@@ -519,10 +519,11 @@ After an integration branch graduation PR merges from `develop-<slug>` to
   --epic <epic-issue-number>
 ```
 
-The helper reconciles delivered planned sub-items before closing the parent
-epic. It discovers planned work from native GitHub sub-issues, the legacy
-`integration-branch:<slug>` label fallback, and closing keywords in merged PRs
-that targeted `develop-<slug>`.
+The helper validates that the graduation PR already merged from
+`develop-<slug>` to `develop`, then reconciles delivered planned sub-items
+before closing the parent epic. It discovers planned work from native GitHub
+sub-issues, the legacy `integration-branch:<slug>` label fallback, and closing
+keywords in merged PRs that targeted `develop-<slug>`.
 
 For each delivered sub-item, it closes the GitHub issue when needed and then
 reasserts the terminal Project status so built-in GitHub Projects close

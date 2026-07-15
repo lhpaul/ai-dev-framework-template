@@ -118,7 +118,7 @@ without undoing successful work.
    wording, cross-repo refs ignored, and markdown punctuation boundaries.
 3. Confirm only current-repository plain `#<number>` closing refs are included
    in the closeout candidate set.
-4. Confirm the mocked closeout test reports `39 passed, 0 failed`.
+4. Confirm the mocked closeout test reports `43 passed, 0 failed`.
 
 **Expected result**: Issues referenced by merged sub-item PR closing keywords are
 included when available, and non-closing references do not trigger mutation.

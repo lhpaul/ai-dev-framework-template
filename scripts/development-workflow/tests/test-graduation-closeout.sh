@@ -100,6 +100,30 @@ JSON
       printf '%s\n' "$MOCK_LABEL_ISSUES"
     fi
     ;;
+  "pr view 77 --json number,state,mergedAt,baseRefName,headRefName")
+    case "${MOCK_GRADUATION_PR_MODE:-merged}" in
+      open)
+        cat <<'JSON'
+{"number":77,"state":"OPEN","mergedAt":null,"baseRefName":"develop","headRefName":"develop-test"}
+JSON
+        ;;
+      wrong_head)
+        cat <<'JSON'
+{"number":77,"state":"MERGED","mergedAt":"2026-07-15T12:00:00Z","baseRefName":"develop","headRefName":"feature/not-graduation"}
+JSON
+        ;;
+      wrong_base)
+        cat <<'JSON'
+{"number":77,"state":"MERGED","mergedAt":"2026-07-15T12:00:00Z","baseRefName":"main","headRefName":"develop-test"}
+JSON
+        ;;
+      *)
+        cat <<'JSON'
+{"number":77,"state":"MERGED","mergedAt":"2026-07-15T12:00:00Z","baseRefName":"develop","headRefName":"develop-test"}
+JSON
+        ;;
+    esac
+    ;;
   "pr list --state merged --base develop-test --limit 1000 --json number,title,body")
     case "${MOCK_PR_MODE:-single_ref}" in
       none)
@@ -216,7 +240,7 @@ set_status() {
 reset_fixture() {
   rm -f "$MOCK_STATE_DIR"/*.json "$MOCK_STATUS_DIR"/* "$MOCK_CLOSE_LOG"
   : > "$MOCK_CLOSE_LOG"
-  unset MOCK_NATIVE_MODE MOCK_LABEL_ISSUES MOCK_PR_MODE MOCK_CLOSE_FAIL_ISSUE MOCK_STATUS_FAIL_ISSUE GITHUB_PROJECT_STATUS_GRADUATED GITHUB_PROJECT_STATUS_MERGED
+  unset MOCK_NATIVE_MODE MOCK_LABEL_ISSUES MOCK_PR_MODE MOCK_GRADUATION_PR_MODE MOCK_CLOSE_FAIL_ISSUE MOCK_STATUS_FAIL_ISSUE GITHUB_PROJECT_STATUS_GRADUATED GITHUB_PROJECT_STATUS_MERGED
 }
 
 run_closeout() {
@@ -235,6 +259,24 @@ last_output_body() {
 last_output_status() {
   head -n 1 <<< "$1"
 }
+
+echo ""
+echo "=== graduation closeout: graduation PR validation ==="
+reset_fixture
+export MOCK_GRADUATION_PR_MODE=open
+export MOCK_NATIVE_MODE=empty
+export MOCK_LABEL_ISSUES="701"
+export MOCK_PR_MODE=none
+write_issue 701 "Should not close" OPEN
+write_issue 900 "Parent epic" OPEN
+set_status 701 "In Development"
+set_status 900 "In Development"
+validation_result="$(run_closeout)"
+validation_body="$(last_output_body "$validation_result")"
+run_test "validation_exit_one" "1" "$(last_output_status "$validation_result")"
+run_contains "validation_reports_unmerged_pr" "has not merged yet" "$validation_body"
+run_test "validation_does_not_close_child" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/701.json"))["state"])')"
+run_test "validation_no_close_calls" "" "$(cat "$MOCK_CLOSE_LOG")"
 
 echo ""
 echo "=== graduation closeout: native sub-issues and PR refs ==="

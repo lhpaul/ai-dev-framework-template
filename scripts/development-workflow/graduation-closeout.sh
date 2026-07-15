@@ -215,6 +215,44 @@ extract_closing_issue_numbers() {
     | sort -un || true
 }
 
+validate_graduation_pr() {
+  local pr_json parsed state merged_at base_ref head_ref
+  if ! pr_json="$(gh pr view "$GRADUATION_PR" --json number,state,mergedAt,baseRefName,headRefName 2>/dev/null)"; then
+    echo "ERROR: could not read graduation PR #${GRADUATION_PR}." >&2
+    exit 1
+  fi
+  if ! parsed="$(printf '%s' "$pr_json" | python3 -c '
+import json, sys
+try:
+    pr = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+print(pr.get("state") or "")
+print(pr.get("mergedAt") or "")
+print(pr.get("baseRefName") or "")
+print(pr.get("headRefName") or "")
+')"; then
+    echo "ERROR: could not parse graduation PR #${GRADUATION_PR}." >&2
+    exit 1
+  fi
+  state="$(printf '%s\n' "$parsed" | sed -n '1p')"
+  merged_at="$(printf '%s\n' "$parsed" | sed -n '2p')"
+  base_ref="$(printf '%s\n' "$parsed" | sed -n '3p')"
+  head_ref="$(printf '%s\n' "$parsed" | sed -n '4p')"
+  if [ "$head_ref" != "$INTEGRATION_BRANCH" ]; then
+    echo "ERROR: graduation PR #${GRADUATION_PR} head is '${head_ref:-unknown}', expected '${INTEGRATION_BRANCH}'." >&2
+    exit 1
+  fi
+  if [ "$base_ref" != "develop" ]; then
+    echo "ERROR: graduation PR #${GRADUATION_PR} base is '${base_ref:-unknown}', expected 'develop'." >&2
+    exit 1
+  fi
+  if [ "$state" != "MERGED" ] && [ -z "$merged_at" ]; then
+    echo "ERROR: graduation PR #${GRADUATION_PR} has not merged yet; closeout is post-merge only." >&2
+    exit 1
+  fi
+}
+
 discover_native_subissues() {
   local after=""
   local has_next="true"
@@ -456,6 +494,8 @@ print_section() {
     echo "  (none)"
   fi
 }
+
+validate_graduation_pr
 
 if ! discover_native_subissues; then
   echo "Warning: native sub-issue discovery failed for epic #${EPIC_ISSUE}; using label fallback only." >&2

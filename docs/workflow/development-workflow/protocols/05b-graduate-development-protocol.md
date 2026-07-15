@@ -290,6 +290,7 @@ After the human merges the graduation PR (must use a **merge commit**):
    Add `--exclude-issue <issue-number>` for optional, deferred, cancelled, or explicitly excluded sub-items that must remain open for human disposition. Add `--defer-epic-close` only when the human explicitly requests that the parent epic remain open after the core deliverable graduates.
 
    The helper:
+   - validates that the graduation PR is already merged from `develop-<slug>` to `develop`;
    - identifies planned sub-items from native GitHub sub-issues or the `integration-branch:<slug>` label fallback;
    - includes issue references from closing keywords in merged PRs targeting `develop-<slug>`;
    - closes open delivered sub-items and reasserts the configured terminal Project status;
