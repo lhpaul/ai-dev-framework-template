@@ -59,3 +59,8 @@ That document is the single source of truth for this supporting role. Key respon
 - When supervising sweep, batch, helper-extraction, numeric-target, or
   pattern-completeness items, require residual gate evidence before accepting
   `ready-for-human-review` as terminal.
+- Before accepting any item as terminal in the batch summary, require the
+  item runner's `## Ground-Truth Completion Verification` section from
+  `item-completion-self-check.sh` or run the helper directly from current
+  artifact state. Missing evidence, `discrepancy`, or `unavailable_required`
+  keeps the item under Protocol 90 Step 5 supervision.

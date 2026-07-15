@@ -18,6 +18,22 @@ This is a **repo-wide definition**. All agents apply these labels consistently.
 
 ---
 
+## Readiness Labels and Report Evidence
+
+`ready-for-human-review` remains the automation-clean label. It says the PR has
+passed the configured review, label, and CI gates. It does not by itself prove
+that a Work Item Runner's final report was based on current ground truth.
+
+Before an agent reports an item as ready, done, blocked, escalated, waiting on a
+human, or waiting on merge, Protocol 91 requires a
+`## Ground-Truth Completion Verification` section from
+`scripts/development-workflow/item-completion-self-check.sh`. That section is
+the report-evidence layer: it records the live branch, HEAD, worktree, PR base,
+labels, CI, review summary/thread, tracker, and external-runtime evidence that
+supports the report. A missing section, `discrepancy`, or
+`unavailable_required` result keeps the item non-terminal even when labels are
+already present.
+
 ## Conditions for `ready-for-human-review`
 
 Apply this label when **all** of the following are true:

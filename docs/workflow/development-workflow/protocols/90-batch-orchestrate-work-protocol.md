@@ -1309,6 +1309,14 @@ After a Work Item Runner returns:
 
 > **Artifact-state rule**: The orchestrator's done-report must be built from independently queried artifact state — **never** from agent self-reports alone. A Work Item Runner that claims a PR is "ready" may have timed out before completing all steps, skipped a required action, or simply reported optimistically. The checks below are mandatory queries against `gh` CLI and the GitHub API; they are not optional confirmations of what the agent said it did.
 
+> **Item self-check evidence rule**: The Work Item Runner's terminal report must
+> include a `## Ground-Truth Completion Verification` section from
+> `scripts/development-workflow/item-completion-self-check.sh`. The Portfolio
+> Orchestrator must quote or link that section for each terminal item before
+> declaring the batch item complete. Missing self-check evidence, a
+> `discrepancy`, or an `unavailable_required` result means the item remains
+> under Step 5 supervision even if labels appear ready.
+
 **Batch-complete gate:** `ready-for-human-review` by itself is not a terminal
 batch-complete signal. Before declaring an explicit-list or portfolio batch
 complete, the orchestrator must verify every in-scope PR has passing required CI
@@ -1708,6 +1716,13 @@ After all currently eligible items have reached a terminal condition, provide a 
 
 > **Done-report source rule**: Every field in this summary — labels present, CHANGELOG touched, reviewer loop completed, CI green — must be sourced from the artifact queries run in Step 5.1, not from agent self-reports. If Step 5.1 was not run for a PR, run it now before writing the summary. Never assert that a PR is "ready" based solely on what a Work Item Runner claimed.
 >
+> **Self-check evidence rule**: For every item listed as terminal, include the
+> associated `Ground-Truth Completion Verification` result from the Work Item
+> Runner summary or from a fresh `item-completion-self-check.sh` run performed by
+> the orchestrator. Do not write the final summary when any in-scope terminal
+> claim lacks this evidence, reports `discrepancy`, or reports
+> `unavailable_required`.
+>
 > **No in-flight handoff rule**: Do not write the final summary while any
 > in-scope PR still has pending/queued checks, incomplete CI evidence, a stale or
 > missing reviewer-loop summary, or an unresolved transient watch failure. Those
@@ -1731,7 +1746,7 @@ Approval required before tracker status changes or branch/PR work starts for the
 
 ### Ready for Human Review
 
-- [PR link] — [item] — [stage] — Automated review: ✅ / ⏭️ / ⚠️
+- [PR link] — [item] — [stage] — Automated review: ✅ / ⏭️ / ⚠️ — Ground-truth verification: verified / not_applicable / unavailable_optional
 
 ### Waiting on Human
 

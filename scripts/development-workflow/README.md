@@ -153,6 +153,49 @@ Use this when:
 - A deliberate split needs explicit `--allow-split true` approval with the
   approved base recorded in the parent summary.
 
+### `item-completion-self-check.sh`
+
+Builds the mandatory ground-truth verification section for Work Item Runner and
+batch terminal reports.
+
+Usage:
+
+```bash
+./scripts/development-workflow/item-completion-self-check.sh \
+  --issue 1202 \
+  --branch feature/1202-example \
+  --stage implementation \
+  --worktree-path "$(pwd)" \
+  --pr 123 \
+  --expected-base develop \
+  --expected-label ready-for-human-review \
+  --expected-label ready-for-regression \
+  --forbid-label needs-fixes \
+  --require-review-summary true \
+  --require-review-threads true
+```
+
+What it does:
+
+- Prints a Markdown section headed `## Ground-Truth Completion Verification`.
+- Verifies current branch, HEAD, worktree path, workspace cleanliness, and
+  `git worktree list` evidence.
+- When `--pr` is supplied, verifies live PR head/base, draft state, labels,
+  changed files, CI rollup, reviewer-loop summary, and optionally review
+  threads.
+- Reads tracker status via `workflow-lib.sh` when tracker evidence is required
+  or expected.
+- Records external runtime/browser/database claims through explicit
+  `--claim <name|required|evidence>` records.
+- Exits non-zero for any `discrepancy` or `unavailable_required` result.
+
+Use this when:
+
+- A Work Item Runner is about to report an item as ready, done, blocked,
+  escalated, waiting on a human, waiting on merge, or cleanup complete.
+- A Portfolio Orchestrator needs item-level evidence before accepting a batch
+  item as terminal.
+
 ### `pr-ci-loop.sh`
 
 Polls GitHub status checks for a PR until they are green, failing, or timed out.

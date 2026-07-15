@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Prevent unsanctioned nested agent PRs** (#1200): Add workflow guards that
   stop duplicate nested-agent artifacts and reject missing or wrong PR base
   context.
+- **Require ground-truth completion verification** (#1202): Add a completion
+  self-check helper and require terminal item reports to include live branch,
+  worktree, PR, CI, review, tracker, and runtime-claim evidence.
 
 ### Changed
 
