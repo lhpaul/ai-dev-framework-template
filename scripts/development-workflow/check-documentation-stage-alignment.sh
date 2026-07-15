@@ -76,7 +76,9 @@ live_pr_state() {
   local number="$1"
   local pr_json files_output files_json file_count
 
-  require_gh
+  if ! gh_available; then
+    infrastructure_exit "GitHub CLI authentication is required for this script"
+  fi
 
   if ! pr_json="$(gh pr view "$number" --json number,headRefName,baseRefName,title 2>/dev/null)"; then
     infrastructure_exit "failed to read PR #$number"
@@ -95,13 +97,15 @@ live_pr_state() {
     infrastructure_exit "failed to normalize changed files for PR #$number"
   fi
 
-  printf '%s\n' "$pr_json" | jq --argjson files "$files_json" '{
+  if ! printf '%s\n' "$pr_json" | jq --argjson files "$files_json" '{
     pr_number: .number,
     title: (.title // ""),
     head: .headRefName,
     base: .baseRefName,
     changed_files: $files
-  }'
+  }'; then
+    infrastructure_exit "failed to normalize PR metadata for #$number"
+  fi
 }
 
 stage_for_head() {
@@ -205,14 +209,14 @@ warning_body() {
   printf '%s\n' "$result_json" | jq -r --arg marker "$COMMENT_MARKER" '
     $marker + "\n" +
     "### Documentation-stage alignment mismatch\n\n" +
-    "This PR is on `" + .head + "`, so Protocol 91 Step 8a blocks `ready-for-human-review` until the diff contains only expected `" + .stage + "`-stage artifacts or the mismatch is escalated.\n\n" +
+    "This PR is on " + .head + ", so Protocol 91 Step 8a blocks ready-for-human-review until the diff contains only expected " + .stage + "-stage artifacts or the mismatch is escalated.\n\n" +
     "**Reason:** " + .reason + "\n\n" +
     (if (.unexpected_files | length) > 0 then
-      "**Unexpected files:**\n" + (.unexpected_files | map("- `" + . + "`") | join("\n")) + "\n"
+      "**Unexpected files:**\n" + (.unexpected_files | map("- " + .) | join("\n")) + "\n"
     else
       "**Unexpected files:** none; no stage artifact was found in the PR diff.\n"
     end) +
-    "\n_Posted automatically by `check-documentation-stage-alignment.sh`._"
+    "\n_Posted automatically by check-documentation-stage-alignment.sh._"
   '
 }
 
@@ -230,8 +234,11 @@ post_or_update_warning() {
     echo "ERROR: failed to read PR comments for #$number" >&2
     return "$INFRASTRUCTURE_EXIT"
   fi
-  existing_id="$(printf '%s\n' "$comments" |
-    jq -r --arg marker "$COMMENT_MARKER" '[.[][] | select((.body // "") | contains($marker))][-1].id // ""')"
+  if ! existing_id="$(printf '%s\n' "$comments" |
+    jq -r --arg marker "$COMMENT_MARKER" '[.[][] | select((.body // "") | contains($marker))][-1].id // ""')"; then
+    echo "ERROR: failed to parse PR comments for #$number" >&2
+    return "$INFRASTRUCTURE_EXIT"
+  fi
 
   if [ -n "$existing_id" ]; then
     if ! gh api -X PATCH "repos/${repo}/issues/comments/${existing_id}" -f body="$body" >/dev/null; then
@@ -289,12 +296,27 @@ fi
 
 state_json=""
 if [ -n "$input_file" ]; then
+  set +e
   state_json="$(normalize_fixture "$input_file")"
+  state_status=$?
+  set -e
 else
+  set +e
   state_json="$(live_pr_state "$pr_number")"
+  state_status=$?
+  set -e
+fi
+if [ "$state_status" -ne 0 ]; then
+  exit "$state_status"
 fi
 
+set +e
 result_json="$(classify_state "$state_json")"
+result_status=$?
+set -e
+if [ "$result_status" -ne 0 ]; then
+  exit "$result_status"
+fi
 
 if [ "$(printf '%s\n' "$result_json" | jq -r '.result')" = "mismatch" ] && [ -n "$pr_number" ]; then
   if ! post_or_update_warning "$pr_number" "$result_json"; then
