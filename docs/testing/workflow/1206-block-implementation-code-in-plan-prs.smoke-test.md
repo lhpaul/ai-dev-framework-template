@@ -73,7 +73,8 @@ emit a readiness-blocking warning.
 
 **Expected result**: The checker reports a stage mismatch, names the expected
 plan-stage artifact boundary, lists the unexpected file path, and makes clear
-that the blocker is workflow stage collapse rather than code correctness.
+that the blocker is workflow stage collapse rather than code correctness. The
+checker exits with Protocol 91 Step 8a exit code `8` for the mismatch.
 
 ### Step 4: Verify Mismatched Spec PR Behavior
 
@@ -143,6 +144,9 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] Spec-stage PRs with implementation artifacts are detected before
       `ready-for-human-review`. AC3.
 - [ ] Mismatch warnings name the expected stage and unexpected files. AC4.
+- [ ] Mismatched documentation-stage fixtures exit with Protocol 91 Step 8a
+      code `8`, while usage and infrastructure failures use separate non-zero
+      codes. AC4, AC8.
 - [ ] Work Item Runner readiness remains blocked until correction or
       escalation. AC5.
 - [ ] Warning text identifies workflow stage collapse, not code correctness.

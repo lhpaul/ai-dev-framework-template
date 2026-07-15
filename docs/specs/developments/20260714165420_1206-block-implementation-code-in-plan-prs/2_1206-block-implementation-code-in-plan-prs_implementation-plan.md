@@ -67,9 +67,10 @@ agent and skill guidance, a new script, and a script test harness.
 - [ ] Add a stable PR comment marker, for example
       `<!-- documentation-stage-alignment -->`, so reruns update one warning
       comment instead of posting duplicates.
-- [ ] Return a distinct non-zero exit code for stage mismatch. Reserve separate
-      non-zero exits for usage errors and failed GitHub/diff reads so the runner
-      can distinguish a real mismatch from an infrastructure problem.
+- [ ] Return Step 8a exit code `8` for documentation-stage mismatch from the
+      checker itself. Reserve separate non-zero exits for usage errors and
+      failed GitHub/diff reads so the runner can distinguish a real mismatch
+      from an infrastructure problem without remapping ambiguous checker exits.
 - [ ] Define the explicit exception path as escalation only: the checker should
       print the mismatch and leave readiness blocked. It should not implement a
       bypass label in the first implementation.
@@ -79,10 +80,12 @@ agent and skill guidance, a new script, and a script test harness.
 - [ ] Update `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
       Step 8a to run the stage-alignment checker after CI and reviewer-loop
       evidence is clean but before `ready-for-human-review` is applied.
-- [ ] Add the next unused Step 8a exit code for documentation-stage mismatch.
-      The action should be: leave the PR without `ready-for-human-review`, post
-      or update the warning, apply `needs-fixes` if the implementation chooses
-      to use labels for blockers, and report a human/workflow correction action.
+- [ ] Add the next unused Step 8a exit code, `8`, for documentation-stage
+      mismatch, and require `check-documentation-stage-alignment.sh` to emit that
+      same code for mismatch outcomes. The action should be: leave the PR
+      without `ready-for-human-review`, post or update the warning, apply
+      `needs-fixes` if the implementation chooses to use labels for blockers,
+      and report a human/workflow correction action.
 - [ ] Make the gate run on every pass through Step 8a, including resumed PRs and
       fix cycles, so contaminated existing branches cannot bypass inspection.
 - [ ] Update `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`
@@ -382,8 +385,8 @@ the checker and tests directly.
 
 1. Create `scripts/development-workflow/check-documentation-stage-alignment.sh`
    with live PR mode, fixture input mode, JSON output, branch-stage detection,
-   changed-file classification, stable warning comment handling, and distinct
-   exit codes.
+   changed-file classification, stable warning comment handling, mismatch exit
+   code `8`, and distinct usage/infrastructure exit codes.
 2. Add `scripts/development-workflow/tests/test-check-documentation-stage-alignment.sh`
    with fixture-based coverage for the parser-risk edge cases and required
    acceptance examples.
