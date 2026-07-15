@@ -41,6 +41,10 @@ advances exactly one non-epic item through Protocol 91.
    run, perform Protocol 91's checkpoint-resume worktree preflight before any
    mutation. Worktree re-entry is a CWD safety check only; it does not satisfy
    or waive checkpoint state.
+   For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
+   items, run Protocol 91's residual gate before `ready-for-human-review`; block
+   or escalate instead of reporting terminal when residual evidence is missing or
+   incomplete.
 7. Epic-like targets must use `$run-epic` / `/run-epic`, not this command.
 8. When the delegated merge gate returns `merge_allowed`, continue through merge,
    remote/local branch cleanup, `post-merge-cleanup.sh`, and live tracker

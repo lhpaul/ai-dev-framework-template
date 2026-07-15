@@ -39,6 +39,10 @@ Key rules:
 - For Refactor: read plan + runbook BEFORE writing any code (no spec)
 - For Fast Track: stop and report if scope exceeds the brief
 - For Hotfix: branch from `main`, not `develop`
+- For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
+  work, produce and verify residual evidence with `scope-residual-gate.sh`
+  before `ready-for-human-review`; block or escalate instead of silently
+  deferring residuals.
 - Never bypass build/lint/test verification
 - Always update CHANGELOG before opening the PR (except spec/plan-only PRs; for fixes to unreleased work, update the existing entry instead of adding a new one; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved at merge time); **hotfix exception**: `hotfix/*` PRs write a new versioned section (e.g., `[1.0.1] - YYYY-MM-DD`) as the **first `##` section** in `CHANGELOG.md` (above all existing headers, including prior hotfix versions and `[Unreleased]`) — hotfixes patch released code and are released immediately on merge; the backport PR carries the versioned entry to `develop` automatically
 - Before writing a CHANGELOG entry, check whether the target category section (e.g. `### Changed`, `### Fixed`) already exists under `[Unreleased]`; if so, append to it — never create a duplicate section header; after writing, verify the header appears exactly once **within the `[Unreleased]` block** using the awk-scoped check from the protocol's "Duplicate-section prevention" step (not a bare file-scoped `grep -c`, which counts across all versioned sections)

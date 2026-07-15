@@ -51,3 +51,6 @@ That document is the single source of truth for this supporting role. Key respon
 - Use the helper scripts in `scripts/development-workflow/` to inspect state, plan batches, and supervise resumes
 - Dispatch the `item-orchestrator` agent for each selected or approved item when possible
 - Do not stop after dispatching a batch if any selected or approved item still has a deterministic next action
+- When supervising sweep, batch, helper-extraction, numeric-target, or
+  pattern-completeness items, require residual gate evidence before accepting
+  `ready-for-human-review` as terminal.

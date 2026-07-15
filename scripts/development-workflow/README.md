@@ -353,6 +353,29 @@ What it does:
 - Passes when `ci_policy: none` is declared for repositories without CI workflows
 - Requires `gh` authentication for remote inspection
 
+#### `scope-residual-gate.sh`
+
+Classifies broad-scope sweep, batch, helper-extraction, and
+pattern-completeness items and validates structured residual evidence before
+workflow readiness.
+
+Usage:
+
+```bash
+./scripts/development-workflow/scope-residual-gate.sh classify \
+  --issue-title "Clean 127 console.log occurrences across apps/admin"
+
+./scripts/development-workflow/scope-residual-gate.sh verify \
+  --issue-title "Clean 127 console.log occurrences across apps/admin" \
+  --evidence /tmp/residual-evidence.json
+```
+
+The helper is read-only. `classify` emits `RESULT=requires_verification` for
+applicable scopes and `RESULT=not_applicable` otherwise. `verify` emits
+`RESULT=pass|block|escalate|not_applicable`. Both modes emit
+`SCOPE_CLASSIFICATION`, `RESIDUAL_GROUPS`, `FOLLOW_UPS`, and `SUMMARY` fields,
+and never update labels, trackers, comments, PRs, branches, or issues.
+
 #### `hub-list-prs.sh`
 
 Lists open pull requests for selected product repositories without modifying

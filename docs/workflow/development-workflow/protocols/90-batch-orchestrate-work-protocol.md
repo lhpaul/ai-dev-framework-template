@@ -1310,6 +1310,12 @@ gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comme
 
 The `files` field is required to verify CHANGELOG presence independently (see table below). Do not skip it.
 
+For sweep, batch, helper-extraction, or pattern-completeness items, also require
+residual-gate evidence from `scripts/development-workflow/scope-residual-gate.sh`
+before accepting the PR as `ready-for-human-review`. A `RESULT=block` or
+`RESULT=escalate` keeps the item in progress; the batch summary must report the
+residual gate outcome instead of counting the item as terminal.
+
 For the `reviewThreads` resolution check, `gh pr view --json` does not expose `reviewThreads`; use the GraphQL API directly:
 
 ```bash

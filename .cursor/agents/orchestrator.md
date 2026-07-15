@@ -51,3 +51,6 @@ That document is the single source of truth for this supporting role. Key respon
 - Dispatch the internal `item-orchestrator` handoff target for each selected or
   approved item when possible
 - Do not stop after dispatching a batch if any selected or approved item still has a deterministic next action
+- When supervising sweep, batch, helper-extraction, numeric-target, or
+  pattern-completeness items, require residual gate evidence before accepting
+  `ready-for-human-review` as terminal.

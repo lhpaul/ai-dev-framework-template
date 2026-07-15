@@ -60,6 +60,9 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    prior worktree-isolated run, run the Protocol 95/91 checkpoint-resume
    worktree preflight before any mutation. Re-entering the worktree is a CWD
    safety check only; it does not satisfy, waive, or clear checkpoint state.
+   For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
+   sub-items, include residual gate status in item/epic summaries and do not
+   treat blocked or escalated residuals as complete.
 9. **Guardrails layer context**: The `--delegate-review`, `--may-merge`,
    `--may-start-backlog`, and `--max-risk` flags are the **invocation-override**
    layer (highest priority) of the three-layer guardrails precedence. The

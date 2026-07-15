@@ -27,6 +27,11 @@ Apply this label when **all** of the following are true:
 - [ ] Step 7's latest automated reviewer-loop summary has `Result: clean` or `Result: skipped`; `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result blocks this label
 - [ ] Every configured automated PR reviewer has no blocking PR feedback (or is skipped)
 - [ ] All feedback from a previous human review cycle has been addressed
+- [ ] For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
+      items, the required residual gate has run in verification mode and the
+      latest result is `pass`. `not_applicable` only satisfies readiness when
+      the residual gate is not required for the item. `block` maps to
+      `needs-fixes`; `escalate` maps to a human-decision stop.
 
 ---
 
@@ -37,6 +42,14 @@ Apply this label when **any** of the following is true:
 - CI checks are failing
 - Any automated PR reviewer reports blocking PR feedback
 - A human has requested changes on the PR (and those changes have not yet been addressed)
+- A required residual gate returns `block`, meaning broad-scope residuals remain
+  undisposed or helper outputs lack caller/disposition evidence
+- A required residual gate result is missing when the item title, body, spec, or
+  plan indicates sweep, batch, helper-extraction, numeric-target, or
+  pattern-completeness work
+
+Do not use `needs-fixes` for residual gate `escalate`; that is a human-decision
+stop until the residual scope decision is resolved.
 
 ---
 

@@ -31,6 +31,17 @@ that begin as read-only questions and then become real code or documentation
 changes. The first mutating action must happen after branch/worktree isolation is
 in place.
 
+## Scope-Residual Evidence Gate
+
+When the item title, body, spec, or plan describes sweep, batch, helper
+extraction, codebase-wide cleanup, numeric target counts, or pattern-based
+completeness, produce residual evidence before the PR can be labeled
+`ready-for-human-review`. Use `scripts/development-workflow/scope-residual-gate.sh`
+to classify the scope and verify structured evidence. If the helper returns
+`RESULT=block` or `RESULT=escalate`, keep the PR out of readiness, report the
+remaining residual groups, and either finish the work, link a follow-up issue, or
+record explicit out-of-scope rationale.
+
 ---
 
 ## GitHub Actions Workflow Security Checklist
