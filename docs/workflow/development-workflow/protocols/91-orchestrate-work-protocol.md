@@ -209,23 +209,24 @@ When an issue tracker is configured in `.ai-dev-workflow.yaml`, **always query t
 
 Prefer the helper scripts in `scripts/development-workflow/` for deterministic state inspection before falling back to ad hoc shell commands.
 
-### Parallel batch indicator
+### Batch context indicator
 
-**Check for a parallel batch context**: If this Work Item Runner was dispatched
-as part of a parallel batch by the Portfolio Orchestrator
-(`90-batch-orchestrate-work-protocol.md`), the handoff metadata will indicate
-`BATCH_CONTEXT=true`. Note this indicator; you will use it in Step 3 (Dispatch
-Strategy) to decide whether worktree isolation is required.
+**Check for batch context**: If this Work Item Runner was dispatched as part of
+an explicit-list batch by the Portfolio Orchestrator
+(`90-batch-orchestrate-work-protocol.md`), including sequential fallback, the
+handoff metadata will indicate `BATCH_CONTEXT=true`. Note this indicator; you
+will use it in Step 3 (Dispatch Strategy) to decide whether worktree isolation
+is required.
 
 When `BATCH_CONTEXT=true` and the runner may mutate artifacts, the handoff must
 also include the Portfolio Orchestrator's isolation assignment: expected
 worktree path, expected workflow branch, artifact repo root, approved base
 branch, mutation classification, and `isolation: "worktree"`. Missing isolation
-metadata is non-terminal for direct single-item runs, but in a concurrent
-mutating batch it is a dispatch error: stop before mutation and report the
-missing field to the Portfolio Orchestrator. This isolation check complements,
-but does not replace, the #1200 nested artifact guard for duplicate or wrong-base
-PR artifacts.
+metadata is non-terminal for direct single-item runs, but in mutating batch
+dispatch it is a dispatch error: stop before mutation and report the missing
+field to the Portfolio Orchestrator. This isolation check complements, but does
+not replace, the #1200 nested artifact guard for duplicate or wrong-base PR
+artifacts.
 
 **CHANGELOG in parallel batches**: Each item in a parallel batch adds its own CHANGELOG entry as normal. CHANGELOG merge conflicts are resolved at merge time by the batch-merge auto-resolution (protocol 94 Step 4.3). Do not skip or consolidate CHANGELOG entries — see protocol 90 Step 3.6 for rationale.
 
@@ -691,11 +692,11 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 | Implement feature           | `developer`                                                                                                                             |
 | Review code (post-draft-PR) | `code-reviewer` agent (Claude Code: `/code-review`); for other runners use compatibility wrapper `03-review-implementation-protocol.md` |
 
-### Worktree isolation for parallel batches
+### Worktree isolation for batch dispatch
 
-**When dispatched as part of a parallel batch** (`BATCH_CONTEXT=true` in the handoff metadata):
+**When dispatched as part of an explicit-list batch** (`BATCH_CONTEXT=true` in the handoff metadata):
 
-1. **Create a dedicated worktree** for this item before executing any stage work. This ensures complete isolation from other concurrent Work Item Runners in the batch.
+1. **Create a dedicated worktree** for this item before executing any stage work. This ensures complete isolation from other Work Item Runners in the batch, including sequential fallback where the same batch contract is preserved.
 
 2. Determine the appropriate base branch for the worktree:
 
@@ -723,7 +724,7 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 
 3. Create the worktree at the worktree path assigned by the Protocol 90
    isolation manifest. Do not invent, shorten, or substitute a different
-   `<worktree-path>` for a concurrent mutating batch. If `BATCH_CONTEXT=true`,
+   `<worktree-path>` for a mutating batch dispatch. If `BATCH_CONTEXT=true`,
    the runner may mutate artifacts, and the manifest-assigned absolute worktree
    path is missing, stop before creating a worktree or mutating files and report
    the missing assignment to the Portfolio Orchestrator. The command depends on
@@ -1049,7 +1050,7 @@ This rule prevents agents from making changes that affect unrelated issues and c
 
 ## Step 3.5: Pre-flight Permission Self-Check (Subagent Runs Only)
 
-**Applies to**: Work Item Runner subagents dispatched as part of a parallel batch (`BATCH_CONTEXT=true`). This step is **optional but recommended** — the permission-denial early-exit in Step 3 (above) covers mid-run failures even without the self-check.
+**Applies to**: Work Item Runner subagents dispatched as part of an explicit-list batch (`BATCH_CONTEXT=true`). This step is **optional but recommended** — the permission-denial early-exit in Step 3 (above) covers mid-run failures even without the self-check.
 
 Before calling any creator-stage agent or making any file edits, perform a lightweight sanity check to verify that both `Edit` and `Bash` are accessible:
 
@@ -1798,11 +1799,11 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 | `implementation-plan/*`                           | `implementation-plan-reviewer`                               |
 | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer`                                              |
 
-**Fixer agent worktree isolation rule (mandatory for parallel batches):**
+**Fixer agent worktree isolation rule (mandatory for batch dispatch):**
 
-When this Work Item Runner was dispatched as part of a parallel batch (`BATCH_CONTEXT=true`), all fixer agents dispatched from this step **must** receive `BATCH_CONTEXT=true` and the resolved `<worktree-path>` in their handoff. Fixer agents that run without these values will use main-repo absolute file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context — causing their changes to be written to the main working tree and left uncommitted on the integration branch instead of on the isolated feature branch.
+When this Work Item Runner was dispatched as part of an explicit-list batch (`BATCH_CONTEXT=true`), all fixer agents dispatched from this step **must** receive `BATCH_CONTEXT=true` and the resolved `<worktree-path>` in their handoff. Fixer agents that run without these values will use main-repo absolute file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context — causing their changes to be written to the main working tree and left uncommitted on the integration branch instead of on the isolated feature branch.
 
-Required fixer handoff values (parallel batches only):
+Required fixer handoff values (batch dispatch only):
 
 - `BATCH_CONTEXT=true`
 - `WORKTREE_PATH=<resolved-absolute-worktree-path>` — the same path used when this item was first dispatched

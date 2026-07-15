@@ -38,13 +38,13 @@ proposal step.
    `run-nested-artifact-guard.sh --repo-root "$ARTIFACT_REPO_ROOT"` before mutation. Stop on
    `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed` instead
    of widening scope or inferring a base.
-9. Before dispatching two or more concurrent runners when any runner may mutate,
-   build the Protocol 90 isolation manifest and require a distinct absolute
-   worktree path plus `isolation: "worktree"` for every mutating item. Stop
-   before dispatch on missing isolation assignment or duplicate worktree path;
-   non-isolated runners are exempt only when explicitly classified `read_only`
-   and they will not edit files, switch branches, commit, push, mutate PRs,
-   change labels, or update tracker state.
+9. Before dispatching an explicit-list batch where any runner may mutate,
+   including sequential fallback, build the Protocol 90 isolation manifest and
+   require a distinct absolute worktree path plus `isolation: "worktree"` for
+   every mutating item. Stop before dispatch on missing isolation assignment or
+   duplicate worktree path; non-isolated runners are exempt only when explicitly
+   classified `read_only` and they will not edit files, switch branches, commit,
+   push, mutate PRs, change labels, or update tracker state.
 10. Do not stop after advancing one item if another item in the explicit list still
    has a deterministic next action.
 11. Do not stop at transient in-flight CI/watch states. If a local watch exits

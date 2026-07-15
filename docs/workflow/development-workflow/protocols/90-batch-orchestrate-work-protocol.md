@@ -890,11 +890,12 @@ For each item in the batch, prepare a short handoff:
 - Current next action
 - Priority context
 - Parallelization notes or serialization reason
-- Isolation assignment for concurrent mutating batches: item identifier,
-  expected branch, absolute worktree path, `isolation: "worktree"`, mutation
-  classification (`mutating` or `read_only`), artifact repo root, and base
-  branch
-- `BATCH_CONTEXT=true` — required for parallel batches so the Work Item Runner (protocol 91) activates worktree isolation
+- Isolation assignment for mutating explicit-list batches, including sequential
+  fallback: item identifier, expected branch, absolute worktree path,
+  `isolation: "worktree"`, mutation classification (`mutating` or
+  `read_only`), artifact repo root, and base branch
+- `BATCH_CONTEXT=true` — required for explicit-list batch dispatch so the Work
+  Item Runner (protocol 91) activates worktree isolation
 - `BASE_BRANCH=<resolved-base>` — include the bounded-prelude-approved base,
   normally `develop`. Use `develop-<slug>` only when the explicit-list or epic
   scope has one shared `integration-branch:<slug>` label and the owning remote
@@ -912,13 +913,14 @@ For each item in the batch, prepare a short handoff:
 
 Do **not** dispatch multiple Work Item Runners to operate in the same working directory.
 
-### Concurrent mutating dispatch isolation manifest
+### Mutating batch dispatch isolation manifest
 
-Before dispatching two or more Work Item Runners concurrently where any runner
-may mutate files, branches, commits, PRs, labels, or tracker state, the
-Portfolio Orchestrator must build a pre-dispatch isolation manifest. The
-manifest is part of the batch evidence and must be visible in the dispatch
-summary.
+Before dispatching an explicit-list batch where any Work Item Runner may mutate
+files, branches, commits, PRs, labels, or tracker state, the Portfolio
+Orchestrator must build a pre-dispatch isolation manifest. This applies to both
+concurrent dispatch and the documented sequential fallback for runners that
+cannot execute multiple Work Item Runners concurrently. The manifest is part of
+the batch evidence and must be visible in the dispatch summary.
 
 Each mutating runner entry must include:
 
@@ -932,7 +934,7 @@ Each mutating runner entry must include:
 
 Pre-dispatch validation is mandatory:
 
-- If any concurrent mutating runner is missing `isolation: "worktree"` or an
+- If any mutating runner is missing `isolation: "worktree"` or an
   absolute worktree path, stop before dispatch; name the affected item, the
   expected branch, the missing isolation field, and the human action needed to
   unblock.

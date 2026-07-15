@@ -213,12 +213,13 @@ Additional checks for **PRs that add or modify guardrails enforcement behavior**
 Additional checks for **PRs that add or modify branch creation, PR creation, or nested/stage-agent dispatch behavior**:
 
 - **Nested artifact guard present**: confirm item-scoped branch and PR creation paths call `run-nested-artifact-guard.sh` with the parent-approved `--approved-base` before mutation. Missing base context, duplicate artifacts, wrong-base PRs, and scan failures must block instead of falling back to the GitHub default branch.
-- **Concurrent mutating dispatch isolation present**: when the PR adds or
-  modifies concurrent Work Item Runner dispatch behavior, confirm Protocol 90
-  requires a pre-dispatch isolation manifest with item identifier, expected
-  branch, absolute worktree path, `isolation: "worktree"`, mutation
-  classification, artifact repo root, and base branch for every mutating runner.
-  Missing-isolation and duplicate-worktree cases must stop before dispatch.
+- **Mutating batch dispatch isolation present**: when the PR adds or modifies
+  Work Item Runner batch dispatch behavior, confirm Protocol 90 requires a
+  pre-dispatch isolation manifest with item identifier, expected branch,
+  absolute worktree path, `isolation: "worktree"`, mutation classification,
+  artifact repo root, and base branch for every mutating runner, including
+  sequential fallback. Missing-isolation and duplicate-worktree cases must stop
+  before dispatch.
 - **Runner pre-mutation self-check present**: when the PR adds or modifies
   worktree-isolated runner, item-orchestrator, developer, or fixer-agent
   handoffs, confirm the runner checks expected worktree path and expected branch
