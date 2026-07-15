@@ -663,7 +663,7 @@ Handle helper results as follows:
 | Result | Meaning | Required action |
 | --- | --- | --- |
 | `RESULT=continue` | Current CWD is already inside the expected worktree on the expected branch. | Continue the item run from the current directory. |
-| `RESULT=reenter` | Current CWD is the main clone and exactly one registered worktree matches the expected branch/path. | `cd "$TARGET_WORKTREE"`, run `bash scripts/development-workflow/worktree-cwd-guard.sh --check-cwd "$TARGET_WORKTREE" "$MAIN_REPO_ROOT"`, verify `pwd` and `git rev-parse --abbrev-ref HEAD`, then continue. |
+| `RESULT=reenter` | Current CWD is the main clone and exactly one registered worktree matches the expected branch/path. | `cd "$TARGET_WORKTREE"`, run `bash scripts/development-workflow/worktree-cwd-guard.sh --check-cwd "$TARGET_WORKTREE" "$MAIN_REPO_ROOT"`, verify `pwd -P` and `git rev-parse --abbrev-ref HEAD`, then continue. |
 | `RESULT=stop` | The expected worktree is missing, ambiguous, detached, on the wrong branch, or the current CWD is untrusted. | Stop before mutation and report the helper fields to the human. |
 
 Stop output must include: item, expected branch, expected worktree when known,
@@ -847,7 +847,7 @@ branch.
 Before issuing any `git switch`, `git checkout`, `git checkout -b`, `git reset`, or `git restore` command, confirm both conditions below. If either check fails, do not run the command — correct the path or use the `-C` flag instead.
 
 1. **Confirm you are operating inside the worktree, not the main repository root.**
-   Run `pwd` and compare the output against `<worktree-path>`. If they differ, you are in the wrong directory. `cd <worktree-path>` or use `git -C <worktree-path>` before continuing.
+   Run `pwd -P` and compare the output against `<worktree-path>`. If they differ, you are in the wrong directory. `cd <worktree-path>` or use `git -C <worktree-path>` before continuing.
 
 2. **Confirm the command targets the current worktree branch, not a base branch.**
    Running `git checkout develop` (or any other base branch) inside the worktree will fail because `develop` is already checked out in the main working tree — git prevents the same branch from being checked out in two locations simultaneously. If a stage protocol's branching step says `git checkout develop && git checkout -b <branch>`, skip it entirely: the worktree was already created on the correct branch.
