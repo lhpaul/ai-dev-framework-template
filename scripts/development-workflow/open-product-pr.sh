@@ -11,7 +11,7 @@ TOKEN_HELPER="$SCRIPT_DIR/github-app-token.sh"
 
 usage() {
   cat <<'USAGE'
-Usage: open-product-pr.sh --repo <product-name> --base <branch> --head <branch> --title <title> --body-file <path> [--repo-root <path>] [--approved-base <branch>] [--dry-run]
+Usage: open-product-pr.sh --repo <product-name> --base <branch> --approved-base <branch> --head <branch> --title <title> --body-file <path> [--repo-root <path>] [--dry-run]
 
 Opens a pull request in the selected product repository. Dry-run mode prints the
 target repo and redacted command shape without requiring credentials.
