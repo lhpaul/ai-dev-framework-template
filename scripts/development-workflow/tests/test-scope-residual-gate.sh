@@ -101,6 +101,9 @@ out="$( "$HELPER" classify --issue-title "Extract 7 shared helpers across servic
 assert_field "combines_overlapping_helper_and_sweep_signals" "helper_extraction" "$out" "SCOPE_CLASSIFICATION"
 assert_field "helper_numeric_target_preserved" "7" "$out" "TARGET_COUNT"
 
+out="$( "$HELPER" classify --issue-title "Verify pattern-completeness for all references to legacy helper" )"
+assert_field "classifies_pattern_completeness" "pattern_completeness" "$out" "SCOPE_CLASSIFICATION"
+
 out="$( "$HELPER" verify --issue-title "Clean 127 console.log occurrences across apps/admin" --evidence "$clean" )"
 assert_field "passes_clean_evidence" "pass" "$out" "RESULT"
 
@@ -125,6 +128,9 @@ assert_fails_contains "blocks_unused_helper_outputs" "unused helper without disp
 
 out="$( "$HELPER" verify --issue-title "Extract 7 shared helpers from workflow scripts" --evidence "$used_helper" )"
 assert_field "passes_helper_with_callers" "pass" "$out" "RESULT"
+
+out="$( "$HELPER" verify --issue-title "Verify pattern-completeness for all references to legacy helper" --evidence "$clean" )"
+assert_field "passes_pattern_completeness_evidence" "pass" "$out" "RESULT"
 
 assert_fails_contains "escalates_missing_evidence_for_ambiguous_scope" "Residual evidence is required" \
   "$HELPER" verify --issue-title "Clean all unresolved workflow leftovers across the codebase"

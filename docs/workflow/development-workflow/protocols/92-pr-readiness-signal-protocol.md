@@ -28,8 +28,10 @@ Apply this label when **all** of the following are true:
 - [ ] Every configured automated PR reviewer has no blocking PR feedback (or is skipped)
 - [ ] All feedback from a previous human review cycle has been addressed
 - [ ] For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
-      items, the latest residual gate result is `pass` or `not_applicable`.
-      `block` maps to `needs-fixes`; `escalate` maps to a human-decision stop.
+      items, the required residual gate has run in verification mode and the
+      latest result is `pass`. `not_applicable` only satisfies readiness when
+      the residual gate is not required for the item. `block` maps to
+      `needs-fixes`; `escalate` maps to a human-decision stop.
 
 ---
 

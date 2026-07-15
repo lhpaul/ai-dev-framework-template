@@ -9,10 +9,10 @@ Usage:
   scope-residual-gate.sh classify --issue-title <title> [--issue-body-file <file>]
   scope-residual-gate.sh verify --issue-title <title> [--issue-body-file <file>] --evidence <json-file>
 
-Classifies broad-scope sweep, batch, and helper-extraction work and validates
-explicit residual evidence before workflow readiness. The helper is read-only:
-it never edits labels, trackers, PRs, issues, branches, or files outside caller
-owned temporary fixtures.
+Classifies broad-scope sweep, batch, helper-extraction, and pattern-completeness
+work and validates explicit residual evidence before workflow readiness. The
+helper is read-only: it never edits labels, trackers, PRs, issues, branches, or
+files outside caller owned temporary fixtures.
 USAGE
 }
 
@@ -107,6 +107,9 @@ target_count="$(extract_numeric_target)"
 if matches_regex '\b(extract|create|add|move|refactor)[[:alnum:] _./()-]*(helper|helpers|shared helper|utility|utilities)\b'; then
   classification="helper_extraction"
   classification_reason="helper extraction signal detected"
+elif matches_regex '\b(pattern-completeness|pattern completeness|pattern-based completeness|pattern based completeness|all matches|all occurrences|every occurrence|all references|every reference|live-search|live search)\b'; then
+  classification="pattern_completeness"
+  classification_reason="pattern-completeness signal detected"
 elif [ -n "$target_count" ] && matches_regex '\b(clean|cleanup|remove|delete|replace|refactor|extract|migrate|fix|update)\b'; then
   classification="numeric_sweep"
   classification_reason="numeric sweep or batch target detected"

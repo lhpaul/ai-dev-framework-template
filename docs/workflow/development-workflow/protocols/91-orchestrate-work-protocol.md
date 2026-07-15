@@ -2126,8 +2126,14 @@ fi
 # RESULT=requires_verification does not satisfy readiness.
 if [ "${RESIDUAL_GATE_REQUIRED:-false}" = "true" ]; then
   case "${RESIDUAL_GATE_RESULT:-}" in
-    pass|not_applicable)
+    pass)
       echo "✅ Residual gate verified: RESULT=${RESIDUAL_GATE_RESULT}."
+      ;;
+    not_applicable)
+      echo "ERROR: Residual gate was required for this item, but the latest verification returned not_applicable."
+      echo "Re-run scripts/development-workflow/scope-residual-gate.sh verify with the item title/body/spec/plan scope that made the gate required."
+      gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+      exit 8
       ;;
     block)
       echo "ERROR: Residual gate blocked readiness."

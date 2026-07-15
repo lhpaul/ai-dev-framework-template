@@ -355,8 +355,9 @@ What it does:
 
 #### `scope-residual-gate.sh`
 
-Classifies broad-scope sweep, batch, and helper-extraction items and validates
-structured residual evidence before workflow readiness.
+Classifies broad-scope sweep, batch, helper-extraction, and
+pattern-completeness items and validates structured residual evidence before
+workflow readiness.
 
 Usage:
 
