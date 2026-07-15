@@ -211,7 +211,21 @@ Prefer the helper scripts in `scripts/development-workflow/` for deterministic s
 
 ### Parallel batch indicator
 
-**Check for a parallel batch context**: If this Work Item Runner was dispatched as part of a parallel batch by the Portfolio Orchestrator (`90-batch-orchestrate-work-protocol.md`), the handoff metadata will indicate `BATCH_CONTEXT=true`. Note this indicator; you will use it in Step 3 (Dispatch Strategy) to decide whether worktree isolation is required.
+**Check for a parallel batch context**: If this Work Item Runner was dispatched
+as part of a parallel batch by the Portfolio Orchestrator
+(`90-batch-orchestrate-work-protocol.md`), the handoff metadata will indicate
+`BATCH_CONTEXT=true`. Note this indicator; you will use it in Step 3 (Dispatch
+Strategy) to decide whether worktree isolation is required.
+
+When `BATCH_CONTEXT=true` and the runner may mutate artifacts, the handoff must
+also include the Portfolio Orchestrator's isolation assignment: expected
+worktree path, expected workflow branch, artifact repo root, approved base
+branch, mutation classification, and `isolation: "worktree"`. Missing isolation
+metadata is non-terminal for direct single-item runs, but in a concurrent
+mutating batch it is a dispatch error: stop before mutation and report the
+missing field to the Portfolio Orchestrator. This isolation check complements,
+but does not replace, the #1200 nested artifact guard for duplicate or wrong-base
+PR artifacts.
 
 **CHANGELOG in parallel batches**: Each item in a parallel batch adds its own CHANGELOG entry as normal. CHANGELOG merge conflicts are resolved at merge time by the batch-merge auto-resolution (protocol 94 Step 4.3). Do not skip or consolidate CHANGELOG entries — see protocol 90 Step 3.6 for rationale.
 
@@ -753,6 +767,36 @@ if [ "$CURRENT" != "<branch>" ]; then
   exit 1
 fi
 ```
+
+**Pre-mutation isolation self-check — mandatory for `BATCH_CONTEXT=true`**
+
+Before the first file edit, branch-changing command, commit, push, PR mutation,
+tracker mutation, or stage-agent handoff, verify that the active runner context
+matches the isolation assignment from the Portfolio Orchestrator:
+
+- Expected worktree path is present, absolute, and matches the resolved
+  `<worktree-path>`.
+- Observed directory (`pwd -P`) is inside the expected worktree path and is not
+  the main repository root.
+- Expected branch is present and matches `git rev-parse --abbrev-ref HEAD`.
+- Mutation classification is `mutating` for any runner that will edit files,
+  change branches, commit, push, open or update PRs, modify labels, or update
+  tracker state.
+
+If the observed directory is outside the expected worktree path, if the runner
+is in the main repo root, or if the observed branch differs from the expected
+branch, stop before mutation. The stop report must include item identifier,
+expected worktree, observed directory, expected branch, observed branch, and the
+human action needed to unblock.
+
+If there is evidence that mutation may already have occurred outside the
+assigned worktree, escalate for human inspection instead of trying to repair it
+automatically. Do not reset, restore, stash, commit, or delete the suspect
+changes without explicit human direction.
+
+Record the pre-mutation isolation self-check result in the Work Item Runner
+terminal summary. The Portfolio Orchestrator must treat missing, failed, or
+escalated isolation evidence as non-terminal for the batch item.
 
 **Runtime CWD guard — activate immediately after entering the worktree**
 

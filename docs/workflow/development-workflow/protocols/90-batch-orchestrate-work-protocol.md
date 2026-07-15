@@ -890,6 +890,10 @@ For each item in the batch, prepare a short handoff:
 - Current next action
 - Priority context
 - Parallelization notes or serialization reason
+- Isolation assignment for concurrent mutating batches: item identifier,
+  expected branch, absolute worktree path, `isolation: "worktree"`, mutation
+  classification (`mutating` or `read_only`), artifact repo root, and base
+  branch
 - `BATCH_CONTEXT=true` — required for parallel batches so the Work Item Runner (protocol 91) activates worktree isolation
 - `BASE_BRANCH=<resolved-base>` — include the bounded-prelude-approved base,
   normally `develop`. Use `develop-<slug>` only when the explicit-list or epic
@@ -907,6 +911,46 @@ For each item in the batch, prepare a short handoff:
 **When batching items for parallel dispatch**: Each item in a parallel batch **must** run in its own isolated worktree (or checked-out copy) to prevent branch contamination, PR cross-pollution, and shared-state conflicts between concurrent agents.
 
 Do **not** dispatch multiple Work Item Runners to operate in the same working directory.
+
+### Concurrent mutating dispatch isolation manifest
+
+Before dispatching two or more Work Item Runners concurrently where any runner
+may mutate files, branches, commits, PRs, labels, or tracker state, the
+Portfolio Orchestrator must build a pre-dispatch isolation manifest. The
+manifest is part of the batch evidence and must be visible in the dispatch
+summary.
+
+Each mutating runner entry must include:
+
+- Work item identifier
+- Expected workflow branch
+- Absolute worktree path
+- `isolation: "worktree"`
+- Mutation classification (`mutating` or `read_only`)
+- Artifact-owning repo root
+- Approved base branch
+
+Pre-dispatch validation is mandatory:
+
+- If any concurrent mutating runner is missing `isolation: "worktree"` or an
+  absolute worktree path, stop before dispatch; name the affected item, the
+  expected branch, the missing isolation field, and the human action needed to
+  unblock.
+- If two mutating runners are assigned the same worktree path, stop before
+  dispatch; name both items, the shared path, and the human action needed to
+  unblock.
+- A non-isolated runner is allowed only when it is explicitly classified
+  `read_only` and will not edit files, switch branches, create commits, push,
+  open or update PRs, modify labels, or update tracker state.
+
+This requirement is separate from the unsanctioned nested-agent PR guard in
+#1200. The #1200 guard prevents child agents from creating duplicate or
+wrong-base PR artifacts. The isolation manifest prevents multiple sanctioned
+mutating runners from sharing one checkout or silently mutating the main tree.
+
+The terminal batch summary must record whether the isolation manifest passed,
+failed before dispatch, or escalated after detecting possible out-of-worktree
+mutation.
 
 ### Integration-branch base override
 

@@ -1,7 +1,7 @@
 interface:
   display_name: "Workflow Implementer"
   short_description: "Implement a feature, fix, or hotfix in code."
-  default_prompt: "Use $workflow-implementer to implement the approved workflow item. Produce and verify scope-residual evidence before readiness for broad sweep, batch, helper-extraction, numeric-target, or pattern-completeness work. In workflow_hub mode, stop before mutation unless selected product repository, artifact owner, and mutation target are clear."
+  default_prompt: "Use $workflow-implementer to implement the approved workflow item. With BATCH_CONTEXT=true, run the pre-mutation isolation self-check before edits, branch-changing commands, commits, pushes, or PR/tracker mutation; stop on missing isolation: \"worktree\", wrong CWD, main-repo CWD, or wrong branch. Produce and verify scope-residual evidence before readiness for broad sweep, batch, helper-extraction, numeric-target, or pattern-completeness work. In workflow_hub mode, stop before mutation unless selected product repository, artifact owner, and mutation target are clear."
 
 policy:
   allow_implicit_invocation: true

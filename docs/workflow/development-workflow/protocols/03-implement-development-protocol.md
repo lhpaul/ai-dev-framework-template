@@ -31,6 +31,16 @@ that begin as read-only questions and then become real code or documentation
 changes. The first mutating action must happen after branch/worktree isolation is
 in place.
 
+When `BATCH_CONTEXT=true`, the item-orchestrator must provide an isolation
+assignment with the expected worktree path, expected branch, artifact repo root,
+approved base branch, mutation classification, and `isolation: "worktree"`.
+Before the first file edit, branch-changing command, commit, push, PR mutation,
+tracker mutation, or stage handoff, verify that `pwd -P` is inside the expected
+worktree path and that `git rev-parse --abbrev-ref HEAD` equals the expected
+branch. Stop before mutation on any mismatch. If mutation may already have
+occurred outside the assigned worktree, escalate for human inspection instead of
+resetting, restoring, stashing, committing, or deleting the suspect changes.
+
 ## Nested Artifact Guard
 
 When the work item has a positive numeric tracker issue number, run
@@ -605,7 +615,7 @@ In `workflow_hub` mode, set `ARTIFACT_REPO_ROOT` to the selected product
 checkout for implementation-owned branches and PRs; hub-owned spec and plan
 artifacts use the hub checkout.
 
-**Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, confirm your working directory is inside the worktree path, not the main repo root (run `pwd` and compare). See the "Critical: Worktree Git Discipline" block in Protocol 91 Step 3 for the full pre-operation checklist.
+**Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, complete the pre-mutation isolation self-check: confirm the handoff includes `isolation: "worktree"`, compare `pwd -P` with the expected worktree path, and verify the active branch matches the expected branch. See the "Pre-mutation isolation self-check" and "Critical: Worktree Git Discipline" blocks in Protocol 91 Step 3 for the full checklist.
 
 ### Step 4: Implement
 
@@ -988,7 +998,7 @@ git checkout -b refactor/[branch-slug]
 
 If the check fails, do not proceed. Report the mismatch to the caller so the working tree can be reset before retrying.
 
-**Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, confirm your working directory is inside the worktree path, not the main repo root (run `pwd` and compare). See the "Critical: Worktree Git Discipline" block in Protocol 91 Step 3 for the full pre-operation checklist.
+**Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, complete the pre-mutation isolation self-check: confirm the handoff includes `isolation: "worktree"`, compare `pwd -P` with the expected worktree path, and verify the active branch matches the expected branch. See the "Pre-mutation isolation self-check" and "Critical: Worktree Git Discipline" blocks in Protocol 91 Step 3 for the full checklist.
 
 3. Implement following the plan order. Follow `docs/best-practices/` for all code written.
 
@@ -1267,7 +1277,7 @@ If the check fails, do not proceed. Report the mismatch to the caller so the wor
 
 The PR opened at the end of this path must target `develop-<slug>` when the label is present. If the integration branch does not exist yet, the orchestrator should have created it before dispatching this protocol — do not create it here; instead, stop and inform the Work Item Runner.
 
-**Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, confirm your working directory is inside the worktree path, not the main repo root (run `pwd` and compare). See the "Critical: Worktree Git Discipline" block in Protocol 91 Step 3 for the full pre-operation checklist.
+**Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, complete the pre-mutation isolation self-check: confirm the handoff includes `isolation: "worktree"`, compare `pwd -P` with the expected worktree path, and verify the active branch matches the expected branch. See the "Pre-mutation isolation self-check" and "Critical: Worktree Git Discipline" blocks in Protocol 91 Step 3 for the full checklist.
 
 ### Step 4: Implement
 
@@ -1548,7 +1558,7 @@ git checkout -b hotfix/[branch-slug]
 
 If the check fails, do not proceed. Report the mismatch to the caller so the working tree can be reset before retrying.
 
-**Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout main` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, confirm your working directory is inside the worktree path, not the main repo root (run `pwd` and compare). See the "Critical: Worktree Git Discipline" block in Protocol 91 Step 3 for the full pre-operation checklist.
+**Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout main` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, complete the pre-mutation isolation self-check: confirm the handoff includes `isolation: "worktree"`, compare `pwd -P` with the expected worktree path, and verify the active branch matches the expected branch. See the "Pre-mutation isolation self-check" and "Critical: Worktree Git Discipline" blocks in Protocol 91 Step 3 for the full checklist.
 
 ### Step 4: Implement
 

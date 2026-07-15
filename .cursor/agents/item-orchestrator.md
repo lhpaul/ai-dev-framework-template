@@ -75,6 +75,16 @@ That document is the single source of truth for this supporting role. Key respon
 
 **Worktree git discipline** (`BATCH_CONTEXT=true` only): All git state-changing commands (`switch`, `checkout`, `checkout -b`, `reset`, `restore`) must target the worktree path, not the main repo root. Never `cd` out of the worktree into the main repo root and then run branch-switching commands. Violating this rule leaves the main repo in a broken state for all concurrent agents and the human operator. Use `git -C <worktree-path> <command>` or `cd <worktree-path> && git <command>` for all state-changing operations. Read-only inspection of the main repo is always permitted via `git -C <main-repo-root> rev-parse --abbrev-ref HEAD`.
 
+**Pre-mutation isolation self-check** (`BATCH_CONTEXT=true` only): Before the
+first file edit, branch-changing command, commit, push, PR mutation, tracker
+mutation, or stage-agent handoff, verify the handoff's expected worktree path,
+expected branch, artifact repo root, mutation classification, and
+`isolation: "worktree"` against `pwd -P` and
+`git rev-parse --abbrev-ref HEAD`. Stop before mutation on missing metadata,
+wrong CWD, main-repo CWD, or wrong branch. If mutation may already have occurred
+outside the assigned worktree, escalate for human inspection instead of
+resetting, restoring, stashing, committing, or deleting suspect changes.
+
 **Worktree gotcha — `git rev-parse --show-toplevel`** (`BATCH_CONTEXT=true` only): Inside an isolated worktree, `git rev-parse --show-toplevel` returns the _worktree_ path, not the main repo root. Use `REPO_ROOT=$(git rev-parse --git-common-dir)/..` instead — it always resolves to the main repo root regardless of context. Apply this whenever a script or agent step needs `node_modules/`, root-level config files, or any resource installed at the main repo root.
 
 - **Worktree Write/Edit path discipline (BATCH_CONTEXT=true only)**: When running inside

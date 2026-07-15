@@ -213,6 +213,25 @@ Additional checks for **PRs that add or modify guardrails enforcement behavior**
 Additional checks for **PRs that add or modify branch creation, PR creation, or nested/stage-agent dispatch behavior**:
 
 - **Nested artifact guard present**: confirm item-scoped branch and PR creation paths call `run-nested-artifact-guard.sh` with the parent-approved `--approved-base` before mutation. Missing base context, duplicate artifacts, wrong-base PRs, and scan failures must block instead of falling back to the GitHub default branch.
+- **Concurrent mutating dispatch isolation present**: when the PR adds or
+  modifies concurrent Work Item Runner dispatch behavior, confirm Protocol 90
+  requires a pre-dispatch isolation manifest with item identifier, expected
+  branch, absolute worktree path, `isolation: "worktree"`, mutation
+  classification, artifact repo root, and base branch for every mutating runner.
+  Missing-isolation and duplicate-worktree cases must stop before dispatch.
+- **Runner pre-mutation self-check present**: when the PR adds or modifies
+  worktree-isolated runner, item-orchestrator, developer, or fixer-agent
+  handoffs, confirm the runner checks expected worktree path and expected branch
+  against `pwd -P` and `git rev-parse --abbrev-ref HEAD` before the first file
+  edit, branch-changing command, commit, push, PR mutation, tracker mutation, or
+  stage-agent handoff. Wrong CWD, main-repo CWD, and wrong branch must stop
+  before mutation; possible prior out-of-worktree mutation must escalate for
+  human inspection instead of auto-repair.
+- **Isolation is distinct from #1200 artifact guarding**: confirm the PR does
+  not rely on the duplicate/wrong-base nested artifact guard alone as evidence
+  of worktree isolation. #1200 prevents unsanctioned duplicate PR artifacts;
+  concurrent worktree isolation prevents sanctioned mutating runners from
+  sharing one checkout or mutating the main tree.
 - **Issue matching boundaries tested**: confirm tests cover numeric boundary cases, tracker-prefixed branches, lookalike paths, local/remote/worktree artifacts, open PRs, and any new workflow branch prefix introduced by the PR.
 - **Parent-visible disposition**: confirm duplicate-fork, wrong-base, scan-failure, and explicit-split results are visible in the parent runner summary or PR evidence before the item can be marked ready.
 
