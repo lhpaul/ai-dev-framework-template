@@ -787,6 +787,9 @@ matches the isolation assignment from the Portfolio Orchestrator:
 - Observed directory (`pwd -P`) is inside the expected worktree path and is not
   the main repository root.
 - Expected branch is present and matches `git rev-parse --abbrev-ref HEAD`.
+- Artifact repo root is present.
+- Approved base branch is present.
+- `isolation: "worktree"` is present.
 - Mutation classification is `mutating` for any runner that will edit files,
   change branches, commit, push, open or update PRs, modify labels, or update
   tracker state.

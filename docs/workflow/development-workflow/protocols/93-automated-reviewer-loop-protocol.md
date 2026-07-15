@@ -203,11 +203,11 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 
 ### Worktree discipline for fixer agents (`BATCH_CONTEXT=true`)
 
-When this protocol runs inside a worktree (the item was dispatched as part of a parallel batch, `BATCH_CONTEXT=true`), all fixer agents dispatched during the reviewer loop **must** stay inside the worktree. The same rules from Protocol 91 Step 3 "Critical: Worktree Git Discipline" apply here:
+When this protocol runs inside a worktree (the item was dispatched as part of an explicit-list batch, `BATCH_CONTEXT=true`), all fixer agents dispatched during the reviewer loop **must** stay inside the worktree. The same rules from Protocol 91 Step 3 "Critical: Worktree Git Discipline" apply here:
 
-- **Before any git state-changing command** (`git switch`, `git checkout`, `git commit`, `git push`, `git reset`, `git restore`): confirm the working directory is inside the worktree path, not the main repo root. Run `pwd` and compare against `<worktree-path>`.
+- **Before any git state-changing command** (`git switch`, `git checkout`, `git commit`, `git push`, `git reset`, `git restore`): confirm the working directory is inside the worktree path, not the main repo root. Run `pwd -P` and confirm it equals `<worktree-path>` or is nested under it.
 - **Never run `git checkout develop` or any base-branch switch** from inside the worktree — the base branch is already checked out in the main working tree and cannot be checked out in the worktree simultaneously.
-- When delegating a fixer subagent, pass the resolved `<worktree-path>` in the handoff and instruct the fixer to validate all `Write`/`Edit` tool call paths start with `<worktree-path>/`.
+- When delegating a fixer subagent, pass the full Protocol 90 isolation assignment in the handoff: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, and `isolation: "worktree"`. Instruct the fixer to validate all `Write`/`Edit` tool call paths start with `<worktree-path>/`.
 
 Violations leave the main repo on a feature branch, breaking all subsequent agents and the human operator. The Portfolio Orchestrator's Step 5.2 check catches leaks after the fact, but prevention here avoids the need for correction.
 
