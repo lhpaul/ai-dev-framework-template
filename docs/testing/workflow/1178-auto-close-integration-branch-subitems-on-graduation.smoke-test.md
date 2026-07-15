@@ -49,11 +49,13 @@ Before running this smoke test:
 2. Locate Step 5 (Post-Merge Cleanup).
 3. Confirm Step 5 instructs the operator to run the graduation closeout helper
    after the graduation PR merges.
-4. Confirm the step says the helper identifies the parent epic and planned
+4. Confirm the documented command includes `--slug`, `--graduation-pr`, and
+   `--epic`, with optional `--exclude-issue` and `--defer-epic-close` handling.
+5. Confirm the step says the helper identifies the parent epic and planned
    sub-items from native sub-issues or the `integration-branch:<slug>` label,
    and includes issues referenced by merged sub-item PR closing keywords when
    available.
-5. Confirm the step says delivered open sub-items are closed and moved to the
+6. Confirm the step says delivered open sub-items are closed and moved to the
    configured terminal status before the parent epic is closed.
 
 **Expected result**: Protocol 05b documents an explicit closeout mechanism and no
@@ -116,6 +118,7 @@ without undoing successful work.
    wording, cross-repo refs ignored, and markdown punctuation boundaries.
 3. Confirm only current-repository plain `#<number>` closing refs are included
    in the closeout candidate set.
+4. Confirm the mocked closeout test reports `39 passed, 0 failed`.
 
 **Expected result**: Issues referenced by merged sub-item PR closing keywords are
 included when available, and non-closing references do not trigger mutation.

@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Add residual verification gate for sweep sub-items** (#1175): Require
   broad-scope workflow items to record residual evidence before readiness.
+- **Auto-close graduation sub-items** (#1178): Reconcile delivered
+  integration-branch sub-items and parent epics during graduation closeout.
 
 ### Changed
 
