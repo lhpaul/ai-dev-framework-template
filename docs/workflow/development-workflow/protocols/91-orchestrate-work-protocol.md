@@ -2345,9 +2345,11 @@ if [ "$ALIGNMENT_STATUS" -eq 8 ]; then
   echo "ERROR: Documentation-stage alignment mismatch blocks ready-for-human-review."
   HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
   if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
-    gh pr edit "$PR_NUMBER" --remove-label "ready-for-human-review"
+    gh pr edit "$PR_NUMBER" --remove-label "ready-for-human-review" ||
+      echo "WARNING: failed to remove stale ready-for-human-review; mismatch still exits 8 and remains blocked."
   fi
-  gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+  gh pr edit "$PR_NUMBER" --add-label "needs-fixes" ||
+    echo "WARNING: failed to add needs-fixes; mismatch still exits 8 and remains blocked."
   echo "Correct the PR diff so it contains only expected documentation-stage artifacts, or escalate for a human workflow-stage decision."
   exit 8
 elif [ "$ALIGNMENT_STATUS" -ne 0 ]; then

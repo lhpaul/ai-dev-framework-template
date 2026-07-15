@@ -201,18 +201,15 @@ case "$*" in
     fi
     exit 0
     ;;
-  pr\ view\ 42\ --json\ number,headRefName,baseRefName,title)
+  pr\ view\ 42\ --repo\ example/repo\ --json\ number,headRefName,baseRefName,title)
     cat <<'JSON'
 {"number":42,"headRefName":"implementation-plan/1206-block-implementation-code-in-plan-prs","baseRefName":"develop","title":"Plan with code"}
 JSON
     ;;
-  pr\ diff\ 42\ --name-only)
+  pr\ diff\ 42\ --repo\ example/repo\ --name-only)
     printf '%s\n' \
       'docs/specs/developments/20260714165420_1206-block-implementation-code-in-plan-prs/2_1206-block-implementation-code-in-plan-prs_implementation-plan.md' \
       'src/example.ts'
-    ;;
-  repo\ view\ --json\ nameWithOwner\ --jq\ .nameWithOwner)
-    printf '%s\n' 'example/repo'
     ;;
   api\ repos/example/repo/issues/42/comments\ --paginate\ --slurp)
     cat <<'JSON'
@@ -236,17 +233,22 @@ chmod +x "$MOCK_BIN/gh"
 MOCK_PATH_ORIGINAL="$PATH"
 export PATH="$MOCK_BIN:$PATH"
 export MOCK_GH_CALL_LOG="$CALL_LOG"
+export WORKFLOW_TARGET_GITHUB_REPO="example/repo"
 live_output="$(run_checker_expect_status 8 "$CHECKER" --pr 42 --json)"
 export PATH="$MOCK_PATH_ORIGINAL"
+unset WORKFLOW_TARGET_GITHUB_REPO
 run_test "warning_comment_updates_existing_marker" "true" "$(grep -Fq 'api -X PATCH repos/example/repo/issues/comments/99 -f body=' "$CALL_LOG" && echo true || echo false)"
 run_test "live_mode_reports_mismatch" "mismatch" "$(printf '%s\n' "$live_output" | jq -r '.result')"
 run_test "warning_body_avoids_shell_backticks" "false" "$(grep -F 'api -X PATCH repos/example/repo/issues/comments/99 -f body=' "$CALL_LOG" | grep -Fq '`' && echo true || echo false)"
+run_test "live_mode_uses_explicit_repo" "true" "$(grep -Fq 'pr view 42 --repo example/repo' "$CALL_LOG" && grep -Fq 'pr diff 42 --repo example/repo' "$CALL_LOG" && echo true || echo false)"
 
 : > "$CALL_LOG"
 export PATH="$MOCK_BIN:$PATH"
+export WORKFLOW_TARGET_GITHUB_REPO="example/repo"
 export MOCK_GH_MODE="auth-fail"
 auth_fail_output="$(run_checker_expect_status 10 "$CHECKER" --pr 42 --json || true)"
 unset MOCK_GH_MODE
+unset WORKFLOW_TARGET_GITHUB_REPO
 export PATH="$MOCK_PATH_ORIGINAL"
 run_test "live_auth_failure_exits_infrastructure_error" "true" "$(printf '%s\n' "$auth_fail_output" | grep -Fq 'GitHub CLI authentication is required' && echo true || echo false)"
 

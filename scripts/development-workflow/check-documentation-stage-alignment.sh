@@ -74,19 +74,22 @@ normalize_fixture() {
 
 live_pr_state() {
   local number="$1"
-  local pr_json files_output files_json file_count
+  local repo pr_json files_output files_json file_count
 
   if ! gh_available; then
     infrastructure_exit "GitHub CLI authentication is required for this script"
   fi
+  if ! repo="$(repo_slug)"; then
+    infrastructure_exit "failed to determine GitHub repository"
+  fi
 
-  if ! pr_json="$(gh pr view "$number" --json number,headRefName,baseRefName,title 2>/dev/null)"; then
+  if ! pr_json="$(gh pr view "$number" --repo "$repo" --json number,headRefName,baseRefName,title 2>/dev/null)"; then
     infrastructure_exit "failed to read PR #$number"
   fi
   if [ -z "$pr_json" ]; then
     infrastructure_exit "empty PR response for #$number"
   fi
-  if ! files_output="$(gh pr diff "$number" --name-only 2>/dev/null)"; then
+  if ! files_output="$(gh pr diff "$number" --repo "$repo" --name-only 2>/dev/null)"; then
     infrastructure_exit "failed to read changed files for PR #$number"
   fi
   file_count="$(printf '%s\n' "$files_output" | sed '/^$/d' | wc -l | tr -d ' ')"
@@ -226,7 +229,7 @@ post_or_update_warning() {
   local repo comments existing_id body
 
   body="$(warning_body "$result_json")"
-  if ! repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)"; then
+  if ! repo="$(repo_slug)"; then
     echo "ERROR: failed to determine GitHub repository" >&2
     return "$INFRASTRUCTURE_EXIT"
   fi
@@ -246,7 +249,7 @@ post_or_update_warning() {
       return "$INFRASTRUCTURE_EXIT"
     fi
   else
-    if ! gh pr comment "$number" --body "$body" >/dev/null; then
+    if ! gh pr comment "$number" --repo "$repo" --body "$body" >/dev/null; then
       echo "ERROR: failed to post documentation-stage warning comment for PR #$number" >&2
       return "$INFRASTRUCTURE_EXIT"
     fi
