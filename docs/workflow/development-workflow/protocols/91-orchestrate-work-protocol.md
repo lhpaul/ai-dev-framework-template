@@ -306,7 +306,7 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 | Current state / detection                                          | Can advance if...                                                                                                                                   | Next action                                                                                                                                                                                                                                                                  |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Backlog (Feature)                                                  | Human has requested this specific item and tracker Type/brief classifies it as Feature                                                              | Set tracker status to **Writing Spec**, then run `01-generate-spec-protocol.md`                                                                                                                                                                                              |
-| Backlog (Bug)                                                      | Human has requested this specific item and tracker Type/brief classifies it as Bug                                                                  | Run the cross-layer fast-track scope check below; if allowed, set tracker status to **In Development** and run `03-implement-development-protocol.md` Path 3, otherwise route to **Writing Spec**                                                                             |
+| Backlog (Bug)                                                      | Human has requested this specific item and tracker Type/brief classifies it as Bug                                                                  | Run the Fast Track blast-radius gate below; if allowed, set tracker status to **In Development** and run `03-implement-development-protocol.md` Path 3, otherwise route to **Writing Spec**                                                                                  |
 | Backlog (Refactor)                                                 | Human has requested this specific item and tracker Type/brief classifies it as Refactor                                                             | Set tracker status to **Writing Plan**, then run `02-generate-implementation-plan-protocol.md` (skip spec)                                                                                                                                                                   |
 | Backlog (Workflow)                                                 | Human has requested this specific item and tracker Type/brief classifies it as Workflow                                                             | Route by the brief's concrete path: full pipeline, refactor, or fast-track. If ambiguous, stop for a human decision rather than guessing.                                                                                                                                     |
 | Writing Spec                                                       | Tracker **Writing Spec** — spec PR not yet human-ready                                                                                              | Continue spec branch/PR work (generate, internal review, reviewer tools, CI) until tracker moves to **Spec in Review**                                                                                                                                                       |
@@ -347,22 +347,36 @@ them when Type is available.
 > perform inline. See [`linear.md`](../integrations/linear.md) for the bridge
 > pattern and full reference table.
 
-### Cross-layer scope check (mandatory before fast-track dispatch)
+### Fast Track blast-radius gate (mandatory before fast-track dispatch)
 
-**When to run**: Before classifying a backlog item as Fast Track and dispatching it to `03-implement-development-protocol.md` Path 3, run this check. It applies to any item whose tracker Type, issue metadata, or brief suggests a bug fix or simple change (i.e., not a feature requiring a spec).
+**When to run**: Before classifying a backlog item as Fast Track and dispatching it to `03-implement-development-protocol.md` Path 3, run this gate. It applies to any item whose tracker Type, issue metadata, or brief suggests a bug fix or simple change (i.e., not a feature requiring a spec).
 
-**What to check**: Inspect the issue title, body, and any linked spec or plan document for concrete signals that the change spans more than one architectural layer simultaneously. Examples of multi-layer signals:
+**What to check**:
+
+1. Inspect the issue title, body, recent comments, and any linked spec or plan document for concrete signals that the change spans more than one architectural layer simultaneously. Examples of multi-layer signals:
 
 - Issue body mentions two or more of: database schema, API endpoint, UI component, data pipeline, storage, mapper, presentation layer.
 - Issue body or a linked spec/plan describes coordinating changes across distinct subsystems (e.g., "update the model, the API, and the UI").
 - Any linked spec or plan document covers more than one architectural layer.
+2. Identify the primary entity being renamed or modified when the brief or linked artifact makes one identifiable. The entity may be a field, type, function, workflow variable, API contract key, or similar named surface.
+3. When a primary entity is identifiable, run a bounded repository search over non-test source references before Fast Track dispatch. Count both affected files and occurrences. Treat this as a planning-risk signal; it does not need to prove every reference requires a code edit.
+4. Check whether the item affects live external system configuration or integration contracts that repository search may not expose, including workflow automation, third-party API schemas, sibling repositories, or similar external config.
+
+**Non-test source scope**: Count source, config, and workflow files that are not tests, specs, fixtures, generated artifacts, lockfiles, documentation, or changelog entries. Example searches may use `rg`, `grep`, IDE search, or an equivalent repository search; do not add a custom parser or script dependency for this MVP.
+
+**High call-site volume threshold**: Treat the entity as high volume when either more than 15 non-test source files or more than 30 non-test source occurrences reference it.
 
 **Decision rule (deterministic)**:
 
-- **No concrete multi-layer signal found** → the item may proceed as fast-track.
+- **No concrete multi-layer signal, no high call-site volume, and no known or likely external-system impact** → the item may proceed as Fast Track.
 - **At least one concrete multi-layer signal found** → the item must NOT be fast-tracked. Route it to the Full Pipeline (spec → plan → implement) so all layers are planned and coordinated. Update the tracker status to **Writing Spec** and dispatch `01-generate-spec-protocol.md`.
+- **High call-site volume found** → the item must NOT be fast-tracked unless the human explicitly overrides the route. Route it to the Full Pipeline and include a visible note such as: "High call-site volume detected: N files / M occurrences; routing to Full Pipeline so scope can be audited before implementation."
+- **Primary entity is ambiguous** → record why the call-site check is not applicable, or ask for clarification when the ambiguity prevents a defensible Fast Track decision.
+- **Known or likely external-system impact found** → do not proceed as immediate Fast Track work. Route to the Full Pipeline, or require a tracked pre-flight follow-up before any later Fast Track dispatch.
 
-This check is deterministic: it does not rely on heuristics alone. A vague or general description is not a multi-layer signal. At least one concrete signal — where the issue or linked document text explicitly mentions two or more distinct architectural layers — is required to block fast-track.
+**Routing evidence**: The Work Item Runner summary must record the cross-layer result, the primary entity and call-site result when applicable, and the external-system impact result. For external-system impact, record one of: no signal found, signal found, or clarification required.
+
+This gate is additive: cross-layer scope checks architectural spread, while call-site volume checks propagation breadth regardless of layer count. A positive signal from either check is enough to disqualify Fast Track. A vague or general description is not a multi-layer signal; at least one concrete signal where the issue or linked document text explicitly mentions two or more distinct architectural layers is required for the cross-layer branch of the gate.
 
 ### Pre-dispatch tracker status update (single-item path)
 

@@ -17,7 +17,10 @@ Key rules:
 
 - Full Pipeline: read spec + plan + runbook BEFORE writing any code
 - Refactor: read plan + runbook BEFORE writing any code (no spec)
-- Fast Track: stop and report if scope expands beyond the brief
+- Fast Track: require the Protocol 91 Fast Track blast-radius gate and Protocol
+  03 criteria to have passed before implementation; stop and report if scope
+  expands, high call-site volume appears, or external-system impact is
+  discovered after dispatch
 - Hotfix: branch from `main`, not `develop`
 - In `workflow_hub`, state selected product repository, local path or remote identity, and mutation target before file edits, branch creation, commits, or implementation PR creation; stop when context is missing or ambiguous
 - Always update CHANGELOG before opening the PR (except spec/plan-only PRs; for fixes to unreleased work, update the existing entry instead of adding a new one; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved at merge time)

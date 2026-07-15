@@ -12,7 +12,7 @@
 | ----------------- | -------------------------------- | -------------------------------------------------------------------------------- |
 | **Full Pipeline** | `feature/[slug]` from `develop`  | Feature with approved spec + plan                                                |
 | **Refactor**      | `refactor/[slug]` from `develop` | Code restructuring with approved plan (no spec)                                  |
-| **Fast Track**    | `fix/[slug]` from `develop`      | Bug or simple change — clear scope, ≤3 files, no schema changes, no new patterns |
+| **Fast Track**    | `fix/[slug]` from `develop`      | Bug or simple change — clear scope, ≤3 files, no schema changes, no new patterns, no blast-radius gate blockers |
 | **Hotfix**        | `hotfix/[slug]` from `main`      | Critical production bug requiring immediate deployment                           |
 
 ---
@@ -1178,15 +1178,15 @@ the enforcement mechanism — do not skip them.
 - [ ] No new database schema migrations
 - [ ] No new architectural patterns
 - [ ] Human provided a clear, self-contained brief
-- [ ] **No multi-layer scope signals** — the issue title, body, and any linked spec/plan do not contain concrete signals that the change spans more than one architectural layer (see "Cross-layer scope check" below)
+- [ ] **Fast Track blast-radius gate passed** — the issue title, body, recent comments, and any linked spec/plan show no concrete multi-layer signal, no high call-site volume for an identifiable primary entity, and no known or likely external-system impact
 
-**Cross-layer scope check**: Apply the deterministic decision rule in
-[`91-orchestrate-work-protocol.md` Step 2 — Cross-layer scope check](./91-orchestrate-work-protocol.md)
-before selecting Fast Track. That section is the authoritative definition of multi-layer signals, the inspection scope, and the routing decision.
+**Fast Track blast-radius gate**: Apply the deterministic decision rule in
+[`91-orchestrate-work-protocol.md` Step 2 — Fast Track blast-radius gate](./91-orchestrate-work-protocol.md)
+before selecting Fast Track. That section is the authoritative definition of multi-layer signals, primary-entity identification, non-test call-site volume, external-system impact, thresholds, summary evidence, and routing decisions.
 
 **If any criterion fails**: Use the Full Pipeline instead.
 
-**If scope expands during implementation**: Stop immediately. Report to the human. Do not silently expand scope.
+**If scope expands during implementation**: Stop immediately. Report to the human. Do not silently expand scope. Also stop if implementation discovers high call-site volume or external-system impact that was missed during routing.
 
 ### Step 1: Read Brief
 

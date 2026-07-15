@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Fast Track blast-radius routing** (#1207): Add call-site volume and
+  external-system impact checks before Fast Track dispatch.
 - **Deprecate direct Cursor item-orchestrator path** (#1190): Clarify that
   Cursor users start single-item work with `/run-item` while internal handoff
   preserves configured subagent model routing.
