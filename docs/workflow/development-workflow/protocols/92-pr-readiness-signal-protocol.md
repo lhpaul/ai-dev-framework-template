@@ -40,6 +40,14 @@ Apply this label when **any** of the following is true:
 - CI checks are failing
 - Any automated PR reviewer reports blocking PR feedback
 - A human has requested changes on the PR (and those changes have not yet been addressed)
+- A required residual gate returns `block`, meaning broad-scope residuals remain
+  undisposed or helper outputs lack caller/disposition evidence
+- A required residual gate result is missing when the item title, body, spec, or
+  plan indicates sweep, batch, helper-extraction, numeric-target, or
+  pattern-completeness work
+
+Do not use `needs-fixes` for residual gate `escalate`; that is a human-decision
+stop until the residual scope decision is resolved.
 
 ---
 

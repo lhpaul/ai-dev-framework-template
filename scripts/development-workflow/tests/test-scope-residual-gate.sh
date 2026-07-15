@@ -56,6 +56,15 @@ write_json "$blocking" '{"checked_scope":"console.log cleanup","residual_groups"
 follow_up="$TMP_DIR/follow-up.json"
 write_json "$follow_up" '{"checked_scope":"console.log cleanup","residual_groups":[{"summary":"legacy logs","remaining_count":3,"disposition":"follow_up","follow_up":"#1234"}],"helper_outputs":[]}'
 
+completed_zero="$TMP_DIR/completed-zero.json"
+write_json "$completed_zero" '{"checked_scope":"console.log cleanup","residual_groups":[{"summary":"fixed logs","remaining_count":0,"disposition":"completed"}],"helper_outputs":[]}'
+
+missing_count="$TMP_DIR/missing-count.json"
+write_json "$missing_count" '{"checked_scope":"console.log cleanup","residual_groups":[{"summary":"admin logs"}],"helper_outputs":[]}'
+
+completed_positive="$TMP_DIR/completed-positive.json"
+write_json "$completed_positive" '{"checked_scope":"console.log cleanup","residual_groups":[{"summary":"admin logs","remaining_count":2,"disposition":"completed"}],"helper_outputs":[]}'
+
 unused_helper="$TMP_DIR/unused-helper.json"
 write_json "$unused_helper" '{"checked_scope":"helper extraction","residual_groups":[],"helper_outputs":[{"path":"scripts/shared.sh","apparent_callers":[]}]}'
 
@@ -100,6 +109,15 @@ assert_fails_contains "blocks_undisposed_residuals" "undisposed residual" \
 out="$( "$HELPER" verify --issue-title "Clean 127 console.log occurrences across apps/admin" --evidence "$follow_up" )"
 assert_field "requires_linked_follow_up_for_deferred_residuals" "pass" "$out" "RESULT"
 assert_field "follow_up_count_reported" "1" "$out" "FOLLOW_UPS"
+
+out="$( "$HELPER" verify --issue-title "Clean 127 console.log occurrences across apps/admin" --evidence "$completed_zero" )"
+assert_field "passes_completed_zero_residual" "pass" "$out" "RESULT"
+
+assert_fails_contains "blocks_missing_residual_count" "residual missing remaining_count" \
+  "$HELPER" verify --issue-title "Clean 127 console.log occurrences across apps/admin" --evidence "$missing_count"
+
+assert_fails_contains "blocks_completed_positive_residual_count" "undisposed residual" \
+  "$HELPER" verify --issue-title "Clean 127 console.log occurrences across apps/admin" --evidence "$completed_positive"
 
 assert_fails_contains "blocks_unused_helper_outputs" "unused helper without disposition" \
   "$HELPER" verify --issue-title "Extract 7 shared helpers from workflow scripts" --evidence "$unused_helper"

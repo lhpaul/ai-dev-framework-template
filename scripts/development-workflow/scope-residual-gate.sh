@@ -169,6 +169,7 @@ if ! validation_json="$(jq -c --arg classification "$classification" '
     tostring | test("(^|[[:space:],;])(#|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#)[0-9]+($|[[:space:],;])|https://[^[:space:]]+/issues/[0-9]+"; "i");
   def residual_groups: (.residual_groups // .residualGroups // []);
   def helper_outputs: (.helper_outputs // .helperOutputs // []);
+  def has_remaining($g): ($g | has("remaining_count") or has("remainingCount"));
   def remaining($g): (($g.remaining_count // $g.remainingCount // 0) | tonumber);
   def disposition($g): ($g.disposition // "");
   def follow($g): ($g.follow_up // $g.followUp // $g.follow_up_issue // $g.followUpIssue // "");
@@ -178,9 +179,14 @@ if ! validation_json="$(jq -c --arg classification "$classification" '
   helper_outputs as $helpers |
   [
     $groups[]? |
+    select(has_remaining(.) | not) |
+    "residual missing remaining_count: " + ((.summary // .name // "unnamed residual") | tostring)
+  ] as $schema_blockers |
+  [
+    $groups[]? |
+    select(has_remaining(.)) |
     select(remaining(.) > 0) |
     select(
-      (disposition(.) == "completed") or
       (disposition(.) == "out_of_scope") or
       (disposition(.) == "follow_up" and (follow(.) | follow_ref))
       | not
@@ -189,6 +195,7 @@ if ! validation_json="$(jq -c --arg classification "$classification" '
   ] as $residual_blockers |
   [
     $groups[]? |
+    select(has_remaining(.)) |
     select(remaining(.) > 0 and disposition(.) == "follow_up" and (follow(.) | follow_ref))
   ] as $followups |
   [
@@ -208,10 +215,10 @@ if ! validation_json="$(jq -c --arg classification "$classification" '
     )
   ] as $helper_blockers |
   {
-    residual_count: ($groups | map(select(remaining(.) > 0)) | length),
+    residual_count: ($groups | map(select(has_remaining(.) and (remaining(.) > 0))) | length),
     follow_up_count: ($followups | length),
     helper_count: ($helpers | length),
-    blockers: ($residual_blockers + $helper_blockers)
+    blockers: ($schema_blockers + $residual_blockers + $helper_blockers)
   }
 ' "$evidence_file")"; then
   printf 'RESULT=block\n'
