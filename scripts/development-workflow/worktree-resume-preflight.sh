@@ -185,7 +185,7 @@ EOF
       trap 'rm -f "$matches_file" "$raw_matches_file"' EXIT
       while IFS="$(printf '\034')" read -r path branch detached; do
         canon="$(canon_path "$path")"
-        if [ "$canon" = "$expected_worktree_canon" ] || [ "$branch" = "$expected_branch" ]; then
+        if [ "$canon" = "$expected_worktree_canon" ]; then
           printf '%s\034%s\034%s\n' "$canon" "$branch" "$detached" >>"$raw_matches_file"
         fi
       done <"$matches_file"

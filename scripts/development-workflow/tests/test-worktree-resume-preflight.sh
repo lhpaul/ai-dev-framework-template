@@ -89,6 +89,12 @@ run_fails_contains "main_clone_missing_worktree_stops_before_mutation" \
   "no registered worktree matches" \
   bash -c "cd '$repo3' && '$HELPER' --item 1174 --expected-branch '$expected_branch' --main-repo-root '$repo3'"
 
+repo4="$(setup_repo expected-path-authoritative)"
+git -C "$repo4" checkout -q -b "$expected_branch"
+run_fails_contains "expected_worktree_path_rejects_branch_only_main_clone_match" \
+  "no registered worktree matches" \
+  bash -c "cd '$repo4' && '$HELPER' --item 1174 --expected-branch '$expected_branch' --expected-worktree '$TMP_ROOT/missing-expected-wt' --main-repo-root '$repo4'"
+
 repo5="$(setup_repo wrong-branch)"
 wrong_branch="implementation-plan/11740-worktree-cwd-restore-sendmessage"
 wt5="$TMP_ROOT/wt5"
