@@ -8,7 +8,7 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 
 COMMENT_MARKER="<!-- documentation-stage-alignment -->"
 MISMATCH_EXIT=8
-INFRASTRUCTURE_EXIT=2
+INFRASTRUCTURE_EXIT=10
 
 usage() {
   cat <<'EOF'
@@ -118,10 +118,10 @@ path_allowed_for_stage() {
 
   case "$stage" in
     spec)
-      [[ "$path" =~ ^docs/specs/developments/.+/1_.+_specs\.md$ ]]
+      [[ "$path" =~ ^docs/specs/developments/.+/1_.+_specs(\.doc)?\.md$ ]]
       ;;
     plan)
-      [[ "$path" =~ ^docs/specs/developments/.+/2_.+_implementation-plan\.md$ ]] ||
+      [[ "$path" =~ ^docs/specs/developments/.+/2_.+_implementation-plan(\.doc)?\.md$ ]] ||
         [[ "$path" =~ ^docs/testing/.+\.smoke-test\.md$ ]]
       ;;
     *)
@@ -223,21 +223,25 @@ post_or_update_warning() {
 
   body="$(warning_body "$result_json")"
   if ! repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)"; then
-    infrastructure_exit "failed to determine GitHub repository"
+    echo "ERROR: failed to determine GitHub repository" >&2
+    return "$INFRASTRUCTURE_EXIT"
   fi
   if ! comments="$(gh api "repos/${repo}/issues/${number}/comments" --paginate --slurp 2>/dev/null)"; then
-    infrastructure_exit "failed to read PR comments for #$number"
+    echo "ERROR: failed to read PR comments for #$number" >&2
+    return "$INFRASTRUCTURE_EXIT"
   fi
   existing_id="$(printf '%s\n' "$comments" |
     jq -r --arg marker "$COMMENT_MARKER" '[.[][] | select((.body // "") | contains($marker))][-1].id // ""')"
 
   if [ -n "$existing_id" ]; then
     if ! gh api -X PATCH "repos/${repo}/issues/comments/${existing_id}" -f body="$body" >/dev/null; then
-      infrastructure_exit "failed to update documentation-stage warning comment for PR #$number"
+      echo "ERROR: failed to update documentation-stage warning comment for PR #$number" >&2
+      return "$INFRASTRUCTURE_EXIT"
     fi
   else
     if ! gh pr comment "$number" --body "$body" >/dev/null; then
-      infrastructure_exit "failed to post documentation-stage warning comment for PR #$number"
+      echo "ERROR: failed to post documentation-stage warning comment for PR #$number" >&2
+      return "$INFRASTRUCTURE_EXIT"
     fi
   fi
 }
@@ -293,7 +297,9 @@ fi
 result_json="$(classify_state "$state_json")"
 
 if [ "$(printf '%s\n' "$result_json" | jq -r '.result')" = "mismatch" ] && [ -n "$pr_number" ]; then
-  post_or_update_warning "$pr_number" "$result_json"
+  if ! post_or_update_warning "$pr_number" "$result_json"; then
+    echo "WARNING: documentation-stage mismatch detected, but the warning comment could not be posted or updated. Readiness remains blocked with exit $MISMATCH_EXIT." >&2
+  fi
 fi
 
 if [ "$json_output" -eq 1 ]; then

@@ -2033,6 +2033,7 @@ Interpret the result as follows:
 | 7         | Latest reviewer-loop summary is missing or has a non-clean terminal result                       | Do not label ready; escalate or return to reviewer loop |
 | 8         | Documentation-stage alignment mismatch on `spec/*` or `implementation-plan/*` PR                 | Remove stale readiness, add/update warning, add `needs-fixes`, correct or escalate |
 | 9         | Residual gate missing, blocked, or escalated for broad-scope work                                | Keep out of readiness; fix residuals, add `needs-fixes`, or escalate |
+| 10        | Documentation-stage alignment checker infrastructure failure                                     | Retry checker or resolve GitHub/diff read failure |
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
@@ -2332,32 +2333,29 @@ fi
 
 # Check 3.6: documentation-stage alignment for spec and plan PRs.
 # Run on every pass through Step 8a, including resumed PRs with an existing
-# ready-for-human-review label. The checker updates a stable warning comment
-# when a mismatch is found and exits 8 for that blocker.
-case "$BRANCH" in
-  spec/*|implementation-plan/*)
-    set +e
-    ALIGNMENT_OUTPUT=$(./scripts/development-workflow/check-documentation-stage-alignment.sh --pr "$PR_NUMBER" --json 2>&1)
-    ALIGNMENT_STATUS=$?
-    set -e
-    if [ "$ALIGNMENT_STATUS" -eq 8 ]; then
-      echo "$ALIGNMENT_OUTPUT"
-      echo "ERROR: Documentation-stage alignment mismatch blocks ready-for-human-review."
-      HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
-      if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
-        gh pr edit "$PR_NUMBER" --remove-label "ready-for-human-review"
-      fi
-      gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
-      echo "Correct the PR diff so it contains only expected documentation-stage artifacts, or escalate for a human workflow-stage decision."
-      exit 8
-    elif [ "$ALIGNMENT_STATUS" -ne 0 ]; then
-      echo "$ALIGNMENT_OUTPUT"
-      echo "ERROR: Documentation-stage alignment checker failed. Retry the checker or resolve the GitHub/diff read failure before applying ready-for-human-review."
-      exit "$ALIGNMENT_STATUS"
-    fi
-    echo "✅ Documentation-stage alignment verified."
-    ;;
-esac
+# ready-for-human-review label. Invoke the checker for every PR; it reads the
+# live PR head branch and returns not_applicable for non-documentation branches,
+# so a stale or wrong local BRANCH value cannot bypass the gate.
+set +e
+ALIGNMENT_OUTPUT=$(./scripts/development-workflow/check-documentation-stage-alignment.sh --pr "$PR_NUMBER" --json 2>&1)
+ALIGNMENT_STATUS=$?
+set -e
+if [ "$ALIGNMENT_STATUS" -eq 8 ]; then
+  echo "$ALIGNMENT_OUTPUT"
+  echo "ERROR: Documentation-stage alignment mismatch blocks ready-for-human-review."
+  HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
+  if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
+    gh pr edit "$PR_NUMBER" --remove-label "ready-for-human-review"
+  fi
+  gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+  echo "Correct the PR diff so it contains only expected documentation-stage artifacts, or escalate for a human workflow-stage decision."
+  exit 8
+elif [ "$ALIGNMENT_STATUS" -ne 0 ]; then
+  echo "$ALIGNMENT_OUTPUT"
+  echo "ERROR: Documentation-stage alignment checker failed. Retry the checker or resolve the GitHub/diff read failure before applying ready-for-human-review."
+  exit "$ALIGNMENT_STATUS"
+fi
+echo "✅ Documentation-stage alignment verified."
 
 # ⛔ STOP — Mandatory pre-Check-4 verification (implementation PRs only)
 # Do NOT proceed to Check 4 until you have explicitly verified ready-for-regression is present.
@@ -2517,6 +2515,9 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
     `block`, apply or keep `needs-fixes` and finish the residuals, link
     follow-up issues, or mark residuals out of scope. For `escalate`, stop for
     the named human decision before readiness.
+  - If `documentation-stage alignment checker infrastructure failure` (exit
+    10): retry the checker or resolve the GitHub/diff read failure before
+    applying `ready-for-human-review`.
   - If `needs-fixes` is present (Check 3): The label is stale at this point (CI is green and reviews are clean), so it is automatically removed before proceeding to apply `ready-for-human-review`
 
 This checklist ensures the label sequence is always complete and all CI checks (including e2e/regression) have passed before the PR is declared ready for human review.

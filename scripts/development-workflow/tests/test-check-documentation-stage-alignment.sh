@@ -115,6 +115,15 @@ spec_ok_output="$(run_checker_json "$spec_ok_fixture")"
 run_test "spec_branch_allows_spec_doc" "aligned" "$(printf '%s\n' "$spec_ok_output" | jq -r '.result')"
 run_test "spec_branch_reports_spec_stage" "spec" "$(printf '%s\n' "$spec_ok_output" | jq -r '.stage')"
 
+spec_doc_ok_fixture="$(write_fixture spec-doc-ok '{
+  "head": "spec/1206-block-implementation-code-in-plan-prs",
+  "changed_files": [
+    "docs/specs/developments/20260714165420_1206-block-implementation-code-in-plan-prs/1_1206-block-implementation-code-in-plan-prs_specs.doc.md"
+  ]
+}')"
+spec_doc_ok_output="$(run_checker_json "$spec_doc_ok_fixture")"
+run_test "spec_branch_allows_doc_md_spec_doc" "aligned" "$(printf '%s\n' "$spec_doc_ok_output" | jq -r '.result')"
+
 plan_ok_fixture="$(write_fixture plan-ok '{
   "headRefName": "implementation-plan/1206-block-implementation-code-in-plan-prs",
   "files": [
@@ -125,6 +134,15 @@ plan_ok_fixture="$(write_fixture plan-ok '{
 plan_ok_output="$(run_checker_json "$plan_ok_fixture")"
 run_test "plan_branch_allows_plan_doc_and_runbook" "aligned" "$(printf '%s\n' "$plan_ok_output" | jq -r '.result')"
 run_test "plan_branch_reports_plan_stage" "plan" "$(printf '%s\n' "$plan_ok_output" | jq -r '.stage')"
+
+plan_doc_ok_fixture="$(write_fixture plan-doc-ok '{
+  "head": "implementation-plan/1206-block-implementation-code-in-plan-prs",
+  "changed_files": [
+    "docs/specs/developments/20260714165420_1206-block-implementation-code-in-plan-prs/2_1206-block-implementation-code-in-plan-prs_implementation-plan.doc.md"
+  ]
+}')"
+plan_doc_ok_output="$(run_checker_json "$plan_doc_ok_fixture")"
+run_test "plan_branch_allows_doc_md_plan_doc" "aligned" "$(printf '%s\n' "$plan_doc_ok_output" | jq -r '.result')"
 
 feature_fixture="$(write_fixture feature '{
   "head": "feature/1206-block-implementation-code-in-plan-prs",
@@ -167,7 +185,7 @@ diff_error_fixture="$(write_fixture diff-error '{
   "head": "spec/1206-block-implementation-code-in-plan-prs",
   "diff_error": true
 }')"
-diff_error_output="$(run_checker_expect_status 2 "$CHECKER" --input "$diff_error_fixture" --json || true)"
+diff_error_output="$(run_checker_expect_status 10 "$CHECKER" --input "$diff_error_fixture" --json || true)"
 run_test "diff_read_failure_exits_infrastructure_error" "true" "$(printf '%s\n' "$diff_error_output" | grep -Fq 'fixture indicates changed-file read failure' && echo true || echo false)"
 
 run_test "warning_comment_uses_stable_marker" "<!-- documentation-stage-alignment -->" "$(printf '%s\n' "$plan_bad_output" | jq -r '.warning_marker')"
