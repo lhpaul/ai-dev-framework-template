@@ -507,6 +507,49 @@ Use explicit issue numbers to avoid accidental broad transitions. Items not incl
 
 ---
 
+## Graduation Closeout Status
+
+After an integration branch graduation PR merges from `develop-<slug>` to
+`develop`, run the graduation closeout helper from Protocol 05b:
+
+```bash
+./scripts/development-workflow/graduation-closeout.sh \
+  --slug <slug> \
+  --graduation-pr <graduation-pr-number> \
+  --epic <epic-issue-number>
+```
+
+The helper validates that the graduation PR already merged from
+`develop-<slug>` to `develop`, then reconciles delivered planned sub-items
+before closing the parent epic. It discovers planned work from native GitHub
+sub-issues, the legacy `integration-branch:<slug>` label fallback, and closing
+keywords in merged PRs that targeted `develop-<slug>`. If discovery is
+incomplete or no delivered sub-items can be identified, closeout fails and holds
+the parent epic open.
+
+For each delivered sub-item, it closes the GitHub issue when needed and then
+reasserts the terminal Project status so built-in GitHub Projects close
+automation cannot leave stale tracker state behind. Closed but non-terminal
+items receive only the Project status update. Already terminal items are
+reported without moving them backward. Optional, deferred, cancelled, or
+explicitly excluded sub-items remain open and are listed for human disposition.
+
+Terminal status is resolved in this order:
+
+- `GITHUB_PROJECT_STATUS_GRADUATED`
+- `GITHUB_PROJECT_STATUS_MERGED`
+- `Merged`
+
+Use `GITHUB_PROJECT_STATUS_GRADUATED=Done` or
+`GITHUB_PROJECT_STATUS_GRADUATED=Released` in repositories whose Project board
+uses those labels for completed graduation work. The configured option must
+exist in the Project `Status` field. If closeout prints
+`GRADUATION_CLOSEOUT_RESULT=failed`, repair the listed `failed` items or
+discovery problem and rerun the helper before treating the graduation as
+complete.
+
+---
+
 ## Prerequisites
 
 - **`gh` CLI** authenticated with a token that has `project` and `repo` scopes:

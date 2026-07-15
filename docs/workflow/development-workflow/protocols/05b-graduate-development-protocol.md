@@ -278,16 +278,33 @@ After the human merges the graduation PR (must use a **merge commit**):
    git branch -d develop-<slug>
    ```
 
-4. **Close the epic issue** (BR-8, AC-9): Close the epic GitHub issue in the tracker, since the core planned deliverable has landed on `develop`. If optional sub-items remain open, leave a note on the epic before closing:
+4. **Run graduation closeout** (BR-8, BR-9, AC-9): Reconcile delivered planned sub-items and the parent epic with the tracker before reporting the integration branch as fully closed.
 
    ```bash
-   # Close the epic issue; substitute <epic-issue-number> with the actual issue number
-   gh issue close <epic-issue-number> --comment "Core deliverable graduated to \`develop\` via graduation PR. Epic closed. Remaining optional sub-items (if any) are listed below for disposition."
+   ./scripts/development-workflow/graduation-closeout.sh \
+     --slug <slug> \
+     --graduation-pr <graduation-pr-number> \
+     --epic <epic-issue-number>
    ```
 
-   If the human has explicitly requested to leave the epic open until all optional sub-items are resolved, defer the closure and note this in the cleanup summary.
+   Add `--exclude-issue <issue-number>` for optional, deferred, cancelled, or explicitly excluded sub-items that must remain open for human disposition. Add `--defer-epic-close` only when the human explicitly requests that the parent epic remain open after the core deliverable graduates.
 
-5. **Optional sub-item disposition** (Use Case 4, AC-10): For any native sub-issues or label-discovered sub-items that remain open at graduation time, surface them to the human for disposition. Prefer the native sub-issue list when available; use the label fallback for legacy epics:
+   The helper:
+   - validates that the graduation PR is already merged from `develop-<slug>` to `develop`;
+   - identifies planned sub-items from native GitHub sub-issues or the `integration-branch:<slug>` label fallback;
+   - includes issue references from closing keywords in merged PRs targeting `develop-<slug>`;
+   - closes open delivered sub-items and reasserts the configured terminal Project status;
+   - updates closed-but-non-terminal delivered sub-items to the terminal Project status;
+   - reports already terminal sub-items without moving them backward;
+   - skips optional/deferred/excluded sub-items and reports the required human disposition;
+   - fails closed when candidate discovery is incomplete or no delivered sub-items can be identified;
+   - closes the parent epic only after delivered planned sub-items reconcile, unless epic closure is explicitly deferred.
+
+   Terminal Project status is resolved in this order: `GITHUB_PROJECT_STATUS_GRADUATED`, `GITHUB_PROJECT_STATUS_MERGED`, then `Merged`.
+
+   If `GRADUATION_CLOSEOUT_RESULT=failed`, stop and repair the listed `failed` items before claiming graduation cleanup is complete. Do not close the parent epic manually while delivered sub-item failures remain.
+
+5. **Optional sub-item disposition** (Use Case 4, AC-10): For any items listed under `skipped_optional`, surface them to the human for disposition. The helper has already left them open intentionally.
 
    ```bash
    gh issue list --label "integration-branch:<slug>" --state open --limit 1000 --json number,title,labels \
@@ -314,7 +331,7 @@ After the human merges the graduation PR (must use a **merge commit**):
    git worktree remove <worktree-path>
    ```
 
-7. Confirm to the human: "Integration branch `develop-<slug>` has been deleted. All sub-items are now on `develop`. Epic issue closed (or: left open — see disposition notes above)."
+7. Confirm to the human: "Integration branch `develop-<slug>` has been deleted. Delivered planned sub-items were reconciled by graduation closeout. Epic issue closed (or: left open — see disposition notes above)."
 
 ---
 
@@ -340,5 +357,5 @@ The following business rules from the spec are enforced by this protocol:
 | BR-5 | Step 2.5      | CHANGELOG absorb must be part of the graduation branch, not a prior merge        |
 | BR-6 | Step 4        | `ready-for-regression` NOT required for graduation PRs                           |
 | BR-7 | Step 5        | Post-graduation remote branch deletion is mandatory                              |
-| BR-8 | Step 5        | Epic issue closed after graduation (unless human defers)                         |
-| BR-9 | Step 5        | Sub-items already marked Done at merge time; no additional tracker update needed |
+| BR-8 | Step 5        | Epic issue closed after delivered sub-items reconcile (unless human defers)      |
+| BR-9 | Step 5        | Graduation closeout reconciles delivered sub-items and terminal Project status   |

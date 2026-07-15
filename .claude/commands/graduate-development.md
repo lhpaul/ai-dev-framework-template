@@ -16,4 +16,7 @@ Key responsibilities:
 - Check CHANGELOG handling (Step 2.5)
 - Open the graduation PR from `develop-<slug>` to `develop` using a merge-commit strategy (Step 3)
 - Run the automated reviewer loop and apply `ready-for-human-review` (Step 4); do NOT apply `ready-for-regression`
-- After human merges: delete the remote/local integration branch, close the epic issue, and surface any open optional sub-items for disposition (Step 5)
+- After human merges: delete the remote/local integration branch, run
+  `graduation-closeout.sh`, reconcile delivered sub-items to terminal tracker
+  status before closing the epic, and surface skipped optional/deferred items or
+  failed closeout entries for human disposition (Step 5)

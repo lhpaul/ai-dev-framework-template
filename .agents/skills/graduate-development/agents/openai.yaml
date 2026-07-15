@@ -1,6 +1,6 @@
 interface:
   display_name: "Graduate development"
-  short_description: "Graduate an integration branch back into develop."
+  short_description: "Graduate an integration branch back into develop and reconcile tracker closeout."
   default_prompt: "Use $graduate-development to graduate the integration branch or development slug I provide."
 
 policy:
