@@ -31,6 +31,21 @@ that begin as read-only questions and then become real code or documentation
 changes. The first mutating action must happen after branch/worktree isolation is
 in place.
 
+## Nested Artifact Guard
+
+When the work item has a positive numeric tracker issue number, run
+`scripts/development-workflow/run-nested-artifact-guard.sh` before creating a
+new workflow branch and again before opening the PR. Pass the parent-approved
+base branch with `--approved-base`; never infer a PR base silently inside a
+nested or spawned agent.
+
+- Use `--mode pre-create` immediately before branch creation.
+- Use `--mode pre-pr` after push and before `gh pr create`.
+- Treat `RESULT=missing_base`, `RESULT=blocked_duplicate`,
+  `RESULT=wrong_base`, or `RESULT=scan_failed` as a hard stop.
+- A deliberate split requires explicit parent-run approval plus
+  `--allow-split true`, with the approved base recorded in the run summary.
+
 ## Scope-Residual Evidence Gate
 
 When the item title, body, spec, or plan describes sweep, batch, helper
@@ -573,6 +588,13 @@ if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
   exit 1
 fi
 echo "Pre-branch HEAD check passed: HEAD matches origin/${BASE_BRANCH}"
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-create \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "feature/[branch-slug]" \
+    --approved-base "$BASE_BRANCH"
+fi
 git checkout -b feature/[branch-slug]   # or fix/[branch-slug], refactor/[branch-slug]
 ```
 
@@ -745,6 +767,14 @@ Open a **draft** PR targeting `develop` with:
 Before running `gh pr create`, verify that the current branch was actually cut from `develop` and confirm the intended base matches:
 
 ```bash
+BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-pr \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "feature/[branch-slug]" \
+    --approved-base "$BASE_BRANCH"
+fi
 # 1. Verify the current branch descends from origin/develop (not from main or another branch)
 if ! git merge-base --is-ancestor origin/develop HEAD; then
   echo "ERROR: Current branch does not descend from origin/develop. Verify the branch was cut from develop before opening the PR."
@@ -933,6 +963,13 @@ if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
   exit 1
 fi
 echo "Pre-branch HEAD check passed: HEAD matches origin/${BASE_BRANCH}"
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-create \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "refactor/[branch-slug]" \
+    --approved-base "$BASE_BRANCH"
+fi
 git checkout -b refactor/[branch-slug]
 ```
 
@@ -1054,6 +1091,14 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
 
 ```bash
+BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-pr \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "refactor/[branch-slug]" \
+    --approved-base "$BASE_BRANCH"
+fi
 # 1. Verify the current branch descends from origin/develop
 if ! git merge-base --is-ancestor origin/develop HEAD; then
   echo "ERROR: Current branch does not descend from origin/develop. Verify the branch was cut from develop before opening the PR."
@@ -1186,6 +1231,13 @@ if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
   exit 1
 fi
 echo "Pre-branch HEAD check passed: HEAD matches origin/${BASE_BRANCH}"
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-create \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "fix/[branch-slug]" \
+    --approved-base "$BASE_BRANCH"
+fi
 git checkout -b fix/[branch-slug]
 ```
 
@@ -1296,6 +1348,14 @@ Open a **draft** PR targeting `develop` using the same structure as Path 1 `### 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
 
 ```bash
+BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-pr \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "fix/[branch-slug]" \
+    --approved-base "$BASE_BRANCH"
+fi
 # 1. Verify the current branch descends from origin/develop
 if ! git merge-base --is-ancestor origin/develop HEAD; then
   echo "ERROR: Current branch does not descend from origin/develop. Verify the branch was cut from develop before opening the PR."
@@ -1446,6 +1506,13 @@ if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
   exit 1
 fi
 echo "Pre-branch HEAD check passed: HEAD matches origin/main"
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-create \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "hotfix/[branch-slug]" \
+    --approved-base main
+fi
 git checkout -b hotfix/[branch-slug]
 ```
 
@@ -1581,6 +1648,13 @@ Open a **draft** PR targeting `main` by adapting Path 1 `### Step 8: Open PR (Dr
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
 
 ```bash
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-pr \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "hotfix/[branch-slug]" \
+    --approved-base main
+fi
 # 1. Verify the current branch descends from origin/main (hotfixes are cut from main)
 if ! git merge-base --is-ancestor origin/main HEAD; then
   echo "ERROR: Current branch does not descend from origin/main. Verify the branch was cut from main before opening the hotfix PR."
@@ -1619,6 +1693,13 @@ The `hotfix/*` branch is **not** reused for the backport. Create a dedicated bac
 
 ```bash
 git fetch origin
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-create \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "backport/hotfix/[slug]" \
+    --approved-base develop
+fi
 git checkout -b backport/hotfix/[slug] origin/main
 ```
 
@@ -1627,6 +1708,13 @@ Open a PR targeting `develop`:
 **Pre-PR-create base-branch guard (mandatory)**:
 
 ```bash
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-pr \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "backport/hotfix/[slug]" \
+    --approved-base develop
+fi
 # Verify the backport branch descends from origin/main (it was cut from origin/main post-merge)
 if ! git merge-base --is-ancestor origin/main HEAD; then
   echo "ERROR: Backport branch does not descend from origin/main. Verify the branch was created from origin/main after the hotfix merge."

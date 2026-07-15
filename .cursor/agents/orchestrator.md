@@ -16,6 +16,11 @@ in each Work Item Runner handoff. Missing or ambiguous product repository
 context blocks mutation-oriented dispatch. Missing mode or `single_repo` keeps
 current behavior and does not require `--repo`.
 
+Include the parent-approved base branch in every mutation-oriented handoff. A
+child runner that may create a branch or open a PR must run
+`run-nested-artifact-guard.sh` with that `--approved-base` before mutation; stop
+instead of dispatching when the base is missing or ambiguous.
+
 ## Tracker Classification
 
 When `issue_tracker.provider: github_projects` is configured, the GitHub

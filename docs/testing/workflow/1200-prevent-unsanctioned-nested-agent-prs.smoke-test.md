@@ -29,6 +29,7 @@ Before running this smoke test:
 | Wrong base branch | `main` |
 | Duplicate branch | `feature/1200-duplicate-path` |
 | Lookalike branch | `feature/12000-unrelated-path` |
+| Backport branch | `backport/hotfix/1200-backport-path` |
 | Guard helper | `scripts/development-workflow/run-nested-artifact-guard.sh` |
 
 ---
@@ -133,6 +134,22 @@ parent-visible, and base-bound.
 
 **Expected result**: Operators can understand the active canonical path and any
 blocked nested attempts without reconstructing events from GitHub notifications.
+
+### Automated Regression Harness
+
+Run the committed harnesses:
+
+```bash
+bash scripts/development-workflow/tests/test-run-nested-artifact-guard.sh
+bash scripts/development-workflow/tests/test-workflow-hub-pr-auth.sh
+```
+
+Expected coverage includes canonical artifacts, duplicate local/remote/worktree
+artifacts, `ENG-1200` tracker prefixes, lowercase/path lookalikes,
+`backport/hotfix/*` branches, wrong-base PRs, audit-only unexpected forks,
+explicit split approval, `gh pr list` scan failure, mixed in-scope/out-of-scope
+PR data, malformed PR JSON, and `open-product-pr.sh --approved-base`
+dry-run/live mismatch stops.
 
 ---
 

@@ -75,6 +75,7 @@ Dry-run product PR creation before credentials or live writes:
 scripts/development-workflow/open-product-pr.sh \
   --repo faind-mobile-app \
   --base main \
+  --approved-base main \
   --head feature/faind-example \
   --title "feat: add faind example" \
   --body-file /tmp/faind-product-pr-body.md \
@@ -83,6 +84,8 @@ scripts/development-workflow/open-product-pr.sh \
 
 Live PR creation uses the selected product repository GitHub App credentials and
 passes the installation token only to the child `gh pr create` invocation.
+`--approved-base` is the parent-approved workflow base; if it differs from
+`--base`, the helper stops before credentials or `gh pr create` are used.
 
 ## Run Reviewers And CI
 

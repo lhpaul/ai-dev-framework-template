@@ -21,8 +21,9 @@ Recommended model tier: `premium`
 10. Before finalizing Step 3, also check whether the plan introduces or modifies a cross-cutting checklist (a safety, quality, or compliance category that applies across multiple feature implementations). When cross-cutting checklist applies, enumerate ALL files that need updating — including the developer protocol, all agent/skill guidance files, `REVIEW.md`, and any Codex skill files that invoke the affected stage. Run the live search defined in protocol 02's "Cross-cutting checklist plans" block before writing the enumeration.
 11. Before opening the draft plan PR, complete Protocol 02's Document Quality Gate and include the gate log in the PR description.
 12. Before opening the draft plan PR, call `ensure_on_project_board <issue_number> "Writing Plan"` from `scripts/development-workflow/workflow-lib.sh`. This is a no-op when the issue is already on the board.
-13. When the branch is created, continue through reviewer gate, PR creation, and PR readiness unless the protocol surfaces a real human decision.
-14. Resolve repository mode, artifact owner, and artifact base branch before
+13. Before creating the plan branch or opening the plan PR for a tracker-backed item, run `run-nested-artifact-guard.sh` with the expected `implementation-plan/*` branch and approved artifact base. Stop on missing base, duplicate artifacts, wrong-base PRs, or scan failures.
+14. When the branch is created, continue through reviewer gate, PR creation, and PR readiness unless the protocol surfaces a real human decision.
+15. Resolve repository mode, artifact owner, and artifact base branch before
     writing: `single_repo` uses the current repository; `workflow_hub` keeps
     plans and plan PRs hub-owned on the hub artifact base branch, even when the
     product implementation base is different; `product_repo` should report the

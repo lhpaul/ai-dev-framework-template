@@ -446,6 +446,23 @@ on top of a sibling's commits. When the guard fires, recovery is: (1) reset the
 working tree to the expected base with `git checkout develop && git pull origin
 develop`, then (2) re-run the agent from branch creation.
 
+**Nested artifact guard**: Before dispatching any child item that may create a
+branch or open a PR, run `run-nested-artifact-guard.sh` with the resolved
+execution base:
+
+```bash
+./scripts/development-workflow/run-nested-artifact-guard.sh \
+  --mode pre-create \
+  --issue <issue-number> \
+  --expected-branch <branch-prefix>/<slug> \
+  --approved-base <base-branch>
+```
+
+Run the same helper with `--mode pre-pr` before a child opens or readies a PR.
+`RESULT=missing_base`, `RESULT=blocked_duplicate`, `RESULT=wrong_base`, and
+`RESULT=scan_failed` block delegated progress until the canonical path is
+resumed or an explicit split is approved and recorded with `--allow-split true`.
+
 **Intended long-term fix — worktree isolation**: The durable solution to
 shared-checkout contamination is to dispatch each parallel agent into a
 separate `git worktree` (one worktree per item). With worktree isolation, each

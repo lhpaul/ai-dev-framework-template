@@ -280,6 +280,13 @@ If no blocking human decision remains:
      exit 1
    fi
    echo "Pre-branch HEAD check passed: HEAD matches origin/${ARTIFACT_BASE_BRANCH}"
+   if [ -n "${ISSUE_NUMBER:-}" ]; then
+     ./scripts/development-workflow/run-nested-artifact-guard.sh \
+       --mode pre-create \
+       --issue "$ISSUE_NUMBER" \
+       --expected-branch "spec/[branch-slug]" \
+       --approved-base "$ARTIFACT_BASE_BRANCH"
+   fi
    git checkout -b spec/[branch-slug]
    ```
 
@@ -290,12 +297,27 @@ If no blocking human decision remains:
 6. **Do NOT update CHANGELOG**: `spec/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
 7. Commit: `docs: add spec for [feature-name]`
 8. Push: `git push -u origin spec/[branch-slug]`
-9. Open a **draft** PR targeting the spec artifact base branch with:
+9. Before opening the draft PR, run the nested-artifact guard again in `pre-pr`
+   mode when a positive numeric issue number is available:
+
+   ```bash
+   ./scripts/development-workflow/run-nested-artifact-guard.sh \
+     --mode pre-pr \
+     --issue "$ISSUE_NUMBER" \
+     --expected-branch "spec/[branch-slug]" \
+     --approved-base "$ARTIFACT_BASE_BRANCH"
+   ```
+
+   Treat `RESULT=missing_base`, `RESULT=blocked_duplicate`,
+   `RESULT=wrong_base`, or `RESULT=scan_failed` as a hard stop before PR
+   creation. A deliberate split requires explicit parent-run approval and
+   `--allow-split true` with the approved base recorded in the run summary.
+10. Open a **draft** PR targeting the spec artifact base branch with:
    - Title: `docs(spec): [feature-name]`
    - Body: summary of the feature, link to the spec file, list of open questions (if any)
    - When a tracker brief exists: Coverage Matrix summary (each brief objective mapped to AC reference(s) or Out-of-Scope entry) and Deferral Notes for each objective intentionally moved to Out of Scope
    - `Document Quality Gate` log from the pre-PR gate above
-10. Return the branch + PR details to the **Work Item Runner**
+11. Return the branch + PR details to the **Work Item Runner**
 
 ---
 

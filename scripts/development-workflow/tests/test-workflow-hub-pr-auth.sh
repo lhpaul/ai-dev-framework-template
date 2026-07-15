@@ -150,12 +150,17 @@ run_contains "auth_json_private_key_path" "\"AUTH_PRIVATE_KEY_PATH\": \"$mobile_
 
 body_file="$hub_dir/body.md"
 printf 'PR body\n' > "$body_file"
-mobile_dry_run="$(bash "$PR_HELPER" --repo-root "$hub_dir" --repo mobile-app --base main --head feature/test --title "Mobile PR" --body-file "$body_file" --dry-run)"
+mobile_dry_run="$(bash "$PR_HELPER" --repo-root "$hub_dir" --repo mobile-app --base main --approved-base main --head feature/test --title "Mobile PR" --body-file "$body_file" --dry-run)"
 admin_dry_run="$(bash "$PR_HELPER" --repo-root "$hub_dir" --repo admin-portal --base develop --head feature/test --title "Admin PR" --body-file "$body_file" --dry-run)"
 run_contains "mobile_dry_run_targets_mobile" "TARGET_REPO=example/mobile-app" "$mobile_dry_run"
+run_contains "mobile_dry_run_records_approved_base" "APPROVED_BASE=main" "$mobile_dry_run"
 run_contains "admin_dry_run_targets_admin" "TARGET_REPO=example/admin-portal" "$admin_dry_run"
 run_not_contains "dry_run_redacts_token" "fixture-installation-token" "$mobile_dry_run"
 run_contains "dry_run_command_shape" "GH_TOKEN=<redacted> gh pr create --repo 'example/mobile-app'" "$mobile_dry_run"
+run_fails_contains \
+  "product_pr_rejects_wrong_approved_base" \
+  "base 'main' does not match approved base 'develop'" \
+  bash "$PR_HELPER" --repo-root "$hub_dir" --repo mobile-app --base main --approved-base develop --head feature/test --title "Mobile PR" --body-file "$body_file" --dry-run
 
 https_dir="$(fixture_dir https-url)"
 cat > "$https_dir/.ai-dev-workflow.yaml" <<'YAML'
@@ -474,12 +479,17 @@ live_output="$(
   GH_TOKEN_CAPTURE="$TMP_ROOT/gh-token.txt" \
   GH_ARGS_CAPTURE="$TMP_ROOT/gh-args.txt" \
   WORKFLOW_GITHUB_APP_TOKEN_EXCHANGE_CMD="$token_exchange_stub" \
-    bash "$PR_HELPER" --repo-root "$hub_dir" --repo mobile-app --base main --head feature/test --title "Mobile PR" --body-file "$body_file"
+    bash "$PR_HELPER" --repo-root "$hub_dir" --repo mobile-app --base main --approved-base main --head feature/test --title "Mobile PR" --body-file "$body_file"
 )"
 run_contains "live_pr_returns_url" "PR_URL=https://github.com/example/mobile-app/pull/123" "$live_output"
 run_equals "live_pr_child_receives_token" "fixture-installation-token" "$(cat "$TMP_ROOT/gh-token.txt")"
 run_contains "live_pr_targets_repo" "pr create --repo example/mobile-app" "$(cat "$TMP_ROOT/gh-args.txt")"
 run_not_contains "live_pr_output_no_token" "fixture-installation-token" "$live_output"
+run_fails_contains \
+  "live_pr_wrong_approved_base_stops_before_token" \
+  "base 'main' does not match approved base 'develop'" \
+  env WORKFLOW_GITHUB_APP_TOKEN_EXCHANGE_CMD="$token_exchange_stub" \
+    bash "$PR_HELPER" --repo-root "$hub_dir" --repo mobile-app --base main --approved-base develop --head feature/test --title "Mobile PR" --body-file "$body_file"
 
 echo ""
 echo "Passed: $PASS_COUNT"

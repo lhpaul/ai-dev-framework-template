@@ -38,6 +38,11 @@ when product repository context is missing or ambiguous. Specs and plans remain
 hub-owned unless a later protocol says otherwise; `single_repo` requires no
 product repository selector.
 
+Before dispatching any stage agent that may create a branch or open a PR, pass
+the expected branch, expected worktree when known, and approved base. The stage
+path must run `run-nested-artifact-guard.sh` before mutation and stop on
+`missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`.
+
 ## Guardrails Enforcement
 
 At the start of each item run, check whether the Portfolio Orchestrator already

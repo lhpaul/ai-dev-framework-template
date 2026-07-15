@@ -33,9 +33,13 @@ proposal step.
 7. Before implementation mutation in `workflow_hub`, state the selected product
    repository, artifact owner, and mutation target; stop when context is missing
    or ambiguous.
-8. Do not stop after advancing one item if another item in the explicit list still
+8. For each in-scope item, pass the approved base to branch and PR creation
+   paths and require `run-nested-artifact-guard.sh` before mutation. Stop on
+   `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed` instead
+   of widening scope or inferring a base.
+9. Do not stop after advancing one item if another item in the explicit list still
    has a deterministic next action.
-9. Do not stop at transient in-flight CI/watch states. If a local watch exits
+10. Do not stop at transient in-flight CI/watch states. If a local watch exits
    early, duplicate checks are skipped/cancelled, or GitHub still shows pending
    or incomplete check evidence, re-query authoritative PR/check state and keep
    supervising until every in-scope PR is green, blocked, escalated, merged, or
@@ -43,7 +47,7 @@ proposal step.
    For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
    items, require residual gate evidence before accepting an item as
    `ready-for-human-review`.
-10. After all in-scope PRs reach `ready-for-human-review`, inspect the effective
+11. After all in-scope PRs reach `ready-for-human-review`, inspect the effective
    guardrails. When the relevant stages allow `may_merge_pr: true`, run
    Guardrails Enforcement Gate 5 for each in-scope PR, including
    `run-epic-risk-classifier.sh` and `run-epic-delegated-gate.sh`; continue only
@@ -59,7 +63,7 @@ proposal step.
    `stages.<stage>.may_merge_pr: false` guardrail for each affected PR, and tell
    the human to invoke `$batch-merge` or adjust guardrails to permit delegated
    merging.
-11. For single-item advancement use `$run-item`; for epic-scoped runs use `$run-epic`;
+12. For single-item advancement use `$run-item`; for epic-scoped runs use `$run-epic`;
    for read-only portfolio scan and proposal use `$run-work`.
 
 > **Deprecation notice**: `/run-epic --items` is deprecated. Use `/run-items` for

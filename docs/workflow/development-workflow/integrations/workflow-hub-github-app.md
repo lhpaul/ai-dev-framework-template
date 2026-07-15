@@ -111,6 +111,7 @@ Dry-run a product repository PR operation before credentials are available:
 scripts/development-workflow/open-product-pr.sh \
   --repo mobile-app \
   --base main \
+  --approved-base main \
   --head feature/example \
   --title "feat: example product change" \
   --body-file /tmp/product-pr-body.md \
@@ -118,8 +119,10 @@ scripts/development-workflow/open-product-pr.sh \
 ```
 
 The dry-run output includes the target `owner/repo`, base branch, head branch,
-title, and a redacted `gh pr create --repo <owner/repo>` command shape. It does
-not require or print credentials.
+approved base branch, title, and a redacted
+`gh pr create --repo <owner/repo>` command shape. It does not require or print
+credentials. If `--approved-base` is supplied and does not match `--base`, the
+helper stops before credentials or `gh pr create` are used.
 
 Run the same dry-run for a second product repository to verify routing:
 
@@ -127,6 +130,7 @@ Run the same dry-run for a second product repository to verify routing:
 scripts/development-workflow/open-product-pr.sh \
   --repo admin-portal \
   --base develop \
+  --approved-base develop \
   --head feature/example \
   --title "feat: example admin change" \
   --body-file /tmp/product-pr-body.md \

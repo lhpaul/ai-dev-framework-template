@@ -128,6 +128,12 @@ inherit the portfolio-resolved guardrails rather than re-resolving them
 independently. Invocation and session overrides resolved at the portfolio level
 flow down to the per-item gates without re-prompting.
 
+Also include the portfolio-approved execution base for each dispatched item.
+Nested or spawned agents must pass that base to
+`run-nested-artifact-guard.sh --approved-base` before branch creation and before
+PR creation. If the base is ambiguous, stop before dispatch rather than letting
+a child agent infer a PR target.
+
 ### Backlog-Start Gate
 
 Before proposing or starting any not-yet-started Backlog item (in Step 2 and

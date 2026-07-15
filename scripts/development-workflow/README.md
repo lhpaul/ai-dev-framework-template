@@ -111,6 +111,37 @@ Use this when:
 - The orchestrator needs to verify whether a workflow item has already been started
 - You want to avoid re-dispatching work for an item that already has a branch or worktree
 
+### `run-nested-artifact-guard.sh`
+
+Prevents nested or spawned agents from silently creating duplicate issue-scoped
+workflow artifacts or opening PRs against an unapproved base.
+
+Usage:
+
+```bash
+./scripts/development-workflow/run-nested-artifact-guard.sh \
+  --mode pre-create \
+  --issue 1200 \
+  --expected-branch feature/1200-example \
+  --approved-base develop
+```
+
+What it does:
+
+- Scans registered worktrees, local branches, remote branches, and open PRs.
+- Treats the expected branch or expected worktree as canonical.
+- Reports duplicate issue-scoped artifacts as `RESULT=blocked_duplicate`.
+- Reports wrong-base open PRs as `RESULT=wrong_base`.
+- Reports missing parent-approved base context as `RESULT=missing_base`.
+- Reports scan failures as `RESULT=scan_failed` instead of assuming clean.
+
+Use this when:
+
+- A parent runner is about to dispatch a child agent that may create a branch.
+- A stage agent is about to open or ready a workflow PR.
+- A deliberate split needs explicit `--allow-split true` approval with the
+  approved base recorded in the parent summary.
+
 ### `pr-ci-loop.sh`
 
 Polls GitHub status checks for a PR until they are green, failing, or timed out.
