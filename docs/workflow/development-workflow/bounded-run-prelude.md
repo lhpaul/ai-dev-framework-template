@@ -59,6 +59,9 @@ Related:
 The JSON output includes:
 
 - `scope` — full resolver payload (`groups`, `items`, `baseBranch`, `policy` flags)
+- `scope.baseReason`, `scope.baseWarnings`, and `scope.baseValidation` — the
+  selected base branch rationale, visible fallback warnings, and read-only
+  remote-branch validation result
 - `guardrails` — repository `guardrails` snapshot (`mode`, `backlog_start`)
 - `policyRecommendation` — same shape as `run-epic-policy-recommender.sh` alone
 - `policyRecommendation.confirmationSummary` — operator-facing summary lines for
@@ -90,6 +93,14 @@ The JSON output includes:
    pending checkpoints.
 5. **Epic-like items** — `run-item-scope-resolver.sh` rejects epic issues; use
    `--epic` instead.
+6. **Explicit-list base selection** — `--items` considers only the listed items.
+   No integration labels resolve to `develop`. Partial or mixed
+   `integration-branch:<slug>` coverage resolves to `develop` with a visible
+   warning. A shared label may resolve to `develop-<slug>` only when the current
+   repository remote confirms that branch exists; missing or unverifiable
+   branches fall back to `develop` with a warning. In workflow-hub mode, product
+   implementation base validation is deferred until the product repository is
+   selected.
 
 ---
 

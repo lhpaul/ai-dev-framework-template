@@ -891,7 +891,15 @@ For each item in the batch, prepare a short handoff:
 - Priority context
 - Parallelization notes or serialization reason
 - `BATCH_CONTEXT=true` — required for parallel batches so the Work Item Runner (protocol 91) activates worktree isolation
-- `BASE_BRANCH=develop-<slug>` — include this field when the item carries an `integration-branch:<slug>` label (see "Integration-branch base override" below). When `BASE_BRANCH` is present in the handoff, the Work Item Runner (protocol 91) **must** use it as the worktree base instead of the default `origin/develop` for all item types (feature, fix, refactor, spec, plan). The base-branch table in protocol 91 Step 3 applies only when `BASE_BRANCH` is absent from the handoff.
+- `BASE_BRANCH=<resolved-base>` — include the bounded-prelude-approved base,
+  normally `develop`. Use `develop-<slug>` only when the explicit-list or epic
+  scope has one shared `integration-branch:<slug>` label and the owning remote
+  branch validation has passed or has been explicitly deferred for a selected
+  product repository. When `BASE_BRANCH` is present in the handoff, the Work
+  Item Runner (protocol 91) **must** use it as the worktree base instead of the
+  default `origin/develop` for all item types (feature, fix, refactor, spec,
+  plan). The base-branch table in protocol 91 Step 3 applies only when
+  `BASE_BRANCH` is absent from the handoff.
 - Each item adds its own CHANGELOG entry as normal (see Step 3.6 for conflict resolution strategy)
 
 ### Worktree isolation requirement
@@ -902,7 +910,21 @@ Do **not** dispatch multiple Work Item Runners to operate in the same working di
 
 ### Integration-branch base override
 
-Before dispatching any Work Item Runner for a sub-item, check whether the item carries an `integration-branch:<slug>` label:
+Before dispatching Work Item Runners for an explicit-list batch, use the
+bounded prelude's resolved base. Do not let one item's
+`integration-branch:<slug>` label select the base for the whole batch.
+
+For explicit-list batches:
+
+- no listed integration labels: use `develop`;
+- partial label coverage: use `develop` and emit the prelude warning;
+- mixed labels: use `develop` and emit the prelude warning;
+- one shared label across every listed item: derive `develop-<slug>` and verify
+  it exists on the owning remote before adopting it;
+- missing or unverifiable `develop-<slug>`: use `develop` and emit the prelude
+  warning.
+
+Before dispatching any Work Item Runner for an epic sub-item, check whether the item carries an `integration-branch:<slug>` label:
 
 ```bash
 gh issue view <issue-number> --json labels --jq '.labels[].name | select(startswith("integration-branch:"))'
@@ -911,16 +933,23 @@ gh issue view <issue-number> --json labels --jq '.labels[].name | select(startsw
 If an `integration-branch:<slug>` label is found:
 
 1. **Derive the integration branch name**: `develop-<slug>`.
-2. **Verify the branch exists on the remote** (output `0` = does not exist, `1` = exists):
+2. **Verify the branch exists on the remote** using
+   `git ls-remote --exit-code --heads`. Exit `0` means the branch exists, exit
+   `2` means it is missing, and any other non-zero status means validation
+   failed:
 
    ```bash
-   BRANCH_EXISTS=$(set -o pipefail; git ls-remote origin "refs/heads/develop-<slug>" 2>/dev/null | wc -l | tr -d ' ') || {
+   set +e
+   git ls-remote --exit-code --heads origin develop-<slug> >/dev/null 2>&1
+   BRANCH_STATUS=$?
+   set -e
+   if [ "$BRANCH_STATUS" -ne 0 ] && [ "$BRANCH_STATUS" -ne 2 ]; then
      echo "WARNING: failed to verify whether develop-<slug> exists on origin; skipping auto-create for this item."
      continue
-   }
+   fi
    ```
 
-3. **If the branch does not exist** (`BRANCH_EXISTS` is `0`), create and push it from `develop`:
+3. **If the branch does not exist** (`BRANCH_STATUS` is `2`), create and push it from `develop`:
 
    ```bash
    git fetch origin develop

@@ -14,6 +14,7 @@ MOCK_BIN="$TMP_ROOT/bin"
 CALL_LOG="$TMP_ROOT/gh-calls.log"
 mkdir -p "$MOCK_BIN"
 : > "$CALL_LOG"
+REAL_GIT_PATH="$(command -v git)"
 
 # _config_backup / _config_file track any temporary .ai-dev-workflow.yaml swap
 # made during provider-normalization tests. _harness_exit restores the file on
@@ -140,9 +141,18 @@ JSON
       109) state="CLOSED"; state_reason="NOT_PLANNED"; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
       110) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
       111) body='Blocked by #108'; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
-      113) labels_json='[{"name":"integration-branch:foo"}]' ;;
-      114) labels_json='[]' ;;
-    esac
+	      113) labels_json='[{"name":"integration-branch:foo"}]' ;;
+	      114) labels_json='[]' ;;
+	      115) labels_json='[]' ;;
+	      116) labels_json='[{"name":"integration-branch:stale"}]' ;;
+	      117) labels_json='[{"name":"integration-branch:valid-shared"}]' ;;
+	      118) labels_json='[{"name":"integration-branch:valid-shared"}]' ;;
+	      119) labels_json='[{"name":"integration-branch:alpha"}]' ;;
+	      120) labels_json='[{"name":"integration-branch:beta"}]' ;;
+	      121) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
+	      122) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
+	      123) labels_json='[{"name":"integration-branch:stale"}]' ;;
+	    esac
     jq -n \
       --argjson number "$issue_number" \
       --arg title "$title" \
@@ -163,9 +173,18 @@ JSON
       101|102|103|104|107|109|110|111) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
       105) labels_json='[{"name":"integration-branch:alpha"}]' ;;
       106) labels_json='[{"name":"integration-branch:beta"}]' ;;
-      113) labels_json='[{"name":"integration-branch:foo"}]' ;;
-      114) labels_json='[]' ;;
-    esac
+	      113) labels_json='[{"name":"integration-branch:foo"}]' ;;
+	      114) labels_json='[]' ;;
+	      115) labels_json='[]' ;;
+	      116) labels_json='[{"name":"integration-branch:stale"}]' ;;
+	      117) labels_json='[{"name":"integration-branch:valid-shared"}]' ;;
+	      118) labels_json='[{"name":"integration-branch:valid-shared"}]' ;;
+	      119) labels_json='[{"name":"integration-branch:alpha"}]' ;;
+	      120) labels_json='[{"name":"integration-branch:beta"}]' ;;
+	      121) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
+	      122) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
+	      123) labels_json='[{"name":"integration-branch:stale"}]' ;;
+	    esac
     jq -n --argjson labels "$labels_json" '{labels:$labels}'
     ;;
   issue\ view\ *\ --json\ number,title,state)
@@ -237,8 +256,34 @@ esac
 MOCK_GH
 chmod +x "$MOCK_BIN/gh"
 
+cat > "$MOCK_BIN/git" <<'MOCK_GIT'
+#!/usr/bin/env bash
+printf 'git %s\n' "$*" >> "$MOCK_GH_CALL_LOG"
+
+case "$*" in
+  ls-remote\ --exit-code\ --heads\ origin\ develop-delegated-epic-orchestration)
+    printf 'abc123\trefs/heads/develop-delegated-epic-orchestration\n'
+    exit 0
+    ;;
+  ls-remote\ --exit-code\ --heads\ origin\ develop-valid-shared)
+    printf 'abc123\trefs/heads/develop-valid-shared\n'
+    exit 0
+    ;;
+  ls-remote\ --exit-code\ --heads\ origin\ develop-stale)
+    exit 2
+    ;;
+  ls-remote\ --exit-code\ --heads\ origin\ develop-remote-failure)
+    exit 128
+    ;;
+esac
+
+exec "$REAL_GIT_PATH" "$@"
+MOCK_GIT
+chmod +x "$MOCK_BIN/git"
+
 export PATH="$MOCK_BIN:$PATH"
 export MOCK_GH_CALL_LOG="$CALL_LOG"
+export REAL_GIT_PATH
 export GITHUB_PROJECT_OWNER="lhpaul"
 export GITHUB_PROJECT_NUMBER="1"
 
@@ -318,9 +363,34 @@ run_test "base_override_lookup_detects_merged" "105" "$(printf '%s\n' "$override
 run_test "base_override_keeps_remaining_eligible" "106" "$(printf '%s\n' "$override_output" | jq -r '.groups.eligible[0].number')"
 
 ambiguous_output="$(run_json --items 105,106)"
-run_test "conflicting_labels_no_base" "null" "$(printf '%s\n' "$ambiguous_output" | jq -r '.baseBranch')"
-run_test "conflicting_labels_base_ambiguous" "true" "$(printf '%s\n' "$ambiguous_output" | jq -r '.baseAmbiguous')"
-run_test "conflicting_labels_ambiguous" "2" "$(printf '%s\n' "$ambiguous_output" | jq '.groups.ambiguous | length')"
+run_test "conflicting_labels_fall_back_to_develop" "develop" "$(printf '%s\n' "$ambiguous_output" | jq -r '.baseBranch')"
+run_test "conflicting_labels_base_not_ambiguous" "false" "$(printf '%s\n' "$ambiguous_output" | jq -r '.baseAmbiguous')"
+run_test "conflicting_labels_warning" "true" "$(printf '%s\n' "$ambiguous_output" | jq -r '.baseWarnings | any(test("mixed integration branch labels"))')"
+run_test "conflicting_labels_keep_items_eligible" "2" "$(printf '%s\n' "$ambiguous_output" | jq '.groups.eligible | length')"
+
+no_label_output="$(run_json --items 114,115)"
+run_test "explicit_no_label_base_develop" "develop" "$(printf '%s\n' "$no_label_output" | jq -r '.baseBranch')"
+run_test "explicit_no_label_has_no_warning" "0" "$(printf '%s\n' "$no_label_output" | jq '.baseWarnings | length')"
+
+partial_label_output="$(run_json --items 115,116)"
+run_test "partial_label_falls_back_to_develop" "develop" "$(printf '%s\n' "$partial_label_output" | jq -r '.baseBranch')"
+run_test "partial_label_warning" "true" "$(printf '%s\n' "$partial_label_output" | jq -r '.baseWarnings | any(test("partial integration branch label"))')"
+run_test "partial_label_validation_skipped" "skipped_partial_label_coverage" "$(printf '%s\n' "$partial_label_output" | jq -r '.baseValidation.result')"
+
+valid_shared_label_output="$(run_json --items 117,118)"
+run_test "valid_shared_label_uses_integration_base" "develop-valid-shared" "$(printf '%s\n' "$valid_shared_label_output" | jq -r '.baseBranch')"
+run_test "valid_shared_label_validation_exists" "exists" "$(printf '%s\n' "$valid_shared_label_output" | jq -r '.baseValidation.result')"
+run_test "valid_shared_label_reason_reports_validation" "true" "$(printf '%s\n' "$valid_shared_label_output" | jq -r '.baseReason | test("remote branch verified")')"
+
+stale_shared_label_output="$(run_json --items 116,123)"
+run_test "stale_shared_label_falls_back_to_develop" "develop" "$(printf '%s\n' "$stale_shared_label_output" | jq -r '.baseBranch')"
+run_test "stale_shared_label_validation_missing" "missing" "$(printf '%s\n' "$stale_shared_label_output" | jq -r '.baseValidation.result')"
+run_test "stale_shared_label_warning" "true" "$(printf '%s\n' "$stale_shared_label_output" | jq -r '.baseWarnings | any(test("was not found on origin"))')"
+
+remote_failure_output="$(run_json --items 121,122)"
+run_test "remote_failure_falls_back_to_develop" "develop" "$(printf '%s\n' "$remote_failure_output" | jq -r '.baseBranch')"
+run_test "remote_failure_validation_failed" "failed" "$(printf '%s\n' "$remote_failure_output" | jq -r '.baseValidation.result')"
+run_test "remote_failure_warning" "true" "$(printf '%s\n' "$remote_failure_output" | jq -r '.baseWarnings | any(test("could not verify"))')"
 
 dependency_output="$(run_json --items 104)"
 run_test "satisfied_dependency_not_blocked" "eligible" "$(printf '%s\n' "$dependency_output" | jq -r '.items[0].group')"
@@ -400,7 +470,8 @@ run_test "unlabeled_item_uses_scope_shared_base" "112" "$(printf '%s\n' "$unlabe
 
 label_fetch_failure_output="$(MOCK_LABEL_FETCH_FAIL=101 run_json --items 101,112)"
 run_test "label_fetch_failure_keeps_partial_scope" "2" "$(printf '%s\n' "$label_fetch_failure_output" | jq '.items | length')"
-run_test "label_fetch_failure_falls_back_to_full_issue_labels" "develop-delegated-epic-orchestration" "$(printf '%s\n' "$label_fetch_failure_output" | jq -r '.baseBranch')"
+run_test "label_fetch_failure_partial_label_uses_develop" "develop" "$(printf '%s\n' "$label_fetch_failure_output" | jq -r '.baseBranch')"
+run_test "label_fetch_failure_partial_label_warns" "true" "$(printf '%s\n' "$label_fetch_failure_output" | jq -r '.baseWarnings | any(test("partial integration branch label"))')"
 run_test "label_fetch_failure_does_not_poison_unrelated_unlabeled_item" "112" "$(printf '%s\n' "$label_fetch_failure_output" | jq -r '.groups.already_merged[] | select(.number == 112) | .number')"
 run_test "label_fetch_failure_avoids_unrelated_ambiguity" "yes" "$(
   ! printf '%s\n' "$label_fetch_failure_output" | jq -e '.groups.ambiguous[] | select(.number == 112)' >/dev/null &&

@@ -372,6 +372,8 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
       epicNumber: .epicNumber,
       itemInput: .itemInput,
       baseReason: .baseReason,
+      baseWarnings: (.baseWarnings // []),
+      baseValidation: (.baseValidation // {branch: null, result: "not_applicable"}),
       itemCount: (.items | length),
       groups: {
         eligible: ((.groups.eligible // []) | length),
