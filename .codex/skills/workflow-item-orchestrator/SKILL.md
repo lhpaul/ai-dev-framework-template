@@ -38,7 +38,11 @@ Recommended model tier: `balanced`
 14. For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
     items, run `scope-residual-gate.sh` before readiness and treat `block` or
     `escalate` as non-terminal.
-15. Before any terminal Work Item Runner Summary (`ready`, `done`, `blocked`,
+15. For `spec/*` and `implementation-plan/*` PRs, run Protocol 91 Step 8a's
+    documentation-stage alignment checker before readiness. Include the
+    alignment result in the runner summary when readiness is blocked; correct
+    or escalate mismatches instead of applying `ready-for-human-review`.
+16. Before any terminal Work Item Runner Summary (`ready`, `done`, `blocked`,
     `escalated`, waiting on human, waiting on merge, or cleanup complete), run
     `scripts/development-workflow/item-completion-self-check.sh` for the claimed
     state and paste its `## Ground-Truth Completion Verification` section into

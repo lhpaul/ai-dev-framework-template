@@ -20,7 +20,11 @@ Recommended model tier: `economy`
 10. When supervising sweep, batch, helper-extraction, numeric-target, or
    pattern-completeness items, require residual gate evidence before accepting
    `ready-for-human-review` as terminal.
-11. Before accepting any item as terminal in a batch summary, require the
+11. When supervising `spec/*` or `implementation-plan/*` PRs, require Protocol
+    91 Step 8a's documentation-stage alignment checker before accepting
+    readiness. A mismatch keeps the item under supervision until corrected or
+    escalated.
+12. Before accepting any item as terminal in a batch summary, require the
     Work Item Runner's `## Ground-Truth Completion Verification` section from
     `scripts/development-workflow/item-completion-self-check.sh` or run the
     helper directly from current artifact state. Do not declare the batch item

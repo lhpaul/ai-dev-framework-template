@@ -1702,8 +1702,9 @@ the PR. The only valid path to `ready-for-human-review` is:
 4. Step 7b applies and verifies `ready-for-regression` for implementation PRs.
 5. Step 8 CI loop returns green.
 6. Step 8a readiness checklist passes, including the reviewer-loop summary
-   check, residual gate for applicable broad-scope work, and GraphQL
-   `reviewThreads` gate.
+   check, documentation-stage alignment for `spec/*` and
+   `implementation-plan/*` PRs, residual gate for applicable broad-scope work,
+   and GraphQL `reviewThreads` gate.
 
 Skipping any step above is a protocol violation. If an item-orchestrator or
 stage agent returns with `ready-for-human-review` already applied before the
@@ -2030,7 +2031,8 @@ Interpret the result as follows:
 | 5         | CI not green at readiness gate                                                                    | Run Step 8 (pr-ci-loop.sh) and fix failing checks   |
 | 6         | Late-arriving async bot threads detected after label application                                  | Remove `ready-for-human-review`, add `needs-fixes`, return to Step 7a |
 | 7         | Latest reviewer-loop summary is missing or has a non-clean terminal result                       | Do not label ready; escalate or return to reviewer loop |
-| 8         | Residual gate missing, blocked, or escalated for broad-scope work                                | Keep out of readiness; fix residuals, add `needs-fixes`, or escalate |
+| 8         | Documentation-stage alignment mismatch on `spec/*` or `implementation-plan/*` PR                 | Remove stale readiness, add/update warning, add `needs-fixes`, correct or escalate |
+| 9         | Residual gate missing, blocked, or escalated for broad-scope work                                | Keep out of readiness; fix residuals, add `needs-fixes`, or escalate |
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
@@ -2144,8 +2146,10 @@ time), synchronize the `human-checkpoint-required` label and stable PR comment
 after fixer pushes — so label state always reflects current checkpoint
 satisfaction.
 
-**Timing**: Run after the infrastructure dependency scan above and before Check
-4 (`ready-for-human-review` application) in the readiness checklist.
+**Timing**: Run after the infrastructure dependency scan above and after the
+documentation-stage alignment checker has passed for `spec/*` and
+`implementation-plan/*` PRs, but before Check 4 (`ready-for-human-review`
+application) in the readiness checklist.
 
 **Procedure**:
 
@@ -2165,10 +2169,15 @@ satisfaction.
      --write-checkpoints-file checkpoint-policy.json
    ```
 
-4. When `BLOCKING_COUNT` is greater than zero, apply `ready-for-human-review`
-   **and** keep `human-checkpoint-required` (both labels may coexist per
-   protocol 92 BR-11/BR-3). Record checkpoint reason and required human action
-   in the `<!-- run-epic:checkpoint-status -->` comment posted by the script.
+4. When `BLOCKING_COUNT` is greater than zero, first run
+   `scripts/development-workflow/check-documentation-stage-alignment.sh --pr "$PR_NUMBER"`
+   for `spec/*` and `implementation-plan/*` PRs. If it exits `8`, remove any
+   stale `ready-for-human-review`, add `needs-fixes`, keep readiness blocked,
+   and correct or escalate the documentation-stage mismatch. Only after the
+   checker passes may this path apply `ready-for-human-review` **and** keep
+   `human-checkpoint-required` (both labels may coexist per protocol 92
+   BR-11/BR-3). Record checkpoint reason and required human action in the
+   `<!-- run-epic:checkpoint-status -->` comment posted by the script.
 5. When all applicable checkpoints are `satisfied` or `waived`, the script
    removes `human-checkpoint-required` automatically.
 6. During fix cycles (Step 9): when applying `needs-fixes`, do **not** remove
@@ -2293,33 +2302,62 @@ if [ "${RESIDUAL_GATE_REQUIRED:-false}" = "true" ]; then
       echo "ERROR: Residual gate was required for this item, but the latest verification returned not_applicable."
       echo "Re-run scripts/development-workflow/scope-residual-gate.sh verify with the item title/body/spec/plan scope that made the gate required."
       gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
-      exit 8
+      exit 9
       ;;
     block)
       echo "ERROR: Residual gate blocked readiness."
       gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
       echo "Finish residual work, link follow-up issues, or mark residuals out of scope before applying ready-for-human-review."
-      exit 8
+      exit 9
       ;;
     escalate)
       echo "ERROR: Residual gate escalated for a human decision."
       echo "Do not apply ready-for-human-review until the residual scope decision is resolved."
-      exit 8
+      exit 9
       ;;
     requires_verification)
       echo "ERROR: Residual gate was only classified; evidence verification has not run."
       echo "Run scripts/development-workflow/scope-residual-gate.sh verify and re-enter Step 8a."
       gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
-      exit 8
+      exit 9
       ;;
     *)
       echo "ERROR: Residual gate is required for this broad-scope item but no pass/not_applicable result is recorded."
       echo "Run scripts/development-workflow/scope-residual-gate.sh verify and re-enter Step 8a."
       gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
-      exit 8
+      exit 9
       ;;
   esac
 fi
+
+# Check 3.6: documentation-stage alignment for spec and plan PRs.
+# Run on every pass through Step 8a, including resumed PRs with an existing
+# ready-for-human-review label. The checker updates a stable warning comment
+# when a mismatch is found and exits 8 for that blocker.
+case "$BRANCH" in
+  spec/*|implementation-plan/*)
+    set +e
+    ALIGNMENT_OUTPUT=$(./scripts/development-workflow/check-documentation-stage-alignment.sh --pr "$PR_NUMBER" --json 2>&1)
+    ALIGNMENT_STATUS=$?
+    set -e
+    if [ "$ALIGNMENT_STATUS" -eq 8 ]; then
+      echo "$ALIGNMENT_OUTPUT"
+      echo "ERROR: Documentation-stage alignment mismatch blocks ready-for-human-review."
+      HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
+      if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
+        gh pr edit "$PR_NUMBER" --remove-label "ready-for-human-review"
+      fi
+      gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+      echo "Correct the PR diff so it contains only expected documentation-stage artifacts, or escalate for a human workflow-stage decision."
+      exit 8
+    elif [ "$ALIGNMENT_STATUS" -ne 0 ]; then
+      echo "$ALIGNMENT_OUTPUT"
+      echo "ERROR: Documentation-stage alignment checker failed. Retry the checker or resolve the GitHub/diff read failure before applying ready-for-human-review."
+      exit "$ALIGNMENT_STATUS"
+    fi
+    echo "✅ Documentation-stage alignment verified."
+    ;;
+esac
 
 # ⛔ STOP — Mandatory pre-Check-4 verification (implementation PRs only)
 # Do NOT proceed to Check 4 until you have explicitly verified ready-for-regression is present.
@@ -2468,7 +2506,13 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
   - If `unresolved review threads found` (exit 4 from GraphQL pre-Check-4 gate): The GraphQL query returned unresolved bot-authored review threads. Address the findings, push fixes, and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until the GraphQL query confirms all threads are resolved. **Do not rely on self-tracked thread state** — the GraphQL query is the authoritative check.
   - If `late-arriving async bot threads detected` (exit 6 from Step 8a.1 re-check): Late-arriving threads from async bots (e.g., `codex-github`) were discovered after the pre-Check-4 gate. Remove `ready-for-human-review`, add `needs-fixes`, and return to Step 7a. This indicates a race condition where the bot posted its thread after the initial verification but before the label was applied.
   - If `reviewer-loop summary missing or non-clean` (exit 7 from Check 0.5): The latest automated reviewer-loop summary comment is absent or its `Result:` line is not `clean`/`skipped`. Do not apply `ready-for-human-review`. For `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result, escalate or re-enter Step 7 according to the reviewer-loop result.
-  - If `residual gate missing, blocked, or escalated` (exit 8 from Check 3.5):
+  - If `documentation-stage alignment mismatch` (exit 8 from Check 3.6):
+    the PR is on `spec/*` or `implementation-plan/*` but includes files outside
+    the expected stage artifact allowlist, or has an empty diff. The checker
+    posts or updates `<!-- documentation-stage-alignment -->`; keep
+    `ready-for-human-review` removed, add `needs-fixes`, and correct the diff or
+    escalate for a human workflow-stage decision.
+  - If `residual gate missing, blocked, or escalated` (exit 9 from Check 3.5):
     the item is broad-scope but lacks a passing residual gate result. For
     `block`, apply or keep `needs-fixes` and finish the residuals, link
     follow-up issues, or mark residuals out of scope. For `escalate`, stop for
