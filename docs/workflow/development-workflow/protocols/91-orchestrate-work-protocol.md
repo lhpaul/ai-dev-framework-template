@@ -74,6 +74,37 @@ Orchestrator resolves guardrails at the portfolio level and passes them down):
 - Audit requirements.
 - Which values were changed by an invocation or session override (if any).
 
+Before producing any terminal Work Item Runner Summary — ready, done, blocked,
+escalated, waiting on human review, waiting on merge, or post-merge cleanup
+complete — run the completion self-check and paste its
+`## Ground-Truth Completion Verification` section into the summary:
+
+```bash
+./scripts/development-workflow/item-completion-self-check.sh \
+  --issue <issue-number> \
+  --branch <workflow-branch> \
+  --stage <spec|plan|implementation|cleanup> \
+  --worktree-path <path-used-for-this-item> \
+  [--pr <pr-number>] \
+  [--expected-base <base-branch>] \
+  [--expected-label ready-for-human-review] \
+  [--expected-label ready-for-regression] \
+  [--forbid-label needs-fixes] \
+  [--require-review-summary true] \
+  [--require-review-threads true] \
+  [--expected-tracker-status "<status>"]
+```
+
+Every claimed surface in the summary must be `verified`, `not_applicable`, or
+`unavailable_*` with a reason in that section. Use flags that match the state
+being claimed: ready/waiting-on-merge claims include PR readiness labels and
+review checks, while blocked/escalated claims omit ready-only labels and instead
+show the failing or unavailable surface that justifies the stop. A `discrepancy`
+or `unavailable_required` result is non-terminal for a success claim: return to
+the matching existing gate instead of reporting success. For blocked or
+escalated claims, the same result may be terminal only when the failing row is
+the explicit blocker named in the summary and no success state is claimed.
+
 When the Portfolio Orchestrator resolved guardrails at the portfolio level and
 passed them into this Work Item Runner handoff, the Work Item Runner inherits
 those resolved guardrails rather than re-resolving them independently. Invocation
@@ -1033,6 +1064,14 @@ After the selected item reaches a terminal condition, provide a concise summary:
 - Final state: ready for human review / waiting on human decision / blocked / escalated
 - Path taken: plan written -> reviewed -> PR opened -> automated review clean -> CI green
 - Next human action: merge PR / answer architecture question / unblock dependency
+
+## Ground-Truth Completion Verification
+
+[Paste the exact output from `scripts/development-workflow/item-completion-self-check.sh`.
+For ready/done/waiting-on-merge/cleanup success, a non-zero helper exit is
+non-terminal. For blocked or escalated states, a non-zero helper exit may be
+terminal only when the failed surface is the explicit blocker; report the
+expected value, observed value, and the next gate or human action required.]
 ```
 
 **Retrospective suggestion (standalone runs only)**:
@@ -2447,7 +2486,18 @@ If any check fails:
 3. Remove `ready-for-human-review` if it was already applied: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 4. Fix the root cause (wrong base branch, missing label, missing review comment, failing CI) and return to Step 7a.
 
-Only after all checks pass should the Work Item Runner report the PR as terminal ("ready for human review").
+Only after all checks pass should the Work Item Runner run
+`item-completion-self-check.sh` for the claimed ready state. Include `--pr`,
+`--expected-base`, `--expected-label ready-for-human-review`,
+`--expected-label ready-for-regression` for implementation branches that require
+Step 7b, `--forbid-label needs-fixes`, `--tracker-required true` when tracker
+status is claimed, and both `--require-review-summary true` and
+`--require-review-threads true` when Step 7 was configured. A helper
+`discrepancy` result sends the runner back to the appropriate existing gate:
+Step 7a for review findings, Step 8 for CI, Step 8a for labels/readiness, Step
+8b for tracker state, or human escalation for unavailable required surfaces.
+Only a passing self-check may be reported as terminal ("ready for human
+review").
 
 ---
 
@@ -2500,6 +2550,13 @@ state according to this table:
 - After cleanup, re-read the live tracker status and Project status. If the live
   status does not match the expected value in the table above, re-apply the
   tracker transition before reporting the item terminal.
+- Before reporting post-merge cleanup or tracker reconciliation complete, run
+  `item-completion-self-check.sh` for the cleanup claim, using the current base
+  branch (the merged workflow branch should already be deleted), the current
+  base worktree path, `--stage cleanup`, and
+  `--expected-tracker-status "<expected status>"`. Paste the
+  `## Ground-Truth Completion Verification` section into the cleanup report.
+  Any `discrepancy` or `unavailable_required` result keeps cleanup non-terminal.
 - If manual cleanup is required, clean up local branches and worktrees associated with the merged PR:
 
 ```bash

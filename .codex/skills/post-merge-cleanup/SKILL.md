@@ -27,6 +27,11 @@ description: After a development PR is merged and the remote branch deleted, syn
    - **GitHub Issues/Projects**: The script already closes the GitHub issue for implementation branches (if a merged PR is found). You still need to update the GitHub Projects board status field via `gh` CLI / GraphQL (per `docs/workflow/development-workflow/integrations/github-projects.md`).
    - **Other trackers**: Follow the same idea — set the issue to the appropriate status per the table above. See `docs/workflow/development-workflow/integrations/issue-tracker.md` and the tracker-specific doc under `docs/workflow/development-workflow/integrations/`.
    - If no issue identifier is present in the branch name or no tracker is in use, skip this step.
+7. Before reporting cleanup or tracker reconciliation complete for a workflow
+   item, run `scripts/development-workflow/item-completion-self-check.sh` with
+   `--stage cleanup` and the expected tracker status when claimed. Include its
+   `## Ground-Truth Completion Verification` section in the cleanup report; a
+   `discrepancy` or `unavailable_required` result means cleanup is not complete.
 
 **After cleanup and tracker update — suggest a retrospective if appropriate:**
 If this post-merge cleanup is the final action for a work item that was advanced in the current session (i.e., you drove the item through implementation, review, and merge in this conversation), suggest running a retrospective:

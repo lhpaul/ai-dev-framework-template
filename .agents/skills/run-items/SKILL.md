@@ -48,7 +48,12 @@ proposal step.
    For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
    items, require residual gate evidence before accepting an item as
    `ready-for-human-review`.
-11. After all in-scope PRs reach `ready-for-human-review`, inspect the effective
+11. Before accepting any in-scope item as terminal, require the item runner's
+   `## Ground-Truth Completion Verification` output from
+   `item-completion-self-check.sh` or run the helper directly from current
+   artifact state. Missing self-check evidence, `discrepancy`, or
+   `unavailable_required` keeps the item under Protocol 90 Step 5 supervision.
+12. After all in-scope PRs reach `ready-for-human-review`, inspect the effective
    guardrails. When the relevant stages allow `may_merge_pr: true`, run
    Guardrails Enforcement Gate 5 for each in-scope PR, including
    `run-epic-risk-classifier.sh` and `run-epic-delegated-gate.sh`; continue only
@@ -64,7 +69,7 @@ proposal step.
    `stages.<stage>.may_merge_pr: false` guardrail for each affected PR, and tell
    the human to invoke `$batch-merge` or adjust guardrails to permit delegated
    merging.
-12. For single-item advancement use `$run-item`; for epic-scoped runs use `$run-epic`;
+13. For single-item advancement use `$run-item`; for epic-scoped runs use `$run-epic`;
    for read-only portfolio scan and proposal use `$run-work`.
 
 > **Deprecation notice**: `/run-epic --items` is deprecated. Use `/run-items` for

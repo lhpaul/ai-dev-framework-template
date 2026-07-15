@@ -216,6 +216,21 @@ Additional checks for **PRs that add or modify branch creation, PR creation, or 
 - **Issue matching boundaries tested**: confirm tests cover numeric boundary cases, tracker-prefixed branches, lookalike paths, local/remote/worktree artifacts, open PRs, and any new workflow branch prefix introduced by the PR.
 - **Parent-visible disposition**: confirm duplicate-fork, wrong-base, scan-failure, and explicit-split results are visible in the parent runner summary or PR evidence before the item can be marked ready.
 
+Additional checks for **PRs that add or modify Work Item Runner completion,
+batch terminal reporting, or final-report examples**:
+
+- **Ground-truth completion verification required**: confirm Protocol 91, Protocol
+  90, mirrored item-orchestrator/orchestrator guidance, and command aliases
+  require the `## Ground-Truth Completion Verification` section from
+  `item-completion-self-check.sh` before any item is reported ready, done,
+  blocked, escalated, waiting on a human, waiting on merge, or cleanup complete.
+  Missing coverage in any runner path is an `important` finding; missing tests
+  for the helper or changed report behavior is `blocking`.
+- **No unsupported terminal examples**: final-report examples must not claim
+  readiness, completion, blocked, escalated, or waiting-on-human states without a
+  ground-truth evidence section or an explicit not-applicable rationale. Treat
+  unsupported examples as `important` because downstream agents copy them.
+
 Additional checks for **PRs that add new filter parameters to a tool schema** (Zod, JSON Schema, Joi, Pydantic, OpenAPI, or any equivalent contract-declaration mechanism):
 
 - **Filter-wiring verification**: confirm the new filter is wired to the query builder's WHERE clause or equivalent filter-application function — not only declared in the schema.

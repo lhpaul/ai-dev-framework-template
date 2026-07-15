@@ -37,3 +37,10 @@ Recommended model tier: `balanced`
 13. For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
     items, run `scope-residual-gate.sh` before readiness and treat `block` or
     `escalate` as non-terminal.
+14. Before any terminal Work Item Runner Summary (`ready`, `done`, `blocked`,
+    `escalated`, waiting on human, waiting on merge, or cleanup complete), run
+    `scripts/development-workflow/item-completion-self-check.sh` for the claimed
+    state and paste its `## Ground-Truth Completion Verification` section into
+    the summary. A `discrepancy` or `unavailable_required` result is
+    non-terminal; return to the matching Protocol 91 gate instead of reporting
+    success.

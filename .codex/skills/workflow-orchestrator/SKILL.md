@@ -19,3 +19,9 @@ Recommended model tier: `economy`
 9. When supervising sweep, batch, helper-extraction, numeric-target, or
    pattern-completeness items, require residual gate evidence before accepting
    `ready-for-human-review` as terminal.
+10. Before accepting any item as terminal in a batch summary, require the
+    Work Item Runner's `## Ground-Truth Completion Verification` section from
+    `scripts/development-workflow/item-completion-self-check.sh` or run the
+    helper directly from current artifact state. Do not declare the batch item
+    complete when the section is missing, reports `discrepancy`, or reports
+    `unavailable_required`.
