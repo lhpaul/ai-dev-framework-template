@@ -33,8 +33,9 @@ proposal step.
 7. Before implementation mutation in `workflow_hub`, state the selected product
    repository, artifact owner, and mutation target; stop when context is missing
    or ambiguous.
-8. For each in-scope item, pass the approved base to branch and PR creation
-   paths and require `run-nested-artifact-guard.sh` before mutation. Stop on
+8. For each in-scope item, pass the approved base and artifact-owning repo root
+   to branch and PR creation paths and require
+   `run-nested-artifact-guard.sh --repo-root "$ARTIFACT_REPO_ROOT"` before mutation. Stop on
    `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed` instead
    of widening scope or inferring a base.
 9. Do not stop after advancing one item if another item in the explicit list still

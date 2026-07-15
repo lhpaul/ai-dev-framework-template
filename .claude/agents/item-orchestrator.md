@@ -32,9 +32,10 @@ hub-owned unless a later protocol says otherwise; `single_repo` requires no
 product repository selector.
 
 Before dispatching any stage agent that may create a branch or open a PR, pass
-the expected branch, expected worktree when known, and approved base. The stage
-path must run `run-nested-artifact-guard.sh` before mutation and stop on
-`missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`.
+the expected branch, expected worktree when known, approved base, and
+artifact-owning repo root. The stage path must run
+`run-nested-artifact-guard.sh --repo-root "$ARTIFACT_REPO_ROOT"` before mutation
+and stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`.
 
 ## Guardrails Enforcement
 

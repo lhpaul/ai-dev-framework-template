@@ -215,6 +215,12 @@ run_test "expected_path_wrong_branch_exit_one" "1" "$(status_code "$out")"
 run_contains "expected_path_wrong_branch_result" "RESULT=blocked_duplicate" "$(body "$out")"
 run_contains "expected_path_wrong_branch_reported" "feature/1200-wrong-worktree-branch" "$(body "$out")"
 
+repo="$(make_repo expected-branch-wrong-path)"
+out="$(guard_output --repo-root "$repo" --mode pre-create --issue 1200 --expected-branch feature/1200-canonical-path --expected-worktree "$TMP_ROOT/worktree-missing-expected-path" --approved-base develop)"
+run_test "expected_branch_wrong_path_exit_one" "1" "$(status_code "$out")"
+run_contains "expected_branch_wrong_path_result" "RESULT=blocked_duplicate" "$(body "$out")"
+run_contains "expected_branch_wrong_path_reported" "feature/1200-canonical-path" "$(body "$out")"
+
 repo="$(make_repo wrong-pr-base)"
 export MOCK_GH_PR_MODE=wrong_base
 out="$(guard_output --repo-root "$repo" --mode pre-pr --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop)"

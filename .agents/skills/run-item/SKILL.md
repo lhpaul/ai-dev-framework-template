@@ -34,7 +34,8 @@ advances exactly one non-epic item through Protocol 91.
    repository, artifact owner, and mutation target; stop when context is missing
    or ambiguous.
 6. Before branch creation or PR creation for a tracker-backed item, run
-   `run-nested-artifact-guard.sh` with the expected branch and approved base.
+   `run-nested-artifact-guard.sh` with the expected branch, approved base, and
+   artifact-owning repo root (`--repo-root "$ARTIFACT_REPO_ROOT"`).
    Stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`;
    explicit split work requires parent approval and `--allow-split true`.
 7. **Guardrails enforcement**: Use portfolio-resolved guardrails from handoff when

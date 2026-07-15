@@ -65,8 +65,10 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    treat blocked or escalated residuals as complete.
 9. Before any child item creates a branch or opens a PR, run
    `run-nested-artifact-guard.sh` with the resolved issue, expected branch, and
-   approved base. Stop on missing base, duplicate artifacts, wrong-base PRs, or
-   scan failures unless an explicit split is approved and recorded.
+   approved base, plus the artifact-owning repo root
+   (`--repo-root "$ARTIFACT_REPO_ROOT"`). Stop on missing base, duplicate
+   artifacts, wrong-base PRs, or scan failures unless an explicit split is
+   approved and recorded.
 10. **Guardrails layer context**: The `--delegate-review`, `--may-merge`,
    `--may-start-backlog`, and `--max-risk` flags are the **invocation-override**
    layer (highest priority) of the three-layer guardrails precedence. The

@@ -148,11 +148,15 @@ branch_conflicts_expected_stage() {
 is_canonical_artifact() {
   local kind="$1"
   local branch="$2"
+  local path_or_number="$3"
 
+  if [ "$kind" = "worktree" ] && [ -n "$EXPECTED_WORKTREE" ]; then
+    [ "$branch" = "$EXPECTED_BRANCH" ] && [ "$path_or_number" = "$EXPECTED_WORKTREE" ]
+    return $?
+  fi
   if [ "$branch" = "$EXPECTED_BRANCH" ]; then
     return 0
   fi
-  [ "$kind" != "worktree" ] || return 1
   return 1
 }
 
