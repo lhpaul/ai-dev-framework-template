@@ -1178,13 +1178,15 @@ the enforcement mechanism — do not skip them.
 - [ ] No new database schema migrations
 - [ ] No new architectural patterns
 - [ ] Human provided a clear, self-contained brief
-- [ ] **Fast Track blast-radius gate passed** — the issue title, body, recent comments, and any linked spec/plan show no concrete multi-layer signal, an external-system result of no signal found, and either no high call-site volume for an identifiable primary entity or an explicit human override for high call-site volume
+- [ ] **Fast Track blast-radius gate passed** — the issue title, body, recent comments, and any linked spec/plan show no concrete multi-layer signal, an external-system result of no signal found, primary-entity ambiguity does not block a defensible routing decision, and either no high call-site volume for an identifiable primary entity or an explicit human override for high call-site volume
 
 **Fast Track blast-radius gate**: Apply the deterministic decision rule in
 [`91-orchestrate-work-protocol.md` Step 2 — Fast Track blast-radius gate](./91-orchestrate-work-protocol.md)
 before selecting Fast Track. That section is the authoritative definition of multi-layer signals, primary-entity identification, non-test call-site volume, external-system impact, thresholds, summary evidence, and routing decisions.
 
-**If any criterion fails**: Use the Full Pipeline instead.
+**If any criterion fails**: Follow the Protocol 91 gate outcome. That may mean
+using the Full Pipeline, asking for clarification, or requiring a tracked
+pre-flight follow-up before any later Fast Track dispatch.
 
 **If scope expands during implementation**: Stop immediately. Report to the human. Do not silently expand scope. Also stop if implementation discovers high call-site volume or external-system impact that was missed during routing.
 

@@ -367,7 +367,7 @@ them when Type is available.
 
 **Decision rule (deterministic)**:
 
-- **No concrete multi-layer signal, external-system result is no signal found, and either no high call-site volume for an identifiable primary entity or an explicit human override for high call-site volume is recorded** → the item may proceed as Fast Track.
+- **No concrete multi-layer signal, external-system result is no signal found, primary-entity ambiguity does not block a defensible routing decision, and either no high call-site volume for an identifiable primary entity or an explicit human override for high call-site volume is recorded** → the item may proceed as Fast Track.
 - **At least one concrete multi-layer signal found** → the item must NOT be fast-tracked. Route it to the Full Pipeline (spec → plan → implement) so all layers are planned and coordinated. Update the tracker status to **Writing Spec** and dispatch `01-generate-spec-protocol.md`.
 - **High call-site volume found without explicit human override** → the item must NOT be fast-tracked. Route it to the Full Pipeline and include a visible note such as: "High call-site volume detected: N files / M occurrences; routing to Full Pipeline so scope can be audited before implementation."
 - **Primary entity is ambiguous** → record why the call-site check is not applicable, or ask for clarification when the ambiguity prevents a defensible Fast Track decision.
