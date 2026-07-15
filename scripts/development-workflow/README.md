@@ -136,6 +136,7 @@ What it does:
   block the next legitimate stage.
 - Reports duplicate issue-scoped artifacts as `RESULT=blocked_duplicate`.
 - Reports wrong-base open PRs as `RESULT=wrong_base`.
+- Reports parent audit forks as `RESULT=unexpected_fork`.
 - Reports missing parent-approved base context as `RESULT=missing_base` in all
   modes, including `audit`.
 - Reports scan failures as `RESULT=scan_failed` instead of assuming clean.
