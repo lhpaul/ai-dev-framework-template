@@ -469,6 +469,14 @@ Complete all applicable checks:
    - Full Pipeline: confirm every spec acceptance criterion is implemented or explicitly documented as an approved deviation.
    - Refactor: confirm every implementation-plan acceptance criterion is addressed.
    - Fast Track Fix and Hotfix: confirm the diff addresses the issue body's stated problem and proposed fix.
+4. **Branch-stage discipline check**: implementation files belong on
+   implementation branches (`feature/*`, `fix/*`, `refactor/*`, or
+   `hotfix/*`), not on `spec/*` or `implementation-plan/*` branches. If the
+   current PR is a documentation-stage PR, run
+   `scripts/development-workflow/check-documentation-stage-alignment.sh --pr <pr_number>`
+   before readiness. A mismatch must be corrected by moving/removing
+   implementation files from the documentation-stage PR or escalated for a
+   human workflow-stage decision.
 
 If the implementation includes any test script, test function, or validation harness, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) also applies. The pre-submission pass reviews the broader PR diff; it does not replace the harness-specific checklist from #614.
 

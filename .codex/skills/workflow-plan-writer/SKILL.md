@@ -23,8 +23,9 @@ Recommended model tier: `premium`
 12. Before opening the draft plan PR, complete Protocol 02's Document Quality Gate and include the gate log in the PR description.
 13. Before opening the draft plan PR, call `ensure_on_project_board <issue_number> "Writing Plan"` from `scripts/development-workflow/workflow-lib.sh`. This is a no-op when the issue is already on the board.
 14. Before creating the plan branch or opening the plan PR for a tracker-backed item, run `run-nested-artifact-guard.sh` with the expected `implementation-plan/*` branch and approved artifact base. Stop on missing base, duplicate artifacts, wrong-base PRs, or scan failures.
-15. When the branch is created, continue through reviewer gate, PR creation, and PR readiness unless the protocol surfaces a real human decision.
-16. Resolve repository mode, artifact owner, and artifact base branch before
+15. Keep implementation files off `implementation-plan/*` branches. Before plan PR readiness, Protocol 91 Step 8a must run `check-documentation-stage-alignment.sh`; a mismatch must be corrected or escalated before `ready-for-human-review`.
+16. When the branch is created, continue through reviewer gate, PR creation, and PR readiness unless the protocol surfaces a real human decision.
+17. Resolve repository mode, artifact owner, and artifact base branch before
     writing: `single_repo` uses the current repository; `workflow_hub` keeps
     plans and plan PRs hub-owned on the hub artifact base branch, even when the
     product implementation base is different; `product_repo` should report the

@@ -65,6 +65,10 @@ Check:
 
 - Required spec template sections are present and no placeholders are unintentionally left behind
 - Spec PRs include a current `Document Quality Gate` log in the PR description; a missing, obviously incomplete, stale, or contradictory log is an important finding by default and blocking when it claims unchecked coverage
+- Spec PRs contain only expected spec-stage artifacts. Implementation files,
+  migrations, product source files, workflow scripts, or unrelated docs on a
+  `spec/*` branch are a workflow-stage blocker unless a human explicitly
+  escalated and accepted the exception outside the automatic readiness path.
 - Use cases are explicit: actor, trigger, steps, outcome
 - Acceptance criteria are specific and testable
 - When a tracker issue is linked, brief objectives are fully covered via a visible matrix: each objective maps to AC(s) or explicit out-of-scope deferral with rationale
@@ -82,6 +86,7 @@ Typical `blocking` issues:
 - Spec drift that would force engineering to guess
 - URL-serialized state introduced without explicit parameter key names and allowed values
 - `CHANGELOG.md` is modified in this PR — `spec/*` branches are exempt from CHANGELOG entries; remove any CHANGELOG modification before merging
+- Implementation or non-stage artifacts are present on the `spec/*` PR diff
 
 Typical `important` issues:
 
@@ -104,6 +109,12 @@ Check:
 
 - Every use case and acceptance criterion from the spec (or from the work item brief for Refactor items) is addressed
 - Plan PRs include a current `Document Quality Gate` log in the PR description; a missing, obviously incomplete, stale, or contradictory log is an important finding by default and blocking when it claims unchecked coverage
+- Plan PRs contain only expected plan-stage artifacts: the implementation plan
+  and any plan-stage smoke-test runbook. Implementation files, migrations,
+  product source files, workflow scripts, or unrelated docs on an
+  `implementation-plan/*` branch are a workflow-stage blocker unless a human
+  explicitly escalated and accepted the exception outside the automatic
+  readiness path.
 - Steps are specific enough to execute without guessing
 - Ordering is feasible and dependencies are explicit
 - When pattern-based completeness applies, enumerated counts/paths are validated against the plan's Verification Log commands and outputs
@@ -139,6 +150,8 @@ Typical `blocking` issues:
 - The plan introduces unsafe or contradictory architecture decisions
 - A CHANGELOG literal in the Implementation Order uses conventional-commit format (`fix(scope): message`) instead of the project's `**Bold Title** (#N):` format
 - `CHANGELOG.md` is modified in this PR — `implementation-plan/*` branches are exempt from CHANGELOG entries; remove any CHANGELOG modification before merging
+- Implementation or non-stage artifacts are present on the
+  `implementation-plan/*` PR diff
 - A behavioral claim about framework/runtime behavior (guard logic, config inheritance, scope, API contract) cannot be verified against the codebase and is not flagged as "unverified"
 - A behavioral guarantee (e.g., "at most once", "bounded", "idempotent") does not cite the specific mechanism (flag, guard clause, constraint, lock) that enforces it
 - Cross-section inconsistency: the same function, constant, architecture decision, file path, directory name, or route/URL structure is defined or described differently in two or more sections of the plan (e.g., incompatible function signatures, conflicting constant values, contradictory decision rationales, a file placed under different directories in different sections, a route pattern that differs between sections)

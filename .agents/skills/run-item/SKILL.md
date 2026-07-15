@@ -50,12 +50,15 @@ advances exactly one non-epic item through Protocol 91.
    items, run Protocol 91's residual gate before `ready-for-human-review`; block
    or escalate instead of reporting terminal when residual evidence is missing or
    incomplete.
-8. Epic-like targets must use `$run-epic` / `/run-epic`, not this command.
-9. When the delegated merge gate returns `merge_allowed`, continue through merge,
+8. For `spec/*` and `implementation-plan/*` PRs, run Protocol 91 Step 8a's
+   documentation-stage alignment checker before readiness; correct or escalate
+   mismatches instead of applying `ready-for-human-review`.
+9. Epic-like targets must use `$run-epic` / `/run-epic`, not this command.
+10. When the delegated merge gate returns `merge_allowed`, continue through merge,
    remote/local branch cleanup, `post-merge-cleanup.sh`, and live tracker
    verification before reporting the item terminal. Do not stop at
    `ready-for-human-review` in a delegated merge run.
-10. Before reporting any terminal state, run
+11. Before reporting any terminal state, run
     `scripts/development-workflow/item-completion-self-check.sh` for the claimed
     state and include its `## Ground-Truth Completion Verification` section in
     the Work Item Runner Summary. Treat `discrepancy` and

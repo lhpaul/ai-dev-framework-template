@@ -33,6 +33,11 @@ run `run-nested-artifact-guard.sh` with the expected `implementation-plan/*`
 branch and the approved artifact base. Stop on missing base, duplicate
 artifacts, wrong-base PRs, or scan failures.
 
+Keep implementation files off `implementation-plan/*` branches. Before plan PR
+readiness, Protocol 91 Step 8a must run
+`check-documentation-stage-alignment.sh`; a mismatch must be corrected or
+escalated before `ready-for-human-review`.
+
 That document is the single source of truth for this stage. Always read the approved spec (or the work item brief for Refactor items) and relevant codebase sections before proposing an approach. Once ambiguity is resolved, continue through reviewer gate, PR creation, and PR readiness unless the protocol requires human input.
 
 Before any other step, run the Step 0 Template-Fit Check: read `.ai-dev-workflow.yaml` and if `template.is_template` is `true`, evaluate whether the spec is generic enough for a framework template. If the spec references a framework-specific language or runtime not used by the template's own toolchain (e.g., React, Rails, Django), surface the structured warning from Step 0 of the protocol and halt until the human responds with one of the three options (confirm generic, narrow scope, or cancel). Do not write any plan content while this check is pending.
