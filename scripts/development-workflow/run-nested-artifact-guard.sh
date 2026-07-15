@@ -259,8 +259,10 @@ scan_open_prs() {
     printf 'REQUIRED_ACTION=Install or expose gh CLI before nested artifact creation.\n'
     exit 1
   fi
-  remote_url="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || true)"
-  repo_slug="$(github_repo_from_url "$remote_url")"
+  repo_slug=""
+  if remote_url="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null)"; then
+    repo_slug="$(github_repo_from_url "$remote_url")"
+  fi
   if [ -n "$repo_slug" ]; then
     output="$(gh pr list --repo "$repo_slug" --state open --search "$ISSUE_NUMBER" --json number,headRefName,baseRefName,title 2>/dev/null)" || {
       printf 'RESULT=scan_failed\n'
