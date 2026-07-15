@@ -994,7 +994,10 @@ git worktree remove <worktree-path>
 
 After removing the worktree, verify that the CWD is still valid by running a simple command like `pwd` before executing any further shell operations.
 
-**When not in a parallel batch**: Worktree creation is optional but recommended for large development folders or long-running work. If not using a dedicated worktree, ensure the working directory is clean before proceeding.
+**When not in batch dispatch**: Worktree creation is optional only for direct
+single-item runs where `BATCH_CONTEXT=true` is absent. Mutating explicit-list
+batch dispatch, including sequential fallback, must use the Protocol 90
+manifest-assigned worktree path.
 
 **Permission-denial early exit (subagent runs only)**: If at any point during the run the harness responds with the known harness failure pattern — a message containing the phrase `"Permission to use"` AND a denied tool name (`Edit`, `Write`, or `Bash`) — the subagent must **immediately stop all further work** and return the following structured string to the Portfolio Orchestrator:
 

@@ -58,7 +58,7 @@ Key responsibilities:
   require a distinct absolute worktree path plus `isolation: "worktree"` for
   every mutating item. Stop before dispatch on missing isolation assignment or
   duplicate worktree path. Non-isolated runners are allowed only when explicitly
-  classified read-only and will not edit files, switch branches, commit, push,
+  classified `read_only` and will not edit files, switch branches, commit, push,
   mutate PRs, change labels, or update tracker state.
 - In `workflow_hub`, state the selected product repository, artifact owner, and mutation
   target before implementation mutation; stop when context is missing or ambiguous.

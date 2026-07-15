@@ -57,7 +57,7 @@ That document is the single source of truth for this supporting role. Key respon
   require a distinct absolute worktree path plus `isolation: "worktree"` for
   every mutating item; stop before dispatch on missing isolation assignment or
   duplicate worktree path. Non-isolated runners are allowed only when explicitly
-  classified read-only and will not edit files, switch branches, commit, push,
+  classified `read_only` and will not edit files, switch branches, commit, push,
   mutate PRs, change labels, or update tracker state
 - Use the helper scripts in `scripts/development-workflow/` to inspect state, plan batches, and supervise resumes
 - Dispatch the internal `item-orchestrator` handoff target for each selected or
