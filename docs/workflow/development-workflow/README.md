@@ -366,11 +366,11 @@ Use it only when all of the following are true:
 - No new architectural pattern is being introduced.
 - No database migration is involved.
 - The human brief is self-contained.
-- No multi-layer scope signals are present — the issue title, body, and any linked spec/plan do not contain concrete signals that the change spans more than one architectural layer (e.g., database schema + API endpoint + UI component, or data pipeline + storage + mapper + presentation). See the cross-layer scope check in `91-orchestrate-work-protocol.md` Step 2 for the decision rule.
+- The Fast Track blast-radius gate has no blockers. The issue title, body, recent comments, and any linked spec/plan must show no concrete multi-layer signal, an external-system result of no signal found, no primary-entity ambiguity that blocks a defensible routing decision, and either no high call-site volume for an identifiable primary entity or an explicit human override for high call-site volume. Cross-layer scope checks architectural spread; call-site volume checks propagation breadth even when a change stays within one or two layers. See the Fast Track blast-radius gate in `91-orchestrate-work-protocol.md` Step 2 for the decision rule.
 
 Path: `fix/[slug]` from `develop` -> implement -> review gate -> smoke test as needed -> merge.
 
-If the change turns out to be larger than expected, or if multi-layer scope signals are discovered during implementation, stop and expand back into the normal staged workflow instead of silently widening scope.
+If the change turns out to be larger than expected, or if multi-layer scope signals, high call-site volume, or external-system impact are discovered during implementation, stop and expand back into the normal staged workflow instead of silently widening scope.
 
 #### Hotfix
 

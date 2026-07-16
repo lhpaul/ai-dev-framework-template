@@ -13,7 +13,7 @@ Before running this smoke test:
 
 - [ ] You are on the implementation branch for issue #1207.
 - [ ] The implementation diff is complete.
-- [ ] No CHANGELOG verification is required for this plan PR; the later implementation PR must include its own CHANGELOG entry.
+- [ ] The implementation PR includes its `[Unreleased]` CHANGELOG entry.
 
 ---
 
@@ -92,7 +92,8 @@ Before running this smoke test:
 **Maps to**: all ACs
 
 1. Run markdownlint on every changed markdown file.
-2. Fix any reported trailing whitespace, relative-link, or newline issues.
+2. Run the CHANGELOG duplicate-header check.
+3. Fix any reported trailing whitespace, relative-link, newline, or CHANGELOG structure issues.
 
 **Expected result**: Markdown lint passes for the plan, runbook, and implementation documentation changes.
 

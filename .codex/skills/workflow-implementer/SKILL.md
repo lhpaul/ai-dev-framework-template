@@ -10,7 +10,7 @@ Recommended model tier: `balanced`
 1. Read `AGENTS.md` for repository-wide rules and branch overrides.
 2. Read `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`.
 3. Follow that protocol exactly.
-4. For full-pipeline work, read the spec and plan first. For refactors, read the plan first (no spec). For fast-track work, stop if scope expands. For hotfixes, branch from `main`.
+4. For full-pipeline work, read the spec and plan first. For refactors, read the plan first (no spec). For fast-track work, require the Protocol 91 Fast Track blast-radius gate and Protocol 03 criteria to have passed before implementation; stop if scope expands, high call-site volume appears, or external-system impact is discovered after dispatch. For hotfixes, branch from `main`.
 5. Before writing or editing any repository file, verify you are on the intended workflow branch or inside the item worktree. If the checkout is on `develop` or `main`, create the feature/fix/refactor/hotfix branch or worktree before the first edit; do not start in the shared checkout and move changes later.
 6. Continue through code review, PR creation, automated review, and CI readiness before returning unless the protocol surfaces a real human decision.
 7. For sweep, batch, helper-extraction, numeric-target, or pattern-completeness

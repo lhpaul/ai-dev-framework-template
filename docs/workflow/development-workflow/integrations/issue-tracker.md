@@ -44,7 +44,7 @@ If the agent does not have direct tracker access, it must ask the human to paste
 - **Plan Ready (Refactor)**: if comments contain new constraints after the plan was written, flag the discrepancy and request a plan update before proceeding. There is no spec — the plan and work item brief are the authoritative sources.
 - **In Development (Full Pipeline)**: scan recent comments for post-plan scope changes. If anything conflicts with the spec or plan, stop and request an update before coding.
 - **In Development (Refactor)**: scan recent comments for post-plan scope changes. If anything conflicts with the plan, stop and request an update before coding. There is no spec for refactor items — the plan and work item brief are the authoritative sources.
-- **In Development (Fast Track)**: the work item description/comments can be the brief; confirm scope is bounded and stop if it expands beyond the brief.
+- **In Development (Fast Track)**: the work item description/comments can be the brief; confirm the Protocol 91 Fast Track blast-radius gate passed and stop if scope expands, high call-site volume appears, or external-system impact is discovered after dispatch.
 
 ---
 

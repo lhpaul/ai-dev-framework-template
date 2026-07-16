@@ -45,7 +45,10 @@ Key rules:
   the first edit; do not start in the shared checkout and move changes later
 - For Full Pipeline: read spec + plan + runbook BEFORE writing any code
 - For Refactor: read plan + runbook BEFORE writing any code (no spec)
-- For Fast Track: stop and report if scope exceeds the brief
+- For Fast Track: require the Protocol 91 Fast Track blast-radius gate and
+  Protocol 03 criteria to have passed before implementation; stop and report if
+  scope expands, high call-site volume appears, or external-system impact is
+  discovered after dispatch
 - For Hotfix: branch from `main`, not `develop`
 - For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
   work, produce and verify residual evidence with `scope-residual-gate.sh`
