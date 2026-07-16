@@ -81,8 +81,9 @@ proposal step.
    merging.
    Report terminal outcomes per in-scope PR as `merged`,
    `ready_human_merge`, `merge_blocked`, `policy_inconsistent`, or
-   `out_of_scope`. A merge-granted PR that stops at readiness without a named
-   blocker is `policy_inconsistent`.
+   `out_of_scope`. A `merge_granted` PR that stops at readiness without a
+   named blocker is `policy_inconsistent`; a `merge_denied` PR stops at
+   `ready_human_merge`.
 15. For single-item advancement use `$run-item`; for epic-scoped runs use `$run-epic`;
    for read-only portfolio scan and proposal use `$run-work`.
 

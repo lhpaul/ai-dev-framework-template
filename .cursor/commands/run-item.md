@@ -55,5 +55,7 @@ Key responsibilities:
   terminal
 - Treat merge authority explicitly: `merge_granted` means readiness is
   intermediate and the runner continues through merge; `merge_denied` means the
-  ready PR stops as `ready_human_merge` and no merge command is run
+  ready PR stops as `ready_human_merge` and no merge command is run. Stopping
+  at readiness without a named blocker in a merge-granted run is
+  `policy_inconsistent`
 - If the target is epic-like, stop and use `/run-epic` instead
