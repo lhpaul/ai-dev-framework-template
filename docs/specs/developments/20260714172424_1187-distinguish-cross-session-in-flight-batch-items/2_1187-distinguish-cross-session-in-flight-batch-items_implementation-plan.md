@@ -57,10 +57,16 @@ tracker statuses, persistence, external services, or product runtime code.
       name the reason they are outside the current `/run-work` decision, such as
       waiting on human review, waiting on merge, already handled elsewhere, or
       not dispatch-eligible. For held items, reuse or refine `HOLD_REASON`.
+- [ ] Derive `REPORT_CATEGORY` from the combined helper block, not from
+      `DISPATCH` alone. If tracker status, PR labels, or `NEXT_ACTION` show the
+      item is already waiting on human review or merge, emit
+      `REPORT_CATEGORY=informational` even when legacy `DISPATCH=proposed` is
+      present for compatibility.
 - [ ] Keep the existing `DISPATCH` semantics intact:
-      `DISPATCH=proposed` may map to `actionable_resume` or `proposed_batch`
-      depending on whether the item is resume work or a Backlog start candidate;
-      `DISPATCH=held` maps to `held`; `DISPATCH=skip` maps to informational.
+      `DISPATCH=proposed` remains a compatibility signal and maps to
+      `actionable_resume` or `proposed_batch` only after the waiting-human
+      informational override above has been checked; `DISPATCH=held` maps to
+      `held`; `DISPATCH=skip` maps to informational.
 - [ ] If the implementation needs Backlog-specific classification that is not
       present in the helper block, use the already available tracker status or
       next-action evidence. Do not introduce new tracker fields.
