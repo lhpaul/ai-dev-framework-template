@@ -36,6 +36,10 @@ the expected branch, expected worktree when known, approved base, and
 artifact-owning repo root. The stage path must run
 `run-nested-artifact-guard.sh --repo-root "$ARTIFACT_REPO_ROOT"` before mutation
 and stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`.
+For substantial or multi-part mutating stage work, also instruct the stage agent
+to commit immediately after each completed logical sub-part, avoid batching all
+completed sub-parts into one end-of-run commit, and never commit incomplete,
+failing, or incoherent edits only to satisfy this requirement.
 
 ## Guardrails Enforcement
 

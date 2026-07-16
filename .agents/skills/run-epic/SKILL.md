@@ -60,6 +60,10 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    prior worktree-isolated run, run the Protocol 95/91 checkpoint-resume
    worktree preflight before any mutation. Re-entering the worktree is a CWD
    safety check only; it does not satisfy, waive, or clear checkpoint state.
+   For substantial or multi-part mutating child work, commit immediately after
+   each completed logical sub-part, do not intentionally batch all completed
+   sub-parts into one end-of-run commit, and never commit incomplete, failing,
+   or incoherent edits only to satisfy the requirement.
    For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
    sub-items, include residual gate status in item/epic summaries and do not
    treat blocked or escalated residuals as complete.

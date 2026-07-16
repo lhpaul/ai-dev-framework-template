@@ -59,6 +59,10 @@ That document is the single source of truth for this supporting role. Key respon
   duplicate worktree path. Non-isolated runners are allowed only when explicitly
   classified `read_only` and will not edit files, switch branches, commit, push,
   mutate PRs, change labels, or update tracker state
+- Include the incremental commit requirement in every substantial or multi-part
+  mutating item handoff: commit immediately after each completed logical
+  sub-part, do not intentionally batch all completed sub-parts into one final
+  commit, and never commit incomplete or failing work only to satisfy the rule
 - Use the helper scripts in `scripts/development-workflow/` to inspect state, plan batches, and supervise resumes
 - Dispatch the internal `item-orchestrator` handoff target for each selected or
   approved item when possible

@@ -30,6 +30,10 @@ advances exactly one non-epic item through Protocol 91.
    and follow it exactly. Do **not** delegate to `workflow-item-orchestrator` in the
    same run after Step 2 — that skill also runs the prelude and would duplicate
    scope/policy work.
+   For substantial or multi-part mutating item work, commit immediately after
+   each completed logical sub-part, do not intentionally batch all completed
+   sub-parts into one end-of-run commit, and never commit incomplete, failing,
+   or incoherent edits only to satisfy the requirement.
 5. Before implementation mutation in `workflow_hub`, state selected product
    repository, artifact owner, and mutation target; stop when context is missing
    or ambiguous.
