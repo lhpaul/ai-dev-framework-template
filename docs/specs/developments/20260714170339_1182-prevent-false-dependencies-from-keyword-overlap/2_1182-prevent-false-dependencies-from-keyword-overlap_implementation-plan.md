@@ -80,10 +80,11 @@ feature to merge first.
     `spec`, `plan`, `implementation`, `workflow`, `agent`, `add`, and `update`.
   - Treat overlap as meaningful only when at least two significant terms overlap
     or one normalized phrase overlaps.
-  - Classify `Dependent` only with concrete evidence: explicit issue reference,
-    dependency phrase (`depends on`, `blocked by`, `requires`, `waiting on`), a
-    shared acceptance criterion that names the other issue, or a
-    human-confirmed prerequisite.
+  - Classify `Dependent` only with concrete evidence: an explicit issue
+    reference, a dependency phrase (`depends on`, `blocked by`, `requires`,
+    `waiting on`) that names an issue reference or peer-specific target, a shared
+    acceptance criterion that names the other issue, or a human-confirmed
+    prerequisite.
   - Classify `Orthogonal` when meaningful overlap exists but issue objectives
     describe independent outcomes and no concrete dependency evidence appears.
   - Classify `Unclear` when overlap exists and the available text contains
