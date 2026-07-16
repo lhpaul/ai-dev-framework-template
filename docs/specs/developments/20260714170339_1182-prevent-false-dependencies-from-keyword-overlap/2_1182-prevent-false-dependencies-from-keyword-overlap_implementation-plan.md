@@ -96,9 +96,13 @@ feature to merge first.
     decision language such as `confirmed`, `approved`, `correction`,
     `clarifying`, or `decision`, and references the selected issue or appears on
     the selected issue.
-  - Use the newest matching decision when multiple decisions conflict; include
-    the older source in `evidence[]` so the orchestrator can stop if the conflict
-    remains ambiguous.
+  - When multiple decisions conflict and source ordering is available, use the
+    newest matching decision only if it directly resolves the dependency
+    question. Include the older source in `evidence[]`.
+  - When source ordering is unavailable, or the newest decision does not clearly
+    resolve the dependency question, classify the relationship as `Unclear`,
+    set `blocking=true`, and include both records in `evidence[]` plus
+    `humanAction`.
 
 ### Workflow Protocols
 
@@ -210,8 +214,9 @@ issue titles, bodies, comments, and optional decision records.
 5. Issue #1182 regression: overlapping `public site components` language plus
    separate objectives classifies as `Orthogonal`.
 6. Conflicting human decisions: newest explicit human decision wins only when
-   source ordering is available; otherwise the helper emits `Unclear` with both
-   evidence records.
+   source ordering is available and it clearly resolves the dependency question;
+   otherwise the helper emits `Unclear`, `blocking=true`, `humanAction`, and
+   both evidence records.
 7. Low-impact overlap: one shared generic term such as `component` or
    `workflow` is ignored and does not create a relationship row.
 
