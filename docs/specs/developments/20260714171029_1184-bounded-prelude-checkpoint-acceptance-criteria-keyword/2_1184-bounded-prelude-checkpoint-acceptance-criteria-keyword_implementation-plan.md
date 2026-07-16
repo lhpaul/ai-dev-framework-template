@@ -32,10 +32,10 @@ not become too permissive.
 | Check | Command / query | Result |
 | --- | --- | --- |
 | Repo revision | `git rev-parse --short HEAD` | `38829f7` |
-| Current checkpoint classifier | `nl -ba scripts/development-workflow/run-epic-policy-recommender.sh \| sed -n '229,245p'` | The spec-stage checkpoint condition currently matches `ambiguous`, `unclear`, `tbd`, `open question`, `acceptance criteria`, and `unresolved product` in one text-wide regex. |
-| Shared prelude entry point | `sed -n '1,95p' docs/workflow/development-workflow/bounded-run-prelude.md` | `/run-item`, `/run-items`, and `/run-epic` share `run-bounded-prelude.sh`, which delegates checkpoint policy to `run-epic-policy-recommender.sh`. |
-| Existing checkpoint tests | `nl -ba scripts/development-workflow/tests/test-run-epic-policy-recommender.sh \| sed -n '267,376p'` | Existing focused tests cover schema, sensitive-change, explicit checkpoint override, text output, and blocked-item cases, but not acceptance-criteria parsing. |
-| Existing documentation wording | `sed -n '95,145p' docs/workflow/development-workflow/protocols/95-run-epic-protocol.md` | Protocol 95 documents spec/product checkpoints as "unresolved product or acceptance-criteria ambiguity", which should be preserved but clarified after implementation. |
+| Current checkpoint classifier | Review the spec-stage checkpoint recommendation logic in `scripts/development-workflow/run-epic-policy-recommender.sh`. | The spec-stage checkpoint condition currently matches `ambiguous`, `unclear`, `tbd`, `open question`, `acceptance criteria`, and `unresolved product` in one text-wide regex. |
+| Shared prelude entry point | Review the bounded-run prelude overview and policy recommendation sections in `docs/workflow/development-workflow/bounded-run-prelude.md`. | `/run-item`, `/run-items`, and `/run-epic` share `run-bounded-prelude.sh`, which delegates checkpoint policy to `run-epic-policy-recommender.sh`. |
+| Existing checkpoint tests | Review the focused checkpoint-policy cases in `scripts/development-workflow/tests/test-run-epic-policy-recommender.sh`. | Existing focused tests cover schema, sensitive-change, explicit checkpoint override, text output, and blocked-item cases, but not acceptance-criteria parsing. |
+| Existing documentation wording | Review the checkpoint policy guidance in `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md`. | Protocol 95 documents spec/product checkpoints as "unresolved product or acceptance-criteria ambiguity", which should be preserved but clarified after implementation. |
 
 ---
 
