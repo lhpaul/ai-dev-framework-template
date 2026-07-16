@@ -79,6 +79,10 @@ proposal step.
    `stages.<stage>.may_merge_pr: false` guardrail for each affected PR, and tell
    the human to invoke `$batch-merge` or adjust guardrails to permit delegated
    merging.
+   Report terminal outcomes per in-scope PR as `merged`,
+   `ready_human_merge`, `merge_blocked`, `policy_inconsistent`, or
+   `out_of_scope`. A merge-granted PR that stops at readiness without a named
+   blocker is `policy_inconsistent`.
 15. For single-item advancement use `$run-item`; for epic-scoped runs use `$run-epic`;
    for read-only portfolio scan and proposal use `$run-work`.
 

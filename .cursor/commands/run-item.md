@@ -53,4 +53,7 @@ Key responsibilities:
   `merge_allowed`, continue through merge, branch cleanup,
   `post-merge-cleanup.sh`, and live tracker verification before reporting
   terminal
+- Treat merge authority explicitly: `merge_granted` means readiness is
+  intermediate and the runner continues through merge; `merge_denied` means the
+  ready PR stops as `ready_human_merge` and no merge command is run
 - If the target is epic-like, stop and use `/run-epic` instead

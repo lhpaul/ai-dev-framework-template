@@ -56,6 +56,11 @@ When no `guardrails` section is found, apply conservative defaults and state the
 When the delegated merge gate returns `merge_allowed`, continue through merge,
 branch cleanup, `post-merge-cleanup.sh`, and live tracker verification before
 reporting the item terminal.
+Treat merge authority explicitly: `merge_granted` means readiness is
+intermediate and the runner continues through merge; `merge_denied` means the
+ready PR stops as `ready_human_merge` and no merge command is run. A
+merge-granted run that stops at readiness without a named blocker is
+`policy_inconsistent`.
 
 That document is the single source of truth for this supporting role. Key responsibilities:
 

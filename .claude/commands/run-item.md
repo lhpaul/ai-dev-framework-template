@@ -37,4 +37,7 @@ The prelude command flags mirror this command's scope flags (`--target`, `--issu
   `merge_allowed`, continue through merge, branch cleanup,
   `post-merge-cleanup.sh`, and live tracker verification before reporting
   terminal
+- Treat merge authority explicitly: `merge_granted` means readiness is
+  intermediate and the runner continues through merge; `merge_denied` means the
+  ready PR stops as `ready_human_merge` and no merge command is run
 - Epic-like targets → use `/run-epic` instead

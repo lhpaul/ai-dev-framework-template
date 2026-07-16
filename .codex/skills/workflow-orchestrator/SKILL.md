@@ -20,6 +20,11 @@ Recommended model tier: `economy`
 10. When supervising sweep, batch, helper-extraction, numeric-target, or
    pattern-completeness items, require residual gate evidence before accepting
    `ready-for-human-review` as terminal.
+   With `merge_granted`, readiness is not terminal; continue through delegated
+   merge and report each in-scope PR as `merged`, `merge_blocked`, or
+   `policy_inconsistent`. With `merge_denied`, ready PRs report
+   `ready_human_merge`. Discovered unrelated PRs are `out_of_scope` and are not
+   merged.
 11. When supervising `spec/*` or `implementation-plan/*` PRs, require Protocol
     91 Step 8a's documentation-stage alignment checker before accepting
     readiness. A mismatch keeps the item under supervision until corrected or
