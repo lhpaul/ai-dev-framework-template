@@ -68,10 +68,11 @@ to prevent regressions in both single-stage and multi-stage paths.
 
 - [ ] Update Protocol 90 Check 3 in
       `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
-      to classify workflow branches by lifecycle before surfacing findings:
-      spec and implementation-plan branches are expected-persistent after merge;
-      implementation branches are expected-deleted after merge. Maps to AC5,
-      AC6, and AC7.
+      to audit both local workflow branches and remote `origin/*`
+      implementation refs, then classify workflow branches by lifecycle before
+      surfacing findings: spec and implementation-plan branches are
+      expected-persistent after merge; implementation branches are
+      expected-deleted after merge. Maps to AC5, AC6, and AC7.
 - [ ] If a script-backed scan path is updated, emit branch category and merged
       PR context in stable key/value output, for example
       `BRANCH_LIFECYCLE=expected-deleted` or
