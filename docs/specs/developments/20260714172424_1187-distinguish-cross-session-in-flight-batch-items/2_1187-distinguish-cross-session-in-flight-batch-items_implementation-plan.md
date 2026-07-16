@@ -53,10 +53,13 @@ tracker statuses, persistence, external services, or product runtime code.
       `ACTIONABLE RESUME - can advance now`,
       `PROPOSED BATCH - your decision`, and
       `HELD - not included in proposed batch`.
-- [ ] Emit `REPORT_REASON` for every non-proposed item. For informational items,
-      name the reason they are outside the current `/run-work` decision, such as
-      waiting on human review, waiting on merge, already handled elsewhere, or
-      not dispatch-eligible. For held items, reuse or refine `HOLD_REASON`.
+- [ ] Emit `REPORT_REASON` for every report row, regardless of category. For
+      informational items, name the reason they are outside the current
+      `/run-work` decision, such as waiting on human review, waiting on merge,
+      already handled elsewhere, or not dispatch-eligible. For held items, reuse
+      or refine `HOLD_REASON`. For proposed-batch items, name why they are in
+      the current proposal, such as Backlog start eligibility or explicit resume
+      eligibility.
 - [ ] Derive `REPORT_CATEGORY` from the combined helper block, not from
       `DISPATCH` alone. If tracker status, PR labels, or `NEXT_ACTION` show the
       item is already waiting on human review or merge, emit
