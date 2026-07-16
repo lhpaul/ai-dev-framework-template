@@ -52,7 +52,8 @@ the gate behavior and mirrored wording were checked before external review.
 - Inputs that influence the gate.
 - Allowed outcomes and required next actions.
 - Mirror surfaces that must stay consistent.
-- Any outcome or surface declared not applicable, with rationale.
+- Any input, outcome, example, or surface declared not applicable, with
+  rationale.
 
 **Actions available**:
 
@@ -77,7 +78,8 @@ the gate behavior and mirrored wording were checked before external review.
 
 1. The reviewer looks for the consistency matrix or equivalent evidence.
 2. The reviewer verifies that each gate input has a defined outcome and next
-   action.
+   action, or a not-applicable rationale when the input does not apply to this
+   gate.
 3. The reviewer compares the listed mirror surfaces against the PR diff.
 4. The reviewer flags missing outcomes, contradictory wording, or omitted mirror
    surfaces before external review churn accumulates.
@@ -171,8 +173,8 @@ check that does not apply.
 - [ ] AC2: Given a consistency matrix for a complex gate PR, it lists the gate
       inputs, allowed outcomes, required next actions, and mirror surfaces that
       must stay consistent.
-- [ ] AC3: Given a matrix row where an expected outcome, example, or mirror
-      surface is not applicable, the row includes a short rationale.
+- [ ] AC3: Given a matrix row where an expected input, outcome, example, or
+      mirror surface is not applicable, the row includes a short rationale.
 - [ ] AC4: Given a reviewer evaluates a complex gate PR with missing or
       contradictory matrix evidence, the reviewer can flag the gap as a finding
       before the PR is considered ready.
