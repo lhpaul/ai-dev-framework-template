@@ -397,6 +397,12 @@ Use the following labels consistently when label tooling is available:
 | `ready-for-human-review` | Internal review is clean, configured automated reviewers are clean or skipped, CI is green, and the PR is ready for a human reviewer. |
 | `needs-fixes`            | CI is failing, blocking automated feedback exists, or human-requested changes are still unresolved.                                   |
 
+When the selected policy grants merge authority (`merge_granted`), a
+`ready-for-human-review` PR is not terminal; the runner continues through the
+delegated merge gate, repository merge path, cleanup, and tracker verification.
+When merge authority is absent (`merge_denied`), readiness is the terminal
+human handoff and the runner reports `ready_human_merge` without merging.
+
 Opening a PR is not a terminal condition. A workflow run should continue until the PR is ready for a human checkpoint or the process escalates.
 
 ### Workflow Configuration

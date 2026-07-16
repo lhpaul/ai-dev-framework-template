@@ -299,7 +299,8 @@ Assign each item to one group:
   or merge.
 - `ambiguous`: missing / conflicting data prevents a deterministic next action.
 - `out_of_scope`: reserved for consumers that compare resolver output against a
-  later bounded handoff.
+  later bounded handoff. Out-of-scope PRs must never be included in delegated
+  merge or batch-merge commands.
 
 Do not mutate anything based on these groups. The resolver only describes the
 execution set.
@@ -563,8 +564,11 @@ Reruns must update existing marker comments instead of creating duplicates.
 ## Step 10: Final Delegated Merge Gate
 
 This step applies only when the invocation policy includes `--may-merge`.
-Without delegated merge authority, the runner may prepare the PR for human
-review but must not merge it.
+Without delegated merge authority (`merge_denied`), the runner may prepare the
+PR for human review but must not merge it; report `ready_human_merge` and name
+the denying policy value. With delegated merge authority (`merge_granted`),
+readiness is intermediate and every in-scope ready PR must continue through this
+gate unless a named blocker produces `merge_blocked`.
 
 Before merge:
 
@@ -602,6 +606,11 @@ Proceed to the repository merge protocol only when the delegated gate reports
 fix, rerun validation/reviewer/CI, and return to Step 8. If it reports
 `human_required`, stop for human authority, setup, or risk tolerance. If it
 reports `blocked`, stop until required state is available.
+
+If an in-scope child PR stops at readiness during a merge-granted run without a
+named blocker from this step, report `policy_inconsistent` in the PR
+disposition and epic ledger. Discovered PRs outside the resolved scope remain
+`out_of_scope` and are never merged by this protocol.
 
 ---
 
