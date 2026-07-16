@@ -113,6 +113,10 @@ feature to merge first.
   The protocol must require the Portfolio Orchestrator to run the helper for
   every Backlog item that will enter spec writing and to include the resulting
   relationship summary in the proposed batch and stage-agent handoff.
+  If any helper result has `blocking=true`, Protocol 90 must stop before batch
+  approval, tracker mutation, branch creation, or Work Item Runner dispatch for
+  that item; the proposed batch output must report the `Unclear` relationship
+  and `humanAction` instead of treating the item as dispatch-eligible.
 - [ ] Update
   `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`.
   For single-item Backlog spec starts, require the Work Item Runner to run the
@@ -305,8 +309,9 @@ tests directly.
    evidence from keyword overlap:
    `bash scripts/development-workflow/tests/test-spec-dispatch-context.sh`.
 4. Update Protocol 90 so batch Backlog spec starts run the helper before tracker
-   mutation/dispatch, show relationship outcomes in the batch proposal, and pass
-   the generated dispatch context to Work Item Runners.
+   mutation/dispatch, stop when `blocking=true` names an `Unclear`
+   relationship, show relationship outcomes in the batch proposal, and pass the
+   generated dispatch context to Work Item Runners only for non-blocking items.
 5. Update Protocol 91 so single-item Backlog spec starts run or consume the
    helper output before invoking the spec writer, and stop when `blocking=true`
    names an `Unclear` relationship.
