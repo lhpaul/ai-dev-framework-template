@@ -689,6 +689,14 @@ waive, clear, or otherwise modify any pending human checkpoint. Checkpoint
 lifecycle state remains governed by the checkpoint policy and
 `run-epic-checkpoint-lifecycle.sh`.
 
+When resuming after an interrupted mutating run, inspect the item branch
+history, local worktree commits, and uncommitted edits before making a new
+mutation. Prefer the latest committed checkpoint that represents a completed
+logical sub-part as the resume boundary. Absence of a newer checkpoint is
+acceptable evidence that no completed sub-part finished after the last
+checkpoint, but live branch, PR, worktree, review, CI, and tracker state still
+control the next action.
+
 ---
 
 ## Step 3: Dispatch Strategy
@@ -859,6 +867,12 @@ The guard is **non-blocking**: it emits a `GUARDRAIL WARNING` and returns exit c
    classification, and `isolation: "worktree"` when the stage agent may mutate
    artifacts.
 3. The explicit instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm `pwd -P` equals `<worktree-path>` or begins with `<worktree-path>/` before any git state-changing command."
+4. The explicit instruction: "For substantial or multi-part mutating item work,
+   commit immediately after each completed logical sub-part so interrupted runs
+   have a recoverable checkpoint. Do not intentionally batch all completed
+   sub-parts into one end-of-run commit. Single-step work with no meaningful
+   completed intermediate checkpoint may use one final commit. Never commit
+   incomplete, failing, or incoherent edits only to satisfy this requirement."
 
 Omitting any required instruction or metadata field from the handoff is the root
 cause of the branch-leak pattern where stage subagents run Protocol 03's
@@ -1860,6 +1874,11 @@ When dispatching a fixer agent, include the following explicit instruction:
 > 3. **One commit, then push** — bundle every fix into a single commit and push once. Do not push after each individual fix.
 >
 > Findings that cannot be addressed in this dispatch (e.g. require a human decision, are out of scope, or are genuinely contradictory) should be noted and left for human review. Do not skip a push just because one finding is unresolvable — push the rest.
+
+For substantial fixer work, coherent local checkpoint commits may be created
+after completed logical sub-parts, but the fixer still pushes once after all
+addressable fixes for the current reviewer-loop cycle are complete. Do not push
+after each checkpoint commit.
 
 ### Attempt-context injection rule (Step 7 fixer dispatch)
 

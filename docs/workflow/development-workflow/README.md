@@ -6,6 +6,11 @@ The goal of this workflow is simple: AI agents should do most of the execution w
 
 The workflow is designed around a persistent execution contract. Once a run starts, it should keep advancing the work until it reaches a real stopping point: the pull request is ready for human review, a human decision is required, a dependency blocks progress, or an automated loop escalates after retry or timeout limits. Opening a branch, opening a PR, or finishing one sub-step is not enough by itself.
 
+For substantial or multi-part mutating item work, the workflow also requires
+incremental checkpoint commits after each completed logical sub-part. This gives
+interrupted runs a recoverable boundary without changing review, CI, readiness,
+tracker, or merge gates.
+
 ---
 
 ## Why This Workflow Exists

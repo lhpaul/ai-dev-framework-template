@@ -905,6 +905,15 @@ For each item in the batch, prepare a short handoff:
   default `origin/develop` for all item types (feature, fix, refactor, spec,
   plan). The base-branch table in protocol 91 Step 3 applies only when
   `BASE_BRANCH` is absent from the handoff.
+- **Incremental commit requirement**: For substantial or multi-part mutating
+  item work, the Work Item Runner must commit immediately after each completed
+  logical sub-part so interrupted runs have a recoverable checkpoint. Do not
+  intentionally batch all completed sub-parts into one end-of-run commit.
+  Single-step work with no meaningful completed intermediate checkpoint may use
+  one final commit. Never commit incomplete, failing, or incoherent edits just
+  to satisfy this requirement. Keep checkpoint commits scoped to the assigned
+  item, branch, and worktree; this does not change review, CI, readiness-label,
+  tracker, or merge gates.
 - Each item adds its own CHANGELOG entry as normal (see Step 3.6 for conflict resolution strategy)
 
 ### Worktree isolation requirement

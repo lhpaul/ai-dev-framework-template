@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Require incremental checkpoint commits for item dispatch** (#1176): Adds
+  recoverability guidance requiring coherent checkpoint commits after completed
+  logical sub-parts of long-running item work.
 - **Fast Track blast-radius routing** (#1207): Add call-site volume and
   external-system impact checks before Fast Track dispatch.
 - **Deprecate direct Cursor item-orchestrator path** (#1190): Clarify that
