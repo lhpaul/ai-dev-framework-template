@@ -29,11 +29,11 @@ tracker statuses, persistence, external services, or product runtime code.
 | Check | Command / query | Result |
 | --- | --- | --- |
 | Repo revision | `git rev-parse --short HEAD` | `38829f7` |
-| Template-fit check | `sed -n '1,220p' .ai-dev-workflow.yaml` | `template.is_template: true`; scope is generic workflow tooling/reporting, not a framework-specific downstream feature. |
+| Template-fit check | Review the `template.is_template` setting in `.ai-dev-workflow.yaml`. | `template.is_template: true`; scope is generic workflow tooling/reporting, not a framework-specific downstream feature. |
 | Tracker status | `gh issue view 1187 --json number,title,state,projectItems,url` | Issue #1187 is open and the project item status is `Writing Plan`. |
 | Run-work/report surface search | `rg -n "run-work|batch proposal|proposal|in-flight|resume|Protocol 90|workflow-batch" docs/workflow scripts .agents .codex .claude .cursor AGENTS.md README.md` | Relevant surfaces include Protocol 90, Protocol 96, `.agents/skills/run-work`, `.claude/commands/run-work.md`, `.cursor/commands/run-work.md`, `README.md`, `AGENTS.md`, and `workflow-batch-plan.sh` / `workflow-batch-lanes.sh`. |
 | Existing helper output fields | `rg -n "^print_kv|NEXT_ACTION|BATCH_HINT|PARALLEL_SAFE|DISPATCH|HOLD_REASON" scripts/development-workflow/workflow-batch-plan.sh scripts/development-workflow/workflow-batch-lanes.sh scripts/development-workflow/tests` | `workflow-batch-plan.sh` emits candidate metadata; `workflow-batch-lanes.sh` already emits `DISPATCH=proposed|held|skip` and `HOLD_REASON`, making it the right place to add report-category metadata. |
-| Existing smoke-test location | `find docs/testing -maxdepth 3 -type f | sort | sed -n '1,120p'` | Workflow runbooks live under `docs/testing/workflow/`; use `1187-distinguish-cross-session-in-flight-batch-items.smoke-test.md`. |
+| Existing smoke-test location | Review existing workflow smoke-test runbooks under `docs/testing/workflow/`. | Workflow runbooks live under `docs/testing/workflow/`; use `1187-distinguish-cross-session-in-flight-batch-items.smoke-test.md`. |
 
 ---
 
