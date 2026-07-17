@@ -103,6 +103,11 @@ JSON
 {"number":118,"title":"Without public-site component","body":"This cannot proceed without #100 for the public site component.","comments":[]}
 JSON
     ;;
+  119)
+    cat <<'JSON'
+{"number":119,"title":"Sprint number public-site component","body":"This requires sprint 100 for public site component planning, not an issue reference.","comments":[]}
+JSON
+    ;;
   107)
     cat <<'JSON'
 {"number":107,"title":"Larger issue reference public-site component","body":"This depends on #2100 for unrelated public site component catalog work.","comments":[]}
@@ -207,6 +212,11 @@ run_test "orthogonal_decision_overrides_dependency" "Orthogonal" "$(printf '%s\n
 run_test "orthogonal_decision_override_not_blocking" "false" "$(printf '%s\n' "$orthogonal_override_output" | jq -r '.blocking')"
 run_test "orthogonal_decision_replaces_dependency_evidence" "no-stale-evidence" "$(printf '%s\n' "$orthogonal_override_output" | jq -r 'if (.relationships[0].evidence | join(" ") | test("explicit dependency phrase")) then "stale-evidence" else "no-stale-evidence" end')"
 
+not_blocked_override_file="$TMP_ROOT/not-blocked-override.jsonl"
+printf '%s\n' '{"issue":100,"summary":"Decision: selected work is not blocked by #102.","source":"session"}' > "$not_blocked_override_file"
+not_blocked_override_output="$("$HELPER" --selected 100 --items 100,102 --confirmed-decision-file "$not_blocked_override_file" --json)"
+run_test "not_blocked_does_not_override_dependency" "Dependent" "$(printf '%s\n' "$not_blocked_override_output" | jq -r '.relationships[0].outcome')"
+
 comment_dependency_output="$("$HELPER" --selected 100 --items 100,114 --json)"
 run_test "comment_dependency_bypasses_overlap_gate" "Dependent" "$(printf '%s\n' "$comment_dependency_output" | jq -r '.relationships[0].outcome')"
 run_test "comment_dependency_not_blocking" "false" "$(printf '%s\n' "$comment_dependency_output" | jq -r '.blocking')"
@@ -247,6 +257,10 @@ run_test "independent_word_not_blocking" "false" "$(printf '%s\n' "$independent_
 bare_requires_output="$("$HELPER" --selected 100 --items 100,113 --json)"
 run_test "bare_requires_not_unclear" "Orthogonal" "$(printf '%s\n' "$bare_requires_output" | jq -r '.relationships[0].outcome')"
 run_test "bare_requires_not_blocking" "false" "$(printf '%s\n' "$bare_requires_output" | jq -r '.blocking')"
+
+bare_number_output="$("$HELPER" --selected 100 --items 100,119 --json)"
+run_test "bare_number_not_dependent" "not-dependent" "$(printf '%s\n' "$bare_number_output" | jq -r 'if .relationships[0].outcome == "Dependent" then "dependent" else "not-dependent" end')"
+run_test "bare_number_not_blocking" "false" "$(printf '%s\n' "$bare_number_output" | jq -r '.blocking')"
 
 boundary_output="$("$HELPER" --selected 100 --items 100,107 --json)"
 run_test "larger_issue_number_not_dependent" "not-dependent" "$(printf '%s\n' "$boundary_output" | jq -r 'if .relationships[0].outcome == "Dependent" then "dependent" else "not-dependent" end')"

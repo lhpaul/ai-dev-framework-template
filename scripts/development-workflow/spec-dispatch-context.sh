@@ -126,7 +126,7 @@ significant_terms() {
 
 issue_ref_pattern() {
   local issue="$1"
-  printf '(^|[^0-9#])#%s([^0-9]|$)|(^|[^0-9#])%s([^0-9]|$)' "$issue" "$issue"
+  printf '(^|[^0-9#])#%s([^0-9]|$)' "$issue"
 }
 
 dependency_phrase_pattern() {
@@ -344,7 +344,7 @@ confirmed_json="$(jq -s 'add' "$decision_file_json" "$comment_decisions_json")"
 relationships_json="$(if [ -s "$relationships_file" ]; then jq -s . "$relationships_file"; else printf '[]\n'; fi)"
 relationships_json="$(printf '%s\n' "$relationships_json" | jq --argjson decisions "$confirmed_json" '
   def decision_text: (.summary // "" | ascii_downcase);
-  def says_independent: decision_text | test("orthogonal|independent|unrelated|no dependency|not dependent|not blocked");
+  def says_independent: decision_text | test("orthogonal|independent|unrelated|no dependency|not dependent");
   def references_issue($issue): decision_text | test("#" + ($issue | tostring) + "([^0-9]|$)");
   def confirmed_orthogonal($issue): any($decisions[]?; says_independent and references_issue($issue));
   map(
@@ -366,7 +366,7 @@ decision_conflict="$(printf '%s\n' "$confirmed_json" | jq '
   def dependency_text: normalized | gsub("(?:not blocked|not dependent)[^.?!;]{0,80}#[0-9]+"; "");
   def refs_for($text; $pattern):
     [$text | scan($pattern + "[^.?!;]{0,80}#[0-9]+") | scan("#[0-9]+") | ltrimstr("#") | tonumber];
-  def independent_refs: refs_for(normalized; "(?:orthogonal|independent|unrelated|no dependency|not dependent|not blocked)");
+  def independent_refs: refs_for(normalized; "(?:orthogonal|independent|unrelated|no dependency|not dependent)");
   def dependent_refs: refs_for(dependency_text; "(?:depends on|dependent on|blocked by|requires|waiting on|prerequisite)");
   [.[] | independent_refs[]?] as $independent
   | [.[] | dependent_refs[]?] as $dependent
