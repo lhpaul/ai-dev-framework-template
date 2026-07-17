@@ -197,6 +197,7 @@ printf '%s\n' '{"issue":100,"summary":"Decision: selected work is orthogonal to 
 orthogonal_override_output="$("$HELPER" --selected 100 --items 100,102 --confirmed-decision-file "$orthogonal_override_file" --json)"
 run_test "orthogonal_decision_overrides_dependency" "Orthogonal" "$(printf '%s\n' "$orthogonal_override_output" | jq -r '.relationships[0].outcome')"
 run_test "orthogonal_decision_override_not_blocking" "false" "$(printf '%s\n' "$orthogonal_override_output" | jq -r '.blocking')"
+run_test "orthogonal_decision_replaces_dependency_evidence" "no-stale-evidence" "$(printf '%s\n' "$orthogonal_override_output" | jq -r 'if (.relationships[0].evidence | join(" ") | test("explicit dependency phrase")) then "stale-evidence" else "no-stale-evidence" end')"
 
 comment_dependency_output="$("$HELPER" --selected 100 --items 100,114 --json)"
 run_test "comment_dependency_bypasses_overlap_gate" "Dependent" "$(printf '%s\n' "$comment_dependency_output" | jq -r '.relationships[0].outcome')"

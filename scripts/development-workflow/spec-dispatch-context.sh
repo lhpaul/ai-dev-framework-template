@@ -353,7 +353,7 @@ relationships_json="$(printf '%s\n' "$relationships_json" | jq --argjson decisio
       | .blocking = false
       | .humanAction = null
       | .dispatchInstruction = "Treat the relationship as orthogonal based on confirmed human decision context."
-      | .evidence += ["Confirmed human decision marks this peer relationship as orthogonal."]
+      | .evidence = ["Confirmed human decision marks this peer relationship as orthogonal."]
     else
       .
     end
