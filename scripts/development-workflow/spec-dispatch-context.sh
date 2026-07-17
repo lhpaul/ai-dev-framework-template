@@ -124,40 +124,66 @@ significant_terms() {
   ' | sort -u
 }
 
+issue_ref_pattern() {
+  local issue="$1"
+  printf '(^|[^0-9#])#%s([^0-9]|$)|(^|[^0-9#])%s([^0-9]|$)' "$issue" "$issue"
+}
+
+dependency_phrase_pattern() {
+  printf 'depends on|dependent on|blocked by|requires|waiting on'
+}
+
 text_contains_dependency() {
   local text="$1" issue="$2"
-  local lower compact match
+  local lower compact match issue_pattern dependency_pattern
   lower="$(printf '%s\n' "$text" | tr '[:upper:]' '[:lower:]')"
   compact="$(printf '%s\n' "$lower" | tr '\n' ' ')"
+  issue_pattern="$(issue_ref_pattern "$issue")"
+  dependency_pattern="$(dependency_phrase_pattern)"
   while IFS= read -r match; do
     if [ -z "$match" ]; then
       continue
     fi
-    if printf '%s\n' "$match" | grep -Eiq "^(not|without)[^.!?]{0,40}(depends on|blocked by|requires|waiting on)"; then
+    if printf '%s\n' "$match" | grep -Eiq "^(not|without)[^.!?]{0,40}(${dependency_pattern})"; then
       continue
     fi
-    if printf '%s\n' "$match" | grep -Eiq "(not|without)[^.!?]{0,80}(^|[^0-9#])#?${issue}([^0-9]|$)"; then
+    if printf '%s\n' "$match" | grep -Eiq "(not|without)[^.!?]{0,80}(${issue_pattern})"; then
       continue
     fi
     return 0
   done <<EOF
-$(printf '%s\n' "$compact" | grep -Eio "((not|without)[^.!?]{0,40})?(depends on|blocked by|requires|waiting on)[^.!?]{0,120}(^|[^0-9#])#?${issue}([^0-9]|$)" || true)
+$(printf '%s\n' "$compact" | grep -Eio "((not|without)[^.!?]{0,40})?(${dependency_pattern})[^.!?]{0,120}(${issue_pattern})" || true)
 EOF
   return 1
 }
 
 text_contains_negated_dependency() {
   local text="$1" issue="$2"
-  local lower compact
+  local lower compact issue_pattern
   lower="$(printf '%s\n' "$text" | tr '[:upper:]' '[:lower:]')"
   compact="$(printf '%s\n' "$lower" | tr '\n' ' ')"
+  issue_pattern="$(issue_ref_pattern "$issue")"
   printf '%s\n' "$compact" \
-    | grep -Eiq "(not|without)[^.!?]{0,120}(^|[^0-9#])#?${issue}([^0-9]|$)"
+    | grep -Eiq "(not|without)[^.!?]{0,120}(${issue_pattern})"
 }
 
 has_coupling_language() {
   printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]' \
-    | grep -Eq 'depends|dependent|blocked|requires|required|waiting on|prerequisite|coupled|coupling|shared|coordinate|coordination|same data|same schema|must align|must share'
+    | awk '
+      {
+        line = $0
+        gsub(/[^a-z0-9]+/, " ", line)
+        if (line ~ /(^| )(depends|dependent|blocked|requires|required|prerequisite|coupled|coupling|shared|coordinate|coordination)( |$)/ ||
+            line ~ /(^| )waiting on( |$)/ ||
+            line ~ /(^| )same data( |$)/ ||
+            line ~ /(^| )same schema( |$)/ ||
+            line ~ /(^| )must align( |$)/ ||
+            line ~ /(^| )must share( |$)/) {
+          found = 1
+        }
+      }
+      END { exit found ? 0 : 1 }
+    '
 }
 
 json_array_from_lines() {
@@ -285,7 +311,18 @@ jq '
 confirmed_json="$(jq -s 'add' "$decision_file_json" "$comment_decisions_json")"
 relationships_json="$(if [ -s "$relationships_file" ]; then jq -s . "$relationships_file"; else printf '[]\n'; fi)"
 blocking="$(printf '%s\n' "$relationships_json" | jq 'any(.[]; .blocking == true)')"
-human_action="$(printf '%s\n' "$relationships_json" | jq -r '[.[] | select(.blocking == true) | .humanAction] | map(select(. != null)) | first // empty')"
+human_actions_json="$(printf '%s\n' "$relationships_json" | jq '[.[] | select(.blocking == true) | .humanAction] | map(select(. != null)) | unique')"
+decision_conflict="$(printf '%s\n' "$confirmed_json" | jq '
+  def normalized: (.summary // "" | ascii_downcase);
+  def says_independent: normalized | test("orthogonal|independent|unrelated|no dependency|not dependent|not blocked");
+  def says_dependent: normalized | test("depends on|dependent on|blocked by|requires|waiting on|prerequisite");
+  (any(.[]; says_independent) and any(.[]; says_dependent))
+')"
+if [ "$decision_conflict" = "true" ]; then
+  blocking=true
+  human_actions_json="$(printf '%s\n' "$human_actions_json" | jq --arg selected "$selected" '. + ["Resolve conflicting confirmed decisions for #\($selected) before spec dispatch."]')"
+fi
+human_action="$(printf '%s\n' "$human_actions_json" | jq -r 'join(" ")')"
 if [ -n "$human_action" ]; then
   human_action_json="$(jq -n --arg action "$human_action" '$action')"
 else

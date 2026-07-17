@@ -58,6 +58,21 @@ JSON
 {"number":109,"title":"Mixed dependency public-site component","body":"This depends on #100 for the API layer. It is not related to #100 for the UI layer.","comments":[]}
 JSON
     ;;
+  110)
+    cat <<'JSON'
+{"number":110,"title":"Independent public-site component content","body":"This independent public site component content can proceed alone.","comments":[]}
+JSON
+    ;;
+  111)
+    cat <<'JSON'
+{"number":111,"title":"Dependent-on public-site component","body":"This is dependent on #100 for the selected unit-stage output.","comments":[]}
+JSON
+    ;;
+  112)
+    cat <<'JSON'
+{"number":112,"title":"Coupled public-site component validation","body":"Coordinate shared public site component validation behavior with the selected work before writing acceptance criteria.","comments":[]}
+JSON
+    ;;
   107)
     cat <<'JSON'
 {"number":107,"title":"Larger issue reference public-site component","body":"This depends on #2100 for unrelated public site component catalog work.","comments":[]}
@@ -106,14 +121,31 @@ printf '%s\n' '{"issue":100,"summary":"Human confirmed this is one component ins
 decision_output="$("$HELPER" --selected 100 --items 100 --confirmed-decision-file "$decision_file" --json)"
 run_test "decision_file_included" "Human confirmed this is one component instance." "$(printf '%s\n' "$decision_output" | jq -r '.confirmedDecisions[] | select(.source == "session") | .summary')"
 
+conflicting_decision_file="$TMP_ROOT/conflicting-decisions.jsonl"
+{
+  printf '%s\n' '{"issue":100,"summary":"Decision: selected work depends on #200.","source":"session"}'
+  printf '%s\n' '{"issue":100,"summary":"Decision: selected work is orthogonal to #200.","source":"session"}'
+} > "$conflicting_decision_file"
+conflicting_decision_output="$("$HELPER" --selected 100 --items 100 --confirmed-decision-file "$conflicting_decision_file" --json)"
+run_test "conflicting_decisions_block" "true" "$(printf '%s\n' "$conflicting_decision_output" | jq -r '.blocking')"
+run_test "conflicting_decisions_human_action" "yes" "$(printf '%s\n' "$conflicting_decision_output" | jq -r '.humanAction | test("conflicting confirmed decisions") | if . then "yes" else "no" end')"
+
 dependent_output="$("$HELPER" --selected 100 --items 100,102 --json)"
 run_test "dependent_outcome" "Dependent" "$(printf '%s\n' "$dependent_output" | jq -r '.relationships[0].outcome')"
 run_test "dependent_not_blocking" "false" "$(printf '%s\n' "$dependent_output" | jq -r '.blocking')"
+
+dependent_on_output="$("$HELPER" --selected 100 --items 100,111 --json)"
+run_test "dependent_on_outcome" "Dependent" "$(printf '%s\n' "$dependent_on_output" | jq -r '.relationships[0].outcome')"
+run_test "dependent_on_not_blocking" "false" "$(printf '%s\n' "$dependent_on_output" | jq -r '.blocking')"
 
 unclear_output="$("$HELPER" --selected 100 --items 100,103 --json)"
 run_test "unclear_outcome" "Unclear" "$(printf '%s\n' "$unclear_output" | jq -r '.relationships[0].outcome')"
 run_test "unclear_blocks" "true" "$(printf '%s\n' "$unclear_output" | jq -r '.blocking')"
 run_test "unclear_human_action" "yes" "$(printf '%s\n' "$unclear_output" | jq -r '.humanAction | test("Confirm whether") | if . then "yes" else "no" end')"
+
+multi_unclear_output="$("$HELPER" --selected 100 --items 100,103,112 --json)"
+run_test "multi_unclear_human_action_includes_first_peer" "yes" "$(printf '%s\n' "$multi_unclear_output" | jq -r '.humanAction | test("#103") | if . then "yes" else "no" end')"
+run_test "multi_unclear_human_action_includes_second_peer" "yes" "$(printf '%s\n' "$multi_unclear_output" | jq -r '.humanAction | test("#112") | if . then "yes" else "no" end')"
 
 negative_output="$("$HELPER" --selected 100 --items 100,104 --json)"
 run_test "negative_lookalike_not_dependent" "not-dependent" "$(printf '%s\n' "$negative_output" | jq -r 'if .relationships[0].outcome == "Dependent" then "dependent" else "not-dependent" end')"
@@ -126,6 +158,10 @@ run_test "negated_dependency_phrase_not_blocking" "false" "$(printf '%s\n' "$neg
 mixed_dependency_output="$("$HELPER" --selected 100 --items 100,109 --json)"
 run_test "mixed_dependency_keeps_dependent" "Dependent" "$(printf '%s\n' "$mixed_dependency_output" | jq -r '.relationships[0].outcome')"
 run_test "mixed_dependency_not_blocking" "false" "$(printf '%s\n' "$mixed_dependency_output" | jq -r '.blocking')"
+
+independent_word_output="$("$HELPER" --selected 100 --items 100,110 --json)"
+run_test "independent_word_not_unclear" "Orthogonal" "$(printf '%s\n' "$independent_word_output" | jq -r '.relationships[0].outcome')"
+run_test "independent_word_not_blocking" "false" "$(printf '%s\n' "$independent_word_output" | jq -r '.blocking')"
 
 boundary_output="$("$HELPER" --selected 100 --items 100,107 --json)"
 run_test "larger_issue_number_not_dependent" "not-dependent" "$(printf '%s\n' "$boundary_output" | jq -r 'if .relationships[0].outcome == "Dependent" then "dependent" else "not-dependent" end')"
