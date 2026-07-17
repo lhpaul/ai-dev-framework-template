@@ -133,6 +133,16 @@ dependency_phrase_pattern() {
   printf 'depends on|dependent on|blocked by|requires|waiting on|prerequisite'
 }
 
+text_contains_without_dependency() {
+  local text="$1" issue="$2"
+  local lower compact issue_pattern
+  lower="$(printf '%s\n' "$text" | tr '[:upper:]' '[:lower:]')"
+  compact="$(printf '%s\n' "$lower" | tr '\n' ' ')"
+  issue_pattern="$(issue_ref_pattern "$issue")"
+  printf '%s\n' "$compact" \
+    | grep -Eiq "(cannot|can not|can't)[^.!?]{0,80}without[^.!?]{0,80}(${issue_pattern})"
+}
+
 text_contains_dependency() {
   local text="$1" issue="$2"
   local lower sentence match issue_pattern dependency_pattern first_ref
@@ -142,6 +152,9 @@ text_contains_dependency() {
   while IFS= read -r sentence; do
     if [ -z "$sentence" ]; then
       continue
+    fi
+    if text_contains_without_dependency "$sentence" "$issue"; then
+      return 0
     fi
     if text_contains_negated_dependency "$sentence" "$issue"; then
       continue
@@ -302,7 +315,11 @@ while IFS= read -r peer; do
 done < "$items_file"
 
 decision_file_json="$tmp_dir/decisions-file.json"
-if [ -n "$confirmed_decision_file" ] && [ -s "$confirmed_decision_file" ]; then
+if [ -n "$confirmed_decision_file" ]; then
+  if [ ! -s "$confirmed_decision_file" ]; then
+    echo "Confirmed decision file is missing or empty: $confirmed_decision_file" >&2
+    exit 66
+  fi
   jq -s --argjson selected "$selected" \
     '[.[] | select((.issue // .item_number // .number | tonumber) == $selected) | {summary: (.summary // .decision // .body // ""), source: (.source // "confirmed decision file")} | select(.summary != "")]' \
     "$confirmed_decision_file" > "$decision_file_json"
@@ -325,6 +342,23 @@ jq '
 
 confirmed_json="$(jq -s 'add' "$decision_file_json" "$comment_decisions_json")"
 relationships_json="$(if [ -s "$relationships_file" ]; then jq -s . "$relationships_file"; else printf '[]\n'; fi)"
+relationships_json="$(printf '%s\n' "$relationships_json" | jq --argjson decisions "$confirmed_json" '
+  def decision_text: (.summary // "" | ascii_downcase);
+  def says_independent: decision_text | test("orthogonal|independent|unrelated|no dependency|not dependent|not blocked");
+  def references_issue($issue): decision_text | test("#" + ($issue | tostring) + "([^0-9]|$)");
+  def confirmed_orthogonal($issue): any($decisions[]?; says_independent and references_issue($issue));
+  map(
+    if confirmed_orthogonal(.issue) then
+      .outcome = "Orthogonal"
+      | .blocking = false
+      | .humanAction = null
+      | .dispatchInstruction = "Treat the relationship as orthogonal based on confirmed human decision context."
+      | .evidence += ["Confirmed human decision marks this peer relationship as orthogonal."]
+    else
+      .
+    end
+  )
+')"
 blocking="$(printf '%s\n' "$relationships_json" | jq 'any(.[]; .blocking == true)')"
 human_actions_json="$(printf '%s\n' "$relationships_json" | jq '[.[] | select(.blocking == true) | .humanAction] | map(select(. != null)) | unique')"
 decision_conflict="$(printf '%s\n' "$confirmed_json" | jq '

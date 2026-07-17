@@ -98,6 +98,11 @@ JSON
 {"number":117,"title":"Prerequisite public-site component","body":"This has prerequisite #100 before the public site component can proceed.","comments":[]}
 JSON
     ;;
+  118)
+    cat <<'JSON'
+{"number":118,"title":"Without public-site component","body":"This cannot proceed without #100 for the public site component.","comments":[]}
+JSON
+    ;;
   107)
     cat <<'JSON'
 {"number":107,"title":"Larger issue reference public-site component","body":"This depends on #2100 for unrelated public site component catalog work.","comments":[]}
@@ -147,6 +152,13 @@ printf '%s\n' '{"issue":100,"summary":"Human confirmed this is one component ins
 decision_output="$("$HELPER" --selected 100 --items 100 --confirmed-decision-file "$decision_file" --json)"
 run_test "decision_file_included" "Human confirmed this is one component instance." "$(printf '%s\n' "$decision_output" | jq -r '.confirmedDecisions[] | select(.source == "session") | .summary')"
 
+if "$HELPER" --selected 100 --items 100 --confirmed-decision-file "$TMP_ROOT/missing-decisions.jsonl" --json >/dev/null 2>&1; then
+  missing_decision_result="success"
+else
+  missing_decision_result="failure"
+fi
+run_test "missing_decision_file_fails" "failure" "$missing_decision_result"
+
 conflicting_decision_file="$TMP_ROOT/conflicting-decisions.jsonl"
 {
   printf '%s\n' '{"issue":100,"summary":"Decision: selected work depends on #200.","source":"session"}'
@@ -175,6 +187,16 @@ run_test "dependent_on_not_blocking" "false" "$(printf '%s\n' "$dependent_on_out
 prerequisite_output="$("$HELPER" --selected 100 --items 100,117 --json)"
 run_test "prerequisite_outcome" "Dependent" "$(printf '%s\n' "$prerequisite_output" | jq -r '.relationships[0].outcome')"
 run_test "prerequisite_not_blocking" "false" "$(printf '%s\n' "$prerequisite_output" | jq -r '.blocking')"
+
+without_dependency_output="$("$HELPER" --selected 100 --items 100,118 --json)"
+run_test "without_dependency_outcome" "Dependent" "$(printf '%s\n' "$without_dependency_output" | jq -r '.relationships[0].outcome')"
+run_test "without_dependency_not_blocking" "false" "$(printf '%s\n' "$without_dependency_output" | jq -r '.blocking')"
+
+orthogonal_override_file="$TMP_ROOT/orthogonal-override.jsonl"
+printf '%s\n' '{"issue":100,"summary":"Decision: selected work is orthogonal to #102.","source":"session"}' > "$orthogonal_override_file"
+orthogonal_override_output="$("$HELPER" --selected 100 --items 100,102 --confirmed-decision-file "$orthogonal_override_file" --json)"
+run_test "orthogonal_decision_overrides_dependency" "Orthogonal" "$(printf '%s\n' "$orthogonal_override_output" | jq -r '.relationships[0].outcome')"
+run_test "orthogonal_decision_override_not_blocking" "false" "$(printf '%s\n' "$orthogonal_override_output" | jq -r '.blocking')"
 
 comment_dependency_output="$("$HELPER" --selected 100 --items 100,114 --json)"
 run_test "comment_dependency_bypasses_overlap_gate" "Dependent" "$(printf '%s\n' "$comment_dependency_output" | jq -r '.relationships[0].outcome')"
