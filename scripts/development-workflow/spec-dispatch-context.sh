@@ -130,7 +130,7 @@ issue_ref_pattern() {
 }
 
 dependency_phrase_pattern() {
-  printf 'depends on|dependent on|blocked by|requires|waiting on'
+  printf 'depends on|dependent on|blocked by|requires|waiting on|prerequisite'
 }
 
 text_contains_dependency() {

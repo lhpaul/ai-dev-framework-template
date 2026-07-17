@@ -93,6 +93,11 @@ JSON
 {"number":116,"title":"Negated sentence public-site component","body":"This does not depend on #100, but it requires #100 discussion notes. It shares public site component wording.","comments":[]}
 JSON
     ;;
+  117)
+    cat <<'JSON'
+{"number":117,"title":"Prerequisite public-site component","body":"This has prerequisite #100 before the public site component can proceed.","comments":[]}
+JSON
+    ;;
   107)
     cat <<'JSON'
 {"number":107,"title":"Larger issue reference public-site component","body":"This depends on #2100 for unrelated public site component catalog work.","comments":[]}
@@ -166,6 +171,10 @@ run_test "dependent_not_blocking" "false" "$(printf '%s\n' "$dependent_output" |
 dependent_on_output="$("$HELPER" --selected 100 --items 100,111 --json)"
 run_test "dependent_on_outcome" "Dependent" "$(printf '%s\n' "$dependent_on_output" | jq -r '.relationships[0].outcome')"
 run_test "dependent_on_not_blocking" "false" "$(printf '%s\n' "$dependent_on_output" | jq -r '.blocking')"
+
+prerequisite_output="$("$HELPER" --selected 100 --items 100,117 --json)"
+run_test "prerequisite_outcome" "Dependent" "$(printf '%s\n' "$prerequisite_output" | jq -r '.relationships[0].outcome')"
+run_test "prerequisite_not_blocking" "false" "$(printf '%s\n' "$prerequisite_output" | jq -r '.blocking')"
 
 comment_dependency_output="$("$HELPER" --selected 100 --items 100,114 --json)"
 run_test "comment_dependency_bypasses_overlap_gate" "Dependent" "$(printf '%s\n' "$comment_dependency_output" | jq -r '.relationships[0].outcome')"
