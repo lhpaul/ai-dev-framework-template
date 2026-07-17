@@ -480,6 +480,33 @@ This rule changes the default `/run-work` behavior from "only resume already-sta
 
 Before batching an item, check its `Depends on` field or tracker dependency data. If any dependency is not yet `Merged` or `Released`, skip the item and record it as blocked.
 
+### Spec-dispatch relationship context gate
+
+Before tracker mutation or Work Item Runner dispatch for any Backlog item that
+will enter **Writing Spec**, build conservative spec-dispatch context:
+
+```bash
+./scripts/development-workflow/spec-dispatch-context.sh \
+  --selected <issue-number> \
+  --items <comma-separated-in-scope-issue-numbers> \
+  [--confirmed-decision-file <jsonl-file>] \
+  --json
+```
+
+The helper output is an ephemeral dispatch-context object. It may include
+human-confirmed decisions, relationship rows for meaningful terminology overlap,
+and a `blocking` flag. Shared keywords alone are not dependency evidence:
+`Dependent` requires concrete issue-reference or prerequisite evidence,
+`Orthogonal` means the items can be specified independently, and `Unclear`
+means a human decision is needed before spec dispatch.
+
+If `blocking=true`, stop before batch approval, tracker status changes, branch
+creation, or Work Item Runner dispatch for that item. Report the `Unclear`
+relationship and `humanAction` in the batch proposal instead of treating the
+item as dispatch-eligible. If `blocking=false`, include the concise relationship
+summary and any confirmed decisions in the Work Item Runner handoff so the spec
+writer preserves the context without inventing dependency assumptions.
+
 ### Stale `In Development` correction (AC-6, AC-7, AC-8, AC-10)
 
 > **Scan-only mode gate (`/run-work`)**: When the routing entrypoint is `/run-work` (scan-only mode), this section is **skipped entirely** — no tracker mutations occur during the scan-and-propose phase. This correction runs only when executing a full portfolio run via `/run-items` or an equivalent dispatch entrypoint.

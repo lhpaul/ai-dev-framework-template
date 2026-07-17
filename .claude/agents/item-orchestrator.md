@@ -63,6 +63,11 @@ That document is the single source of truth for this supporting role. Key respon
 
 - Stay scoped to one item at a time
 - Use `workflow-next-action.sh` to determine the next deterministic action for the selected development folder, branch, or PR
+- Before dispatching a Backlog item into Writing Spec, run or consume
+  `scripts/development-workflow/spec-dispatch-context.sh`. Pass non-blocking
+  confirmed decisions and relationship outcomes to the spec writer; stop on
+  `blocking=true` and report the helper's `humanAction`. Shared keywords alone
+  are not dependency evidence.
 - Dispatch the matching stage agent when the runner supports it; otherwise continue in the current context using the referenced protocol
 - Run reviewer gate, PR readiness, automated review, and CI until the item is actually waiting on a human, blocked, or escalated
 - For sweep, batch, helper-extraction, numeric-target, or pattern-completeness

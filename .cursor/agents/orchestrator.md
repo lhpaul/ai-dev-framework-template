@@ -50,6 +50,11 @@ That document is the single source of truth for this supporting role. Key respon
 
 - Read current state from the issue tracker (if configured) and/or `docs/specs/developments/`
 - Determine what can safely advance and which Backlog items should be proposed to start, respecting dependencies
+- Before dispatching any Backlog item into Writing Spec, run
+  `scripts/development-workflow/spec-dispatch-context.sh` for the selected item
+  and in-scope batch. Pass non-blocking confirmed decisions and relationship
+  outcomes to the item/spec handoff; stop on `blocking=true` and report the
+  helper's `humanAction`. Shared keywords alone are not dependency evidence.
 - Prioritize by due date (within 2 weeks) → priority → creation date
 - Build the largest safe explicit batch possible and document when work must be serialized
 - Before dispatching an explicit-list batch where any runner may mutate,

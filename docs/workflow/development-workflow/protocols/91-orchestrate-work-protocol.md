@@ -334,6 +334,31 @@ route classification. Repository labels such as `workflow`, `bug`,
 `enhancement`, and `type:*` are legacy classification hints only; do not rely on
 them when Type is available.
 
+### Spec-dispatch relationship context gate
+
+Before a direct single-item run transitions a Backlog item into **Writing Spec**,
+run or consume the spec-dispatch context helper:
+
+```bash
+./scripts/development-workflow/spec-dispatch-context.sh \
+  --selected <issue-number> \
+  --items <issue-number> \
+  [--confirmed-decision-file <jsonl-file>] \
+  --json
+```
+
+When the item is dispatched by Protocol 90, use the handoff-provided context
+instead of recomputing it unless the handoff is missing or stale. When running
+directly, a one-item scope still lets the helper collect human-confirmed
+decisions from the issue and optional current-session decision file.
+
+If helper output has `blocking=true`, stop before tracker mutation, branch
+creation, or spec-writer dispatch and report the `humanAction`. If it is not
+blocking, pass `confirmedDecisions[]` and `relationships[]` to
+`01-generate-spec-protocol.md`. Shared terminology alone must not be treated as
+a dependency; `Dependent` requires concrete evidence, `Orthogonal` means no
+ordering dependency, and `Unclear` requires a human relationship decision.
+
 > **Linear provider — deferred status reads**: When `workflow-next-action.sh`
 > (or `workflow-batch-plan.sh`) returns a `TRACKER_ACTION_REQUIRED=read_status
 > issue=<id>` line in place of an empty status, the item's status was deferred —

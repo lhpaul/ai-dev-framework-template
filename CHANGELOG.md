@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Prevent false dependency dispatch context** (#1182): Add
+  spec-dispatch relationship context so orchestrators do not infer dependencies
+  from keyword overlap alone.
 - **Block Implementation Code in Plan PRs** (#1206): Add a
   documentation-stage alignment gate that blocks spec and plan PR readiness when
   implementation files are present.

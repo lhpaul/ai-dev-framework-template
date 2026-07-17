@@ -47,6 +47,13 @@ The process moves through the stages below in order. The point of this section i
 
 The backlog is where work starts. A work item exists here before the team commits to a solution. This stage is about priority, timing, dependencies, and clarity of the request.
 
+Before a Backlog item enters spec writing, orchestration builds a conservative
+spec-dispatch context when possible. Shared terminology with another in-scope
+item is not enough to create a dependency: the workflow records relationships as
+`Dependent`, `Orthogonal`, or `Unclear`, preserves human-confirmed design
+decisions from tracker comments or current-session context, and stops for a
+human decision when ambiguity could change product scope.
+
 ### Spec
 
 The spec explains **what** should happen and **why** it matters. It should describe actors, workflows, business rules, acceptance criteria, scope boundaries, and any product-facing measurement requirements in product terms.

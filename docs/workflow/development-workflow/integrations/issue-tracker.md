@@ -28,6 +28,10 @@ If the agent does not have direct tracker access, it must ask the human to paste
 
 - **Prefer recency**: newer comments override older ones if they conflict.
 - **Prefer explicit decisions**: “Decision: …”, “We will …”, “Out of scope: …” are high-signal.
+- **Preserve confirmed design decisions for spec dispatch**: comments with
+  explicit human correction, approval, clarification, or decision language can
+  feed `spec-dispatch-context.sh` so spec writers receive confirmed product
+  constraints before drafting begins.
 - **Don’t guess**: if comments introduce ambiguity or contradict the spec/plan, **stop and ask** for clarification.
 - **Don’t silently discard** tracker context: if it changes scope/requirements, call it out explicitly in the stage output (spec/plan/PR).
 
