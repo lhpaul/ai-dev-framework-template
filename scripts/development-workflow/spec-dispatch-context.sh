@@ -129,17 +129,21 @@ text_contains_dependency() {
   local lower compact match
   lower="$(printf '%s\n' "$text" | tr '[:upper:]' '[:lower:]')"
   compact="$(printf '%s\n' "$lower" | tr '\n' ' ')"
-  if printf '%s\n' "$compact" | grep -Eiq "(not|without)[^.!?]{0,120}(^|[^0-9#])#?${issue}([^0-9]|$)"; then
-    return 1
-  fi
-  match="$(printf '%s\n' "$compact" | grep -Eio "(depends on|blocked by|requires|waiting on)[^.!?]{0,120}(^|[^0-9#])#?${issue}([^0-9]|$)" | head -1 || true)"
-  if [ -z "$match" ]; then
-    return 1
-  fi
-  if printf '%s\n' "$match" | grep -Eiq "(not|without)[^.!?]{0,80}(^|[^0-9#])#?${issue}([^0-9]|$)"; then
-    return 1
-  fi
-  return 0
+  while IFS= read -r match; do
+    if [ -z "$match" ]; then
+      continue
+    fi
+    if printf '%s\n' "$match" | grep -Eiq "^(not|without)[^.!?]{0,40}(depends on|blocked by|requires|waiting on)"; then
+      continue
+    fi
+    if printf '%s\n' "$match" | grep -Eiq "(not|without)[^.!?]{0,80}(^|[^0-9#])#?${issue}([^0-9]|$)"; then
+      continue
+    fi
+    return 0
+  done <<EOF
+$(printf '%s\n' "$compact" | grep -Eio "((not|without)[^.!?]{0,40})?(depends on|blocked by|requires|waiting on)[^.!?]{0,120}(^|[^0-9#])#?${issue}([^0-9]|$)" || true)
+EOF
+  return 1
 }
 
 text_contains_negated_dependency() {

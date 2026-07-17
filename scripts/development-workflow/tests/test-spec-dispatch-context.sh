@@ -53,6 +53,11 @@ JSON
 {"number":108,"title":"Negated blocked-by public-site component","body":"This is not blocked by #100. It shares public site component language but can proceed independently.","comments":[]}
 JSON
     ;;
+  109)
+    cat <<'JSON'
+{"number":109,"title":"Mixed dependency public-site component","body":"This depends on #100 for the API layer. It is not related to #100 for the UI layer.","comments":[]}
+JSON
+    ;;
   107)
     cat <<'JSON'
 {"number":107,"title":"Larger issue reference public-site component","body":"This depends on #2100 for unrelated public site component catalog work.","comments":[]}
@@ -117,6 +122,10 @@ run_test "negative_lookalike_not_blocking" "false" "$(printf '%s\n' "$negative_o
 negated_dependency_output="$("$HELPER" --selected 100 --items 100,108 --json)"
 run_test "negated_dependency_phrase_not_dependent" "not-dependent" "$(printf '%s\n' "$negated_dependency_output" | jq -r 'if .relationships[0].outcome == "Dependent" then "dependent" else "not-dependent" end')"
 run_test "negated_dependency_phrase_not_blocking" "false" "$(printf '%s\n' "$negated_dependency_output" | jq -r '.blocking')"
+
+mixed_dependency_output="$("$HELPER" --selected 100 --items 100,109 --json)"
+run_test "mixed_dependency_keeps_dependent" "Dependent" "$(printf '%s\n' "$mixed_dependency_output" | jq -r '.relationships[0].outcome')"
+run_test "mixed_dependency_not_blocking" "false" "$(printf '%s\n' "$mixed_dependency_output" | jq -r '.blocking')"
 
 boundary_output="$("$HELPER" --selected 100 --items 100,107 --json)"
 run_test "larger_issue_number_not_dependent" "not-dependent" "$(printf '%s\n' "$boundary_output" | jq -r 'if .relationships[0].outcome == "Dependent" then "dependent" else "not-dependent" end')"
