@@ -42,7 +42,15 @@ advances exactly one non-epic item through Protocol 91.
    artifact-owning repo root (`--repo-root "$ARTIFACT_REPO_ROOT"`).
    Stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`;
    explicit split work requires parent approval and `--allow-split true`.
-7. **Guardrails enforcement**: Use portfolio-resolved guardrails from handoff when
+7. Before dispatching a Backlog item into Writing Spec, run or consume
+   `scripts/development-workflow/spec-dispatch-context.sh`. For direct
+   single-item runs, pass the selected item plus relevant in-scope Backlog peers
+   from the current tracker scan in `--items`; a selected-only scope may collect
+   decisions but cannot classify peer relationships. Pass non-blocking confirmed
+   decisions and relationship outcomes to the spec writer; stop on
+   `blocking=true` and report the helper's `humanAction`. Shared keywords alone
+   are not dependency evidence.
+8. **Guardrails enforcement**: Use portfolio-resolved guardrails from handoff when
    available; otherwise resolve from repo `guardrails` config. Report effective
    values before mutation. Enforce gates per
    `docs/workflow/development-workflow/guardrails-enforcement.md` section 3.
@@ -54,11 +62,11 @@ advances exactly one non-epic item through Protocol 91.
    items, run Protocol 91's residual gate before `ready-for-human-review`; block
    or escalate instead of reporting terminal when residual evidence is missing or
    incomplete.
-8. For `spec/*` and `implementation-plan/*` PRs, run Protocol 91 Step 8a's
+9. For `spec/*` and `implementation-plan/*` PRs, run Protocol 91 Step 8a's
    documentation-stage alignment checker before readiness; correct or escalate
    mismatches instead of applying `ready-for-human-review`.
-9. Epic-like targets must use `$run-epic` / `/run-epic`, not this command.
-10. When the delegated merge gate returns `merge_allowed`, continue through merge,
+10. Epic-like targets must use `$run-epic` / `/run-epic`, not this command.
+11. When the delegated merge gate returns `merge_allowed`, continue through merge,
    remote/local branch cleanup, `post-merge-cleanup.sh`, and live tracker
    verification before reporting the item terminal. Do not stop at
    `ready-for-human-review` in a delegated merge run.
@@ -66,7 +74,7 @@ advances exactly one non-epic item through Protocol 91.
    intermediate; `merge_denied` means the ready PR stops as
    `ready_human_merge` and no merge command is run. A merge-granted run that
    stops at readiness without a named blocker is `policy_inconsistent`.
-11. Before reporting any terminal state, run
+12. Before reporting any terminal state, run
     `scripts/development-workflow/item-completion-self-check.sh` for the claimed
     state and include its `## Ground-Truth Completion Verification` section in
     the Work Item Runner Summary. Treat `discrepancy` and

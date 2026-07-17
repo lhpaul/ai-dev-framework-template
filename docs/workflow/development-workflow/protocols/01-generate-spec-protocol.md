@@ -34,6 +34,16 @@ Before starting, read:
 
 **Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Spec** before dispatch, **Spec in Review** when the PR is human-ready, and **Spec Ready** only after merge. If you invoke this protocol standalone, mirror the same status progression manually.
 
+**Spec-dispatch context**: When the Work Item Runner or Portfolio Orchestrator
+provides output from `scripts/development-workflow/spec-dispatch-context.sh`,
+read it before the alignment conversation. Preserve `confirmedDecisions[]` and
+non-blocking relationship outcomes as product constraints in the spec. Do not
+turn helper mechanics, token matching, JSON fields, or implementation algorithms
+into spec requirements. If the supplied context says a relationship is
+`Dependent`, cite the concrete evidence. If it says `Orthogonal`, avoid adding
+dependency language from shared terminology alone. If the context is `Unclear`
+or `blocking=true`, stop and ask for the named human decision before drafting.
+
 **Repository mode ownership**: Resolve repository mode before creating or
 reviewing spec artifacts. Missing mode or explicit `single_repo` means the
 current repository owns the spec. In `workflow_hub` mode, the hub owns specs and
