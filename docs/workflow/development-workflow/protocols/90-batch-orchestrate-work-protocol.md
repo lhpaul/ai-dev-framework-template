@@ -501,11 +501,13 @@ and a `blocking` flag. Shared keywords alone are not dependency evidence:
 means a human decision is needed before spec dispatch.
 
 If `blocking=true`, stop before batch approval, tracker status changes, branch
-creation, or Work Item Runner dispatch for that item. Report the `Unclear`
-relationship and `humanAction` in the batch proposal instead of treating the
-item as dispatch-eligible. If `blocking=false`, include the concise relationship
-summary and any confirmed decisions in the Work Item Runner handoff so the spec
-writer preserves the context without inventing dependency assumptions.
+creation, or Work Item Runner dispatch for that item. Report the helper
+`humanAction`; when the block comes from peer ambiguity, include the `Unclear`
+relationship row, and when it comes from confirmed-decision conflict, report the
+decision conflict instead of treating the item as dispatch-eligible. If
+`blocking=false`, include the concise relationship summary and any confirmed
+decisions in the Work Item Runner handoff so the spec writer preserves the
+context without inventing dependency assumptions.
 
 ### Stale `In Development` correction (AC-6, AC-7, AC-8, AC-10)
 

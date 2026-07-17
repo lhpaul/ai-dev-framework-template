@@ -184,7 +184,7 @@ text_contains_negated_dependency() {
   compact="$(printf '%s\n' "$lower" | tr '\n' ' ')"
   issue_pattern="$(issue_ref_pattern "$issue")"
   printf '%s\n' "$compact" \
-    | grep -Eiq "(not|without)[^.!?]{0,120}(${issue_pattern})"
+    | grep -Eiq "(^|[^a-z])(not|without)[^.!?]{0,120}(${issue_pattern})"
 }
 
 has_coupling_language() {

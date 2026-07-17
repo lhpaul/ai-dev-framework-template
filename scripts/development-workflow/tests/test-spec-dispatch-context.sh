@@ -108,6 +108,11 @@ JSON
 {"number":119,"title":"Sprint number public-site component","body":"This requires sprint 100 for public site component planning, not an issue reference.","comments":[]}
 JSON
     ;;
+  120)
+    cat <<'JSON'
+{"number":120,"title":"Cannot wait public-site component","body":"This cannot wait because it depends on #100 for public site component sequencing.","comments":[]}
+JSON
+    ;;
   107)
     cat <<'JSON'
 {"number":107,"title":"Larger issue reference public-site component","body":"This depends on #2100 for unrelated public site component catalog work.","comments":[]}
@@ -192,6 +197,10 @@ run_test "different_peer_decisions_do_not_conflict" "false" "$(printf '%s\n' "$d
 dependent_output="$("$HELPER" --selected 100 --items 100,102 --json)"
 run_test "dependent_outcome" "Dependent" "$(printf '%s\n' "$dependent_output" | jq -r '.relationships[0].outcome')"
 run_test "dependent_not_blocking" "false" "$(printf '%s\n' "$dependent_output" | jq -r '.blocking')"
+
+cannot_output="$("$HELPER" --selected 100 --items 100,120 --json)"
+run_test "cannot_subword_keeps_dependency" "Dependent" "$(printf '%s\n' "$cannot_output" | jq -r '.relationships[0].outcome')"
+run_test "cannot_subword_not_blocking" "false" "$(printf '%s\n' "$cannot_output" | jq -r '.blocking')"
 
 dependent_on_output="$("$HELPER" --selected 100 --items 100,111 --json)"
 run_test "dependent_on_outcome" "Dependent" "$(printf '%s\n' "$dependent_on_output" | jq -r '.relationships[0].outcome')"
