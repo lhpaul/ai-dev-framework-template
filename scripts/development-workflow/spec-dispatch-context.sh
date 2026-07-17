@@ -129,6 +129,9 @@ text_contains_dependency() {
   local lower compact match
   lower="$(printf '%s\n' "$text" | tr '[:upper:]' '[:lower:]')"
   compact="$(printf '%s\n' "$lower" | tr '\n' ' ')"
+  if printf '%s\n' "$compact" | grep -Eiq "(not|without)[^.!?]{0,120}(^|[^0-9#])#?${issue}([^0-9]|$)"; then
+    return 1
+  fi
   match="$(printf '%s\n' "$compact" | grep -Eio "(depends on|blocked by|requires|waiting on)[^.!?]{0,120}(^|[^0-9#])#?${issue}([^0-9]|$)" | head -1 || true)"
   if [ -z "$match" ]; then
     return 1
