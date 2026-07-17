@@ -25,7 +25,7 @@ issue="$3"
 case "$issue" in
   100)
     cat <<'JSON'
-{"number":100,"title":"Internal public-site component unit stages","body":"Build unit stages as an internal state switcher within one public site component instance.","comments":[{"body":"Decision: the selected item uses one component instance with an internal switcher.","url":"https://example.test/comments/1"}]}
+{"number":100,"title":"Internal public-site component unit stages","body":"Build unit stages as an internal state switcher within one public site component instance.","comments":[{"body":"Decision: the selected item uses one component instance with an internal switcher.","url":"https://example.test/comments/1"},{"body":"We still have indecision around naming, but no settled outcome here.","url":"https://example.test/comments/2"}]}
 JSON
     ;;
   101)
@@ -73,6 +73,26 @@ JSON
 {"number":112,"title":"Coupled public-site component validation","body":"Coordinate shared public site component validation behavior with the selected work before writing acceptance criteria.","comments":[]}
 JSON
     ;;
+  113)
+    cat <<'JSON'
+{"number":113,"title":"Clarification public-site component","body":"This requires clarification for public site component copy, but does not name another issue.","comments":[]}
+JSON
+    ;;
+  114)
+    cat <<'JSON'
+{"number":114,"title":"Remote blocker","body":"Different words only.","comments":[{"body":"Decision: this depends on #100 for the selected output.","url":"https://example.test/comments/114"}]}
+JSON
+    ;;
+  115)
+    cat <<'JSON'
+{"number":115,"title":"Different-target public-site component","body":"This depends on #200, but is not related to #100. It shares public site component wording.","comments":[]}
+JSON
+    ;;
+  116)
+    cat <<'JSON'
+{"number":116,"title":"Negated sentence public-site component","body":"This does not depend on #100, but it requires #100 discussion notes. It shares public site component wording.","comments":[]}
+JSON
+    ;;
   107)
     cat <<'JSON'
 {"number":107,"title":"Larger issue reference public-site component","body":"This depends on #2100 for unrelated public site component catalog work.","comments":[]}
@@ -115,6 +135,7 @@ orthogonal_output="$("$HELPER" --selected 100 --items 100,101 --json)"
 run_test "orthogonal_overlap_outcome" "Orthogonal" "$(printf '%s\n' "$orthogonal_output" | jq -r '.relationships[0].outcome')"
 run_test "orthogonal_not_blocking" "false" "$(printf '%s\n' "$orthogonal_output" | jq -r '.blocking')"
 run_test "issue_comment_decision_included" "yes" "$(printf '%s\n' "$orthogonal_output" | jq -r '.confirmedDecisions[0].summary | test("internal switcher") | if . then "yes" else "no" end')"
+run_test "comment_decision_substring_ignored" "1" "$(printf '%s\n' "$orthogonal_output" | jq -r '.confirmedDecisions | length')"
 
 decision_file="$TMP_ROOT/decisions.jsonl"
 printf '%s\n' '{"issue":100,"summary":"Human confirmed this is one component instance.","source":"session"}' > "$decision_file"
@@ -138,6 +159,10 @@ dependent_on_output="$("$HELPER" --selected 100 --items 100,111 --json)"
 run_test "dependent_on_outcome" "Dependent" "$(printf '%s\n' "$dependent_on_output" | jq -r '.relationships[0].outcome')"
 run_test "dependent_on_not_blocking" "false" "$(printf '%s\n' "$dependent_on_output" | jq -r '.blocking')"
 
+comment_dependency_output="$("$HELPER" --selected 100 --items 100,114 --json)"
+run_test "comment_dependency_bypasses_overlap_gate" "Dependent" "$(printf '%s\n' "$comment_dependency_output" | jq -r '.relationships[0].outcome')"
+run_test "comment_dependency_not_blocking" "false" "$(printf '%s\n' "$comment_dependency_output" | jq -r '.blocking')"
+
 unclear_output="$("$HELPER" --selected 100 --items 100,103 --json)"
 run_test "unclear_outcome" "Unclear" "$(printf '%s\n' "$unclear_output" | jq -r '.relationships[0].outcome')"
 run_test "unclear_blocks" "true" "$(printf '%s\n' "$unclear_output" | jq -r '.blocking')"
@@ -159,9 +184,21 @@ mixed_dependency_output="$("$HELPER" --selected 100 --items 100,109 --json)"
 run_test "mixed_dependency_keeps_dependent" "Dependent" "$(printf '%s\n' "$mixed_dependency_output" | jq -r '.relationships[0].outcome')"
 run_test "mixed_dependency_not_blocking" "false" "$(printf '%s\n' "$mixed_dependency_output" | jq -r '.blocking')"
 
+different_target_output="$("$HELPER" --selected 100 --items 100,115 --json)"
+run_test "different_target_not_dependent" "not-dependent" "$(printf '%s\n' "$different_target_output" | jq -r 'if .relationships[0].outcome == "Dependent" then "dependent" else "not-dependent" end')"
+run_test "different_target_not_blocking" "false" "$(printf '%s\n' "$different_target_output" | jq -r '.blocking')"
+
+negated_sentence_output="$("$HELPER" --selected 100 --items 100,116 --json)"
+run_test "negated_sentence_not_dependent" "not-dependent" "$(printf '%s\n' "$negated_sentence_output" | jq -r 'if .relationships[0].outcome == "Dependent" then "dependent" else "not-dependent" end')"
+run_test "negated_sentence_not_blocking" "false" "$(printf '%s\n' "$negated_sentence_output" | jq -r '.blocking')"
+
 independent_word_output="$("$HELPER" --selected 100 --items 100,110 --json)"
 run_test "independent_word_not_unclear" "Orthogonal" "$(printf '%s\n' "$independent_word_output" | jq -r '.relationships[0].outcome')"
 run_test "independent_word_not_blocking" "false" "$(printf '%s\n' "$independent_word_output" | jq -r '.blocking')"
+
+bare_requires_output="$("$HELPER" --selected 100 --items 100,113 --json)"
+run_test "bare_requires_not_unclear" "Orthogonal" "$(printf '%s\n' "$bare_requires_output" | jq -r '.relationships[0].outcome')"
+run_test "bare_requires_not_blocking" "false" "$(printf '%s\n' "$bare_requires_output" | jq -r '.blocking')"
 
 boundary_output="$("$HELPER" --selected 100 --items 100,107 --json)"
 run_test "larger_issue_number_not_dependent" "not-dependent" "$(printf '%s\n' "$boundary_output" | jq -r 'if .relationships[0].outcome == "Dependent" then "dependent" else "not-dependent" end')"

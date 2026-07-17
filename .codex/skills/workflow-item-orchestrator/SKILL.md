@@ -39,8 +39,11 @@ Recommended model tier: `balanced`
 12. Before implementation mutation in `workflow_hub`, state the selected product repository, local path or remote identity, artifact owner, and mutation target. Stop before file edits, branch creation, commits, or implementation PR creation when product repository context is missing or ambiguous. Specs and plans remain hub-owned unless a later protocol says otherwise.
 13. Before dispatching a stage path that may create a branch or open a PR, pass the expected branch, expected worktree when known, approved base, and artifact-owning repo root. Run `run-nested-artifact-guard.sh --repo-root "$ARTIFACT_REPO_ROOT"` before mutation and stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`.
 14. Before dispatching a Backlog item into Writing Spec, run or consume
-    `scripts/development-workflow/spec-dispatch-context.sh`. Pass non-blocking
-    confirmed decisions and relationship outcomes to the spec writer; stop on
+    `scripts/development-workflow/spec-dispatch-context.sh`. For direct
+    single-item runs, pass the selected item plus relevant in-scope Backlog peers
+    from the current tracker scan in `--items`; a selected-only scope may collect
+    decisions but cannot classify peer relationships. Pass non-blocking confirmed
+    decisions and relationship outcomes to the spec writer; stop on
     `blocking=true` and report the helper's `humanAction`. Shared keywords alone
     are not dependency evidence.
 15. **Guardrails enforcement**: At item-run start, use portfolio-resolved guardrails from handoff metadata when available; otherwise resolve from repo `guardrails` config. Report effective values before mutation. Enforce per-stage PR-open, delegated review, delegated merge, and completion gates per `docs/workflow/development-workflow/guardrails-enforcement.md` section 3. When no `guardrails` section is found, apply conservative defaults and state them. When the delegated merge gate returns `merge_allowed`, continue through merge, branch cleanup, `post-merge-cleanup.sh`, and live tracker verification before reporting the item terminal. Treat merge authority explicitly: `merge_granted` means readiness is intermediate; `merge_denied` means the ready PR stops as `ready_human_merge` and no merge command is run. A merge-granted run that stops at readiness without a named blocker is `policy_inconsistent`.

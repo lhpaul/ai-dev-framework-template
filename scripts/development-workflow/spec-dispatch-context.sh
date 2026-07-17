@@ -93,7 +93,7 @@ done < "$items_file"
 
 issue_text() {
   local issue="$1"
-  jq -r '[.title // "", .body // ""] | join("\n")' "$issue_json_dir/$issue.json"
+  jq -r '[.title // "", .body // "", (.comments[]?.body // empty)] | join("\n")' "$issue_json_dir/$issue.json"
 }
 
 significant_terms() {
@@ -135,24 +135,31 @@ dependency_phrase_pattern() {
 
 text_contains_dependency() {
   local text="$1" issue="$2"
-  local lower compact match issue_pattern dependency_pattern
+  local lower sentence match issue_pattern dependency_pattern first_ref
   lower="$(printf '%s\n' "$text" | tr '[:upper:]' '[:lower:]')"
-  compact="$(printf '%s\n' "$lower" | tr '\n' ' ')"
   issue_pattern="$(issue_ref_pattern "$issue")"
   dependency_pattern="$(dependency_phrase_pattern)"
-  while IFS= read -r match; do
-    if [ -z "$match" ]; then
+  while IFS= read -r sentence; do
+    if [ -z "$sentence" ]; then
       continue
     fi
-    if printf '%s\n' "$match" | grep -Eiq "^(not|without)[^.!?]{0,40}(${dependency_pattern})"; then
+    if text_contains_negated_dependency "$sentence" "$issue"; then
       continue
     fi
-    if printf '%s\n' "$match" | grep -Eiq "(not|without)[^.!?]{0,80}(${issue_pattern})"; then
-      continue
-    fi
-    return 0
+    while IFS= read -r match; do
+      if [ -z "$match" ]; then
+        continue
+      fi
+      first_ref="$(printf '%s\n' "$match" | grep -Eo '#[0-9]+' | head -1 || true)"
+      if [ -n "$first_ref" ] && [ "$first_ref" != "#$issue" ]; then
+        continue
+      fi
+      return 0
+    done <<EOF_MATCH
+$(printf '%s\n' "$sentence" | grep -Eio "(${dependency_pattern})[^.!?]{0,120}(${issue_pattern})" || true)
+EOF_MATCH
   done <<EOF
-$(printf '%s\n' "$compact" | grep -Eio "((not|without)[^.!?]{0,40})?(${dependency_pattern})[^.!?]{0,120}(${issue_pattern})" || true)
+$(printf '%s\n' "$lower" | tr '\n' ' ' | awk '{ gsub(/[.!?]+/, "\n"); print }')
 EOF
   return 1
 }
@@ -173,7 +180,7 @@ has_coupling_language() {
       {
         line = $0
         gsub(/[^a-z0-9]+/, " ", line)
-        if (line ~ /(^| )(depends|dependent|blocked|requires|required|prerequisite|coupled|coupling|shared|coordinate|coordination)( |$)/ ||
+        if (line ~ /(^| )(depends|dependent|blocked|prerequisite|coupled|coupling|shared|coordinate|coordination)( |$)/ ||
             line ~ /(^| )waiting on( |$)/ ||
             line ~ /(^| )same data( |$)/ ||
             line ~ /(^| )same schema( |$)/ ||
@@ -210,12 +217,23 @@ while IFS= read -r peer; do
   peer_terms="$tmp_dir/peer-$peer-terms"
   significant_terms < "$peer_text_file" > "$peer_terms"
 
+  selected_text="$(cat "$selected_text_file")"
+  peer_text="$(cat "$peer_text_file")"
+  selected_depends_on_peer=false
+  peer_depends_on_selected=false
+  if text_contains_dependency "$selected_text" "$peer"; then
+    selected_depends_on_peer=true
+  fi
+  if text_contains_dependency "$peer_text" "$selected"; then
+    peer_depends_on_selected=true
+  fi
+
   overlap_file="$tmp_dir/overlap-$peer"
   comm -12 "$selected_terms" "$peer_terms" > "$overlap_file"
 
   phrase_count="$(grep -c '^phrase:' "$overlap_file" || true)"
   term_count="$(grep -c '^term:' "$overlap_file" || true)"
-  if [ "$phrase_count" -lt 1 ] && [ "$term_count" -lt 2 ]; then
+  if [ "$selected_depends_on_peer" != "true" ] && [ "$peer_depends_on_selected" != "true" ] && [ "$phrase_count" -lt 1 ] && [ "$term_count" -lt 2 ]; then
     continue
   fi
 
@@ -225,14 +243,12 @@ while IFS= read -r peer; do
   evidence_file="$tmp_dir/evidence-$peer"
   : > "$evidence_file"
   outcome="Orthogonal"
-  selected_text="$(cat "$selected_text_file")"
-  peer_text="$(cat "$peer_text_file")"
 
-  if text_contains_dependency "$selected_text" "$peer"; then
+  if [ "$selected_depends_on_peer" = "true" ]; then
     outcome="Dependent"
     printf 'Selected issue contains an explicit dependency phrase referencing #%s.\n' "$peer" >> "$evidence_file"
   fi
-  if text_contains_dependency "$peer_text" "$selected"; then
+  if [ "$peer_depends_on_selected" = "true" ]; then
     outcome="Dependent"
     printf 'Peer issue #%s contains an explicit dependency phrase referencing #%s.\n' "$peer" "$selected" >> "$evidence_file"
   fi
@@ -300,7 +316,7 @@ jq '
   [
     .comments[]?
     | (.body // "") as $body
-    | select($body | test("(?i)(confirmed|approved|correction|clarifying|decision)"))
+	    | select($body | test("(?i)\\b(confirmed|approved|correction|clarifying|decision)\\b"))
     | {
         summary: ($body | gsub("\\s+"; " ") | .[0:240]),
         source: (.url // (.author.login // "issue comment"))

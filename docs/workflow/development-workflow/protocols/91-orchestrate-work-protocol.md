@@ -342,15 +342,18 @@ run or consume the spec-dispatch context helper:
 ```bash
 ./scripts/development-workflow/spec-dispatch-context.sh \
   --selected <issue-number> \
-  --items <issue-number> \
+  --items <selected-and-in-scope-backlog-peer-issue-numbers> \
   [--confirmed-decision-file <jsonl-file>] \
   --json
 ```
 
 When the item is dispatched by Protocol 90, use the handoff-provided context
 instead of recomputing it unless the handoff is missing or stale. When running
-directly, a one-item scope still lets the helper collect human-confirmed
-decisions from the issue and optional current-session decision file.
+directly, populate `--items` with the selected item plus the relevant in-scope
+Backlog peers from the current tracker scan so keyword-overlap relationships can
+be classified on the single-item path. If no peer scope is available, the helper
+still collects human-confirmed decisions from the issue and optional
+current-session decision file, but peer relationship classification is skipped.
 
 If helper output has `blocking=true`, stop before tracker mutation, branch
 creation, or spec-writer dispatch and report the `humanAction`. If it is not

@@ -43,8 +43,11 @@ advances exactly one non-epic item through Protocol 91.
    Stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`;
    explicit split work requires parent approval and `--allow-split true`.
 7. Before dispatching a Backlog item into Writing Spec, run or consume
-   `scripts/development-workflow/spec-dispatch-context.sh`. Pass non-blocking
-   confirmed decisions and relationship outcomes to the spec writer; stop on
+   `scripts/development-workflow/spec-dispatch-context.sh`. For direct
+   single-item runs, pass the selected item plus relevant in-scope Backlog peers
+   from the current tracker scan in `--items`; a selected-only scope may collect
+   decisions but cannot classify peer relationships. Pass non-blocking confirmed
+   decisions and relationship outcomes to the spec writer; stop on
    `blocking=true` and report the helper's `humanAction`. Shared keywords alone
    are not dependency evidence.
 8. **Guardrails enforcement**: Use portfolio-resolved guardrails from handoff when
