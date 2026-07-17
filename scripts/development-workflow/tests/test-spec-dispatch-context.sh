@@ -48,6 +48,11 @@ JSON
 {"number":104,"title":"Negative dependency lookalike public-site component","body":"This requires clarification, not #100. It shares public site component language but does not name a prerequisite.","comments":[]}
 JSON
     ;;
+  107)
+    cat <<'JSON'
+{"number":107,"title":"Larger issue reference public-site component","body":"This depends on #2100 for unrelated public site component catalog work.","comments":[]}
+JSON
+    ;;
   105)
     cat <<'JSON'
 {"number":105,"title":"Workflow helper alpha","body":"Tighten helper behavior.","comments":[]}
@@ -102,6 +107,10 @@ run_test "unclear_human_action" "yes" "$(printf '%s\n' "$unclear_output" | jq -r
 
 negative_output="$("$HELPER" --selected 100 --items 100,104 --json)"
 run_test "negative_lookalike_not_dependent" "not-dependent" "$(printf '%s\n' "$negative_output" | jq -r 'if .relationships[0].outcome == "Dependent" then "dependent" else "not-dependent" end')"
+run_test "negative_lookalike_not_blocking" "false" "$(printf '%s\n' "$negative_output" | jq -r '.blocking')"
+
+boundary_output="$("$HELPER" --selected 100 --items 100,107 --json)"
+run_test "larger_issue_number_not_dependent" "not-dependent" "$(printf '%s\n' "$boundary_output" | jq -r 'if .relationships[0].outcome == "Dependent" then "dependent" else "not-dependent" end')"
 
 low_overlap_output="$("$HELPER" --selected 105 --items 105,106 --json)"
 run_test "low_impact_overlap_ignored" "0" "$(printf '%s\n' "$low_overlap_output" | jq -r '.relationships | length')"

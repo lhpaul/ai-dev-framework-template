@@ -129,14 +129,23 @@ text_contains_dependency() {
   local lower compact match
   lower="$(printf '%s\n' "$text" | tr '[:upper:]' '[:lower:]')"
   compact="$(printf '%s\n' "$lower" | tr '\n' ' ')"
-  match="$(printf '%s\n' "$compact" | grep -Eio "(depends on|blocked by|requires|waiting on)[^.!?]{0,120}#?${issue}([^0-9]|$)" | head -1 || true)"
+  match="$(printf '%s\n' "$compact" | grep -Eio "(depends on|blocked by|requires|waiting on)[^.!?]{0,120}(^|[^0-9#])#?${issue}([^0-9]|$)" | head -1 || true)"
   if [ -z "$match" ]; then
     return 1
   fi
-  if printf '%s\n' "$match" | grep -Eiq "(not|without)[^.!?]{0,80}#?${issue}([^0-9]|$)"; then
+  if printf '%s\n' "$match" | grep -Eiq "(not|without)[^.!?]{0,80}(^|[^0-9#])#?${issue}([^0-9]|$)"; then
     return 1
   fi
   return 0
+}
+
+text_contains_negated_dependency() {
+  local text="$1" issue="$2"
+  local lower compact
+  lower="$(printf '%s\n' "$text" | tr '[:upper:]' '[:lower:]')"
+  compact="$(printf '%s\n' "$lower" | tr '\n' ' ')"
+  printf '%s\n' "$compact" \
+    | grep -Eiq "(not|without)[^.!?]{0,120}(^|[^0-9#])#?${issue}([^0-9]|$)"
 }
 
 has_coupling_language() {
@@ -195,9 +204,19 @@ while IFS= read -r peer; do
     printf 'Peer issue #%s contains an explicit dependency phrase referencing #%s.\n' "$peer" "$selected" >> "$evidence_file"
   fi
 
+  negated_dependency=false
+  if text_contains_negated_dependency "$selected_text" "$peer"; then
+    negated_dependency=true
+    printf 'Selected issue explicitly negates a dependency on #%s.\n' "$peer" >> "$evidence_file"
+  fi
+  if text_contains_negated_dependency "$peer_text" "$selected"; then
+    negated_dependency=true
+    printf 'Peer issue #%s explicitly negates a dependency on #%s.\n' "$peer" "$selected" >> "$evidence_file"
+  fi
+
   if [ "$outcome" != "Dependent" ] && {
     has_coupling_language "$selected_text" || has_coupling_language "$peer_text"
-  }; then
+  } && [ "$negated_dependency" != "true" ]; then
     outcome="Unclear"
     printf 'Meaningful overlap plus coupling language lacks concrete dependency or independence evidence.\n' >> "$evidence_file"
   fi
