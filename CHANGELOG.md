@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Fix bounded-prelude acceptance criteria checkpoints** (#1184): Stop treating
+  populated Acceptance Criteria sections as standalone product checkpoint
+  signals while preserving checkpoints for unresolved, empty, or placeholder
+  criteria.
 - **Require worktree isolation for concurrent runners** (#1205): Require
   concurrent mutating batch dispatches to use distinct isolated worktrees and
   pre-mutation runner self-checks.

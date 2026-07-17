@@ -102,8 +102,10 @@ signals default to checkpoints:
 
 - **Plan + technical**: database schema, migration, or persistent data-model
   wording.
-- **Spec + product**: unresolved product or acceptance-criteria ambiguity when
-  the item is still in Backlog or spec stage.
+- **Spec + product**: unresolved product language, open questions, empty
+  Acceptance Criteria sections, or placeholder-only acceptance criteria when
+  the item is still in Backlog or spec stage. A populated Acceptance Criteria
+  heading is normal issue structure and is not a checkpoint signal by itself.
 - **Plan or implementation + both**: ambiguous product/technical tradeoffs.
 - **Implementation + technical**: security, auth, permission, or other
   sensitive-change wording.
