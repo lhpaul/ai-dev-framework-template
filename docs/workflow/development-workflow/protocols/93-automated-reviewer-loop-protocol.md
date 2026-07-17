@@ -233,8 +233,13 @@ Reviewer bots (e.g. Devin) start a new review cycle within 5–8 minutes of each
 
 1. **Read ALL blocking findings first** — before editing any file, collect the complete list of open blocking findings from the current review cycle. Do not start fixing until you have the full picture.
 2. **Apply ALL addressable fixes** — implement every fix you can address in this dispatch, across all files and findings.
-3. **One commit, then push** — bundle every fix into a single commit and push exactly once per dispatch. Do not push after each individual fix.
-4. **Mandatory post-push SHA verification** — immediately after the push, verify the commit has landed on the remote before replying to review threads or declaring the fix pass complete:
+3. **Use local checkpoint commits when useful** — for substantial fixer work,
+   create coherent local checkpoint commits after completed logical sub-parts so
+   partial progress survives runner interruption.
+4. **Push once after all addressable fixes** — push only after all addressable
+   fixes for the current reviewer-loop cycle are complete. Do not push after
+   each individual fix or checkpoint commit.
+5. **Mandatory post-push SHA verification** — immediately after the push, verify the commit has landed on the remote before replying to review threads or declaring the fix pass complete:
 
    ```bash
    LOCAL_SHA=$(git rev-parse HEAD)
