@@ -363,9 +363,14 @@ blocking="$(printf '%s\n' "$relationships_json" | jq 'any(.[]; .blocking == true
 human_actions_json="$(printf '%s\n' "$relationships_json" | jq '[.[] | select(.blocking == true) | .humanAction] | map(select(. != null)) | unique')"
 decision_conflict="$(printf '%s\n' "$confirmed_json" | jq '
   def normalized: (.summary // "" | ascii_downcase);
-  def says_independent: normalized | test("orthogonal|independent|unrelated|no dependency|not dependent|not blocked");
-  def says_dependent: normalized | test("(depends on|dependent on|blocked by|requires|waiting on|prerequisite)[^.?!;]{0,80}#[0-9]+");
-  (any(.[]; says_independent) and any(.[]; says_dependent))
+  def dependency_text: normalized | gsub("(?:not blocked|not dependent)[^.?!;]{0,80}#[0-9]+"; "");
+  def refs_for($text; $pattern):
+    [$text | scan($pattern + "[^.?!;]{0,80}#[0-9]+") | scan("#[0-9]+") | ltrimstr("#") | tonumber];
+  def independent_refs: refs_for(normalized; "(?:orthogonal|independent|unrelated|no dependency|not dependent|not blocked)");
+  def dependent_refs: refs_for(dependency_text; "(?:depends on|dependent on|blocked by|requires|waiting on|prerequisite)");
+  [.[] | independent_refs[]?] as $independent
+  | [.[] | dependent_refs[]?] as $dependent
+  | any($independent[]; . as $issue | any($dependent[]; . == $issue))
 ')"
 if [ "$decision_conflict" = "true" ]; then
   blocking=true

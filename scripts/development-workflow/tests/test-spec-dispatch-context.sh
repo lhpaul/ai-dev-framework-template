@@ -176,6 +176,14 @@ non_conflicting_decision_file="$TMP_ROOT/non-conflicting-decisions.jsonl"
 non_conflicting_decision_output="$("$HELPER" --selected 100 --items 100 --confirmed-decision-file "$non_conflicting_decision_file" --json)"
 run_test "requires_detail_decision_not_conflict" "false" "$(printf '%s\n' "$non_conflicting_decision_output" | jq -r '.blocking')"
 
+different_peer_decision_file="$TMP_ROOT/different-peer-decisions.jsonl"
+{
+  printf '%s\n' '{"issue":100,"summary":"Decision: selected work is not blocked by #101.","source":"session"}'
+  printf '%s\n' '{"issue":100,"summary":"Decision: selected work depends on #102.","source":"session"}'
+} > "$different_peer_decision_file"
+different_peer_decision_output="$("$HELPER" --selected 100 --items 100 --confirmed-decision-file "$different_peer_decision_file" --json)"
+run_test "different_peer_decisions_do_not_conflict" "false" "$(printf '%s\n' "$different_peer_decision_output" | jq -r '.blocking')"
+
 dependent_output="$("$HELPER" --selected 100 --items 100,102 --json)"
 run_test "dependent_outcome" "Dependent" "$(printf '%s\n' "$dependent_output" | jq -r '.relationships[0].outcome')"
 run_test "dependent_not_blocking" "false" "$(printf '%s\n' "$dependent_output" | jq -r '.blocking')"
