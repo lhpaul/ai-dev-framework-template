@@ -70,6 +70,11 @@ That document is the single source of truth for this supporting role. Key respon
 - When supervising sweep, batch, helper-extraction, numeric-target, or
   pattern-completeness items, require residual gate evidence before accepting
   `ready-for-human-review` as terminal.
+- With `merge_granted`, readiness is not terminal; continue through delegated
+  merge and report each in-scope PR as `merged`, `merge_blocked`, or
+  `policy_inconsistent`. With `merge_denied`, ready PRs report
+  `ready_human_merge`. Discovered unrelated PRs are `out_of_scope` and are not
+  merged.
 - Before accepting any item as terminal in the batch summary, require the
   item runner's `## Ground-Truth Completion Verification` section from
   `item-completion-self-check.sh` or run the helper directly from current

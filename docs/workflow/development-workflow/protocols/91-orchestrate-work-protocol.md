@@ -2013,8 +2013,25 @@ Merge only when the gate returns `merge_allowed` **and** every required-evidence
 check in section 3 Gate 5 of `guardrails-enforcement.md` passes. For medium-risk
 decisions, include a complete "why safe to merge" explanation. A risk classified
 above the stage `max_merge_risk` stops the run and names the `high_risk_change`
-guardrail. When `may_merge_pr` is `false`, do not merge automatically — leave the
-PR at the `ready-for-human-review` handoff.
+guardrail.
+
+After readiness, branch on the effective merge authority:
+
+- `merge_granted` (`stages.<stage>.may_merge_pr: true`, or an accepted
+  invocation override such as `--may-merge` within the resolved guardrails):
+  `ready-for-human-review` and `ready-for-regression` are intermediate
+  readiness evidence. Continue through the delegated merge gate and approved
+  merge path for the in-scope PR. Do not report the item terminal while it is
+  merely ready unless a named post-readiness gate blocks merge.
+- `merge_denied` (`stages.<stage>.may_merge_pr: false`, `--no-may-merge`, or no
+  delegated merge authority): do not execute merge commands. Report
+  `ready_human_merge`, leave the PR at the human handoff, and name the exact
+  denying policy value plus the next human action.
+
+If merge authority is granted but a named post-readiness gate fails, report
+`merge_blocked` with the failed gate and human action. If this runner stops at
+readiness in a merge-granted run without a named blocker, the terminal outcome
+is `policy_inconsistent`, not ready or done.
 
 When the gate returns `merge_allowed`, the item run does **not** stop at
 `ready-for-human-review`. Continue through the repository-approved merge path,

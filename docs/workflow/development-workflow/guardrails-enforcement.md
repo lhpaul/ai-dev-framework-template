@@ -198,6 +198,27 @@ rollback/cleanup risk. Missing this explanation blocks the merge.
 Merging a high-risk PR requires explicit human selection of `max_merge_risk: high`
 for the stage.
 
+### Merge Authority Terminal Contract
+
+The selected merge authority controls whether readiness is terminal:
+
+- `merge_granted`: readiness labels are intermediate. After readiness, the
+  runner must continue through Gate 5 and the repository-approved merge path for
+  every in-scope PR whose gates pass. A clean merge path ends as `merged` only
+  after GitHub reports `MERGED`, branch cleanup runs, `post-merge-cleanup.sh`
+  completes, and live tracker verification is reported.
+- `merge_denied`: readiness labels are terminal for this run. The runner must
+  not execute a merge command. The terminal outcome is `ready_human_merge`, and
+  the summary must name the exact `stages.<stage>.may_merge_pr: false` or
+  invocation policy value that requires human review or merge.
+
+If merge authority is granted but an in-scope PR cannot proceed after readiness
+because a named gate fails, report `merge_blocked` with the failed gate and the
+required human action. If an in-scope PR stops at readiness during a
+merge-granted run without a named blocker, report `policy_inconsistent`. PRs
+discovered outside the bounded scope are `out_of_scope` and must not enter
+delegated merge or batch-merge commands.
+
 ### Gate 6 — Completion Gate
 
 At the Step 8b tracker-status transition, mark an item complete for a stage

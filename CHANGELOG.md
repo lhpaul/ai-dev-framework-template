@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Require incremental checkpoint commits for item dispatch** (#1176): Adds
   recoverability guidance requiring coherent checkpoint commits after completed
   logical sub-parts of long-running item work.
+- **Clarify delegated merge terminal behavior** (#1177): Document that
+  merge-authorized runs continue from readiness through merge and cleanup while
+  merge-denied runs stop at human handoff.
 - **Fast Track blast-radius routing** (#1207): Add call-site volume and
   external-system impact checks before Fast Track dispatch.
 - **Deprecate direct Cursor item-orchestrator path** (#1190): Clarify that

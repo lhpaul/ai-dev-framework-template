@@ -56,6 +56,10 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    verification, branch deletion/pruning, `post-merge-cleanup.sh`, live tracker
    verification, audit update, and rediscovery before treating that PR as
    complete.
+   Treat merge authority explicitly: `merge_granted` makes readiness
+   intermediate for in-scope child PRs; `merge_denied` stops at
+   `ready_human_merge`; unexplained stalled-at-ready child PRs are
+   `policy_inconsistent`; discovered unrelated PRs remain `out_of_scope`.
    When resuming an epic-scoped item after a human-checkpoint pause from a
    prior worktree-isolated run, run the Protocol 95/91 checkpoint-resume
    worktree preflight before any mutation. Re-entering the worktree is a CWD

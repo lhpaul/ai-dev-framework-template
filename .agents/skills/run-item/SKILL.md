@@ -62,6 +62,10 @@ advances exactly one non-epic item through Protocol 91.
    remote/local branch cleanup, `post-merge-cleanup.sh`, and live tracker
    verification before reporting the item terminal. Do not stop at
    `ready-for-human-review` in a delegated merge run.
+   Treat merge authority explicitly: `merge_granted` means readiness is
+   intermediate; `merge_denied` means the ready PR stops as
+   `ready_human_merge` and no merge command is run. A merge-granted run that
+   stops at readiness without a named blocker is `policy_inconsistent`.
 11. Before reporting any terminal state, run
     `scripts/development-workflow/item-completion-self-check.sh` for the claimed
     state and include its `## Ground-Truth Completion Verification` section in

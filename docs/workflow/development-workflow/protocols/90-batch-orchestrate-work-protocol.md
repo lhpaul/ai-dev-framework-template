@@ -1425,6 +1425,17 @@ a missing summary when review platforms are configured, or a non-clean
 reviewer-loop result remains in progress and must be redispatched or escalated
 instead of included in the done-report.
 
+When the selected policy grants merge authority for the PR stage, readiness is
+still not terminal. The batch outcome for each in-scope PR must be one of:
+`merged`, `merge_blocked`, or `policy_inconsistent`. Use `merge_blocked` when a
+named delegated merge gate, CI, review, setup, merge-state, risk, audit, or
+tracker blocker prevents merge after readiness. Use `policy_inconsistent` when
+an in-scope PR stops at readiness in a merge-granted run without a named blocker.
+When merge authority is denied, the terminal outcome for a ready PR is
+`ready_human_merge`. Any discovered PR outside the explicit bounded scope is
+`out_of_scope` and must not be included in delegated merge or batch-merge
+commands.
+
 **In-flight CI/watch states are non-terminal:** A transient watch failure,
 cancelled duplicate run, skipped superseded run, pending/queued check, or
 incomplete `statusCheckRollup` snapshot does not end a same-session
@@ -1745,7 +1756,7 @@ The re-trigger uses the same `max_cycles` counter as the normal reviewer loop (S
 
 ## Step 5.5: Batch-Merge Handoff (Merge-Ready Parallel Batches)
 
-When **all PRs in a parallel batch** have reached `ready-for-human-review`, the orchestrator may hand off to the batch-merge flow instead of leaving the human to merge manually.
+When **all PRs in a parallel batch** have reached `ready-for-human-review`, the orchestrator may hand off to the batch-merge flow instead of leaving the human to merge manually. In a merge-granted run this handoff is required for every in-scope PR whose delegated merge gate returns `merge_allowed`; in a merge-denied run this handoff is forbidden and the batch reports `ready_human_merge`.
 
 ### When to activate this step
 

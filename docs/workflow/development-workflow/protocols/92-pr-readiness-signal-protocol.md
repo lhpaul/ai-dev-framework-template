@@ -10,7 +10,7 @@ This is a **repo-wide definition**. All agents apply these labels consistently.
 
 | Label                    | Meaning                                                                                                                                                                                                                                                                                                                  |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ready-for-human-review` | The PR is ready for a human reviewer. CI is green. The `REVIEW.md` gate is satisfied. Every configured automated reviewer is clean or skipped.                                                                                                                                                                           |
+| `ready-for-human-review` | The PR is automation-clean and ready for a human reviewer or for the next delegated merge gate. CI is green. The `REVIEW.md` gate is satisfied. Every configured automated reviewer is clean or skipped.                                                                                                                |
 | `needs-fixes`            | The PR still needs fixes before it is ready for human review. This may be due to human-requested changes, failing CI, or blocking automated PR feedback.                                                                                                                                                                 |
 | `ready-for-regression`   | Automated code reviews are clean (or skipped). Configured real e2e/regression tests, or an explicitly enabled placeholder, should now run. Applied by the orchestrator (Step 7b) on implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`, `backport/hotfix/*`), and by the prepare-release flow (protocol `05`) on **production** release PRs (`release/*` → `main`) only. |
 | `needs-setup`            | PR introduces one or more infrastructure dependencies (env vars, secrets, DNS records, service account tokens, etc.) that require human setup steps before the feature can be safely enabled. Co-exists with `ready-for-human-review`; the human removes this label after completing (or intentionally deferring) setup. |
@@ -23,6 +23,10 @@ This is a **repo-wide definition**. All agents apply these labels consistently.
 `ready-for-human-review` remains the automation-clean label. It says the PR has
 passed the configured review, label, and CI gates. It does not by itself prove
 that a Work Item Runner's final report was based on current ground truth.
+It also is not always the terminal state: with `merge_granted`, the runner must
+continue through delegated merge, cleanup, and tracker verification; with
+`merge_denied`, the ready PR reports `ready_human_merge` and waits for human
+review or merge.
 
 Before an agent reports an item as ready, done, blocked, escalated, waiting on a
 human, or waiting on merge, Protocol 91 requires a
@@ -156,7 +160,8 @@ checkpoint transitions to `satisfied` or `waived` with audit evidence. Removing
 **Invariants**:
 
 - **BR-11**: `ready-for-human-review` means automation-clean only; it does not
-  imply checkpoint satisfaction.
+  imply checkpoint satisfaction or terminal completion when merge authority is
+  granted.
 - **BR-12**: `human-checkpoint-required` persists through ordinary fix cycles
   while the checkpoint remains `pending`.
 - **BR-13**: Removing `human-checkpoint-required` requires `satisfaction_state`
