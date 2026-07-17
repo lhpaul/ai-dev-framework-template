@@ -43,6 +43,21 @@ mutation may already have occurred outside the assigned worktree, escalate for
 human inspection instead of resetting, restoring, stashing, committing, or
 deleting the suspect changes.
 
+## Incremental Checkpoint Commits
+
+For substantial or multi-part mutating implementation work, commit immediately
+after each completed logical sub-part so interrupted runs have a recoverable
+checkpoint. Do not intentionally batch all completed sub-parts into one
+end-of-run commit. Single-step work with no meaningful completed intermediate
+checkpoint may use one final commit. Never commit incomplete, failing, or
+incoherent edits only to satisfy this requirement.
+
+Checkpoint commits must stay scoped to the assigned item, branch, and worktree.
+They do not change review, CI, readiness-label, tracker, or merge gates. Before
+resuming an interrupted run, inspect the branch history, local worktree commits,
+and uncommitted edits, then prefer the latest committed checkpoint that
+represents a completed logical sub-part as the resume boundary.
+
 ## Nested Artifact Guard
 
 When the work item has a positive numeric tracker issue number, run

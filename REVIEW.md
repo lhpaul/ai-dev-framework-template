@@ -48,6 +48,9 @@ A PR is ready for human review only when all of the following are true:
 - CI is green
 - Every configured automated PR reviewer is `clean` or `skipped`
 - No unresolved human-requested changes remain
+- For substantial or multi-part mutating item work, the branch history shows
+  coherent checkpoint commits after completed logical sub-parts, or the PR notes
+  why the work had no meaningful intermediate checkpoint before the final commit
 
 If any blocking finding remains, the PR must stay out of `ready-for-human-review`.
 

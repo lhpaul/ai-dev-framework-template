@@ -503,6 +503,13 @@ branch when available, failure reason, and human recovery action. The helper is
 read-only and never satisfies, waives, clears, or changes checkpoint state;
 checkpoint lifecycle still requires explicit satisfaction or waiver evidence.
 
+When resuming an interrupted mutating child run, inspect the child branch
+history, local worktree commits, and uncommitted edits before mutation. Prefer
+the latest committed checkpoint that represents a completed logical sub-part as
+the resume boundary. Absence of a newer checkpoint is acceptable evidence that
+no completed sub-part finished after the last checkpoint, but live branch, PR,
+worktree, review, CI, and tracker state still control the next action.
+
 For each in-scope item:
 
 1. Advance the item with the existing `/run-item-work` or stage protocol. Do not

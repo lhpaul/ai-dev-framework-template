@@ -43,6 +43,11 @@ Key rules:
   workflow branch or inside the item worktree. If the checkout is on `develop`
   or `main`, create the feature/fix/refactor/hotfix branch or worktree before
   the first edit; do not start in the shared checkout and move changes later
+- For substantial or multi-part mutating implementation work, commit
+  immediately after each completed logical sub-part so interrupted runs have a
+  recoverable checkpoint. Do not intentionally batch all completed sub-parts
+  into one end-of-run commit, and never commit incomplete, failing, or
+  incoherent edits only to satisfy this requirement
 - For Full Pipeline: read spec + plan + runbook BEFORE writing any code
 - For Refactor: read plan + runbook BEFORE writing any code (no spec)
 - For Fast Track: require the Protocol 91 Fast Track blast-radius gate and

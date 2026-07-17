@@ -20,6 +20,12 @@ escalate for human inspection if mutation may already have occurred outside the
 assigned worktree. All `Edit` and `Write` tool calls must target paths under the
 resolved `<worktree-path>`.
 
+For substantial or multi-part mutating spec work, commit immediately after each
+completed logical sub-part so interrupted runs have a recoverable checkpoint.
+Do not intentionally batch all completed sub-parts into one end-of-run commit,
+and never commit incomplete, failing, or incoherent edits only to satisfy this
+requirement.
+
 ## Repository Mode Context
 
 Resolve repository mode and artifact owner before writing a spec. Missing mode

@@ -12,11 +12,15 @@ Recommended model tier: `premium`
 3. Follow that protocol exactly.
 4. Keep the spec product-focused; implementation details belong in the plan stage.
 5. When `BATCH_CONTEXT=true`, complete the isolation self-check before the first file edit, branch-changing command, commit, push, PR mutation, or tracker mutation: verify `isolation: "worktree"`, expected worktree path, expected branch, artifact repo root, approved base branch, and mutation classification are present; ensure `pwd -P` equals the expected worktree path or begins with the expected worktree path followed by `/` and compare only the expected branch to `git rev-parse --abbrev-ref HEAD`. Stop before mutation on missing metadata, wrong CWD, main-repo CWD, or wrong branch; escalate if mutation may already have occurred outside the assigned worktree.
-6. Before opening the draft spec PR, complete Protocol 01's Document Quality Gate and include the gate log in the PR description. For tracker-backed briefs, include the mandatory Brief Objective List, Coverage Matrix, and PR-visible Deferral Notes as part of that gate.
-7. Before opening the draft spec PR, call `ensure_on_project_board <issue_number> "Writing Spec"` from `scripts/development-workflow/workflow-lib.sh`. This is a no-op when the issue is already on the board.
-8. Before creating the spec branch or opening the spec PR for a tracker-backed item, run `run-nested-artifact-guard.sh` with the expected `spec/*` branch and approved artifact base. Stop on missing base, duplicate artifacts, wrong-base PRs, or scan failures.
-9. When the branch is created, continue through reviewer gate, PR creation, and PR readiness unless the protocol surfaces a real human decision.
-10. Resolve repository mode, artifact owner, and artifact base branch before
+6. For substantial or multi-part mutating spec work, commit immediately after
+   each completed logical sub-part, do not intentionally batch all completed
+   sub-parts into one end-of-run commit, and never commit incomplete, failing,
+   or incoherent edits only to satisfy the requirement.
+7. Before opening the draft spec PR, complete Protocol 01's Document Quality Gate and include the gate log in the PR description. For tracker-backed briefs, include the mandatory Brief Objective List, Coverage Matrix, and PR-visible Deferral Notes as part of that gate.
+8. Before opening the draft spec PR, call `ensure_on_project_board <issue_number> "Writing Spec"` from `scripts/development-workflow/workflow-lib.sh`. This is a no-op when the issue is already on the board.
+9. Before creating the spec branch or opening the spec PR for a tracker-backed item, run `run-nested-artifact-guard.sh` with the expected `spec/*` branch and approved artifact base. Stop on missing base, duplicate artifacts, wrong-base PRs, or scan failures.
+10. When the branch is created, continue through reviewer gate, PR creation, and PR readiness unless the protocol surfaces a real human decision.
+11. Resolve repository mode, artifact owner, and artifact base branch before
    writing: `single_repo` uses the current repository; `workflow_hub` keeps specs
    and spec PRs hub-owned on the hub artifact base branch, even when the
    product implementation base is different; `product_repo` should report the

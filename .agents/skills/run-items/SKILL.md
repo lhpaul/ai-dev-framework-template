@@ -45,6 +45,11 @@ proposal step.
    duplicate worktree path; non-isolated runners are exempt only when explicitly
    classified `read_only` and they will not edit files, switch branches, commit,
    push, mutate PRs, change labels, or update tracker state.
+   Include the incremental commit requirement in every substantial or
+   multi-part mutating runner handoff: commit immediately after each completed
+   logical sub-part, do not intentionally batch all completed sub-parts into one
+   final commit, and never commit incomplete or failing work only to satisfy the
+   rule.
 10. Do not stop after advancing one item if another item in the explicit list still
    has a deterministic next action.
 11. Do not stop at transient in-flight CI/watch states. If a local watch exits

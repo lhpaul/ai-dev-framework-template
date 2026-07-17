@@ -36,6 +36,10 @@ the expected branch, expected worktree when known, approved base, and
 artifact-owning repo root. The stage path must run
 `run-nested-artifact-guard.sh --repo-root "$ARTIFACT_REPO_ROOT"` before mutation
 and stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`.
+For substantial or multi-part mutating stage work, also instruct the stage agent
+to commit immediately after each completed logical sub-part, avoid batching all
+completed sub-parts into one end-of-run commit, and never commit incomplete,
+failing, or incoherent edits only to satisfy this requirement.
 
 ## Guardrails Enforcement
 
@@ -98,6 +102,13 @@ resetting, restoring, stashing, committing, or deleting suspect changes.
    classification, and `isolation: "worktree"` when the stage agent may mutate
    artifacts.
 3. The sentence: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm `pwd -P` equals `<worktree-path>` or begins with `<worktree-path>/` before any git state-changing command."
+4. The checkpoint instruction: "For substantial or multi-part mutating item
+   work, commit each completed logical sub-part as soon as it is coherent so
+   agent death or compaction can resume from a recoverable checkpoint. Do not
+   intentionally batch all completed sub-parts into one end-of-run commit.
+   Single-step work with no meaningful completed intermediate checkpoint may use
+   one final commit. Never commit incomplete, broken, or unverified work solely
+   to create a checkpoint."
    Omitting any required instruction or metadata field is the root cause of the branch-leak pattern where stage subagents run Protocol 03's branching steps from the main repo root CWD, silently switching the main working tree to the feature branch.
 
 **Main-tree return rule (BATCH_CONTEXT=false / no isolation: worktree)**: When this agent is dispatched **without** worktree isolation (i.e., `BATCH_CONTEXT` is `false` or absent), the agent runs in the main working tree. In this case:
