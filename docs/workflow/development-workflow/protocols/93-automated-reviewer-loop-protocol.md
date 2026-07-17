@@ -178,10 +178,15 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
    assigned worktree path or begin with that path followed by `/`, and
    `git rev-parse --abbrev-ref HEAD` must match the expected branch. Stop before
    mutation if the check fails.
-2. Apply every blocking finding in one pass (follow the batching rule: all in one commit).
-3. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
-4. Push the commit. _(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)_
-5. **Mandatory post-push SHA verification** — immediately after the push, verify the commit has landed on the remote:
+2. Apply every blocking finding in one pass. For substantial fixer work, create
+   coherent local checkpoint commits after completed logical sub-parts so
+   partial progress survives runner interruption.
+3. Push once after all addressable fixes for the current reviewer-loop cycle
+   are complete. Do not push after each individual fix or checkpoint commit.
+   Use descriptive commit messages for the final local commit sequence.
+   _(Push before resolving threads — if push fails, threads must not be falsely
+   marked resolved.)_
+4. **Mandatory post-push SHA verification** — immediately after the push, verify the commit has landed on the remote:
 
    ```bash
    LOCAL_SHA=$(git rev-parse HEAD)
@@ -201,10 +206,10 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 
    If verification fails after one retry, report a BLOCKED state, do not resolve any threads, and do not apply any readiness labels. This is a hard stop — do not proceed past this point until the push is confirmed.
 
-6. Reply to each finding's review thread with the fix description and commit SHA.
-7. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
-8. **Increment `cycle`** (the same counter used in the sub-agent loop). Inline fix retries are bounded by `max_cycles` exactly like sub-agent retries — the inline path is a faster lane, not an unbounded one.
-9. Re-run the reviewer loop script from the top. If it returns `clean`, proceed normally. If the loop still reports unresolved blocking findings **and** `cycle >= max_cycles`, escalate to human (the just-pushed fix is always given a chance to be verified before escalating).
+5. Reply to each finding's review thread with the fix description and commit SHA.
+6. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
+7. **Increment `cycle`** (the same counter used in the sub-agent loop). Inline fix retries are bounded by `max_cycles` exactly like sub-agent retries — the inline path is a faster lane, not an unbounded one.
+8. Re-run the reviewer loop script from the top. If it returns `clean`, proceed normally. If the loop still reports unresolved blocking findings **and** `cycle >= max_cycles`, escalate to human (the just-pushed fix is always given a chance to be verified before escalating).
 
 **Do not dispatch a sub-agent for mechanical findings.** Sub-agent startup overhead (context loading, planning) typically costs 10–20 minutes for changes that take 30 seconds to apply directly.
 

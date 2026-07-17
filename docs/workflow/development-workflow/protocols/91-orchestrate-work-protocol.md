@@ -1871,14 +1871,14 @@ When dispatching a fixer agent, include the following explicit instruction:
 >
 > 1. **Read ALL blocking findings first** — before touching any file, collect the complete list of open blocking findings from the current review cycle.
 > 2. **Apply ALL addressable fixes** — implement every fix you can address in this dispatch, across all files.
-> 3. **One commit, then push** — bundle every fix into a single commit and push once. Do not push after each individual fix.
+> 3. **Use local checkpoint commits when useful** — for substantial fixer work,
+>    create coherent local checkpoint commits after completed logical sub-parts
+>    so partial progress survives runner interruption.
+> 4. **Push once after all addressable fixes** — push only after all addressable
+>    fixes for the current reviewer-loop cycle are complete. Do not push after
+>    each individual fix or checkpoint commit.
 >
 > Findings that cannot be addressed in this dispatch (e.g. require a human decision, are out of scope, or are genuinely contradictory) should be noted and left for human review. Do not skip a push just because one finding is unresolvable — push the rest.
-
-For substantial fixer work, coherent local checkpoint commits may be created
-after completed logical sub-parts, but the fixer still pushes once after all
-addressable fixes for the current reviewer-loop cycle are complete. Do not push
-after each checkpoint commit.
 
 ### Attempt-context injection rule (Step 7 fixer dispatch)
 
