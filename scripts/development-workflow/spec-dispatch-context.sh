@@ -180,8 +180,7 @@ has_coupling_language() {
       {
         line = $0
         gsub(/[^a-z0-9]+/, " ", line)
-        if (line ~ /(^| )(depends|dependent|blocked|prerequisite|coupled|coupling|shared|coordinate|coordination)( |$)/ ||
-            line ~ /(^| )waiting on( |$)/ ||
+        if (line ~ /(^| )(coupled|coupling|shared|coordinate|coordination)( |$)/ ||
             line ~ /(^| )same data( |$)/ ||
             line ~ /(^| )same schema( |$)/ ||
             line ~ /(^| )must align( |$)/ ||
@@ -331,7 +330,7 @@ human_actions_json="$(printf '%s\n' "$relationships_json" | jq '[.[] | select(.b
 decision_conflict="$(printf '%s\n' "$confirmed_json" | jq '
   def normalized: (.summary // "" | ascii_downcase);
   def says_independent: normalized | test("orthogonal|independent|unrelated|no dependency|not dependent|not blocked");
-  def says_dependent: normalized | test("depends on|dependent on|blocked by|requires|waiting on|prerequisite");
+  def says_dependent: normalized | test("(depends on|dependent on|blocked by|requires|waiting on|prerequisite)[^.?!;]{0,80}#[0-9]+");
   (any(.[]; says_independent) and any(.[]; says_dependent))
 ')"
 if [ "$decision_conflict" = "true" ]; then

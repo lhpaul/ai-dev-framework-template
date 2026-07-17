@@ -151,6 +151,14 @@ conflicting_decision_output="$("$HELPER" --selected 100 --items 100 --confirmed-
 run_test "conflicting_decisions_block" "true" "$(printf '%s\n' "$conflicting_decision_output" | jq -r '.blocking')"
 run_test "conflicting_decisions_human_action" "yes" "$(printf '%s\n' "$conflicting_decision_output" | jq -r '.humanAction | test("conflicting confirmed decisions") | if . then "yes" else "no" end')"
 
+non_conflicting_decision_file="$TMP_ROOT/non-conflicting-decisions.jsonl"
+{
+  printf '%s\n' '{"issue":100,"summary":"Decision: selected work is orthogonal to #200.","source":"session"}'
+  printf '%s\n' '{"issue":100,"summary":"Follow-up requires more detail before implementation.","source":"session"}'
+} > "$non_conflicting_decision_file"
+non_conflicting_decision_output="$("$HELPER" --selected 100 --items 100 --confirmed-decision-file "$non_conflicting_decision_file" --json)"
+run_test "requires_detail_decision_not_conflict" "false" "$(printf '%s\n' "$non_conflicting_decision_output" | jq -r '.blocking')"
+
 dependent_output="$("$HELPER" --selected 100 --items 100,102 --json)"
 run_test "dependent_outcome" "Dependent" "$(printf '%s\n' "$dependent_output" | jq -r '.relationships[0].outcome')"
 run_test "dependent_not_blocking" "false" "$(printf '%s\n' "$dependent_output" | jq -r '.blocking')"
@@ -202,6 +210,7 @@ run_test "bare_requires_not_blocking" "false" "$(printf '%s\n' "$bare_requires_o
 
 boundary_output="$("$HELPER" --selected 100 --items 100,107 --json)"
 run_test "larger_issue_number_not_dependent" "not-dependent" "$(printf '%s\n' "$boundary_output" | jq -r 'if .relationships[0].outcome == "Dependent" then "dependent" else "not-dependent" end')"
+run_test "larger_issue_number_not_blocking" "false" "$(printf '%s\n' "$boundary_output" | jq -r '.blocking')"
 
 low_overlap_output="$("$HELPER" --selected 105 --items 105,106 --json)"
 run_test "low_impact_overlap_ignored" "0" "$(printf '%s\n' "$low_overlap_output" | jq -r '.relationships | length')"
