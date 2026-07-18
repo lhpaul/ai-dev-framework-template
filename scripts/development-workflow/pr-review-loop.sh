@@ -5259,6 +5259,29 @@ _check_release_pr_guard() {
   return 1
 }
 
+resolve_local_review_override_root() {
+  local initiating_root="$1"
+  local caller_override_root="${WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT:-}"
+  local override_context=""
+  local override_source=""
+
+  if [ -n "$caller_override_root" ]; then
+    if [ ! -d "$caller_override_root" ]; then
+      return 1
+    fi
+    printf '%s\n' "$caller_override_root"
+    return 0
+  fi
+
+  if ! override_context="$(workflow_review_override_context "$initiating_root")"; then
+    return 1
+  fi
+  override_source="$(workflow_context_value "LOCAL_OVERRIDE_SOURCE" "$override_context")"
+  if [ -n "$override_source" ]; then
+    printf '%s\n' "$initiating_root"
+  fi
+}
+
 # Skip the main execution block when sourced in test-harness mode.
 # All function definitions above (including normalize_platform_verdict,
 # append_compare_metrics_row, and restore_regression_label_if_missing) are
@@ -5274,6 +5297,8 @@ pr_number=""
 branch_name=""
 repo_selector=""
 repo_root="$(workflow_repo_root)"
+local_review_override_root=""
+review_policy_source="shared"
 poll_interval=120
 poll_interval_explicit=0
 max_wait=1200
@@ -5378,6 +5403,17 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if ! local_review_override_root="$(resolve_local_review_override_root "$repo_root")"; then
+  echo "ERROR: could not resolve the initiating checkout's local reviewer policy." >&2
+  exit 2
+fi
+if [ -n "$local_review_override_root" ]; then
+  export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$local_review_override_root"
+  review_policy_source="local_override"
+else
+  unset WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT
+fi
 
 if [ -z "$pr_number" ]; then
   usage >&2
@@ -5573,6 +5609,8 @@ if [ "${#phase_after_clean_platforms[@]}" -eq 0 ]; then
     done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_phase_after_clean_platforms "$config_file")
   fi
 fi
+
+print_kv REVIEW_POLICY_SOURCE "$review_policy_source"
 
 if [ "$pre_after_clean_only" -eq 1 ]; then
   filter_pre_after_clean_platforms

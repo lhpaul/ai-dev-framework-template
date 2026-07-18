@@ -346,6 +346,31 @@ temp_override_parsed="$(
 )"
 run_test "local_review_override_applies_to_temp_config_when_forced" "pr-agent,bugbot" "$temp_override_parsed"
 
+_TEMP_WORKTREE_DIR="$(mktemp -d)"
+initiating_override_parsed="$(
+  workflow_repo_root() { printf '%s\n' "$_TEMP_WORKTREE_DIR"; }
+  WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$_LOCAL_OVERRIDE_DIR" \
+    WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 \
+    workflow_config_review_platforms "$_TEMP_CONFIG" | paste -sd ',' -
+)"
+run_test "initiating_local_override_applies_in_temp_worktree" "pr-agent,bugbot" "$initiating_override_parsed"
+
+caller_override_root="$(
+  WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$_LOCAL_OVERRIDE_DIR" \
+    resolve_local_review_override_root "$_TEMP_WORKTREE_DIR"
+)"
+run_test "caller_override_root_is_preserved" "$_LOCAL_OVERRIDE_DIR" "$caller_override_root"
+rm -rf "$_TEMP_WORKTREE_DIR"
+unset _TEMP_WORKTREE_DIR initiating_override_parsed caller_override_root
+
+missing_override_status=0
+if WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$_LOCAL_OVERRIDE_DIR/missing" workflow_local_config_file >/dev/null 2>&1; then
+  missing_override_status=0
+else
+  missing_override_status=$?
+fi
+run_test "unavailable_initiating_override_stops_resolution" "1" "$missing_override_status"
+
 cat > "$_LOCAL_OVERRIDE_DIR/.ai-dev-workflow.local.yaml" <<'YAML'
 review:
   on_ready:

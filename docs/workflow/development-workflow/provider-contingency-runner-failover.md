@@ -56,6 +56,18 @@ Typical timeout thresholds for long agents are documented in [`agent-model-confi
 
 Tool-specific agent files (`.cursor/agents/`, `.claude/agents/`, `.codex/skills/`) share the same protocols — only the invocation surface changes.
 
+### Local reviewer overrides across temporary worktrees
+
+When reviewer execution moves into a temporary worktree, the review loop resolves
+the local reviewer-policy fields from the initiating checkout and applies that
+effective policy to the temporary target-branch configuration. It records only
+whether the policy source is `local_override` or `shared`; it does not copy,
+commit, or print local configuration contents or paths.
+
+If the initiating local policy cannot be resolved, the loop stops with an
+actionable error rather than silently choosing a different shared reviewer. When
+there is no local reviewer override, the shared-policy path remains unchanged.
+
 ---
 
 ## Resume checklist
