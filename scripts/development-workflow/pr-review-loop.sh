@@ -4895,6 +4895,271 @@ doc_branch_default_poll_interval() {
   printf '%s\n' "$interval"
 }
 
+REVIEWER_LOOP_HISTORY_SCHEMA="reviewer_loop_history.v1"
+REVIEWER_LOOP_HISTORY_MARKER="<!-- reviewer-loop-history:v1 -->"
+
+reviewer_loop_history_extract_latest_json() {
+  awk -v marker="$REVIEWER_LOOP_HISTORY_MARKER" '
+    index($0, marker) > 0 {
+      seen_marker = 1
+      in_json = 0
+      block = ""
+      next
+    }
+    seen_marker && $0 ~ /^```json[[:space:]]*$/ {
+      in_json = 1
+      block = ""
+      next
+    }
+    in_json && $0 ~ /^```[[:space:]]*$/ {
+      latest = block
+      in_json = 0
+      seen_marker = 0
+      next
+    }
+    in_json {
+      block = block $0 "\n"
+    }
+    END {
+      printf "%s", latest
+    }
+  '
+}
+
+reviewer_loop_history_platforms_json() {
+  local platform_list="${1:-}"
+
+  printf '%s\n' "$platform_list" |
+    jq -R -s -c 'split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) | map(select(length > 0 and . != "none"))'
+}
+
+reviewer_loop_history_current_head_sha() {
+  local head_sha=""
+  [ -n "${pr_number:-}" ] || return 0
+  if ! head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid // ""' 2>/dev/null)"; then
+    head_sha=""
+  fi
+  printf '%s\n' "$head_sha"
+}
+
+reviewer_loop_history_recorded_at() {
+  local recorded_at=""
+  [ -n "${pr_number:-}" ] || return 0
+  if ! recorded_at="$(gh pr view "$pr_number" --json updatedAt --jq '.updatedAt // ""' 2>/dev/null)"; then
+    recorded_at=""
+  fi
+  printf '%s\n' "$recorded_at"
+}
+
+reviewer_loop_history_build_entry() {
+  local iteration="$1"
+  local result="$2"
+  local reason="$3"
+  local platform_list="$4"
+  local blocking="$5"
+  local suggestions="$6"
+  local phase_enabled="${7:-0}"
+  local phase_platform_list="${8:-}"
+  local phase_started="${9:-0}"
+  local phase_net_new_blocker="${10:-0}"
+  local phase_blocking_platform="${11:-}"
+  local platforms_json
+  local head_sha
+  local recorded_at
+
+  platforms_json="$(reviewer_loop_history_platforms_json "$platform_list")" || platforms_json='[]'
+  head_sha="$(reviewer_loop_history_current_head_sha)"
+  recorded_at="$(reviewer_loop_history_recorded_at)"
+
+  jq -n \
+    --argjson iteration "$iteration" \
+    --arg recordedAt "$recorded_at" \
+    --arg headSha "$head_sha" \
+    --arg result "$result" \
+    --arg reason "$reason" \
+    --argjson platforms "$platforms_json" \
+    --argjson blockingCount "${blocking:-0}" \
+    --argjson suggestionCount "${suggestions:-0}" \
+    --argjson unresolvedThreadCount "${unresolved_thread_count:-0}" \
+    --argjson lateThreadsFound "${late_thread_count:-0}" \
+    --argjson phaseEnabled "${phase_enabled:-0}" \
+    --arg phasePlatforms "$phase_platform_list" \
+    --argjson phaseStarted "${phase_started:-0}" \
+    --argjson phaseNetNewBlocker "${phase_net_new_blocker:-0}" \
+    --arg phaseBlockingPlatform "$phase_blocking_platform" \
+    '{
+      iteration: $iteration,
+      recorded_at: $recordedAt,
+      head_sha: $headSha,
+      result: $result,
+      reason: $reason,
+      platforms: $platforms,
+      blocking_count: $blockingCount,
+      suggestion_count: $suggestionCount,
+      unresolved_thread_count: $unresolvedThreadCount,
+      late_threads_found: $lateThreadsFound,
+      phase_after_clean: {
+        enabled: ($phaseEnabled == 1),
+        platforms: ($phasePlatforms | split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) | map(select(length > 0))),
+        started: ($phaseStarted == 1),
+        net_new_blocker: ($phaseNetNewBlocker == 1),
+        blocking_platform: $phaseBlockingPlatform
+      }
+    }'
+}
+
+reviewer_loop_history_payload_from_existing() {
+  local existing_body="${1:-}"
+  local result="$2"
+  local reason="$3"
+  local platform_list="$4"
+  local blocking="$5"
+  local suggestions="$6"
+  local phase_enabled="${7:-0}"
+  local phase_platform_list="${8:-}"
+  local phase_started="${9:-0}"
+  local phase_net_new_blocker="${10:-0}"
+  local phase_blocking_platform="${11:-}"
+  local existing_json=""
+  local payload=""
+  local history_status="available"
+  local unavailable_reason=""
+  local append_safe=1
+  local entry=""
+  local iteration=1
+  local updated_at
+
+  existing_json="$(printf '%s\n' "$existing_body" | reviewer_loop_history_extract_latest_json)"
+  if [ -n "$existing_json" ]; then
+    if ! payload="$(printf '%s\n' "$existing_json" | jq -c '.' 2>/dev/null)"; then
+      history_status="unavailable"
+      unavailable_reason="malformed_history"
+      append_safe=0
+    elif ! printf '%s\n' "$payload" |
+        jq -e --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" '.schema == $schema and (.entries | type) == "array"' >/dev/null 2>&1; then
+      history_status="unavailable"
+      unavailable_reason="unknown_schema"
+      append_safe=0
+    elif [ "$(printf '%s\n' "$payload" | jq -r '.history_status // "available"')" = "unavailable" ]; then
+      history_status="unavailable"
+      unavailable_reason="$(printf '%s\n' "$payload" | jq -r '.history_unavailable_reason // "prior_unavailable"')"
+      append_safe=0
+    fi
+  elif printf '%s\n' "$existing_body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
+    history_status="unavailable"
+    unavailable_reason="missing_history_json"
+    append_safe=0
+  else
+    payload="$(jq -n \
+      --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
+      --argjson prNumber "${pr_number:-0}" \
+      '{schema: $schema, pr_number: $prNumber, updated_at: "", history_status: "available", history_unavailable_reason: "", entries: []}')"
+  fi
+
+  if [ "$append_safe" -eq 1 ]; then
+    iteration="$(printf '%s\n' "$payload" | jq '(.entries // []) | length + 1')"
+    entry="$(reviewer_loop_history_build_entry "$iteration" "$result" "$reason" "$platform_list" \
+      "$blocking" "$suggestions" "$phase_enabled" "$phase_platform_list" \
+      "$phase_started" "$phase_net_new_blocker" "$phase_blocking_platform")"
+    updated_at="$(printf '%s\n' "$entry" | jq -r '.recorded_at // ""')"
+    printf '%s\n' "$payload" | jq \
+      --arg updatedAt "$updated_at" \
+      --argjson entry "$entry" \
+      '.updated_at = $updatedAt
+       | .history_status = "available"
+       | .history_unavailable_reason = ""
+       | .entries = ((.entries // []) + [$entry])'
+  else
+    updated_at="$(reviewer_loop_history_recorded_at)"
+    jq -n \
+      --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
+      --argjson prNumber "${pr_number:-0}" \
+      --arg updatedAt "$updated_at" \
+      --arg status "$history_status" \
+      --arg reason "$unavailable_reason" \
+      '{
+        schema: $schema,
+        pr_number: $prNumber,
+        updated_at: $updatedAt,
+        history_status: $status,
+        history_unavailable_reason: $reason,
+        entries: []
+      }'
+  fi
+}
+
+reviewer_loop_history_render_section() {
+  local payload="$1"
+  local status
+  local reason
+  local count
+
+  status="$(printf '%s\n' "$payload" | jq -r '.history_status // "available"')"
+  reason="$(printf '%s\n' "$payload" | jq -r '.history_unavailable_reason // ""')"
+  count="$(printf '%s\n' "$payload" | jq '(.entries // []) | length')"
+
+  printf '\n\n<details>\n'
+  if [ "$status" = "available" ]; then
+    printf '<summary>Reviewer-loop history (%s iteration%s)</summary>\n\n' \
+      "$count" "$([ "$count" -eq 1 ] && printf '' || printf 's')"
+  else
+    printf '<summary>Reviewer-loop history unavailable (%s)</summary>\n\n' "${reason:-unknown}"
+  fi
+  printf '%s\n' "$REVIEWER_LOOP_HISTORY_MARKER"
+  printf '```json\n'
+  printf '%s\n' "$payload" | jq '.'
+  printf '```\n'
+  printf '</details>'
+}
+
+reviewer_loop_history_unavailable_stub_body() {
+  local reason="${1:-unknown}"
+  local updated_at
+  updated_at="$(reviewer_loop_history_recorded_at)"
+
+  printf '%s\n' "$REVIEWER_LOOP_HISTORY_MARKER"
+  printf '```json\n'
+  jq -n \
+    --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
+    --argjson prNumber "${pr_number:-0}" \
+    --arg updatedAt "$updated_at" \
+    --arg reason "$reason" \
+    '{
+      schema: $schema,
+      pr_number: $prNumber,
+      updated_at: $updatedAt,
+      history_status: "unavailable",
+      history_unavailable_reason: $reason,
+      entries: []
+    }'
+  printf '```\n'
+}
+
+reviewer_loop_history_append_to_summary() {
+  local comment_body="$1"
+  local existing_body="${2:-}"
+  shift 2
+  local payload
+  local section
+
+  if ! payload="$(reviewer_loop_history_payload_from_existing "$existing_body" "$@" 2>/dev/null)"; then
+    payload="$(jq -n \
+      --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" \
+      --argjson prNumber "${pr_number:-0}" \
+      --arg updatedAt "$(reviewer_loop_history_recorded_at)" \
+      '{
+        schema: $schema,
+        pr_number: $prNumber,
+        updated_at: $updatedAt,
+        history_status: "unavailable",
+        history_unavailable_reason: "history_render_failed",
+        entries: []
+      }')"
+  fi
+  section="$(reviewer_loop_history_render_section "$payload")"
+  printf '%s%s\n' "$comment_body" "$section"
+}
+
 # ---------------------------------------------------------------------------
 # _check_release_pr_guard <pr_number> [<branch_name>]
 #
@@ -5135,6 +5400,8 @@ post_release_guard_summary() {
   local _branch_name="$2"
   local _repo _existing_comment_id _patch_payload _comment_posted _body_tmpfile
   local _comment_body
+  local _existing_comment_body=""
+  local _existing_comment_record=""
 
   if [ -z "$_pr_number" ]; then
     return 0
@@ -5157,22 +5424,34 @@ EOF
   _existing_comment_id=""
   _repo="$(repo_slug 2>/dev/null)"
   if [ -n "$_repo" ]; then
-    _existing_comment_id="$(
-      gh api "repos/$_repo/issues/$_pr_number/comments" --paginate 2>/dev/null \
-        | jq -rs '
-            add // []
-            | [.[]
-               | select(
-                   (.body // "" | contains("### Automated Reviewer Loop Summary")) and
-                   (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
-                 )
-              ]
-            | sort_by(.created_at)
-            | last
-            | .id // empty
-          '
-    )"
+    if ! _existing_comment_record="$(
+        set -o pipefail
+        gh api "repos/$_repo/issues/$_pr_number/comments" --paginate 2>/dev/null \
+          | jq -rs '
+              add // []
+              | [.[]
+                 | select(
+                     (.body // "" | contains("### Automated Reviewer Loop Summary")) and
+                     (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
+                   )
+                ]
+              | sort_by(.created_at)
+              | last
+              | {id: (.id // ""), body: (.body // "")}
+            '
+      )"; then
+      echo "WARN: failed to fetch existing summary comments for PR ${_pr_number}; will create a new comment with unavailable history" >&2
+      _existing_comment_record=""
+      _existing_comment_body="$(reviewer_loop_history_unavailable_stub_body comment_read_failed)"
+    fi
+    if [ -n "$_existing_comment_record" ]; then
+      _existing_comment_id="$(printf '%s\n' "$_existing_comment_record" | jq -r '.id // empty' 2>/dev/null)" || _existing_comment_id=""
+      _existing_comment_body="$(printf '%s\n' "$_existing_comment_record" | jq -r '.body // ""' 2>/dev/null)" || _existing_comment_body=""
+    fi
   fi
+
+  _comment_body="$(reviewer_loop_history_append_to_summary "$_comment_body" "$_existing_comment_body" \
+    "skipped" "release_pr" "none" "0" "0" "0" "" "0" "0" "")"
 
   _patch_payload="$(jq -n --arg body "$_comment_body" '{body: $body}')"
   _comment_posted=0
@@ -5834,11 +6113,14 @@ EOF
   # The marker string "*Posted automatically by `pr-review-loop.sh`.*" is unique
   # to this script and is present in every comment it posts.
   local _existing_comment_id=""
+  local _existing_comment_body=""
   local _repo
+  local _existing_comment_record=""
   _repo="$(repo_slug 2>/dev/null)" \
     || { echo "WARN: repo_slug failed in _post_review_summary; will post new comment without update-in-place check" >&2; _repo=""; }
   if [ -n "$_repo" ]; then
-    _existing_comment_id="$(
+    _existing_comment_record="$(
+      set -o pipefail
       gh api "repos/$_repo/issues/$pr_number/comments" --paginate 2>/dev/null \
         | jq -rs '
             add // []
@@ -5850,11 +6132,24 @@ EOF
               ]
             | sort_by(.created_at)
             | last
-            | .id // empty
+            | {id: (.id // ""), body: (.body // "")}
           '
     )" \
-      || { echo "WARN: failed to fetch existing summary comments for PR ${pr_number}; will create a new comment" >&2; _existing_comment_id=""; }
+      || {
+        echo "WARN: failed to fetch existing summary comments for PR ${pr_number}; will create a new comment with unavailable history" >&2
+        _existing_comment_record=""
+        _existing_comment_body="$(reviewer_loop_history_unavailable_stub_body comment_read_failed)"
+      }
+    if [ -n "$_existing_comment_record" ]; then
+      _existing_comment_id="$(printf '%s\n' "$_existing_comment_record" | jq -r '.id // empty' 2>/dev/null)" || _existing_comment_id=""
+      _existing_comment_body="$(printf '%s\n' "$_existing_comment_record" | jq -r '.body // ""' 2>/dev/null)" || _existing_comment_body=""
+    fi
   fi
+
+  comment_body="$(reviewer_loop_history_append_to_summary "$comment_body" "$_existing_comment_body" \
+    "$result" "$reason" "$platform_list" "$blocking" "$suggestions" \
+    "$phase_enabled" "$phase_platform_list" "$phase_started" \
+    "$phase_net_new_blocker" "$phase_blocking_platform")"
 
   local _patch_payload
   _patch_payload="$(jq -n --arg body "$comment_body" '{body: $body}')"
@@ -6194,9 +6489,17 @@ case "$aggregate_result" in
     ;;
   needs_rerun)
     # PR-Agent "Possible Issue" evaluation pushed a fix; orchestrator must
-    # re-invoke the loop on the new HEAD. No summary comment is posted here —
-    # the loop re-runs from the top and posts the summary on its terminal exit.
+    # re-invoke the loop on the new HEAD. Preserve this completed iteration
+    # before exit so retrospective retry metrics do not lose the fix-pushed run.
     # RESULT=needs_rerun is already emitted by the general print_kv block above.
+    _post_review_summary "$aggregate_result" "$aggregate_reason" \
+      "$_summary_platform_list" \
+      "$total_blocking_count" "$total_suggestion_count" \
+      "$aggregate_advisory_labels" \
+      "$aggregate_possible_issue_eval_outcome" \
+      "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
+      "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
+      "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
     exit 3
     ;;
   escalate)

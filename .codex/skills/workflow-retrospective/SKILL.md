@@ -14,7 +14,15 @@ Recommended model tier: `economy`
 3. Resolve scope from the user's request (PR number, branch name, batch date) or default to recent PRs in the repository.
 4. Gather GitHub PR metadata (review cycles, finding types, labels, merge conflicts) and git history (commit patterns, fix-commit ratio) using `gh`. When conversation context is available, also analyze manual interventions, human corrections, and agent deviations from the current session.
 5. Synthesize findings into a categorized list using the fixed taxonomy and severity signals defined in the protocol.
-6. After synthesizing findings, populate the required metrics block (see Step 3d in the protocol): batch identifier, human interventions count, Step 5.2 violations count, automated-reviewer retry loops count, escalations count, prior action item recurrence assessment. Record `unavailable` for any field that cannot be reliably determined.
+6. After synthesizing findings, populate the required metrics block (see Step 3d
+   in the protocol): batch identifier, human interventions count, Step 5.2
+   violations count, automated-reviewer retry loops count, escalations count,
+   prior action item recurrence assessment. For automated-reviewer retry loops,
+   parse `reviewer_loop_history.v1` from the latest script-owned reviewer-loop
+   summary comment first and calculate `max(entries.length - 1, 0)` when
+   `history_status` is `available`; otherwise record `unavailable (<reason>)`
+   before falling back to legacy timestamp heuristics. Record `unavailable` for
+   any field that cannot be reliably determined.
 7. Present findings to the human, including the metrics block alongside improvement opportunities. For each opportunity, accept the human's choice of "Address now", "Add to backlog", or "Skip" — then execute the chosen action.
 8. "Address now": apply simple fix on a `fix/[slug]` branch, open a PR to `develop`, and proceed through normal review/CI gates — do not push directly to shared branches. "Add to backlog": create GitHub issue directly via `gh issue create`. "Skip": move on.
 9. After all opportunities are acted on, append the finalized metrics block to `docs/workflow/retro-metrics.md` as a new table row.

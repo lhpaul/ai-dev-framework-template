@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Reviewer-loop retry history** (#1243): Preserve machine-readable
+  reviewer-loop iteration history so retrospectives can report exact retry
+  metrics.
 - **Decision gate consistency matrix** (#1242): Added consistency-matrix
   evidence for complex workflow decision-gate documentation changes before PR
   readiness.
