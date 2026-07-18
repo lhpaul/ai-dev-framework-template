@@ -373,6 +373,10 @@ lookalike_fixture="$(write_fixture lookalike "$(jq '.groups.eligible[0].body = "
 lookalike_output="$(recommend_json "$lookalike_fixture" "\$run-epic --items 401")"
 run_test "acceptance_criteria_phrase_in_complete_body_is_not_checkpoint_signal" "0" "$(printf '%s\n' "$lookalike_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length')"
 
+duplicate_heading_fixture="$(write_fixture duplicate-heading "$(jq '.groups.eligible[0].body = "## Acceptance Criteria\n\n## Acceptance Criteria\n- The later repeated heading has real criteria.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
+duplicate_heading_output="$(recommend_json "$duplicate_heading_fixture" "\$run-epic --items 401")"
+run_test "duplicate_acceptance_criteria_heading_before_content_is_not_empty_section" "0" "$(printf '%s\n' "$duplicate_heading_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length')"
+
 second_empty_fixture="$(write_fixture second-empty "$(jq '.groups.eligible[0].body = "## Acceptance Criteria\n- First section is complete.\n\n## Acceptance Criteria\n\n## Notes\nSecond section is empty.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
 second_empty_output="$(recommend_json "$second_empty_fixture" "\$run-epic --items 401")"
 run_test "second_empty_acceptance_criteria_section_recommends_checkpoint" "empty acceptance criteria" "$(printf '%s\n' "$second_empty_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "spec" and .domain == "product") | .reason')"

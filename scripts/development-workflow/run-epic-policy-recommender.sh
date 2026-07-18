@@ -210,6 +210,8 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   def item_signal_text($item):
     (($item.title // "") + " " + ($item.body // "") + " " + ($item.type // "") + " " + (($item.labels // []) | join(" ")) + " " + ($item.integrationBranchLabel // ""))
     | ascii_downcase;
+  def has_nonblank_lines($lines):
+    any($lines[]?; (gsub("^[[:space:]]+"; "") | gsub("[[:space:]]+$"; "") | length) > 0);
   def acceptance_criteria_sections($item):
     (($item.body // "") | gsub("\r\n"; "\n") | split("\n")) as $lines |
     reduce range(0; ($lines | length)) as $i (
@@ -217,7 +219,9 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
       ($lines[$i]) as $line |
       if ($line | test("^#{1,6}[[:space:]]+acceptance criteria[[:space:]]*$"; "i")) then
         if .active then
-          .sections += [(.current | join("\n"))] | .active = true | .current = []
+          (if has_nonblank_lines(.current) then .sections += [(.current | join("\n"))] else . end)
+          | .active = true
+          | .current = []
         else
           .active = true | .current = []
         end
