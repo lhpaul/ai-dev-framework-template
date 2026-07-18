@@ -2427,23 +2427,27 @@ fi
 #   of the changed surface; or
 # - a short not-applicable rationale when the PR evidence format asks for this
 #   check but the change does not alter decision-gate behavior.
-# Missing or contradictory matrix evidence blocks ready-for-human-review.
+# The caller sets COMPLEX_GATE_MATRIX_REQUIRED=true after classifying the PR as
+# an applicable complex workflow decision-gate change. The body check below is a
+# minimum evidence check; reviewers still verify that the matrix content is not
+# contradictory across mirror surfaces.
 if [ "${COMPLEX_GATE_MATRIX_REQUIRED:-false}" = "true" ]; then
-  case "${COMPLEX_GATE_MATRIX_RESULT:-}" in
-    pass)
-      echo "OK: Complex workflow decision-gate matrix verified."
-      ;;
-    not_applicable)
-      echo "ERROR: Complex workflow decision-gate matrix was required, but the latest evidence says not applicable."
-      gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
-      exit 11
-      ;;
-    *)
-      echo "ERROR: Complex workflow decision-gate matrix evidence is missing or contradictory."
-      gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
-      exit 11
-      ;;
-  esac
+  if ! PR_BODY=$(gh pr view "$PR_NUMBER" --json body --jq '.body // ""'); then
+    echo "ERROR: Cannot verify complex workflow decision-gate matrix evidence - gh pr view failed."
+    exit 11
+  fi
+  if ! printf '%s\n' "$PR_BODY" |
+    grep -Eiq 'consistency matrix|gate inputs|allowed outcomes|required next actions|mirror surfaces'; then
+    echo "ERROR: Complex workflow decision-gate matrix evidence is missing from the PR body."
+    gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+    exit 11
+  fi
+  if printf '%s\n' "$PR_BODY" | grep -Eiq 'complex workflow decision-gate matrix:[[:space:]]*not applicable|complex gate matrix[[:space:]-]+not applicable'; then
+    echo "ERROR: Complex workflow decision-gate matrix was required, but the PR body says not applicable."
+    gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+    exit 11
+  fi
+  echo "OK: Complex workflow decision-gate matrix evidence is present in the PR body."
 fi
 
 # Check 3.7: documentation-stage alignment for spec and plan PRs.
