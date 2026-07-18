@@ -42,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Clarify run-work batch proposal categories** (#1187): Label
+  informational, actionable-resume, proposed-batch, and held items separately
+  in run-work scan proposals.
 - **Delete remote implementation branches after merge** (#1185): Ensure
   multi-stage item cleanup deletes merged implementation branches while treating
   spec and plan branches as expected-persistent.

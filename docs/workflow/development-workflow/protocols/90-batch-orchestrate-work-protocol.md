@@ -472,7 +472,29 @@ For unrestricted portfolio runs, the orchestrator must maximize useful parallel 
    - Refactor Backlog items require a plan before implementation and can be proposed together when their briefs do not indicate overlapping ownership or dependency.
    - Implementation/resume items must still pass tool-fix ordering and file-level conflict checks below.
 6. If a lower-priority item blocks a higher-priority item because of dependency, tool-fix ordering, or file conflicts, report the reason and keep the higher-priority feasible set as large as possible.
-7. Present the proposed batch with item number, title, priority, type, next stage, and parallelization notes. If Backlog items are included, stop for explicit human approval before Step 2.5 mutates tracker status or before any Work Item Runner is dispatched for those Backlog starts.
+7. Present the scan output in separate report categories when records are
+   present:
+   - `INFORMATIONAL - not actionable in this proposal`: cross-session
+     in-flight items, review-waiting or merge-waiting items, skipped items, and
+     other portfolio context excluded from the current decision. Include
+     `REPORT_REASON`.
+   - `ACTIONABLE RESUME - can advance now`: already-started items whose next
+     deterministic action can advance in the current run. Include
+     `REPORT_REASON` and the next action.
+   - `PROPOSED BATCH - your decision`: proposal-eligible Backlog items included
+     in the current start batch. Include item number, title, priority, type,
+     next stage, parallelization notes, and `REPORT_REASON`.
+   - `HELD - not included in proposed batch`: evaluated candidates excluded by
+     dependency, priority, capacity, conflict, ordering, or other hold
+     constraints. Include `REPORT_REASON`.
+8. State the current decision in terms of only the
+   `PROPOSED BATCH - your decision` items. Approval of the proposed batch does
+   not include informational records unless the operator invokes a separate
+   bounded command that explicitly names them. If no proposed-batch records
+   exist, state directly that no Backlog start batch is currently proposed.
+9. If Backlog items are included, stop for explicit human approval before Step
+   2.5 mutates tracker status or before any Work Item Runner is dispatched for
+   those Backlog starts.
 
 This rule changes the default `/run-work` behavior from "only resume already-started items" to "resume deterministic work and, when there is no deterministic work or spare capacity remains, propose the biggest safe set of Backlog items to start next."
 

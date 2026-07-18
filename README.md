@@ -267,6 +267,12 @@ Example commands:
 > classifier and routes to portfolio scan, single-item, or epic protocols based
 > on your target. `/run-item-work` and `/run-epic` are compatibility/advanced
 > aliases that bypass routing for direct access.
+> In no-target scan mode, `/run-work` is read-only and separates
+> `INFORMATIONAL - not actionable in this proposal`,
+> `ACTIONABLE RESUME - can advance now`,
+> `PROPOSED BATCH - your decision`, and
+> `HELD - not included in proposed batch` records. Approval or the recommended
+> `/run-items` command applies only to the proposed-batch records.
 
 ### Codex
 
