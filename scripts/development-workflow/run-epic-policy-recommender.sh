@@ -212,21 +212,28 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
     | ascii_downcase;
   def has_nonblank_lines($lines):
     any($lines[]?; (gsub("^[[:space:]]+"; "") | gsub("[[:space:]]+$"; "") | length) > 0);
+  def heading_level($line):
+    if ($line | test("^#{1,6}[[:space:]]+")) then
+      ($line | capture("^(?<marks>#{1,6})[[:space:]]+").marks | length)
+    else 0 end;
+  def acceptance_criteria_heading($line):
+    $line | test("^#{1,6}[[:space:]]+acceptance criteria[[:space:]]*:?[[:space:]]*$"; "i");
   def acceptance_criteria_sections($item):
     (($item.body // "") | gsub("\r\n"; "\n") | split("\n")) as $lines |
     reduce range(0; ($lines | length)) as $i (
-      {sections: [], active: false, current: []};
+      {sections: [], active: false, current: [], level: 0};
       ($lines[$i]) as $line |
-      if ($line | test("^#{1,6}[[:space:]]+acceptance criteria[[:space:]]*$"; "i")) then
+      if acceptance_criteria_heading($line) then
         if .active then
           (if has_nonblank_lines(.current) then .sections += [(.current | join("\n"))] else . end)
           | .active = true
+          | .level = heading_level($line)
           | .current = []
         else
-          .active = true | .current = []
+          .active = true | .level = heading_level($line) | .current = []
         end
-      elif (.active and ($line | test("^#{1,6}[[:space:]]+"))) then
-        .sections += [(.current | join("\n"))] | .active = false | .current = []
+      elif (.active and (heading_level($line) > 0) and (heading_level($line) <= .level)) then
+        .sections += [(.current | join("\n"))] | .active = false | .level = 0 | .current = []
       elif .active then
         .current += [$line]
       else
@@ -237,6 +244,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
     | .sections;
   def normalized_criteria_lines($section):
     ($section | split("\n"))
+    | map(select(test("^#{1,6}[[:space:]]+") | not))
     | map(
         gsub("^[[:space:]]*(-|\\*|\\+|[0-9]+\\.)[[:space:]]+"; "")
         | gsub("^[[:space:]]*\\[[ xX]\\][[:space:]]+"; "")

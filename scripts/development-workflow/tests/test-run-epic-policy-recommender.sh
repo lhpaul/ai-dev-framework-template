@@ -361,9 +361,21 @@ empty_criteria_fixture="$(write_fixture empty-criteria "$(jq '.groups.eligible[0
 empty_criteria_output="$(recommend_json "$empty_criteria_fixture" "\$run-epic --items 401")"
 run_test "empty_acceptance_criteria_recommends_product_checkpoint" "empty acceptance criteria" "$(printf '%s\n' "$empty_criteria_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "spec" and .domain == "product") | .reason')"
 
+colon_empty_criteria_fixture="$(write_fixture colon-empty-criteria "$(jq '.groups.eligible[0].body = "## Acceptance Criteria:\n\n## Notes\nMore detail later.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
+colon_empty_criteria_output="$(recommend_json "$colon_empty_criteria_fixture" "\$run-epic --items 401")"
+run_test "empty_acceptance_criteria_heading_with_colon_recommends_product_checkpoint" "empty acceptance criteria" "$(printf '%s\n' "$colon_empty_criteria_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "spec" and .domain == "product") | .reason')"
+
 placeholder_criteria_fixture="$(write_fixture placeholder-criteria "$(jq '.groups.eligible[0].body = "## Acceptance Criteria\n- TBD\n- To be defined\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
 placeholder_criteria_output="$(recommend_json "$placeholder_criteria_fixture" "\$run-epic --items 401")"
 run_test "placeholder_acceptance_criteria_recommends_product_checkpoint" "placeholder acceptance criteria" "$(printf '%s\n' "$placeholder_criteria_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "spec" and .domain == "product") | .reason')"
+
+nested_placeholder_fixture="$(write_fixture nested-placeholder "$(jq '.groups.eligible[0].body = "## Acceptance Criteria\n### Required behavior\n- TBD\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
+nested_placeholder_output="$(recommend_json "$nested_placeholder_fixture" "\$run-epic --items 401")"
+run_test "nested_acceptance_criteria_heading_placeholder_recommends_checkpoint" "placeholder acceptance criteria" "$(printf '%s\n' "$nested_placeholder_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "spec" and .domain == "product") | .reason')"
+
+nested_complete_fixture="$(write_fixture nested-complete "$(jq '.groups.eligible[0].body = "## Acceptance Criteria\n### Required behavior\n- The user can run the bounded prelude.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
+nested_complete_output="$(recommend_json "$nested_complete_fixture" "\$run-epic --items 401")"
+run_test "nested_acceptance_criteria_heading_with_real_criteria_is_complete" "0" "$(printf '%s\n' "$nested_complete_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length')"
 
 open_question_fixture="$(write_fixture open-question "$(jq '.groups.eligible[0].body = "## Problem\nOpen question: should this apply to epics too?\n\n## Acceptance Criteria\n- The report labels each proposed item.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
 open_question_output="$(recommend_json "$open_question_fixture" "\$run-epic --items 401")"
