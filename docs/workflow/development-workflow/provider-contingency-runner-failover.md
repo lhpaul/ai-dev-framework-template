@@ -90,7 +90,7 @@ Then re-invoke:
 
 - Do **not** apply `ready-for-human-review` when the PR lacks an “Automated Reviewer Loop Summary” (or equivalent) comment unless Step 7 was explicitly skipped (no platforms configured).
 - Do **not** remove `needs-fixes` without a clean reviewer loop and CI evidence.
-- Do **not** force-push or amend published PR commits during recovery unless a human explicitly approves.
+- Do **not** force-push or amend published PR commits during recovery. Follow the [published branch update rule](../../best-practices/2-version-control.md#published-branch-updates): preserve shared history and use focused follow-up commits; ask for human direction when no safe recovery path is clear.
 - Do **not** assume the latest bot comment is the only active blocker — audit all open review threads on the current HEAD.
 
 ---

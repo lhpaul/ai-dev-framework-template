@@ -94,6 +94,17 @@ The issue ID prefix is the canonical identifier when a tracker is in use. The sl
 - Every PR must update `CHANGELOG.md` under `[Unreleased]` before merge (see the CHANGELOG section below for exceptions)
 - Open PRs with `gh pr create` per the implementation protocol unless the team has adopted Haystack's submit workflow (see [`docs/workflow/development-workflow/integrations/haystack.md`](../workflow/development-workflow/integrations/haystack.md))
 
+### Published branch updates
+
+Once a branch has been pushed for review, treat its published history as shared.
+Record corrections as focused follow-up commits; do not amend published commits
+or rewrite the remote branch. Amendments remain appropriate only for unpublished
+local commits that do not require changing a branch already visible to reviewers.
+
+If an amend was attempted after publication, stop before force-pushing. Preserve
+the published history and use normal follow-up commits for a coherent recovery;
+ask for human direction when no safe recovery path is clear.
+
 ## Safety Rules
 
 The following actions require explicit human approval before executing:

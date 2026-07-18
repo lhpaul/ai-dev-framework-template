@@ -48,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Clarify pushed branch updates** (#1262): Require focused follow-up commits
+  for corrections after a branch is published for review, preserving shared
+  history without force-pushing.
 - **Clarify run-work batch proposal categories** (#1187): Label
   informational, actionable-resume, proposed-batch, and held items separately
   in run-work scan proposals.
