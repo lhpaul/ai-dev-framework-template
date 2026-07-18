@@ -42,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Delete remote implementation branches after merge** (#1185): Ensure
+  multi-stage item cleanup deletes merged implementation branches while treating
+  spec and plan branches as expected-persistent.
 - **Fix bounded-prelude acceptance criteria checkpoints** (#1184): Stop treating
   populated Acceptance Criteria sections as standalone product checkpoint
   signals while preserving checkpoints for unresolved, empty, or placeholder

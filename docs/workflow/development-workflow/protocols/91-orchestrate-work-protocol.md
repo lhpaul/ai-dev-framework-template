@@ -2782,6 +2782,15 @@ state according to this table:
 - After cleanup, re-read the live tracker status and Project status. If the live
   status does not match the expected value in the table above, re-apply the
   tracker transition before reporting the item terminal.
+- For implementation branches (`feature/*`, `fix/*`, `refactor/*`, and
+  `hotfix/*`), `post-merge-cleanup.sh` must report remote branch cleanup
+  evidence before the item is terminal. Accept `REMOTE_DELETE_RESULT=deleted`
+  or `REMOTE_DELETE_RESULT=not_found` as successful/idempotent outcomes after a
+  merged PR is verified. Treat `REMOTE_DELETE_RESULT=skipped` or
+  `REMOTE_DELETE_RESULT=failed` as non-terminal cleanup failures and report the
+  named branch and PR context. Spec and implementation-plan branches are
+  expected-persistent remotely and do not require implementation remote deletion
+  evidence.
 - Before reporting post-merge cleanup or tracker reconciliation complete, run
   `item-completion-self-check.sh` for the cleanup claim, using the current base
   branch (the merged workflow branch should already be deleted), the current

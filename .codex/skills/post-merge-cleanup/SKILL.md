@@ -1,6 +1,6 @@
 ---
 name: post-merge-cleanup
-description: After a development PR is merged and the remote branch deleted, sync with origin, switch to the merged PR's base branch, pull, delete the local branch, and update the related issue in the issue tracker. Use when you want to clean up the local repo post-merge.
+description: After a development PR is merged, sync with origin, switch to the merged PR's base branch, pull, verify or delete the remote implementation branch, delete the local branch, and update the related issue in the issue tracker. Use when you want to clean up the local repo post-merge.
 ---
 
 # Post-merge cleanup
@@ -27,7 +27,12 @@ description: After a development PR is merged and the remote branch deleted, syn
    - **GitHub Issues/Projects**: The script already closes the GitHub issue for implementation branches (if a merged PR is found). You still need to update the GitHub Projects board status field via `gh` CLI / GraphQL (per `docs/workflow/development-workflow/integrations/github-projects.md`).
    - **Other trackers**: Follow the same idea — set the issue to the appropriate status per the table above. See `docs/workflow/development-workflow/integrations/issue-tracker.md` and the tracker-specific doc under `docs/workflow/development-workflow/integrations/`.
    - If no issue identifier is present in the branch name or no tracker is in use, skip this step.
-7. Before reporting cleanup or tracker reconciliation complete for a workflow
+7. For implementation branches (`feature/*`, `fix/*`, `refactor/*`,
+   `hotfix/*`), verify the script reports `REMOTE_DELETE_RESULT=deleted` or
+   `REMOTE_DELETE_RESULT=not_found` before claiming cleanup complete. A
+   `skipped` or `failed` remote deletion result is non-terminal. Spec and
+   implementation-plan branches are expected-persistent remotely.
+8. Before reporting cleanup or tracker reconciliation complete for a workflow
    item, run `scripts/development-workflow/item-completion-self-check.sh` with
    `--stage cleanup` and the expected tracker status when claimed. Include its
    `## Ground-Truth Completion Verification` section in the cleanup report; a
@@ -40,4 +45,4 @@ If this post-merge cleanup is the final action for a work item that was advanced
 
 Only suggest this when the cleanup is for a standalone item run (not when called as part of a batch merge or orchestrator flow, which handle retrospectives at their own level). See `docs/workflow/development-workflow/protocols/06-retrospective-protocol.md`.
 
-The script (step 1) fetches origin, checks out the merged PR's base branch, pulls, deletes the local branch with `git branch -D` (force-delete; safe because the branch is already merged on the remote), and for implementation branches (`fix/*`, `feature/*`, `hotfix/*`, `refactor/*`) automatically closes the associated GitHub issue if a merged PR is found. Do not change the order or skip steps.
+The script (step 1) fetches origin, checks out the merged PR's base branch, pulls, verifies or deletes the remote implementation branch after confirming the PR is merged, deletes the local branch with `git branch -D` (force-delete; safe because the branch is already merged on the remote), and for implementation branches (`fix/*`, `feature/*`, `hotfix/*`, `refactor/*`) automatically closes the associated GitHub issue if a merged PR is found. Do not change the order or skip steps.
