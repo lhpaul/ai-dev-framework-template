@@ -58,6 +58,13 @@ From this data, extract:
 - **Labels applied / missing**: were expected labels (`ready-for-human-review`, `needs-fixes`, `ready-for-regression`) applied correctly?
 - **Merge conflicts**: did the PR require conflict resolution?
 - **Automated reviewer findings**: CodeRabbit, Greptile, or other configured platforms (if visible in PR comments or reviews)
+- **Reviewer-loop history**: read the latest script-owned
+  `### Automated Reviewer Loop Summary` comment and parse the fenced
+  `reviewer_loop_history.v1` JSON block before using timestamp heuristics.
+  When `history_status` is `available`, use `entries` as the authoritative
+  iteration history. When the block is absent, malformed, unreadable, or reports
+  `history_status: unavailable`, record `unavailable (<reason>)` for exact
+  retry metrics instead of treating the PR as zero retries.
 
 ### 2b. Git history analysis
 
@@ -275,7 +282,7 @@ After completing Steps 3a–3c (backlog query, template cross-reference, and cat
 | **Batch identifier**                        | The PR numbers or batch date used as the scope in Step 1 (e.g., "PRs #301–#315" or "2026-04-24")                                                                                                                                              | Step 1 scope resolution                           |
 | **Human interventions count**               | Number of moments where the human had to correct the agent's direction mid-run (not counting routine choices like approving a retrospective output)                                                                                           | Step 2c conversation context, or PR event history |
 | **Step 5.2 violations count**               | Number of instances where the automated reviewer found a Step 5.2 (PR-readiness) violation during the batch                                                                                                                                   | PR comments and review cycles                     |
-| **Automated-reviewer retry loops count**    | Number of additional `pr-review-loop.sh` iterations beyond the first pass (i.e., how many re-runs were needed after findings were addressed)                                                                                                  | PR comment timestamps and review rounds           |
+| **Automated-reviewer retry loops count**    | Number of additional `pr-review-loop.sh` iterations beyond the first pass. When durable history is available, calculate `max(entries.length - 1, 0)` from `reviewer_loop_history.v1`; otherwise report `unavailable (<reason>)`.             | Reviewer-loop history block, then legacy PR comment timestamps and review rounds |
 | **Escalations count**                       | Number of items that escalated past the automated reviewer retry limit (source: PR labels or conversation notes indicating escalation)                                                                                                        | PR labels, conversation notes                     |
 | **Prior action item recurrence assessment** | For each open action item from prior retrospectives whose targeted failure mode was observable in this batch, record whether it "recurred" or "did not recur". If no prior action items are relevant to this batch, record "none applicable". | Comparison with prior retrospective output        |
 
@@ -283,6 +290,17 @@ After completing Steps 3a–3c (backlog query, template cross-reference, and cat
 
 - **"Unavailable" is a valid value**: if a field cannot be reliably determined from available GitHub data or conversation context, record `unavailable` — not blank and not a guess (BR-7).
 - **Zero is a valid value**: a batch that produced zero human interventions is a meaningful data point (BR-1).
+- **Durable reviewer-loop history is authoritative**: for automated-reviewer
+  retry metrics, prefer the latest `reviewer_loop_history.v1` JSON payload from
+  the script-owned summary comment. Use:
+  - `iteration_count = entries.length`
+  - `automated_reviewer_retry_loops_count = max(iteration_count - 1, 0)` when
+    `history_status` is `available`
+  - `unavailable (<reason>)` when the block is absent, malformed, unreadable, or
+    explicitly reports unavailable
+- **Iteration evidence**: when durable history is available, include the
+  per-iteration result, blocker count, and timestamp or stable ordering evidence
+  in the retrospective notes supporting the metrics block.
 - This metrics block is part of the retrospective output presented in Step 4 alongside improvement opportunities.
 
 ### Severity signals

@@ -105,6 +105,10 @@ case "$*" in
     printf '%s\n' "${MOCK_GH_HEAD_SHA:-}"
     exit "${MOCK_GH_EXIT:-0}"
     ;;
+  *"updatedAt"*)
+    printf '%s\n' "${MOCK_GH_UPDATED_AT:-2026-07-18T00:00:00Z}"
+    exit "${MOCK_GH_EXIT:-0}"
+    ;;
   # gh api repos/.../issues/.../comments — used by restore_regression_label_if_missing
   # to check for prior reviewer-loop summary comments (Area 11 summary-comment gate).
   # Tests set MOCK_GH_COMMENTS_OUTPUT to control the returned JSON; defaults to an
@@ -1451,10 +1455,209 @@ fi
 run_test "summary_advisory_split_visible" "yes" "$_summary_advisory_split"
 rm -f "$_summary_call_log"
 rm -f "$_summary_body_capture"
-unset MOCK_GH_CALL_LOG MOCK_GH_BODY_CAPTURE MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT
+
+if ! _summary_read_failed_body_capture="$(mktemp)"; then
+  echo "ERROR: failed to allocate read-failure summary body capture temp file" >&2
+  exit 1
+fi
+if [ -z "$_summary_read_failed_body_capture" ]; then
+  echo "ERROR: mktemp returned an empty read-failure summary body capture path" >&2
+  exit 1
+fi
+export MOCK_GH_BODY_CAPTURE="$_summary_read_failed_body_capture"
+MOCK_GH_EXIT=0
+MOCK_GH_COMMENTS_EXIT=1
+MOCK_GH_UPDATED_AT="2026-07-18T00:10:00Z"
+export MOCK_GH_EXIT MOCK_GH_COMMENTS_EXIT MOCK_GH_UPDATED_AT
+_post_review_summary "clean" "" "bugbot (clean)" "0" "0"
+if [ -n "${_summary_read_failed_body_capture:-}" ] \
+    && grep -q "comment_read_failed" "$_summary_read_failed_body_capture"; then
+  _summary_read_failed_history="yes"
+else
+  _summary_read_failed_history="no"
+fi
+run_test "summary_comment_read_failure_history_unavailable" "yes" "$_summary_read_failed_history"
+rm -f "$_summary_read_failed_body_capture"
+unset MOCK_GH_CALL_LOG MOCK_GH_BODY_CAPTURE MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT MOCK_GH_COMMENTS_EXIT MOCK_GH_UPDATED_AT
 unset _summary_advisory_split _post_summary_source
+unset _summary_read_failed_body_capture _summary_read_failed_history
 unset -f _post_review_summary
 unset compare_mode compare_verdicts platform_policy_status_notes pr_number branch_name
+
+# ---------------------------------------------------------------------------
+# Area 10b: reviewer-loop history payload (#1243)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 10b: reviewer-loop history payload ==="
+
+pr_number=42
+branch_name="fix/42-history"
+unresolved_thread_count=0
+late_thread_count=0
+MOCK_GH_HEAD_SHA="abc-history-1"
+MOCK_GH_UPDATED_AT="2026-07-18T00:00:00Z"
+export MOCK_GH_HEAD_SHA MOCK_GH_UPDATED_AT
+
+_history_payload="$(reviewer_loop_history_payload_from_existing "" \
+  "clean" "" "bugbot (clean)" "0" "0" "1" "bugbot" "1" "0" "")"
+run_test "history_first_entry_schema" "reviewer_loop_history.v1" \
+  "$(printf '%s\n' "$_history_payload" | jq -r '.schema')"
+run_test "history_first_entry_count" "1" \
+  "$(printf '%s\n' "$_history_payload" | jq '(.entries // []) | length')"
+run_test "history_first_entry_zero_retries" "0" \
+  "$(printf '%s\n' "$_history_payload" | jq '((.entries // []) | length) - 1')"
+run_test "history_first_entry_result" "clean" \
+  "$(printf '%s\n' "$_history_payload" | jq -r '.entries[0].result')"
+
+_history_existing_body="$(cat <<EOF_HISTORY
+### Automated Reviewer Loop Summary
+
+*Posted automatically by \`pr-review-loop.sh\`.*
+
+<details>
+<summary>Reviewer-loop history (1 iteration)</summary>
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+$(printf '%s\n' "$_history_payload" | jq '.')
+\`\`\`
+</details>
+EOF_HISTORY
+)"
+MOCK_GH_HEAD_SHA="abc-history-2"
+MOCK_GH_UPDATED_AT="2026-07-18T00:05:00Z"
+_history_payload_2="$(reviewer_loop_history_payload_from_existing "$_history_existing_body" \
+  "needs_fixes" "unresolved_review_threads" "bugbot (needs_fixes)" "1" "0" "1" "bugbot" "1" "1" "review_threads")"
+run_test "history_append_entry_count" "2" \
+  "$(printf '%s\n' "$_history_payload_2" | jq '(.entries // []) | length')"
+run_test "history_append_second_iteration" "2" \
+  "$(printf '%s\n' "$_history_payload_2" | jq '.entries[1].iteration')"
+run_test "history_append_preserves_first_result" "clean" \
+  "$(printf '%s\n' "$_history_payload_2" | jq -r '.entries[0].result')"
+run_test "history_append_records_blocking_count" "1" \
+  "$(printf '%s\n' "$_history_payload_2" | jq '.entries[1].blocking_count')"
+
+_history_empty_entries_body=$'### Automated Reviewer Loop Summary\n\n<!-- reviewer-loop-history:v1 -->\n```json\n{\"schema\":\"reviewer_loop_history.v1\",\"history_status\":\"available\",\"entries\":[]}\n```\n'
+_history_empty_entries_payload="$(reviewer_loop_history_payload_from_existing "$_history_empty_entries_body" \
+  "clean" "" "bugbot (clean)" "0" "0")"
+run_test "history_empty_entries_append_count" "1" \
+  "$(printf '%s\n' "$_history_empty_entries_payload" | jq '(.entries // []) | length')"
+
+_history_needs_rerun_payload="$(reviewer_loop_history_payload_from_existing "" \
+  "needs_rerun" "" "pr-agent (needs_rerun)" "0" "0")"
+run_test "history_needs_rerun_result" "needs_rerun" \
+  "$(printf '%s\n' "$_history_needs_rerun_payload" | jq -r '.entries[0].result')"
+
+_history_same_sha_body="$(cat <<EOF_HISTORY_SAME_SHA
+### Automated Reviewer Loop Summary
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+$(printf '%s\n' "$_history_payload" | jq '.')
+\`\`\`
+EOF_HISTORY_SAME_SHA
+)"
+MOCK_GH_HEAD_SHA="abc-history-1"
+_history_same_sha_payload="$(reviewer_loop_history_payload_from_existing "$_history_same_sha_body" \
+  "clean" "transient_retry" "bugbot (clean)" "0" "0")"
+run_test "history_same_sha_duplicate_appends" "2" \
+  "$(printf '%s\n' "$_history_same_sha_payload" | jq '(.entries // []) | length')"
+
+_history_latest_body="$(cat <<EOF_HISTORY_LATEST
+### Automated Reviewer Loop Summary
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+{"schema":"reviewer_loop_history.v1","history_status":"available","entries":[{"iteration":1,"result":"old"}]}
+\`\`\`
+
+Some adjacent Markdown that must not be consumed.
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+{"schema":"reviewer_loop_history.v1","history_status":"available","entries":[{"iteration":1,"result":"latest"}]}
+\`\`\`
+Trailing summary text.
+EOF_HISTORY_LATEST
+)"
+_history_latest_payload="$(reviewer_loop_history_payload_from_existing "$_history_latest_body" \
+  "clean" "" "bugbot (clean)" "0" "0")"
+run_test "history_latest_block_preserved" "latest" \
+  "$(printf '%s\n' "$_history_latest_payload" | jq -r '.entries[0].result')"
+run_test "history_fence_boundary_append_count" "2" \
+  "$(printf '%s\n' "$_history_latest_payload" | jq '(.entries // []) | length')"
+
+_history_summary_comments="$(cat <<EOF_HISTORY_COMMENTS
+[
+  {
+    "id": 101,
+    "created_at": "2026-07-18T00:00:00Z",
+    "body": "### Automated Reviewer Loop Summary\n\n*Posted automatically by \`pr-review-loop.sh\`.*\n\n<!-- reviewer-loop-history:v1 -->\n\`\`\`json\n{\"schema\":\"reviewer_loop_history.v1\",\"history_status\":\"available\",\"entries\":[{\"iteration\":1,\"result\":\"needs_fixes\"}]}\n\`\`\`"
+  },
+  {
+    "id": 102,
+    "created_at": "2026-07-18T00:05:00Z",
+    "body": "### Automated Reviewer Loop Summary\n\n*Posted automatically by \`pr-review-loop.sh\`.*\n\n<!-- reviewer-loop-history:v1 -->\n\`\`\`json\n{\"schema\":\"reviewer_loop_history.v1\",\"history_status\":\"unavailable\",\"history_unavailable_reason\":\"comment_read_failed\",\"entries\":[]}\n\`\`\`"
+  }
+]
+EOF_HISTORY_COMMENTS
+)"
+_history_selected_record="$(printf '%s\n' "$_history_summary_comments" | reviewer_loop_history_select_summary_record)"
+run_test "history_selector_targets_newest_comment" "102" \
+  "$(printf '%s\n' "$_history_selected_record" | jq '.id')"
+run_test "history_selector_preserves_available_history" "needs_fixes" \
+  "$(printf '%s\n' "$_history_selected_record" | jq -r '.body' | reviewer_loop_history_extract_latest_json | jq -r '.entries[0].result')"
+
+_history_malformed_body=$'### Automated Reviewer Loop Summary\n\n<!-- reviewer-loop-history:v1 -->\n```json\n{ not json\n```\n'
+_history_malformed_payload="$(reviewer_loop_history_payload_from_existing "$_history_malformed_body" \
+  "clean" "" "bugbot (clean)" "0" "0")"
+run_test "history_malformed_unavailable" "unavailable" \
+  "$(printf '%s\n' "$_history_malformed_payload" | jq -r '.history_status')"
+run_test "history_malformed_reason" "malformed_history" \
+  "$(printf '%s\n' "$_history_malformed_payload" | jq -r '.history_unavailable_reason')"
+
+_history_wrong_schema_body=$'### Automated Reviewer Loop Summary\n\n<!-- reviewer-loop-history:v1 -->\n```json\n{\"schema\":\"other.v1\",\"entries\":[]}\n```\n'
+_history_wrong_schema_payload="$(reviewer_loop_history_payload_from_existing "$_history_wrong_schema_body" \
+  "clean" "" "bugbot (clean)" "0" "0")"
+run_test "history_wrong_schema_reason" "unknown_schema" \
+  "$(printf '%s\n' "$_history_wrong_schema_payload" | jq -r '.history_unavailable_reason')"
+
+_history_prior_unavailable_body=$'### Automated Reviewer Loop Summary\n\n<!-- reviewer-loop-history:v1 -->\n```json\n{\"schema\":\"reviewer_loop_history.v1\",\"history_status\":\"unavailable\",\"history_unavailable_reason\":\"comment_read_failed\",\"entries\":[]}\n```\n'
+_history_prior_unavailable_payload="$(reviewer_loop_history_payload_from_existing "$_history_prior_unavailable_body" \
+  "clean" "" "bugbot (clean)" "0" "0")"
+run_test "history_prior_unavailable_preserved" "comment_read_failed" \
+  "$(printf '%s\n' "$_history_prior_unavailable_payload" | jq -r '.history_unavailable_reason')"
+
+_history_read_failed_body="$(reviewer_loop_history_unavailable_stub_body comment_read_failed)"
+_history_read_failed_payload="$(reviewer_loop_history_payload_from_existing "$_history_read_failed_body" \
+  "clean" "" "bugbot (clean)" "0" "0")"
+run_test "history_read_failure_unavailable" "unavailable" \
+  "$(printf '%s\n' "$_history_read_failed_payload" | jq -r '.history_status')"
+run_test "history_read_failure_reason" "comment_read_failed" \
+  "$(printf '%s\n' "$_history_read_failed_payload" | jq -r '.history_unavailable_reason')"
+
+_history_rendered_section="$(reviewer_loop_history_render_section "$_history_payload_2")"
+if printf '%s\n' "$_history_rendered_section" | grep -qF "$REVIEWER_LOOP_HISTORY_MARKER" \
+    && printf '%s\n' "$_history_rendered_section" | grep -qF "Reviewer-loop history (2 iterations)"; then
+  _history_rendered_ok="yes"
+else
+  _history_rendered_ok="no"
+fi
+run_test "history_rendered_section" "yes" "$_history_rendered_ok"
+
+unset _history_payload _history_existing_body _history_payload_2
+unset _history_empty_entries_body _history_empty_entries_payload
+unset _history_needs_rerun_payload
+unset _history_same_sha_body _history_same_sha_payload
+unset _history_latest_body _history_latest_payload
+unset _history_summary_comments _history_selected_record
+unset _history_malformed_body _history_malformed_payload
+unset _history_wrong_schema_body _history_wrong_schema_payload
+unset _history_prior_unavailable_body _history_prior_unavailable_payload
+unset _history_read_failed_body _history_read_failed_payload
+unset _history_rendered_section _history_rendered_ok
+unset MOCK_GH_HEAD_SHA MOCK_GH_UPDATED_AT
+unset pr_number branch_name unresolved_thread_count late_thread_count
 
 # ---------------------------------------------------------------------------
 # Area 11: Step 7b regression-label auto-restore (Option C, issue #805)
