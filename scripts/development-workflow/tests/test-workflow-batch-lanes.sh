@@ -68,6 +68,8 @@ fixture_repo="$TMP_ROOT/repo"
 mkdir -p "$fixture_repo/docs/specs/developments"
 cat > "$fixture_repo/.ai-dev-workflow.yaml" <<'YAML'
 schema_version: 2
+issue_tracker:
+  provider: none
 guardrails:
   mode: manual
 YAML
@@ -155,6 +157,67 @@ MD
 export WORKFLOW_SKIP_FETCH=1
 runtime_plan_out="$(cd "$fixture_repo" && "$BATCH_PLAN" "$runtime_dev" 2>/dev/null | awk '/^LOCAL_RUNTIME=/{print; exit}')"
 run_test "local_runtime_exclusive_from_plan" "LOCAL_RUNTIME=exclusive" "$runtime_plan_out"
+
+git -C "$fixture_repo" init -q
+git -C "$fixture_repo" config user.email test@example.com
+git -C "$fixture_repo" config user.name "Test User"
+git -C "$fixture_repo" commit --allow-empty -m "initial fixture" >/dev/null
+git -C "$fixture_repo" update-ref refs/remotes/origin/feature/999-ready-pr HEAD
+
+ready_pr_dev="$fixture_repo/docs/specs/developments/20260624121000_999-ready-pr"
+mkdir -p "$ready_pr_dev"
+cat > "$ready_pr_dev/1_999-ready-pr_specs.md" <<'MD'
+# Spec
+MD
+cat > "$ready_pr_dev/2_999-ready-pr_implementation-plan.md" <<'MD'
+# Implementation plan
+MD
+
+mock_bin="$TMP_ROOT/mock-bin"
+mkdir -p "$mock_bin"
+cat > "$mock_bin/gh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "auth" ] && [ "${2:-}" = "status" ]; then
+  exit 0
+fi
+if [ "${1:-}" = "repo" ] && [ "${2:-}" = "view" ]; then
+  case "$*" in
+    *nameWithOwner*) printf 'test-owner/test-repo\n' ;;
+    *owner*) printf 'test-owner\n' ;;
+    *name*) printf 'test-repo\n' ;;
+    *) printf 'test-owner/test-repo\n' ;;
+  esac
+  exit 0
+fi
+if [ "${1:-}" = "api" ] && [ "${2:-}" = "graphql" ]; then
+  case "$*" in
+    *"projectV2(number"*)
+      printf '{"data":{"user":{"projectV2":{"id":"PVT_test"}}}}\n'
+      ;;
+    *"repository(owner"*)
+      printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_test","project":{"id":"PVT_test","number":1},"status":{"name":"In Development"},"configuredType":{"name":"Workflow"},"customType":null,"compactCustomType":null,"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n'
+      ;;
+    *)
+      printf 'unexpected gh graphql call: %s\n' "$*" >&2
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then
+  printf '[{"number":42,"headRefName":"feature/999-ready-pr","labels":[{"name":"ready-for-human-review"}]}]\n'
+  exit 0
+fi
+printf 'unexpected gh call: %s\n' "$*" >&2
+exit 1
+SH
+chmod +x "$mock_bin/gh"
+
+ready_pr_plan_out="$(PATH="$mock_bin:$PATH" WORKFLOW_SKIP_FETCH=1 AI_DEV_WORKFLOW_CONFIG_FILE="$fixture_repo/.ai-dev-workflow.yaml" "$BATCH_PLAN" --repo-root "$fixture_repo" "$ready_pr_dev")"
+run_test "batch_plan_emits_pr_labels" "PR_LABELS=ready-for-human-review" "$(printf '%s\n' "$ready_pr_plan_out" | awk '/^PR_LABELS=/{print; exit}')"
+ready_pr_lane_out="$(printf '%s\n' "$ready_pr_plan_out" | "$LANES" --repo-root "$fixture_repo")"
+run_test "ready_pr_metadata_is_informational" "informational" "$(block_value "$ready_pr_lane_out" "999-ready-pr" "REPORT_CATEGORY")"
 
 skip_file="$TMP_ROOT/skip.batch"
 : > "$skip_file"

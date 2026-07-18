@@ -355,6 +355,73 @@ extract_github_issue_number() {
   printf '%s' "${issue_number:-}"
 }
 
+# Escape string for use in extended regular expressions.
+ere_escape() {
+  printf '%s\n' "$1" | sed 's/[]\.^$*+?{}()|[\]/\\&/g'
+}
+
+# open_implementation_pr_metadata <issue-number> <slug> <github-repo>
+#
+# Emits PR_NUMBER, PR_BRANCH, and PR_LABELS for the first open implementation PR
+# matching the development folder slug. This enriches development-folder scans
+# so ready PRs can be reported as informational instead of actionable resume.
+open_implementation_pr_metadata() {
+  local issue_number="$1"
+  local slug="$2"
+  local github_repo="${3:-}"
+  local prs_json pr_rows
+
+  gh_available || return 0
+
+  local gh_args=()
+  if [ -n "$github_repo" ]; then
+    gh_args+=(--repo "$github_repo")
+  fi
+
+  if [ "${#gh_args[@]}" -gt 0 ]; then
+    if ! prs_json="$(gh pr list "${gh_args[@]}" --state open --limit 500 --json number,headRefName,labels 2>/dev/null)"; then
+      return 0
+    fi
+  else
+    if ! prs_json="$(gh pr list --state open --limit 500 --json number,headRefName,labels 2>/dev/null)"; then
+      return 0
+    fi
+  fi
+  if ! pr_rows="$(printf '%s\n' "$prs_json" | jq -r '.[] | [.number, .headRefName, ([.labels[].name] | join(","))] | @tsv' 2>/dev/null)"; then
+    return 0
+  fi
+  [ -n "$pr_rows" ] || return 0
+
+  local slug_core="$slug"
+  if [ -n "$issue_number" ]; then
+    case "$slug_core" in
+      "$issue_number"-*) slug_core="${slug_core#"$issue_number"-}" ;;
+    esac
+  fi
+  local slug_core_ere
+  slug_core_ere="$(ere_escape "$slug_core")"
+
+  local number head labels
+  while IFS=$'\t' read -r number head labels; do
+    [ -n "$head" ] || continue
+    case "$head" in
+      feature/"$slug"|fix/"$slug"|refactor/"$slug"|hotfix/"$slug")
+        print_kv PR_NUMBER "$number"
+        print_kv PR_BRANCH "$head"
+        print_kv PR_LABELS "$labels"
+        return 0
+        ;;
+    esac
+    if [ -n "$issue_number" ] \
+      && printf '%s\n' "$head" | grep -qE "^(feature|fix|refactor|hotfix)/([A-Z][A-Z0-9]*-)?${issue_number}-${slug_core_ere}$"; then
+      print_kv PR_NUMBER "$number"
+      print_kv PR_BRANCH "$head"
+      print_kv PR_LABELS "$labels"
+      return 0
+    fi
+  done <<< "$pr_rows"
+}
+
 target_repo=""
 repo_root="$(workflow_repo_root)"
 development_paths=()
@@ -528,10 +595,16 @@ for development_path in "${development_paths[@]}"; do
   # Extract file set and local-runtime class for implementation-stage items only (BR-1).
   file_set=""
   local_runtime=""
+  pr_metadata=""
   case "$next_action" in
     implement|resolve-development-pr)
       file_set="$(extract_file_set "$development_path")"
       local_runtime="$(classify_local_runtime "$development_path")"
+      ;;
+  esac
+  case "$next_action" in
+    resolve-development-pr)
+      pr_metadata="$(open_implementation_pr_metadata "$issue_number" "$slug" "$action_github_repo")"
       ;;
   esac
 
@@ -560,6 +633,7 @@ for development_path in "${development_paths[@]}"; do
   [ -n "$action_repository" ] && print_kv ACTION_REPOSITORY "$action_repository"
   [ -n "$action_github_repo" ] && print_kv ACTION_GITHUB_REPO "$action_github_repo"
   [ -n "$action_local_path" ] && print_kv ACTION_LOCAL_PATH "$action_local_path"
+  [ -n "$pr_metadata" ] && printf '%s\n' "$pr_metadata"
   print_kv BATCH_HINT "$(batch_hint_for_action "$next_action")"
   print_kv PARALLEL_SAFE "$(parallel_safe_for_action "$next_action")"
   print_kv TOOL_FIX "$tool_fix"
