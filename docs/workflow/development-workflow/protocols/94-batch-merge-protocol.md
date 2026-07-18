@@ -277,7 +277,17 @@ After a clean or resolved merge, in order:
    > (with locked-worktree handling) before deleting the local branch. Any manual worktree
    > removal step here is redundant and risks breaking the cleanup sequence.
 
-   `post-merge-cleanup.sh` requires a local branch to exist. Because `batch-merge.sh` merges via `origin/<branch>` without creating a local tracking branch, create a temporary local branch first:
+   `post-merge-cleanup.sh` verifies or performs guarded remote cleanup for
+   implementation branches. If `batch-merge.sh delete-branch` already removed
+   the remote branch, `post-merge-cleanup.sh` reports
+   `REMOTE_DELETE_RESULT=not_found` / `REMOTE_DELETE_STATUS=already_absent` and
+   continues. If the remote implementation branch still exists, the helper
+   deletes it only after confirming the PR is `MERGED`; if deletion fails, the
+   cleanup is non-terminal.
+
+   The helper requires a local branch to exist. Because `batch-merge.sh` merges
+   via `origin/<branch>` without creating a local tracking branch, create a
+   temporary local branch first:
 
    ```bash
    BRANCH="$(gh pr view <number> --json headRefName --jq '.headRefName')"

@@ -1205,7 +1205,10 @@ Scan local branches for two categories of stale / orphaned entries that clutter 
 
 **Category A — Workflow-prefix branches whose upstream PR has been merged**
 
-Workflow branches (`feature/`, `fix/`, `refactor/`, `hotfix/`, `spec/`, `implementation-plan/`) that were used for a PR which has since merged are safe to delete but are not cleaned up automatically by `post-merge-cleanup.sh` when other PRs in the same batch merge later.
+Workflow branches (`feature/`, `fix/`, `refactor/`, `hotfix/`, `spec/`, `implementation-plan/`) that were used for a PR which has since merged are safe to delete locally when they are not part of the current batch. Classify the branch lifecycle before reporting:
+
+- `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` are implementation branches. After the implementation PR is confirmed merged, the remote branch is `expected_deleted`; a remaining `origin/<branch>` ref is a cleanup finding.
+- `spec/*` and `implementation-plan/*` are documentation-stage branches. After merge, their remote branches are `expected_persistent`; do not report them as implementation cleanup failures.
 
 ```bash
 # List all local branches matching workflow prefixes
@@ -1221,6 +1224,14 @@ For each branch found, check whether its upstream PR has been merged:
 gh pr list --state merged --head <branch> --json number,mergedAt \
   --jq '.[0] | "PR #\(.number) merged at \(.mergedAt)"'
 # Non-empty output → merged; the local branch is stale and safe to delete
+```
+
+For merged implementation branches, also check whether the remote branch still exists:
+
+```bash
+# For each merged implementation branch <branch>:
+git ls-remote --heads origin <branch>
+# Non-empty output → remote implementation branch cleanup is incomplete.
 ```
 
 **Category B — `worktree-agent-*` branches with no remote counterpart and no open/merged PR**
@@ -1244,11 +1255,14 @@ gh pr list --state all --head <branch> --json number,state --jq '.[0] | .number'
 
 **Action when stale or orphaned branches are found:**
 
-1. List every stale / orphaned branch with its category and a suggested cleanup command:
+1. List every stale / orphaned branch with its category, lifecycle, merged PR context, and a suggested cleanup command:
 
    ```bash
-   # Category A — stale workflow branch (upstream PR merged):
+   # Category A — stale local workflow branch (upstream PR merged):
    git branch -D <branch>
+
+   # Category A — remote implementation branch still present after merge:
+   ./scripts/development-workflow/post-merge-cleanup.sh --base <base> <branch>
 
    # Category B — orphaned worktree-agent branch (no remote, no PR):
    git branch -D <branch>

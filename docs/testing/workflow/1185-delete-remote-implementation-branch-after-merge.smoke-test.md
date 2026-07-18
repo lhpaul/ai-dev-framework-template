@@ -50,7 +50,8 @@ Before running this smoke test:
    ./scripts/development-workflow/post-merge-cleanup.sh --base develop feature/1185-smoke-cleanup
    ```
 
-4. Confirm the output reports the remote branch as deleted or already absent.
+4. Confirm the output reports `REMOTE_DELETE_RESULT=deleted` or
+   `REMOTE_DELETE_RESULT=not_found`.
 5. Confirm `origin/feature/1185-smoke-cleanup` no longer exists.
 
 **Expected result**: Cleanup only runs after merged-state verification and the
@@ -65,9 +66,9 @@ remote implementation branch is gone afterward.
 2. Run the cleanup path against that branch.
 3. Inspect the output.
 
-**Expected result**: The helper skips remote deletion, names the non-merged PR
-state, and does not report terminal cleanup success for the implementation
-branch.
+**Expected result**: The helper reports `REMOTE_DELETE_RESULT=skipped`, names
+the non-merged state or missing merged PR evidence, and does not report terminal
+cleanup success for the implementation branch.
 
 ### Step 3: Verify already absent remote branches are successful
 
@@ -77,8 +78,8 @@ branch.
 2. Run the cleanup helper for that branch.
 3. Inspect the output.
 
-**Expected result**: Cleanup reports the remote branch as already absent or
-already complete and continues local/tracker cleanup.
+**Expected result**: Cleanup reports `REMOTE_DELETE_RESULT=not_found` and
+`REMOTE_DELETE_STATUS=already_absent`, then continues local/tracker cleanup.
 
 ### Step 4: Verify spec and plan branch classification
 

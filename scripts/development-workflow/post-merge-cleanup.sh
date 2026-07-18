@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Post-merge cleanup: fetch origin, checkout the merge base, pull, and delete the
-# local branch that was just merged (remote branch already deleted).
+# Post-merge cleanup: fetch origin, checkout the merge base, pull, delete the
+# local branch that was just merged, and verify or delete merged implementation
+# branches on the remote.
 # Keeps the local repo clean after merging developments.
 #
 # Usage:
@@ -23,7 +24,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./workflow-lib.sh
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
 . "$SCRIPT_DIR/workflow-lib.sh"
 
 cd_workflow_repo_root
@@ -99,6 +100,9 @@ selected_product_default_branch=""
 case "$(branch_prefix "$TO_DELETE")" in
   feature|fix|refactor|hotfix)
     branch_owner_kind="implementation"
+    ;;
+  spec|implementation-plan)
+    branch_owner_kind="expected_persistent"
     ;;
 esac
 
@@ -185,8 +189,91 @@ print_kv ACTION_REPOSITORY "$ACTION_REPOSITORY"
 [ -n "$TARGET_GITHUB_REPO" ] && print_kv TARGET_GITHUB_REPO "$TARGET_GITHUB_REPO"
 print_kv CLEANUP_REPO_ROOT "$CLEANUP_REPO_ROOT"
 print_kv TRACKER_REPO_ROOT "$HUB_REPO_ROOT"
+case "$branch_owner_kind" in
+  implementation)
+    print_kv BRANCH_LIFECYCLE "expected_deleted"
+    ;;
+  expected_persistent)
+    print_kv BRANCH_LIFECYCLE "expected_persistent"
+    ;;
+  *)
+    print_kv BRANCH_LIFECYCLE "unclassified"
+    ;;
+esac
 
 cd "$CLEANUP_REPO_ROOT" || exit 1
+
+remote_cleanup_repo_slug() {
+  if [ -n "$TARGET_GITHUB_REPO" ]; then
+    printf '%s\n' "$TARGET_GITHUB_REPO"
+    return 0
+  fi
+  repo_slug
+}
+
+verify_merged_pr_for_branch() {
+  local branch="$1"
+  local lookup_repo="$2"
+
+  gh pr list \
+    --repo "$lookup_repo" \
+    --state merged \
+    --head "$branch" \
+    --limit 1 \
+    --json number \
+    --jq '.[0].number // empty'
+}
+
+cleanup_remote_implementation_branch() {
+  local branch="$1"
+  local lookup_repo merged_pr push_err push_exit
+
+  if [ "$branch_owner_kind" != "implementation" ]; then
+    return 0
+  fi
+
+  if ! lookup_repo="$(remote_cleanup_repo_slug)"; then
+    print_kv REMOTE_DELETE_RESULT "skipped"
+    print_kv_escaped ERROR_MESSAGE "Could not resolve GitHub repository for remote implementation branch cleanup."
+    echo "ERROR: could not resolve GitHub repository for remote implementation branch cleanup." >&2
+    return 1
+  fi
+
+  if ! merged_pr="$(verify_merged_pr_for_branch "$branch" "$lookup_repo")"; then
+    print_kv REMOTE_DELETE_RESULT "skipped"
+    print_kv_escaped ERROR_MESSAGE "Could not query merged PRs for branch '${branch}' in '${lookup_repo}'."
+    echo "ERROR: could not query merged PRs for branch '$branch' in '$lookup_repo'." >&2
+    return 1
+  fi
+
+  if [ -z "$merged_pr" ]; then
+    print_kv REMOTE_DELETE_RESULT "skipped"
+    print_kv REMOTE_DELETE_REASON "pr_not_merged"
+    print_kv_escaped ERROR_MESSAGE "Remote implementation branch '${branch}' was not deleted because no merged PR was found."
+    echo "ERROR: remote implementation branch '$branch' was not deleted because no merged PR was found." >&2
+    return 1
+  fi
+
+  print_kv REMOTE_DELETE_PR_NUMBER "$merged_pr"
+  push_err="$(git push origin --delete "$branch" 2>&1)" && push_exit=0 || push_exit=$?
+  if [ "$push_exit" -eq 0 ]; then
+    print_kv REMOTE_DELETE_RESULT "deleted"
+    echo "Remote implementation branch '$branch' deleted after merged PR #${merged_pr}."
+    return 0
+  fi
+
+  if printf '%s\n' "$push_err" | grep -Eiq "remote ref does not exist|unable to delete .* remote ref does not exist|not found"; then
+    print_kv REMOTE_DELETE_RESULT "not_found"
+    print_kv REMOTE_DELETE_STATUS "already_absent"
+    echo "Remote implementation branch '$branch' already absent after merged PR #${merged_pr}."
+    return 0
+  fi
+
+  print_kv REMOTE_DELETE_RESULT "failed"
+  print_kv_escaped ERROR_MESSAGE "Failed to delete remote implementation branch '${branch}' (exit ${push_exit}): ${push_err}"
+  echo "ERROR: failed to delete remote implementation branch '$branch': $push_err" >&2
+  return 1
+}
 
 LOCAL_BRANCH_MISSING=0
 VERIFIED_MERGED_PR=""
@@ -235,6 +322,8 @@ echo "Pulling $DEVELOP_BRANCH..."
 # tracking set (e.g. integration branches created/pushed without --set-upstream).
 # --ff-only: fail cleanly if the branch diverged (e.g. local commits) instead of creating a merge.
 git pull --ff-only origin "$DEVELOP_BRANCH"
+
+cleanup_remote_implementation_branch "$TO_DELETE"
 
 if [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
   echo "Skipping local branch delete for '$TO_DELETE' (already absent)."
