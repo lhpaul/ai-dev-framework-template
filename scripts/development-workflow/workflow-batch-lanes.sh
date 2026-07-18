@@ -52,10 +52,12 @@ report_category_for_item() {
   local status="$2"
   local next_action="$3"
   local labels="$4"
+  local pr_metadata_status="${5:-}"
 
   status="$(lowercase "$status")"
   next_action="$(lowercase "$next_action")"
   labels="$(lowercase "$labels")"
+  pr_metadata_status="$(lowercase "$pr_metadata_status")"
 
   if [ "$dispatch" = "held" ]; then
     printf 'held\n'
@@ -86,6 +88,11 @@ report_category_for_item() {
     return 0
   fi
 
+  if [ "$next_action" = "resolve-development-pr" ] && [ "$pr_metadata_status" = "unavailable" ]; then
+    printf 'informational\n'
+    return 0
+  fi
+
   if [ "$status" = "backlog" ] || [ "$next_action" = "write-spec" ]; then
     printf 'proposed_batch\n'
     return 0
@@ -102,11 +109,14 @@ report_reason_for_item() {
   local hold_reason="$5"
   local skip_reason="$6"
   local labels="$7"
+  local pr_metadata_status="${8:-}"
+  local pr_metadata_reason="${9:-}"
 
   local status_lc next_action_lc labels_lc
   status_lc="$(lowercase "$status")"
   next_action_lc="$(lowercase "$next_action")"
   labels_lc="$(lowercase "$labels")"
+  pr_metadata_status="$(lowercase "$pr_metadata_status")"
 
   case "$category" in
     held)
@@ -133,6 +143,12 @@ report_reason_for_item() {
         || [ "$status_lc" = "development in review" ] \
         || [ "$labels_lc" != "${labels_lc/ready-for-human-review/}" ]; then
         printf 'Waiting on human review or merge outside the current run-work proposal.\n'
+      elif [ "$next_action_lc" = "resolve-development-pr" ] && [ "$pr_metadata_status" = "unavailable" ]; then
+        if [ -n "$pr_metadata_reason" ]; then
+          printf 'Open PR metadata unavailable (%s); not actionable in this proposal.\n' "$pr_metadata_reason"
+        else
+          printf 'Open PR metadata unavailable; not actionable in this proposal.\n'
+        fi
       elif [ -n "$skip_reason" ]; then
         printf '%s\n' "$skip_reason"
       elif [ -n "$hold_reason" ]; then
@@ -420,6 +436,8 @@ while [ "$idx" -lt "$block_idx" ]; do
   next_action=""
   labels=""
   skip_reason=""
+  pr_metadata_status=""
+  pr_metadata_reason=""
   while IFS='=' read -r key value; do
     case "$key" in
       SLUG) item_id="$value" ;;
@@ -428,13 +446,15 @@ while [ "$idx" -lt "$block_idx" ]; do
       NEXT_ACTION) next_action="$value" ;;
       LABELS|PR_LABELS) labels="$value" ;;
       SKIP_REASON) skip_reason="$value" ;;
+      PR_METADATA_STATUS) pr_metadata_status="$value" ;;
+      PR_METADATA_REASON) pr_metadata_reason="$value" ;;
     esac
   done < "$TMP_BLOCKS.$idx"
   [ -z "$item_id" ] && item_id="unknown-item"
 
-  report_category="$(report_category_for_item "$dispatch" "$status" "$next_action" "$labels")"
+  report_category="$(report_category_for_item "$dispatch" "$status" "$next_action" "$labels" "$pr_metadata_status")"
   report_label="$(report_label_for_category "$report_category")"
-  report_reason="$(report_reason_for_item "$report_category" "$dispatch" "$status" "$next_action" "$hold_reason" "$skip_reason" "$labels")"
+  report_reason="$(report_reason_for_item "$report_category" "$dispatch" "$status" "$next_action" "$hold_reason" "$skip_reason" "$labels" "$pr_metadata_status" "$pr_metadata_reason")"
 
   cat "$TMP_BLOCKS.$idx"
   print_kv STAGE_LANE "$stage_lane"

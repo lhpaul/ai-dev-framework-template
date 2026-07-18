@@ -371,7 +371,11 @@ open_implementation_pr_metadata() {
   local github_repo="${3:-}"
   local prs_json pr_rows
 
-  gh_available || return 0
+  if ! gh_available; then
+    print_kv PR_METADATA_STATUS "unavailable"
+    print_kv PR_METADATA_REASON "gh_unavailable"
+    return 0
+  fi
 
   local gh_args=()
   if [ -n "$github_repo" ]; then
@@ -380,14 +384,20 @@ open_implementation_pr_metadata() {
 
   if [ "${#gh_args[@]}" -gt 0 ]; then
     if ! prs_json="$(gh pr list "${gh_args[@]}" --state open --limit 500 --json number,headRefName,labels 2>/dev/null)"; then
+      print_kv PR_METADATA_STATUS "unavailable"
+      print_kv PR_METADATA_REASON "gh_pr_list_failed"
       return 0
     fi
   else
     if ! prs_json="$(gh pr list --state open --limit 500 --json number,headRefName,labels 2>/dev/null)"; then
+      print_kv PR_METADATA_STATUS "unavailable"
+      print_kv PR_METADATA_REASON "gh_pr_list_failed"
       return 0
     fi
   fi
   if ! pr_rows="$(printf '%s\n' "$prs_json" | jq -r '.[] | [.number, .headRefName, ([.labels[].name] | join(","))] | @tsv' 2>/dev/null)"; then
+    print_kv PR_METADATA_STATUS "unavailable"
+    print_kv PR_METADATA_REASON "jq_parse_failed"
     return 0
   fi
   [ -n "$pr_rows" ] || return 0

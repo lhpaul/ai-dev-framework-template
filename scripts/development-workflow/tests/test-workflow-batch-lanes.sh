@@ -206,6 +206,10 @@ if [ "${1:-}" = "api" ] && [ "${2:-}" = "graphql" ]; then
   exit 0
 fi
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then
+  if [ "${MOCK_GH_PR_LIST_FAIL:-0}" = "1" ]; then
+    printf 'mock pr list failure\n' >&2
+    exit 1
+  fi
   printf '[{"number":42,"headRefName":"feature/999-ready-pr","labels":[{"name":"ready-for-human-review"}]}]\n'
   exit 0
 fi
@@ -218,6 +222,12 @@ ready_pr_plan_out="$(PATH="$mock_bin:$PATH" WORKFLOW_SKIP_FETCH=1 AI_DEV_WORKFLO
 run_test "batch_plan_emits_pr_labels" "PR_LABELS=ready-for-human-review" "$(printf '%s\n' "$ready_pr_plan_out" | awk '/^PR_LABELS=/{print; exit}')"
 ready_pr_lane_out="$(printf '%s\n' "$ready_pr_plan_out" | "$LANES" --repo-root "$fixture_repo")"
 run_test "ready_pr_metadata_is_informational" "informational" "$(block_value "$ready_pr_lane_out" "999-ready-pr" "REPORT_CATEGORY")"
+
+unavailable_pr_plan_out="$(PATH="$mock_bin:$PATH" MOCK_GH_PR_LIST_FAIL=1 WORKFLOW_SKIP_FETCH=1 AI_DEV_WORKFLOW_CONFIG_FILE="$fixture_repo/.ai-dev-workflow.yaml" "$BATCH_PLAN" --repo-root "$fixture_repo" "$ready_pr_dev")"
+run_test "batch_plan_emits_pr_metadata_unavailable" "PR_METADATA_STATUS=unavailable" "$(printf '%s\n' "$unavailable_pr_plan_out" | awk '/^PR_METADATA_STATUS=/{print; exit}')"
+unavailable_pr_lane_out="$(printf '%s\n' "$unavailable_pr_plan_out" | "$LANES" --repo-root "$fixture_repo")"
+run_test "unavailable_pr_metadata_is_informational" "informational" "$(block_value "$unavailable_pr_lane_out" "999-ready-pr" "REPORT_CATEGORY")"
+run_test "unavailable_pr_metadata_reason" "Open PR metadata unavailable (gh_pr_list_failed); not actionable in this proposal." "$(block_value "$unavailable_pr_lane_out" "999-ready-pr" "REPORT_REASON")"
 
 skip_file="$TMP_ROOT/skip.batch"
 : > "$skip_file"
