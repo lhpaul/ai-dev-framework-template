@@ -78,8 +78,9 @@ without introducing a new local dependency.
 
 - Temporary-worktree review execution must use the reviewer policy effective
   in the initiating checkout.
-- A local reviewer override takes precedence over the shared configuration only
-  for the operator's local workflow run.
+- A local reviewer override contributes only the reviewer-policy choices it
+  defines; the temporary worktree must preserve the fully resolved effective
+  policy, including applicable shared choices.
 - Local reviewer settings must not be committed, pushed, copied into pull
   request artifacts, or exposed in review output beyond their policy source.
 - If the effective local reviewer policy cannot be safely applied, the workflow
@@ -103,8 +104,8 @@ without introducing a new local dependency.
 
 | Initiating local policy | Temporary worktree | Required outcome | Next action | Mirror surfaces | Visibility |
 | --- | --- | --- | --- | --- | --- |
-| Present and valid | Able to use the effective policy | Use the local policy | Continue normal review | Initiating checkout, temporary review location, and PR review record | Record local policy source |
-| Present and valid | Cannot use the effective policy | Do not substitute a shared reviewer silently | Apply existing availability stop or warning policy | Initiating checkout, temporary review location, and PR review record | Report the unavailable local policy |
+| Present and valid | Able to use the effective policy | Use the fully resolved effective policy | Continue normal review | Initiating checkout, temporary review location, and PR review record | Record local policy source |
+| Present and valid | Cannot use the effective policy | Do not substitute a different reviewer policy silently | Apply existing availability stop or warning policy | Initiating checkout, temporary review location, and PR review record | Report the unavailable effective policy |
 | Absent | Shared policy available | Use the shared policy | Continue normal review | Initiating checkout, temporary review location, and PR review record | Record shared policy source |
 | Absent | Shared policy unavailable | Apply the existing availability policy | Stop or warn as configured | Initiating checkout, temporary review location, and PR review record | Report the unavailable shared policy |
 
