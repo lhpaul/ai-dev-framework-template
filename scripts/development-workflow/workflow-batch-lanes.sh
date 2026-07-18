@@ -59,11 +59,6 @@ report_category_for_item() {
   labels="$(lowercase "$labels")"
   pr_metadata_status="$(lowercase "$pr_metadata_status")"
 
-  if [ "$dispatch" = "held" ]; then
-    printf 'held\n'
-    return 0
-  fi
-
   if [ "$dispatch" = "skip" ]; then
     printf 'informational\n'
     return 0
@@ -90,6 +85,11 @@ report_category_for_item() {
 
   if [ "$next_action" = "resolve-development-pr" ] && [ "$pr_metadata_status" = "unavailable" ]; then
     printf 'informational\n'
+    return 0
+  fi
+
+  if [ "$dispatch" = "held" ]; then
+    printf 'held\n'
     return 0
   fi
 

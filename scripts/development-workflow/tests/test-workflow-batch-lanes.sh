@@ -109,6 +109,14 @@ run_test "held_label" "HELD - not included in proposed batch" "$(block_value "$c
 run_test "held_reason_reuses_hold_reason" "implementation lane cap (max 1)" "$(block_value "$category_output" "held-impl-b" "REPORT_REASON")"
 run_test "skip_reason_reported" "merged implementation branch already cleaned up" "$(block_value "$category_output" "skip-item-with-reason" "REPORT_REASON")"
 
+review_cap_file="$TMP_ROOT/review-cap.batch"
+: > "$review_cap_file"
+write_batch_block "$review_cap_file" "waiting-review-a" "wait-human-review" "" "Development in Review" "ready-for-human-review"
+write_batch_block "$review_cap_file" "waiting-review-b" "wait-human-review" "" "Development in Review" "ready-for-human-review"
+review_cap_output="$(WORKFLOW_MAX_CONCURRENT_REVIEW=1 "$LANES" --repo-root "$fixture_repo" < "$review_cap_file")"
+run_test "held_waiting_review_stays_informational" "informational" "$(block_value "$review_cap_output" "waiting-review-b" "REPORT_CATEGORY")"
+run_test "held_waiting_review_uses_wait_reason" "Waiting on human review or merge outside the current run-work proposal." "$(block_value "$review_cap_output" "waiting-review-b" "REPORT_REASON")"
+
 scan_no_paths_output="$("$LANES" --repo-root "$fixture_repo" --scan 2>&1)"
 run_test "scan_mode_no_paths_returns_none" "yes" "$(printf '%s\n' "$scan_no_paths_output" | grep -q '^(none)$' && echo yes || echo no)"
 
