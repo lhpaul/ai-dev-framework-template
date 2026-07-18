@@ -354,8 +354,14 @@ initiating_override_parsed="$(
     workflow_config_review_platforms "$_TEMP_CONFIG" | paste -sd ',' -
 )"
 run_test "initiating_local_override_applies_in_temp_worktree" "pr-agent,bugbot" "$initiating_override_parsed"
+
+caller_override_root="$(
+  WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$_LOCAL_OVERRIDE_DIR" \
+    resolve_local_review_override_root "$_TEMP_WORKTREE_DIR"
+)"
+run_test "caller_override_root_is_preserved" "$_LOCAL_OVERRIDE_DIR" "$caller_override_root"
 rm -rf "$_TEMP_WORKTREE_DIR"
-unset _TEMP_WORKTREE_DIR initiating_override_parsed
+unset _TEMP_WORKTREE_DIR initiating_override_parsed caller_override_root
 
 missing_override_status=0
 if WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$_LOCAL_OVERRIDE_DIR/missing" workflow_local_config_file >/dev/null 2>&1; then
