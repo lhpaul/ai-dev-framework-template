@@ -10,7 +10,7 @@ This is a **repo-wide definition**. All agents apply these labels consistently.
 
 | Label                    | Meaning                                                                                                                                                                                                                                                                                                                  |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ready-for-human-review` | The PR is automation-clean and ready for a human reviewer or for the next delegated merge gate. CI is green. The `REVIEW.md` gate is satisfied. Every configured automated reviewer is clean or skipped.                                                                                                                |
+| `ready-for-human-review` | The PR is automation-clean and ready for a human reviewer or for the next delegated merge gate. CI is green. The `REVIEW.md` gate is satisfied, including stage-required evidence such as the complex workflow decision-gate consistency matrix when applicable. Every configured automated reviewer is clean or skipped. |
 | `needs-fixes`            | The PR still needs fixes before it is ready for human review. This may be due to human-requested changes, failing CI, or blocking automated PR feedback.                                                                                                                                                                 |
 | `ready-for-regression`   | Automated code reviews are clean (or skipped). Configured real e2e/regression tests, or an explicitly enabled placeholder, should now run. Applied by the orchestrator (Step 7b) on implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`, `backport/hotfix/*`), and by the prepare-release flow (protocol `05`) on **production** release PRs (`release/*` → `main`) only. |
 | `needs-setup`            | PR introduces one or more infrastructure dependencies (env vars, secrets, DNS records, service account tokens, etc.) that require human setup steps before the feature can be safely enabled. Co-exists with `ready-for-human-review`; the human removes this label after completing (or intentionally deferring) setup. |
@@ -57,6 +57,12 @@ Apply this label when **all** of the following are true:
       latest result is `pass`. `not_applicable` only satisfies readiness when
       the residual gate is not required for the item. `block` maps to
       `needs-fixes`; `escalate` maps to a human-decision stop.
+- [ ] For complex workflow decision-gate PRs, the PR evidence includes a
+      consistency matrix or pointer that identifies gate inputs, allowed
+      outcomes, required next actions, mirror surfaces, and examples when
+      examples are part of the changed surface. A short not-applicable rationale
+      is enough only when the PR does not add or modify workflow decision-gate
+      behavior. Missing or contradictory evidence blocks this label.
 
 ---
 
@@ -75,6 +81,9 @@ Apply this label when **any** of the following is true:
 - A required residual gate result is missing when the item title, body, spec, or
   plan indicates sweep, batch, helper-extraction, numeric-target, or
   pattern-completeness work
+- A complex workflow decision-gate PR lacks matrix evidence, omits a required
+  input/outcome/next-action/mirror-surface/example row, or contains
+  contradictory wording across listed mirror surfaces
 
 Do not use `needs-fixes` for residual gate `escalate`; that is a human-decision
 stop until the residual scope decision is resolved.

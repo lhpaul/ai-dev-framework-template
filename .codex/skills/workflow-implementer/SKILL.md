@@ -21,7 +21,13 @@ Recommended model tier: `balanced`
    work, produce and verify residual evidence with
    `scope-residual-gate.sh` before readiness.
 9. Implementation files belong on implementation branches, not `spec/*` or `implementation-plan/*` branches. If a documentation-stage PR is in scope, run Protocol 91 Step 8a's documentation-stage alignment checker before readiness and correct or escalate any mismatch.
-10. Before opening the draft implementation PR, complete the Protocol 03 **Pre-Submission Self-Review Pass**: review `git diff <base-branch>...HEAD`, remove stale markers, verify sibling/caller consistency, confirm spec/plan or issue-body coverage, and add the self-review log to the PR description.
+10. Before opening the draft implementation PR, complete the Protocol 03
+    **Pre-Submission Self-Review Pass**: review
+    `git diff <base-branch>...HEAD`, remove stale markers, verify
+    sibling/caller consistency, confirm spec/plan or issue-body coverage,
+    include the complex workflow decision-gate matrix or not-applicable
+    rationale when Protocol 03 requires it, and add the self-review log to the
+    PR description.
 11. Before opening the draft implementation PR, verify the PR has a linked tracker item through the branch name, handoff metadata, or a closing/reference keyword in the PR body. If ad-hoc work has no item, create or accept a retroactive backlog item first and reference it in the PR description.
 12. Before opening the draft implementation PR, call `ensure_on_project_board <issue_number> "In Development"` from `scripts/development-workflow/workflow-lib.sh`. This is a no-op when the issue is already on the board.
 13. Before creating an implementation branch or opening an implementation PR for a tracker-backed item, run `run-nested-artifact-guard.sh` with the expected workflow branch, parent-approved base, and artifact-owning repo root (`--repo-root "$ARTIFACT_REPO_ROOT"`). In `workflow_hub`, product implementation artifacts scan the selected product checkout, not the hub. Stop on missing base, duplicate artifacts, wrong-base PRs, or scan failures; deliberate splits require explicit parent approval.

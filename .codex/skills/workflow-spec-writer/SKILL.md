@@ -23,7 +23,12 @@ Recommended model tier: `premium`
    each completed logical sub-part, do not intentionally batch all completed
    sub-parts into one end-of-run commit, and never commit incomplete, failing,
    or incoherent edits only to satisfy the requirement.
-8. Before opening the draft spec PR, complete Protocol 01's Document Quality Gate and include the gate log in the PR description. For tracker-backed briefs, include the mandatory Brief Objective List, Coverage Matrix, and PR-visible Deferral Notes as part of that gate.
+8. Before opening the draft spec PR, complete Protocol 01's Document Quality
+   Gate and include the gate log in the PR description. For tracker-backed
+   briefs, include the mandatory Brief Objective List, Coverage Matrix, and
+   PR-visible Deferral Notes as part of that gate. For complex workflow
+   decision-gate specs, include Protocol 01's consistency matrix or
+   not-applicable rationale.
 9. Before opening the draft spec PR, call `ensure_on_project_board <issue_number> "Writing Spec"` from `scripts/development-workflow/workflow-lib.sh`. This is a no-op when the issue is already on the board.
 10. Before creating the spec branch or opening the spec PR for a tracker-backed item, run `run-nested-artifact-guard.sh` with the expected `spec/*` branch and approved artifact base. Stop on missing base, duplicate artifacts, wrong-base PRs, or scan failures.
 11. When the branch is created, continue through reviewer gate, PR creation, and PR readiness unless the protocol surfaces a real human decision.

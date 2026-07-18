@@ -2117,6 +2117,7 @@ Interpret the result as follows:
 | 8         | Documentation-stage alignment mismatch on `spec/*` or `implementation-plan/*` PR                 | Remove stale readiness, add/update warning, add `needs-fixes`, correct or escalate |
 | 9         | Residual gate missing, blocked, or escalated for broad-scope work                                | Keep out of readiness; fix residuals, add `needs-fixes`, or escalate |
 | 10        | Documentation-stage alignment checker infrastructure failure                                     | Retry checker or resolve GitHub/diff read failure |
+| 11        | Complex workflow decision-gate matrix evidence missing or contradictory when applicable          | Keep out of readiness; add `needs-fixes`, complete matrix evidence, and re-run review |
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
@@ -2416,7 +2417,40 @@ if [ "${RESIDUAL_GATE_REQUIRED:-false}" = "true" ]; then
   esac
 fi
 
-# Check 3.6: documentation-stage alignment for spec and plan PRs.
+# Check 3.6: complex workflow decision-gate matrix evidence.
+# This is a manual evidence gate, not a detector. When the PR changes workflow
+# documentation or protocols whose behavior depends on multiple inputs,
+# outcomes, next-action branches, labels, exit states, examples, or mirrored
+# workflow surfaces, verify that the PR description contains either:
+# - a consistency matrix or pointer identifying gate inputs, allowed outcomes,
+#   required next actions, mirror surfaces, and examples when examples are part
+#   of the changed surface; or
+# - a short not-applicable rationale when the PR evidence format asks for this
+#   check but the change does not alter decision-gate behavior.
+# The caller sets COMPLEX_GATE_MATRIX_REQUIRED=true after classifying the PR as
+# an applicable complex workflow decision-gate change. The body check below is a
+# minimum evidence check; reviewers still verify that the matrix content is not
+# contradictory across mirror surfaces.
+if [ "${COMPLEX_GATE_MATRIX_REQUIRED:-false}" = "true" ]; then
+  if ! PR_BODY=$(gh pr view "$PR_NUMBER" --json body --jq '.body // ""'); then
+    echo "ERROR: Cannot verify complex workflow decision-gate matrix evidence - gh pr view failed."
+    exit 11
+  fi
+  if ! printf '%s\n' "$PR_BODY" |
+    grep -Eiq 'consistency matrix|gate inputs|allowed outcomes|required next actions|mirror surfaces'; then
+    echo "ERROR: Complex workflow decision-gate matrix evidence is missing from the PR body."
+    gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+    exit 11
+  fi
+  if printf '%s\n' "$PR_BODY" | grep -Eiq 'complex workflow decision-gate matrix:[[:space:]]*not applicable|complex gate matrix[[:space:]-]+not applicable'; then
+    echo "ERROR: Complex workflow decision-gate matrix was required, but the PR body says not applicable."
+    gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+    exit 11
+  fi
+  echo "OK: Complex workflow decision-gate matrix evidence is present in the PR body."
+fi
+
+# Check 3.7: documentation-stage alignment for spec and plan PRs.
 # Run on every pass through Step 8a, including resumed PRs with an existing
 # ready-for-human-review label. Invoke the checker for every PR; it reads the
 # live PR head branch and returns not_applicable for non-documentation branches,

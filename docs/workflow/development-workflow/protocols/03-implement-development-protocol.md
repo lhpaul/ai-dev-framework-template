@@ -492,10 +492,26 @@ Complete all applicable checks:
    before readiness. A mismatch must be corrected by moving/removing
    implementation files from the documentation-stage PR or escalated for a
    human workflow-stage decision.
+5. **Complex workflow decision-gate matrix check**: when the implementation adds
+   or modifies a complex workflow decision gate, include consistency-matrix
+   evidence before opening or marking the PR ready. A complex workflow
+   decision-gate change is any workflow documentation or protocol change whose
+   behavior depends on multiple inputs, outcomes, next-action branches, status
+   labels, exit states, examples, or mirrored workflow surfaces. Matrix evidence
+   must identify the gate inputs, allowed outcomes, required next actions,
+   mirror surfaces, and examples when examples are part of the changed surface.
+   If the implementation does not change decision-gate behavior, record a short
+   not-applicable rationale when the PR evidence format asks for this check. If
+   an expected input, outcome, example, or mirror surface is marked not
+   applicable, include the rationale in the matrix row.
 
 If the implementation includes any test script, test function, or validation harness, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) also applies. The pre-submission pass reviews the broader PR diff; it does not replace the harness-specific checklist from #614.
 
-Append a brief self-review log to the draft PR description. If all checks are clean, one line is enough, for example: `Pre-submission self-review: stale markers — none, caller consistency — verified, coverage — all acceptance criteria addressed.` If the pass found and fixed a gap, note the finding and the commit that addressed it.
+Append a brief self-review log to the draft PR description. If all checks are
+clean, one line is enough, for example: `Pre-submission self-review: stale
+markers - none, caller consistency - verified, coverage - all acceptance
+criteria addressed, complex gate matrix - not applicable.` If the pass found
+and fixed a gap, note the finding and the commit that addressed it.
 
 ## Pre-PR Tracking Item Gate
 

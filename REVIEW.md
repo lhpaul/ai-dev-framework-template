@@ -68,6 +68,12 @@ Check:
 
 - Required spec template sections are present and no placeholders are unintentionally left behind
 - Spec PRs include a current `Document Quality Gate` log in the PR description; a missing, obviously incomplete, stale, or contradictory log is an important finding by default and blocking when it claims unchecked coverage
+- Spec PRs that add or modify complex workflow decision-gate behavior include a
+  consistency matrix or pointer that identifies gate inputs, allowed outcomes,
+  required next actions, mirror surfaces, and examples when examples are part of
+  the changed surface. Missing or contradictory matrix evidence is blocking
+  before `ready-for-human-review`; for non-gate documentation changes, accept a
+  concise not-applicable rationale.
 - Spec PRs contain only expected spec-stage artifacts. Implementation files,
   migrations, product source files, workflow scripts, or unrelated docs on a
   `spec/*` branch are a workflow-stage blocker unless a human explicitly
@@ -112,6 +118,11 @@ Check:
 
 - Every use case and acceptance criterion from the spec (or from the work item brief for Refactor items) is addressed
 - Plan PRs include a current `Document Quality Gate` log in the PR description; a missing, obviously incomplete, stale, or contradictory log is an important finding by default and blocking when it claims unchecked coverage
+- Plan PRs that add or modify complex workflow decision-gate behavior classify
+  applicability and include matrix coverage for gate inputs, allowed outcomes,
+  required next actions, mirror surfaces, and examples when examples are part of
+  the changed surface. Missing rows, contradictory next actions, or unreasoned
+  not-applicable entries are blocking before `ready-for-human-review`.
 - Plan PRs contain only expected plan-stage artifacts: the implementation plan
   and any plan-stage smoke-test runbook. Implementation files, migrations,
   product source files, workflow scripts, or unrelated docs on an
@@ -216,6 +227,14 @@ Additional checks for **documentation PRs** (when a PR adds or modifies document
   present and that remaining residuals are completed, explicitly out of scope, or
   linked to follow-up issues. Silent prose deferral is an important finding, and
   missing evidence that allows readiness is blocking.
+- **Complex workflow decision-gate matrix**: when an implementation PR adds or
+  modifies workflow decision-gate behavior with multiple inputs, outcomes,
+  next-action branches, status labels, exit states, examples, or mirrored
+  workflow surfaces, verify that the PR evidence includes a consistency matrix
+  or pointer with gate inputs, allowed outcomes, required next actions, mirror
+  surfaces, and examples when examples are part of the changed surface. Missing
+  rows, contradictory wording between mirror surfaces, or unreasoned
+  not-applicable entries are blocking before `ready-for-human-review`.
 
 Additional checks for **PRs that add or modify guardrails enforcement behavior** (orchestration protocols, agent files, skill files, or guardrails-related documentation):
 

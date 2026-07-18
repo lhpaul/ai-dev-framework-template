@@ -376,6 +376,7 @@ If no blocking human decision remains:
    - Spec/brief coverage: Checked - all ACs map to implementation steps and tests.
    - Implementation-order consistency: Checked - file list and order agree.
    - Verification support: Checked - broad claims cite Verification Log evidence.
+   - Complex workflow decision-gate matrix: Not applicable - this plan does not add or modify workflow decision-gate behavior.
    - Parser/API/concurrency checklist: Not applicable - no parser, API-surface, snapshot, or concurrent-event signals.
    ```
 
@@ -389,6 +390,17 @@ If no blocking human decision remains:
      or tool semantics cite a Verification Log command or a concrete source file.
    - Behavioral guarantees: every guarantee such as idempotency, bounded retries,
      ordering, or "at most once" names the mechanism that enforces it.
+   - Complex workflow decision-gate matrix: when the plan adds or modifies a
+     complex workflow decision gate, classify it and include matrix coverage
+     before PR handoff. A complex workflow decision-gate change is any workflow
+     documentation or protocol change whose behavior depends on multiple inputs,
+     outcomes, next-action branches, status labels, exit states, examples, or
+     mirrored workflow surfaces. Matrix evidence must identify the gate inputs,
+     allowed outcomes, required next actions, mirror surfaces, and examples when
+     examples are part of the changed surface. If the plan does not change
+     decision-gate behavior, record a short not-applicable rationale. If an
+     expected input, outcome, example, or mirror surface is marked not
+     applicable, include the rationale in the matrix row.
    - Parser/API/concurrency checklist completeness: when parser-risk,
      API-surface, single-snapshot or consistency-semantics, or
      concurrent-event-source signals apply, the required checklist sections are
@@ -443,6 +455,9 @@ If no blocking human decision remains:
     - Title: `docs(plan): [feature-name]`
     - Body: summary of the approach, complexity estimate, key risks, link to plan and runbook
     - `Document Quality Gate` log from the pre-PR gate above
+    - For complex workflow decision-gate plans: the consistency matrix or a
+      pointer to it, using the canonical fields from the Document Quality Gate
+      above; for non-gate plans, the not-applicable rationale is enough
 14. Return the branch + PR details to the **Work Item Runner**
 
 ---
