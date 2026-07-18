@@ -5274,6 +5274,8 @@ pr_number=""
 branch_name=""
 repo_selector=""
 repo_root="$(workflow_repo_root)"
+local_review_override_root=""
+review_policy_source="shared"
 poll_interval=120
 poll_interval_explicit=0
 max_wait=1200
@@ -5378,6 +5380,20 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+review_override_context=""
+if ! review_override_context="$(workflow_review_override_context "$repo_root")"; then
+  echo "ERROR: could not resolve the initiating checkout's local reviewer policy." >&2
+  exit 2
+fi
+local_override_source="$(workflow_context_value "LOCAL_OVERRIDE_SOURCE" "$review_override_context")"
+if [ -n "$local_override_source" ]; then
+  local_review_override_root="$repo_root"
+  export WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$local_review_override_root"
+  review_policy_source="local_override"
+else
+  unset WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT
+fi
 
 if [ -z "$pr_number" ]; then
   usage >&2
@@ -5573,6 +5589,8 @@ if [ "${#phase_after_clean_platforms[@]}" -eq 0 ]; then
     done < <(WORKFLOW_APPLY_LOCAL_REVIEW_OVERRIDES=1 workflow_config_review_phase_after_clean_platforms "$config_file")
   fi
 fi
+
+print_kv REVIEW_POLICY_SOURCE "$review_policy_source"
 
 if [ "$pre_after_clean_only" -eq 1 ]; then
   filter_pre_after_clean_platforms

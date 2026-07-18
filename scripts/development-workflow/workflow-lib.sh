@@ -35,8 +35,28 @@ workflow_effective_config_file() {
   return 1
 }
 
+workflow_local_review_override_root() {
+  local override_root="${WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT:-}"
+
+  if [ -n "$override_root" ]; then
+    if [ ! -d "$override_root" ]; then
+      echo "ERROR: configured local reviewer override source is unavailable." >&2
+      return 1
+    fi
+    printf '%s\n' "$override_root"
+    return 0
+  fi
+
+  workflow_repo_root
+}
+
 workflow_local_config_file() {
-  printf '%s/.ai-dev-workflow.local.yaml\n' "$(workflow_repo_root)"
+  local override_root
+
+  if ! override_root="$(workflow_local_review_override_root)"; then
+    return 1
+  fi
+  printf '%s/.ai-dev-workflow.local.yaml\n' "$override_root"
 }
 
 workflow_is_default_config_file() {
