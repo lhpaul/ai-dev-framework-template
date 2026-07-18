@@ -27,6 +27,15 @@ For single-item work use `/run-item`. For bounded multi-item batch execution use
 When mode is `no_target_scan`, follow Protocol 90 Steps 1–3 (scan + propose)
 only. Do not dispatch items under `/run-work`:
 
+Render the scan output with Protocol 90 report categories kept separate:
+`INFORMATIONAL - not actionable in this proposal`,
+`ACTIONABLE RESUME - can advance now`,
+`PROPOSED BATCH - your decision`, and
+`HELD - not included in proposed batch`. The recommended approval or
+`/run-items` command applies only to `PROPOSED BATCH - your decision` items;
+informational records are excluded unless the operator explicitly names them in
+a separate bounded command.
+
 `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
 
 Routing specification: `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
