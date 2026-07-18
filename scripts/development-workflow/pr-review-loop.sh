@@ -5135,6 +5135,35 @@ reviewer_loop_history_unavailable_stub_body() {
   printf '```\n'
 }
 
+reviewer_loop_history_select_summary_record() {
+  jq -rs '
+    (add // []) as $all
+    | [
+        $all[]
+        | select(
+            (.body // "" | contains("### Automated Reviewer Loop Summary")) and
+            (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
+          )
+      ]
+    | sort_by(.created_at) as $comments
+    | (
+        $comments
+        | map(
+            select(
+              (.body // "" | contains("reviewer_loop_history.v1")) and
+              (.body // "" | test("\"history_status\"[[:space:]]*:[[:space:]]*\"available\""))
+            )
+          )
+        | last
+      ) as $history_source
+    | ($comments | last) as $target
+    | {
+        id: ($target.id // ""),
+        body: (($history_source.body // $target.body) // "")
+      }
+  '
+}
+
 reviewer_loop_history_append_to_summary() {
   local comment_body="$1"
   local existing_body="${2:-}"
@@ -5427,18 +5456,7 @@ EOF
     if ! _existing_comment_record="$(
         set -o pipefail
         gh api "repos/$_repo/issues/$_pr_number/comments" --paginate 2>/dev/null \
-          | jq -rs '
-              add // []
-              | [.[]
-                 | select(
-                     (.body // "" | contains("### Automated Reviewer Loop Summary")) and
-                     (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
-                   )
-                ]
-              | sort_by(.created_at)
-              | last
-              | {id: (.id // ""), body: (.body // "")}
-            '
+          | reviewer_loop_history_select_summary_record
       )"; then
       echo "WARN: failed to fetch existing summary comments for PR ${_pr_number}; will create a new comment with unavailable history" >&2
       _existing_comment_record=""
@@ -6122,18 +6140,7 @@ EOF
     _existing_comment_record="$(
       set -o pipefail
       gh api "repos/$_repo/issues/$pr_number/comments" --paginate 2>/dev/null \
-        | jq -rs '
-            add // []
-            | [.[]
-               | select(
-                   (.body // "" | contains("### Automated Reviewer Loop Summary")) and
-                   (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
-                 )
-              ]
-            | sort_by(.created_at)
-            | last
-            | {id: (.id // ""), body: (.body // "")}
-          '
+        | reviewer_loop_history_select_summary_record
     )" \
       || {
         echo "WARN: failed to fetch existing summary comments for PR ${pr_number}; will create a new comment with unavailable history" >&2

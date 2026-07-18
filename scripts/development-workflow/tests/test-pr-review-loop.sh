@@ -1587,6 +1587,27 @@ run_test "history_latest_block_preserved" "latest" \
 run_test "history_fence_boundary_append_count" "2" \
   "$(printf '%s\n' "$_history_latest_payload" | jq '(.entries // []) | length')"
 
+_history_summary_comments="$(cat <<EOF_HISTORY_COMMENTS
+[
+  {
+    "id": 101,
+    "created_at": "2026-07-18T00:00:00Z",
+    "body": "### Automated Reviewer Loop Summary\n\n*Posted automatically by \`pr-review-loop.sh\`.*\n\n<!-- reviewer-loop-history:v1 -->\n\`\`\`json\n{\"schema\":\"reviewer_loop_history.v1\",\"history_status\":\"available\",\"entries\":[{\"iteration\":1,\"result\":\"needs_fixes\"}]}\n\`\`\`"
+  },
+  {
+    "id": 102,
+    "created_at": "2026-07-18T00:05:00Z",
+    "body": "### Automated Reviewer Loop Summary\n\n*Posted automatically by \`pr-review-loop.sh\`.*\n\n<!-- reviewer-loop-history:v1 -->\n\`\`\`json\n{\"schema\":\"reviewer_loop_history.v1\",\"history_status\":\"unavailable\",\"history_unavailable_reason\":\"comment_read_failed\",\"entries\":[]}\n\`\`\`"
+  }
+]
+EOF_HISTORY_COMMENTS
+)"
+_history_selected_record="$(printf '%s\n' "$_history_summary_comments" | reviewer_loop_history_select_summary_record)"
+run_test "history_selector_targets_newest_comment" "102" \
+  "$(printf '%s\n' "$_history_selected_record" | jq '.id')"
+run_test "history_selector_preserves_available_history" "needs_fixes" \
+  "$(printf '%s\n' "$_history_selected_record" | jq -r '.body' | reviewer_loop_history_extract_latest_json | jq -r '.entries[0].result')"
+
 _history_malformed_body=$'### Automated Reviewer Loop Summary\n\n<!-- reviewer-loop-history:v1 -->\n```json\n{ not json\n```\n'
 _history_malformed_payload="$(reviewer_loop_history_payload_from_existing "$_history_malformed_body" \
   "clean" "" "bugbot (clean)" "0" "0")"
@@ -1629,6 +1650,7 @@ unset _history_empty_entries_body _history_empty_entries_payload
 unset _history_needs_rerun_payload
 unset _history_same_sha_body _history_same_sha_payload
 unset _history_latest_body _history_latest_payload
+unset _history_summary_comments _history_selected_record
 unset _history_malformed_body _history_malformed_payload
 unset _history_wrong_schema_body _history_wrong_schema_payload
 unset _history_prior_unavailable_body _history_prior_unavailable_payload
