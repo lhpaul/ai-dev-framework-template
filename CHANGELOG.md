@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Decision gate consistency matrix** (#1242): Added consistency-matrix
+  evidence for complex workflow decision-gate documentation changes before PR
+  readiness.
 - **Require incremental checkpoint commits for item dispatch** (#1176): Adds
   recoverability guidance requiring coherent checkpoint commits after completed
   logical sub-parts of long-running item work.

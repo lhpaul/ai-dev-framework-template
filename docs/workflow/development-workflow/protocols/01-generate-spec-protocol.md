@@ -173,6 +173,7 @@ rationale for every `Not applicable` item:
 - Brief coverage: Checked - all brief objectives map to acceptance criteria or out of scope.
 - Internal consistency: Checked - terminology and status labels are consistent.
 - Behavioral guarantees: Not applicable - this spec does not introduce guarantees beyond ACs.
+- Complex workflow decision-gate matrix: Not applicable - this spec does not add or modify workflow decision-gate behavior.
 - Reviewer-risk categories: Checked - API surface, concurrency, snapshot semantics, edge cases, and template placeholders reviewed.
 ```
 
@@ -186,6 +187,16 @@ Before the PR is opened, verify:
   workflow statuses use one spelling/casing throughout.
 - Behavioral guarantees: every guarantee, limit, ordering rule, or invariant is
   backed by acceptance criteria or a business rule that makes it testable.
+- Complex workflow decision-gate matrix: when the spec adds or modifies a
+  complex workflow decision gate, include matrix evidence that identifies the
+  gate inputs, allowed outcomes, required next actions, mirror surfaces, and
+  examples when examples are part of the changed surface. A complex workflow
+  decision-gate change is any workflow documentation or protocol change whose
+  behavior depends on multiple inputs, outcomes, next-action branches, status
+  labels, exit states, examples, or mirrored workflow surfaces. If the spec does
+  not change decision-gate behavior, record a short not-applicable rationale.
+  If an expected input, outcome, example, or mirror surface is marked not
+  applicable, include the rationale in the matrix row.
 - Reviewer-risk categories: common high-signal reviewer concerns are checked:
   API-surface completeness, concurrency correctness, single-snapshot or
   consistency semantics, missing edge cases, vague actors/triggers, untestable
@@ -327,6 +338,9 @@ If no blocking human decision remains:
    - Body: summary of the feature, link to the spec file, list of open questions (if any)
    - When a tracker brief exists: Coverage Matrix summary (each brief objective mapped to AC reference(s) or Out-of-Scope entry) and Deferral Notes for each objective intentionally moved to Out of Scope
    - `Document Quality Gate` log from the pre-PR gate above
+   - For complex workflow decision-gate specs: the consistency matrix or a
+     pointer to it, using the canonical fields from the Document Quality Gate
+     above; for non-gate specs, the not-applicable rationale is enough
 11. Return the branch + PR details to the **Work Item Runner**
 
 ---

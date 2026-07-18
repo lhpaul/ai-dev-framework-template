@@ -112,6 +112,13 @@ After implementation is code-review ready, the workflow can still run a smoke te
 
 That repeated pattern is one of the main reasons the workflow scales well with AI assistance: it creates a predictable loop for authored artifacts without pretending every checkpoint has the same review semantics.
 
+For complex workflow decision-gate documentation changes, the PR evidence must
+include a consistency matrix before human-readiness is claimed. The matrix lists
+the gate inputs, allowed outcomes, required next actions, mirror surfaces, and
+examples when examples are part of the changed surface. Simple documentation
+changes that do not alter decision-gate behavior can record a short
+not-applicable rationale instead.
+
 ---
 
 ## How AI Agents Fit Into The Process

@@ -48,6 +48,10 @@ token matching, JSON fields, or implementation algorithms into spec
 requirements. If context is `blocking=true` or `Unclear`, stop for the named
 human relationship decision.
 
-Before opening the draft PR, complete protocol 01's Document Quality Gate and include the gate log in the PR description. For tracker-backed items, follow protocol 01's Brief Objective List, Coverage Matrix, and Deferral Note requirements as part of that gate.
+Before opening the draft PR, complete protocol 01's Document Quality Gate and
+include the gate log in the PR description. For tracker-backed items, follow
+protocol 01's Brief Objective List, Coverage Matrix, and Deferral Note
+requirements as part of that gate. For complex workflow decision-gate specs,
+include protocol 01's consistency matrix or not-applicable rationale.
 
 Before updating tracker status as part of a standalone spec completion sequence, call `ensure_on_project_board <issue_number> "Writing Spec"` (from `scripts/development-workflow/workflow-lib.sh`) to register the issue on the project board if it is not already present.
