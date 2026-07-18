@@ -262,7 +262,7 @@ cleanup_remote_implementation_branch() {
     return 0
   fi
 
-  if printf '%s\n' "$push_err" | grep -Eiq "remote ref does not exist|unable to delete .* remote ref does not exist|not found"; then
+  if printf '%s\n' "$push_err" | grep -Eiq "remote ref does not exist|unable to delete .* remote ref does not exist"; then
     print_kv REMOTE_DELETE_RESULT "not_found"
     print_kv REMOTE_DELETE_STATUS "already_absent"
     echo "Remote implementation branch '$branch' already absent after merged PR #${merged_pr}."
