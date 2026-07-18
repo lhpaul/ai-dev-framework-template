@@ -91,9 +91,14 @@ The JSON output includes:
    the same item and policy. It never waives new guardrail stops, failed review,
    failed CI, risk violations, missing permissions, destructive-action stops, or
    pending checkpoints.
-5. **Epic-like items** — `run-item-scope-resolver.sh` rejects epic issues; use
+5. **Acceptance Criteria checkpoint signal** — populated Acceptance Criteria
+   sections are normal issue structure and do not create a product checkpoint by
+   themselves. Product checkpoints remain recommended for unresolved product
+   language, open questions, empty Acceptance Criteria sections, and
+   placeholder-only criteria such as `TBD` or `to be defined`.
+6. **Epic-like items** — `run-item-scope-resolver.sh` rejects epic issues; use
    `--epic` instead.
-6. **Explicit-list base selection** — `--items` considers only the listed items.
+7. **Explicit-list base selection** — `--items` considers only the listed items.
    No integration labels resolve to `develop`. Partial or mixed
    `integration-branch:<slug>` coverage resolves to `develop` with a visible
    warning. A shared label may resolve to `develop-<slug>` only when the current

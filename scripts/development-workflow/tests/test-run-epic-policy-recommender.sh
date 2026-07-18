@@ -4,11 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-GIT_COMMON_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --git-common-dir)"
-case "$GIT_COMMON_DIR" in
-  /*) REPO_ROOT="$(cd "$GIT_COMMON_DIR/.." && pwd -P)" ;;
-  *) REPO_ROOT="$(cd "$SCRIPT_DIR/$GIT_COMMON_DIR/.." && pwd -P)" ;;
-esac
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd -P)"
 HELPER="$REPO_ROOT/scripts/development-workflow/run-epic-policy-recommender.sh"
 
 TMP_ROOT="$(mktemp -d)"
@@ -248,7 +244,7 @@ run_items_output="$("$HELPER" --scope "$backlog_fixture" --original-command "/ru
 run_test "run_items_copy_paste_uses_run_items" "yes" "$(
   run_items_copy_paste="$(printf '%s\n' "$run_items_output" | jq -r '.copyPasteCommand')"
   if grep -Fq -- '/run-items 949' <<<"$run_items_copy_paste" &&
-    ! grep -Fq -- '$run-epic' <<<"$run_items_copy_paste"; then
+    ! grep -Fq -- "\$run-epic" <<<"$run_items_copy_paste"; then
     echo yes
   else
     echo no
@@ -334,6 +330,72 @@ sensitive_backlog_output="$(recommend_json "$sensitive_backlog_fixture" "\$run-e
 run_test "sensitive_backlog_recommends_implementation_checkpoint" "implementation:technical" "$(printf '%s\n' "$sensitive_backlog_output" | jq -r '.recommendedPolicy.checkpoints[0] | .stage + ":" + .domain')"
 
 run_test "docs_scope_has_no_checkpoints" "0" "$(printf '%s\n' "$docs_output" | jq -r '.recommendedPolicy.checkpoints | length')"
+
+complete_criteria_fixture="$(write_fixture complete-criteria '{
+  "scopeSource": "items",
+  "epicNumber": null,
+  "itemInput": "401",
+  "baseBranch": "develop",
+  "baseAmbiguous": false,
+  "baseReason": "no integration branch label",
+  "policy": {"delegateReview": false, "mayMerge": false, "mayStartBacklog": false, "maxRisk": "low"},
+  "groups": {
+    "eligible": [{"number": 401, "title": "Add clear workflow report labels", "body": "## Problem\nThe report is hard to scan.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n- The report names held items.\n", "status": "Backlog", "type": "Workflow", "labels": [], "dependencies": {"state": "none"}}],
+    "blocked": [],
+    "already_merged": [],
+    "in_review": [],
+    "ambiguous": []
+  },
+  "items": [
+    {"number": 401, "title": "Add clear workflow report labels", "body": "## Problem\nThe report is hard to scan.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n- The report names held items.\n", "status": "Backlog", "type": "Workflow", "labels": []}
+  ]
+}')"
+complete_criteria_output="$(recommend_json "$complete_criteria_fixture" "\$run-epic --items 401")"
+run_test "complete_acceptance_criteria_has_no_product_checkpoint" "0" "$(printf '%s\n' "$complete_criteria_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length')"
+
+case_variant_fixture="$(write_fixture case-variant "$(jq '.groups.eligible[0].body = "## ACCEPTANCE CRITERIA\n- The heading case is normalized.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
+case_variant_output="$(recommend_json "$case_variant_fixture" "\$run-epic --items 401")"
+run_test "acceptance_criteria_heading_case_variants_are_normal_structure" "0" "$(printf '%s\n' "$case_variant_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length')"
+
+empty_criteria_fixture="$(write_fixture empty-criteria "$(jq '.groups.eligible[0].body = "## Acceptance Criteria\n\n## Notes\nMore detail later.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
+empty_criteria_output="$(recommend_json "$empty_criteria_fixture" "\$run-epic --items 401")"
+run_test "empty_acceptance_criteria_recommends_product_checkpoint" "empty acceptance criteria" "$(printf '%s\n' "$empty_criteria_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "spec" and .domain == "product") | .reason')"
+
+colon_empty_criteria_fixture="$(write_fixture colon-empty-criteria "$(jq '.groups.eligible[0].body = "## Acceptance Criteria:\n\n## Notes\nMore detail later.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
+colon_empty_criteria_output="$(recommend_json "$colon_empty_criteria_fixture" "\$run-epic --items 401")"
+run_test "empty_acceptance_criteria_heading_with_colon_recommends_product_checkpoint" "empty acceptance criteria" "$(printf '%s\n' "$colon_empty_criteria_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "spec" and .domain == "product") | .reason')"
+
+placeholder_criteria_fixture="$(write_fixture placeholder-criteria "$(jq '.groups.eligible[0].body = "## Acceptance Criteria\n- TBD\n- To be defined\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
+placeholder_criteria_output="$(recommend_json "$placeholder_criteria_fixture" "\$run-epic --items 401")"
+run_test "placeholder_acceptance_criteria_recommends_product_checkpoint" "placeholder acceptance criteria" "$(printf '%s\n' "$placeholder_criteria_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "spec" and .domain == "product") | .reason')"
+
+nested_placeholder_fixture="$(write_fixture nested-placeholder "$(jq '.groups.eligible[0].body = "## Acceptance Criteria\n### Required behavior\n- TBD\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
+nested_placeholder_output="$(recommend_json "$nested_placeholder_fixture" "\$run-epic --items 401")"
+run_test "nested_acceptance_criteria_heading_placeholder_recommends_checkpoint" "placeholder acceptance criteria" "$(printf '%s\n' "$nested_placeholder_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "spec" and .domain == "product") | .reason')"
+
+nested_complete_fixture="$(write_fixture nested-complete "$(jq '.groups.eligible[0].body = "## Acceptance Criteria\n### Required behavior\n- The user can run the bounded prelude.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
+nested_complete_output="$(recommend_json "$nested_complete_fixture" "\$run-epic --items 401")"
+run_test "nested_acceptance_criteria_heading_with_real_criteria_is_complete" "0" "$(printf '%s\n' "$nested_complete_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length')"
+
+open_question_fixture="$(write_fixture open-question "$(jq '.groups.eligible[0].body = "## Problem\nOpen question: should this apply to epics too?\n\n## Acceptance Criteria\n- The report labels each proposed item.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
+open_question_output="$(recommend_json "$open_question_fixture" "\$run-epic --items 401")"
+run_test "populated_criteria_with_open_question_still_recommends_checkpoint" "issue signals unresolved product requirements or acceptance-criteria ambiguity" "$(printf '%s\n' "$open_question_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "spec" and .domain == "product") | .reason')"
+
+lookalike_fixture="$(write_fixture lookalike "$(jq '.groups.eligible[0].body = "The acceptance criteria are listed below.\n\n## Acceptance Criteria\n- The populated list is enough.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
+lookalike_output="$(recommend_json "$lookalike_fixture" "\$run-epic --items 401")"
+run_test "acceptance_criteria_phrase_in_complete_body_is_not_checkpoint_signal" "0" "$(printf '%s\n' "$lookalike_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length')"
+
+duplicate_heading_fixture="$(write_fixture duplicate-heading "$(jq '.groups.eligible[0].body = "## Acceptance Criteria\n\n## Acceptance Criteria\n- The later repeated heading has real criteria.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
+duplicate_heading_output="$(recommend_json "$duplicate_heading_fixture" "\$run-epic --items 401")"
+run_test "duplicate_acceptance_criteria_heading_before_content_is_not_empty_section" "0" "$(printf '%s\n' "$duplicate_heading_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length')"
+
+second_empty_fixture="$(write_fixture second-empty "$(jq '.groups.eligible[0].body = "## Acceptance Criteria\n- First section is complete.\n\n## Acceptance Criteria\n\n## Notes\nSecond section is empty.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
+second_empty_output="$(recommend_json "$second_empty_fixture" "\$run-epic --items 401")"
+run_test "second_empty_acceptance_criteria_section_recommends_checkpoint" "empty acceptance criteria" "$(printf '%s\n' "$second_empty_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "spec" and .domain == "product") | .reason')"
+
+plan_stage_criteria_fixture="$(write_fixture plan-stage-criteria "$(jq '.groups.eligible[0].status = "Plan Ready" | .items[0].status = "Plan Ready"' "$empty_criteria_fixture")")"
+plan_stage_criteria_output="$(recommend_json "$plan_stage_criteria_fixture" "\$run-epic --items 401")"
+run_test "plan_stage_acceptance_criteria_body_does_not_create_spec_checkpoint" "0" "$(printf '%s\n' "$plan_stage_criteria_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length')"
 
 waived_file="$TMP_ROOT/waived-checkpoints.json"
 printf '%s\n' '[{

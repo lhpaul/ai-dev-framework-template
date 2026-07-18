@@ -210,6 +210,59 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   def item_signal_text($item):
     (($item.title // "") + " " + ($item.body // "") + " " + ($item.type // "") + " " + (($item.labels // []) | join(" ")) + " " + ($item.integrationBranchLabel // ""))
     | ascii_downcase;
+  def has_nonblank_lines($lines):
+    any($lines[]?; (gsub("^[[:space:]]+"; "") | gsub("[[:space:]]+$"; "") | length) > 0);
+  def heading_level($line):
+    if ($line | test("^#{1,6}[[:space:]]+")) then
+      ($line | capture("^(?<marks>#{1,6})[[:space:]]+").marks | length)
+    else 0 end;
+  def acceptance_criteria_heading($line):
+    $line | test("^#{1,6}[[:space:]]+acceptance criteria[[:space:]]*:?[[:space:]]*$"; "i");
+  def acceptance_criteria_sections($item):
+    (($item.body // "") | gsub("\r\n"; "\n") | split("\n")) as $lines |
+    reduce range(0; ($lines | length)) as $i (
+      {sections: [], active: false, current: [], level: 0};
+      ($lines[$i]) as $line |
+      if acceptance_criteria_heading($line) then
+        if .active then
+          (if has_nonblank_lines(.current) then .sections += [(.current | join("\n"))] else . end)
+          | .active = true
+          | .level = heading_level($line)
+          | .current = []
+        else
+          .active = true | .level = heading_level($line) | .current = []
+        end
+      elif (.active and (heading_level($line) > 0) and (heading_level($line) <= .level)) then
+        .sections += [(.current | join("\n"))] | .active = false | .level = 0 | .current = []
+      elif .active then
+        .current += [$line]
+      else
+        .
+      end
+    )
+    | if .active then .sections += [(.current | join("\n"))] else . end
+    | .sections;
+  def normalized_criteria_lines($section):
+    ($section | split("\n"))
+    | map(select(test("^#{1,6}[[:space:]]+") | not))
+    | map(
+        gsub("^[[:space:]]*(-|\\*|\\+|[0-9]+\\.)[[:space:]]+"; "")
+        | gsub("^[[:space:]]*\\[[ xX]\\][[:space:]]+"; "")
+        | gsub("^[[:space:]]+"; "")
+        | gsub("[[:space:]]+$"; "")
+      )
+    | map(select(length > 0));
+  def criteria_section_problem($section):
+    normalized_criteria_lines($section) as $lines |
+    if ($lines | length) == 0 then "empty acceptance criteria"
+    elif all($lines[]; test("^(tbd|todo|n/a|na|none|placeholder|to be defined|to be determined|coming soon)\\.?$"; "i")) then "placeholder acceptance criteria"
+    else ""
+    end;
+  def acceptance_criteria_problem($item):
+    acceptance_criteria_sections($item)
+    | map(criteria_section_problem(.))
+    | map(select(length > 0))
+    | .[0] // "";
   def infer_workflow_stage($item):
     ($item.status // "" | ascii_downcase) as $s |
     if $s == "backlog" or ($s | test("writing spec|spec in review|spec")) then "spec"
@@ -229,16 +282,18 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   def recommend_checkpoints_for_item($item):
     item_signal_text($item) as $text |
     infer_workflow_stage($item) as $stage |
+    acceptance_criteria_problem($item) as $criteria_problem |
+    ($text | test("ambiguous|unclear|\\btbd\\b|open question|unresolved product")) as $unresolved_product_signal |
     ($item.number) as $num |
     (
       []
       | if ($stage == "spec" or ($item.status // "" | ascii_downcase) == "backlog")
-          and ($text | test("ambiguous|unclear|\\btbd\\b|open question|acceptance criteria|unresolved product")) then
+          and (($criteria_problem | length) > 0 or $unresolved_product_signal) then
           . + [{
             item_number: $num,
             stage: "spec",
             domain: "product",
-            reason: "issue signals unresolved product requirements or acceptance-criteria ambiguity",
+            reason: (if ($criteria_problem | length) > 0 then $criteria_problem else "issue signals unresolved product requirements or acceptance-criteria ambiguity" end),
             required_human_action: "confirm product requirements and acceptance criteria before spec work proceeds",
             satisfaction_state: "pending"
           }]
