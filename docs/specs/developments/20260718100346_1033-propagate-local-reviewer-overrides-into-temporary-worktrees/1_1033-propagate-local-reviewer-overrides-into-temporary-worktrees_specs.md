@@ -101,12 +101,12 @@ without introducing a new local dependency.
 
 ## Workflow Decision-Gate Matrix
 
-| Initiating local policy | Temporary worktree | Required outcome | Next action | Visibility |
-| --- | --- | --- | --- | --- |
-| Present and valid | Able to use the effective policy | Use the local policy | Continue normal review | Record local policy source |
-| Present and valid | Cannot use the effective policy | Do not substitute a shared reviewer silently | Apply existing availability stop or warning policy | Report the unavailable local policy |
-| Absent | Shared policy available | Use the shared policy | Continue normal review | Record shared policy source |
-| Absent | Shared policy unavailable | Apply the existing availability policy | Stop or warn as configured | Report the unavailable shared policy |
+| Initiating local policy | Temporary worktree | Required outcome | Next action | Mirror surfaces | Visibility |
+| --- | --- | --- | --- | --- | --- |
+| Present and valid | Able to use the effective policy | Use the local policy | Continue normal review | Initiating checkout, temporary review location, and PR review record | Record local policy source |
+| Present and valid | Cannot use the effective policy | Do not substitute a shared reviewer silently | Apply existing availability stop or warning policy | Initiating checkout, temporary review location, and PR review record | Report the unavailable local policy |
+| Absent | Shared policy available | Use the shared policy | Continue normal review | Initiating checkout, temporary review location, and PR review record | Record shared policy source |
+| Absent | Shared policy unavailable | Apply the existing availability policy | Stop or warn as configured | Initiating checkout, temporary review location, and PR review record | Report the unavailable shared policy |
 
 ## Acceptance Criteria
 
