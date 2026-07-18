@@ -48,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Preserve local reviewer overrides** (#1033): Apply the initiating
+  checkout's effective reviewer policy when review work resolves temporary
+  target-branch configuration, without exposing local settings.
 - **Clarify run-work batch proposal categories** (#1187): Label
   informational, actionable-resume, proposed-batch, and held items separately
   in run-work scan proposals.
