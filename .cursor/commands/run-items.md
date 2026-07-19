@@ -59,7 +59,8 @@ Key responsibilities:
   duplicate worktree path. Non-isolated runners are allowed only when explicitly
   classified `read_only` and will not edit files, switch branches, commit, push,
   mutate PRs, change labels, or update tracker state.
-- In `workflow_hub`, include selected product repository context in implementation handoffs.
+- In `workflow_hub`, state the selected product repository, artifact owner, and mutation
+  target before implementation mutation; stop when context is missing or ambiguous.
 - Do not stop after advancing one item if another in the list still has a
   deterministic next action.
 - Do not stop at transient in-flight CI/watch states. If a local watch exits
