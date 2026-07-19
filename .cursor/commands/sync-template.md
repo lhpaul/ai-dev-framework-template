@@ -860,9 +860,18 @@ Update the tracker status to `Development in Review` if an issue tracker is conf
 Before reporting the sync PR terminal, run Protocol 91's completion self-check:
 
 ```bash
+set -euo pipefail
+
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source scripts/development-workflow/workflow-lib.sh
+
 ISSUE_NUMBER="${ISSUE_NUMBER:?Set ISSUE_NUMBER to the tracker issue for this sync}"
 SYNC_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 WORKTREE_PATH=$(pwd -P)
+REVIEW_SELF_CHECK_REQUIRED=false
+if workflow_config_review_platforms | grep -q .; then
+  REVIEW_SELF_CHECK_REQUIRED=true
+fi
 
 ./scripts/development-workflow/item-completion-self-check.sh \
   --issue "$ISSUE_NUMBER" \
@@ -874,8 +883,8 @@ WORKTREE_PATH=$(pwd -P)
   --expected-label ready-for-human-review \
   --expected-label ready-for-regression \
   --forbid-label needs-fixes \
-  --require-review-summary true \
-  --require-review-threads true
+  --require-review-summary "$REVIEW_SELF_CHECK_REQUIRED" \
+  --require-review-threads "$REVIEW_SELF_CHECK_REQUIRED"
 ```
 
 Include the helper's `## Ground-Truth Completion Verification` section in the

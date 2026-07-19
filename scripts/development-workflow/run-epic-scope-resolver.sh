@@ -425,7 +425,7 @@ discover_prs_via_head_search() {
   fi
 
   for prefix in spec implementation-plan feature fix refactor hotfix; do
-    query="repo:${repo} is:pr head:${prefix}/${issue}"
+    query="repo:${repo} is:pr ${issue} in:head head:${prefix}/"
     numbers=""
     if ! numbers="$(gh search prs "$query" --json number -q '.[].number' 2>/dev/null)"; then
       numbers=""
