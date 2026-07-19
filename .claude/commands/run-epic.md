@@ -30,6 +30,9 @@ Key responsibilities:
 - When autonomy policy is missing or ambiguous, run the read-only policy
   recommender, present the recommended config and checkpoint policy in-place,
   and continue the same run when the human accepts or customizes it.
+- On checkpoint resume from a prior worktree-isolated item run, perform the
+  Protocol 95/91 worktree-resume preflight before mutation. Re-entry does not
+  satisfy or waive checkpoint state.
 - Before any later delegated merge decision, run the PR risk classifier and
   respect its `--max-risk` gate.
 - After delegated review, fix, merge, block, or escalation decisions, update
@@ -40,6 +43,10 @@ Key responsibilities:
 - After `merge_allowed`, continue through Protocol 95 Step 11: merge, merge
   verification, branch deletion/pruning, `post-merge-cleanup.sh`, live tracker
   verification, audit update, and rediscovery.
+- Treat merge authority explicitly: `merge_granted` makes readiness
+  intermediate for in-scope child PRs; `merge_denied` stops at
+  `ready_human_merge`; unexplained stalled-at-ready child PRs are
+  `policy_inconsistent`; discovered unrelated PRs remain `out_of_scope`.
 
 Use the helper script:
 

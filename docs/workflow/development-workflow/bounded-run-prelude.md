@@ -59,6 +59,9 @@ Related:
 The JSON output includes:
 
 - `scope` — full resolver payload (`groups`, `items`, `baseBranch`, `policy` flags)
+- `scope.baseReason`, `scope.baseWarnings`, and `scope.baseValidation` — the
+  selected base branch rationale, visible fallback warnings, and read-only
+  remote-branch validation result
 - `guardrails` — repository `guardrails` snapshot (`mode`, `backlog_start`)
 - `policyRecommendation` — same shape as `run-epic-policy-recommender.sh` alone
 - `policyRecommendation.confirmationSummary` — operator-facing summary lines for
@@ -88,8 +91,21 @@ The JSON output includes:
    the same item and policy. It never waives new guardrail stops, failed review,
    failed CI, risk violations, missing permissions, destructive-action stops, or
    pending checkpoints.
-5. **Epic-like items** — `run-item-scope-resolver.sh` rejects epic issues; use
+5. **Acceptance Criteria checkpoint signal** — populated Acceptance Criteria
+   sections are normal issue structure and do not create a product checkpoint by
+   themselves. Product checkpoints remain recommended for unresolved product
+   language, open questions, empty Acceptance Criteria sections, and
+   placeholder-only criteria such as `TBD` or `to be defined`.
+6. **Epic-like items** — `run-item-scope-resolver.sh` rejects epic issues; use
    `--epic` instead.
+7. **Explicit-list base selection** — `--items` considers only the listed items.
+   No integration labels resolve to `develop`. Partial or mixed
+   `integration-branch:<slug>` coverage resolves to `develop` with a visible
+   warning. A shared label may resolve to `develop-<slug>` only when the current
+   repository remote confirms that branch exists; missing or unverifiable
+   branches fall back to `develop` with a warning. In workflow-hub mode, product
+   implementation base validation is deferred until the product repository is
+   selected.
 
 ---
 

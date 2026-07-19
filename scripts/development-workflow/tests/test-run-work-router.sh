@@ -424,20 +424,19 @@ popd > /dev/null
 run_test "single_dev_folder_mode" "redirect_item" \
   "$(printf '%s\n' "$output_devfolder" | grep '^MODE=' | cut -d= -f2-)"
 
-# --- PyYAML unavailable: conservative defaults applied ----------------------
+# --- PyYAML unavailable: stdlib parser still reads guardrails ----------------
 # Simulates PyYAML being unavailable by injecting a fake yaml module into
-# PYTHONPATH. Verifies the router applies conservative safe defaults
-# (mode=manual, backlog_start=false) and does not silently misparse config.
+# PYTHONPATH. The router must use the repo's stdlib-only YAML subset parser and
+# still report the configured guardrails instead of falling back to defaults.
 mkdir -p "$TMP_ROOT/no_yaml"
 cat > "$TMP_ROOT/no_yaml/yaml.py" <<'NO_YAML'
 raise ImportError("test: yaml not available for fallback test")
 NO_YAML
 # Uses AI_DEV_WORKFLOW_CONFIG_FILE to supply a config with delegated mode.
-# When PyYAML is absent, the router must ignore the config and use safe defaults.
 output_fallback="$(AI_DEV_WORKFLOW_CONFIG_FILE="$FAKE_REPO_DIR/.ai-dev-workflow.yaml" PYTHONPATH="$TMP_ROOT/no_yaml" PATH="$MOCK_BIN:$PATH" "$ROUTER" 2>/dev/null)"
-run_test "guardrails_nopyaml_mode_defaults_to_manual" "manual" \
+run_test "guardrails_nopyaml_mode_uses_config" "delegated" \
   "$(printf '%s\n' "$output_fallback" | grep '^GUARDRAILS_MODE=' | cut -d= -f2-)"
-run_test "guardrails_nopyaml_backlog_defaults_to_false" "false" \
+run_test "guardrails_nopyaml_backlog_uses_config" "true" \
   "$(printf '%s\n' "$output_fallback" | grep '^GUARDRAILS_BACKLOG_START=' | cut -d= -f2-)"
 
 # --- Space-separated multi-target list → redirect_items (AC3) ---------------

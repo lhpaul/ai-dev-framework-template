@@ -34,6 +34,16 @@ Before starting, read:
 
 **Tracker workflow status**: The **Work Item Runner** owns workflow-status transitions for this stage. When this protocol is run under normal orchestration, expect the runner to set **Writing Spec** before dispatch, **Spec in Review** when the PR is human-ready, and **Spec Ready** only after merge. If you invoke this protocol standalone, mirror the same status progression manually.
 
+**Spec-dispatch context**: When the Work Item Runner or Portfolio Orchestrator
+provides output from `scripts/development-workflow/spec-dispatch-context.sh`,
+read it before the alignment conversation. Preserve `confirmedDecisions[]` and
+non-blocking relationship outcomes as product constraints in the spec. Do not
+turn helper mechanics, token matching, JSON fields, or implementation algorithms
+into spec requirements. If the supplied context says a relationship is
+`Dependent`, cite the concrete evidence. If it says `Orthogonal`, avoid adding
+dependency language from shared terminology alone. If the context is `Unclear`
+or `blocking=true`, stop and ask for the named human decision before drafting.
+
 **Repository mode ownership**: Resolve repository mode before creating or
 reviewing spec artifacts. Missing mode or explicit `single_repo` means the
 current repository owns the spec. In `workflow_hub` mode, the hub owns specs and
@@ -163,6 +173,7 @@ rationale for every `Not applicable` item:
 - Brief coverage: Checked - all brief objectives map to acceptance criteria or out of scope.
 - Internal consistency: Checked - terminology and status labels are consistent.
 - Behavioral guarantees: Not applicable - this spec does not introduce guarantees beyond ACs.
+- Complex workflow decision-gate matrix: Not applicable - this spec does not add or modify workflow decision-gate behavior.
 - Reviewer-risk categories: Checked - API surface, concurrency, snapshot semantics, edge cases, and template placeholders reviewed.
 ```
 
@@ -176,6 +187,16 @@ Before the PR is opened, verify:
   workflow statuses use one spelling/casing throughout.
 - Behavioral guarantees: every guarantee, limit, ordering rule, or invariant is
   backed by acceptance criteria or a business rule that makes it testable.
+- Complex workflow decision-gate matrix: when the spec adds or modifies a
+  complex workflow decision gate, include matrix evidence that identifies the
+  gate inputs, allowed outcomes, required next actions, mirror surfaces, and
+  examples when examples are part of the changed surface. A complex workflow
+  decision-gate change is any workflow documentation or protocol change whose
+  behavior depends on multiple inputs, outcomes, next-action branches, status
+  labels, exit states, examples, or mirrored workflow surfaces. If the spec does
+  not change decision-gate behavior, record a short not-applicable rationale.
+  If an expected input, outcome, example, or mirror surface is marked not
+  applicable, include the rationale in the matrix row.
 - Reviewer-risk categories: common high-signal reviewer concerns are checked:
   API-surface completeness, concurrency correctness, single-snapshot or
   consistency semantics, missing edge cases, vague actors/triggers, untestable
@@ -280,6 +301,13 @@ If no blocking human decision remains:
      exit 1
    fi
    echo "Pre-branch HEAD check passed: HEAD matches origin/${ARTIFACT_BASE_BRANCH}"
+   if [ -n "${ISSUE_NUMBER:-}" ]; then
+     ./scripts/development-workflow/run-nested-artifact-guard.sh \
+       --mode pre-create \
+       --issue "$ISSUE_NUMBER" \
+       --expected-branch "spec/[branch-slug]" \
+       --approved-base "$ARTIFACT_BASE_BRANCH"
+   fi
    git checkout -b spec/[branch-slug]
    ```
 
@@ -290,12 +318,30 @@ If no blocking human decision remains:
 6. **Do NOT update CHANGELOG**: `spec/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
 7. Commit: `docs: add spec for [feature-name]`
 8. Push: `git push -u origin spec/[branch-slug]`
-9. Open a **draft** PR targeting the spec artifact base branch with:
+9. Before opening the draft PR, run the nested-artifact guard again in `pre-pr`
+   mode when a positive numeric issue number is available:
+
+   ```bash
+   ./scripts/development-workflow/run-nested-artifact-guard.sh \
+     --mode pre-pr \
+     --issue "$ISSUE_NUMBER" \
+     --expected-branch "spec/[branch-slug]" \
+     --approved-base "$ARTIFACT_BASE_BRANCH"
+   ```
+
+   Treat `RESULT=missing_base`, `RESULT=blocked_duplicate`,
+   `RESULT=wrong_base`, or `RESULT=scan_failed` as a hard stop before PR
+   creation. A deliberate split requires explicit parent-run approval and
+   `--allow-split true` with the approved base recorded in the run summary.
+10. Open a **draft** PR targeting the spec artifact base branch with:
    - Title: `docs(spec): [feature-name]`
    - Body: summary of the feature, link to the spec file, list of open questions (if any)
    - When a tracker brief exists: Coverage Matrix summary (each brief objective mapped to AC reference(s) or Out-of-Scope entry) and Deferral Notes for each objective intentionally moved to Out of Scope
    - `Document Quality Gate` log from the pre-PR gate above
-10. Return the branch + PR details to the **Work Item Runner**
+   - For complex workflow decision-gate specs: the consistency matrix or a
+     pointer to it, using the canonical fields from the Document Quality Gate
+     above; for non-gate specs, the not-applicable rationale is enough
+11. Return the branch + PR details to the **Work Item Runner**
 
 ---
 

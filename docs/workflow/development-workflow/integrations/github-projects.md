@@ -10,7 +10,8 @@ GitHub Projects is **optional**. The workflow functions without it — the **Por
 
 - The **Portfolio Orchestrator** can read work item status, priority, and iteration autonomously via `gh` CLI
 - A custom **Status** field on the project board maps directly to workflow stages
-- Custom fields (Priority, Due date, Type) drive automated prioritization
+- Custom fields (Priority, Due date, Type / Custom Type) drive automated
+  prioritization
 - Labels on issues map to work item types and scope
 - Agents will read the **current brief** following tracker-agnostic rules in [`issue-tracker.md`](issue-tracker.md)
 
@@ -90,13 +91,15 @@ Add these custom fields to the project (via project settings UI or GraphQL):
 
 | Field    | Type                                                         | Purpose                                                                                 |
 | -------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| Priority | Single select: `Urgent`, `High`, `Medium`, `Low`             | Drives orchestrator prioritization                                                      |
+| Priority | Single select: `Urgent`, `High`, `Normal`, `Low`             | Drives orchestrator prioritization                                                      |
 | Size     | Single select: `XS`, `S`, `M`, `L`, `XL`                    | Drives work sizing and sprint planning                                                  |
 | Due date | Date                                                         | Items due within 2 weeks get priority boost                                             |
 | Type     | Single select: `Feature`, `Bug`, `Refactor`, `Workflow`      | Source of truth for work-item classification and workflow path routing                  |
 
-The **Type** field is the classification source of truth for GitHub Projects
-integrations:
+The classification field is the source of truth for GitHub Projects
+integrations. By default the workflow looks for `Custom Type`, `CustomType`,
+then `Type`. If your board uses a different name, set
+`issue_tracker.custom_fields.type_field` in `.ai-dev-workflow.yaml`.
 
 - `Feature` routes through the full pipeline: spec, plan, implementation.
 - `Bug` routes through the fast-track fix path when the scope check allows it.
@@ -197,6 +200,8 @@ list_open_workflow_type_issues
 
 `get_tracker_type_for_issue` and `update_tracker_type_best_effort` use the same
 targeted `repository.issue(...).projectItems` lookup as the Status helpers.
+The field metadata lookup honors `issue_tracker.custom_fields.type_field`, then
+falls back to `Custom Type`, `CustomType`, and `Type`.
 `list_open_workflow_type_issues` fetches open issues first and then
 cross-references a single project item-list result, so callers do not perform
 one full-board scan per issue.
@@ -215,8 +220,8 @@ Field IDs and option IDs are stable within a project.
 `update_tracker_status_best_effort` and `update_tracker_type_best_effort` cache
 field metadata in memory for the current shell process after the first targeted
 lookup, so repeated updates in the same run do not need repeated field metadata
-queries. Re-run the helper in a fresh shell if the project field configuration
-changes.
+queries. The Type cache is scoped by the configured classification field name.
+Re-run the helper in a fresh shell if the project field configuration changes.
 
 ---
 
@@ -502,6 +507,49 @@ Use explicit issue numbers to avoid accidental broad transitions. Items not incl
 
 ---
 
+## Graduation Closeout Status
+
+After an integration branch graduation PR merges from `develop-<slug>` to
+`develop`, run the graduation closeout helper from Protocol 05b:
+
+```bash
+./scripts/development-workflow/graduation-closeout.sh \
+  --slug <slug> \
+  --graduation-pr <graduation-pr-number> \
+  --epic <epic-issue-number>
+```
+
+The helper validates that the graduation PR already merged from
+`develop-<slug>` to `develop`, then reconciles delivered planned sub-items
+before closing the parent epic. It discovers planned work from native GitHub
+sub-issues, the legacy `integration-branch:<slug>` label fallback, and closing
+keywords in merged PRs that targeted `develop-<slug>`. If discovery is
+incomplete or no delivered sub-items can be identified, closeout fails and holds
+the parent epic open.
+
+For each delivered sub-item, it closes the GitHub issue when needed and then
+reasserts the terminal Project status so built-in GitHub Projects close
+automation cannot leave stale tracker state behind. Closed but non-terminal
+items receive only the Project status update. Already terminal items are
+reported without moving them backward. Optional, deferred, cancelled, or
+explicitly excluded sub-items remain open and are listed for human disposition.
+
+Terminal status is resolved in this order:
+
+- `GITHUB_PROJECT_STATUS_GRADUATED`
+- `GITHUB_PROJECT_STATUS_MERGED`
+- `Merged`
+
+Use `GITHUB_PROJECT_STATUS_GRADUATED=Done` or
+`GITHUB_PROJECT_STATUS_GRADUATED=Released` in repositories whose Project board
+uses those labels for completed graduation work. The configured option must
+exist in the Project `Status` field. If closeout prints
+`GRADUATION_CLOSEOUT_RESULT=failed`, repair the listed `failed` items or
+discovery problem and rerun the helper before treating the graduation as
+complete.
+
+---
+
 ## Prerequisites
 
 - **`gh` CLI** authenticated with a token that has `project` and `repo` scopes:
@@ -516,12 +564,18 @@ Use explicit issue numbers to avoid accidental broad transitions. Items not incl
 
 ## Custom Fields
 
-The `issue_tracker.custom_fields` flat map in `.ai-dev-workflow.yaml` is available for provider-specific configuration extensions. For the `github_projects` provider, **no `custom_fields` keys are currently recognised by workflow scripts**.
+The `issue_tracker.custom_fields` flat map in `.ai-dev-workflow.yaml` is
+available for provider-specific configuration extensions. For the
+`github_projects` provider, workflow scripts currently recognize:
+
+| Key | Purpose |
+| --- | --- |
+| `type_field` | Overrides the GitHub Projects classification field name used by Type helpers, for example `Custom Type`. |
 
 Key points:
 
 - The `project_number` field is a standard top-level `issue_tracker` field — it is not a custom field and must remain under `issue_tracker` directly, not under `custom_fields`.
-- Any keys placed under `custom_fields` are silently ignored by all current GitHub Projects scripts.
+- Unrecognized keys placed under `custom_fields` are silently ignored by current GitHub Projects scripts.
 - Future provider-specific fields (e.g., additional project metadata) may be added here as the integration evolves.
 
 Read the `workflow_issue_tracker_custom_field` helper documentation in `scripts/development-workflow/workflow-lib.sh` for the parsing API available to future consumers.

@@ -102,8 +102,10 @@ signals default to checkpoints:
 
 - **Plan + technical**: database schema, migration, or persistent data-model
   wording.
-- **Spec + product**: unresolved product or acceptance-criteria ambiguity when
-  the item is still in Backlog or spec stage.
+- **Spec + product**: unresolved product language, open questions, empty
+  Acceptance Criteria sections, or placeholder-only acceptance criteria when
+  the item is still in Backlog or spec stage. A populated Acceptance Criteria
+  heading is normal issue structure and is not a checkpoint signal by itself.
 - **Plan or implementation + both**: ambiguous product/technical tradeoffs.
 - **Implementation + technical**: security, auth, permission, or other
   sensitive-change wording.
@@ -299,7 +301,8 @@ Assign each item to one group:
   or merge.
 - `ambiguous`: missing / conflicting data prevents a deterministic next action.
 - `out_of_scope`: reserved for consumers that compare resolver output against a
-  later bounded handoff.
+  later bounded handoff. Out-of-scope PRs must never be included in delegated
+  merge or batch-merge commands.
 
 Do not mutate anything based on these groups. The resolver only describes the
 execution set.
@@ -446,6 +449,28 @@ on top of a sibling's commits. When the guard fires, recovery is: (1) reset the
 working tree to the expected base with `git checkout develop && git pull origin
 develop`, then (2) re-run the agent from branch creation.
 
+**Nested artifact guard**: Before dispatching any child item that may create a
+branch or open a PR, run `run-nested-artifact-guard.sh` with the resolved
+execution base:
+
+```bash
+ARTIFACT_REPO_ROOT="${ARTIFACT_REPO_ROOT:-$(pwd)}"
+./scripts/development-workflow/run-nested-artifact-guard.sh \
+  --mode pre-create \
+  --issue <issue-number> \
+  --expected-branch <branch-prefix>/<slug> \
+  --approved-base <base-branch> \
+  --repo-root "$ARTIFACT_REPO_ROOT"
+```
+
+Run the same helper with `--mode pre-pr` before a child opens or readies a PR.
+`RESULT=missing_base`, `RESULT=blocked_duplicate`, `RESULT=wrong_base`, and
+`RESULT=scan_failed` block delegated progress until the canonical path is
+resumed or an explicit split is approved and recorded with `--allow-split true`.
+Use the repository root that owns the child artifact. In `workflow_hub` mode,
+product implementation branches and PRs must scan the selected product checkout;
+hub-owned spec and plan artifacts use the hub checkout.
+
 **Intended long-term fix — worktree isolation**: The durable solution to
 shared-checkout contamination is to dispatch each parallel agent into a
 separate `git worktree` (one worktree per item). With worktree isolation, each
@@ -456,6 +481,37 @@ contract. Future `/run-epic` parallel dispatch should set `isolation: worktree`
 (or equivalent) so item-orchestrators create a dedicated worktree before
 handing off to each agent, making the pre-branch guard redundant for parallel
 runs while keeping it as a backstop for single-checkout fallback.
+
+**Checkpoint-resume worktree preflight**: When an epic-scoped item resumes
+after a human-checkpoint pause and the prior run used a dedicated item
+worktree, run Protocol 91's checkpoint-resume preflight before any mutation in
+the resumed session:
+
+```bash
+./scripts/development-workflow/worktree-resume-preflight.sh \
+  --item <item-id> \
+  --expected-branch <branch-prefix>/<slug> \
+  --expected-worktree <worktree-path-if-known> \
+  --main-repo-root <main-repo-root> \
+  --json
+```
+
+`RESULT=continue` means the session is already inside the expected worktree.
+`RESULT=reenter` means the runner must `cd "$TARGET_WORKTREE"` and verify the
+branch before continuing, including a one-shot
+`worktree-cwd-guard.sh --check-cwd "$TARGET_WORKTREE" "$MAIN_REPO_ROOT"` check.
+`RESULT=stop` means the run must stop before mutation and report the item,
+expected branch, expected worktree when known, observed directory, observed
+branch when available, failure reason, and human recovery action. The helper is
+read-only and never satisfies, waives, clears, or changes checkpoint state;
+checkpoint lifecycle still requires explicit satisfaction or waiver evidence.
+
+When resuming an interrupted mutating child run, inspect the child branch
+history, local worktree commits, and uncommitted edits before mutation. Prefer
+the latest committed checkpoint that represents a completed logical sub-part as
+the resume boundary. Absence of a newer checkpoint is acceptable evidence that
+no completed sub-part finished after the last checkpoint, but live branch, PR,
+worktree, review, CI, and tracker state still control the next action.
 
 For each in-scope item:
 
@@ -517,8 +573,11 @@ Reruns must update existing marker comments instead of creating duplicates.
 ## Step 10: Final Delegated Merge Gate
 
 This step applies only when the invocation policy includes `--may-merge`.
-Without delegated merge authority, the runner may prepare the PR for human
-review but must not merge it.
+Without delegated merge authority (`merge_denied`), the runner may prepare the
+PR for human review but must not merge it; report `ready_human_merge` and name
+the denying policy value. With delegated merge authority (`merge_granted`),
+readiness is intermediate and every in-scope ready PR must continue through this
+gate unless a named blocker produces `merge_blocked`.
 
 Before merge:
 
@@ -537,7 +596,12 @@ Before merge:
 10. Confirm the risk classifier permits merge under the invocation's
     `--max-risk`.
 11. Confirm the PR disposition audit comment exists for the reviewed head SHA.
-12. Confirm the candidate PR is not a graduation PR
+12. For sweep, batch, helper-extraction, numeric-target, or
+    pattern-completeness sub-items, confirm the PR disposition or item summary
+    includes residual gate evidence: `RESULT=pass` or `RESULT=not_applicable`.
+    A blocked or escalated residual gate means the sub-item is not complete and
+    must remain out of delegated merge.
+13. Confirm the candidate PR is not a graduation PR
     (`develop-<slug>` -> `develop`) unless explicit graduation approval has
     been recorded in the assembled policy evidence as
     `graduationApproved: true`. `/run-epic` delegated merge authority applies to
@@ -551,6 +615,11 @@ Proceed to the repository merge protocol only when the delegated gate reports
 fix, rerun validation/reviewer/CI, and return to Step 8. If it reports
 `human_required`, stop for human authority, setup, or risk tolerance. If it
 reports `blocked`, stop until required state is available.
+
+If an in-scope child PR stops at readiness during a merge-granted run without a
+named blocker from this step, report `policy_inconsistent` in the PR
+disposition and epic ledger. Discovered PRs outside the resolved scope remain
+`out_of_scope` and are never merged by this protocol.
 
 ---
 

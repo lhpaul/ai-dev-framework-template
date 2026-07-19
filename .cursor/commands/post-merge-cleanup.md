@@ -1,7 +1,8 @@
 ---
 description: >
-  After a development PR is merged and the remote branch deleted, sync with origin,
-  switch to the merged PR's base branch, pull, delete the local branch, and update the related issue in the issue tracker.
+  After a development PR is merged, sync with origin, switch to the merged PR's
+  base branch, pull, verify or delete the remote implementation branch, delete the local branch,
+  and update the related issue in the issue tracker.
   Usage: /post-merge-cleanup [--base base-branch] [branch-name]
 ---
 
@@ -15,7 +16,18 @@ Run the post-merge cleanup script from the repository root.
 - **With `branch-name`**: delete that local branch (e.g. `feature/my-feature`).
 - **With `--base base-branch`**: explicitly choose the cleanup base branch. When omitted for hub-owned cleanup, the script queries the merged PR base and fails closed if that lookup is unavailable.
 
-The script will: fetch origin, checkout the merged PR's base branch, pull, delete the local branch with `git branch -D` (force-delete; safe because the branch is already merged on the remote), and for implementation branches (`fix/*`, `feature/*`, `hotfix/*`, `refactor/*`) automatically close the associated GitHub issue if a merged PR is found for the branch. If the user is not in the repo root, `cd` to the repo root first (e.g. use the workspace root or ask which directory is the repo).
+The script will: fetch origin, checkout the merged PR's base branch, pull,
+verify or delete the remote branch for implementation branches only after the
+PR is confirmed merged, delete the local branch with `git branch -D`
+(force-delete; safe because the branch is already merged on the remote), and
+for implementation branches (`fix/*`, `feature/*`, `hotfix/*`, `refactor/*`)
+automatically close the associated GitHub issue if a merged PR is found for the
+branch. If the user is not in the repo root, `cd` to the repo root first (e.g.
+use the workspace root or ask which directory is the repo).
+
+For implementation branches, cleanup is complete only when the script reports
+`REMOTE_DELETE_RESULT=deleted` or `REMOTE_DELETE_RESULT=not_found`. Spec and
+implementation-plan branches are expected-persistent remotely.
 
 Do not skip steps or change the order. If the script fails, show the error and stop.
 

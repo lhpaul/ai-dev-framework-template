@@ -10,13 +10,33 @@ This is a **repo-wide definition**. All agents apply these labels consistently.
 
 | Label                    | Meaning                                                                                                                                                                                                                                                                                                                  |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ready-for-human-review` | The PR is ready for a human reviewer. CI is green. The `REVIEW.md` gate is satisfied. Every configured automated reviewer is clean or skipped.                                                                                                                                                                           |
+| `ready-for-human-review` | The PR is automation-clean and ready for a human reviewer or for the next delegated merge gate. CI is green. The `REVIEW.md` gate is satisfied, including stage-required evidence such as the complex workflow decision-gate consistency matrix when applicable. Every configured automated reviewer is clean or skipped. |
 | `needs-fixes`            | The PR still needs fixes before it is ready for human review. This may be due to human-requested changes, failing CI, or blocking automated PR feedback.                                                                                                                                                                 |
 | `ready-for-regression`   | Automated code reviews are clean (or skipped). Configured real e2e/regression tests, or an explicitly enabled placeholder, should now run. Applied by the orchestrator (Step 7b) on implementation PRs (`feature/*`, `fix/*`, `hotfix/*`, `refactor/*`, `backport/hotfix/*`), and by the prepare-release flow (protocol `05`) on **production** release PRs (`release/*` → `main`) only. |
 | `needs-setup`            | PR introduces one or more infrastructure dependencies (env vars, secrets, DNS records, service account tokens, etc.) that require human setup steps before the feature can be safely enabled. Co-exists with `ready-for-human-review`; the human removes this label after completing (or intentionally deferring) setup. |
 | `human-checkpoint-required` | The PR's linked work item has at least one `pending` human checkpoint that applies to this PR: same `item_number` and either matching the PR's current workflow stage or an earlier stage not yet `satisfied`/`waived`. Human feedback or approval named in `required_human_action` is still required. Co-exists with `ready-for-human-review` when automation is clean but a checkpoint remains open. Does **not** satisfy when only `needs-setup` is removed. |
 
 ---
+
+## Readiness Labels and Report Evidence
+
+`ready-for-human-review` remains the automation-clean label. It says the PR has
+passed the configured review, label, and CI gates. It does not by itself prove
+that a Work Item Runner's final report was based on current ground truth.
+It also is not always the terminal state: with `merge_granted`, the runner must
+continue through delegated merge, cleanup, and tracker verification; with
+`merge_denied`, the ready PR reports `ready_human_merge` and waits for human
+review or merge.
+
+Before an agent reports an item as ready, done, blocked, escalated, waiting on a
+human, or waiting on merge, Protocol 91 requires a
+`## Ground-Truth Completion Verification` section from
+`scripts/development-workflow/item-completion-self-check.sh`. That section is
+the report-evidence layer: it records the live branch, HEAD, worktree, PR base,
+labels, CI, review summary/thread, tracker, and external-runtime evidence that
+supports the report. A missing section, `discrepancy`, or
+`unavailable_required` result keeps the item non-terminal even when labels are
+already present.
 
 ## Conditions for `ready-for-human-review`
 
@@ -27,6 +47,22 @@ Apply this label when **all** of the following are true:
 - [ ] Step 7's latest automated reviewer-loop summary has `Result: clean` or `Result: skipped`; `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result blocks this label
 - [ ] Every configured automated PR reviewer has no blocking PR feedback (or is skipped)
 - [ ] All feedback from a previous human review cycle has been addressed
+- [ ] For `spec/*` and `implementation-plan/*` PRs,
+      `scripts/development-workflow/check-documentation-stage-alignment.sh`
+      has passed on the current PR diff. A mismatch or empty diff blocks
+      readiness and must leave `ready-for-human-review` absent until corrected
+      or explicitly escalated.
+- [ ] For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
+      items, the required residual gate has run in verification mode and the
+      latest result is `pass`. `not_applicable` only satisfies readiness when
+      the residual gate is not required for the item. `block` maps to
+      `needs-fixes`; `escalate` maps to a human-decision stop.
+- [ ] For complex workflow decision-gate PRs, the PR evidence includes a
+      consistency matrix or pointer that identifies gate inputs, allowed
+      outcomes, required next actions, mirror surfaces, and examples when
+      examples are part of the changed surface. A short not-applicable rationale
+      is enough only when the PR does not add or modify workflow decision-gate
+      behavior. Missing or contradictory evidence blocks this label.
 
 ---
 
@@ -37,6 +73,20 @@ Apply this label when **any** of the following is true:
 - CI checks are failing
 - Any automated PR reviewer reports blocking PR feedback
 - A human has requested changes on the PR (and those changes have not yet been addressed)
+- A `spec/*` or `implementation-plan/*` PR contains implementation or
+  non-stage files, or has an empty changed-file list, per
+  `check-documentation-stage-alignment.sh`
+- A required residual gate returns `block`, meaning broad-scope residuals remain
+  undisposed or helper outputs lack caller/disposition evidence
+- A required residual gate result is missing when the item title, body, spec, or
+  plan indicates sweep, batch, helper-extraction, numeric-target, or
+  pattern-completeness work
+- A complex workflow decision-gate PR lacks matrix evidence, omits a required
+  input/outcome/next-action/mirror-surface/example row, or contains
+  contradictory wording across listed mirror surfaces
+
+Do not use `needs-fixes` for residual gate `escalate`; that is a human-decision
+stop until the residual scope decision is resolved.
 
 ---
 
@@ -119,7 +169,8 @@ checkpoint transitions to `satisfied` or `waived` with audit evidence. Removing
 **Invariants**:
 
 - **BR-11**: `ready-for-human-review` means automation-clean only; it does not
-  imply checkpoint satisfaction.
+  imply checkpoint satisfaction or terminal completion when merge authority is
+  granted.
 - **BR-12**: `human-checkpoint-required` persists through ordinary fix cycles
   while the checkpoint remains `pending`.
 - **BR-13**: Removing `human-checkpoint-required` requires `satisfaction_state`

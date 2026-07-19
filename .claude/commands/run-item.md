@@ -26,6 +26,9 @@ The prelude command flags mirror this command's scope flags (`--target`, `--issu
   re-prompt for the same selected policy.
 - Pending checkpoints, guardrail stops, review/CI failures, risk violations, and
   missing permissions still stop the run.
+- When resuming after a human-checkpoint pause from a prior worktree-isolated
+  run, perform Protocol 91's checkpoint-resume worktree preflight before any
+  mutation. Worktree re-entry does not satisfy or waive checkpoint state.
 - Resolve exactly one non-epic workflow item
 - Use `scripts/development-workflow/` helpers for next-action classification
 - In `workflow_hub`, state product repository and mutation target before implementation mutation
@@ -34,4 +37,9 @@ The prelude command flags mirror this command's scope flags (`--target`, `--issu
   `merge_allowed`, continue through merge, branch cleanup,
   `post-merge-cleanup.sh`, and live tracker verification before reporting
   terminal
+- Treat merge authority explicitly: `merge_granted` means readiness is
+  intermediate and the runner continues through merge; `merge_denied` means the
+  ready PR stops as `ready_human_merge` and no merge command is run. Stopping
+  at readiness without a named blocker in a merge-granted run is
+  `policy_inconsistent`
 - Epic-like targets → use `/run-epic` instead

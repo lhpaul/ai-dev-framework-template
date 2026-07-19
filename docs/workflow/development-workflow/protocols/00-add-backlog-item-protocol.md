@@ -64,13 +64,15 @@ If any of the above are missing or contradictory, ask **targeted** clarifying qu
 
 ### Priority and Size inference heuristics (GitHub Projects)
 
-**Priority** — default `Medium` unless there is explicit urgency signal:
+**Priority** — default `Normal` unless there is explicit urgency signal.
+`Medium` remains accepted by helper scripts as a backward-compatible alias for
+`Normal`:
 
 | Signal | Priority |
 | ------ | -------- |
 | Human uses words like "urgent", "blocking", "ASAP", "critical", or "production issue" | `Urgent` or `High` |
 | Item blocks another in-progress item or a pending release | `High` |
-| Standard new feature, improvement, or process fix | `Medium` (default) |
+| Standard new feature, improvement, or process fix | `Normal` (default) |
 | Nice-to-have, polish, or exploratory work | `Low` |
 
 **Size** — infer from the scope of the change implied by the request:
@@ -89,11 +91,11 @@ Pass inferred values directly to the helper:
 ./scripts/development-workflow/add-backlog-item.sh create \
   --title "..." \
   --body-file - \
-  --priority Medium \
+  --priority Normal \
   --size S
 ```
 
-When the scope is genuinely unclear after reading the request, omit `--size` (leave it unset) rather than guessing. Do not omit `--priority` — the script defaults to `Medium` when the flag is absent.
+When the scope is genuinely unclear after reading the request, omit `--size` (leave it unset) rather than guessing. Do not omit `--priority` — the script defaults to `Normal` when the flag is absent.
 
 ---
 

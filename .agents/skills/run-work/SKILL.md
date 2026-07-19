@@ -26,7 +26,18 @@ command. It performs no mutation in any routing mode.
 4. For `no_target_scan`, follow Protocol 90 Steps 1–3 (scan + propose) only.
    Do **not** dispatch items — present the proposal and emit the recommended
    `/run-items` command for the operator to execute.
-5. For single-item advancement use `$run-item`; for epic bounded runs use `$run-epic`;
+5. In `no_target_scan` output, keep Protocol 90 report categories distinct:
+   `INFORMATIONAL - not actionable in this proposal`,
+   `ACTIONABLE RESUME - can advance now`,
+   `PROPOSED BATCH - your decision`, and
+   `HELD - not included in proposed batch`. Approval applies only to
+   `PROPOSED BATCH - your decision` items; informational records are excluded
+   unless the operator explicitly names them in a separate bounded command.
+6. For single-item advancement use `$run-item`; for epic bounded runs use `$run-epic`;
    for multi-item execution use `$run-items`.
+7. When presenting executable follow-ups, include the resolved base branch when
+   known so later mutation-oriented commands can pass it to
+   `run-nested-artifact-guard.sh --approved-base`. Do not infer a base during
+   the read-only scan.
 
 Routing specification: `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`

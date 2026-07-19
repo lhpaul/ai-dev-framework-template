@@ -61,6 +61,12 @@ run_test "prelude_help" "0" "$( "$PRELUDE" --help >/dev/null; echo 0)"
 run_test "items_resolver_internal_env_set" "yes" "$(
   grep -Fq 'RUN_EPIC_SCOPE_RESOLVER_INTERNAL_ITEMS=1' "$PRELUDE" && echo yes || echo no
 )"
+run_test "confirmation_summary_includes_base_reason" "yes" "$(
+  grep -Fq 'Base reason' "$PRELUDE" && echo yes || echo no
+)"
+run_test "confirmation_summary_includes_base_warning" "yes" "$(
+  grep -Fq 'Base warning' "$PRELUDE" && echo yes || echo no
+)"
 
 run_fails() {
   local name="$1" expected="$2"
@@ -172,6 +178,7 @@ run_test "guardrails_policy_source_reported" "guardrails" "$(printf '%s\n' "$lin
 run_test "guardrails_policy_not_marked_explicit" "false" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.confirmationReason | test("policy values are explicit")')"
 run_test "confirmation_summary_exists" "true" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.confirmationSummary.title == "Run item policy confirmation"')"
 run_test "confirmation_summary_scope_lines" "true" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.confirmationSummary.scopeLines | any(test("Resolved item"))')"
+run_test "confirmation_summary_base_reason_line" "true" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.confirmationSummary.scopeLines | any(test("Base reason"))')"
 run_test "confirmation_summary_policy_lines" "true" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.confirmationSummary.policyLines | any(test("May start Backlog.*guardrails"))')"
 run_test "confirmation_summary_copy_paste" "true" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.confirmationSummary.copyPasteLine | test("/run-item LEA-185")')"
 run_test "confirmation_summary_read_only" "true" "$(printf '%s\n' "$linear_prelude_out" | jq -r '.policyRecommendation.confirmationSummary.readOnlyLine | test("No tracker updates")')"

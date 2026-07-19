@@ -56,7 +56,28 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    verification, branch deletion/pruning, `post-merge-cleanup.sh`, live tracker
    verification, audit update, and rediscovery before treating that PR as
    complete.
-9. **Guardrails layer context**: The `--delegate-review`, `--may-merge`,
+   Treat merge authority explicitly: `merge_granted` makes readiness
+   intermediate for in-scope child PRs; `merge_denied` stops at
+   `ready_human_merge`; unexplained stalled-at-ready child PRs are
+   `policy_inconsistent`; discovered unrelated PRs remain `out_of_scope`.
+   When resuming an epic-scoped item after a human-checkpoint pause from a
+   prior worktree-isolated run, run the Protocol 95/91 checkpoint-resume
+   worktree preflight before any mutation. Re-entering the worktree is a CWD
+   safety check only; it does not satisfy, waive, or clear checkpoint state.
+   For substantial or multi-part mutating child work, commit immediately after
+   each completed logical sub-part, do not intentionally batch all completed
+   sub-parts into one end-of-run commit, and never commit incomplete, failing,
+   or incoherent edits only to satisfy the requirement.
+   For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
+   sub-items, include residual gate status in item/epic summaries and do not
+   treat blocked or escalated residuals as complete.
+9. Before any child item creates a branch or opens a PR, run
+   `run-nested-artifact-guard.sh` with the resolved issue, expected branch, and
+   approved base, plus the artifact-owning repo root
+   (`--repo-root "$ARTIFACT_REPO_ROOT"`). Stop on missing base, duplicate
+   artifacts, wrong-base PRs, or scan failures unless an explicit split is
+   approved and recorded.
+10. **Guardrails layer context**: The `--delegate-review`, `--may-merge`,
    `--may-start-backlog`, and `--max-risk` flags are the **invocation-override**
    layer (highest priority) of the three-layer guardrails precedence. The
    repository `guardrails` config in `.ai-dev-workflow.yaml` is the base layer.

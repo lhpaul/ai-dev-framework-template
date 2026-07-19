@@ -199,6 +199,34 @@ MOCK_HAYSTACK
   chmod +x "$MOCK_BIN/haystack"
 }
 
+_install_gh_check_run_mock() {
+  cat > "$MOCK_BIN/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"repos/owner/repo/pulls/123"*"--jq .head.sha"*)
+    printf '%s\n' "${MOCK_GH_HEAD_SHA:-abc123sha}"
+    exit 0
+    ;;
+  *"repos/owner/repo/commits/"*"/check-runs"*)
+    if [ "${MOCK_GH_CHECK_RUNS_FAIL:-0}" = "1" ]; then
+      exit 1
+    fi
+    if [ -n "${MOCK_GH_CHECK_RUNS:-}" ]; then
+      printf '%s\n' "$MOCK_GH_CHECK_RUNS"
+    else
+      printf '{"check_runs":[]}\n'
+    fi
+    exit 0
+    ;;
+  *)
+    printf 'unexpected gh invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+MOCK_GH
+  chmod +x "$MOCK_BIN/gh"
+}
+
 _call_count() {
   # Returns number of times the mock haystack was called.
   if [ ! -f "$CALL_LOG" ]; then echo "0"; return; fi
@@ -1063,6 +1091,198 @@ run_test "http_401_result" "RESULT=skipped" "$(echo "$output" | grep '^RESULT=')
 run_test "http_401_reason" "REASON=unauthorized" "$(echo "$output" | grep '^REASON=')"
 run_test "http_401_exit_code" "3" "$ec"
 run_test "http_401_single_call" "1" "$calls"
+
+# ---------------------------------------------------------------------------
+# Area 12: GitHub App check-run fallback
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 12: GitHub App check-run fallback ==="
+
+_check_summary_blocking="$(cat <<'SUMMARY_BLOCKING'
+**Verdict:** `has-issues`
+**Rating:** `3/5`
+**Findings:** 3
+
+**[Logic error]** - Sticky fingerprint mismatch can delay escalation.
+**[Rules violation]** - Config invariants are not validated.
+**[Weak test coverage]** - Remediation branch selection lacks coverage.
+SUMMARY_BLOCKING
+)"
+MOCK_GH_CHECK_RUNS="$(
+  jq -n --arg summary "$_check_summary_blocking" '{
+    check_runs: [
+      {
+        name: "Haystack / Review",
+        status: "completed",
+        conclusion: "failure",
+        details_url: "https://haystackeditor.com/review/owner/repo/123",
+        started_at: "2026-07-12T15:26:22Z",
+        output: {title: "Haystack found 3 issues", summary: $summary}
+      }
+    ]
+  }'
+)"
+export MOCK_GH_CHECK_RUNS
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"status":"pending"}'
+MOCK_HAYSTACK_EXITS='0'
+_install_mock_with_exits
+_install_gh_check_run_mock
+
+output=$(_run_reviewer 1 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "check_run_fallback_blocking_result" "RESULT=needs_fixes" "$(echo "$output" | grep '^RESULT=')"
+run_test "check_run_fallback_blocking_count" "BLOCKING_COUNT=1" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
+run_test "check_run_fallback_suggestion_count" "SUGGESTION_COUNT=2" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "check_run_fallback_conclusion" "CHECK_RUN_CONCLUSION=failure" "$(echo "$output" | grep '^CHECK_RUN_CONCLUSION=')"
+run_test "check_run_fallback_blocking_exit_code" "1" "$ec"
+
+_check_summary_advisory="$(cat <<'SUMMARY_ADVISORY'
+**Verdict:** `has-issues`
+**Rating:** `4/5`
+**Findings:** 2
+
+- **[Rules violation]** - Changelog placement needs review.
+- **[Weak test coverage]** - Add focused coverage.
+SUMMARY_ADVISORY
+)"
+MOCK_GH_CHECK_RUNS="$(
+  jq -n --arg summary "$_check_summary_advisory" '{
+    check_runs: [
+      {
+        name: "Haystack / Review",
+        status: "completed",
+        conclusion: "failure",
+        details_url: "https://haystackeditor.com/review/owner/repo/123",
+        started_at: "2026-07-12T15:26:22Z",
+        output: {title: "Haystack found 2 issues", summary: $summary}
+      }
+    ]
+  }'
+)"
+export MOCK_GH_CHECK_RUNS
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"status":"pending"}'
+MOCK_HAYSTACK_EXITS='0'
+_install_mock_with_exits
+_install_gh_check_run_mock
+
+output=$(_run_reviewer 1 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "check_run_fallback_advisory_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "check_run_fallback_advisory_blocking_zero" "BLOCKING_COUNT=0" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
+run_test "check_run_fallback_advisory_suggestions" "SUGGESTION_COUNT=2" "$(echo "$output" | grep '^SUGGESTION_COUNT=')"
+run_test "check_run_fallback_advisory_exit_code" "0" "$ec"
+
+_check_summary_custom='**Verdict:** `pass`
+**Rating:** `5/5`
+**Findings:** 0'
+MOCK_GH_CHECK_RUNS="$(
+  jq -n --arg summary "$_check_summary_custom" '[
+    {
+      check_runs: [
+        {
+          name: "Unrelated Check",
+          status: "completed",
+          conclusion: "failure",
+          started_at: "2026-07-12T15:25:22Z"
+        }
+      ]
+    },
+    {
+      check_runs: [
+        {
+          name: "Custom Haystack Review",
+          status: "completed",
+          conclusion: "success",
+          details_url: "https://haystackeditor.com/review/owner/repo/123",
+          started_at: "2026-07-12T15:26:22Z",
+          output: {title: "Haystack passed", summary: $summary}
+        }
+      ]
+    }
+  ]'
+)"
+export MOCK_GH_CHECK_RUNS
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"status":"pending"}'
+MOCK_HAYSTACK_EXITS='0'
+_install_mock_with_exits
+_install_gh_check_run_mock
+
+output=$(HAYSTACK_CHECK_NAME="Custom Haystack Review" _run_reviewer 1 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "check_run_fallback_custom_paginated_name_result" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+run_test "check_run_fallback_custom_paginated_name_conclusion" "CHECK_RUN_CONCLUSION=success" "$(echo "$output" | grep '^CHECK_RUN_CONCLUSION=')"
+run_test "check_run_fallback_custom_paginated_name_exit_code" "0" "$ec"
+
+MOCK_GH_CHECK_RUNS="$(
+  jq -n '{
+    check_runs: [
+      {
+        name: "Haystack / Review",
+        status: "completed",
+        conclusion: "failure",
+        details_url: "https://haystackeditor.com/review/owner/repo/123",
+        started_at: "2026-07-12T15:26:22Z",
+        output: {title: "Haystack found issues", summary: "Haystack found issues but did not expose structured category output."}
+      }
+    ]
+  }'
+)"
+export MOCK_GH_CHECK_RUNS
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"status":"pending"}'
+MOCK_HAYSTACK_EXITS='0'
+_install_mock_with_exits
+_install_gh_check_run_mock
+
+output=$(_run_reviewer 1 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "check_run_fallback_unparseable_failure_result" "RESULT=needs_fixes" "$(echo "$output" | grep '^RESULT=')"
+run_test "check_run_fallback_unparseable_failure_blocking" "BLOCKING_COUNT=1" "$(echo "$output" | grep '^BLOCKING_COUNT=')"
+run_test "check_run_fallback_unparseable_failure_exit_code" "1" "$ec"
+
+MOCK_GH_CHECK_RUNS='not-json'
+export MOCK_GH_CHECK_RUNS
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"status":"pending"}'
+MOCK_HAYSTACK_EXITS='0'
+_install_mock_with_exits
+_install_gh_check_run_mock
+
+output=$(_run_reviewer 1 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "check_run_fallback_malformed_json_result" "RESULT=skipped" "$(echo "$output" | grep '^RESULT=')"
+run_test "check_run_fallback_malformed_json_reason" "REASON=pending_timeout" "$(echo "$output" | grep '^REASON=')"
+run_test "check_run_fallback_malformed_json_exit_code" "2" "$ec"
+
+MOCK_GH_CHECK_RUNS="$(
+  jq -n '{
+    check_runs: [
+      {
+        name: "Haystack / Review",
+        status: "in_progress",
+        conclusion: null,
+        started_at: "2026-07-12T15:26:22Z"
+      }
+    ]
+  }'
+)"
+export MOCK_GH_CHECK_RUNS
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"status":"pending"}'
+MOCK_HAYSTACK_EXITS='0'
+_install_mock_with_exits
+_install_gh_check_run_mock
+
+output=$(_run_reviewer 1 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+
+run_test "check_run_fallback_pending_result" "RESULT=skipped" "$(echo "$output" | grep '^RESULT=')"
+run_test "check_run_fallback_pending_reason" "REASON=pending_check_run" "$(echo "$output" | grep '^REASON=')"
+run_test "check_run_fallback_pending_exit_code" "2" "$ec"
+
+unset MOCK_GH_CHECK_RUNS _check_summary_blocking _check_summary_advisory _check_summary_custom
 
 # ---------------------------------------------------------------------------
 # Summary

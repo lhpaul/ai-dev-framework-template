@@ -137,6 +137,7 @@ esac
 TIMEOUT="${HAYSTACK_REVIEWER_TIMEOUT:-120}"
 POLL_INTERVAL="${HAYSTACK_POLL_INTERVAL:-15}"
 PR_STATUS_CHECK="${HAYSTACK_PR_STATUS_CHECK:-1}"
+CHECK_NAME="${HAYSTACK_CHECK_NAME:-Haystack / Review}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -164,9 +165,194 @@ case "$POLL_INTERVAL" in
     ;;
 esac
 
+# ── GitHub App check-run fallback ─────────────────────────────────────────────
+
+_classify_haystack_category() {
+  local category="$1"
+  case "$category" in
+    "Logic error"|"Critical")
+      printf 'blocking'
+      ;;
+    "Major")
+      if [ "${HAYSTACK_MAJOR_IS_BLOCKING:-0}" = "1" ]; then
+        printf 'blocking'
+      else
+        printf 'advisory'
+      fi
+      ;;
+    "Minor"|"Advisory"|"Nitpick"|"Trivial"|"Weak test coverage"|"Rules violation"|"Code contract violation")
+      printf 'advisory'
+      ;;
+    *)
+      printf 'blocking'
+      ;;
+  esac
+}
+
+fetch_haystack_check_run_json() {
+  command -v gh >/dev/null 2>&1 || return 1
+
+  local head_sha=""
+  local runs_json=""
+  local check_json=""
+
+  if ! head_sha="$(gh api "repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha // empty' 2>/dev/null)"; then
+    return 1
+  fi
+  [ -n "$head_sha" ] || return 1
+
+  if ! runs_json="$(gh api --paginate --slurp "repos/${OWNER}/${REPO}/commits/${head_sha}/check-runs" 2>/dev/null)"; then
+    return 1
+  fi
+  [ -n "$runs_json" ] || return 1
+
+  if ! check_json="$(printf '%s\n' "$runs_json" | jq -c --arg name "$CHECK_NAME" '
+    [
+      if type == "array" then
+        .[] | (.check_runs[]? // empty)
+      else
+        .check_runs[]? // empty
+      end
+    ]
+    | map(select((.name // "") == $name))
+    | sort_by(.started_at // .completed_at // "")
+    | last // empty
+  ' 2>/dev/null)"; then
+    return 1
+  fi
+  [ -n "$check_json" ] || return 1
+
+  printf '%s\n' "$check_json"
+}
+
+emit_haystack_check_run_result() {
+  local check_json=""
+  local status=""
+  local conclusion=""
+  local details_url=""
+  local summary=""
+  local title=""
+  local categories=""
+  local category=""
+  local classification=""
+  local blocking_count=0
+  local suggestion_count=0
+  local comment_count=0
+  local findings_count=""
+
+  if ! check_json="$(fetch_haystack_check_run_json)"; then
+    return 3
+  fi
+
+  status="$(printf '%s\n' "$check_json" | jq -r '.status // ""')"
+  conclusion="$(printf '%s\n' "$check_json" | jq -r '.conclusion // ""')"
+  details_url="$(printf '%s\n' "$check_json" | jq -r '.details_url // .detailsUrl // ""')"
+  summary="$(printf '%s\n' "$check_json" | jq -r '.output.summary // ""')"
+  title="$(printf '%s\n' "$check_json" | jq -r '.output.title // ""')"
+
+  if [ "$status" != "completed" ] && [ "$status" != "COMPLETED" ]; then
+    printf 'RESULT=skipped\n'
+    printf 'REASON=pending_check_run\n'
+    printf 'BLOCKING_COUNT=0\n'
+    printf 'SUGGESTION_COUNT=0\n'
+    printf 'COMMENT_COUNT=0\n'
+    printf 'CHECK_RUN_STATUS=%s\n' "$status"
+    printf 'CHECK_RUN_CONCLUSION=%s\n' "$conclusion"
+    [ -n "$details_url" ] && printf 'CHECK_RUN_URL=%s\n' "$details_url"
+    return 2
+  fi
+
+  categories="$(printf '%s\n' "$summary" | sed -n 's/^[[:space:]]*[-*][[:space:]][[:space:]]*//;s/^\*\*\[\([^]]*\)\]\*\*.*/\1/p')"
+  if [ -n "$categories" ]; then
+    while IFS= read -r category; do
+      [ -z "${category:-}" ] && continue
+      classification="$(_classify_haystack_category "$category")"
+      case "$classification" in
+        blocking) blocking_count=$((blocking_count + 1)) ;;
+        *)        suggestion_count=$((suggestion_count + 1)) ;;
+      esac
+    done <<EOF
+$categories
+EOF
+  fi
+  comment_count=$((blocking_count + suggestion_count))
+
+  findings_count="$(printf '%s\n' "$summary" | sed -n 's/^\*\*Findings:\*\* \([0-9][0-9]*\).*/\1/p' | head -n 1)"
+  case "$findings_count" in
+    ''|*[!0-9]*) findings_count="" ;;
+  esac
+
+  case "$conclusion" in
+    success|SUCCESS|neutral|NEUTRAL|skipped|SKIPPED)
+      printf 'RESULT=clean\n'
+      printf 'BLOCKING_COUNT=0\n'
+      printf 'SUGGESTION_COUNT=%d\n' "$suggestion_count"
+      printf 'COMMENT_COUNT=%d\n' "$comment_count"
+      printf 'CHECK_RUN_STATUS=%s\n' "$status"
+      printf 'CHECK_RUN_CONCLUSION=%s\n' "$conclusion"
+      [ -n "$title" ] && printf 'CHECK_RUN_TITLE=%s\n' "$title"
+      [ -n "$details_url" ] && printf 'CHECK_RUN_URL=%s\n' "$details_url"
+      return 0
+      ;;
+    failure|FAILURE|action_required|ACTION_REQUIRED|startup_failure|STARTUP_FAILURE)
+      if [ "$comment_count" -eq 0 ] && [ "${findings_count:-unknown}" != "0" ]; then
+        # The check run failed but did not expose parseable category lines. Fail
+        # closed unless the summary explicitly reports zero findings.
+        blocking_count=1
+        comment_count=1
+      fi
+      if [ "$blocking_count" -gt 0 ]; then
+        printf 'RESULT=needs_fixes\n'
+        printf 'BLOCKING_COUNT=%d\n' "$blocking_count"
+        printf 'SUGGESTION_COUNT=%d\n' "$suggestion_count"
+        printf 'COMMENT_COUNT=%d\n' "$comment_count"
+        printf 'CHECK_RUN_STATUS=%s\n' "$status"
+        printf 'CHECK_RUN_CONCLUSION=%s\n' "$conclusion"
+        [ -n "$title" ] && printf 'CHECK_RUN_TITLE=%s\n' "$title"
+        [ -n "$details_url" ] && printf 'CHECK_RUN_URL=%s\n' "$details_url"
+        return 1
+      fi
+      printf 'RESULT=clean\n'
+      printf 'BLOCKING_COUNT=0\n'
+      printf 'SUGGESTION_COUNT=%d\n' "$suggestion_count"
+      printf 'COMMENT_COUNT=%d\n' "$comment_count"
+      printf 'CHECK_RUN_STATUS=%s\n' "$status"
+      printf 'CHECK_RUN_CONCLUSION=%s\n' "$conclusion"
+      [ -n "$title" ] && printf 'CHECK_RUN_TITLE=%s\n' "$title"
+      [ -n "$details_url" ] && printf 'CHECK_RUN_URL=%s\n' "$details_url"
+      return 0
+      ;;
+    *)
+      printf 'RESULT=skipped\n'
+      printf 'REASON=check_run_%s\n' "${conclusion:-unknown}"
+      printf 'BLOCKING_COUNT=0\n'
+      printf 'SUGGESTION_COUNT=0\n'
+      printf 'COMMENT_COUNT=0\n'
+      printf 'CHECK_RUN_STATUS=%s\n' "$status"
+      printf 'CHECK_RUN_CONCLUSION=%s\n' "$conclusion"
+      [ -n "$details_url" ] && printf 'CHECK_RUN_URL=%s\n' "$details_url"
+      return 2
+      ;;
+  esac
+}
+
+emit_check_run_fallback_or_skip() {
+  local fallback_exit=0
+  set +e
+  emit_haystack_check_run_result
+  fallback_exit=$?
+  set -e
+  [ "$fallback_exit" -ne 3 ] && exit "$fallback_exit"
+  return 1
+}
+
 # ── Availability check ────────────────────────────────────────────────────────
 
 if ! command -v haystack >/dev/null 2>&1; then
+  echo "INFO: haystack CLI not found in PATH — trying GitHub App check-run fallback" >&2
+  if emit_check_run_fallback_or_skip; then
+    :
+  fi
   echo "INFO: haystack CLI not found in PATH — skipping (UNAVAILABLE)" >&2
   printf 'RESULT=skipped\n'
   printf 'REASON=unavailable\n'
@@ -449,6 +635,10 @@ if [ "$TRIAGE_EXIT" -eq 124 ]; then
   # A single haystack triage call exceeded its per-call OS timeout and the
   # overall budget was exhausted.
   echo "INFO: haystack triage timed out after ${TIMEOUT}s" >&2
+  echo "INFO: trying GitHub App check-run fallback after triage timeout" >&2
+  if emit_check_run_fallback_or_skip; then
+    :
+  fi
   printf 'RESULT=skipped\n'
   printf 'REASON=timeout\n'
   printf 'BLOCKING_COUNT=0\n'
@@ -465,6 +655,10 @@ if [ "$TRIAGE_EXIT" -eq 200 ]; then
   # REASON=unavailable (CLI not found / auth failure) and REASON=timeout
   # (per-call OS timeout).
   echo "INFO: haystack triage transient state persisted — budget exhausted after ${TIMEOUT}s (pending_timeout)" >&2
+  echo "INFO: trying GitHub App check-run fallback after pending_timeout" >&2
+  if emit_check_run_fallback_or_skip; then
+    :
+  fi
   printf 'RESULT=skipped\n'
   printf 'REASON=pending_timeout\n'
   printf 'BLOCKING_COUNT=0\n'

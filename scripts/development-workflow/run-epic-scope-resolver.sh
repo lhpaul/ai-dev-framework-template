@@ -333,14 +333,31 @@ base_branch_cache_file() {
   printf '%s/prs_base_%s.json\n' "$tmp_dir" "$safe"
 }
 
+remote_branch_status() {
+  local branch="$1"
+  local status
+  set +e
+  git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1
+  status=$?
+  set -e
+  case "$status" in
+    0) printf 'exists\n' ;;
+    2) printf 'missing\n' ;;
+    *) printf 'failed\n' ;;
+  esac
+}
+
 fetch_prs_for_base() {
   local branch="$1"
-  local cache_file
+  local cache_file encoded_branch
   cache_file="$(base_branch_cache_file "$branch")"
+  if ! encoded_branch="$(jq -nr --arg branch "$branch" '$branch | @uri')"; then
+    error_exit "failed to URI-encode base branch ${branch}."
+  fi
 
   if [ ! -f "$cache_file" ]; then
     if ! gh api --paginate --slurp \
-      "repos/${repo}/pulls?state=all&base=${branch}&per_page=100" \
+      "repos/${repo}/pulls?state=all&base=${encoded_branch}&per_page=100" \
       > "$cache_file" 2>/dev/null; then
       error_exit "failed to read PRs targeting base branch ${branch}."
     fi
@@ -353,9 +370,55 @@ fetch_prs_for_base() {
 # (develop-<slug>) that are not represented by integration-branch:* labels in scope.
 discover_prs_via_head_search() {
   local issue="$1"
-  local prefix query numbers number pr_json open merged
+  local prefix query numbers number pr_json open merged search_json primary_result primary_count
   open='[]'
   merged='[]'
+
+  if search_json="$(gh pr list --state all --search "${issue} in:head" \
+      --json number,title,state,headRefName,baseRefName,isDraft,labels,mergedAt \
+      --limit 100 2>/dev/null)"; then
+    if ! primary_result="$(jq --arg issue "$issue" '
+      {
+        open: [
+          .[]
+          | select(.state == "OPEN")
+          | select(.headRefName | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
+          | {
+              number,
+              title,
+              state: "OPEN",
+              headRefName,
+              baseRefName,
+              isDraft,
+              labels: [.labels[].name]
+            }
+        ],
+        merged: [
+          .[]
+          | select(.mergedAt != null)
+          | select(.headRefName | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
+          | {
+              number,
+              title,
+              state: "MERGED",
+              headRefName,
+              baseRefName,
+              isDraft: false,
+              labels: [],
+              mergedAt
+          }
+        ]
+      }
+    ' <<< "$search_json")"; then
+      primary_result=""
+    elif ! primary_count="$(printf '%s\n' "$primary_result" | jq '(.open | length) + (.merged | length)')"; then
+      primary_count=0
+    elif [ "$primary_count" -gt 0 ]; then
+      printf '%s\n' "$primary_result"
+      return 0
+    fi
+  fi
+
   for prefix in spec implementation-plan feature fix refactor hotfix; do
     query="repo:${repo} is:pr head:${prefix}/${issue}"
     numbers=""
@@ -366,6 +429,12 @@ discover_prs_via_head_search() {
       [ -n "$number" ] || continue
       pr_json=""
       if ! pr_json="$(gh pr view "$number" --json number,title,state,headRefName,baseRefName,isDraft,labels,mergedAt 2>/dev/null)"; then
+        continue
+      fi
+      if ! printf '%s\n' "$pr_json" | jq -e \
+          --arg prefix "$prefix" \
+          --arg issue "$issue" \
+          '.headRefName | test("^" + $prefix + "/" + $issue + "(-|$)")' >/dev/null 2>&1; then
         continue
       fi
       if printf '%s\n' "$pr_json" | jq -e '.mergedAt != null' >/dev/null 2>&1; then
@@ -456,6 +525,15 @@ linked_pr_json() {
   fi
   bases="$(printf '%s\n%s\n' "$scope_pr_bases" "$candidate_base" | sed '/^$/d' | sort -u)"
 
+  # The default unlabeled develop scope is common for `/run-items` Backlog
+  # starts. Avoid paginating every historical PR targeting develop when the
+  # branch naming convention gives us a precise, issue-scoped lookup.
+  if [ -z "$integration_label" ] && [ "$bases" = "develop" ]; then
+    discover_prs_via_head_search "$issue" \
+      | jq '{open: (.open | unique_by(.number)), merged: (.merged | unique_by(.number))}'
+    return 0
+  fi
+
   open_prs="[]"
   merged_prs="[]"
   while IFS= read -r base; do
@@ -500,10 +578,11 @@ EOF
 
   local _linked_result
   _linked_result="$(jq -n --argjson open "$open_prs" --argjson merged "$merged_prs" \
-    '{open: $open, merged: $merged}')"
+    '{open: ($open | unique_by(.number)), merged: ($merged | unique_by(.number))}')"
   if [ "$(printf '%s\n' "$_linked_result" | jq '(.open | length) + (.merged | length)')" -eq 0 ]; then
     _linked_result="$(discover_prs_via_head_search "$issue")"
   fi
+  _linked_result="$(printf '%s\n' "$_linked_result" | jq '{open: (.open | unique_by(.number)), merged: (.merged | unique_by(.number))}')"
   printf '%s\n' "$_linked_result"
 }
 
@@ -699,6 +778,11 @@ items_json="$(jq -s '.' "$items_file")"
 
 integration_labels="$(printf '%s\n' "$items_json" | jq -r '[.[].integrationBranchLabel | select(. != "")] | unique | .[]')"
 integration_count="$(printf '%s\n' "$integration_labels" | sed '/^$/d' | wc -l | tr -d ' ')"
+item_count="$(printf '%s\n' "$items_json" | jq 'length')"
+labeled_item_count="$(printf '%s\n' "$items_json" | jq '[.[] | select((.integrationBranchLabel // "") != "")] | length')"
+base_warnings_json="[]"
+base_validation_result="not_applicable"
+base_validation_branch=""
 
 base_branch=""
 base_reason=""
@@ -708,12 +792,54 @@ if [ -n "$base_override" ]; then
   base_reason="supplied --base override"
 elif [ "$integration_count" -eq 1 ]; then
   label="$(printf '%s\n' "$integration_labels" | sed -n '1p')"
-  base_branch="develop-${label#integration-branch:}"
-  base_reason="shared integration branch label ${label}"
+  candidate_branch="develop-${label#integration-branch:}"
+  base_validation_branch="$candidate_branch"
+  if [ "$labeled_item_count" -lt "$item_count" ]; then
+    base_branch="develop"
+    base_reason="partial integration branch label coverage for ${label}; falling back to develop"
+    base_validation_result="skipped_partial_label_coverage"
+    base_warnings_json="$(jq -nc \
+      --arg label "$label" \
+      --argjson labeled "$labeled_item_count" \
+      --argjson total "$item_count" \
+      '[("partial integration branch label " + $label + " applies to " + ($labeled|tostring) + " of " + ($total|tostring) + " items; using develop")]')"
+  elif [ "$base_branch_applies_to" != "current_repository_prs" ]; then
+    base_branch="$candidate_branch"
+    base_reason="shared integration branch label ${label}; branch validation deferred for ${base_branch_applies_to}"
+    base_validation_result="deferred"
+  else
+    base_validation_result="$(remote_branch_status "$candidate_branch")"
+    if [ "$base_validation_result" = "exists" ]; then
+      base_branch="$candidate_branch"
+      base_reason="shared integration branch label ${label}; remote branch verified"
+    elif [ "$base_validation_result" = "missing" ]; then
+      base_branch="develop"
+      base_reason="shared integration branch label ${label} points to missing branch ${candidate_branch}; falling back to develop"
+      base_warnings_json="$(jq -nc \
+        --arg label "$label" \
+        --arg branch "$candidate_branch" \
+        '[("integration branch " + $branch + " from label " + $label + " was not found on origin; using develop")]')"
+    else
+      base_branch="develop"
+      base_reason="could not verify integration branch ${candidate_branch}; falling back to develop"
+      base_warnings_json="$(jq -nc \
+        --arg label "$label" \
+        --arg branch "$candidate_branch" \
+        '[("could not verify integration branch " + $branch + " from label " + $label + "; using develop")]')"
+    fi
+  fi
 elif [ "$integration_count" -gt 1 ]; then
-  base_branch=""
-  base_reason="conflicting integration branch labels"
-  set_ambiguous=1
+  base_validation_result="skipped_mixed_labels"
+  if [ -n "$epic_number" ]; then
+    base_branch=""
+    base_reason="conflicting integration branch labels"
+    set_ambiguous=1
+  else
+    base_branch="develop"
+    base_reason="mixed integration branch labels; falling back to develop"
+    base_warnings_json="$(printf '%s\n' "$integration_labels" | jq -R -s -c \
+      'split("\n") | map(select(. != "")) | [("mixed integration branch labels in scope: " + join(", ") + "; using develop")]')"
+  fi
 else
   base_branch="develop"
   base_reason="no integration branch label"
@@ -732,9 +858,12 @@ summary_json="$(jq -n \
   --arg itemInput "$items_arg" \
   --arg baseBranch "$base_branch" \
   --arg baseReason "$base_reason" \
+  --arg baseValidationResult "$base_validation_result" \
+  --arg baseValidationBranch "$base_validation_branch" \
   --arg workflowMode "$workflow_mode" \
   --arg baseBranchAppliesTo "$base_branch_applies_to" \
   --arg baseBranchValidationNote "$base_branch_validation_note" \
+  --argjson baseWarnings "$base_warnings_json" \
   --argjson delegateReview "$delegate_review" \
   --argjson mayMerge "$may_merge" \
   --arg mayStartBacklog "$may_start_backlog" \
@@ -748,6 +877,11 @@ summary_json="$(jq -n \
     baseBranch: (if $baseBranch == "" then null else $baseBranch end),
     baseAmbiguous: ($baseBranch == ""),
     baseReason: $baseReason,
+    baseWarnings: $baseWarnings,
+    baseValidation: {
+      branch: (if $baseValidationBranch == "" then null else $baseValidationBranch end),
+      result: $baseValidationResult
+    },
     workflowMode: $workflowMode,
     baseBranchAppliesTo: $baseBranchAppliesTo,
     baseBranchValidationNote: $baseBranchValidationNote,
@@ -789,6 +923,7 @@ if [ "$(printf '%s\n' "$summary_json" | jq -r '.emptyEpicScope')" = "true" ]; th
   printf 'Native sub-issues: none resolved for epic #%s\n' "$epic_number"
 fi
 printf 'Base branch: %s (%s)\n' "${base_branch:-ambiguous}" "$base_reason"
+printf '%s\n' "$summary_json" | jq -r '.baseWarnings[]? | "WARNING: " + .'
 printf 'Workflow mode: %s\n' "$workflow_mode"
 printf 'Base applies to: %s\n' "$base_branch_applies_to"
 printf 'Base validation note: %s\n' "$base_branch_validation_note"

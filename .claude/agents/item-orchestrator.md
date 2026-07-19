@@ -31,6 +31,16 @@ when product repository context is missing or ambiguous. Specs and plans remain
 hub-owned unless a later protocol says otherwise; `single_repo` requires no
 product repository selector.
 
+Before dispatching any stage agent that may create a branch or open a PR, pass
+the expected branch, expected worktree when known, approved base, and
+artifact-owning repo root. The stage path must run
+`run-nested-artifact-guard.sh --repo-root "$ARTIFACT_REPO_ROOT"` before mutation
+and stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`.
+For substantial or multi-part mutating stage work, also instruct the stage agent
+to commit immediately after each completed logical sub-part, avoid batching all
+completed sub-parts into one end-of-run commit, and never commit incomplete,
+failing, or incoherent edits only to satisfy this requirement.
+
 ## Guardrails Enforcement
 
 At the start of each item run, check whether the Portfolio Orchestrator already
@@ -43,15 +53,51 @@ When no `guardrails` section is found, apply conservative defaults and state the
 When the delegated merge gate returns `merge_allowed`, continue through merge,
 branch cleanup, `post-merge-cleanup.sh`, and live tracker verification before
 reporting the item terminal.
+Treat merge authority explicitly: `merge_granted` means readiness is
+intermediate and the runner continues through merge; `merge_denied` means the
+ready PR stops as `ready_human_merge` and no merge command is run. A
+merge-granted run that stops at readiness without a named blocker is
+`policy_inconsistent`.
 
 That document is the single source of truth for this supporting role. Key responsibilities:
 
 - Stay scoped to one item at a time
 - Use `workflow-next-action.sh` to determine the next deterministic action for the selected development folder, branch, or PR
+- Before dispatching a Backlog item into Writing Spec, run or consume
+  `scripts/development-workflow/spec-dispatch-context.sh`. For direct
+  single-item runs, pass the selected item plus relevant in-scope Backlog peers
+  from the current tracker scan in `--items`; a selected-only scope may collect
+  decisions but cannot classify peer relationships. Pass non-blocking confirmed
+  decisions and relationship outcomes to the spec writer; stop on
+  `blocking=true` and report the helper's `humanAction`. Shared keywords alone
+  are not dependency evidence.
 - Dispatch the matching stage agent when the runner supports it; otherwise continue in the current context using the referenced protocol
 - Run reviewer gate, PR readiness, automated review, and CI until the item is actually waiting on a human, blocked, or escalated
+- For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
+  items, run `scope-residual-gate.sh` before readiness; `block` and
+  `escalate` results are non-terminal until resolved or explicitly accepted by
+  a human decision.
+- For `spec/*` and `implementation-plan/*` PRs, run Protocol 91 Step 8a's
+  documentation-stage alignment checker before readiness. Include the alignment
+  result in the runner summary when readiness is blocked; correct or escalate
+  mismatches instead of applying `ready-for-human-review`.
+- Before emitting any terminal Work Item Runner Summary, run
+  `scripts/development-workflow/item-completion-self-check.sh` for the claimed
+  state and paste its `## Ground-Truth Completion Verification` section into the
+  summary. A `discrepancy` or `unavailable_required` result is non-terminal and
+  must return to the relevant Protocol 91 gate.
 
 **Worktree git discipline** (`BATCH_CONTEXT=true` only): All git state-changing commands (`switch`, `checkout`, `checkout -b`, `reset`, `restore`) must target the worktree path, not the main repo root. Never `cd` out of the worktree into the main repo root and then run branch-switching commands. Violating this rule leaves the main repo in a broken state for all concurrent agents and the human operator. Use `git -C <worktree-path> <command>` or `cd <worktree-path> && git <command>` for all state-changing operations. Read-only inspection of the main repo is always permitted via `git -C <main-repo-root> rev-parse --abbrev-ref HEAD`.
+
+**Pre-mutation isolation self-check** (`BATCH_CONTEXT=true` only): Before the
+first file edit, branch-changing command, commit, push, PR mutation, tracker
+mutation, or stage-agent handoff, verify the handoff's expected worktree path,
+expected branch, artifact repo root, mutation classification, and
+`isolation: "worktree"` against `pwd -P` and
+`git rev-parse --abbrev-ref HEAD`. Stop before mutation on missing metadata,
+wrong CWD, main-repo CWD, or wrong branch. If mutation may already have occurred
+outside the assigned worktree, escalate for human inspection instead of
+resetting, restoring, stashing, committing, or deleting suspect changes.
 
 **Worktree gotcha — `git rev-parse --show-toplevel`** (`BATCH_CONTEXT=true` only): Inside an isolated worktree, `git rev-parse --show-toplevel` returns the _worktree_ path, not the main repo root. Use `REPO_ROOT=$(git rev-parse --git-common-dir)/..` instead — it always resolves to the main repo root regardless of context. Apply this whenever a script or agent step needs `node_modules/`, root-level config files, or any resource installed at the main repo root.
 
@@ -62,11 +108,21 @@ That document is the single source of truth for this supporting role. Key respon
   the literal resolved `<worktree-path>` value in every stage-agent handoff so each
   dispatched agent can validate its own paths independently.
 
-**Stage-agent handoff branch-skip requirement (BATCH_CONTEXT=true only)**: Claude Code subagents start with an independent execution context — the CWD guard sourced in the item-orchestrator's shell is NOT active in the dispatched subagent's environment. To prevent the subagent from running `git checkout develop` or `git checkout -b <branch>` against the main repo root, every stage-agent handoff when `BATCH_CONTEXT=true` **must** include both of the following explicit instructions:
+**Stage-agent handoff branch-skip requirement (BATCH_CONTEXT=true only)**: Claude Code subagents start with an independent execution context — the CWD guard sourced in the item-orchestrator's shell is NOT active in the dispatched subagent's environment. To prevent the subagent from running `git checkout develop` or `git checkout -b <branch>` against the main repo root, every stage-agent handoff when `BATCH_CONTEXT=true` **must** include all of the following explicit instructions and metadata:
 
 1. The literal resolved `<worktree-path>` value (e.g., `/path/to/repo/.claude/worktrees/lh-168/fix-lh-168-slug`).
-2. The sentence: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm CWD matches `<worktree-path>` before any git state-changing command."
-   Omitting either instruction is the root cause of the branch-leak pattern where stage subagents run Protocol 03's branching steps from the main repo root CWD, silently switching the main working tree to the feature branch.
+2. The expected branch, artifact repo root, approved base branch, mutation
+   classification, and `isolation: "worktree"` when the stage agent may mutate
+   artifacts.
+3. The sentence: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm `pwd -P` equals `<worktree-path>` or begins with `<worktree-path>/` before any git state-changing command."
+4. The checkpoint instruction: "For substantial or multi-part mutating item
+   work, commit each completed logical sub-part as soon as it is coherent so
+   agent death or compaction can resume from a recoverable checkpoint. Do not
+   intentionally batch all completed sub-parts into one end-of-run commit.
+   Single-step work with no meaningful completed intermediate checkpoint may use
+   one final commit. Never commit incomplete, broken, or unverified work solely
+   to create a checkpoint."
+   Omitting any required instruction or metadata field is the root cause of the branch-leak pattern where stage subagents run Protocol 03's branching steps from the main repo root CWD, silently switching the main working tree to the feature branch.
 
 **Main-tree return rule (BATCH_CONTEXT=false / no isolation: worktree)**: When this agent is dispatched **without** worktree isolation (i.e., `BATCH_CONTEXT` is `false` or absent), the agent runs in the main working tree. In this case:
 

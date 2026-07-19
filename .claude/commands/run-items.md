@@ -53,6 +53,13 @@ Key responsibilities:
 - Use the supplied targets as the hard bounded scope for Protocol 90 `explicit_list` mode.
 - Target `develop` directly; `/run-items` does not create or target
   `develop-<slug>` integration branches.
+- Before dispatching an explicit-list batch where any runner may mutate,
+  including sequential fallback, build the Protocol 90 isolation manifest and
+  require a distinct absolute worktree path plus `isolation: "worktree"` for
+  every mutating item. Stop before dispatch on missing isolation assignment or
+  duplicate worktree path. Non-isolated runners are allowed only when explicitly
+  classified `read_only` and will not edit files, switch branches, commit, push,
+  mutate PRs, change labels, or update tracker state.
 - In `workflow_hub`, state the selected product repository, artifact owner, and mutation
   target before implementation mutation; stop when context is missing or ambiguous.
 - Do not stop after advancing one item if another in the list still has a
@@ -75,6 +82,10 @@ Key responsibilities:
   `stages.<stage>.may_merge_pr: false` guardrail for each affected PR, and tell
   the human to invoke `/batch-merge` or adjust guardrails to permit delegated
   merging.
+- Report terminal outcomes per in-scope PR: `merged`, `ready_human_merge`,
+  `merge_blocked`, `policy_inconsistent`, or `out_of_scope`. A
+  `merge_granted` PR that stops at readiness without a named blocker is
+  `policy_inconsistent`; a `merge_denied` PR stops at `ready_human_merge`.
 
 For single-item advancement use `/run-item`. For epic-scoped runs use `/run-epic`.
 For read-only portfolio scan and proposal use `/run-work`.

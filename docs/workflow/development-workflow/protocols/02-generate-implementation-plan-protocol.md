@@ -327,6 +327,13 @@ If no blocking human decision remains:
      exit 1
    fi
    echo "Pre-branch HEAD check passed: HEAD matches origin/${ARTIFACT_BASE_BRANCH}"
+   if [ -n "${ISSUE_NUMBER:-}" ]; then
+     ./scripts/development-workflow/run-nested-artifact-guard.sh \
+       --mode pre-create \
+       --issue "$ISSUE_NUMBER" \
+       --expected-branch "implementation-plan/[branch-slug]" \
+       --approved-base "$ARTIFACT_BASE_BRANCH"
+   fi
    git checkout -b implementation-plan/[branch-slug]
    ```
 
@@ -369,6 +376,7 @@ If no blocking human decision remains:
    - Spec/brief coverage: Checked - all ACs map to implementation steps and tests.
    - Implementation-order consistency: Checked - file list and order agree.
    - Verification support: Checked - broad claims cite Verification Log evidence.
+   - Complex workflow decision-gate matrix: Not applicable - this plan does not add or modify workflow decision-gate behavior.
    - Parser/API/concurrency checklist: Not applicable - no parser, API-surface, snapshot, or concurrent-event signals.
    ```
 
@@ -382,6 +390,17 @@ If no blocking human decision remains:
      or tool semantics cite a Verification Log command or a concrete source file.
    - Behavioral guarantees: every guarantee such as idempotency, bounded retries,
      ordering, or "at most once" names the mechanism that enforces it.
+   - Complex workflow decision-gate matrix: when the plan adds or modifies a
+     complex workflow decision gate, classify it and include matrix coverage
+     before PR handoff. A complex workflow decision-gate change is any workflow
+     documentation or protocol change whose behavior depends on multiple inputs,
+     outcomes, next-action branches, status labels, exit states, examples, or
+     mirrored workflow surfaces. Matrix evidence must identify the gate inputs,
+     allowed outcomes, required next actions, mirror surfaces, and examples when
+     examples are part of the changed surface. If the plan does not change
+     decision-gate behavior, record a short not-applicable rationale. If an
+     expected input, outcome, example, or mirror surface is marked not
+     applicable, include the rationale in the matrix row.
    - Parser/API/concurrency checklist completeness: when parser-risk,
      API-surface, single-snapshot or consistency-semantics, or
      concurrent-event-source signals apply, the required checklist sections are
@@ -417,11 +436,29 @@ If no blocking human decision remains:
 9. **Do NOT update CHANGELOG**: `implementation-plan/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.
 10. Commit: `docs: add implementation plan for [feature-name]`
 11. Push: `git push -u origin implementation-plan/[branch-slug]`
-12. Open a **draft** PR targeting the plan artifact base branch with:
+12. Before opening the draft PR, run the nested-artifact guard again in `pre-pr`
+    mode when a positive numeric issue number is available:
+
+    ```bash
+    ./scripts/development-workflow/run-nested-artifact-guard.sh \
+      --mode pre-pr \
+      --issue "$ISSUE_NUMBER" \
+      --expected-branch "implementation-plan/[branch-slug]" \
+      --approved-base "$ARTIFACT_BASE_BRANCH"
+    ```
+
+    Treat `RESULT=missing_base`, `RESULT=blocked_duplicate`,
+    `RESULT=wrong_base`, or `RESULT=scan_failed` as a hard stop before PR
+    creation. A deliberate split requires explicit parent-run approval and
+    `--allow-split true` with the approved base recorded in the run summary.
+13. Open a **draft** PR targeting the plan artifact base branch with:
     - Title: `docs(plan): [feature-name]`
     - Body: summary of the approach, complexity estimate, key risks, link to plan and runbook
     - `Document Quality Gate` log from the pre-PR gate above
-13. Return the branch + PR details to the **Work Item Runner**
+    - For complex workflow decision-gate plans: the consistency matrix or a
+      pointer to it, using the canonical fields from the Document Quality Gate
+      above; for non-gate plans, the not-applicable rationale is enough
+14. Return the branch + PR details to the **Work Item Runner**
 
 ---
 
@@ -433,6 +470,12 @@ After the draft PR exists, the **Work Item Runner** owns the rest of the lifecyc
 - Run the automated reviewer loop and CI loop to completion
 - Apply `ready-for-human-review` and move the tracker to **Plan in Review** when the PR is human-ready
 - Stop only when the PR is waiting on human review / merge or the run has escalated
+
+For sweep, batch, helper-extraction, or pattern-completeness work, the plan must
+name the residual verification strategy and evidence source that implementation
+will use before `ready-for-human-review`. The plan should identify whether the
+evidence is occurrence/file counts, linked follow-up residuals, out-of-scope
+rationale, or apparent caller evidence for helper outputs.
 
 If this protocol is invoked **standalone** rather than through the Work Item Runner, hand off manually by following `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` from the newly opened draft PR.
 

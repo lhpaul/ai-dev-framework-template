@@ -7,6 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-07-19
+
+### Added
+
+- **Prevent false dependency dispatch context** (#1182): Add
+  spec-dispatch relationship context so orchestrators do not infer dependencies
+  from keyword overlap alone.
+- **Block Implementation Code in Plan PRs** (#1206): Add a
+  documentation-stage alignment gate that blocks spec and plan PR readiness when
+  implementation files are present.
+- **Add residual verification gate for sweep sub-items** (#1175): Require
+  broad-scope workflow items to record residual evidence before readiness.
+- **Auto-close graduation sub-items** (#1178): Reconcile delivered
+  integration-branch sub-items and parent epics during graduation closeout.
+- **Prevent unsanctioned nested agent PRs** (#1200): Add workflow guards that
+  stop duplicate nested-agent artifacts and reject missing or wrong PR base
+  context.
+- **Require ground-truth completion verification** (#1202): Add a completion
+  self-check helper and require terminal item reports to include live branch,
+  worktree, PR, CI, review, tracker, and runtime-claim evidence.
+
+### Changed
+
+- **Reviewer-loop retry history** (#1243): Preserve machine-readable
+  reviewer-loop iteration history so retrospectives can report exact retry
+  metrics.
+- **Decision gate consistency matrix** (#1242): Added consistency-matrix
+  evidence for complex workflow decision-gate documentation changes before PR
+  readiness.
+- **Require incremental checkpoint commits for item dispatch** (#1176): Adds
+  recoverability guidance requiring coherent checkpoint commits after completed
+  logical sub-parts of long-running item work.
+- **Clarify delegated merge terminal behavior** (#1177): Document that
+  merge-authorized runs continue from readiness through merge and cleanup while
+  merge-denied runs stop at human handoff.
+- **Fast Track blast-radius routing** (#1207): Add call-site volume and
+  external-system impact checks before Fast Track dispatch.
+- **Deprecate direct Cursor item-orchestrator path** (#1190): Clarify that
+  Cursor users start single-item work with `/run-item` while internal handoff
+  preserves configured subagent model routing.
+
+### Fixed
+
+- **Clarify pushed branch updates** (#1262): Require focused follow-up commits
+  for corrections after a branch is published for review, preserving shared
+  history without force-pushing.
+- **Preserve local reviewer overrides** (#1033): Apply the initiating
+  checkout's effective reviewer policy when review work resolves temporary
+  target-branch configuration, without exposing local settings.
+- **Clarify run-work batch proposal categories** (#1187): Label
+  informational, actionable-resume, proposed-batch, and held items separately
+  in run-work scan proposals.
+- **Delete remote implementation branches after merge** (#1185): Ensure
+  multi-stage item cleanup deletes merged implementation branches while treating
+  spec and plan branches as expected-persistent.
+- **Fix bounded-prelude acceptance criteria checkpoints** (#1184): Stop treating
+  populated Acceptance Criteria sections as standalone product checkpoint
+  signals while preserving checkpoints for unresolved, empty, or placeholder
+  criteria.
+- **Require worktree isolation for concurrent runners** (#1205): Require
+  concurrent mutating batch dispatches to use distinct isolated worktrees and
+  pre-mutation runner self-checks.
+- **Restore worktree CWD on checkpoint resume** (#1174): Add a resume preflight
+  so checkpointed worktree-isolated runs cannot continue from the main clone.
+- **Bounded prelude base selection** (#1204): Require explicit-list
+  integration labels to cover the whole item set and verify shared
+  integration branches before selecting `develop-<slug>`.
+- **Bounded prelude PR lookup**: avoid paginating every historical PR targeting
+  `develop` for unlabeled `/run-items` Backlog starts by using targeted
+  issue-head PR search before falling back to legacy lookup paths.
+- **Zeki overlay workflow helper fixes** (#1191, #1192, #1193, #1194): honor
+  configured GitHub Projects classification fields, default backlog priority to
+  Normal, fail closed when GitHub trackers lack merge-status automation, and
+  encode/dedupe run-epic PR base lookups.
+- **Run-work scan helper caveats** (#1198): parse router guardrails without a
+  PyYAML dependency and make batch-lane scan mode Bash 3.2 safe when no paths
+  are supplied.
+- **Haystack GitHub App review checks** (#1188): treat configured Haystack
+  check runs as reviewer-loop state instead of generic CI, with check-run
+  fallback/readback when CLI triage cannot return completed findings.
+
 ## [0.36.3] - 2026-07-08
 
 ### Fixed
@@ -1156,7 +1237,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.3...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.37.0...HEAD
+[0.37.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.3...v0.37.0
 [0.36.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.2...v0.36.3
 [0.36.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.1...v0.36.2
 [0.36.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.0...v0.36.1

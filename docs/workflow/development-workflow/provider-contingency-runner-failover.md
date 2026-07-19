@@ -56,6 +56,18 @@ Typical timeout thresholds for long agents are documented in [`agent-model-confi
 
 Tool-specific agent files (`.cursor/agents/`, `.claude/agents/`, `.codex/skills/`) share the same protocols — only the invocation surface changes.
 
+### Local reviewer overrides across temporary worktrees
+
+When reviewer execution moves into a temporary worktree, the review loop resolves
+the local reviewer-policy fields from the initiating checkout and applies that
+effective policy to the temporary target-branch configuration. It records only
+whether the policy source is `local_override` or `shared`; it does not copy,
+commit, or print local configuration contents or paths.
+
+If the initiating local policy cannot be resolved, the loop stops with an
+actionable error rather than silently choosing a different shared reviewer. When
+there is no local reviewer override, the shared-policy path remains unchanged.
+
 ---
 
 ## Resume checklist
@@ -90,7 +102,7 @@ Then re-invoke:
 
 - Do **not** apply `ready-for-human-review` when the PR lacks an “Automated Reviewer Loop Summary” (or equivalent) comment unless Step 7 was explicitly skipped (no platforms configured).
 - Do **not** remove `needs-fixes` without a clean reviewer loop and CI evidence.
-- Do **not** force-push or amend published PR commits during recovery unless a human explicitly approves.
+- Do **not** force-push or amend published PR commits during recovery. Follow the [published branch update rule](../../best-practices/2-version-control.md#published-branch-updates): preserve shared history and use focused follow-up commits; ask for human direction when no safe recovery path is clear.
 - Do **not** assume the latest bot comment is the only active blocker — audit all open review threads on the current HEAD.
 
 ---

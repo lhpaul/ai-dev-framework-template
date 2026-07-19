@@ -12,7 +12,7 @@
 | ----------------- | -------------------------------- | -------------------------------------------------------------------------------- |
 | **Full Pipeline** | `feature/[slug]` from `develop`  | Feature with approved spec + plan                                                |
 | **Refactor**      | `refactor/[slug]` from `develop` | Code restructuring with approved plan (no spec)                                  |
-| **Fast Track**    | `fix/[slug]` from `develop`      | Bug or simple change — clear scope, ≤3 files, no schema changes, no new patterns |
+| **Fast Track**    | `fix/[slug]` from `develop`      | Bug or simple change — clear scope, ≤3 files, no schema changes, no new patterns, no blast-radius gate blockers |
 | **Hotfix**        | `hotfix/[slug]` from `main`      | Critical production bug requiring immediate deployment                           |
 
 ---
@@ -30,6 +30,59 @@ This guard applies to all implementation paths, including ad-hoc investigations
 that begin as read-only questions and then become real code or documentation
 changes. The first mutating action must happen after branch/worktree isolation is
 in place.
+
+When `BATCH_CONTEXT=true`, the item-orchestrator must provide an isolation
+assignment with the expected worktree path, expected branch, artifact repo root,
+approved base branch, mutation classification, and `isolation: "worktree"`.
+Before the first file edit, branch-changing command, commit, push, PR mutation,
+tracker mutation, or stage handoff, verify that every field is present, that
+`pwd -P` equals the expected worktree path or begins with the expected worktree path followed by `/`, and that
+`git rev-parse --abbrev-ref HEAD` equals the expected branch. Stop before
+mutation on missing metadata, wrong CWD, main-repo CWD, or wrong branch. If
+mutation may already have occurred outside the assigned worktree, escalate for
+human inspection instead of resetting, restoring, stashing, committing, or
+deleting the suspect changes.
+
+## Incremental Checkpoint Commits
+
+For substantial or multi-part mutating implementation work, commit immediately
+after each completed logical sub-part so interrupted runs have a recoverable
+checkpoint. Do not intentionally batch all completed sub-parts into one
+end-of-run commit. Single-step work with no meaningful completed intermediate
+checkpoint may use one final commit. Never commit incomplete, failing, or
+incoherent edits only to satisfy this requirement.
+
+Checkpoint commits must stay scoped to the assigned item, branch, and worktree.
+They do not change review, CI, readiness-label, tracker, or merge gates. Before
+resuming an interrupted run, inspect the branch history, local worktree commits,
+and uncommitted edits, then prefer the latest committed checkpoint that
+represents a completed logical sub-part as the resume boundary.
+
+## Nested Artifact Guard
+
+When the work item has a positive numeric tracker issue number, run
+`scripts/development-workflow/run-nested-artifact-guard.sh` before creating a
+new workflow branch and again before opening the PR. Pass the parent-approved
+base branch with `--approved-base`; never infer a PR base silently inside a
+nested or spawned agent.
+
+- Use `--mode pre-create` immediately before branch creation.
+- Use `--mode pre-pr` after push and before `gh pr create`.
+- Treat `RESULT=missing_base`, `RESULT=blocked_duplicate`,
+  `RESULT=wrong_base`, or `RESULT=scan_failed` as a hard stop.
+- A deliberate split requires explicit parent-run approval plus
+  `--allow-split true`, with the approved base recorded in the run summary.
+
+## Scope-Residual Evidence Gate
+
+When the item title, body, spec, or plan describes sweep, batch, helper
+extraction, codebase-wide cleanup, numeric target counts, or pattern-based
+completeness, produce residual evidence before the PR can be labeled
+`ready-for-human-review`. Use `scripts/development-workflow/scope-residual-gate.sh`
+to classify the scope and verify structured evidence. If the helper returns
+`RESULT=block` or `RESULT=escalate`, keep the PR out of readiness, report the
+remaining residual groups, and either finish the work, link a follow-up issue, or
+record explicit out-of-scope rationale.
 
 ---
 
@@ -431,10 +484,34 @@ Complete all applicable checks:
    - Full Pipeline: confirm every spec acceptance criterion is implemented or explicitly documented as an approved deviation.
    - Refactor: confirm every implementation-plan acceptance criterion is addressed.
    - Fast Track Fix and Hotfix: confirm the diff addresses the issue body's stated problem and proposed fix.
+4. **Branch-stage discipline check**: implementation files belong on
+   implementation branches (`feature/*`, `fix/*`, `refactor/*`, or
+   `hotfix/*`), not on `spec/*` or `implementation-plan/*` branches. If the
+   current PR is a documentation-stage PR, run
+   `scripts/development-workflow/check-documentation-stage-alignment.sh --pr <pr_number>`
+   before readiness. A mismatch must be corrected by moving/removing
+   implementation files from the documentation-stage PR or escalated for a
+   human workflow-stage decision.
+5. **Complex workflow decision-gate matrix check**: when the implementation adds
+   or modifies a complex workflow decision gate, include consistency-matrix
+   evidence before opening or marking the PR ready. A complex workflow
+   decision-gate change is any workflow documentation or protocol change whose
+   behavior depends on multiple inputs, outcomes, next-action branches, status
+   labels, exit states, examples, or mirrored workflow surfaces. Matrix evidence
+   must identify the gate inputs, allowed outcomes, required next actions,
+   mirror surfaces, and examples when examples are part of the changed surface.
+   If the implementation does not change decision-gate behavior, record a short
+   not-applicable rationale when the PR evidence format asks for this check. If
+   an expected input, outcome, example, or mirror surface is marked not
+   applicable, include the rationale in the matrix row.
 
 If the implementation includes any test script, test function, or validation harness, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) also applies. The pre-submission pass reviews the broader PR diff; it does not replace the harness-specific checklist from #614.
 
-Append a brief self-review log to the draft PR description. If all checks are clean, one line is enough, for example: `Pre-submission self-review: stale markers — none, caller consistency — verified, coverage — all acceptance criteria addressed.` If the pass found and fixed a gap, note the finding and the commit that addressed it.
+Append a brief self-review log to the draft PR description. If all checks are
+clean, one line is enough, for example: `Pre-submission self-review: stale
+markers - none, caller consistency - verified, coverage - all acceptance
+criteria addressed, complex gate matrix - not applicable.` If the pass found
+and fixed a gap, note the finding and the commit that addressed it.
 
 ## Pre-PR Tracking Item Gate
 
@@ -552,6 +629,7 @@ The PR opened at the end of this path must target `develop-<slug>` when the labe
 
 ```bash
 BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
+ARTIFACT_REPO_ROOT="${ARTIFACT_REPO_ROOT:-$(pwd)}"
 EXPECTED_SHA=$(git rev-parse "origin/${BASE_BRANCH}") \
   || { echo "ERROR: git rev-parse origin/${BASE_BRANCH} failed — verify the remote ref exists." >&2; exit 1; }
 ACTUAL_SHA=$(git rev-parse HEAD) \
@@ -562,12 +640,23 @@ if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
   exit 1
 fi
 echo "Pre-branch HEAD check passed: HEAD matches origin/${BASE_BRANCH}"
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-create \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "feature/[branch-slug]" \
+    --approved-base "$BASE_BRANCH" \
+    --repo-root "$ARTIFACT_REPO_ROOT"
+fi
 git checkout -b feature/[branch-slug]   # or fix/[branch-slug], refactor/[branch-slug]
 ```
 
 If the check fails, do not proceed. Report the mismatch to the caller so the working tree can be reset to the correct base before retrying.
+In `workflow_hub` mode, set `ARTIFACT_REPO_ROOT` to the selected product
+checkout for implementation-owned branches and PRs; hub-owned spec and plan
+artifacts use the hub checkout.
 
-**Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, confirm your working directory is inside the worktree path, not the main repo root (run `pwd` and compare). See the "Critical: Worktree Git Discipline" block in Protocol 91 Step 3 for the full pre-operation checklist.
+**Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, complete the pre-mutation isolation self-check: confirm the handoff includes `isolation: "worktree"`, compare `pwd -P` with the expected worktree path, and verify the active branch matches the expected branch. See the "Pre-mutation isolation self-check" and "Critical: Worktree Git Discipline" blocks in Protocol 91 Step 3 for the full checklist.
 
 ### Step 4: Implement
 
@@ -719,7 +808,8 @@ description before running `gh pr create`.
 
 **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
-Open a **draft** PR targeting `develop` with:
+Open a **draft** PR targeting the approved base branch (normally `develop`,
+or `develop-<slug>` for integration-branch items) with:
 
 - **Title**: `feat([scope]): [feature-name]`
 - **Description**:
@@ -731,34 +821,47 @@ Open a **draft** PR targeting `develop` with:
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
 
-Before running `gh pr create`, verify that the current branch was actually cut from `develop` and confirm the intended base matches:
+Before running `gh pr create`, verify that the current branch was actually cut from the approved base and confirm the intended base matches:
 
 ```bash
-# 1. Verify the current branch descends from origin/develop (not from main or another branch)
-if ! git merge-base --is-ancestor origin/develop HEAD; then
-  echo "ERROR: Current branch does not descend from origin/develop. Verify the branch was cut from develop before opening the PR."
+BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
+ARTIFACT_REPO_ROOT="${ARTIFACT_REPO_ROOT:-$(pwd)}"
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-pr \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "feature/[branch-slug]" \
+    --approved-base "$BASE_BRANCH" \
+    --repo-root "$ARTIFACT_REPO_ROOT"
+fi
+# 1. Verify the current branch descends from the approved base (not from main or another branch)
+if ! git merge-base --is-ancestor "origin/${BASE_BRANCH}" HEAD; then
+  echo "ERROR: Current branch does not descend from origin/${BASE_BRANCH}. Verify the branch was cut from ${BASE_BRANCH} before opening the PR."
   exit 1
 fi
-echo "Base-branch guard passed: branch descends from origin/develop"
+echo "Base-branch guard passed: branch descends from origin/${BASE_BRANCH}"
 ```
 
 **Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
 
 ```bash
-gh pr create --draft --base develop --title "feat([scope]): [feature-name]" --body "..."
+gh pr create --draft --base "$BASE_BRANCH" --title "feat([scope]): [feature-name]" --body "..."
 PR_NUMBER=$(gh pr view --json number -q '.number')
 
-# Assert the opened PR targets develop
+# Assert the opened PR targets the approved base
 ACTUAL_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q '.baseRefName')
-if [ "$ACTUAL_BASE" != "develop" ]; then
-  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
-  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+if [ "$ACTUAL_BASE" != "$BASE_BRANCH" ]; then
+  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of '$BASE_BRANCH'. Closing the malformed PR."
+  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against '$BASE_BRANCH'."
   exit 1
 fi
 echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
 ```
 
-**Important**: Always use `--base develop` to explicitly target the `develop` branch. This prevents accidental PR creation to `main` or other branches. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
+**Important**: Always use `--base "$BASE_BRANCH"` to explicitly target the
+approved base branch. This prevents accidental PR creation to `main`, `develop`,
+or another branch that was not approved for the item. The pre-create guard and
+post-create assertion above are the enforcement mechanism — do not skip them.
 
 ### Step 9: Handoff to Work Item Runner
 
@@ -912,6 +1015,7 @@ git pull origin develop
 
 ```bash
 BASE_BRANCH="develop"
+ARTIFACT_REPO_ROOT="${ARTIFACT_REPO_ROOT:-$(pwd)}"
 EXPECTED_SHA=$(git rev-parse "origin/${BASE_BRANCH}") \
   || { echo "ERROR: git rev-parse origin/${BASE_BRANCH} failed — verify the remote ref exists." >&2; exit 1; }
 ACTUAL_SHA=$(git rev-parse HEAD) \
@@ -922,12 +1026,20 @@ if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
   exit 1
 fi
 echo "Pre-branch HEAD check passed: HEAD matches origin/${BASE_BRANCH}"
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-create \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "refactor/[branch-slug]" \
+    --approved-base "$BASE_BRANCH" \
+    --repo-root "$ARTIFACT_REPO_ROOT"
+fi
 git checkout -b refactor/[branch-slug]
 ```
 
 If the check fails, do not proceed. Report the mismatch to the caller so the working tree can be reset before retrying.
 
-**Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, confirm your working directory is inside the worktree path, not the main repo root (run `pwd` and compare). See the "Critical: Worktree Git Discipline" block in Protocol 91 Step 3 for the full pre-operation checklist.
+**Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, complete the pre-mutation isolation self-check: confirm the handoff includes `isolation: "worktree"`, compare `pwd -P` with the expected worktree path, and verify the active branch matches the expected branch. See the "Pre-mutation isolation self-check" and "Critical: Worktree Git Discipline" blocks in Protocol 91 Step 3 for the full checklist.
 
 3. Implement following the plan order. Follow `docs/best-practices/` for all code written.
 
@@ -1031,7 +1143,10 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
 9. **Pre-Submission Self-Review Pass (mandatory — before opening the PR)**: Complete the [Pre-Submission Self-Review Pass](#pre-submission-self-review-pass) using `git diff develop...HEAD` for normal `develop`-target work, or `git diff develop-<slug>...HEAD` for integration-branch items. For Refactor work, the coverage check must confirm every implementation-plan acceptance criterion is addressed. This pass complements, and does not replace, the [Test Harness Coverage Checklist](#test-harness-coverage-checklist) when a test harness is involved. Add the self-review log to the PR description.
 10. **Pre-PR Tracking Item Gate (mandatory — before opening the PR)**: Complete the [Pre-PR Tracking Item Gate](#pre-pr-tracking-item-gate). If no tracker item exists, create or accept a retroactive backlog item and reference it in the PR description before running `gh pr create`.
 11. **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
-12. Open a **draft** PR targeting `develop` with refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim — that path uses `feat(...)` and a spec link):
+12. Open a **draft** PR targeting the approved base branch (normally `develop`,
+    or `develop-<slug>` for integration-branch items) with
+    refactor-appropriate metadata (do **not** reuse Path 1 Step 8 verbatim —
+    that path uses `feat(...)` and a spec link):
     - **Title**: `refactor([scope]): [short description]`
     - **Description**:
       - What was refactored and why
@@ -1043,31 +1158,43 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
 
 ```bash
-# 1. Verify the current branch descends from origin/develop
-if ! git merge-base --is-ancestor origin/develop HEAD; then
-  echo "ERROR: Current branch does not descend from origin/develop. Verify the branch was cut from develop before opening the PR."
+BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
+ARTIFACT_REPO_ROOT="${ARTIFACT_REPO_ROOT:-$(pwd)}"
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-pr \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "refactor/[branch-slug]" \
+    --approved-base "$BASE_BRANCH" \
+    --repo-root "$ARTIFACT_REPO_ROOT"
+fi
+# 1. Verify the current branch descends from the approved base
+if ! git merge-base --is-ancestor "origin/${BASE_BRANCH}" HEAD; then
+  echo "ERROR: Current branch does not descend from origin/${BASE_BRANCH}. Verify the branch was cut from ${BASE_BRANCH} before opening the PR."
   exit 1
 fi
-echo "Base-branch guard passed: branch descends from origin/develop"
+echo "Base-branch guard passed: branch descends from origin/${BASE_BRANCH}"
 ```
 
 **Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
 
 ```bash
-gh pr create --draft --base develop --title "refactor([scope]): [short description]" --body "..."
+gh pr create --draft --base "$BASE_BRANCH" --title "refactor([scope]): [short description]" --body "..."
 PR_NUMBER=$(gh pr view --json number -q '.number')
 
-# Assert the opened PR targets develop
+# Assert the opened PR targets the approved base
 ACTUAL_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q '.baseRefName')
-if [ "$ACTUAL_BASE" != "develop" ]; then
-  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
-  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+if [ "$ACTUAL_BASE" != "$BASE_BRANCH" ]; then
+  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of '$BASE_BRANCH'. Closing the malformed PR."
+  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against '$BASE_BRANCH'."
   exit 1
 fi
 echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
 ```
 
-**Important**: Always use `--base develop` to explicitly target the `develop` branch. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
+**Important**: Always use `--base "$BASE_BRANCH"` to explicitly target the
+approved base branch. The pre-create guard and post-create assertion above are
+the enforcement mechanism — do not skip them.
 
 12. Hand off to the Work Item Runner with the same lifecycle expectations as Path 1 Step 9 (internal review gate, automated reviewer loop, CI, labels). **Label derivation rule**: `refactor/*` branches always require `ready-for-regression` based on branch prefix, not content type. See `91-orchestrate-work-protocol.md` Step 8a for the full branch-prefix-to-label table. See `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` and `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`.
 
@@ -1082,15 +1209,17 @@ echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
 - [ ] No new database schema migrations
 - [ ] No new architectural patterns
 - [ ] Human provided a clear, self-contained brief
-- [ ] **No multi-layer scope signals** — the issue title, body, and any linked spec/plan do not contain concrete signals that the change spans more than one architectural layer (see "Cross-layer scope check" below)
+- [ ] **Fast Track blast-radius gate passed** — the issue title, body, recent comments, and any linked spec/plan show no concrete multi-layer signal, an external-system result of no signal found, primary-entity ambiguity does not block a defensible routing decision, and either no high call-site volume for an identifiable primary entity or an explicit human override for high call-site volume
 
-**Cross-layer scope check**: Apply the deterministic decision rule in
-[`91-orchestrate-work-protocol.md` Step 2 — Cross-layer scope check](./91-orchestrate-work-protocol.md)
-before selecting Fast Track. That section is the authoritative definition of multi-layer signals, the inspection scope, and the routing decision.
+**Fast Track blast-radius gate**: Apply the deterministic decision rule in
+[`91-orchestrate-work-protocol.md` Step 2 — Fast Track blast-radius gate](./91-orchestrate-work-protocol.md)
+before selecting Fast Track. That section is the authoritative definition of multi-layer signals, primary-entity identification, non-test call-site volume, external-system impact, thresholds, summary evidence, and routing decisions.
 
-**If any criterion fails**: Use the Full Pipeline instead.
+**If any criterion fails**: Follow the Protocol 91 gate outcome. That may mean
+using the Full Pipeline, asking for clarification, or requiring a tracked
+pre-flight follow-up before any later Fast Track dispatch.
 
-**If scope expands during implementation**: Stop immediately. Report to the human. Do not silently expand scope.
+**If scope expands during implementation**: Stop immediately. Report to the human. Do not silently expand scope. Also stop if implementation discovers high call-site volume or external-system impact that was missed during routing.
 
 ### Step 1: Read Brief
 
@@ -1165,6 +1294,7 @@ git checkout develop && git pull origin develop
 
 ```bash
 BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
+ARTIFACT_REPO_ROOT="${ARTIFACT_REPO_ROOT:-$(pwd)}"
 EXPECTED_SHA=$(git rev-parse "origin/${BASE_BRANCH}") \
   || { echo "ERROR: git rev-parse origin/${BASE_BRANCH} failed — verify the remote ref exists." >&2; exit 1; }
 ACTUAL_SHA=$(git rev-parse HEAD) \
@@ -1175,6 +1305,14 @@ if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
   exit 1
 fi
 echo "Pre-branch HEAD check passed: HEAD matches origin/${BASE_BRANCH}"
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-create \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "fix/[branch-slug]" \
+    --approved-base "$BASE_BRANCH" \
+    --repo-root "$ARTIFACT_REPO_ROOT"
+fi
 git checkout -b fix/[branch-slug]
 ```
 
@@ -1182,7 +1320,7 @@ If the check fails, do not proceed. Report the mismatch to the caller so the wor
 
 The PR opened at the end of this path must target `develop-<slug>` when the label is present. If the integration branch does not exist yet, the orchestrator should have created it before dispatching this protocol — do not create it here; instead, stop and inform the Work Item Runner.
 
-**Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, confirm your working directory is inside the worktree path, not the main repo root (run `pwd` and compare). See the "Critical: Worktree Git Discipline" block in Protocol 91 Step 3 for the full pre-operation checklist.
+**Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout develop` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, complete the pre-mutation isolation self-check: confirm the handoff includes `isolation: "worktree"`, compare `pwd -P` with the expected worktree path, and verify the active branch matches the expected branch. See the "Pre-mutation isolation self-check" and "Critical: Worktree Git Discipline" blocks in Protocol 91 Step 3 for the full checklist.
 
 ### Step 4: Implement
 
@@ -1280,36 +1418,51 @@ description before running `gh pr create`.
 
 **Board membership check (mandatory — before opening the PR)**: Before running `gh pr create`, call `ensure_on_project_board <issue_number> "In Development"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "In Development". On any API failure, the function logs a warning and continues — this step must never block the PR creation.
 
-Open a **draft** PR targeting `develop` using the same structure as Path 1 `### Step 8: Open PR (Draft)`, but with a **`fix(...)`** title and a fix-focused description (omit spec/plan links when none exist):
+Open a **draft** PR targeting the approved base branch using the same structure
+as Path 1 `### Step 8: Open PR (Draft)`, but with a **`fix(...)`** title and a
+fix-focused description (omit spec/plan links when none exist):
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
 
 ```bash
-# 1. Verify the current branch descends from origin/develop
-if ! git merge-base --is-ancestor origin/develop HEAD; then
-  echo "ERROR: Current branch does not descend from origin/develop. Verify the branch was cut from develop before opening the PR."
+BASE_BRANCH="develop"  # or develop-<slug> when an integration-branch label is present
+ARTIFACT_REPO_ROOT="${ARTIFACT_REPO_ROOT:-$(pwd)}"
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-pr \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "fix/[branch-slug]" \
+    --approved-base "$BASE_BRANCH" \
+    --repo-root "$ARTIFACT_REPO_ROOT"
+fi
+# 1. Verify the current branch descends from the approved base
+if ! git merge-base --is-ancestor "origin/${BASE_BRANCH}" HEAD; then
+  echo "ERROR: Current branch does not descend from origin/${BASE_BRANCH}. Verify the branch was cut from ${BASE_BRANCH} before opening the PR."
   exit 1
 fi
-echo "Base-branch guard passed: branch descends from origin/develop"
+echo "Base-branch guard passed: branch descends from origin/${BASE_BRANCH}"
 ```
 
 **Post-create base-branch assertion (mandatory — run immediately after `gh pr create`)**:
 
 ```bash
-gh pr create --draft --base develop --title "fix([scope]): [description]" --body "..."
+gh pr create --draft --base "$BASE_BRANCH" --title "fix([scope]): [description]" --body "..."
 PR_NUMBER=$(gh pr view --json number -q '.number')
 
-# Assert the opened PR targets develop
+# Assert the opened PR targets the approved base
 ACTUAL_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q '.baseRefName')
-if [ "$ACTUAL_BASE" != "develop" ]; then
-  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of 'develop'. Closing the malformed PR."
-  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against develop."
+if [ "$ACTUAL_BASE" != "$BASE_BRANCH" ]; then
+  echo "ERROR: PR was created with base '$ACTUAL_BASE' instead of '$BASE_BRANCH'. Closing the malformed PR."
+  gh pr close "$PR_NUMBER" --comment "Closed: PR was opened against wrong base branch '$ACTUAL_BASE'. Will reopen against '$BASE_BRANCH'."
   exit 1
 fi
 echo "Post-create assertion passed: PR base is '$ACTUAL_BASE'"
 ```
 
-**Important**: Always use `--base develop` to explicitly target the `develop` branch. This prevents accidental PR creation to `main` or other branches. The pre-create guard and post-create assertion above are the enforcement mechanism — do not skip them.
+**Important**: Always use `--base "$BASE_BRANCH"` to explicitly target the
+approved base branch. This prevents accidental PR creation to `main`, `develop`,
+or another branch that was not approved for the item. The pre-create guard and
+post-create assertion above are the enforcement mechanism — do not skip them.
 
 ### Step 9: Handoff to Work Item Runner
 
@@ -1435,12 +1588,20 @@ if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
   exit 1
 fi
 echo "Pre-branch HEAD check passed: HEAD matches origin/main"
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-create \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "hotfix/[branch-slug]" \
+    --approved-base main \
+    --repo-root "${ARTIFACT_REPO_ROOT:-$(pwd)}"
+fi
 git checkout -b hotfix/[branch-slug]
 ```
 
 If the check fails, do not proceed. Report the mismatch to the caller so the working tree can be reset before retrying.
 
-**Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout main` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, confirm your working directory is inside the worktree path, not the main repo root (run `pwd` and compare). See the "Critical: Worktree Git Discipline" block in Protocol 91 Step 3 for the full pre-operation checklist.
+**Worktree context (`BATCH_CONTEXT=true`)**: If this step runs inside an isolated worktree created by the item-orchestrator (Protocol 91 Step 3), skip the `git checkout main` / `git checkout -b` commands above — the worktree was already created on the correct branch. Run only `git fetch origin` if you need the latest remote refs. Before running any git state-changing command, complete the pre-mutation isolation self-check: confirm the handoff includes `isolation: "worktree"`, compare `pwd -P` with the expected worktree path, and verify the active branch matches the expected branch. See the "Pre-mutation isolation self-check" and "Critical: Worktree Git Discipline" blocks in Protocol 91 Step 3 for the full checklist.
 
 ### Step 4: Implement
 
@@ -1570,6 +1731,14 @@ Open a **draft** PR targeting `main` by adapting Path 1 `### Step 8: Open PR (Dr
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
 
 ```bash
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-pr \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "hotfix/[branch-slug]" \
+    --approved-base main \
+    --repo-root "${ARTIFACT_REPO_ROOT:-$(pwd)}"
+fi
 # 1. Verify the current branch descends from origin/main (hotfixes are cut from main)
 if ! git merge-base --is-ancestor origin/main HEAD; then
   echo "ERROR: Current branch does not descend from origin/main. Verify the branch was cut from main before opening the hotfix PR."
@@ -1608,6 +1777,14 @@ The `hotfix/*` branch is **not** reused for the backport. Create a dedicated bac
 
 ```bash
 git fetch origin
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-create \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "backport/hotfix/[slug]" \
+    --approved-base develop \
+    --repo-root "${ARTIFACT_REPO_ROOT:-$(pwd)}"
+fi
 git checkout -b backport/hotfix/[slug] origin/main
 ```
 
@@ -1616,6 +1793,14 @@ Open a PR targeting `develop`:
 **Pre-PR-create base-branch guard (mandatory)**:
 
 ```bash
+if [ -n "${ISSUE_NUMBER:-}" ]; then
+  ./scripts/development-workflow/run-nested-artifact-guard.sh \
+    --mode pre-pr \
+    --issue "$ISSUE_NUMBER" \
+    --expected-branch "backport/hotfix/[slug]" \
+    --approved-base develop \
+    --repo-root "${ARTIFACT_REPO_ROOT:-$(pwd)}"
+fi
 # Verify the backport branch descends from origin/main (it was cut from origin/main post-merge)
 if ! git merge-base --is-ancestor origin/main HEAD; then
   echo "ERROR: Backport branch does not descend from origin/main. Verify the branch was created from origin/main after the hotfix merge."

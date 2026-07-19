@@ -28,6 +28,10 @@ If the agent does not have direct tracker access, it must ask the human to paste
 
 - **Prefer recency**: newer comments override older ones if they conflict.
 - **Prefer explicit decisions**: “Decision: …”, “We will …”, “Out of scope: …” are high-signal.
+- **Preserve confirmed design decisions for spec dispatch**: comments with
+  explicit human correction, approval, clarification, or decision language can
+  feed `spec-dispatch-context.sh` so spec writers receive confirmed product
+  constraints before drafting begins.
 - **Don’t guess**: if comments introduce ambiguity or contradict the spec/plan, **stop and ask** for clarification.
 - **Don’t silently discard** tracker context: if it changes scope/requirements, call it out explicitly in the stage output (spec/plan/PR).
 
@@ -44,7 +48,7 @@ If the agent does not have direct tracker access, it must ask the human to paste
 - **Plan Ready (Refactor)**: if comments contain new constraints after the plan was written, flag the discrepancy and request a plan update before proceeding. There is no spec — the plan and work item brief are the authoritative sources.
 - **In Development (Full Pipeline)**: scan recent comments for post-plan scope changes. If anything conflicts with the spec or plan, stop and request an update before coding.
 - **In Development (Refactor)**: scan recent comments for post-plan scope changes. If anything conflicts with the plan, stop and request an update before coding. There is no spec for refactor items — the plan and work item brief are the authoritative sources.
-- **In Development (Fast Track)**: the work item description/comments can be the brief; confirm scope is bounded and stop if it expands beyond the brief.
+- **In Development (Fast Track)**: the work item description/comments can be the brief; confirm the Protocol 91 Fast Track blast-radius gate passed and stop if scope expands, high call-site volume appears, or external-system impact is discovered after dispatch.
 
 ---
 

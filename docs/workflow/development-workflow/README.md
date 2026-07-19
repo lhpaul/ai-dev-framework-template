@@ -6,6 +6,11 @@ The goal of this workflow is simple: AI agents should do most of the execution w
 
 The workflow is designed around a persistent execution contract. Once a run starts, it should keep advancing the work until it reaches a real stopping point: the pull request is ready for human review, a human decision is required, a dependency blocks progress, or an automated loop escalates after retry or timeout limits. Opening a branch, opening a PR, or finishing one sub-step is not enough by itself.
 
+For substantial or multi-part mutating item work, the workflow also requires
+incremental checkpoint commits after each completed logical sub-part. This gives
+interrupted runs a recoverable boundary without changing review, CI, readiness,
+tracker, or merge gates.
+
 ---
 
 ## Why This Workflow Exists
@@ -41,6 +46,13 @@ The process moves through the stages below in order. The point of this section i
 ### Backlog
 
 The backlog is where work starts. A work item exists here before the team commits to a solution. This stage is about priority, timing, dependencies, and clarity of the request.
+
+Before a Backlog item enters spec writing, orchestration builds a conservative
+spec-dispatch context when possible. Shared terminology with another in-scope
+item is not enough to create a dependency: the workflow records relationships as
+`Dependent`, `Orthogonal`, or `Unclear`, preserves human-confirmed design
+decisions from tracker comments or current-session context, and stops for a
+human decision when ambiguity could change product scope.
 
 ### Spec
 
@@ -99,6 +111,13 @@ For the three authored artifacts in the middle of the workflow, the same review 
 After implementation is code-review ready, the workflow can still run a smoke test as a final validation checkpoint. That checkpoint is intentionally different from the spec, plan, and implementation review loops: it produces a pass/fail validation result, not another reviewed artifact PR.
 
 That repeated pattern is one of the main reasons the workflow scales well with AI assistance: it creates a predictable loop for authored artifacts without pretending every checkpoint has the same review semantics.
+
+For complex workflow decision-gate documentation changes, the PR evidence must
+include a consistency matrix before human-readiness is claimed. The matrix lists
+the gate inputs, allowed outcomes, required next actions, mirror surfaces, and
+examples when examples are part of the changed surface. Simple documentation
+changes that do not alter decision-gate behavior can record a short
+not-applicable rationale instead.
 
 ---
 
@@ -200,7 +219,7 @@ The sections below keep this document usable as a master reference after the nar
 | Review gate (spec / plan / code) | Native review against `REVIEW.md`                                 | `/review-spec`, `/review-implementation-plan`, `/review-code` | Native review against `REVIEW.md`  | `REVIEW.md` plus compatibility wrappers in `docs/workflow/development-workflow/protocols/`                                                                                                                |
 | Smoke test                       | `smoke-tester` agent                                              | `/smoke-tester`                                               | —                                  | `docs/workflow/development-workflow/protocols/04-smoke-test-protocol.md`                                                                                                                                  |
 | Run reviewer loop                | `/run-reviewer-loop` command (or `automated-reviewer-loop` agent) | `/run-reviewer-loop`                                          | `/run-reviewer-loop` alias or `workflow-reviewer-loop` skill     | `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`                                                                                                                     |
-| Advance one item                 | `/run-item` command (or `item-orchestrator` agent)                | `/run-item`                                                   | `/run-item` alias or `workflow-item-orchestrator` skill            | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — `/run-item-work` is a deprecated alias |
+| Advance one item                 | `/run-item` command (or `item-orchestrator` agent)                | `/run-item`                                                   | `/run-item` alias or `workflow-item-orchestrator` skill            | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — `/run-item-work` is a deprecated alias; Cursor `item-orchestrator` is an internal handoff role, not the normal entrypoint |
 | Execute bounded batch            | `/run-items`                                                      | `/run-items`                                                  | `/run-items` alias                                               | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — Protocol 90 `explicit_list` mode; supply two or more item targets; targets `develop` directly |
 | Resolve epic scope / delegated gate (alias) | `/run-epic`                                           | `/run-epic`                                                   | `/run-epic` alias                                                | `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md`                                                                                                                                    |
 | Scan portfolio (read-only)       | `/run-work` command (or `orchestrator` agent)                     | `/run-work`                                                   | `/run-work` alias or `workflow-orchestrator` skill               | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — read-only scan; proposes batch options; single/epic targets redirect to `/run-item` / `/run-epic` (Protocol 96) |
@@ -219,7 +238,7 @@ Codex skills are stored in `.agents/skills/` for repo-scoped Codex discovery, wi
 ./scripts/development-workflow/install-codex-skills.sh
 ```
 
-These skills are thin wrappers around the same workflow protocols used by the other tools. Command-style aliases such as `/add-backlog-item`, `/run-work`, `/run-item`, `/run-items`, `/run-item-work` (deprecated alias), `/run-epic`, `/run-reviewer-loop`, `/batch-merge`, `/post-merge-cleanup`, `/prepare-release`, `/graduate-development`, `/retrospective`, and `/sync-template` map to the canonical workflow skills or protocols so Codex can be used with names similar to Claude Code commands. `/run-item` and `/run-epic` are the primary bounded commands (shared prelude + Protocol 91 or 95). `/run-item` prints `policyRecommendation.confirmationSummary` before mutation and records an invocation-scoped item/policy binding after explicit autonomy flags or human acceptance so the same selected policy is not re-prompted. `/run-items` is the bounded multi-item batch execute command (Protocol 90 `explicit_list` mode — two or more items). `/run-work` is the read-only portfolio scan entrypoint via `run-work-router.sh` (Protocol 96) — it proposes batch options but does not execute; single/epic targets redirect to `/run-item` / `/run-epic`. `/run-item-work` remains a deprecated alias identical to `/run-item`.
+These skills are thin wrappers around the same workflow protocols used by the other tools. Command-style aliases such as `/add-backlog-item`, `/run-work`, `/run-item`, `/run-items`, `/run-item-work` (deprecated alias), `/run-epic`, `/run-reviewer-loop`, `/batch-merge`, `/post-merge-cleanup`, `/prepare-release`, `/graduate-development`, `/retrospective`, and `/sync-template` map to the canonical workflow skills or protocols so Codex can be used with names similar to Claude Code commands. `/run-item` and `/run-epic` are the primary bounded commands (shared prelude + Protocol 91 or 95). `/run-item` prints `policyRecommendation.confirmationSummary` before mutation and records an invocation-scoped item/policy binding after explicit autonomy flags or human acceptance so the same selected policy is not re-prompted. `/run-items` is the bounded multi-item batch execute command (Protocol 90 `explicit_list` mode — two or more items). `/run-work` is the read-only portfolio scan entrypoint via `run-work-router.sh` (Protocol 96) — it proposes batch options but does not execute; single/epic targets redirect to `/run-item` / `/run-epic`. In no-target scan mode, `/run-work` separates `INFORMATIONAL - not actionable in this proposal`, `ACTIONABLE RESUME - can advance now`, `PROPOSED BATCH - your decision`, and `HELD - not included in proposed batch` records; approval or the recommended `/run-items` command applies only to proposed-batch records. `/run-item-work` remains a deprecated alias identical to `/run-item`.
 
 ### Workflow Capabilities And Fallbacks
 
@@ -280,7 +299,7 @@ not apply setup, sync files, or change runtime behavior.
 | Release             | `release/v[X.Y.Z]`           | `develop`   |
 | Development integration | `develop-<slug>`         | `develop`   |
 
-**Development integration branches** (`develop-<slug>`) are staging branches that collect all sub-item PRs for a multi-item grouped development. They are created by the orchestrator and deleted after the graduation PR merges to `develop`. Single-item developments do not use integration branches. See `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`.
+**Development integration branches** (`develop-<slug>`) are staging branches that collect all sub-item PRs for a multi-item grouped development. They are created by the orchestrator and deleted after the graduation PR merges to `develop`; graduation closeout then reconciles delivered sub-items and the parent epic to terminal tracker state. Single-item developments do not use integration branches. See `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`.
 
 Slug format:
 
@@ -366,11 +385,11 @@ Use it only when all of the following are true:
 - No new architectural pattern is being introduced.
 - No database migration is involved.
 - The human brief is self-contained.
-- No multi-layer scope signals are present — the issue title, body, and any linked spec/plan do not contain concrete signals that the change spans more than one architectural layer (e.g., database schema + API endpoint + UI component, or data pipeline + storage + mapper + presentation). See the cross-layer scope check in `91-orchestrate-work-protocol.md` Step 2 for the decision rule.
+- The Fast Track blast-radius gate has no blockers. The issue title, body, recent comments, and any linked spec/plan must show no concrete multi-layer signal, an external-system result of no signal found, no primary-entity ambiguity that blocks a defensible routing decision, and either no high call-site volume for an identifiable primary entity or an explicit human override for high call-site volume. Cross-layer scope checks architectural spread; call-site volume checks propagation breadth even when a change stays within one or two layers. See the Fast Track blast-radius gate in `91-orchestrate-work-protocol.md` Step 2 for the decision rule.
 
 Path: `fix/[slug]` from `develop` -> implement -> review gate -> smoke test as needed -> merge.
 
-If the change turns out to be larger than expected, or if multi-layer scope signals are discovered during implementation, stop and expand back into the normal staged workflow instead of silently widening scope.
+If the change turns out to be larger than expected, or if multi-layer scope signals, high call-site volume, or external-system impact are discovered during implementation, stop and expand back into the normal staged workflow instead of silently widening scope.
 
 #### Hotfix
 
@@ -396,6 +415,12 @@ Use the following labels consistently when label tooling is available:
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `ready-for-human-review` | Internal review is clean, configured automated reviewers are clean or skipped, CI is green, and the PR is ready for a human reviewer. |
 | `needs-fixes`            | CI is failing, blocking automated feedback exists, or human-requested changes are still unresolved.                                   |
+
+When the selected policy grants merge authority (`merge_granted`), a
+`ready-for-human-review` PR is not terminal; the runner continues through the
+delegated merge gate, repository merge path, cleanup, and tracker verification.
+When merge authority is absent (`merge_denied`), readiness is the terminal
+human handoff and the runner reports `ready_human_merge` without merging.
 
 Opening a PR is not a terminal condition. A workflow run should continue until the PR is ready for a human checkpoint or the process escalates.
 

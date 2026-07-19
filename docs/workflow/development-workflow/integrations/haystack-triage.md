@@ -8,15 +8,16 @@ For information about Haystack's local git hooks (truncation checker, LLM_RULES.
 
 ## Overview
 
-`haystack-reviewer.sh` wraps the `haystack triage <PR> --json` CLI call and emits the standard key-value output contract consumed by `pr-review-loop.sh`. Teams that declare `haystack` in `review.on_ready.github` gain a review platform that produces actionable, file-anchored findings with fix prompts — without requiring any additional GitHub App installation.
+`haystack-reviewer.sh` wraps the `haystack triage <PR> --json` CLI call and emits the standard key-value output contract consumed by `pr-review-loop.sh`. Teams that declare `haystack` in `review.on_ready.github` gain a review platform that produces actionable, file-anchored findings with fix prompts. When the Haystack GitHub App is installed, the same reviewer state may also appear as a `Haystack / Review` check run on the PR.
 
 Key properties:
 
 - **Poll-retry on pending**: When `haystack triage` returns `status=pending` (analysis still in progress), `haystack-reviewer.sh` waits `HAYSTACK_POLL_INTERVAL` seconds (default: 15) and retries automatically until the analysis completes or the overall `HAYSTACK_REVIEWER_TIMEOUT` budget is exhausted. This eliminates the timing-gap false-negative where the reviewer loop ran within the first 2–4 minutes of a PR push and silently skipped findings.
+- **GitHub App check-run fallback**: When CLI triage is unavailable, times out, or stays pending past the timeout budget, `haystack-reviewer.sh` reads the latest `Haystack / Review` check run for the PR head. The check run is used as fallback/readback evidence; CLI triage remains the preferred source because it exposes richer finding details and fix prompts.
 - **Policy-verdict visibility**: After triage completes, `haystack-reviewer.sh` also reads `haystack pr-status <PR> --json`. When Haystack reports `needsHumanReview: true` or `analysisVerdict: "needs-review"`, the reviewer loop keeps the result non-blocking if there are no blocking findings but displays `haystack (needs-review: policy)` in the PR summary instead of `haystack (clean)`. The summary also records the Haystack bucket, `needsHumanReview`, and a disposition such as `blocking`, `policy-human-review`, `advisory-only`, or `good-to-merge`.
 - **No per-hour rate cap**: Unlike some hosted review services, Haystack triage is not subject to hourly review limits (as of the time of writing).
-- **Graceful degradation**: If the `haystack` CLI is absent or unauthenticated, the reviewer exits with `UNAVAILABLE` and the review loop continues with the remaining configured platforms.
-- **No GitHub App required**: This integration uses the CLI only. Haystack does not post inline GitHub review threads in this MVP — findings are reported locally via the key-value output.
+- **Graceful degradation**: If neither CLI triage nor the GitHub App check run is reachable, the reviewer exits with `UNAVAILABLE` and the review loop continues with the remaining configured platforms.
+- **GitHub App optional**: The CLI path is still sufficient. The GitHub App check run is optional fallback/readback state and must not be treated as ordinary CI when `haystack` is configured as a reviewer.
 
 ---
 
@@ -53,7 +54,7 @@ review:
       - haystack
 ```
 
-No other configuration changes are required in `.ai-dev-workflow.yaml`.
+No other configuration changes are required in `.ai-dev-workflow.yaml`. If a repository uses the Haystack GitHub App check run under a non-default name, set `HAYSTACK_CHECK_NAME` for the reviewer and CI loop; the default is `Haystack / Review`.
 
 If the repository creates implementation PRs as drafts, prefer
 `review.on_ready.github` for Haystack. In this mode the reviewer loop lets
@@ -66,11 +67,11 @@ draft, so running it before `gh pr ready` can produce avoidable
 
 ## Bot Login Identifier
 
-Haystack triage does not post inline GitHub review threads in this MVP. The Haystack CLI reads triage results locally and does not push findings to the GitHub PR review thread API.
+Haystack triage does not post inline GitHub review threads in this integration. The Haystack CLI reads triage results locally and does not push findings to the GitHub PR review thread API. The Haystack GitHub App can publish a check run, but that check run is not a review thread.
 
 Because no GitHub review threads are posted, the `check_unresolved_threads` gate is not invoked for Haystack. `bot_login_for_platform("haystack")` returns an empty string `""`, which signals to `pr-review-loop.sh` that no thread audit is needed.
 
-If a future integration adds a Haystack GitHub App with inline thread posting, this can be updated to the actual bot login (e.g., `haystack-ai[bot]`).
+If a future integration adds Haystack inline thread posting, this can be updated to the actual bot login (e.g., `haystack-ai[bot]`). A check run alone does not require changing the bot login.
 
 ---
 
@@ -102,6 +103,7 @@ Haystack exposes two related but separate result channels:
 | ----------- | ------------- | ----------------------- |
 | `haystack triage <PR> --json` | Code-review findings in `.findings[]` and rating | Blocking categories stop the loop; advisory categories increment `SUGGESTION_COUNT` |
 | `haystack pr-status <PR> --json` | Pipeline/review-policy verdicts such as `analysisVerdict`, `needsHumanReview`, `bucket`, `hasReviewer`, and `haystackRating` | Non-blocking visibility signal when no blocking triage findings exist |
+| `Haystack / Review` check run | GitHub App status, details URL, output summary, and annotations when installed | Fallback/readback source when CLI triage cannot return completed findings; ignored by `pr-ci-loop.sh` as generic CI when Haystack is configured as a reviewer |
 
 When `pr-status` reports `needsHumanReview: true` or
 `analysisVerdict: "needs-review"`, `haystack-reviewer.sh` emits:

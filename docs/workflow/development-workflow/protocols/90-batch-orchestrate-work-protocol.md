@@ -128,6 +128,34 @@ inherit the portfolio-resolved guardrails rather than re-resolving them
 independently. Invocation and session overrides resolved at the portfolio level
 flow down to the per-item gates without re-prompting.
 
+Also include the portfolio-approved execution base for each dispatched item.
+Nested or spawned agents must pass that base to
+`run-nested-artifact-guard.sh --approved-base` before branch creation and before
+PR creation. If the base is ambiguous, stop before dispatch rather than letting
+a child agent infer a PR target.
+
+The Portfolio Orchestrator also owns parent-visible fork enumeration. For each
+dispatched item with a positive numeric issue number, run the nested artifact
+guard in `audit` mode before child dispatch and again after the child returns
+control:
+
+```bash
+./scripts/development-workflow/run-nested-artifact-guard.sh \
+  --mode audit \
+  --issue "$ISSUE_NUMBER" \
+  --expected-branch "$EXPECTED_BRANCH" \
+  --expected-worktree "$EXPECTED_WORKTREE" \
+  --approved-base "$BASE_BRANCH" \
+  --repo-root "$ARTIFACT_REPO_ROOT"
+```
+
+Use the repository root that owns the item artifacts. In `workflow_hub` mode,
+implementation branches and PRs are product-owned, so `ARTIFACT_REPO_ROOT` must
+be the selected product checkout; hub-owned spec and plan artifacts use the hub
+checkout. Treat `RESULT=unexpected_fork`, `RESULT=wrong_base`,
+`RESULT=missing_base`, and `RESULT=scan_failed` as parent-level blockers and
+include the guard output in the batch summary.
+
 ### Backlog-Start Gate
 
 Before proposing or starting any not-yet-started Backlog item (in Step 2 and
@@ -444,13 +472,64 @@ For unrestricted portfolio runs, the orchestrator must maximize useful parallel 
    - Refactor Backlog items require a plan before implementation and can be proposed together when their briefs do not indicate overlapping ownership or dependency.
    - Implementation/resume items must still pass tool-fix ordering and file-level conflict checks below.
 6. If a lower-priority item blocks a higher-priority item because of dependency, tool-fix ordering, or file conflicts, report the reason and keep the higher-priority feasible set as large as possible.
-7. Present the proposed batch with item number, title, priority, type, next stage, and parallelization notes. If Backlog items are included, stop for explicit human approval before Step 2.5 mutates tracker status or before any Work Item Runner is dispatched for those Backlog starts.
+7. Present the scan output in separate report categories when records are
+   present:
+   - `INFORMATIONAL - not actionable in this proposal`: cross-session
+     in-flight items, review-waiting or merge-waiting items, skipped items, and
+     other portfolio context excluded from the current decision. Include
+     `REPORT_REASON`.
+   - `ACTIONABLE RESUME - can advance now`: already-started items whose next
+     deterministic action can advance in the current run. Include
+     `REPORT_REASON` and the next action.
+   - `PROPOSED BATCH - your decision`: proposal-eligible Backlog items included
+     in the current start batch. Include item number, title, priority, type,
+     next stage, parallelization notes, and `REPORT_REASON`.
+   - `HELD - not included in proposed batch`: evaluated candidates excluded by
+     dependency, priority, capacity, conflict, ordering, or other hold
+     constraints. Include `REPORT_REASON`.
+8. State the current decision in terms of only the
+   `PROPOSED BATCH - your decision` items. Approval of the proposed batch does
+   not include informational records unless the operator invokes a separate
+   bounded command that explicitly names them. If no proposed-batch records
+   exist, state directly that no Backlog start batch is currently proposed.
+9. If Backlog items are included, stop for explicit human approval before Step
+   2.5 mutates tracker status or before any Work Item Runner is dispatched for
+   those Backlog starts.
 
 This rule changes the default `/run-work` behavior from "only resume already-started items" to "resume deterministic work and, when there is no deterministic work or spare capacity remains, propose the biggest safe set of Backlog items to start next."
 
 ### Dependency gate
 
 Before batching an item, check its `Depends on` field or tracker dependency data. If any dependency is not yet `Merged` or `Released`, skip the item and record it as blocked.
+
+### Spec-dispatch relationship context gate
+
+Before tracker mutation or Work Item Runner dispatch for any Backlog item that
+will enter **Writing Spec**, build conservative spec-dispatch context:
+
+```bash
+./scripts/development-workflow/spec-dispatch-context.sh \
+  --selected <issue-number> \
+  --items <comma-separated-in-scope-issue-numbers> \
+  [--confirmed-decision-file <jsonl-file>] \
+  --json
+```
+
+The helper output is an ephemeral dispatch-context object. It may include
+human-confirmed decisions, relationship rows for meaningful terminology overlap,
+and a `blocking` flag. Shared keywords alone are not dependency evidence:
+`Dependent` requires concrete issue-reference or prerequisite evidence,
+`Orthogonal` means the items can be specified independently, and `Unclear`
+means a human decision is needed before spec dispatch.
+
+If `blocking=true`, stop before batch approval, tracker status changes, branch
+creation, or Work Item Runner dispatch for that item. Report the helper
+`humanAction`; when the block comes from peer ambiguity, include the `Unclear`
+relationship row, and when it comes from confirmed-decision conflict, report the
+decision conflict instead of treating the item as dispatch-eligible. If
+`blocking=false`, include the concise relationship summary and any confirmed
+decisions in the Work Item Runner handoff so the spec writer preserves the
+context without inventing dependency assumptions.
 
 ### Stale `In Development` correction (AC-6, AC-7, AC-8, AC-10)
 
@@ -862,8 +941,30 @@ For each item in the batch, prepare a short handoff:
 - Current next action
 - Priority context
 - Parallelization notes or serialization reason
-- `BATCH_CONTEXT=true` — required for parallel batches so the Work Item Runner (protocol 91) activates worktree isolation
-- `BASE_BRANCH=develop-<slug>` — include this field when the item carries an `integration-branch:<slug>` label (see "Integration-branch base override" below). When `BASE_BRANCH` is present in the handoff, the Work Item Runner (protocol 91) **must** use it as the worktree base instead of the default `origin/develop` for all item types (feature, fix, refactor, spec, plan). The base-branch table in protocol 91 Step 3 applies only when `BASE_BRANCH` is absent from the handoff.
+- Isolation assignment for mutating explicit-list batches, including sequential
+  fallback: item identifier, expected branch, absolute worktree path,
+  `isolation: "worktree"`, mutation classification (`mutating` or
+  `read_only`), artifact repo root, and base branch
+- `BATCH_CONTEXT=true` — required for explicit-list batch dispatch so the Work
+  Item Runner (protocol 91) activates worktree isolation
+- `BASE_BRANCH=<resolved-base>` — include the bounded-prelude-approved base,
+  normally `develop`. Use `develop-<slug>` only when the explicit-list or epic
+  scope has one shared `integration-branch:<slug>` label and the owning remote
+  branch validation has passed or has been explicitly deferred for a selected
+  product repository. When `BASE_BRANCH` is present in the handoff, the Work
+  Item Runner (protocol 91) **must** use it as the worktree base instead of the
+  default `origin/develop` for all item types (feature, fix, refactor, spec,
+  plan). The base-branch table in protocol 91 Step 3 applies only when
+  `BASE_BRANCH` is absent from the handoff.
+- **Incremental commit requirement**: For substantial or multi-part mutating
+  item work, the Work Item Runner must commit immediately after each completed
+  logical sub-part so interrupted runs have a recoverable checkpoint. Do not
+  intentionally batch all completed sub-parts into one end-of-run commit.
+  Single-step work with no meaningful completed intermediate checkpoint may use
+  one final commit. Never commit incomplete, failing, or incoherent edits just
+  to satisfy this requirement. Keep checkpoint commits scoped to the assigned
+  item, branch, and worktree; this does not change review, CI, readiness-label,
+  tracker, or merge gates.
 - Each item adds its own CHANGELOG entry as normal (see Step 3.6 for conflict resolution strategy)
 
 ### Worktree isolation requirement
@@ -872,9 +973,64 @@ For each item in the batch, prepare a short handoff:
 
 Do **not** dispatch multiple Work Item Runners to operate in the same working directory.
 
+### Mutating batch dispatch isolation manifest
+
+Before dispatching an explicit-list batch where any Work Item Runner may mutate
+files, branches, commits, PRs, labels, or tracker state, the Portfolio
+Orchestrator must build a pre-dispatch isolation manifest. This applies to both
+concurrent dispatch and the documented sequential fallback for runners that
+cannot execute multiple Work Item Runners concurrently. The manifest is part of
+the batch evidence and must be visible in the dispatch summary.
+
+Each mutating runner entry must include:
+
+- Work item identifier
+- Expected workflow branch
+- Absolute worktree path
+- `isolation: "worktree"`
+- Mutation classification (`mutating`)
+- Artifact-owning repo root
+- Approved base branch
+
+Pre-dispatch validation is mandatory:
+
+- If any mutating runner is missing `isolation: "worktree"` or an
+  absolute worktree path, stop before dispatch with guardrail stop condition
+  `unclear_requirements`; name the affected item, the expected branch, the
+  missing isolation field, and the human action needed to unblock.
+- If two mutating runners are assigned the same worktree path, stop before
+  dispatch with guardrail stop condition `unclear_requirements`; name both
+  items, the shared path, and the human action needed to unblock.
+- A non-isolated runner is allowed only when it is explicitly classified
+  `read_only` and will not edit files, switch branches, create commits, push,
+  open or update PRs, modify labels, or update tracker state.
+
+This requirement is separate from the unsanctioned nested-agent PR guard in
+#1200. The #1200 guard prevents child agents from creating duplicate or
+wrong-base PR artifacts. The isolation manifest prevents multiple sanctioned
+mutating runners from sharing one checkout or silently mutating the main tree.
+
+The terminal batch summary must record whether the isolation manifest passed,
+failed before dispatch, or escalated after detecting possible out-of-worktree
+mutation.
+
 ### Integration-branch base override
 
-Before dispatching any Work Item Runner for a sub-item, check whether the item carries an `integration-branch:<slug>` label:
+Before dispatching Work Item Runners for an explicit-list batch, use the
+bounded prelude's resolved base. Do not let one item's
+`integration-branch:<slug>` label select the base for the whole batch.
+
+For explicit-list batches:
+
+- no listed integration labels: use `develop`;
+- partial label coverage: use `develop` and emit the prelude warning;
+- mixed labels: use `develop` and emit the prelude warning;
+- one shared label across every listed item: derive `develop-<slug>` and verify
+  it exists on the owning remote before adopting it;
+- missing or unverifiable `develop-<slug>`: use `develop` and emit the prelude
+  warning.
+
+Before dispatching any Work Item Runner for an epic sub-item, check whether the item carries an `integration-branch:<slug>` label:
 
 ```bash
 gh issue view <issue-number> --json labels --jq '.labels[].name | select(startswith("integration-branch:"))'
@@ -883,21 +1039,29 @@ gh issue view <issue-number> --json labels --jq '.labels[].name | select(startsw
 If an `integration-branch:<slug>` label is found:
 
 1. **Derive the integration branch name**: `develop-<slug>`.
-2. **Verify the branch exists on the remote** (output `0` = does not exist, `1` = exists):
+2. **Verify the branch exists on the remote** using
+   `git ls-remote --exit-code --heads`. Exit `0` means the branch exists, exit
+   `2` means it is missing, and any other non-zero status means validation
+   failed:
 
    ```bash
-   BRANCH_EXISTS=$(set -o pipefail; git ls-remote origin "refs/heads/develop-<slug>" 2>/dev/null | wc -l | tr -d ' ') || {
+   set +e
+   git ls-remote --exit-code --heads origin develop-<slug> >/dev/null 2>&1
+   BRANCH_STATUS=$?
+   set -e
+   if [ "$BRANCH_STATUS" -ne 0 ] && [ "$BRANCH_STATUS" -ne 2 ]; then
      echo "WARNING: failed to verify whether develop-<slug> exists on origin; skipping auto-create for this item."
      continue
-   }
+   fi
    ```
 
-3. **If the branch does not exist** (`BRANCH_EXISTS` is `0`), create and push it from `develop`:
+3. **If the branch does not exist** (`BRANCH_STATUS` is `2`), create and push it from `develop`:
 
-   ```bash
-   git fetch origin develop
-   git checkout -B develop-<slug> origin/develop
-   git push -u origin develop-<slug>
+	   ```bash
+	   set -euo pipefail
+	   git fetch origin develop
+	   git checkout -B develop-<slug> origin/develop
+	   git push -u origin develop-<slug>
    git switch develop  # return to develop immediately after creation
    ```
 
@@ -1063,7 +1227,10 @@ Scan local branches for two categories of stale / orphaned entries that clutter 
 
 **Category A — Workflow-prefix branches whose upstream PR has been merged**
 
-Workflow branches (`feature/`, `fix/`, `refactor/`, `hotfix/`, `spec/`, `implementation-plan/`) that were used for a PR which has since merged are safe to delete but are not cleaned up automatically by `post-merge-cleanup.sh` when other PRs in the same batch merge later.
+Workflow branches (`feature/`, `fix/`, `refactor/`, `hotfix/`, `spec/`, `implementation-plan/`) that were used for a PR which has since merged are safe to delete locally when they are not part of the current batch. Classify the branch lifecycle before reporting:
+
+- `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` are implementation branches. After the implementation PR is confirmed merged, the remote branch is `expected_deleted`; a remaining `origin/<branch>` ref is a cleanup finding.
+- `spec/*` and `implementation-plan/*` are documentation-stage branches. After merge, their remote branches are `expected_persistent`; do not report them as implementation cleanup failures.
 
 ```bash
 # List all local branches matching workflow prefixes
@@ -1079,6 +1246,14 @@ For each branch found, check whether its upstream PR has been merged:
 gh pr list --state merged --head <branch> --json number,mergedAt \
   --jq '.[0] | "PR #\(.number) merged at \(.mergedAt)"'
 # Non-empty output → merged; the local branch is stale and safe to delete
+```
+
+For merged implementation branches, also check whether the remote branch still exists:
+
+```bash
+# For each merged implementation branch <branch>:
+git ls-remote --heads origin <branch>
+# Non-empty output → remote implementation branch cleanup is incomplete.
 ```
 
 **Category B — `worktree-agent-*` branches with no remote counterpart and no open/merged PR**
@@ -1102,11 +1277,14 @@ gh pr list --state all --head <branch> --json number,state --jq '.[0] | .number'
 
 **Action when stale or orphaned branches are found:**
 
-1. List every stale / orphaned branch with its category and a suggested cleanup command:
+1. List every stale / orphaned branch with its category, lifecycle, merged PR context, and a suggested cleanup command:
 
    ```bash
-   # Category A — stale workflow branch (upstream PR merged):
+   # Category A — stale local workflow branch (upstream PR merged):
    git branch -D <branch>
+
+   # Category A — remote implementation branch still present after merge:
+   ./scripts/development-workflow/post-merge-cleanup.sh --base <base> <branch>
 
    # Category B — orphaned worktree-agent branch (no remote, no PR):
    git branch -D <branch>
@@ -1204,7 +1382,7 @@ Dispatch exactly one Work Item Runner per item in the current batch.
 | Runner      | Handoff target                           |
 | ----------- | ---------------------------------------- |
 | Claude Code | `item-orchestrator` agent                |
-| Cursor      | `/item-orchestrator` or `/run-item-work` |
+| Cursor      | Internal `item-orchestrator` handoff from `/run-items`; use `/run-item` for standalone single-item runs |
 | Codex       | `workflow-item-orchestrator` skill       |
 
 If the runner supports true concurrent subagents, launch the full batch in parallel.
@@ -1230,11 +1408,24 @@ Do **not** redispatch the same subagent for the same item in the same batch run.
 
 ### Inline fallback (AC2)
 
-Execute the item from the main session. If the worktree was already created during dispatch, use that path. If the denial occurred before the worktree was created (early preflight failure in Protocol 91 Step 3.5), create it first:
+Execute the item from the current orchestration session, but operate only inside
+the manifest-assigned worktree. If the worktree was already created during
+dispatch, use that exact absolute path. If the denial occurred before the
+worktree was created (early preflight failure in Protocol 91 Step 3.5), create
+it at the manifest-assigned absolute worktree path first. Stop with guardrail
+stop condition `unclear_requirements` if the manifest assignment is missing; do
+not substitute a generic path or continue from the main repository checkout.
 
 ```bash
-git worktree add <path> <branch>
+git worktree add <manifest-assigned-worktree-path> <branch>
 ```
+
+Before any inline edit, branch-changing command, commit, push, PR mutation, or
+tracker mutation, run the same Protocol 91 pre-mutation isolation self-check:
+`BATCH_CONTEXT=true`, expected branch, artifact repo root, approved base branch,
+mutation classification, and `isolation: "worktree"` must be present; `pwd -P`
+must equal the manifest-assigned worktree path or begin with that path followed
+by `/`; and `git rev-parse --abbrev-ref HEAD` must match the expected branch.
 
 Re-evaluate item state from scratch:
 
@@ -1272,7 +1463,7 @@ After a Work Item Runner returns:
 
 1. **Re-check tracker status first** when an issue tracker is configured — query the tracker for the item's current status before consulting VCS state. Do not rely solely on `workflow-next-action.sh` to determine whether an item should advance, as VCS-derived status cannot reliably distinguish certain states (e.g., a spec PR awaiting review vs. one already merged). Use `workflow-next-action.sh` only for VCS-level enrichment (branch existence, PR labels) after the tracker status is known.
 2. If the tracker is unavailable, fall back to `workflow-next-action.sh` but flag to the human that status may be stale.
-3. If the next action is still deterministic because the Work Item Runner returned early or was interrupted, redispatch / resume that same item. **Worktree isolation is mandatory on redispatch**: when the original batch used parallel dispatch (`BATCH_CONTEXT=true`), every redispatch — including fixer-agent passes triggered by review findings — must carry `BATCH_CONTEXT=true` and the resolved `<worktree-path>` in the handoff. Redispatching without `BATCH_CONTEXT=true` causes fixer agents to use main-repo file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context, leaving uncommitted files in the main working tree instead of the isolated branch.
+3. If the next action is still deterministic because the Work Item Runner returned early or was interrupted, redispatch / resume that same item. **Worktree isolation is mandatory on redispatch**: when the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), every redispatch — including fixer-agent passes triggered by review findings — must carry the full Protocol 90 isolation assignment in the handoff: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, and `isolation: "worktree"`. Redispatching without the full assignment causes fixer agents to use main-repo file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context, leaving uncommitted files in the main working tree instead of the isolated branch.
 4. Stop supervising that item only when it is waiting on a human, blocked, or escalated.
 5. **Collect deferred tracker transitions**: scan the Work Item Runner's summary for any `TRACKER_UPDATE_REQUIRED:` lines. These are transitions that the subagent could not perform (e.g., because the provider requires MCP and MCP is not available in the subagent context). Apply each deferred transition now via MCP before moving on to the next item. For GitHub Projects, subagents use `gh` CLI directly and do not emit `TRACKER_UPDATE_REQUIRED:` — this step only applies to providers without CLI support (e.g., Linear).
 6. **When a human confirms PRs have been merged**: run post-merge status transitions per the table in Step 10 of `91-orchestrate-work-protocol.md` — set tracker status to `Spec Ready`, `Plan Ready`, or `Merged` depending on the branch type of the merged PR — and clean up local branches and worktrees associated with the merged PRs.
@@ -1280,6 +1471,14 @@ After a Work Item Runner returns:
 ### Step 5.1: Post-Dispatch PR Verification
 
 > **Artifact-state rule**: The orchestrator's done-report must be built from independently queried artifact state — **never** from agent self-reports alone. A Work Item Runner that claims a PR is "ready" may have timed out before completing all steps, skipped a required action, or simply reported optimistically. The checks below are mandatory queries against `gh` CLI and the GitHub API; they are not optional confirmations of what the agent said it did.
+
+> **Item self-check evidence rule**: The Work Item Runner's terminal report must
+> include a `## Ground-Truth Completion Verification` section from
+> `scripts/development-workflow/item-completion-self-check.sh`. The Portfolio
+> Orchestrator must quote or link that section for each terminal item before
+> declaring the batch item complete. Missing self-check evidence, a
+> `discrepancy`, or an `unavailable_required` result means the item remains
+> under Step 5 supervision even if labels appear ready.
 
 **Batch-complete gate:** `ready-for-human-review` by itself is not a terminal
 batch-complete signal. Before declaring an explicit-list or portfolio batch
@@ -1290,6 +1489,17 @@ platforms are configured. Any PR with failing CI, pending reviewer-loop guard,
 a missing summary when review platforms are configured, or a non-clean
 reviewer-loop result remains in progress and must be redispatched or escalated
 instead of included in the done-report.
+
+When the selected policy grants merge authority for the PR stage, readiness is
+still not terminal. The batch outcome for each in-scope PR must be one of:
+`merged`, `merge_blocked`, or `policy_inconsistent`. Use `merge_blocked` when a
+named delegated merge gate, CI, review, setup, merge-state, risk, audit, or
+tracker blocker prevents merge after readiness. Use `policy_inconsistent` when
+an in-scope PR stops at readiness in a merge-granted run without a named blocker.
+When merge authority is denied, the terminal outcome for a ready PR is
+`ready_human_merge`. Any discovered PR outside the explicit bounded scope is
+`out_of_scope` and must not be included in delegated merge or batch-merge
+commands.
 
 **In-flight CI/watch states are non-terminal:** A transient watch failure,
 cancelled duplicate run, skipped superseded run, pending/queued check, or
@@ -1309,6 +1519,12 @@ gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comme
 ```
 
 The `files` field is required to verify CHANGELOG presence independently (see table below). Do not skip it.
+
+For sweep, batch, helper-extraction, or pattern-completeness items, also require
+residual-gate evidence from `scripts/development-workflow/scope-residual-gate.sh`
+before accepting the PR as `ready-for-human-review`. A `RESULT=block` or
+`RESULT=escalate` keeps the item in progress; the batch summary must report the
+residual gate outcome instead of counting the item as terminal.
 
 For the `reviewThreads` resolution check, `gh pr view --json` does not expose `reviewThreads`; use the GraphQL API directly:
 
@@ -1361,7 +1577,7 @@ If a check requires agent redispatch:
 1. Log the specific failure in your retrospective notes (see "Retrospective notes during supervision" below).
 2. Remove `ready-for-human-review` if it is present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 3. Add the `needs-fixes` label to the PR: `gh pr edit <pr_number> --add-label "needs-fixes"`.
-4. Redispatch / resume the Work Item Runner for that item to address the gap. **Worktree isolation is mandatory**: if the original batch used parallel dispatch (`BATCH_CONTEXT=true`), the redispatched Work Item Runner must also receive `BATCH_CONTEXT=true` and the resolved `<worktree-path>` so it operates inside the existing worktree. Do not redispatch without these values — fixer agents that run outside the worktree will use main-repo file paths and leave uncommitted changes in the main working tree.
+4. Redispatch / resume the Work Item Runner for that item to address the gap. **Worktree isolation is mandatory**: if the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), the redispatched Work Item Runner must receive the full Protocol 90 isolation assignment: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, and `isolation: "worktree"`. Do not redispatch without these values — fixer agents that run outside the worktree will use main-repo file paths and leave uncommitted changes in the main working tree.
 5. Re-run this verification after the next Work Item Runner return.
 
 Do not consider the batch complete until every dispatched item has reached a real terminal condition.
@@ -1605,7 +1821,7 @@ The re-trigger uses the same `max_cycles` counter as the normal reviewer loop (S
 
 ## Step 5.5: Batch-Merge Handoff (Merge-Ready Parallel Batches)
 
-When **all PRs in a parallel batch** have reached `ready-for-human-review`, the orchestrator may hand off to the batch-merge flow instead of leaving the human to merge manually.
+When **all PRs in a parallel batch** have reached `ready-for-human-review`, the orchestrator may hand off to the batch-merge flow instead of leaving the human to merge manually. In a merge-granted run this handoff is required for every in-scope PR whose delegated merge gate returns `merge_allowed`; in a merge-denied run this handoff is forbidden and the batch reports `ready_human_merge`.
 
 ### When to activate this step
 
@@ -1674,6 +1890,13 @@ After all currently eligible items have reached a terminal condition, provide a 
 
 > **Done-report source rule**: Every field in this summary — labels present, CHANGELOG touched, reviewer loop completed, CI green — must be sourced from the artifact queries run in Step 5.1, not from agent self-reports. If Step 5.1 was not run for a PR, run it now before writing the summary. Never assert that a PR is "ready" based solely on what a Work Item Runner claimed.
 >
+> **Self-check evidence rule**: For every item listed as terminal, include the
+> associated `Ground-Truth Completion Verification` result from the Work Item
+> Runner summary or from a fresh `item-completion-self-check.sh` run performed by
+> the orchestrator. Do not write the final summary when any in-scope terminal
+> claim lacks this evidence, reports `discrepancy`, or reports
+> `unavailable_required`.
+>
 > **No in-flight handoff rule**: Do not write the final summary while any
 > in-scope PR still has pending/queued checks, incomplete CI evidence, a stale or
 > missing reviewer-loop summary, or an unresolved transient watch failure. Those
@@ -1697,7 +1920,7 @@ Approval required before tracker status changes or branch/PR work starts for the
 
 ### Ready for Human Review
 
-- [PR link] — [item] — [stage] — Automated review: ✅ / ⏭️ / ⚠️
+- [PR link] — [item] — [stage] — Automated review: ✅ / ⏭️ / ⚠️ — Ground-truth verification: verified / not_applicable / unavailable_optional
 
 ### Waiting on Human
 

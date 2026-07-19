@@ -171,7 +171,7 @@ After the routing-decision record is emitted, `/run-work` hands off as follows:
 
 | Routing mode      | Handoff target                                                                                                                      |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `no_target_scan`  | **Protocol 90** (Steps 1–3 scan + proposal only) — outputs a batch recommendation; **no dispatch, no mutation** under `/run-work`. Execute the proposal with `/run-items`. |
+| `no_target_scan`  | **Protocol 90** (Steps 1–3 scan + proposal only) — outputs a categorized batch recommendation using `INFORMATIONAL - not actionable in this proposal`, `ACTIONABLE RESUME - can advance now`, `PROPOSED BATCH - your decision`, and `HELD - not included in proposed batch`; **no dispatch, no mutation** under `/run-work`. Execute only the proposed-batch items with `/run-items`. |
 | `redirect_items`  | **No handoff** — emit `REDIRECT_COMMAND=/run-items <targets>`; operator re-invokes `/run-items` for batch execution               |
 | `redirect_item`   | **No handoff** — emit `REDIRECT_COMMAND` (e.g. `/run-item <target>`); operator re-invokes `/run-item`                              |
 | `redirect_epic`   | **No handoff** — emit `REDIRECT_COMMAND` (e.g. `/run-epic --epic <n>`); operator re-invokes `/run-epic`                           |

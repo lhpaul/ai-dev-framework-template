@@ -185,6 +185,17 @@ The item-orchestrator uses the Step 8c independent verification gate to detect a
 
 For quota exhaustion, stream timeouts, and runner failover (Cursor ↔ Codex ↔ Claude Code), see [`provider-contingency-runner-failover.md`](provider-contingency-runner-failover.md).
 
+### Cursor `/run-item` Handoff
+
+Cursor users should start single-item work with `/run-item <target>`. After the
+bounded prelude confirms scope, guardrails, policy, and checkpoints, Cursor may
+route internally through `item-orchestrator` and the configured stage subagents
+(`product-manager`, `tech-lead`, `developer`, `code-reviewer`, and related
+roles). This keeps role-specific model assignments active without asking users
+to invoke `item-orchestrator` directly. The internal handoff must preserve the
+confirmed item/policy binding and must not duplicate the bounded prelude or
+re-prompt for the same policy.
+
 ### Warning
 
 **Do NOT manually apply `ready-for-human-review` to a PR that is missing the reviewer loop summary comment.** Doing so marks the PR as ready when the automated review step was never completed, defeating the purpose of the review loop. Always resume via the item-orchestrator and let it complete Step 7 and Step 8 before the label is applied.

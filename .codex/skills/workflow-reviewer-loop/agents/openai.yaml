@@ -1,7 +1,7 @@
 interface:
   display_name: "Workflow Reviewer Loop"
   short_description: "Run automated reviewer and CI loop for a PR until ready or escalated."
-  default_prompt: "Use $workflow-reviewer-loop to run automated review and CI for the current branch's PR or PR number, passing workflow_hub product repository context through shared scripts when needed."
+  default_prompt: "Use $workflow-reviewer-loop to run automated review and CI for the current branch's PR or PR number, passing workflow_hub product repository context through shared scripts when needed. When BATCH_CONTEXT=true, pass the full Protocol 90 isolation assignment to fixer handoffs, including worktree path, expected branch, artifact repo root, approved base branch, mutation classification, and isolation: \"worktree\"."
 
 policy:
   allow_implicit_invocation: false

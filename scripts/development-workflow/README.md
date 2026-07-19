@@ -111,6 +111,91 @@ Use this when:
 - The orchestrator needs to verify whether a workflow item has already been started
 - You want to avoid re-dispatching work for an item that already has a branch or worktree
 
+### `run-nested-artifact-guard.sh`
+
+Prevents nested or spawned agents from silently creating duplicate issue-scoped
+workflow artifacts or opening PRs against an unapproved base.
+
+Usage:
+
+```bash
+./scripts/development-workflow/run-nested-artifact-guard.sh \
+  --mode pre-create \
+  --issue 1200 \
+  --expected-branch feature/1200-example \
+  --approved-base develop \
+  --repo-root "$(pwd)"
+```
+
+What it does:
+
+- Scans registered worktrees, local branches, remote branches, and open PRs.
+- Treats the expected branch or expected worktree as canonical.
+- Compares non-PR artifacts against the expected workflow stage so merged
+  prior-stage `spec/*`, `implementation-plan/*`, or `hotfix/*` branches do not
+  block the next legitimate stage.
+- Reports duplicate issue-scoped artifacts as `RESULT=blocked_duplicate`.
+- Reports wrong-base open PRs as `RESULT=wrong_base`.
+- Reports parent audit forks as `RESULT=unexpected_fork`.
+- Reports missing parent-approved base context as `RESULT=missing_base` in all
+  modes, including `audit`.
+- Reports scan failures as `RESULT=scan_failed` instead of assuming clean.
+- Uses `--repo-root` to choose which repository owns the artifacts being
+  scanned; in `workflow_hub` mode, product implementation artifacts must scan
+  the selected product checkout rather than the hub checkout.
+
+Use this when:
+
+- A parent runner is about to dispatch a child agent that may create a branch.
+- A stage agent is about to open or ready a workflow PR.
+- A parent runner is auditing in-scope forks before dispatch or after a child
+  returns control.
+- A deliberate split needs explicit `--allow-split true` approval with the
+  approved base recorded in the parent summary.
+
+### `item-completion-self-check.sh`
+
+Builds the mandatory ground-truth verification section for Work Item Runner and
+batch terminal reports.
+
+Usage:
+
+```bash
+./scripts/development-workflow/item-completion-self-check.sh \
+  --issue 1202 \
+  --branch feature/1202-example \
+  --stage implementation \
+  --worktree-path "$(pwd)" \
+  --pr 123 \
+  --expected-base develop \
+  --expected-label ready-for-human-review \
+  --expected-label ready-for-regression \
+  --forbid-label needs-fixes \
+  --require-review-summary true \
+  --require-review-threads true
+```
+
+What it does:
+
+- Prints a Markdown section headed `## Ground-Truth Completion Verification`.
+- Verifies current branch, HEAD, worktree path, workspace cleanliness, and
+  `git worktree list` evidence.
+- When `--pr` is supplied, verifies live PR head/base, draft state, labels,
+  changed files, CI rollup, reviewer-loop summary, and optionally review
+  threads.
+- Reads tracker status via `workflow-lib.sh` when tracker evidence is required
+  or expected.
+- Records external runtime/browser/database claims through explicit
+  `--claim <name|required|evidence>` records.
+- Exits non-zero for any `discrepancy` or `unavailable_required` result.
+
+Use this when:
+
+- A Work Item Runner is about to report an item as ready, done, blocked,
+  escalated, waiting on a human, waiting on merge, or cleanup complete.
+- A Portfolio Orchestrator needs item-level evidence before accepting a batch
+  item as terminal.
+
 ### `pr-ci-loop.sh`
 
 Polls GitHub status checks for a PR until they are green, failing, or timed out.
@@ -352,6 +437,29 @@ What it does:
 - Probes GitHub Actions workflow count when `ci_policy` is `required` (default)
 - Passes when `ci_policy: none` is declared for repositories without CI workflows
 - Requires `gh` authentication for remote inspection
+
+#### `scope-residual-gate.sh`
+
+Classifies broad-scope sweep, batch, helper-extraction, and
+pattern-completeness items and validates structured residual evidence before
+workflow readiness.
+
+Usage:
+
+```bash
+./scripts/development-workflow/scope-residual-gate.sh classify \
+  --issue-title "Clean 127 console.log occurrences across apps/admin"
+
+./scripts/development-workflow/scope-residual-gate.sh verify \
+  --issue-title "Clean 127 console.log occurrences across apps/admin" \
+  --evidence /tmp/residual-evidence.json
+```
+
+The helper is read-only. `classify` emits `RESULT=requires_verification` for
+applicable scopes and `RESULT=not_applicable` otherwise. `verify` emits
+`RESULT=pass|block|escalate|not_applicable`. Both modes emit
+`SCOPE_CLASSIFICATION`, `RESIDUAL_GROUPS`, `FOLLOW_UPS`, and `SUMMARY` fields,
+and never update labels, trackers, comments, PRs, branches, or issues.
 
 #### `hub-list-prs.sh`
 

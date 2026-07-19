@@ -74,6 +74,37 @@ Orchestrator resolves guardrails at the portfolio level and passes them down):
 - Audit requirements.
 - Which values were changed by an invocation or session override (if any).
 
+Before producing any terminal Work Item Runner Summary — ready, done, blocked,
+escalated, waiting on human review, waiting on merge, or post-merge cleanup
+complete — run the completion self-check and paste its
+`## Ground-Truth Completion Verification` section into the summary:
+
+```bash
+./scripts/development-workflow/item-completion-self-check.sh \
+  --issue <issue-number> \
+  --branch <workflow-branch> \
+  --stage <spec|plan|implementation|cleanup> \
+  --worktree-path <path-used-for-this-item> \
+  [--pr <pr-number>] \
+  [--expected-base <base-branch>] \
+  [--expected-label ready-for-human-review] \
+  [--expected-label ready-for-regression] \
+  [--forbid-label needs-fixes] \
+  [--require-review-summary true] \
+  [--require-review-threads true] \
+  [--expected-tracker-status "<status>"]
+```
+
+Every claimed surface in the summary must be `verified`, `not_applicable`, or
+`unavailable_*` with a reason in that section. Use flags that match the state
+being claimed: ready/waiting-on-merge claims include PR readiness labels and
+review checks, while blocked/escalated claims omit ready-only labels and instead
+show the failing or unavailable surface that justifies the stop. A `discrepancy`
+or `unavailable_required` result is non-terminal for a success claim: return to
+the matching existing gate instead of reporting success. For blocked or
+escalated claims, the same result may be terminal only when the failing row is
+the explicit blocker named in the summary and no success state is claimed.
+
 When the Portfolio Orchestrator resolved guardrails at the portfolio level and
 passed them into this Work Item Runner handoff, the Work Item Runner inherits
 those resolved guardrails rather than re-resolving them independently. Invocation
@@ -164,6 +195,12 @@ These are **not** terminal conditions and must not stop the run:
 - A PR is open but still waiting for CI or automated review to finish
 - Automated review found blocking PR feedback that the matching fixer agent can address
 
+For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
+items, `ready-for-human-review` is also non-terminal until
+`scripts/development-workflow/scope-residual-gate.sh` has produced `RESULT=pass`
+or `RESULT=not_applicable`. `RESULT=block` keeps the item in fixes, and
+`RESULT=escalate` is a named human-decision stop.
+
 ---
 
 ## Step 1: Resolve the Target Item
@@ -172,9 +209,24 @@ When an issue tracker is configured in `.ai-dev-workflow.yaml`, **always query t
 
 Prefer the helper scripts in `scripts/development-workflow/` for deterministic state inspection before falling back to ad hoc shell commands.
 
-### Parallel batch indicator
+### Batch context indicator
 
-**Check for a parallel batch context**: If this Work Item Runner was dispatched as part of a parallel batch by the Portfolio Orchestrator (`90-batch-orchestrate-work-protocol.md`), the handoff metadata will indicate `BATCH_CONTEXT=true`. Note this indicator; you will use it in Step 3 (Dispatch Strategy) to decide whether worktree isolation is required.
+**Check for batch context**: If this Work Item Runner was dispatched as part of
+an explicit-list batch by the Portfolio Orchestrator
+(`90-batch-orchestrate-work-protocol.md`), including sequential fallback, the
+handoff metadata will indicate `BATCH_CONTEXT=true`. Note this indicator; you
+will use it in Step 3 (Dispatch Strategy) to decide whether worktree isolation
+is required.
+
+When `BATCH_CONTEXT=true` and the runner may mutate artifacts, the handoff must
+also include the Portfolio Orchestrator's isolation assignment: expected
+worktree path, expected workflow branch, artifact repo root, approved base
+branch, mutation classification, and `isolation: "worktree"`. Missing isolation
+metadata is non-terminal for direct single-item runs, but in mutating batch
+dispatch it is a dispatch error: stop before mutation and report the missing
+field to the Portfolio Orchestrator. This isolation check complements, but does
+not replace, the #1200 nested artifact guard for duplicate or wrong-base PR
+artifacts.
 
 **CHANGELOG in parallel batches**: Each item in a parallel batch adds its own CHANGELOG entry as normal. CHANGELOG merge conflicts are resolved at merge time by the batch-merge auto-resolution (protocol 94 Step 4.3). Do not skip or consolidate CHANGELOG entries — see protocol 90 Step 3.6 for rationale.
 
@@ -254,7 +306,7 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 | Current state / detection                                          | Can advance if...                                                                                                                                   | Next action                                                                                                                                                                                                                                                                  |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Backlog (Feature)                                                  | Human has requested this specific item and tracker Type/brief classifies it as Feature                                                              | Set tracker status to **Writing Spec**, then run `01-generate-spec-protocol.md`                                                                                                                                                                                              |
-| Backlog (Bug)                                                      | Human has requested this specific item and tracker Type/brief classifies it as Bug                                                                  | Run the cross-layer fast-track scope check below; if allowed, set tracker status to **In Development** and run `03-implement-development-protocol.md` Path 3, otherwise route to **Writing Spec**                                                                             |
+| Backlog (Bug)                                                      | Human has requested this specific item and tracker Type/brief classifies it as Bug                                                                  | Run the Fast Track blast-radius gate below. If the gate allows Fast Track, set tracker status to **In Development** and run `03-implement-development-protocol.md` Path 3. Otherwise follow the gate outcome: route to **Writing Spec**, request clarification, or require a tracked pre-flight follow-up before later Fast Track dispatch. |
 | Backlog (Refactor)                                                 | Human has requested this specific item and tracker Type/brief classifies it as Refactor                                                             | Set tracker status to **Writing Plan**, then run `02-generate-implementation-plan-protocol.md` (skip spec)                                                                                                                                                                   |
 | Backlog (Workflow)                                                 | Human has requested this specific item and tracker Type/brief classifies it as Workflow                                                             | Route by the brief's concrete path: full pipeline, refactor, or fast-track. If ambiguous, stop for a human decision rather than guessing.                                                                                                                                     |
 | Writing Spec                                                       | Tracker **Writing Spec** — spec PR not yet human-ready                                                                                              | Continue spec branch/PR work (generate, internal review, reviewer tools, CI) until tracker moves to **Spec in Review**                                                                                                                                                       |
@@ -282,6 +334,34 @@ route classification. Repository labels such as `workflow`, `bug`,
 `enhancement`, and `type:*` are legacy classification hints only; do not rely on
 them when Type is available.
 
+### Spec-dispatch relationship context gate
+
+Before a direct single-item run transitions a Backlog item into **Writing Spec**,
+run or consume the spec-dispatch context helper:
+
+```bash
+./scripts/development-workflow/spec-dispatch-context.sh \
+  --selected <issue-number> \
+  --items <selected-and-in-scope-backlog-peer-issue-numbers> \
+  [--confirmed-decision-file <jsonl-file>] \
+  --json
+```
+
+When the item is dispatched by Protocol 90, use the handoff-provided context
+instead of recomputing it unless the handoff is missing or stale. When running
+directly, populate `--items` with the selected item plus the relevant in-scope
+Backlog peers from the current tracker scan so keyword-overlap relationships can
+be classified on the single-item path. If no peer scope is available, the helper
+still collects human-confirmed decisions from the issue and optional
+current-session decision file, but peer relationship classification is skipped.
+
+If helper output has `blocking=true`, stop before tracker mutation, branch
+creation, or spec-writer dispatch and report the `humanAction`. If it is not
+blocking, pass `confirmedDecisions[]` and `relationships[]` to
+`01-generate-spec-protocol.md`. Shared terminology alone must not be treated as
+a dependency; `Dependent` requires concrete evidence, `Orthogonal` means no
+ordering dependency, and `Unclear` requires a human relationship decision.
+
 > **Linear provider — deferred status reads**: When `workflow-next-action.sh`
 > (or `workflow-batch-plan.sh`) returns a `TRACKER_ACTION_REQUIRED=read_status
 > issue=<id>` line in place of an empty status, the item's status was deferred —
@@ -295,22 +375,36 @@ them when Type is available.
 > perform inline. See [`linear.md`](../integrations/linear.md) for the bridge
 > pattern and full reference table.
 
-### Cross-layer scope check (mandatory before fast-track dispatch)
+### Fast Track blast-radius gate (mandatory before fast-track dispatch)
 
-**When to run**: Before classifying a backlog item as Fast Track and dispatching it to `03-implement-development-protocol.md` Path 3, run this check. It applies to any item whose tracker Type, issue metadata, or brief suggests a bug fix or simple change (i.e., not a feature requiring a spec).
+**When to run**: Before classifying a backlog item as Fast Track and dispatching it to `03-implement-development-protocol.md` Path 3, run this gate. It applies to any item whose tracker Type, issue metadata, or brief suggests a bug fix or simple change (i.e., not a feature requiring a spec).
 
-**What to check**: Inspect the issue title, body, and any linked spec or plan document for concrete signals that the change spans more than one architectural layer simultaneously. Examples of multi-layer signals:
+**What to check**:
 
-- Issue body mentions two or more of: database schema, API endpoint, UI component, data pipeline, storage, mapper, presentation layer.
-- Issue body or a linked spec/plan describes coordinating changes across distinct subsystems (e.g., "update the model, the API, and the UI").
-- Any linked spec or plan document covers more than one architectural layer.
+1. Inspect the issue title, body, recent comments, and any linked spec or plan document for concrete signals that the change spans more than one architectural layer simultaneously. Examples of multi-layer signals:
+   - Issue body mentions two or more of: database schema, API endpoint, UI component, data pipeline, storage, mapper, presentation layer.
+   - Issue body or a linked spec/plan describes coordinating changes across distinct subsystems (e.g., "update the model, the API, and the UI").
+   - Any linked spec or plan document covers more than one architectural layer.
+2. Identify the primary entity being renamed or modified when the brief or linked artifact makes one identifiable. The entity may be a field, type, function, workflow variable, API contract key, or similar named surface.
+3. When a primary entity is identifiable, run a bounded repository search over non-test source references before Fast Track dispatch. Count both affected files and occurrences. Treat this as a planning-risk signal; it does not need to prove every reference requires a code edit.
+4. Check whether the item affects live external system configuration or integration contracts that repository search may not expose, including workflow automation, third-party API schemas, sibling repositories, or similar external config.
+
+**Non-test source scope**: Count source, config, and workflow files that are not tests, specs, fixtures, generated artifacts, lockfiles, documentation, or changelog entries. Example searches may use `rg`, `grep`, IDE search, or an equivalent repository search; do not add a custom parser or script dependency for this MVP.
+
+**High call-site volume threshold**: Treat the entity as high volume when either more than 15 non-test source files or more than 30 non-test source occurrences reference it.
 
 **Decision rule (deterministic)**:
 
-- **No concrete multi-layer signal found** → the item may proceed as fast-track.
+- **No concrete multi-layer signal, external-system result is no signal found, primary-entity ambiguity does not block a defensible routing decision, and either no high call-site volume for an identifiable primary entity or an explicit human override for high call-site volume is recorded** → the item may proceed as Fast Track.
 - **At least one concrete multi-layer signal found** → the item must NOT be fast-tracked. Route it to the Full Pipeline (spec → plan → implement) so all layers are planned and coordinated. Update the tracker status to **Writing Spec** and dispatch `01-generate-spec-protocol.md`.
+- **High call-site volume found without explicit human override** → the item must NOT be fast-tracked. Route it to the Full Pipeline and include a visible note such as: "High call-site volume detected: N files / M occurrences; routing to Full Pipeline so scope can be audited before implementation."
+- **Primary entity is ambiguous** → record why the call-site check is not applicable, or ask for clarification when the ambiguity prevents a defensible Fast Track decision.
+- **Known or likely external-system impact found** → do not proceed as immediate Fast Track work. Route to the Full Pipeline, or require a tracked pre-flight follow-up before any later Fast Track dispatch.
+- **External-system clarification required** → stop before Fast Track dispatch and ask the human for the missing context, or route to the Full Pipeline if the uncertainty is material enough that implementation would require guessing.
 
-This check is deterministic: it does not rely on heuristics alone. A vague or general description is not a multi-layer signal. At least one concrete signal — where the issue or linked document text explicitly mentions two or more distinct architectural layers — is required to block fast-track.
+**Routing evidence**: The Work Item Runner summary must record the cross-layer result, the primary entity and call-site result when applicable, and the external-system impact result. For external-system impact, record one of: no signal found, signal found, or clarification required.
+
+This gate is additive: cross-layer scope checks architectural spread, while call-site volume checks propagation breadth regardless of layer count. A positive signal from either check is enough to disqualify Fast Track. A vague or general description is not a multi-layer signal; at least one concrete signal where the issue or linked document text explicitly mentions two or more distinct architectural layers is required for the cross-layer branch of the gate.
 
 ### Pre-dispatch tracker status update (single-item path)
 
@@ -417,6 +511,34 @@ git worktree list | grep "<branch-prefix>/<slug>"
 
 If any check returns a match: **do not re-dispatch**. Resume from the existing branch or PR with `workflow-next-action.sh`.
 
+### Nested artifact guard before child dispatch
+
+Before dispatching any creator-stage or PR-opening child agent for an item with
+a positive numeric issue number, run:
+
+```bash
+ARTIFACT_REPO_ROOT="${ARTIFACT_REPO_ROOT:-$(pwd)}"
+./scripts/development-workflow/run-nested-artifact-guard.sh \
+  --mode pre-create \
+  --issue "$ISSUE_NUMBER" \
+  --expected-branch "<branch-prefix>/<slug>" \
+  --approved-base "$BASE_BRANCH" \
+  --repo-root "$ARTIFACT_REPO_ROOT"
+```
+
+Run the same helper with `--mode pre-pr` before any stage agent opens a PR. The
+approved base must come from the bounded prelude, portfolio handoff, integration
+branch resolution, or explicit human override. Treat `RESULT=missing_base`,
+`RESULT=blocked_duplicate`, `RESULT=wrong_base`, and `RESULT=scan_failed` as
+non-terminal blockers; resume the canonical path or obtain explicit split
+approval before continuing. Add `--expected-worktree <path>` only when a
+non-empty expected worktree path is known.
+
+Set `ARTIFACT_REPO_ROOT` to the repository that owns the branch and PR being
+guarded. In `workflow_hub` mode, implementation artifacts live in the selected
+product checkout, not the hub checkout; hub-owned spec and plan artifacts keep
+using the hub repository root.
+
 ### Integration-branch base override (sub-items with `integration-branch:<slug>` label)
 
 Before dispatching any creator-stage agent, check whether the item carries an `integration-branch:<slug>` label:
@@ -428,30 +550,41 @@ gh issue view <issue-number> --json labels --jq '.labels[].name | select(startsw
 If the label is present:
 
 1. **Derive the integration branch name**: `develop-<slug>` (replace `<slug>` with the value after `integration-branch:`).
+   When the bounded prelude or portfolio handoff already resolved
+   `BASE_BRANCH=develop` because the label was partial, mixed, missing on the
+   remote, or unverifiable, do not re-adopt `develop-<slug>` silently. Preserve
+   the approved base and report the prelude warning before mutation.
 2. **Resolve the branch owner**. In `single_repo`, the integration branch is
    owned by the current repository. In `workflow_hub`, it is the product
    implementation base and must be checked against the selected product
    repository, not the hub repository. Hub-owned spec and plan artifacts still
    target the hub artifact base branch.
-3. **Verify the branch exists on the owning remote** (output `0` = does not
-   exist, `1` = exists):
+3. **Verify the branch exists on the owning remote** using
+   `git ls-remote --exit-code --heads`. Exit `0` means the branch exists, exit
+   `2` means it is missing, and any other non-zero status means validation
+   failed:
 
    ```bash
    OWNING_REPO_ROOT="<current-or-selected-product-repository-root>"
    OWNING_REMOTE="origin"
-   BRANCH_EXISTS=$(set -o pipefail; git -C "$OWNING_REPO_ROOT" ls-remote "$OWNING_REMOTE" "refs/heads/develop-<slug>" 2>/dev/null | wc -l | tr -d ' ') || {
+   set +e
+   git -C "$OWNING_REPO_ROOT" ls-remote --exit-code --heads "$OWNING_REMOTE" "develop-<slug>" >/dev/null 2>&1
+   BRANCH_STATUS=$?
+   set -e
+   if [ "$BRANCH_STATUS" -ne 0 ] && [ "$BRANCH_STATUS" -ne 2 ]; then
      echo "WARNING: failed to verify whether develop-<slug> exists on the owning remote; skipping auto-create for this item."
      continue  # or return 1 / exit 1 depending on surrounding loop/function context
-   }
+   fi
    ```
 
-4. **If the branch does not exist** (`BRANCH_EXISTS` is `0`), create and push it
+4. **If the branch does not exist** (`BRANCH_STATUS` is `2`), create and push it
    from the owning repository's default implementation branch:
 
-   ```bash
-   OWNING_REPO_ROOT="<current-or-selected-product-repository-root>"
-   OWNING_REMOTE="origin"
-   DEFAULT_IMPLEMENTATION_BRANCH="<default-implementation-branch>"
+	   ```bash
+	   set -euo pipefail
+	   OWNING_REPO_ROOT="<current-or-selected-product-repository-root>"
+	   OWNING_REMOTE="origin"
+	   DEFAULT_IMPLEMENTATION_BRANCH="<default-implementation-branch>"
    git -C "$OWNING_REPO_ROOT" fetch "$OWNING_REMOTE" "$DEFAULT_IMPLEMENTATION_BRANCH"
    git -C "$OWNING_REPO_ROOT" checkout -B develop-<slug> "$OWNING_REMOTE/$DEFAULT_IMPLEMENTATION_BRANCH"
    git -C "$OWNING_REPO_ROOT" push -u "$OWNING_REMOTE" develop-<slug>
@@ -543,6 +676,55 @@ artifact base instead, even when product implementation work uses
 
 Before advancing the item, check its spec's `Depends on` field. If any dependency is not yet `Merged` or `Released`, stop and report the blocked state to the human.
 
+### Checkpoint-Resume Worktree Preflight
+
+When resuming an item after a human-checkpoint pause, and the prior run used a
+dedicated item worktree, run the checkpoint-resume preflight **before any
+mutation** (file edit, branch switch, commit, PR update, label update, tracker
+write, or merge). This closes the resume-side gap where a SendMessage or new
+session starts from the main clone instead of the item's isolated worktree.
+
+Use the read-only helper:
+
+```bash
+./scripts/development-workflow/worktree-resume-preflight.sh \
+  --item <item-id> \
+  --expected-branch <branch-prefix>/<slug> \
+  --expected-worktree <worktree-path-if-known> \
+  --main-repo-root <main-repo-root> \
+  --json
+```
+
+The helper inspects current CWD, current branch, and
+`git worktree list --porcelain`. It must not switch branches, edit files,
+update tracker state, update PRs, apply labels, merge PRs, or satisfy/waive any
+human checkpoint.
+
+Handle helper results as follows:
+
+| Result | Meaning | Required action |
+| --- | --- | --- |
+| `RESULT=continue` | Current CWD is already inside the expected worktree on the expected branch. | Continue the item run from the current directory. |
+| `RESULT=reenter` | Current CWD is the main clone and exactly one registered worktree matches the expected branch/path. | `cd "$TARGET_WORKTREE"`, run `bash scripts/development-workflow/worktree-cwd-guard.sh --check-cwd "$TARGET_WORKTREE" "$MAIN_REPO_ROOT"`, verify `pwd -P` and `git rev-parse --abbrev-ref HEAD`, then continue. |
+| `RESULT=stop` | The expected worktree is missing, ambiguous, detached, on the wrong branch, or the current CWD is untrusted. | Stop before mutation and report the helper fields to the human. |
+
+Stop output must include: item, expected branch, expected worktree when known,
+target worktree when found, observed directory, observed branch when available,
+failure reason, and human recovery action.
+
+Successful worktree re-entry is only a CWD safety check. It does not satisfy,
+waive, clear, or otherwise modify any pending human checkpoint. Checkpoint
+lifecycle state remains governed by the checkpoint policy and
+`run-epic-checkpoint-lifecycle.sh`.
+
+When resuming after an interrupted mutating run, inspect the item branch
+history, local worktree commits, and uncommitted edits before making a new
+mutation. Prefer the latest committed checkpoint that represents a completed
+logical sub-part as the resume boundary. Absence of a newer checkpoint is
+acceptable evidence that no completed sub-part finished after the last
+checkpoint, but live branch, PR, worktree, review, CI, and tracker state still
+control the next action.
+
 ---
 
 ## Step 3: Dispatch Strategy
@@ -560,13 +742,20 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 | Implement feature           | `developer`                                                                                                                             |
 | Review code (post-draft-PR) | `code-reviewer` agent (Claude Code: `/code-review`); for other runners use compatibility wrapper `03-review-implementation-protocol.md` |
 
-### Worktree isolation for parallel batches
+### Worktree isolation for batch dispatch
 
-**When dispatched as part of a parallel batch** (`BATCH_CONTEXT=true` in the handoff metadata):
+**When dispatched as part of an explicit-list batch** (`BATCH_CONTEXT=true` in the handoff metadata):
 
-1. **Create a dedicated worktree** for this item before executing any stage work. This ensures complete isolation from other concurrent Work Item Runners in the batch.
+1. If the handoff explicitly classifies the runner as `read_only`, do not create
+   a dedicated worktree and do not mutate files, switch branches, commit, push,
+   mutate PRs, change labels, or update tracker state. If a mutating action
+   becomes necessary, stop and return to the Portfolio Orchestrator so the item
+   can be redispatched as `mutating` with a Protocol 90 isolation manifest
+   assignment.
 
-2. Determine the appropriate base branch for the worktree:
+2. **For mutating runners, create a dedicated worktree** for this item before executing any stage work. This ensures complete isolation from other Work Item Runners in the batch, including sequential fallback where the same batch contract is preserved.
+
+3. Determine the appropriate base branch for the worktree:
 
    **If `BASE_BRANCH` is present in the handoff metadata** (set by the
    Portfolio Orchestrator when the item carries an `integration-branch:<slug>`
@@ -590,13 +779,20 @@ Use the matching workflow agent / skill for the next stage when your runner supp
 
 **Note:** Use `origin/<base>` (remote tracking) rather than local `<base>` to avoid git worktree conflicts if the local base branch is already checked out elsewhere.
 
-3. Create the worktree. The command depends on whether the item's branch already exists:
+4. Create the worktree at the worktree path assigned by the Protocol 90
+   isolation manifest. Do not invent, shorten, or substitute a different
+   `<worktree-path>` for a mutating batch dispatch. If `BATCH_CONTEXT=true`,
+   the runner may mutate artifacts, and the manifest-assigned absolute worktree
+   path is missing, stop before creating a worktree or mutating files and report
+   the missing assignment to the Portfolio Orchestrator. The command depends on
+   whether the item's branch already exists:
 
 ```bash
 # Fetch latest remote refs first
 git fetch origin
 
 # Case A: New item — branch does not exist yet
+# <worktree-path> must be the manifest-assigned absolute path.
 git worktree add <worktree-path> -b <branch-prefix>/<slug> origin/<base-branch>
 
 # Case B: Resuming item — branch exists locally
@@ -637,6 +833,41 @@ if [ "$CURRENT" != "<branch>" ]; then
 fi
 ```
 
+**Pre-mutation isolation self-check — mandatory for `BATCH_CONTEXT=true`**
+
+Before the first file edit, branch-changing command, commit, push, PR mutation,
+tracker mutation, or stage-agent handoff, verify that the active runner context
+matches the isolation assignment from the Portfolio Orchestrator:
+
+- Expected worktree path is present, absolute, and matches the resolved
+  `<worktree-path>`.
+- Observed directory (`pwd -P`) equals the expected worktree path or begins with
+  the expected worktree path followed by `/`, and is not the main repository
+  root.
+- Expected branch is present and matches `git rev-parse --abbrev-ref HEAD`.
+- Artifact repo root is present.
+- Approved base branch is present.
+- `isolation: "worktree"` is present.
+- Mutation classification is `mutating` for any runner that will edit files,
+  change branches, commit, push, open or update PRs, modify labels, or update
+  tracker state.
+
+If the observed directory is outside the expected worktree path, if the runner
+is in the main repo root, or if the observed branch differs from the expected
+branch, stop before mutation with guardrail stop condition
+`unclear_requirements`. The stop report must include the stop condition name,
+item identifier, expected worktree, observed directory, expected branch,
+observed branch, and the human action needed to unblock.
+
+If there is evidence that mutation may already have occurred outside the
+assigned worktree, escalate for human inspection instead of trying to repair it
+automatically. Do not reset, restore, stash, commit, or delete the suspect
+changes without explicit human direction.
+
+Record the pre-mutation isolation self-check result in the Work Item Runner
+terminal summary. The Portfolio Orchestrator must treat missing, failed, or
+escalated isolation evidence as non-terminal for the batch item.
+
 **Runtime CWD guard — activate immediately after entering the worktree**
 
 After `cd <worktree-path>`, source and initialise the CWD guard. This provides runtime enforcement that catches branch-switching commands issued from the wrong directory **at execution time** rather than only at the post-agent Step 5.2 inspection:
@@ -660,9 +891,22 @@ The guard is **non-blocking**: it emits a `GUARDRAIL WARNING` and returns exit c
 **Stage-agent handoff branch-skip requirement** (`BATCH_CONTEXT=true` only): Every stage-agent handoff (to `developer`, `tech-lead`, `product-manager`, or any other stage agent) when `BATCH_CONTEXT=true` **must** include:
 
 1. The literal resolved `<worktree-path>` value (e.g., `/path/to/repo/.claude/worktrees/lh-168/fix-lh-168-slug`).
-2. The explicit instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm CWD matches `<worktree-path>` before any git state-changing command."
+2. The expected branch, artifact repo root, approved base branch, mutation
+   classification, and `isolation: "worktree"` when the stage agent may mutate
+   artifacts.
+3. The explicit instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root. Confirm `pwd -P` equals `<worktree-path>` or begins with `<worktree-path>/` before any git state-changing command."
+4. The explicit instruction: "For substantial or multi-part mutating item work,
+   commit immediately after each completed logical sub-part so interrupted runs
+   have a recoverable checkpoint. Do not intentionally batch all completed
+   sub-parts into one end-of-run commit. Single-step work with no meaningful
+   completed intermediate checkpoint may use one final commit. Never commit
+   incomplete, failing, or incoherent edits only to satisfy this requirement."
 
-Omitting either of these from the handoff is the root cause of the branch-leak pattern where stage subagents run Protocol 03's branching steps (`git checkout develop && git checkout -b <branch>`) from the main repo root CWD, silently switching the main working tree to the feature branch.
+Omitting any required instruction or metadata field from the handoff is the root
+cause of the branch-leak pattern where stage subagents run Protocol 03's
+branching steps (`git checkout develop && git checkout -b <branch>`) from the
+main repo root CWD, silently switching the main working tree to the feature
+branch.
 
 **Critical: Worktree Git Discipline** (`BATCH_CONTEXT=true` only)
 
@@ -671,7 +915,7 @@ Omitting either of these from the handoff is the root cause of the branch-leak p
 Before issuing any `git switch`, `git checkout`, `git checkout -b`, `git reset`, or `git restore` command, confirm both conditions below. If either check fails, do not run the command — correct the path or use the `-C` flag instead.
 
 1. **Confirm you are operating inside the worktree, not the main repository root.**
-   Run `pwd` and compare the output against `<worktree-path>`. If they differ, you are in the wrong directory. `cd <worktree-path>` or use `git -C <worktree-path>` before continuing.
+   Run `pwd -P` and confirm the output equals `<worktree-path>` or begins with `<worktree-path>/`. If it is outside the assigned worktree, you are in the wrong directory. `cd <worktree-path>` or use `git -C <worktree-path>` before continuing.
 
 2. **Confirm the command targets the current worktree branch, not a base branch.**
    Running `git checkout develop` (or any other base branch) inside the worktree will fail because `develop` is already checked out in the main working tree — git prevents the same branch from being checked out in two locations simultaneously. If a stage protocol's branching step says `git checkout develop && git checkout -b <branch>`, skip it entirely: the worktree was already created on the correct branch.
@@ -818,7 +1062,10 @@ git worktree remove <worktree-path>
 
 After removing the worktree, verify that the CWD is still valid by running a simple command like `pwd` before executing any further shell operations.
 
-**When not in a parallel batch**: Worktree creation is optional but recommended for large development folders or long-running work. If not using a dedicated worktree, ensure the working directory is clean before proceeding.
+**When not in batch dispatch**: Worktree creation is optional only for direct
+single-item runs where `BATCH_CONTEXT=true` is absent. Mutating explicit-list
+batch dispatch, including sequential fallback, must use the Protocol 90
+manifest-assigned worktree path.
 
 **Permission-denial early exit (subagent runs only)**: If at any point during the run the harness responds with the known harness failure pattern — a message containing the phrase `"Permission to use"` AND a denied tool name (`Edit`, `Write`, or `Bash`) — the subagent must **immediately stop all further work** and return the following structured string to the Portfolio Orchestrator:
 
@@ -874,7 +1121,7 @@ This rule prevents agents from making changes that affect unrelated issues and c
 
 ## Step 3.5: Pre-flight Permission Self-Check (Subagent Runs Only)
 
-**Applies to**: Work Item Runner subagents dispatched as part of a parallel batch (`BATCH_CONTEXT=true`). This step is **optional but recommended** — the permission-denial early-exit in Step 3 (above) covers mid-run failures even without the self-check.
+**Applies to**: Work Item Runner subagents dispatched as part of an explicit-list batch (`BATCH_CONTEXT=true`). This step is **optional but recommended** — the permission-denial early-exit in Step 3 (above) covers mid-run failures even without the self-check.
 
 Before calling any creator-stage agent or making any file edits, perform a lightweight sanity check to verify that both `Edit` and `Bash` are accessible:
 
@@ -958,6 +1205,14 @@ After the selected item reaches a terminal condition, provide a concise summary:
 - Final state: ready for human review / waiting on human decision / blocked / escalated
 - Path taken: plan written -> reviewed -> PR opened -> automated review clean -> CI green
 - Next human action: merge PR / answer architecture question / unblock dependency
+
+## Ground-Truth Completion Verification
+
+[Paste the exact output from `scripts/development-workflow/item-completion-self-check.sh`.
+For ready/done/waiting-on-merge/cleanup success, a non-zero helper exit is
+non-terminal. For blocked or escalated states, a non-zero helper exit may be
+terminal only when the failed surface is the explicit blocker; report the
+expected value, observed value, and the next gate or human action required.]
 ```
 
 **Retrospective suggestion (standalone runs only)**:
@@ -1503,7 +1758,9 @@ the PR. The only valid path to `ready-for-human-review` is:
 4. Step 7b applies and verifies `ready-for-regression` for implementation PRs.
 5. Step 8 CI loop returns green.
 6. Step 8a readiness checklist passes, including the reviewer-loop summary
-   check and GraphQL `reviewThreads` gate.
+   check, documentation-stage alignment for `spec/*` and
+   `implementation-plan/*` PRs, residual gate for applicable broad-scope work,
+   and GraphQL `reviewThreads` gate.
 
 Skipping any step above is a protocol violation. If an item-orchestrator or
 stage agent returns with `ready-for-human-review` already applied before the
@@ -1594,9 +1851,17 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 
 **When ALL criteria are met — apply the fixes directly** in the current session using Edit/Bash tools:
 
-1. Apply every blocking finding in one pass (follow the batching rule: all in one commit).
-2. Commit with a descriptive message (e.g., `fix: address [platform] findings inline ([brief description])`).
-3. Push the commit. _(Push before resolving threads — if push fails, threads must not be falsely marked resolved.)_
+1. If `BATCH_CONTEXT=true`, complete the pre-mutation isolation self-check above
+   before any inline edit, branch-changing command, commit, push, PR mutation, or
+   tracker mutation. Stop before mutation if the check fails.
+2. Apply every blocking finding in one pass. For substantial fixer work, create
+   coherent local checkpoint commits after completed logical sub-parts so
+   partial progress survives runner interruption.
+3. Push once after all addressable fixes for the current reviewer-loop cycle
+   are complete. Do not push after each individual fix or checkpoint commit.
+   Use descriptive commit messages for the final local commit sequence.
+   _(Push before resolving threads — if push fails, threads must not be falsely
+   marked resolved.)_
 4. Reply to each finding's review thread with the fix description and commit SHA.
 5. Resolve each addressed thread via the GraphQL `resolveReviewThread` mutation.
 6. **Increment `cycle`** (the same counter used in the sub-agent loop). Inline fix retries are bounded by `max_cycles` exactly like sub-agent retries — the inline path is a faster lane, not an unbounded one.
@@ -1614,14 +1879,19 @@ Before dispatching a fixer sub-agent, check whether ALL blocking findings are **
 | `implementation-plan/*`                           | `implementation-plan-reviewer`                               |
 | `feature/*` / `refactor/*` / `fix/*` / `hotfix/*` | `code-reviewer`                                              |
 
-**Fixer agent worktree isolation rule (mandatory for parallel batches):**
+**Fixer agent worktree isolation rule (mandatory for batch dispatch):**
 
-When this Work Item Runner was dispatched as part of a parallel batch (`BATCH_CONTEXT=true`), all fixer agents dispatched from this step **must** receive `BATCH_CONTEXT=true` and the resolved `<worktree-path>` in their handoff. Fixer agents that run without these values will use main-repo absolute file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context — causing their changes to be written to the main working tree and left uncommitted on the integration branch instead of on the isolated feature branch.
+When this Work Item Runner was dispatched as part of an explicit-list batch (`BATCH_CONTEXT=true`), all fixer agents dispatched from this step **must** receive `BATCH_CONTEXT=true` and the resolved `<worktree-path>` in their handoff. Fixer agents that run without these values will use main-repo absolute file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context — causing their changes to be written to the main working tree and left uncommitted on the integration branch instead of on the isolated feature branch.
 
-Required fixer handoff values (parallel batches only):
+Required fixer handoff values (batch dispatch only):
 
 - `BATCH_CONTEXT=true`
 - `WORKTREE_PATH=<resolved-absolute-worktree-path>` — the same path used when this item was first dispatched
+- `EXPECTED_BRANCH=<branch>`
+- `ARTIFACT_REPO_ROOT=<artifact-owning-repo-root>`
+- `APPROVED_BASE_BRANCH=<base-branch>`
+- `MUTATION_CLASSIFICATION=mutating`
+- `isolation: "worktree"`
 - The explicit branch-skip instruction: "BATCH_CONTEXT=true — the worktree is already on branch `<branch>`. Do NOT run `git checkout develop`, `git checkout -b`, `git switch`, `git reset`, or `git restore` from the main repo root."
 
 **Fixer agent batching rule (mandatory):**
@@ -1634,7 +1904,12 @@ When dispatching a fixer agent, include the following explicit instruction:
 >
 > 1. **Read ALL blocking findings first** — before touching any file, collect the complete list of open blocking findings from the current review cycle.
 > 2. **Apply ALL addressable fixes** — implement every fix you can address in this dispatch, across all files.
-> 3. **One commit, then push** — bundle every fix into a single commit and push once. Do not push after each individual fix.
+> 3. **Use local checkpoint commits when useful** — for substantial fixer work,
+>    create coherent local checkpoint commits after completed logical sub-parts
+>    so partial progress survives runner interruption.
+> 4. **Push once after all addressable fixes** — push only after all addressable
+>    fixes for the current reviewer-loop cycle are complete. Do not push after
+>    each individual fix or checkpoint commit.
 >
 > Findings that cannot be addressed in this dispatch (e.g. require a human decision, are out of scope, or are genuinely contradictory) should be noted and left for human review. Do not skip a push just because one finding is unresolvable — push the rest.
 
@@ -1766,8 +2041,25 @@ Merge only when the gate returns `merge_allowed` **and** every required-evidence
 check in section 3 Gate 5 of `guardrails-enforcement.md` passes. For medium-risk
 decisions, include a complete "why safe to merge" explanation. A risk classified
 above the stage `max_merge_risk` stops the run and names the `high_risk_change`
-guardrail. When `may_merge_pr` is `false`, do not merge automatically — leave the
-PR at the `ready-for-human-review` handoff.
+guardrail.
+
+After readiness, branch on the effective merge authority:
+
+- `merge_granted` (`stages.<stage>.may_merge_pr: true`, or an accepted
+  invocation override such as `--may-merge` within the resolved guardrails):
+  `ready-for-human-review` and `ready-for-regression` are intermediate
+  readiness evidence. Continue through the delegated merge gate and approved
+  merge path for the in-scope PR. Do not report the item terminal while it is
+  merely ready unless a named post-readiness gate blocks merge.
+- `merge_denied` (`stages.<stage>.may_merge_pr: false`, `--no-may-merge`, or no
+  delegated merge authority): do not execute merge commands. Report
+  `ready_human_merge`, leave the PR at the human handoff, and name the exact
+  denying policy value plus the next human action.
+
+If merge authority is granted but a named post-readiness gate fails, report
+`merge_blocked` with the failed gate and human action. If this runner stops at
+readiness in a merge-granted run without a named blocker, the terminal outcome
+is `policy_inconsistent`, not ready or done.
 
 When the gate returns `merge_allowed`, the item run does **not** stop at
 `ready-for-human-review`. Continue through the repository-approved merge path,
@@ -1822,6 +2114,10 @@ Interpret the result as follows:
 | 5         | CI not green at readiness gate                                                                    | Run Step 8 (pr-ci-loop.sh) and fix failing checks   |
 | 6         | Late-arriving async bot threads detected after label application                                  | Remove `ready-for-human-review`, add `needs-fixes`, return to Step 7a |
 | 7         | Latest reviewer-loop summary is missing or has a non-clean terminal result                       | Do not label ready; escalate or return to reviewer loop |
+| 8         | Documentation-stage alignment mismatch on `spec/*` or `implementation-plan/*` PR                 | Remove stale readiness, add/update warning, add `needs-fixes`, correct or escalate |
+| 9         | Residual gate missing, blocked, or escalated for broad-scope work                                | Keep out of readiness; fix residuals, add `needs-fixes`, or escalate |
+| 10        | Documentation-stage alignment checker infrastructure failure                                     | Retry checker or resolve GitHub/diff read failure |
+| 11        | Complex workflow decision-gate matrix evidence missing or contradictory when applicable          | Keep out of readiness; add `needs-fixes`, complete matrix evidence, and re-run review |
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
@@ -1935,8 +2231,10 @@ time), synchronize the `human-checkpoint-required` label and stable PR comment
 after fixer pushes — so label state always reflects current checkpoint
 satisfaction.
 
-**Timing**: Run after the infrastructure dependency scan above and before Check
-4 (`ready-for-human-review` application) in the readiness checklist.
+**Timing**: Run after the infrastructure dependency scan above, after CI and
+reviewer-loop checks are clean, and before Check 4 (`ready-for-human-review`
+application) in the readiness checklist. This sync step never applies
+`ready-for-human-review` by itself; Check 4 is the only label-application path.
 
 **Procedure**:
 
@@ -1956,10 +2254,13 @@ satisfaction.
      --write-checkpoints-file checkpoint-policy.json
    ```
 
-4. When `BLOCKING_COUNT` is greater than zero, apply `ready-for-human-review`
-   **and** keep `human-checkpoint-required` (both labels may coexist per
-   protocol 92 BR-11/BR-3). Record checkpoint reason and required human action
-   in the `<!-- run-epic:checkpoint-status -->` comment posted by the script.
+4. When `BLOCKING_COUNT` is greater than zero, keep
+   `human-checkpoint-required` and record checkpoint reason plus required human
+   action in the `<!-- run-epic:checkpoint-status -->` comment posted by the
+   script. Do **not** apply `ready-for-human-review` here. If CI, reviewers,
+   documentation-stage alignment, residual gates, and review-thread checks all
+   pass, Check 4 applies `ready-for-human-review`; the two labels may coexist
+   per protocol 92 BR-11/BR-3.
 5. When all applicable checkpoints are `satisfied` or `waived`, the script
    removes `human-checkpoint-required` automatically.
 6. During fix cycles (Step 9): when applying `needs-fixes`, do **not** remove
@@ -1973,6 +2274,9 @@ Run this checklist for **every PR**:
 ```bash
 PR_NUMBER=<pr_number>
 BRANCH=<branch_name>  # e.g., feature/foo, spec/bar, fix/baz
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source scripts/development-workflow/workflow-lib.sh
+TARGET_REPO=$(repo_slug)
 
 # Determine PR type (implementation vs. spec/plan)
 case "$BRANCH" in
@@ -2062,12 +2366,117 @@ if [ "$IS_IMPLEMENTATION_PR" = "true" ]; then
   fi
 fi
 
-# Check 3: needs-fixes label — remove if present (stale at this point: CI is green and reviews are clean)
+# Check 3: record needs-fixes label state.
+# Do not remove it yet. Later gates in this checklist, including residual and
+# documentation-stage alignment, can still prove that needs-fixes is current.
 HAS_NEEDS_FIXES=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^needs-fixes$" || true)
 if [ "$HAS_NEEDS_FIXES" -gt 0 ]; then
-  echo "INFO: Removing stale 'needs-fixes' label (CI is green and reviews are clean)."
-  gh pr edit "$PR_NUMBER" --remove-label "needs-fixes"
+  echo "INFO: needs-fixes is present; it will be removed only after all Step 8a gates pass."
 fi
+
+# Check 3.5: residual gate for broad-scope work.
+# When item title/body/spec/plan indicates sweep, batch, helper extraction,
+# numeric target counts, or pattern-based completeness, the runner must execute
+# scripts/development-workflow/scope-residual-gate.sh verify before Check 4 and
+# expose the latest verify result here. A classify-only
+# RESULT=requires_verification does not satisfy readiness.
+if [ "${RESIDUAL_GATE_REQUIRED:-false}" = "true" ]; then
+  case "${RESIDUAL_GATE_RESULT:-}" in
+    pass)
+      echo "✅ Residual gate verified: RESULT=${RESIDUAL_GATE_RESULT}."
+      ;;
+    not_applicable)
+      echo "ERROR: Residual gate was required for this item, but the latest verification returned not_applicable."
+      echo "Re-run scripts/development-workflow/scope-residual-gate.sh verify with the item title/body/spec/plan scope that made the gate required."
+      gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+      exit 9
+      ;;
+    block)
+      echo "ERROR: Residual gate blocked readiness."
+      gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+      echo "Finish residual work, link follow-up issues, or mark residuals out of scope before applying ready-for-human-review."
+      exit 9
+      ;;
+    escalate)
+      echo "ERROR: Residual gate escalated for a human decision."
+      echo "Do not apply ready-for-human-review until the residual scope decision is resolved."
+      exit 9
+      ;;
+    requires_verification)
+      echo "ERROR: Residual gate was only classified; evidence verification has not run."
+      echo "Run scripts/development-workflow/scope-residual-gate.sh verify and re-enter Step 8a."
+      gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+      exit 9
+      ;;
+    *)
+      echo "ERROR: Residual gate is required for this broad-scope item but no pass/not_applicable result is recorded."
+      echo "Run scripts/development-workflow/scope-residual-gate.sh verify and re-enter Step 8a."
+      gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+      exit 9
+      ;;
+  esac
+fi
+
+# Check 3.6: complex workflow decision-gate matrix evidence.
+# This is a manual evidence gate, not a detector. When the PR changes workflow
+# documentation or protocols whose behavior depends on multiple inputs,
+# outcomes, next-action branches, labels, exit states, examples, or mirrored
+# workflow surfaces, verify that the PR description contains either:
+# - a consistency matrix or pointer identifying gate inputs, allowed outcomes,
+#   required next actions, mirror surfaces, and examples when examples are part
+#   of the changed surface; or
+# - a short not-applicable rationale when the PR evidence format asks for this
+#   check but the change does not alter decision-gate behavior.
+# The caller sets COMPLEX_GATE_MATRIX_REQUIRED=true after classifying the PR as
+# an applicable complex workflow decision-gate change. The body check below is a
+# minimum evidence check; reviewers still verify that the matrix content is not
+# contradictory across mirror surfaces.
+if [ "${COMPLEX_GATE_MATRIX_REQUIRED:-false}" = "true" ]; then
+  if ! PR_BODY=$(gh pr view "$PR_NUMBER" --json body --jq '.body // ""'); then
+    echo "ERROR: Cannot verify complex workflow decision-gate matrix evidence - gh pr view failed."
+    exit 11
+  fi
+  if ! printf '%s\n' "$PR_BODY" |
+    grep -Eiq 'consistency matrix|gate inputs|allowed outcomes|required next actions|mirror surfaces'; then
+    echo "ERROR: Complex workflow decision-gate matrix evidence is missing from the PR body."
+    gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+    exit 11
+  fi
+  if printf '%s\n' "$PR_BODY" | grep -Eiq 'complex workflow decision-gate matrix:[[:space:]]*not applicable|complex gate matrix[[:space:]-]+not applicable'; then
+    echo "ERROR: Complex workflow decision-gate matrix was required, but the PR body says not applicable."
+    gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+    exit 11
+  fi
+  echo "OK: Complex workflow decision-gate matrix evidence is present in the PR body."
+fi
+
+# Check 3.7: documentation-stage alignment for spec and plan PRs.
+# Run on every pass through Step 8a, including resumed PRs with an existing
+# ready-for-human-review label. Invoke the checker for every PR; it reads the
+# live PR head branch and returns not_applicable for non-documentation branches,
+# so a stale or wrong local BRANCH value cannot bypass the gate.
+set +e
+ALIGNMENT_OUTPUT=$(./scripts/development-workflow/check-documentation-stage-alignment.sh --pr "$PR_NUMBER" --json 2>&1)
+ALIGNMENT_STATUS=$?
+set -e
+if [ "$ALIGNMENT_STATUS" -eq 8 ]; then
+  echo "$ALIGNMENT_OUTPUT"
+  echo "ERROR: Documentation-stage alignment mismatch blocks ready-for-human-review."
+  HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
+  if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
+    gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "ready-for-human-review" ||
+      echo "WARNING: failed to remove stale ready-for-human-review; mismatch still exits 8 and remains blocked."
+  fi
+  gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --add-label "needs-fixes" ||
+    echo "WARNING: failed to add needs-fixes; mismatch still exits 8 and remains blocked."
+  echo "Correct the PR diff so it contains only expected documentation-stage artifacts, or escalate for a human workflow-stage decision."
+  exit 8
+elif [ "$ALIGNMENT_STATUS" -ne 0 ]; then
+  echo "$ALIGNMENT_OUTPUT"
+  echo "ERROR: Documentation-stage alignment checker failed. Retry the checker or resolve the GitHub/diff read failure before applying ready-for-human-review."
+  exit "$ALIGNMENT_STATUS"
+fi
+echo "✅ Documentation-stage alignment verified."
 
 # ⛔ STOP — Mandatory pre-Check-4 verification (implementation PRs only)
 # Do NOT proceed to Check 4 until you have explicitly verified ready-for-regression is present.
@@ -2128,13 +2537,20 @@ else
   echo "✅ GraphQL verification: all review threads resolved. Proceeding to Check 4."
 fi
 
+# Check 3.7: remove stale needs-fixes only after every pre-readiness gate that
+# can keep it current has passed.
+if [ "$HAS_NEEDS_FIXES" -gt 0 ]; then
+  echo "INFO: Removing stale 'needs-fixes' label after all pre-readiness gates passed."
+  gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "needs-fixes"
+fi
+
 # Check 4: ready-for-human-review label NOT yet applied (we are about to apply it)
-HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
+HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
 if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
   echo "INFO: PR already has 'ready-for-human-review' label. Skipping re-application."
 else
   echo "Applying 'ready-for-human-review' label..."
-  gh pr edit "$PR_NUMBER" --add-label "ready-for-human-review"
+  gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --add-label "ready-for-human-review"
 fi
 
 echo "✅ Label readiness checklist passed. PR is ready for human review."
@@ -2216,6 +2632,20 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
   - If `unresolved review threads found` (exit 4 from GraphQL pre-Check-4 gate): The GraphQL query returned unresolved bot-authored review threads. Address the findings, push fixes, and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until the GraphQL query confirms all threads are resolved. **Do not rely on self-tracked thread state** — the GraphQL query is the authoritative check.
   - If `late-arriving async bot threads detected` (exit 6 from Step 8a.1 re-check): Late-arriving threads from async bots (e.g., `codex-github`) were discovered after the pre-Check-4 gate. Remove `ready-for-human-review`, add `needs-fixes`, and return to Step 7a. This indicates a race condition where the bot posted its thread after the initial verification but before the label was applied.
   - If `reviewer-loop summary missing or non-clean` (exit 7 from Check 0.5): The latest automated reviewer-loop summary comment is absent or its `Result:` line is not `clean`/`skipped`. Do not apply `ready-for-human-review`. For `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result, escalate or re-enter Step 7 according to the reviewer-loop result.
+  - If `documentation-stage alignment mismatch` (exit 8 from Check 3.6):
+    the PR is on `spec/*` or `implementation-plan/*` but includes files outside
+    the expected stage artifact allowlist, or has an empty diff. The checker
+    posts or updates `<!-- documentation-stage-alignment -->`; keep
+    `ready-for-human-review` removed, add `needs-fixes`, and correct the diff or
+    escalate for a human workflow-stage decision.
+  - If `residual gate missing, blocked, or escalated` (exit 9 from Check 3.5):
+    the item is broad-scope but lacks a passing residual gate result. For
+    `block`, apply or keep `needs-fixes` and finish the residuals, link
+    follow-up issues, or mark residuals out of scope. For `escalate`, stop for
+    the named human decision before readiness.
+  - If `documentation-stage alignment checker infrastructure failure` (exit
+    10): retry the checker or resolve the GitHub/diff read failure before
+    applying `ready-for-human-review`.
   - If `needs-fixes` is present (Check 3): The label is stale at this point (CI is green and reviews are clean), so it is automatically removed before proceeding to apply `ready-for-human-review`
 
 This checklist ensures the label sequence is always complete and all CI checks (including e2e/regression) have passed before the PR is declared ready for human review.
@@ -2322,7 +2752,18 @@ If any check fails:
 3. Remove `ready-for-human-review` if it was already applied: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 4. Fix the root cause (wrong base branch, missing label, missing review comment, failing CI) and return to Step 7a.
 
-Only after all checks pass should the Work Item Runner report the PR as terminal ("ready for human review").
+Only after all checks pass should the Work Item Runner run
+`item-completion-self-check.sh` for the claimed ready state. Include `--pr`,
+`--expected-base`, `--expected-label ready-for-human-review`,
+`--expected-label ready-for-regression` for implementation branches that require
+Step 7b, `--forbid-label needs-fixes`, `--tracker-required true` when tracker
+status is claimed, and both `--require-review-summary true` and
+`--require-review-threads true` when Step 7 was configured. A helper
+`discrepancy` result sends the runner back to the appropriate existing gate:
+Step 7a for review findings, Step 8 for CI, Step 8a for labels/readiness, Step
+8b for tracker state, or human escalation for unavailable required surfaces.
+Only a passing self-check may be reported as terminal ("ready for human
+review").
 
 ---
 
@@ -2375,6 +2816,22 @@ state according to this table:
 - After cleanup, re-read the live tracker status and Project status. If the live
   status does not match the expected value in the table above, re-apply the
   tracker transition before reporting the item terminal.
+- For implementation branches (`feature/*`, `fix/*`, `refactor/*`, and
+  `hotfix/*`), `post-merge-cleanup.sh` must report remote branch cleanup
+  evidence before the item is terminal. Accept `REMOTE_DELETE_RESULT=deleted`
+  or `REMOTE_DELETE_RESULT=not_found` as successful/idempotent outcomes after a
+  merged PR is verified. Treat `REMOTE_DELETE_RESULT=skipped` or
+  `REMOTE_DELETE_RESULT=failed` as non-terminal cleanup failures and report the
+  named branch and PR context. Spec and implementation-plan branches are
+  expected-persistent remotely and do not require implementation remote deletion
+  evidence.
+- Before reporting post-merge cleanup or tracker reconciliation complete, run
+  `item-completion-self-check.sh` for the cleanup claim, using the current base
+  branch (the merged workflow branch should already be deleted), the current
+  base worktree path, `--stage cleanup`, and
+  `--expected-tracker-status "<expected status>"`. Paste the
+  `## Ground-Truth Completion Verification` section into the cleanup report.
+  Any `discrepancy` or `unavailable_required` result keeps cleanup non-terminal.
 - If manual cleanup is required, clean up local branches and worktrees associated with the merged PR:
 
 ```bash

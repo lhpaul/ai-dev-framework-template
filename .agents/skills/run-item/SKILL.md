@@ -30,18 +30,56 @@ advances exactly one non-epic item through Protocol 91.
    and follow it exactly. Do **not** delegate to `workflow-item-orchestrator` in the
    same run after Step 2 — that skill also runs the prelude and would duplicate
    scope/policy work.
+   For substantial or multi-part mutating item work, commit immediately after
+   each completed logical sub-part, do not intentionally batch all completed
+   sub-parts into one end-of-run commit, and never commit incomplete, failing,
+   or incoherent edits only to satisfy the requirement.
 5. Before implementation mutation in `workflow_hub`, state selected product
    repository, artifact owner, and mutation target; stop when context is missing
    or ambiguous.
-6. **Guardrails enforcement**: Use portfolio-resolved guardrails from handoff when
+6. Before branch creation or PR creation for a tracker-backed item, run
+   `run-nested-artifact-guard.sh` with the expected branch, approved base, and
+   artifact-owning repo root (`--repo-root "$ARTIFACT_REPO_ROOT"`).
+   Stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`;
+   explicit split work requires parent approval and `--allow-split true`.
+7. Before dispatching a Backlog item into Writing Spec, run or consume
+   `scripts/development-workflow/spec-dispatch-context.sh`. For direct
+   single-item runs, pass the selected item plus relevant in-scope Backlog peers
+   from the current tracker scan in `--items`; a selected-only scope may collect
+   decisions but cannot classify peer relationships. Pass non-blocking confirmed
+   decisions and relationship outcomes to the spec writer; stop on
+   `blocking=true` and report the helper's `humanAction`. Shared keywords alone
+   are not dependency evidence.
+8. **Guardrails enforcement**: Use portfolio-resolved guardrails from handoff when
    available; otherwise resolve from repo `guardrails` config. Report effective
    values before mutation. Enforce gates per
    `docs/workflow/development-workflow/guardrails-enforcement.md` section 3.
-7. Epic-like targets must use `$run-epic` / `/run-epic`, not this command.
-8. When the delegated merge gate returns `merge_allowed`, continue through merge,
+   When resuming after a human-checkpoint pause from a prior worktree-isolated
+   run, perform Protocol 91's checkpoint-resume worktree preflight before any
+   mutation. Worktree re-entry is a CWD safety check only; it does not satisfy
+   or waive checkpoint state.
+   For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
+   items, run Protocol 91's residual gate before `ready-for-human-review`; block
+   or escalate instead of reporting terminal when residual evidence is missing or
+   incomplete.
+9. For `spec/*` and `implementation-plan/*` PRs, run Protocol 91 Step 8a's
+   documentation-stage alignment checker before readiness; correct or escalate
+   mismatches instead of applying `ready-for-human-review`.
+10. Epic-like targets must use `$run-epic` / `/run-epic`, not this command.
+11. When the delegated merge gate returns `merge_allowed`, continue through merge,
    remote/local branch cleanup, `post-merge-cleanup.sh`, and live tracker
    verification before reporting the item terminal. Do not stop at
    `ready-for-human-review` in a delegated merge run.
+   Treat merge authority explicitly: `merge_granted` means readiness is
+   intermediate; `merge_denied` means the ready PR stops as
+   `ready_human_merge` and no merge command is run. A merge-granted run that
+   stops at readiness without a named blocker is `policy_inconsistent`.
+12. Before reporting any terminal state, run
+    `scripts/development-workflow/item-completion-self-check.sh` for the claimed
+    state and include its `## Ground-Truth Completion Verification` section in
+    the Work Item Runner Summary. Treat `discrepancy` and
+    `unavailable_required` as non-terminal and re-enter the relevant Protocol 91
+    gate.
 
 > **Deprecated alias**: `$run-item-work` / `/run-item-work` resolves to the same
 > behavior for legacy invocations.

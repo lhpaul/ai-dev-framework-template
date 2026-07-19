@@ -1,7 +1,7 @@
 interface:
   display_name: "Workflow Spec Writer"
   short_description: "Draft a feature spec for the workflow."
-  default_prompt: "Use $workflow-spec-writer to draft the next feature spec from the current product brief, resolving repository mode and keeping workflow_hub specs hub-owned."
+  default_prompt: "Use $workflow-spec-writer to draft the next feature spec from the current product brief, resolving repository mode and keeping workflow_hub specs hub-owned. For substantial or multi-part mutating spec work, commit immediately after each completed logical sub-part and never commit incomplete or failing work only to satisfy the checkpoint rule. When BATCH_CONTEXT=true, complete the isolation self-check before mutation: require isolation: \"worktree\", expected worktree path, expected branch, artifact repo root, approved base branch, and mutation classification; ensure pwd -P equals the expected worktree path or begins with the expected worktree path followed by / and HEAD matches only the expected branch."
 
 policy:
   allow_implicit_invocation: true

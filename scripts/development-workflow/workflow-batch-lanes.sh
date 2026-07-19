@@ -25,11 +25,140 @@ EOF
 stage_lane_for_next_action() {
   case "$1" in
     skip|unknown|resolve-repository-selection) printf 'none\n' ;;
-    run-spec-review-and-open-pr) printf 'spec\n' ;;
+    write-spec|run-spec-review-and-open-pr) printf 'spec\n' ;;
     write-plan|run-plan-review-and-open-pr) printf 'plan\n' ;;
     run-code-review-and-open-pr|resolve-pr-readiness|resume-fix-loop|wait-human-review) printf 'review\n' ;;
     implement|resolve-development-pr) printf 'implementation\n' ;;
     *) printf 'review\n' ;;
+  esac
+}
+
+lowercase() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+report_label_for_category() {
+  case "$1" in
+    informational) printf 'INFORMATIONAL - not actionable in this proposal\n' ;;
+    actionable_resume) printf 'ACTIONABLE RESUME - can advance now\n' ;;
+    proposed_batch) printf 'PROPOSED BATCH - your decision\n' ;;
+    held) printf 'HELD - not included in proposed batch\n' ;;
+    *) printf 'INFORMATIONAL - not actionable in this proposal\n' ;;
+  esac
+}
+
+report_category_for_item() {
+  local dispatch="$1"
+  local status="$2"
+  local next_action="$3"
+  local labels="$4"
+  local pr_metadata_status="${5:-}"
+
+  status="$(lowercase "$status")"
+  next_action="$(lowercase "$next_action")"
+  labels="$(lowercase "$labels")"
+  pr_metadata_status="$(lowercase "$pr_metadata_status")"
+
+  if [ "$dispatch" = "skip" ]; then
+    printf 'informational\n'
+    return 0
+  fi
+
+  case "$next_action" in
+    wait-human-review)
+      printf 'informational\n'
+      return 0
+      ;;
+  esac
+
+  case "$status" in
+    "spec in review"|"plan in review"|"development in review")
+      printf 'informational\n'
+      return 0
+      ;;
+  esac
+
+  if [ "$labels" != "${labels/ready-for-human-review/}" ]; then
+    printf 'informational\n'
+    return 0
+  fi
+
+  if [ "$next_action" = "resolve-development-pr" ] && [ "$pr_metadata_status" = "unavailable" ]; then
+    printf 'informational\n'
+    return 0
+  fi
+
+  if [ "$dispatch" = "held" ]; then
+    printf 'held\n'
+    return 0
+  fi
+
+  if [ "$status" = "backlog" ] || [ "$next_action" = "write-spec" ]; then
+    printf 'proposed_batch\n'
+    return 0
+  fi
+
+  printf 'actionable_resume\n'
+}
+
+report_reason_for_item() {
+  local category="$1"
+  local dispatch="$2"
+  local status="$3"
+  local next_action="$4"
+  local hold_reason="$5"
+  local skip_reason="$6"
+  local labels="$7"
+  local pr_metadata_status="${8:-}"
+  local pr_metadata_reason="${9:-}"
+
+  local status_lc next_action_lc labels_lc
+  status_lc="$(lowercase "$status")"
+  next_action_lc="$(lowercase "$next_action")"
+  labels_lc="$(lowercase "$labels")"
+  pr_metadata_status="$(lowercase "$pr_metadata_status")"
+
+  case "$category" in
+    held)
+      if [ -n "$hold_reason" ]; then
+        printf '%s\n' "$hold_reason"
+      else
+        printf 'Candidate evaluated but not included in the proposed batch.\n'
+      fi
+      ;;
+    proposed_batch)
+      if [ "$status_lc" = "backlog" ]; then
+        printf 'Backlog start candidate included in the current proposal.\n'
+      else
+        printf 'Backlog start candidate included in the current proposal via %s.\n' "$next_action"
+      fi
+      ;;
+    actionable_resume)
+      printf 'Current-session resume work can advance via %s.\n' "$next_action"
+      ;;
+    *)
+      if [ "$next_action_lc" = "wait-human-review" ] \
+        || [ "$status_lc" = "spec in review" ] \
+        || [ "$status_lc" = "plan in review" ] \
+        || [ "$status_lc" = "development in review" ] \
+        || [ "$labels_lc" != "${labels_lc/ready-for-human-review/}" ]; then
+        printf 'Waiting on human review or merge outside the current run-work proposal.\n'
+      elif [ "$next_action_lc" = "resolve-development-pr" ] && [ "$pr_metadata_status" = "unavailable" ]; then
+        if [ -n "$pr_metadata_reason" ]; then
+          printf 'Open PR metadata unavailable (%s); not actionable in this proposal.\n' "$pr_metadata_reason"
+        else
+          printf 'Open PR metadata unavailable; not actionable in this proposal.\n'
+        fi
+      elif [ -n "$skip_reason" ]; then
+        printf '%s\n' "$skip_reason"
+      elif [ -n "$hold_reason" ]; then
+        printf '%s\n' "$hold_reason"
+      elif [ -n "$next_action" ]; then
+        printf 'Not dispatch-eligible in the current run-work proposal (%s).\n' "$next_action"
+      else
+        printf 'Not dispatch-eligible in the current run-work proposal.\n'
+      fi
+      ;;
   esac
 }
 
@@ -140,9 +269,11 @@ echo
 
 batch_input=""
 if [ "$scan_mode" -eq 1 ]; then
-  scan_args=()
-  [ -n "${development_paths[*]:-}" ] && scan_args+=("${development_paths[@]}")
-  batch_input="$("$SCRIPT_DIR/workflow-batch-plan.sh" "${scan_args[@]}")"
+  if [ "${#development_paths[@]}" -gt 0 ]; then
+    batch_input="$("$SCRIPT_DIR/workflow-batch-plan.sh" --repo-root "$repo_root" "${development_paths[@]}")"
+  else
+    batch_input="$("$SCRIPT_DIR/workflow-batch-plan.sh" --repo-root "$repo_root")"
+  fi
 else
   batch_input="$(cat)"
 fi
@@ -301,17 +432,36 @@ while [ "$idx" -lt "$block_idx" ]; do
   done < "$TMP_META"
 
   item_id=""
+  status=""
+  next_action=""
+  labels=""
+  skip_reason=""
+  pr_metadata_status=""
+  pr_metadata_reason=""
   while IFS='=' read -r key value; do
     case "$key" in
       SLUG) item_id="$value" ;;
       DEVELOPMENT_PATH) [ -z "$item_id" ] && item_id="$value" ;;
+      STATUS) status="$value" ;;
+      NEXT_ACTION) next_action="$value" ;;
+      LABELS|PR_LABELS) labels="$value" ;;
+      SKIP_REASON) skip_reason="$value" ;;
+      PR_METADATA_STATUS) pr_metadata_status="$value" ;;
+      PR_METADATA_REASON) pr_metadata_reason="$value" ;;
     esac
   done < "$TMP_BLOCKS.$idx"
   [ -z "$item_id" ] && item_id="unknown-item"
 
+  report_category="$(report_category_for_item "$dispatch" "$status" "$next_action" "$labels" "$pr_metadata_status")"
+  report_label="$(report_label_for_category "$report_category")"
+  report_reason="$(report_reason_for_item "$report_category" "$dispatch" "$status" "$next_action" "$hold_reason" "$skip_reason" "$labels" "$pr_metadata_status" "$pr_metadata_reason")"
+
   cat "$TMP_BLOCKS.$idx"
   print_kv STAGE_LANE "$stage_lane"
   print_kv DISPATCH "$dispatch"
+  print_kv REPORT_CATEGORY "$report_category"
+  print_kv REPORT_LABEL "$report_label"
+  print_kv REPORT_REASON "$report_reason"
   if [ "$dispatch" = "held" ] || [ "$dispatch" = "skip" ]; then
     print_kv HOLD_REASON "$hold_reason"
     if [ "$dispatch" = "held" ]; then

@@ -48,6 +48,9 @@ A PR is ready for human review only when all of the following are true:
 - CI is green
 - Every configured automated PR reviewer is `clean` or `skipped`
 - No unresolved human-requested changes remain
+- For substantial or multi-part mutating item work, the branch history shows
+  coherent checkpoint commits after completed logical sub-parts, or the PR notes
+  why the work had no meaningful intermediate checkpoint before the final commit
 
 If any blocking finding remains, the PR must stay out of `ready-for-human-review`.
 
@@ -65,6 +68,16 @@ Check:
 
 - Required spec template sections are present and no placeholders are unintentionally left behind
 - Spec PRs include a current `Document Quality Gate` log in the PR description; a missing, obviously incomplete, stale, or contradictory log is an important finding by default and blocking when it claims unchecked coverage
+- Spec PRs that add or modify complex workflow decision-gate behavior include a
+  consistency matrix or pointer that identifies gate inputs, allowed outcomes,
+  required next actions, mirror surfaces, and examples when examples are part of
+  the changed surface. Missing or contradictory matrix evidence is blocking
+  before `ready-for-human-review`; for non-gate documentation changes, accept a
+  concise not-applicable rationale.
+- Spec PRs contain only expected spec-stage artifacts. Implementation files,
+  migrations, product source files, workflow scripts, or unrelated docs on a
+  `spec/*` branch are a workflow-stage blocker unless a human explicitly
+  escalated and accepted the exception outside the automatic readiness path.
 - Use cases are explicit: actor, trigger, steps, outcome
 - Acceptance criteria are specific and testable
 - When a tracker issue is linked, brief objectives are fully covered via a visible matrix: each objective maps to AC(s) or explicit out-of-scope deferral with rationale
@@ -82,6 +95,7 @@ Typical `blocking` issues:
 - Spec drift that would force engineering to guess
 - URL-serialized state introduced without explicit parameter key names and allowed values
 - `CHANGELOG.md` is modified in this PR — `spec/*` branches are exempt from CHANGELOG entries; remove any CHANGELOG modification before merging
+- Implementation or non-stage artifacts are present on the `spec/*` PR diff
 
 Typical `important` issues:
 
@@ -104,6 +118,17 @@ Check:
 
 - Every use case and acceptance criterion from the spec (or from the work item brief for Refactor items) is addressed
 - Plan PRs include a current `Document Quality Gate` log in the PR description; a missing, obviously incomplete, stale, or contradictory log is an important finding by default and blocking when it claims unchecked coverage
+- Plan PRs that add or modify complex workflow decision-gate behavior classify
+  applicability and include matrix coverage for gate inputs, allowed outcomes,
+  required next actions, mirror surfaces, and examples when examples are part of
+  the changed surface. Missing rows, contradictory next actions, or unreasoned
+  not-applicable entries are blocking before `ready-for-human-review`.
+- Plan PRs contain only expected plan-stage artifacts: the implementation plan
+  and any plan-stage smoke-test runbook. Implementation files, migrations,
+  product source files, workflow scripts, or unrelated docs on an
+  `implementation-plan/*` branch are a workflow-stage blocker unless a human
+  explicitly escalated and accepted the exception outside the automatic
+  readiness path.
 - Steps are specific enough to execute without guessing
 - Ordering is feasible and dependencies are explicit
 - When pattern-based completeness applies, enumerated counts/paths are validated against the plan's Verification Log commands and outputs
@@ -139,6 +164,8 @@ Typical `blocking` issues:
 - The plan introduces unsafe or contradictory architecture decisions
 - A CHANGELOG literal in the Implementation Order uses conventional-commit format (`fix(scope): message`) instead of the project's `**Bold Title** (#N):` format
 - `CHANGELOG.md` is modified in this PR — `implementation-plan/*` branches are exempt from CHANGELOG entries; remove any CHANGELOG modification before merging
+- Implementation or non-stage artifacts are present on the
+  `implementation-plan/*` PR diff
 - A behavioral claim about framework/runtime behavior (guard logic, config inheritance, scope, API contract) cannot be verified against the codebase and is not flagged as "unverified"
 - A behavioral guarantee (e.g., "at most once", "bounded", "idempotent") does not cite the specific mechanism (flag, guard clause, constraint, lock) that enforces it
 - Cross-section inconsistency: the same function, constant, architecture decision, file path, directory name, or route/URL structure is defined or described differently in two or more sections of the plan (e.g., incompatible function signatures, conflicting constant values, contradictory decision rationales, a file placed under different directories in different sections, a route pattern that differs between sections)
@@ -194,6 +221,20 @@ Additional checks for **documentation PRs** (when a PR adds or modifies document
 - **Intra-file content duplication**: when a new section is added to an existing file, verify that any tables or lists in the new section are not reproducing content already present elsewhere in the same file. If a duplicate is found, flag it as `important` with a recommendation to cross-reference the canonical location instead of duplicating.
 - **Wording consistency**: verify that procedural instructions in a new section (e.g., "push a commit", "apply a label", "run a script") are consistent with the existing flow described in sibling sections of the same file. Flag contradictions as `important`.
 - **Shell snippet safety in protocol files**: when a PR adds or modifies shell code blocks (`` ```bash `` / `` ```sh `` fenced blocks) inside a protocol or documentation `.md` file, apply the same quality bar as for `.sh` files (see the "Shell Script Quality Checklist" in `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`). Specifically flag as `important` any multi-command state-mutating block that lacks `set -euo pipefail`, any block that commits or pushes without a wrong-branch guard, and any single-liner that can fail silently without an explicit `|| exit 1` or equivalent error guard. Read-only query snippets (e.g., `gh pr view`, `git log`) are exempt.
+- **Residual evidence for sweep/batch work**: when an implementation PR can
+  reach `ready-for-human-review` for sweep, batch, helper-extraction,
+  numeric-target, or pattern-completeness work, verify that residual evidence is
+  present and that remaining residuals are completed, explicitly out of scope, or
+  linked to follow-up issues. Silent prose deferral is an important finding, and
+  missing evidence that allows readiness is blocking.
+- **Complex workflow decision-gate matrix**: when an implementation PR adds or
+  modifies workflow decision-gate behavior with multiple inputs, outcomes,
+  next-action branches, status labels, exit states, examples, or mirrored
+  workflow surfaces, verify that the PR evidence includes a consistency matrix
+  or pointer with gate inputs, allowed outcomes, required next actions, mirror
+  surfaces, and examples when examples are part of the changed surface. Missing
+  rows, contradictory wording between mirror surfaces, or unreasoned
+  not-applicable entries are blocking before `ready-for-human-review`.
 
 Additional checks for **PRs that add or modify guardrails enforcement behavior** (orchestration protocols, agent files, skill files, or guardrails-related documentation):
 
@@ -203,6 +244,47 @@ Additional checks for **PRs that add or modify guardrails enforcement behavior**
 - **Delegated merge/review/backlog-start/completion gates**: confirm the orchestration path (Protocol 90, 91, or 95) enforces each of these gates before the relevant decision point (opening a PR, making a review decision, merging, marking complete), not after.
 - **Audit recording**: when `audit.pr_disposition_record` or `audit.work_item_ledger_record` is required, confirm the stable audit markers (`<!-- run-epic:pr-disposition -->` and `<!-- run-epic:epic-ledger -->`) are used so reruns update rather than duplicate records.
 - **Conservative defaults declared**: the load+report step must state "conservative defaults in effect" when no `guardrails` section is present, and must enumerate each default value (mode=`manual`, `may_merge_pr: false`, `max_merge_risk: low`, backlog starts confirmation-gated, no audit requirements).
+
+Additional checks for **PRs that add or modify branch creation, PR creation, or nested/stage-agent dispatch behavior**:
+
+- **Nested artifact guard present**: confirm item-scoped branch and PR creation paths call `run-nested-artifact-guard.sh` with the parent-approved `--approved-base` before mutation. Missing base context, duplicate artifacts, wrong-base PRs, and scan failures must block instead of falling back to the GitHub default branch.
+- **Mutating batch dispatch isolation present**: when the PR adds or modifies
+  Work Item Runner batch dispatch behavior, confirm Protocol 90 requires a
+  pre-dispatch isolation manifest with item identifier, expected branch,
+  absolute worktree path, `isolation: "worktree"`, mutation classification,
+  artifact repo root, and base branch for every mutating runner, including
+  sequential fallback. Missing-isolation and duplicate-worktree cases must stop
+  before dispatch.
+- **Runner pre-mutation self-check present**: when the PR adds or modifies
+  worktree-isolated runner, item-orchestrator, developer, or fixer-agent
+  handoffs, confirm the runner checks expected worktree path and expected branch
+  against `pwd -P` and `git rev-parse --abbrev-ref HEAD` before the first file
+  edit, branch-changing command, commit, push, PR mutation, tracker mutation, or
+  stage-agent handoff. Wrong CWD, main-repo CWD, and wrong branch must stop
+  before mutation; possible prior out-of-worktree mutation must escalate for
+  human inspection instead of auto-repair.
+- **Isolation is distinct from #1200 artifact guarding**: confirm the PR does
+  not rely on the duplicate/wrong-base nested artifact guard alone as evidence
+  of worktree isolation. #1200 prevents unsanctioned duplicate PR artifacts;
+  concurrent worktree isolation prevents sanctioned mutating runners from
+  sharing one checkout or mutating the main tree.
+- **Issue matching boundaries tested**: confirm tests cover numeric boundary cases, tracker-prefixed branches, lookalike paths, local/remote/worktree artifacts, open PRs, and any new workflow branch prefix introduced by the PR.
+- **Parent-visible disposition**: confirm duplicate-fork, wrong-base, scan-failure, and explicit-split results are visible in the parent runner summary or PR evidence before the item can be marked ready.
+
+Additional checks for **PRs that add or modify Work Item Runner completion,
+batch terminal reporting, or final-report examples**:
+
+- **Ground-truth completion verification required**: confirm Protocol 91, Protocol
+  90, mirrored item-orchestrator/orchestrator guidance, and command aliases
+  require the `## Ground-Truth Completion Verification` section from
+  `item-completion-self-check.sh` before any item is reported ready, done,
+  blocked, escalated, waiting on a human, waiting on merge, or cleanup complete.
+  Missing coverage in any runner path is an `important` finding; missing tests
+  for the helper or changed report behavior is `blocking`.
+- **No unsupported terminal examples**: final-report examples must not claim
+  readiness, completion, blocked, escalated, or waiting-on-human states without a
+  ground-truth evidence section or an explicit not-applicable rationale. Treat
+  unsupported examples as `important` because downstream agents copy them.
 
 Additional checks for **PRs that add new filter parameters to a tool schema** (Zod, JSON Schema, Joi, Pydantic, OpenAPI, or any equivalent contract-declaration mechanism):
 
