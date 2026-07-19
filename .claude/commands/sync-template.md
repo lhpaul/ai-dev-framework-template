@@ -861,7 +861,15 @@ Update the tracker status to `Development in Review` if an issue tracker is conf
 Before reporting the sync PR terminal, run Protocol 91's completion self-check:
 
 ```bash
+ISSUE_NUMBER="${ISSUE_NUMBER:?Set ISSUE_NUMBER to the tracker issue for this sync}"
+SYNC_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+WORKTREE_PATH=$(pwd -P)
+
 ./scripts/development-workflow/item-completion-self-check.sh \
+  --issue "$ISSUE_NUMBER" \
+  --branch "$SYNC_BRANCH" \
+  --stage implementation \
+  --worktree-path "$WORKTREE_PATH" \
   --pr "$PR_NUMBER" \
   --expected-base "$BASE_BRANCH" \
   --expected-label ready-for-human-review \
