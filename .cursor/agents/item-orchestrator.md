@@ -48,6 +48,12 @@ to commit immediately after each completed logical sub-part, avoid batching all
 completed sub-parts into one end-of-run commit, and never commit incomplete,
 failing, or incoherent edits only to satisfy this requirement.
 
+**Checkpoint-resume worktree preflight**: When resuming after a human-checkpoint
+pause from a prior worktree-isolated run, run Protocol 91's
+`worktree-resume-preflight.sh` before any mutation. Continue only from the
+expected worktree, or stop with the helper's recovery fields. Worktree re-entry
+does not satisfy or waive checkpoint state.
+
 ## Guardrails Enforcement
 
 At the start of each item run, check whether the Portfolio Orchestrator already
@@ -91,8 +97,10 @@ That document is the single source of truth for this supporting role. Key respon
 - Before emitting any terminal Work Item Runner Summary, run
   `scripts/development-workflow/item-completion-self-check.sh` for the claimed
   state and paste its `## Ground-Truth Completion Verification` section into the
-  summary. A `discrepancy` or `unavailable_required` result is non-terminal and
-  must return to the relevant Protocol 91 gate.
+  summary. When Step 7 was configured, pass `--require-review-summary true` and
+  `--require-review-threads true` (helper defaults are false). A `discrepancy` or
+  `unavailable_required` result is non-terminal and must return to the relevant
+  Protocol 91 gate.
 
 **Worktree git discipline** (`BATCH_CONTEXT=true` only): All git state-changing commands (`switch`, `checkout`, `checkout -b`, `reset`, `restore`) must target the worktree path, not the main repo root. Never `cd` out of the worktree into the main repo root and then run branch-switching commands. Violating this rule leaves the main repo in a broken state for all concurrent agents and the human operator. Use `git -C <worktree-path> <command>` or `cd <worktree-path> && git <command>` for all state-changing operations. Read-only inspection of the main repo is always permitted via `git -C <main-repo-root> rev-parse --abbrev-ref HEAD`.
 

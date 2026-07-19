@@ -58,6 +58,7 @@ Recommended model tier: `balanced`
     `escalated`, waiting on human, waiting on merge, or cleanup complete), run
     `scripts/development-workflow/item-completion-self-check.sh` for the claimed
     state and paste its `## Ground-Truth Completion Verification` section into
-    the summary. A `discrepancy` or `unavailable_required` result is
-    non-terminal; return to the matching Protocol 91 gate instead of reporting
-    success.
+    the summary. When Step 7 was configured, pass `--require-review-summary true`
+    and `--require-review-threads true` (helper defaults are false). A
+    `discrepancy` or `unavailable_required` result is non-terminal; return to the
+    matching Protocol 91 gate instead of reporting success.

@@ -77,9 +77,10 @@ advances exactly one non-epic item through Protocol 91.
 12. Before reporting any terminal state, run
     `scripts/development-workflow/item-completion-self-check.sh` for the claimed
     state and include its `## Ground-Truth Completion Verification` section in
-    the Work Item Runner Summary. Treat `discrepancy` and
-    `unavailable_required` as non-terminal and re-enter the relevant Protocol 91
-    gate.
+    the Work Item Runner Summary. When Step 7 was configured, pass
+    `--require-review-summary true` and `--require-review-threads true` (helper
+    defaults are false). Treat `discrepancy` and `unavailable_required` as
+    non-terminal and re-enter the relevant Protocol 91 gate.
 
 > **Deprecated alias**: `$run-item-work` / `/run-item-work` resolves to the same
 > behavior for legacy invocations.
