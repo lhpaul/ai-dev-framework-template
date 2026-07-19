@@ -72,9 +72,9 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    sub-items, include residual gate status in item/epic summaries and do not
    treat blocked or escalated residuals as complete.
 9. Before any child item creates a branch or opens a PR, run
-   `run-nested-artifact-guard.sh` with the resolved issue, expected branch, and
-   approved base, plus the artifact-owning repo root
-   (`--repo-root "$ARTIFACT_REPO_ROOT"`). Stop on missing base, duplicate
+   `run-nested-artifact-guard.sh --mode <pre-create|pre-pr> --issue <number>
+   --expected-branch <branch> --approved-base <branch>
+   --repo-root "$ARTIFACT_REPO_ROOT"`. Stop on missing base, duplicate
    artifacts, wrong-base PRs, or scan failures unless an explicit split is
    approved and recorded.
 10. **Guardrails layer context**: The `--delegate-review`, `--may-merge`,

@@ -854,6 +854,26 @@ gh pr edit "$PR_NUMBER" --add-label "ready-for-human-review"
 
 Update the tracker status to `Development in Review` if an issue tracker is configured.
 
+
+### 6.4 — Ground-truth completion verification
+
+Before reporting the sync PR terminal, run Protocol 91's completion self-check:
+
+```bash
+./scripts/development-workflow/item-completion-self-check.sh \
+  --pr "$PR_NUMBER" \
+  --expected-base "$BASE_BRANCH" \
+  --expected-label ready-for-human-review \
+  --expected-label ready-for-regression \
+  --forbid-label needs-fixes \
+  --require-review-summary true \
+  --require-review-threads true
+```
+
+Include the helper's `## Ground-Truth Completion Verification` section in the
+final sync summary. Treat `discrepancy` or `unavailable_required` as non-terminal
+and return to the reviewer/CI loop.
+
 Print a final summary:
 
 ```

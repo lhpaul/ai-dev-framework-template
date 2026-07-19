@@ -34,7 +34,7 @@ product repository selector.
 Before dispatching any stage agent that may create a branch or open a PR, pass
 the expected branch, expected worktree when known, approved base, and
 artifact-owning repo root. The stage path must run
-`run-nested-artifact-guard.sh --repo-root "$ARTIFACT_REPO_ROOT"` before mutation
+`run-nested-artifact-guard.sh --mode <pre-create|pre-pr> --issue <number> --expected-branch <branch> --approved-base <branch> --repo-root "$ARTIFACT_REPO_ROOT"` before mutation
 and stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`.
 For substantial or multi-part mutating stage work, also instruct the stage agent
 to commit immediately after each completed logical sub-part, avoid batching all

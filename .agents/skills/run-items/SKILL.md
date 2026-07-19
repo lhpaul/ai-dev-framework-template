@@ -41,7 +41,7 @@ proposal step.
    or ambiguous.
 9. For each in-scope item, pass the approved base and artifact-owning repo root
    to branch and PR creation paths and require
-   `run-nested-artifact-guard.sh --repo-root "$ARTIFACT_REPO_ROOT"` before mutation. Stop on
+   `run-nested-artifact-guard.sh --mode <pre-create|pre-pr> --issue <number> --expected-branch <branch> --approved-base <branch> --repo-root "$ARTIFACT_REPO_ROOT"` before mutation. Stop on
    `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed` instead
    of widening scope or inferring a base.
 10. Before dispatching an explicit-list batch where any runner may mutate,
