@@ -156,6 +156,7 @@ JSON
 	      121) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
 	      122) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
 	      123) labels_json='[{"name":"integration-branch:stale"}]' ;;
+	      124) labels_json='[]' ;;
 	    esac
     jq -n \
       --argjson number "$issue_number" \
@@ -188,6 +189,7 @@ JSON
 	      121) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
 	      122) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
 	      123) labels_json='[{"name":"integration-branch:stale"}]' ;;
+	      124) labels_json='[]' ;;
 	    esac
     jq -n --argjson labels "$labels_json" '{labels:$labels}'
     ;;
@@ -240,6 +242,11 @@ JSON
         fi
         cat <<'JSON'
 [{"number":2114,"title":"Unlabeled primary PR","state":"OPEN","headRefName":"feature/114-unlabeled-primary","baseRefName":"develop-missing-label","isDraft":false,"labels":[{"name":"ready-for-human-review"}],"mergedAt":null}]
+JSON
+        ;;
+      124)
+        cat <<'JSON'
+[{"number":2124,"title":"Team-prefixed unlabeled PR","state":"OPEN","headRefName":"feature/lh-124-prefixed","baseRefName":"develop","isDraft":false,"labels":[{"name":"ready-for-human-review"}],"mergedAt":null}]
 JSON
         ;;
       *)
@@ -436,6 +443,11 @@ run_test "primary_empty_search_uses_prefix_fallback" "yes" "$(
 head_search_boundary_output="$(run_json --items 11)"
 run_test "head_search_boundary_ignores_partial_issue_match" "eligible" "$(printf '%s\n' "$head_search_boundary_output" | jq -r '.items[0].group')"
 run_test "head_search_boundary_returns_no_wrong_pr" "0" "$(printf '%s\n' "$head_search_boundary_output" | jq '.items[0].pullRequests.open | length')"
+
+team_prefix_head_search_output="$(MOCK_PR_LIST_SEARCH=1 run_json --items 124)"
+run_test "head_search_detects_team_prefixed_branch" "in_review" "$(printf '%s\n' "$team_prefix_head_search_output" | jq -r '.items[0].group')"
+run_test "head_search_preserves_team_prefixed_pr_number" "2124" "$(printf '%s\n' "$team_prefix_head_search_output" | jq -r '.items[0].pullRequests.open[0].number')"
+run_test "head_search_preserves_team_prefixed_head_ref" "feature/lh-124-prefixed" "$(printf '%s\n' "$team_prefix_head_search_output" | jq -r '.items[0].pullRequests.open[0].headRefName')"
 
 closed_output="$(run_json --items 109)"
 run_test "closed_not_planned_not_complete" "ambiguous" "$(printf '%s\n' "$closed_output" | jq -r '.items[0].group')"

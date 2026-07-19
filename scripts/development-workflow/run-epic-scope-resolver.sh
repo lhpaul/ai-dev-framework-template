@@ -366,6 +366,11 @@ fetch_prs_for_base() {
   printf '%s\n' "$cache_file"
 }
 
+# Optional team prefix between kind and issue id, matching
+# run-nested-artifact-guard.sh branch_matches_issue (e.g. ENG-, AB12-, lh-).
+# Kept as a jq fragment so head-search and base-scan filters stay aligned.
+HEAD_REF_TEAM_PREFIX_RE='(([A-Z][A-Z0-9]{1,7}|[a-z][a-z0-9])-)?'
+
 # Fallback when label-derived base scans miss PRs on integration branches
 # (develop-<slug>) that are not represented by integration-branch:* labels in scope.
 discover_prs_via_head_search() {
@@ -377,12 +382,12 @@ discover_prs_via_head_search() {
   if search_json="$(gh pr list --state all --search "${issue} in:head" \
       --json number,title,state,headRefName,baseRefName,isDraft,labels,mergedAt \
       --limit 100 2>/dev/null)"; then
-    if ! primary_result="$(jq --arg issue "$issue" '
+    if ! primary_result="$(jq --arg issue "$issue" --arg team_prefix_re "$HEAD_REF_TEAM_PREFIX_RE" '
       {
         open: [
           .[]
           | select(.state == "OPEN")
-          | select(.headRefName | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
+          | select(.headRefName | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $team_prefix_re + $issue + "(-|$)"))
           | {
               number,
               title,
@@ -396,7 +401,7 @@ discover_prs_via_head_search() {
         merged: [
           .[]
           | select(.mergedAt != null)
-          | select(.headRefName | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
+          | select(.headRefName | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $team_prefix_re + $issue + "(-|$)"))
           | {
               number,
               title,
@@ -434,7 +439,8 @@ discover_prs_via_head_search() {
       if ! printf '%s\n' "$pr_json" | jq -e \
           --arg prefix "$prefix" \
           --arg issue "$issue" \
-          '.headRefName | test("^" + $prefix + "/" + $issue + "(-|$)")' >/dev/null 2>&1; then
+          --arg team_prefix_re "$HEAD_REF_TEAM_PREFIX_RE" \
+          '.headRefName | test("^" + $prefix + "/" + $team_prefix_re + $issue + "(-|$)")' >/dev/null 2>&1; then
         continue
       fi
       if printf '%s\n' "$pr_json" | jq -e '.mergedAt != null' >/dev/null 2>&1; then
@@ -540,9 +546,9 @@ linked_pr_json() {
     [ -n "$base" ] || continue
     cache_file="$(fetch_prs_for_base "$base")"
 
-    if ! open_prs="$(jq --arg issue "$issue" --argjson acc "$open_prs" '
+    if ! open_prs="$(jq --arg issue "$issue" --arg team_prefix_re "$HEAD_REF_TEAM_PREFIX_RE" --argjson acc "$open_prs" '
           $acc + [ .[][] | select(.state == "open")
-            | select(.head.ref | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
+            | select(.head.ref | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $team_prefix_re + $issue + "(-|$)"))
             | {
                 number,
                 title,
@@ -556,9 +562,9 @@ linked_pr_json() {
       error_exit "failed to parse open PRs targeting ${base} while resolving issue #${issue}."
     fi
 
-    if ! merged_prs="$(jq --arg issue "$issue" --argjson acc "$merged_prs" '
+    if ! merged_prs="$(jq --arg issue "$issue" --arg team_prefix_re "$HEAD_REF_TEAM_PREFIX_RE" --argjson acc "$merged_prs" '
           $acc + [ .[][] | select(.merged_at != null)
-            | select(.head.ref | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $issue + "(-|$)"))
+            | select(.head.ref | test("^(spec|implementation-plan|feature|fix|refactor|hotfix)/" + $team_prefix_re + $issue + "(-|$)"))
             | {
                 number,
                 title,
