@@ -38,4 +38,5 @@ Recommended model tier: `balanced`
     91's Work Item Runner Summary path and include the
     `item-completion-self-check.sh` `Ground-Truth Completion Verification`
     section before claiming ready, blocked, escalated, or waiting-on-human
-    state.
+    state. When Step 7 was configured, pass `--require-review-summary true` and
+    `--require-review-threads true` (helper defaults are false).
