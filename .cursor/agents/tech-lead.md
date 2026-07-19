@@ -29,9 +29,9 @@ requirement.
 
 Resolve repository mode and artifact owner before writing a plan. Missing mode
 or `single_repo` means the current repository owns the plan. In `workflow_hub`,
-plans and plan PRs are hub-owned unless a future protocol explicitly changes
-that. In `product_repo`, report the configured hub owner or stop if ownership is
-ambiguous.
+plans and plan PRs are hub-owned on the hub artifact base branch, even when the
+product implementation base is different. In `product_repo`, report the
+configured hub owner or stop if ownership is ambiguous.
 
 Before creating a plan branch or opening a plan PR for a tracker-backed item,
 run `run-nested-artifact-guard.sh` with the expected `implementation-plan/*`

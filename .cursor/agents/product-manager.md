@@ -29,9 +29,9 @@ requirement.
 
 Resolve repository mode and artifact owner before writing a spec. Missing mode
 or `single_repo` means the current repository owns the spec. In `workflow_hub`,
-specs and spec PRs are hub-owned unless a future protocol explicitly changes
-that. In `product_repo`, report the configured hub owner or stop if ownership is
-ambiguous.
+specs and spec PRs are hub-owned on the hub artifact base branch, even when the
+product implementation base is different. In `product_repo`, report the
+configured hub owner or stop if ownership is ambiguous.
 
 Before creating a spec branch or opening a spec PR for a tracker-backed item,
 run `run-nested-artifact-guard.sh` with the expected `spec/*` branch and the
