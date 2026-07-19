@@ -27,6 +27,11 @@ For single-item work use `/run-item`. For bounded multi-item batch execution use
 When mode is `no_target_scan`, follow Protocol 90 Steps 1–3 (scan + propose)
 only. Do not dispatch items under `/run-work`:
 
+In `workflow_hub`, preserve selected product repository context in
+implementation handoffs so mutation-oriented follow-up commands can route the
+artifact owner, local path or remote identity, and PR/reviewer/cleanup work
+without re-resolving or guessing.
+
 Render the scan output with Protocol 90 report categories kept separate:
 `INFORMATIONAL - not actionable in this proposal`,
 `ACTIONABLE RESUME - can advance now`,
