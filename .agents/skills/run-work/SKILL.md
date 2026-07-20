@@ -33,9 +33,13 @@ command. It performs no mutation in any routing mode.
    `HELD - not included in proposed batch`. Approval applies only to
    `PROPOSED BATCH - your decision` items; informational records are excluded
    unless the operator explicitly names them in a separate bounded command.
-6. For single-item advancement use `$run-item`; for epic bounded runs use `$run-epic`;
+6. In `workflow_hub`, preserve selected product repository context in
+   implementation handoffs so later mutation-oriented commands can route the
+   artifact owner, local path or remote identity, and PR/reviewer/cleanup work
+   without re-resolving or guessing.
+7. For single-item advancement use `$run-item`; for epic bounded runs use `$run-epic`;
    for multi-item execution use `$run-items`.
-7. When presenting executable follow-ups, include the resolved base branch when
+8. When presenting executable follow-ups, include the resolved base branch when
    known so later mutation-oriented commands can pass it to
    `run-nested-artifact-guard.sh --approved-base`. Do not infer a base during
    the read-only scan.

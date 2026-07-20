@@ -30,6 +30,12 @@ Key responsibilities:
 - When autonomy policy is missing or ambiguous, run the read-only policy
   recommender, present the recommended config and checkpoint policy in-place,
   and continue the same run when the human accepts or customizes it.
+- Before any child item creates a branch or opens a PR, run
+  `run-nested-artifact-guard.sh --mode <pre-create|pre-pr> --issue <number>
+  --expected-branch <branch> --approved-base <branch>
+  --repo-root "$ARTIFACT_REPO_ROOT"`. Stop on missing base, duplicate
+  artifacts, wrong-base PRs, or scan failures unless an explicit split is
+  approved and recorded.
 - On checkpoint resume from a prior worktree-isolated item run, perform the
   Protocol 95/91 worktree-resume preflight before mutation. Re-entry does not
   satisfy or waive checkpoint state.

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Faind sync-template follow-ups** (#1271): port reusable downstream fixes for
+  team-prefixed epic head-search, nested-guard guidance, terminal completion
+  self-check requirements, sync-template completion verification, and
+  implementation-branch cleanup outcomes.
+
 ## [0.37.0] - 2026-07-19
 
 ### Added

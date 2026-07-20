@@ -59,7 +59,8 @@ Key responsibilities:
   duplicate worktree path. Non-isolated runners are allowed only when explicitly
   classified `read_only` and will not edit files, switch branches, commit, push,
   mutate PRs, change labels, or update tracker state.
-- In `workflow_hub`, include selected product repository context in implementation handoffs.
+- In `workflow_hub`, state the selected product repository, artifact owner, and mutation
+  target before implementation mutation; stop when context is missing or ambiguous.
 - Do not stop after advancing one item if another in the list still has a
   deterministic next action.
 - Do not stop at transient in-flight CI/watch states. If a local watch exits
@@ -67,6 +68,13 @@ Key responsibilities:
   or incomplete check evidence, re-query authoritative PR/check state and keep
   supervising until every in-scope PR is green, blocked, escalated, merged, or
   held by guardrails.
+- Before accepting any in-scope item as terminal, require the item runner's
+  `## Ground-Truth Completion Verification` output from
+  `item-completion-self-check.sh` (or run the helper directly). When Step 7
+  was configured, pass `--require-review-summary true` and
+  `--require-review-threads true` (helper defaults are false). Missing
+  evidence, `discrepancy`, or `unavailable_required` keeps the item under
+  Protocol 90 Step 5 supervision.
 - After all in-scope PRs reach `ready-for-human-review`, inspect the effective
   guardrails. When the relevant stages allow `may_merge_pr: true`, run
   Guardrails Enforcement Gate 5 for each in-scope PR, including

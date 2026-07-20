@@ -41,7 +41,7 @@ proposal step.
    or ambiguous.
 9. For each in-scope item, pass the approved base and artifact-owning repo root
    to branch and PR creation paths and require
-   `run-nested-artifact-guard.sh --repo-root "$ARTIFACT_REPO_ROOT"` before mutation. Stop on
+   `run-nested-artifact-guard.sh --mode <pre-create|pre-pr> --issue <number> --expected-branch <branch> --approved-base <branch> --repo-root "$ARTIFACT_REPO_ROOT"` before mutation. Stop on
    `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed` instead
    of widening scope or inferring a base.
 10. Before dispatching an explicit-list batch where any runner may mutate,
@@ -72,8 +72,10 @@ proposal step.
 14. Before accepting any in-scope item as terminal, require the item runner's
    `## Ground-Truth Completion Verification` output from
    `item-completion-self-check.sh` or run the helper directly from current
-   artifact state. Missing self-check evidence, `discrepancy`, or
-   `unavailable_required` keeps the item under Protocol 90 Step 5 supervision.
+   artifact state. When Step 7 was configured, pass `--require-review-summary true`
+   and `--require-review-threads true` (helper defaults are false). Missing
+   self-check evidence, `discrepancy`, or `unavailable_required` keeps the item
+   under Protocol 90 Step 5 supervision.
 15. After all in-scope PRs reach `ready-for-human-review`, inspect the effective
    guardrails. When the relevant stages allow `may_merge_pr: true`, run
    Guardrails Enforcement Gate 5 for each in-scope PR, including
