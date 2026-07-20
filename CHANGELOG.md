@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Enable delegated medium-risk execution** (#1274): Allow Backlog starts and
+  delegated merges through medium risk for spec, plan, and implementation
+  stages.
 - **Faind sync-template follow-ups** (#1271): port reusable downstream fixes for
   team-prefixed epic head-search, nested-guard guidance, terminal completion
   self-check requirements, sync-template completion verification, and
