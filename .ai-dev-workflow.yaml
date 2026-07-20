@@ -178,38 +178,33 @@ template:
 # named stop conditions, audit-evidence rules).
 #
 # Two-step lifecycle (default for this template):
-# Execute commands (/run-item, /run-epic) stop at ready-for-human-review.
-# Merge is performed separately via /batch-merge (human confirms the merge plan).
-# Bounded prelude always requires confirmation before mutation — see
-# docs/workflow/development-workflow/bounded-run-prelude.md.
+# Delegated execution permits Backlog starts and merges within the per-stage
+# risk limits below. Bounded prelude still reports the resolved policy before
+# mutation — see docs/workflow/development-workflow/bounded-run-prelude.md.
 
 guardrails:
   # mode: delegated — agents may merge within per-stage permissions and risk limits.
-  # All stages default to may_merge_pr: false, implementing the two-step lifecycle
-  # where execute commands stop at ready-for-human-review and /batch-merge is used
-  # to land work. Override per-stage values to grant merge authority for specific stages.
   mode: delegated
 
-  # backlog_start — agents must receive an explicit human instruction (via /run-item
-  # or /run-epic with --may-start-backlog true) before starting a new backlog item.
+  # backlog_start — agents may start eligible Backlog work without an additional
+  # policy confirmation.
   backlog_start:
-    allow_without_confirmation: false
+    allow_without_confirmation: true
 
-  # stages — all stages have may_merge_pr: false by default (two-step lifecycle).
-  # Override specific stages to grant merge authority when needed.
+  # stages — delegated merge authority is enabled up to medium risk.
   stages:
     spec:
       may_open_pr: true
-      may_merge_pr: false
-      max_merge_risk: low
+      may_merge_pr: true
+      max_merge_risk: medium
     plan:
       may_open_pr: true
-      may_merge_pr: false
-      max_merge_risk: low
+      may_merge_pr: true
+      max_merge_risk: medium
     implementation:
       may_open_pr: true
-      may_merge_pr: false
-      max_merge_risk: low
+      may_merge_pr: true
+      max_merge_risk: medium
 
   # stop_conditions — baseline stops that hold in all modes (additive, never removable).
   stop_conditions:

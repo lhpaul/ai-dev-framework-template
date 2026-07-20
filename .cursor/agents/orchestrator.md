@@ -83,5 +83,7 @@ That document is the single source of truth for this supporting role. Key respon
 - Before accepting any item as terminal in the batch summary, require the
   item runner's `## Ground-Truth Completion Verification` section from
   `item-completion-self-check.sh` or run the helper directly from current
-  artifact state. Missing evidence, `discrepancy`, or `unavailable_required`
-  keeps the item under Protocol 90 Step 5 supervision.
+  artifact state. When Step 7 was configured, pass `--require-review-summary true`
+  and `--require-review-threads true` (helper defaults are false). Missing
+  evidence, `discrepancy`, or `unavailable_required` keeps the item under
+  Protocol 90 Step 5 supervision.

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.1] - 2026-07-20
+
+### Fixed
+
+- **Hub-owned sync-template cleanup** (#1273): Allow merged
+  `feature/sync-template-*` branches to clean up in workflow-hub repositories
+  without a product-repository selection.
+- **Enable delegated medium-risk execution** (#1274): Allow Backlog starts and
+  delegated merges through medium risk for spec, plan, and implementation
+  stages.
+- **Faind sync-template follow-ups** (#1271): port reusable downstream fixes for
+  team-prefixed epic head-search, nested-guard guidance, terminal completion
+  self-check requirements, sync-template completion verification, and
+  implementation-branch cleanup outcomes.
+
 ## [0.37.0] - 2026-07-19
 
 ### Added
@@ -1237,7 +1252,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.37.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.37.1...HEAD
+[0.37.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.37.0...v0.37.1
 [0.37.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.3...v0.37.0
 [0.36.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.2...v0.36.3
 [0.36.2]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.1...v0.36.2

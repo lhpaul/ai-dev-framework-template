@@ -28,7 +28,8 @@ branch. If the user is not in the repo root, `cd` to the repo root first (e.g.
 use the workspace root or ask which directory is the repo).
 
 For implementation branches, cleanup is complete only when the script reports
-`REMOTE_DELETE_RESULT=deleted` or `REMOTE_DELETE_RESULT=not_found`. Spec and
+`REMOTE_DELETE_RESULT=deleted` or `REMOTE_DELETE_RESULT=not_found`. A
+`skipped` or `failed` remote deletion result is non-terminal. Spec and
 implementation-plan branches are expected-persistent remotely.
 
 Do not skip steps or change the order. If the script fails, show the error and stop.

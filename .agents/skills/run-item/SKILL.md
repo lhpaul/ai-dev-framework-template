@@ -38,10 +38,12 @@ advances exactly one non-epic item through Protocol 91.
    repository, artifact owner, and mutation target; stop when context is missing
    or ambiguous.
 6. Before branch creation or PR creation for a tracker-backed item, run
-   `run-nested-artifact-guard.sh` with the expected branch, approved base, and
-   artifact-owning repo root (`--repo-root "$ARTIFACT_REPO_ROOT"`).
-   Stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`;
-   explicit split work requires parent approval and `--allow-split true`.
+   `run-nested-artifact-guard.sh --mode <pre-create|pre-pr> --issue <number>
+   --expected-branch <branch> --approved-base <branch>
+   --repo-root "$ARTIFACT_REPO_ROOT"` (optional `--expected-worktree` /
+   `--allow-split`). Stop on `missing_base`, `blocked_duplicate`, `wrong_base`,
+   or `scan_failed`; explicit split work requires parent approval and
+   `--allow-split true`.
 7. Before dispatching a Backlog item into Writing Spec, run or consume
    `scripts/development-workflow/spec-dispatch-context.sh`. For direct
    single-item runs, pass the selected item plus relevant in-scope Backlog peers
@@ -77,9 +79,10 @@ advances exactly one non-epic item through Protocol 91.
 12. Before reporting any terminal state, run
     `scripts/development-workflow/item-completion-self-check.sh` for the claimed
     state and include its `## Ground-Truth Completion Verification` section in
-    the Work Item Runner Summary. Treat `discrepancy` and
-    `unavailable_required` as non-terminal and re-enter the relevant Protocol 91
-    gate.
+    the Work Item Runner Summary. When Step 7 was configured, pass
+    `--require-review-summary true` and `--require-review-threads true` (helper
+    defaults are false). Treat `discrepancy` and `unavailable_required` as
+    non-terminal and re-enter the relevant Protocol 91 gate.
 
 > **Deprecated alias**: `$run-item-work` / `/run-item-work` resolves to the same
 > behavior for legacy invocations.

@@ -35,7 +35,7 @@ product implementation base is different. In `product_repo`, report the
 configured hub owner or stop if ownership is ambiguous.
 
 Before creating a spec branch or opening a spec PR for a tracker-backed item,
-run `run-nested-artifact-guard.sh` with the expected `spec/*` branch and the
+run `run-nested-artifact-guard.sh` with required `--mode`, `--issue`, `--expected-branch`, `--approved-base`, and the expected `spec/*` branch and the
 approved artifact base. Stop on missing base, duplicate artifacts, wrong-base
 PRs, or scan failures.
 

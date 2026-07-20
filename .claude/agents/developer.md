@@ -20,7 +20,7 @@ missing or ambiguous. Missing mode or `single_repo` keeps the current repository
 as the mutation target and does not require `--repo`.
 
 Before creating an implementation branch or opening an implementation PR for a
-tracker-backed item, run `run-nested-artifact-guard.sh` with the expected
+tracker-backed item, run `run-nested-artifact-guard.sh` with required `--mode`, `--issue`, `--expected-branch`, `--approved-base`, and the expected
 workflow branch, parent-approved base, and artifact-owning repo root
 (`--repo-root "$ARTIFACT_REPO_ROOT"`). In `workflow_hub`, product implementation
 artifacts scan the selected product checkout, not the hub. Stop on missing base,
@@ -81,6 +81,8 @@ Key rules:
   Protocol 91's Work Item Runner Summary path and include the
   `item-completion-self-check.sh` `Ground-Truth Completion Verification`
   section before claiming ready, blocked, escalated, or waiting-on-human state.
+  When Step 7 was configured, pass `--require-review-summary true` and
+  `--require-review-threads true` (helper defaults are false).
 - Before writing any code for documentation or policy changes, grep for all existing references to the policy being changed across `docs/`, `.cursor/`, `.claude/`, `.codex/`, `AGENTS.md`, `README.md`, `REVIEW.md` — do not assume you know all locations; the grep is the discovery step. All matched files are candidates for the same update; explicitly confirm coverage of each before submitting. See Step 1b item 6 in `03-implement-development-protocol.md`
 - When writing or editing protocol text that cites a script-emitted signal value (e.g., `REASON=`, `RESULT=`, `STATUS=`), read the relevant source script and verify the exact string before committing — do not cite it from memory or from other protocol text. Example: `grep -n 'REASON=' scripts/development-workflow/pr-review-loop.sh`. See Step 1b item 7 in `03-implement-development-protocol.md`
 - When the PR is a documentation PR that describes script behavior (CLI output format, exit codes, option flags, API call patterns), complete the **Script-Accuracy Self-Check Checklist** in `03-implement-development-protocol.md` before opening the PR: enumerate every claim the documentation makes about the script, verify each claim with a targeted grep against the actual script source (not memory or reviewer assertions), resolve any discrepancies by updating the documentation to match the source, and append a self-check log to the PR description confirming each verified claim.

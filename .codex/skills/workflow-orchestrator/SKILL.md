@@ -38,6 +38,7 @@ Recommended model tier: `economy`
 15. Before accepting any item as terminal in a batch summary, require the
     Work Item Runner's `## Ground-Truth Completion Verification` section from
     `scripts/development-workflow/item-completion-self-check.sh` or run the
-    helper directly from current artifact state. Do not declare the batch item
-    complete when the section is missing, reports `discrepancy`, or reports
-    `unavailable_required`.
+    helper directly from current artifact state. When Step 7 was configured, pass
+    `--require-review-summary true` and `--require-review-threads true` (helper
+    defaults are false). Do not declare the batch item complete when the section
+    is missing, reports `discrepancy`, or reports `unavailable_required`.

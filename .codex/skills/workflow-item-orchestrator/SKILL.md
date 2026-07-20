@@ -37,7 +37,7 @@ Recommended model tier: `balanced`
     incomplete, failing, or incoherent edits only to satisfy this requirement.
 11. **Main-tree return rule (BATCH_CONTEXT=false / no worktree isolation)**: When dispatched WITHOUT worktree isolation (`BATCH_CONTEXT` is `false` or absent), this skill runs in the main working tree. Before emitting the Work Item Runner Summary and returning, switch the main working tree back to the integration branch (`git switch develop`, or whichever branch `integration_branch` specifies in `.ai-dev-workflow.yaml`). Verify with `git rev-parse --abbrev-ref HEAD`. If uncommitted changes block the switch, commit or stash first. Omitting this return step causes Protocol 90 Step 5.2 to fire "wrong branch + clean" auto-correct on every subsequent item.
 12. Before implementation mutation in `workflow_hub`, state the selected product repository, local path or remote identity, artifact owner, and mutation target. Stop before file edits, branch creation, commits, or implementation PR creation when product repository context is missing or ambiguous. Specs and plans remain hub-owned unless a later protocol says otherwise.
-13. Before dispatching a stage path that may create a branch or open a PR, pass the expected branch, expected worktree when known, approved base, and artifact-owning repo root. Run `run-nested-artifact-guard.sh --repo-root "$ARTIFACT_REPO_ROOT"` before mutation and stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`.
+13. Before dispatching a stage path that may create a branch or open a PR, pass the expected branch, expected worktree when known, approved base, and artifact-owning repo root. Run `run-nested-artifact-guard.sh --mode <pre-create|pre-pr> --issue <number> --expected-branch <branch> --approved-base <branch> --repo-root "$ARTIFACT_REPO_ROOT"` before mutation and stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`.
 14. Before dispatching a Backlog item into Writing Spec, run or consume
     `scripts/development-workflow/spec-dispatch-context.sh`. For direct
     single-item runs, pass the selected item plus relevant in-scope Backlog peers
@@ -58,6 +58,7 @@ Recommended model tier: `balanced`
     `escalated`, waiting on human, waiting on merge, or cleanup complete), run
     `scripts/development-workflow/item-completion-self-check.sh` for the claimed
     state and paste its `## Ground-Truth Completion Verification` section into
-    the summary. A `discrepancy` or `unavailable_required` result is
-    non-terminal; return to the matching Protocol 91 gate instead of reporting
-    success.
+    the summary. When Step 7 was configured, pass `--require-review-summary true`
+    and `--require-review-threads true` (helper defaults are false). A
+    `discrepancy` or `unavailable_required` result is non-terminal; return to the
+    matching Protocol 91 gate instead of reporting success.

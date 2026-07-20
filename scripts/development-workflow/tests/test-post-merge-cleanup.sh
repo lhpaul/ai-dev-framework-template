@@ -232,6 +232,19 @@ run_test "spec_remote_ref_remains" "yes" "$(
   fi
 )"
 
+hub_sync_branch="feature/sync-template-v0.37.0"
+hub_sync_repo="$(make_repo hub-sync "$hub_sync_branch" yes)"
+printf 'mode: workflow_hub\n' >"$hub_sync_repo/.ai-dev-workflow.yaml"
+hub_sync_output="$(
+  GH_MERGED_HEAD="$hub_sync_branch" \
+  GH_MERGED_PR=80 \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$hub_sync_repo" --base develop "$hub_sync_branch"
+)"
+run_contains "hub_sync_branch_is_hub_owned" "ACTION_REPOSITORY_KIND=hub_owned" "$hub_sync_output"
+run_contains "hub_sync_branch_skips_product_repo_requirement" "BRANCH_LIFECYCLE=unclassified" "$hub_sync_output"
+
 fail_branch="feature/noissue-delete-fails"
 fail_repo="$(make_repo delete-fails "$fail_branch" yes)"
 fail_bin="$TMP_ROOT/fail-bin"

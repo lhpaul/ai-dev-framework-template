@@ -35,7 +35,7 @@ product implementation base is different. In `product_repo`, report the
 configured hub owner or stop if ownership is ambiguous.
 
 Before creating a plan branch or opening a plan PR for a tracker-backed item,
-run `run-nested-artifact-guard.sh` with the expected `implementation-plan/*`
+run `run-nested-artifact-guard.sh` with required `--mode`, `--issue`, `--expected-branch`, `--approved-base`, and the expected `implementation-plan/*`
 branch and the approved artifact base. Stop on missing base, duplicate
 artifacts, wrong-base PRs, or scan failures.
 
