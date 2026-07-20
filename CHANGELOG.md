@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Hub-owned sync-template cleanup** (#1273): Allow merged
+  `feature/sync-template-*` branches to clean up in workflow-hub repositories
+  without a product-repository selection.
 - **Enable delegated medium-risk execution** (#1274): Allow Backlog starts and
   delegated merges through medium risk for spec, plan, and implementation
   stages.

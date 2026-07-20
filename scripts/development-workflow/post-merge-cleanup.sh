@@ -98,7 +98,14 @@ branch_owner_kind="hub"
 selected_product_default_branch=""
 
 case "$(branch_prefix "$TO_DELETE")" in
-  feature|fix|refactor|hotfix)
+  feature)
+    # Template sync branches are created and merged on the workflow hub itself.
+    # They are not product-repository implementation artifacts.
+    if [ "$workflow_mode" != "workflow_hub" ] || [[ "$TO_DELETE" != feature/sync-template-* ]]; then
+      branch_owner_kind="implementation"
+    fi
+    ;;
+  fix|refactor|hotfix)
     branch_owner_kind="implementation"
     ;;
   spec|implementation-plan)
