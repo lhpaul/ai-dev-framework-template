@@ -52,6 +52,10 @@ Before writing any test code, read:
 - The **smoke test runbook**
 - The **project testing README** — for environment setup, execution approach, known limitations, and troubleshooting
 - **Application source code** for the pages under test (e.g. component templates) to understand selectors, labels, routes, and UI library patterns
+- **Design assets** when the runbook or work item references them — discover via
+  [`design-assets.md`](../design-assets.md) (issue-body `## Design assets`,
+  tracker attachments, linked files, `<dev-folder>/assets/`). Absence of assets
+  is not a failure; do not invent a baseline.
 
 ### 2. Choose and Execute the Test Approach
 
@@ -77,6 +81,20 @@ For each runbook step, record:
 - **Step number and description**
 - **Result**: PASS or FAIL
 - **Details**: What was observed (for failures, include expected vs. actual)
+
+### 3a. Design fidelity steps (when present)
+
+When the runbook includes expected-vs-actual fidelity steps against design
+assets:
+
+1. Execute them as a lightweight human/agent visual comparison (not pixel diff).
+2. Record PASS or FAIL like any other step.
+3. On FAIL, include expected-vs-actual detail naming the reference asset and what
+   differed in the UI under test.
+4. Do **not** treat design-reviewer as the primary fidelity gate; optional design
+   review remains separate from these AC-driven smoke steps.
+5. If the runbook has no fidelity steps (no assets were discovered at plan time),
+   skip this subsection — missing assets are not a smoke failure.
 
 ---
 

@@ -294,6 +294,20 @@ docs/testing/[app-or-section]/[feature-slug].smoke-test.md
 
 The runbook must cover all acceptance criteria from the spec (or from the work item brief for Refactor items). Each criterion must have at least one testable step.
 
+### Design-asset discovery and fidelity steps
+
+Before finalizing the runbook for UI-facing work, discover design assets using
+the order in [`design-assets.md`](../design-assets.md) (issue-body
+`## Design assets`, tracker attachments, linked files, `<dev-folder>/assets/`).
+
+- **When assets exist**: include at least one expected-vs-actual fidelity step
+  that names the reference asset(s). Fidelity is a lightweight visual
+  comparison, not a pixel-diff platform.
+- **When none exist**: omit fidelity steps; do **not** invent a baseline or
+  fail the plan for missing mockups.
+- If locations conflict, ask the human once which reference is authoritative.
+  Sibling issues are never asset sources for this item.
+
 ---
 
 ## Step 5: Git Execution

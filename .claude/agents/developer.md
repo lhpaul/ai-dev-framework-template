@@ -50,6 +50,9 @@ Key rules:
   incoherent edits only to satisfy this requirement
 - For Full Pipeline: read spec + plan + runbook BEFORE writing any code
 - For Refactor: read plan + runbook BEFORE writing any code (no spec)
+- For UI-facing work, discover design assets per
+  `docs/workflow/development-workflow/design-assets.md` and use them as visual
+  references; do not invent assets when none exist
 - For Fast Track: require the Protocol 91 Fast Track blast-radius gate and
   Protocol 03 criteria to have passed before implementation; stop and report if
   scope expands, high call-site volume appears, or external-system impact is

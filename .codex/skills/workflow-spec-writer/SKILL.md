@@ -31,8 +31,12 @@ Recommended model tier: `premium`
    not-applicable rationale.
 9. Before opening the draft spec PR, call `ensure_on_project_board <issue_number> "Writing Spec"` from `scripts/development-workflow/workflow-lib.sh`. This is a no-op when the issue is already on the board.
 10. Before creating the spec branch or opening the spec PR for a tracker-backed item, run `run-nested-artifact-guard.sh` with required `--mode`, `--issue`, `--expected-branch`, `--approved-base`, plus the expected `spec/*` branch and approved artifact base. Stop on missing base, duplicate artifacts, wrong-base PRs, or scan failures.
-11. When the branch is created, continue through reviewer gate, PR creation, and PR readiness unless the protocol surfaces a real human decision.
-12. Resolve repository mode, artifact owner, and artifact base branch before
+11. When creating the development folder, discover design assets per
+    `docs/workflow/development-workflow/design-assets.md`. If confirmed tracker
+    design assets exist, copy or download them into `<dev-folder>/assets/` and
+    update the issue-body location note. Do not invent assets when none exist.
+12. When the branch is created, continue through reviewer gate, PR creation, and PR readiness unless the protocol surfaces a real human decision.
+13. Resolve repository mode, artifact owner, and artifact base branch before
    writing: `single_repo` uses the current repository; `workflow_hub` keeps specs
    and spec PRs hub-owned on the hub artifact base branch, even when the
    product implementation base is different; `product_repo` should report the

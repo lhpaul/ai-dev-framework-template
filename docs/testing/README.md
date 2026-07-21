@@ -8,6 +8,12 @@
 
 The smoke test _process_ (inputs, output format, pass criteria, fail handling) is defined in the [Smoke Test Protocol](../workflow/development-workflow/protocols/04-smoke-test-protocol.md). This guide covers **how** to execute tests in this specific repo.
 
+When a work item has graphical design references, runbooks may include optional
+expected-vs-actual fidelity steps. Discover assets and record PASS/FAIL detail
+per [`design-assets.md`](../workflow/development-workflow/design-assets.md) and
+protocol `04`. Omit fidelity steps when no assets exist — do not invent a
+baseline.
+
 If this repository has a preferred browser automation provider, declare it in `.ai-dev-workflow.yaml` under `browser_automation.provider`.
 
 ---
