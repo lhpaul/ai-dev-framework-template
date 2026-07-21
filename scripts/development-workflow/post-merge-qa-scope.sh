@@ -118,6 +118,7 @@ append_candidate() {
 }
 
 # Append pull_request/issue rows from a JSON array file (no pipeline subshell).
+# Malformed rows are skipped with a note so one bad API object cannot abort the proposal.
 append_rows_from_json_array() {
   local json_file="$1" kind="$2" reason="$3" skip_number="${4:-}"
   local count row number title url
@@ -130,18 +131,18 @@ append_rows_from_json_array() {
     return 0
   fi
   while IFS= read -r row; do
-    number="$(printf '%s' "$row" | jq -er '.number')" || {
-      echo "Failed to parse candidate number" >&2
-      exit 1
-    }
-    title="$(printf '%s' "$row" | jq -er '.title')" || {
-      echo "Failed to parse candidate title" >&2
-      exit 1
-    }
-    url="$(printf '%s' "$row" | jq -er '.url')" || {
-      echo "Failed to parse candidate url" >&2
-      exit 1
-    }
+    if ! number="$(printf '%s' "$row" | jq -er '.number')"; then
+      append_note "Skipped malformed $kind row (missing number) for: $reason"
+      continue
+    fi
+    if ! title="$(printf '%s' "$row" | jq -er '.title')"; then
+      append_note "Skipped malformed $kind #$number (missing title) for: $reason"
+      continue
+    fi
+    if ! url="$(printf '%s' "$row" | jq -er '.url')"; then
+      append_note "Skipped malformed $kind #$number (missing url) for: $reason"
+      continue
+    fi
     if [ -n "$skip_number" ] && [ "$number" = "$skip_number" ]; then
       continue
     fi
@@ -219,8 +220,14 @@ if [ ! -s "$candidates_file" ] && [ "$recent_merged" -eq 0 ] && [ -z "$issues_ar
   append_note "No explicit scope flags; proposed up to 10 recent merged PRs into $base (capped, not fully paginated). Confirm or adjust before testing."
 fi
 
-candidates_json="$(if [ -s "$candidates_file" ]; then jq -s 'unique_by(.kind + ":" + (.number|tostring))' "$candidates_file"; else printf '[]\n'; fi)"
-notes_json="$(if [ -s "$notes_file" ]; then jq -s '[.[].note]' "$notes_file"; else printf '[]\n'; fi)"
+candidates_json="$(if [ -s "$candidates_file" ]; then jq -e -s 'unique_by(.kind + ":" + (.number|tostring))' "$candidates_file"; else printf '[]\n'; fi)" || {
+  echo "Failed to build candidates JSON" >&2
+  exit 1
+}
+notes_json="$(if [ -s "$notes_file" ]; then jq -e -s '[.[].note]' "$notes_file"; else printf '[]\n'; fi)" || {
+  echo "Failed to build notes JSON" >&2
+  exit 1
+}
 
 result="$(jq -n \
   --arg base "$base" \

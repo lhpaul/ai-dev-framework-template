@@ -9,7 +9,10 @@ HELPER="$REPO_ROOT/scripts/development-workflow/post-merge-qa-scope.sh"
 
 PASS_COUNT=0
 FAIL_COUNT=0
-TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(mktemp -d)" || {
+  echo "Failed to create test temp dir" >&2
+  exit 1
+}
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 run_test() {
@@ -48,8 +51,9 @@ cat >"$MOCK_BIN/gh" <<'STUB'
 set -euo pipefail
 case "$*" in
   *"pr list"*"--state merged"*)
+    # Include a malformed row to verify skip-and-continue behavior
     cat <<'JSON'
-[{"number":101,"title":"Merged feature","url":"https://example.test/pr/101","mergedAt":"2026-07-01T00:00:00Z"}]
+[{"number":101,"title":"Merged feature","url":"https://example.test/pr/101","mergedAt":"2026-07-01T00:00:00Z"},{"number":null,"title":"Bad","url":"https://example.test/pr/bad"}]
 JSON
     ;;
   *"issue view"*"--json"*)
