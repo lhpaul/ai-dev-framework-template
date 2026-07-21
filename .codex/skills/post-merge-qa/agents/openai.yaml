@@ -1,0 +1,7 @@
+interface:
+  display_name: "Post-merge QA"
+  short_description: "QA develop / develop-<slug>; fix PR for safe defects."
+  default_prompt: "Run /post-merge-qa: resolve an allowed base, propose and confirm scope, preflight the environment, exercise critical flows, optionally check design assets, and open one fix PR for safely actionable defects without creating a backlog item."
+
+policy:
+  allow_implicit_invocation: false

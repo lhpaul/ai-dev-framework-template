@@ -4,8 +4,11 @@ Canonical rules for capturing, storing, discovering, and lightly validating
 graphical design references in the AI development workflow.
 
 Protocols and command surfaces **link here** rather than redefining these rules.
-This is intentionally lightweight: it is **not** a visual-regression platform,
-pixel-diff harness, or `/merged-qa` (#1283) implementation.
+This is intentionally lightweight: it is **not** a visual-regression platform
+or pixel-diff harness. Post-merge QA (`/post-merge-qa`, protocol
+[`08-post-merge-qa-protocol.md`](protocols/08-post-merge-qa-protocol.md)) may
+**consume** these assets for optional light fidelity checks when they already
+exist; that command does not own or redefine this convention.
 
 ---
 
