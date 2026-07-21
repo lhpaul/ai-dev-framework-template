@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Post-merge QA command** (#1283): add `/post-merge-qa` (alias
+  `/merged-qa-tester`), protocol `08`, and a read-only scope helper to QA work
+  on `develop` or `develop-<slug>`, with optional design-asset fidelity and a
+  single fix-PR path for safely actionable defects.
 - **Automate graduation closeout on merge** (#1281): invoke the existing
   graduation closeout reconciler when a `develop-<slug>` graduation PR merges,
   while keeping Step 5 as the primary path.
