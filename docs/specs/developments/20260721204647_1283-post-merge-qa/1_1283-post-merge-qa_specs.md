@@ -12,7 +12,7 @@ Operators need a shared workflow command to quality-check work that is already o
 - Target branch defaults to the current checkout when it is `develop` or `develop-<slug>`; otherwise the human must supply an explicit target.
 - Default proposed scope is items already in a merged state for that target, or — when an epic is in scope — all items on the epic’s integration branch; the command confirms the proposed set with the human before testing.
 - Before testing begins, the command checks that the necessary runnable environment is available and asks the human when it is not.
-- Findings that need code fixes result in a new fix PR; no follow-up backlog item is required for those fixes.
+- Findings that need safely actionable code/docs fixes result in one new fix PR targeting the QA branch; no follow-up backlog item is required for those fixes. Findings that need a product decision are asked of the human and may be deferred explicitly.
 - Relationship to graphical design assets work (#1282) is **orthogonal**: when design assets happen to be discoverable for the scoped items, include light fidelity checks; when none exist, skip silently (do not fail the run for missing assets).
 - Does not replace pre-merge smoke tests; does not invent a full visual-regression platform.
 
@@ -38,13 +38,13 @@ Operators need a shared workflow command to quality-check work that is already o
 5. Command runs a preflight: confirm a runnable app / test surface exists (URLs, local apps, or documented how-to-run). If anything required is missing, ask the human and wait — do not begin exercising flows until the gap is resolved or the human explicitly narrows scope to what can be tested
 6. Command exercises critical user flows and UX for the confirmed scope on the target branch
 7. When design assets are already discoverable for scoped items, perform light fidelity comparison (expected vs actual). When none are discoverable, skip asset checks without failing the run
-8. If actionable defects are found, implement the fixes and open a **fix PR** against the appropriate base (`develop` or the integration branch under test). Summarize findings and fixes in the PR description. Do **not** create a separate backlog item for those fixes
+8. If safely actionable defects are found, implement those fixes and open **one fix PR** whose base is the same QA target branch under test (`develop` or that `develop-<slug>`). Summarize findings, fixes, and any deferred items in the PR description. Do **not** create a separate backlog item for those fixes
 9. If no actionable defects are found, report a clean result to the human and do not open a fix PR
 
 **Postconditions**:
 
 - Human has a clear pass/fail outcome for the confirmed scope
-- When fixes were needed, a fix PR exists with the corrections and a findings summary; no new backlog item was created solely to track those fixes
+- When safely actionable fixes were made, one fix PR exists targeting the QA branch, with corrections and a findings summary; no new backlog item was created solely to track those fixes
 - When nothing needed fixing, no fix PR was opened
 
 **Information shown**:
@@ -52,7 +52,7 @@ Operators need a shared workflow command to quality-check work that is already o
 - Resolved target branch
 - Proposed and confirmed item/PR scope
 - Preflight environment status (ready / missing with questions)
-- Findings summary (pass, defects found, assets checked or skipped)
+- Findings summary (pass, defects found, assets checked or skipped, deferred product decisions)
 - Fix PR link when one was opened
 
 **Actions available**:
@@ -60,13 +60,16 @@ Operators need a shared workflow command to quality-check work that is already o
 - Confirm or edit proposed scope
 - Supply missing run/test environment details when asked
 - Review and merge (or reject) the fix PR when one was opened
+- Answer product questions for any deferred findings
 
 **Considerations**:
 
 - Scope confirmation is mandatory even when the default proposal is clear
+- If the human confirms an empty scope, stop with a clear message and do not run preflight or flows
 - “Merged state” means work already integrated onto the target branch (not still-open feature PRs unless the human explicitly adds them)
 - Epic path: prefer every item that belongs on that epic’s integration branch, then confirm with the human
-- If defects need a product decision before a safe fix exists, stop and ask the human rather than guessing in the fix PR
+- Explicit operator inputs (single item, several items, epic, or recent merged PRs) seed or narrow the proposal; the human still confirms before flows run
+- If some defects need a product decision before a safe fix exists, ask the human for those decisions. Do not invent behavior. Safely fixable defects may still ship in the fix PR, provided deferred findings are listed explicitly for the human and are not silently dropped
 
 ---
 
@@ -150,14 +153,15 @@ Operators need a shared workflow command to quality-check work that is already o
 - Allowed QA target branches are only `develop` and `develop-<slug>`
 - If the current checkout is not an allowed target and no explicit allowed target was given, the command must stop and ask for a target — it must not silently QA an arbitrary feature branch
 - Default scope proposal prefers: (a) items already merged onto the target, or (b) when an epic is indicated, all items on that epic’s integration branch; the human must confirm before flows are exercised
+- An empty confirmed scope ends the run without preflight, flow exercise, or a fix PR
 - Preflight of the runnable test environment is mandatory before exercising flows
-- When actionable defects are found, the command opens a fix PR with the fixes; it must not create a separate backlog item solely to track those fixes
+- When safely actionable defects are found, the command opens exactly one fix PR whose base is the QA target branch; it must not create a separate backlog item solely to track those fixes
 - When no actionable defects are found, the command must not open an empty or ceremony-only fix PR
-- Product-code changes from this command happen only via that fix PR path (or not at all on a clean run)
+- Remediation changes from this command happen only via that fix PR path (or not at all on a clean run)
 - Design-asset fidelity is optional and best-effort: check when assets are discoverable; skip silently when not
 - This command does not replace per-item pre-merge smoke tests
 - This command does not auto-merge the fix PR; normal human (or delegated) merge policy still applies to that PR
-- If a safe fix cannot be determined without a product decision, stop and ask rather than inventing behavior in the fix PR
+- Defects that require a product decision must not be guessed away: ask the human, and list any still-deferred findings explicitly when a fix PR for the safe subset is opened
 
 ---
 
@@ -173,11 +177,13 @@ Operators need a shared workflow command to quality-check work that is already o
 
 - [ ] An operator can invoke `/post-merge-qa` or `/merged-qa-tester` and get identical behavior from either name
 - [ ] When the checkout is `develop` or `develop-<slug>`, the command uses that as the QA target without requiring an extra flag; when it is not, the command asks for an explicit allowed target and refuses to proceed on a disallowed branch
-- [ ] The command proposes a scope of merged items (or all items on an epic’s integration branch when an epic is in play), presents that proposal, and only begins exercising flows after human confirmation (or an explicit confirmed adjustment)
+- [ ] The command proposes a scope of merged items (or all items on an epic’s integration branch when an epic is in play), honors explicit inputs such as recent merged PRs when given, presents that proposal, and only begins exercising flows after human confirmation (or an explicit confirmed adjustment)
+- [ ] When the human confirms an empty scope, the run stops cleanly without preflight, flow exercise, or a fix PR
 - [ ] Before exercising flows, the command verifies a runnable test environment exists and asks the human when prerequisites are missing; it does not start flow exercise while blocked on environment
 - [ ] When design assets are discoverable for scoped items, the run includes light fidelity checks; when none are discoverable, the run continues without failing for missing assets
-- [ ] When actionable defects are found, the run opens a fix PR containing the fixes and a findings summary, and does **not** create a new backlog item for those fixes
+- [ ] When safely actionable defects are found, the run opens exactly one fix PR targeting the QA branch, containing those fixes and a findings summary (including any deferred product questions), and does **not** create a new backlog item for those fixes
 - [ ] When no actionable defects are found, the run reports a clean pass and does not open a fix PR
+- [ ] Defects that need a product decision are surfaced to the human instead of being invented in the fix PR
 - [ ] Pre-merge smoke-test commands/protocols remain unchanged and are still the path for single-item pre-merge validation
 - [ ] Command surfaces exist for Cursor, Claude Code, and Codex (command / skill / agent entrypoints as appropriate to each tool)
 
