@@ -91,12 +91,49 @@ jobs:
             TARGET_STATUS="Plan Ready"
           elif [[ "$BRANCH" == feature/* || "$BRANCH" == fix/* || "$BRANCH" == refactor/* || "$BRANCH" == hotfix/* ]]; then
             TARGET_STATUS="Merged"
+          elif [[ "$BRANCH" == develop-* ]]; then
+            BRANCH_TYPE="graduation"
           fi
+      - name: Run graduation closeout fallback
+        run: ./scripts/development-workflow/graduation-closeout-from-merged-pr.sh --graduation-pr 1
 YAML
 
 valid_output="$(run_with_workflow "$valid_workflow")" \
   || fail "valid workflow mappings should pass"
-printf '%s\n' "$valid_output" | grep -q 'All 6 mappings correct\.' \
-  || fail "valid workflow output should confirm all mappings"
+printf '%s\n' "$valid_output" | grep -q 'All 6 mappings correct (+ graduation closeout fallback)\.' \
+  || fail "valid workflow output should confirm all mappings and graduation fallback"
+printf '%s\n' "$valid_output" | grep -q "OK: branch 'develop-\*' → graduation closeout fallback" \
+  || fail "valid workflow output should acknowledge graduation closeout fallback"
+
+missing_graduation_workflow="$TMP_DIR/update-tracker-missing-graduation.yml"
+cat > "$missing_graduation_workflow" <<'YAML'
+name: Update tracker on merge
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  update-tracker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect branch type
+        run: |
+          if [[ "$BRANCH" == spec/* ]]; then
+            TARGET_STATUS="Spec Ready"
+          elif [[ "$BRANCH" == implementation-plan/* ]]; then
+            TARGET_STATUS="Plan Ready"
+          elif [[ "$BRANCH" == feature/* || "$BRANCH" == fix/* || "$BRANCH" == refactor/* || "$BRANCH" == hotfix/* ]]; then
+            TARGET_STATUS="Merged"
+          fi
+YAML
+
+missing_graduation_exit=0
+missing_graduation_output="$(run_with_workflow "$missing_graduation_workflow" 2>&1)" \
+  || missing_graduation_exit=$?
+[ "$missing_graduation_exit" -eq 1 ] \
+  || fail "workflow without graduation fallback should fail"
+printf '%s\n' "$missing_graduation_output" | grep -q 'expected graduation closeout fallback wiring' \
+  || fail "missing graduation fallback should explain the required wiring"
 
 printf 'check tracker merge mapping tests passed\n'

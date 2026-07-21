@@ -10,12 +10,14 @@
 #   elif [[ "$BRANCH" == implementation-plan/* → TARGET_STATUS="Plan Ready"
 #   elif [[ "$BRANCH" == feature/* || ...      → TARGET_STATUS="Merged"
 #     (covers feature/*, fix/*, refactor/*, hotfix/*)
+#   elif [[ "$BRANCH" == develop-* ]];         → BRANCH_TYPE="graduation"
+#     (invokes graduation-closeout-from-merged-pr.sh closeout fallback)
 #
 # Usage:
 #   bash scripts/development-workflow/check-tracker-merge-mapping.sh
 #
 # Exit codes:
-#   0 — all six required mappings are correct
+#   0 — all six required mappings are correct and graduation fallback is wired
 #   1 — one or more mappings are incorrect or missing
 
 set -euo pipefail
@@ -96,8 +98,19 @@ check_mapping "refactor"            "Merged"
 check_mapping "hotfix"              "Merged"
 
 echo ""
+# Graduation heads must invoke closeout fallback rather than silent untracked skip.
+if grep -Eq 'BRANCH_TYPE="graduation"|branch_type=graduation' "$WORKFLOW_FILE" \
+  && grep -Fq 'graduation-closeout-from-merged-pr.sh' "$WORKFLOW_FILE" \
+  && grep -Eq '== develop-\*|develop-\*' "$WORKFLOW_FILE"; then
+  echo "OK: branch 'develop-*' → graduation closeout fallback"
+else
+  echo "ERROR: branch 'develop-*' → expected graduation closeout fallback wiring (BRANCH_TYPE=graduation + graduation-closeout-from-merged-pr.sh)"
+  ERRORS=$((ERRORS + 1))
+fi
+
+echo ""
 if [ "$ERRORS" -eq 0 ]; then
-  echo "All 6 mappings correct."
+  echo "All 6 mappings correct (+ graduation closeout fallback)."
   exit 0
 else
   echo "$ERRORS mapping(s) failed."
