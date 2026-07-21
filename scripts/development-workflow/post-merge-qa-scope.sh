@@ -9,8 +9,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-
 usage() {
   cat <<'EOF'
 Usage:
