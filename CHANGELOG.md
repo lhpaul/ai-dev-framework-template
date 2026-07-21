@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Automate graduation closeout on merge** (#1281): invoke the existing
+  graduation closeout reconciler when a `develop-<slug>` graduation PR merges,
+  while keeping Step 5 as the primary path.
 - **Graphical design assets in the workflow** (#1282): add capture, storage,
   discovery, and lightweight plan/smoke fidelity hooks for design references
   without a visual-regression platform.

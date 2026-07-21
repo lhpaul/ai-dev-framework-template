@@ -17,6 +17,9 @@ Key responsibilities:
 - Open the graduation PR from `develop-<slug>` to `develop` using a merge-commit strategy (Step 3)
 - Run the automated reviewer loop and apply `ready-for-human-review` (Step 4); do NOT apply `ready-for-regression`
 - After human merges: delete the remote/local integration branch, run
-  `graduation-closeout.sh`, reconcile delivered sub-items to terminal tracker
-  status before closing the epic, and surface skipped optional/deferred items or
-  failed closeout entries for human disposition (Step 5)
+  `graduation-closeout.sh` (Step 5 primary closeout), reconcile delivered
+  sub-items to terminal tracker status before closing the epic, and surface
+  skipped optional/deferred items or failed closeout entries for human
+  disposition. Merge-time automation may also invoke the same reconciler via
+  `graduation-closeout-from-merged-pr.sh` as a fallback; double-runs are
+  idempotent.

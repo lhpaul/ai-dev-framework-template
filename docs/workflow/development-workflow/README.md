@@ -299,7 +299,7 @@ not apply setup, sync files, or change runtime behavior.
 | Release             | `release/v[X.Y.Z]`           | `develop`   |
 | Development integration | `develop-<slug>`         | `develop`   |
 
-**Development integration branches** (`develop-<slug>`) are staging branches that collect all sub-item PRs for a multi-item grouped development. They are created by the orchestrator and deleted after the graduation PR merges to `develop`; graduation closeout then reconciles delivered sub-items and the parent epic to terminal tracker state. Single-item developments do not use integration branches. See `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`.
+**Development integration branches** (`develop-<slug>`) are staging branches that collect all sub-item PRs for a multi-item grouped development. They are created by the orchestrator and deleted after the graduation PR merges to `develop`; graduation closeout (Protocol 05b Step 5 primary path, with merge-time automation fallback via `graduation-closeout-from-merged-pr.sh`) then reconciles delivered sub-items and the parent epic to terminal tracker state. Single-item developments do not use integration branches. See `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`.
 
 Slug format:
 

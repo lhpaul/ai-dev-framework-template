@@ -423,15 +423,23 @@ repositories without implying equivalent behavior for every tracker provider.
 | `fix/*`                 | Merged             | Yes           |
 | `refactor/*`            | Merged             | Yes           |
 | `hotfix/*`              | Merged             | Yes           |
+| `develop-<slug>`        | Graduation closeout fallback (same reconciler as Protocol 05b Step 5) | Via closeout helper |
+
+Non-graduation mappings above are unchanged. Graduation heads no longer silently
+skip: the workflow runs
+`scripts/development-workflow/graduation-closeout-from-merged-pr.sh`, which
+discovers slug/epic/deferral signals and invokes `graduation-closeout.sh`.
 
 ### How it works
 
 1. Triggered on `pull_request` closed events targeting `develop` where `merged == true`
 2. Extracts the branch prefix to determine the stage type
-3. Extracts the issue number from the branch name (e.g., `fix/463-some-slug` → `463`)
+3. For non-graduation branches: extracts the issue number from the branch name (e.g., `fix/463-some-slug` → `463`)
 4. Queries the GitHub Projects v2 GraphQL API to find the project item for that issue
 5. Updates the `Status` field to the appropriate value
 6. For implementation branches (`feature/*`, `fix/*`, `refactor/*`, `hotfix/*`): also closes the GitHub issue
+7. For graduation heads (`develop-<slug>`): checks out the repo and runs the
+   graduation closeout fallback instead of the per-issue status mapping
 
 ### Required configuration (GitHub Projects only)
 
@@ -510,7 +518,7 @@ Use explicit issue numbers to avoid accidental broad transitions. Items not incl
 ## Graduation Closeout Status
 
 After an integration branch graduation PR merges from `develop-<slug>` to
-`develop`, run the graduation closeout helper from Protocol 05b:
+`develop`, Protocol 05b Step 5 remains the **primary** closeout path:
 
 ```bash
 ./scripts/development-workflow/graduation-closeout.sh \
@@ -518,6 +526,17 @@ After an integration branch graduation PR merges from `develop-<slug>` to
   --graduation-pr <graduation-pr-number> \
   --epic <epic-issue-number>
 ```
+
+Merge-time automation is a **fallback**: `update-tracker-on-merge.yml` invokes
+`graduation-closeout-from-merged-pr.sh` for merged graduation heads, which
+discovers the slug/epic and calls the same reconciler. Operator controls:
+
+- CLI `--defer-epic-close` / `--exclude-issue` on Step 5
+- Durable epic label `defer-epic-close` (applied automatically when Step 5 uses
+  `--defer-epic-close`; also honored when present before automation runs)
+- Sub-item skip labels already honored by the reconciler (`optional`,
+  `deferred`, `cancelled`, `excluded-from-graduation`,
+  `exclude-from-graduation`)
 
 The helper validates that the graduation PR already merged from
 `develop-<slug>` to `develop`, then reconciles delivered planned sub-items
