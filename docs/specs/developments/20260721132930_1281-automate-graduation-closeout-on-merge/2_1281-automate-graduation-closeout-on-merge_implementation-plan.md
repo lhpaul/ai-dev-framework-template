@@ -76,10 +76,18 @@ change.
            `excluded-from-graduation`, `exclude-from-graduation`)
          - Explicit `--exclude-issue` / `--defer-epic-close` CLI overrides when
            the wrapper is invoked manually
+- [ ] **AC4 double-run durability**: When Step 5 / `graduation-closeout.sh` is
+      invoked with `--defer-epic-close`, the primary path must also ensure the
+      durable epic label `defer-epic-close` is present before returning success
+      (add the label if missing). Without this, a later merge-time automation
+      run would not see the operator deferral and could force-close the epic —
+      a conflicting policy. Document the label in Protocol 05b as the shared
+      deferral signal across agent and automation paths.
 - [ ] Invoke
       `./scripts/development-workflow/graduation-closeout.sh --slug … --graduation-pr … --epic …`
       with discovered/override flags. Do not reimplement close/status logic in
-      the wrapper.
+      the wrapper (except the small label-ensure behavior above for deferral
+      durability, which may live in the reconciler or a tiny shared helper).
 - [ ] Emit a stable summary including discovery sources, whether deferral was
       inferred from a label, and the child closeout result lines
       (`GRADUATION_CLOSEOUT_RESULT=…`). Non-zero exit when discovery fails closed
@@ -266,7 +274,7 @@ reconciler, not concurrent event listeners sharing mutable process state.
 | Risk | Likelihood | Impact | Mitigation |
 | ---- | ---------- | ------ | ---------- |
 | Epic discovery ambiguous for legacy integrations | Med | High (fail closed leaves board stale) | Ordered discovery + clear job failure logs; Step 5 remains primary repair path |
-| Automation closes epic despite operator intent to defer | Low | High | Require durable `defer-epic-close` label (or CLI) before automation defers; document in 05b |
+| Automation closes epic despite operator intent to defer | Low | High | CLI `--defer-epic-close` must apply durable epic label; wrapper reads that label; document in 05b |
 | Workflow secrets missing → silent skip | Med | Med | Fail the graduation job visibly when token/project vars missing for closeout path |
 | Mapping-check drift vs workflow | Low | Med | Update `check-tracker-merge-mapping.sh` + tests in same PR |
 | Sibling coupling to #1282/#1284 | Low | Low | Explicit non-goals; no shared commits/branches |
@@ -295,10 +303,12 @@ reconciler, not concurrent event listeners sharing mutable process state.
 
 ## Implementation Order
 
-1. Add `graduation-closeout-from-merged-pr.sh` with slug/epic discovery, durable
-   defer-label handling, fail-closed behavior, and delegation to
-   `graduation-closeout.sh`. Verify with mocked unit tests for the parser-risk
-   edge cases above.
+1. Extend `graduation-closeout.sh` so `--defer-epic-close` ensures the durable
+   epic label `defer-epic-close` is present (AC4 durability). Add
+   `graduation-closeout-from-merged-pr.sh` with slug/epic discovery, label-based
+   defer detection, fail-closed behavior, and delegation to the reconciler.
+   Verify with mocked unit tests for parser-risk edge cases and defer-label
+   round-trip (CLI defer → label present → wrapper re-defers).
 2. Extend `update-tracker-on-merge.yml` graduation path; keep non-graduation
    mappings unchanged. Confirm job logs distinguish skip / run / fail.
 3. Update `check-tracker-merge-mapping.sh` +

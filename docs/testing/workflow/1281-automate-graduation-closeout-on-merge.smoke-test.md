@@ -82,12 +82,13 @@ show run/success (or fail-closed with a clear error).
 
 **Maps to**: AC4
 
-1. Apply epic label `defer-epic-close` (or invoke wrapper/CLI with
-   `--defer-epic-close`).
-2. Run automation/wrapper against the merged graduation PR.
+1. Run primary closeout with `--defer-epic-close` and confirm the epic receives
+   the durable `defer-epic-close` label (or apply the label explicitly).
+2. Run automation/wrapper against the merged graduation PR afterward.
 3. Confirm delivered non-excluded sub-items reconcile and the epic remains open.
 
-**Expected result**: Automation does not force-close a deferred epic.
+**Expected result**: Automation honors the durable deferral signal and does not
+force-close the epic.
 
 ### Step 5: Excluded / optional sub-items remain open
 
