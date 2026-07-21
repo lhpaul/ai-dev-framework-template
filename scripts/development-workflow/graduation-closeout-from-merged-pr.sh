@@ -172,7 +172,7 @@ extract_epic_parent_refs() {
 }
 
 read_merged_graduation_pr() {
-  local pr_json parsed state merged_at base_ref head_ref title body
+  local pr_json parsed state base_ref head_ref title body
   if ! pr_json="$(gh pr view "$GRADUATION_PR" --json number,state,mergedAt,baseRefName,headRefName,title,body,merged 2>/dev/null)"; then
     fail_closed "could_not_read_graduation_pr"
   fi
