@@ -3,12 +3,13 @@
 #
 # Proposes QA candidates for human confirmation. Does not update trackers,
 # create branches, open PRs, or exercise application flows.
+#
+# List calls use an explicit --limit (proposal size). Results are not fully
+# paginated; the human confirms/adjusts scope before any testing.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-# shellcheck source=scripts/development-workflow/workflow-lib.sh
-source "$SCRIPT_DIR/workflow-lib.sh"
 
 usage() {
   cat <<'EOF'
@@ -17,6 +18,7 @@ Usage:
       [--epic <number>] [--issues <csv>] [--recent-merged-prs <n>] [--json]
 
 Read-only: proposes post-merge QA scope for human confirmation.
+List queries are intentionally capped with --limit; confirm or adjust before testing.
 EOF
 }
 
@@ -85,7 +87,10 @@ if ! printf '%s\n' "$recent_merged" | grep -Eq '^[0-9]+$'; then
   exit 64
 fi
 
-tmp_dir="$(mktemp -d)"
+tmp_dir="$(mktemp -d)" || {
+  echo "Failed to create temp directory" >&2
+  exit 1
+}
 cleanup() {
   rm -rf "$tmp_dir"
 }
@@ -112,9 +117,43 @@ append_candidate() {
     >> "$candidates_file"
 }
 
-# Explicit issues
+# Append pull_request/issue rows from a JSON array file (no pipeline subshell).
+append_rows_from_json_array() {
+  local json_file="$1" kind="$2" reason="$3" skip_number="${4:-}"
+  local count row number title url
+  count="$(jq 'length' "$json_file")" || {
+    echo "Failed to parse JSON array from $json_file" >&2
+    exit 1
+  }
+  if [ "$count" -eq 0 ]; then
+    append_note "No $kind candidates returned for: $reason"
+    return 0
+  fi
+  while IFS= read -r row; do
+    number="$(printf '%s' "$row" | jq -er '.number')" || {
+      echo "Failed to parse candidate number" >&2
+      exit 1
+    }
+    title="$(printf '%s' "$row" | jq -er '.title')" || {
+      echo "Failed to parse candidate title" >&2
+      exit 1
+    }
+    url="$(printf '%s' "$row" | jq -er '.url')" || {
+      echo "Failed to parse candidate url" >&2
+      exit 1
+    }
+    if [ -n "$skip_number" ] && [ "$number" = "$skip_number" ]; then
+      continue
+    fi
+    append_candidate "$kind" "$number" "$title" "$url" "$reason"
+  done < <(jq -c '.[]' "$json_file")
+}
+
+# Explicit issues (file-backed loop — exits abort the main script)
 if [ -n "$issues_arg" ]; then
-  printf '%s\n' "$issues_arg" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | awk 'NF' | while IFS= read -r issue; do
+  issues_list="$tmp_dir/issues-list.txt"
+  printf '%s\n' "$issues_arg" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | awk 'NF' > "$issues_list"
+  while IFS= read -r issue; do
     if ! printf '%s\n' "$issue" | grep -Eq '^[1-9][0-9]*$'; then
       echo "Invalid issue in --issues: $issue" >&2
       exit 64
@@ -123,25 +162,22 @@ if [ -n "$issues_arg" ]; then
       echo "Failed to read issue #$issue" >&2
       exit 1
     fi
-    jq -r '[.number, .title, .url] | @tsv' "$tmp_dir/issue-$issue.json" | while IFS=$'\t' read -r number title url; do
-      append_candidate "issue" "$number" "$title" "$url" "explicit --issues input"
-    done
-  done
+    number="$(jq -er '.number' "$tmp_dir/issue-$issue.json")" || exit 1
+    title="$(jq -er '.title' "$tmp_dir/issue-$issue.json")" || exit 1
+    url="$(jq -er '.url' "$tmp_dir/issue-$issue.json")" || exit 1
+    append_candidate "issue" "$number" "$title" "$url" "explicit --issues input"
+  done < "$issues_list"
 fi
 
-# Recent merged PRs into base
+# Recent merged PRs into base (intentionally capped; human confirms)
 if [ "$recent_merged" -gt 0 ]; then
   if ! gh pr list --base "$base" --state merged --limit "$recent_merged" \
     --json number,title,url,mergedAt > "$tmp_dir/merged-prs.json"; then
     echo "Failed to list merged PRs for base '$base'" >&2
     exit 1
   fi
-  jq -c '.[]' "$tmp_dir/merged-prs.json" | while IFS= read -r row; do
-    number="$(printf '%s' "$row" | jq -r '.number')"
-    title="$(printf '%s' "$row" | jq -r '.title')"
-    url="$(printf '%s' "$row" | jq -r '.url')"
-    append_candidate "pull_request" "$number" "$title" "$url" "recent merged PR into $base"
-  done
+  append_rows_from_json_array "$tmp_dir/merged-prs.json" "pull_request" "recent merged PR into $base (limit $recent_merged)"
+  append_note "Merged-PR proposal is capped at --recent-merged-prs=$recent_merged (not fully paginated)."
 fi
 
 # Epic association (best-effort)
@@ -150,26 +186,20 @@ if [ -n "$epic" ]; then
     echo "Failed to read epic #$epic" >&2
     exit 1
   fi
-  integration_label="$(jq -r '[.labels[].name] | map(select(startswith("integration-branch:"))) | .[0] // empty' "$tmp_dir/epic.json")"
+  integration_label="$(jq -r '[.labels[].name] | map(select(startswith("integration-branch:"))) | .[0] // empty' "$tmp_dir/epic.json")" || {
+    echo "Failed to parse epic labels" >&2
+    exit 1
+  }
   if [ -n "$integration_label" ]; then
     slug="${integration_label#integration-branch:}"
     expected_base="develop-${slug}"
     if [ "$base" != "$expected_base" ] && [ "$base" != "develop" ]; then
       append_note "Epic #$epic has $integration_label; QA base is '$base' (expected '$expected_base' or develop). Proceeding with best-effort label search."
     fi
-    # Search issues carrying the same integration-branch label
     if gh issue list --label "$integration_label" --state all --limit 50 \
       --json number,title,url > "$tmp_dir/epic-issues.json" 2>/dev/null; then
-      jq -c '.[]' "$tmp_dir/epic-issues.json" | while IFS= read -r row; do
-        number="$(printf '%s' "$row" | jq -r '.number')"
-        title="$(printf '%s' "$row" | jq -r '.title')"
-        url="$(printf '%s' "$row" | jq -r '.url')"
-        # Skip the epic issue itself when it appears in the list
-        if [ "$number" = "$epic" ]; then
-          continue
-        fi
-        append_candidate "issue" "$number" "$title" "$url" "epic #$epic via $integration_label"
-      done
+      append_rows_from_json_array "$tmp_dir/epic-issues.json" "issue" "epic #$epic via $integration_label (limit 50)" "$epic"
+      append_note "Epic issue list is capped at 50 (not fully paginated)."
     else
       append_note "Could not list issues for label $integration_label; ask the human to supply --issues."
     fi
@@ -178,20 +208,15 @@ if [ -n "$epic" ]; then
   fi
 fi
 
-# Default: if no filters produced candidates and no notes about missing data, suggest recent merged
+# Default: if no filters produced candidates, suggest recent merged
 if [ ! -s "$candidates_file" ] && [ "$recent_merged" -eq 0 ] && [ -z "$issues_arg" ] && [ -z "$epic" ]; then
   if ! gh pr list --base "$base" --state merged --limit 10 \
     --json number,title,url,mergedAt > "$tmp_dir/default-merged.json"; then
     echo "Failed to list default merged PRs for base '$base'" >&2
     exit 1
   fi
-  jq -c '.[]' "$tmp_dir/default-merged.json" | while IFS= read -r row; do
-    number="$(printf '%s' "$row" | jq -r '.number')"
-    title="$(printf '%s' "$row" | jq -r '.title')"
-    url="$(printf '%s' "$row" | jq -r '.url')"
-    append_candidate "pull_request" "$number" "$title" "$url" "default: up to 10 recent merged PRs into $base"
-  done
-  append_note "No explicit scope flags; proposed up to 10 recent merged PRs into $base. Confirm or adjust before testing."
+  append_rows_from_json_array "$tmp_dir/default-merged.json" "pull_request" "default: up to 10 recent merged PRs into $base"
+  append_note "No explicit scope flags; proposed up to 10 recent merged PRs into $base (capped, not fully paginated). Confirm or adjust before testing."
 fi
 
 candidates_json="$(if [ -s "$candidates_file" ]; then jq -s 'unique_by(.kind + ":" + (.number|tostring))' "$candidates_file"; else printf '[]\n'; fi)"
@@ -209,13 +234,16 @@ result="$(jq -n \
     confirmationRequired: true,
     emptyScopeStop: "If the human confirms an empty scope, stop without preflight, flows, or a fix PR.",
     readOnlyGuarantee: "No tracker updates, branch creation, PR edits, merges, issue closure, or flow exercise were performed."
-  }')"
+  }')" || {
+  echo "Failed to build scope proposal JSON" >&2
+  exit 1
+}
 
 if [ "$json_output" -eq 1 ]; then
   printf '%s\n' "$result"
 else
   printf 'QA base: %s\n' "$base"
-  printf 'Candidates: %s\n' "$(printf '%s' "$result" | jq -r '.candidateCount')"
+  printf 'Candidates: %s\n' "$(printf '%s' "$result" | jq -er '.candidateCount')"
   printf '%s\n' "$result" | jq -r '.candidates[]? | "- [\(.kind) #\(.number)] \(.title) — \(.reason)"'
   printf '%s\n' "$result" | jq -r '.notes[]? | "Note: \(.)"'
   echo "Confirmation required before exercising flows."

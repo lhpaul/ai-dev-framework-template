@@ -58,6 +58,10 @@ JSON
     for a in "$@"; do
       if [[ "$a" =~ ^[0-9]+$ ]]; then issue="$a"; fi
     done
+    if [ "$issue" = "999001" ]; then
+      echo "issue not found" >&2
+      exit 1
+    fi
     if [ "$issue" = "50" ]; then
       cat <<'JSON'
 {"number":50,"title":"Epic","url":"https://example.test/issues/50","labels":[{"name":"integration-branch:demo"}],"body":"epic"}
@@ -86,18 +90,33 @@ run_fails_contains "requires_base" "--base is required" "$HELPER" --json
 run_fails_contains "rejects_feature_base" "Disallowed base" "$HELPER" --base feature/foo --json
 run_fails_contains "rejects_bad_recent" "--recent-merged-prs must be" "$HELPER" --base develop --recent-merged-prs no --json
 
-out="$("$HELPER" --base develop --recent-merged-prs 1 --json)"
-run_test "recent_merged_count" "1" "$(printf '%s' "$out" | jq -r '.candidateCount')"
-run_test "confirmation_required" "true" "$(printf '%s' "$out" | jq -r '.confirmationRequired')"
-run_test "read_only_present" "yes" "$(printf '%s' "$out" | jq -r 'if .readOnlyGuarantee then "yes" else "no" end')"
-run_test "base_echoed" "develop" "$(printf '%s' "$out" | jq -r '.base')"
+out="$("$HELPER" --base develop --recent-merged-prs 1 --json)" || {
+  echo "FAIL: recent_merged helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out="{}"
+}
+run_test "recent_merged_count" "1" "$(printf '%s' "$out" | jq -er '.candidateCount')"
+run_test "confirmation_required" "true" "$(printf '%s' "$out" | jq -er '.confirmationRequired')"
+run_test "read_only_present" "yes" "$(printf '%s' "$out" | jq -er 'if .readOnlyGuarantee then "yes" else "no" end')"
+run_test "base_echoed" "develop" "$(printf '%s' "$out" | jq -er '.base')"
 
-out2="$("$HELPER" --base develop --issues 42 --json)"
-run_test "explicit_issue" "42" "$(printf '%s' "$out2" | jq -r '.candidates[0].number')"
+out2="$("$HELPER" --base develop --issues 42 --json)" || {
+  echo "FAIL: explicit_issue helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out2="{}"
+}
+run_test "explicit_issue" "42" "$(printf '%s' "$out2" | jq -er '.candidates[0].number')"
 
-out3="$("$HELPER" --base develop-demo --epic 50 --json)"
-run_test "epic_child_included" "yes" "$(printf '%s' "$out3" | jq -r 'any(.candidates[]; .number == 51) | if . then "yes" else "no" end')"
-run_test "epic_self_excluded" "no" "$(printf '%s' "$out3" | jq -r 'any(.candidates[]; .number == 50) | if . then "yes" else "no" end')"
+out3="$("$HELPER" --base develop-demo --epic 50 --json)" || {
+  echo "FAIL: epic helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out3="{}"
+}
+run_test "epic_child_included" "yes" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .number == 51) | if . then "yes" else "no" end')"
+run_test "epic_self_excluded" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .number == 50) | if . then "yes" else "no" end')"
+
+run_fails_contains "rejects_invalid_issues" "Invalid issue in --issues" "$HELPER" --base develop --issues "abc" --json
+run_fails_contains "rejects_missing_issue" "Failed to read issue" "$HELPER" --base develop --issues "999001" --json
 
 echo ""
 echo "Passed: $PASS_COUNT"
