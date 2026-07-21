@@ -14,6 +14,7 @@ FIXTURE_REPO="$TMP_ROOT/repo"
 MOCK_STATE_DIR="$TMP_ROOT/state"
 MOCK_STATUS_DIR="$TMP_ROOT/status"
 MOCK_CLOSE_LOG="$TMP_ROOT/close.log"
+MOCK_LABEL_LOG="$TMP_ROOT/label.log"
 PASS_COUNT=0
 FAIL_COUNT=0
 
@@ -149,6 +150,19 @@ JSON
         ;;
     esac
     ;;
+  issue\ view\ *\ --json\ labels\ --jq\ *)
+    issue="$3"
+    file="$MOCK_STATE_DIR/$issue.json"
+    if [ ! -f "$file" ]; then
+      printf 'missing fixture for issue #%s\n' "$issue" >&2
+      exit 44
+    fi
+    python3 - "$file" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+print(",".join(label.get("name") or "" for label in (data.get("labels") or [])))
+PY
+    ;;
   issue\ view\ *\ --json\ number,title,state,labels)
     issue="$3"
     file="$MOCK_STATE_DIR/$issue.json"
@@ -157,6 +171,35 @@ JSON
       exit 44
     fi
     cat "$file"
+    ;;
+  issue\ edit\ *\ --add-label\ defer-epic-close)
+    issue="$3"
+    file="$MOCK_STATE_DIR/$issue.json"
+    if [ ! -f "$file" ]; then
+      printf 'missing fixture for issue #%s\n' "$issue" >&2
+      exit 44
+    fi
+    if [ "${MOCK_LABEL_ADD_FAIL:-0}" = "1" ]; then
+      printf 'mock label add failure\n' >&2
+      exit 48
+    fi
+    python3 - "$file" <<'PY'
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path))
+labels = data.setdefault("labels", [])
+if not any((label.get("name") or "") == "defer-epic-close" for label in labels):
+    labels.append({"name": "defer-epic-close"})
+json.dump(data, open(path, "w"))
+PY
+    printf 'add\t%s\tdefer-epic-close\n' "$issue" >> "$MOCK_LABEL_LOG"
+    ;;
+  label\ create\ defer-epic-close*)
+    if [ "${MOCK_LABEL_CREATE_FAIL:-0}" = "1" ]; then
+      printf 'mock label create failure\n' >&2
+      exit 49
+    fi
+    printf 'create\tdefer-epic-close\n' >> "$MOCK_LABEL_LOG"
     ;;
   issue\ close\ *\ --comment\ *)
     issue="$3"
@@ -184,7 +227,7 @@ MOCK_GH
 chmod +x "$MOCK_BIN/gh"
 export PATH="$MOCK_BIN:$PATH"
 export WORKFLOW_FIXTURE_REPO="$FIXTURE_REPO"
-export MOCK_STATE_DIR MOCK_STATUS_DIR MOCK_CLOSE_LOG
+export MOCK_STATE_DIR MOCK_STATUS_DIR MOCK_CLOSE_LOG MOCK_LABEL_LOG
 
 run_test() {
   local name="$1"
@@ -246,9 +289,10 @@ set_status() {
 }
 
 reset_fixture() {
-  rm -f "$MOCK_STATE_DIR"/*.json "$MOCK_STATUS_DIR"/* "$MOCK_CLOSE_LOG"
+  rm -f "$MOCK_STATE_DIR"/*.json "$MOCK_STATUS_DIR"/* "$MOCK_CLOSE_LOG" "$MOCK_LABEL_LOG"
   : > "$MOCK_CLOSE_LOG"
-  unset MOCK_NATIVE_MODE MOCK_LABEL_MODE MOCK_LABEL_ISSUES MOCK_PR_MODE MOCK_GRADUATION_PR_MODE MOCK_CLOSE_FAIL_ISSUE MOCK_STATUS_FAIL_ISSUE GITHUB_PROJECT_STATUS_GRADUATED GITHUB_PROJECT_STATUS_MERGED
+  : > "$MOCK_LABEL_LOG"
+  unset MOCK_NATIVE_MODE MOCK_LABEL_MODE MOCK_LABEL_ISSUES MOCK_PR_MODE MOCK_GRADUATION_PR_MODE MOCK_CLOSE_FAIL_ISSUE MOCK_STATUS_FAIL_ISSUE MOCK_LABEL_ADD_FAIL MOCK_LABEL_CREATE_FAIL GITHUB_PROJECT_STATUS_GRADUATED GITHUB_PROJECT_STATUS_MERGED
 }
 
 run_closeout() {
@@ -450,9 +494,17 @@ defer_result="$(run_closeout --defer-epic-close)"
 defer_body="$(last_output_body "$defer_result")"
 run_test "defer_exit_zero" "0" "$(last_output_status "$defer_result")"
 run_contains "defer_epic" "EPIC_RESULT=deferred" "$defer_body"
+run_contains "defer_label_added" "DEFER_LABEL=added" "$defer_body"
 run_contains "configured_terminal_status" "TERMINAL_STATUS=Done" "$defer_body"
 run_test "done_status_written" "Done" "$(cat "$MOCK_STATUS_DIR/501")"
 run_test "deferred_epic_stays_open" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/900.json"))["state"])')"
+run_contains "defer_label_on_epic" "defer-epic-close" "$(python3 -c 'import json; print(",".join(l["name"] for l in json.load(open("'"$MOCK_STATE_DIR"'/900.json"))["labels"]))')"
+
+# Re-run with label already present — durable signal must stay idempotent.
+defer_rerun_result="$(run_closeout --defer-epic-close)"
+defer_rerun_body="$(last_output_body "$defer_rerun_result")"
+run_test "defer_rerun_exit_zero" "0" "$(last_output_status "$defer_rerun_result")"
+run_contains "defer_label_already" "DEFER_LABEL=already_present" "$defer_rerun_body"
 
 echo ""
 echo "=== graduation closeout: already-terminal rerun behavior ==="
