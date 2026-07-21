@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Graphical design assets in the workflow** (#1282): add capture, storage,
+  discovery, and lightweight plan/smoke fidelity hooks for design references
+  without a visual-regression platform.
+
 ## [0.37.1] - 2026-07-20
 
 ### Fixed

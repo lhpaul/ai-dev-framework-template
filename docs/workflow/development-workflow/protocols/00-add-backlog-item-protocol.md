@@ -51,6 +51,36 @@ If any of the above are missing or contradictory, ask **targeted** clarifying qu
 
 ---
 
+## Step 2b: Capture graphical design assets (when candidates are present)
+
+When the invocation includes candidate files (chat attachments, local paths, or
+explicit mockup references), follow the canonical convention in
+[`design-assets.md`](../design-assets.md) before creating the item:
+
+1. **Detect** candidate files from the invocation.
+2. **Classify** each file as likely design, clearly non-design, or ambiguous
+   using the extension heuristics in `design-assets.md`.
+3. **Clarify once** when any file is ambiguous (or a mixed batch is unclear): ask
+   one brief question covering the whole ambiguous set. Clearly non-design files
+   are not staged as design references unless the human explicitly says so.
+4. Proceed to create **exactly one** backlog item (Step 3) — asset handling must
+   not create duplicate items across clarification turns.
+5. **Attach or stage** confirmed design assets via provider-native means when
+   available. On attach/upload failure, record local paths in the issue body and
+   ask the human to attach manually; do **not** fail item creation solely because
+   upload failed. Reliable binary attach is agent-driven for GitHub (see the
+   attach recipe in `design-assets.md`); the shell helper creates the issue and
+   fields only.
+6. **Record** a `## Design assets` section in the item body (include it in the
+   initial body or append after create) using the template in `design-assets.md`.
+   State locations and that plan/smoke stages should use the assets as fidelity
+   references.
+
+When no candidate files are present, skip this step entirely — do not invent
+assets or a fidelity baseline.
+
+---
+
 ## Step 3: Create exactly one backlog item
 
 1. Create **one** item in the **confirmed** destination.
@@ -107,6 +137,8 @@ Return a short confirmation including:
 - **Identifier** (e.g. issue number, Linear key).
 - **URL** to the item.
 - **Title** and one-line recap of scope.
+- When Step 2b ran: which files were treated as design assets, where they are
+  stored (tracker attachment and/or path note), and any clarifying question asked.
 
 ---
 
@@ -217,6 +249,8 @@ When a human requests the creation of two or more related backlog items that tog
 - Do not silently pick a tracker when uncertain.
 - Do not create multiple items for one user request.
 - Do not start spec/plan/implementation work unless the user explicitly asks to advance stages afterward.
+- Do not invent design assets or a visual-regression baseline when none were supplied.
+- Do not implement `/merged-qa` (#1283) or promote design-reviewer as the primary fidelity gate here.
 
 ---
 

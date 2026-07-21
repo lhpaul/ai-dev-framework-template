@@ -313,6 +313,10 @@ If no blocking human decision remains:
 
    If the check fails, do not proceed. Report the mismatch to the caller so the working tree can be reset before retrying.
 3. Create the development folder: `docs/specs/developments/[YYYYMMDDHHMMSS]_[feature-slug]/`
+   - When confirmed design assets exist on the tracker item (see
+     [`design-assets.md`](../design-assets.md)), copy or download them into
+     `<dev-folder>/assets/` and update the issue-body `## Design assets`
+     location note. Do not invent assets when none exist.
 4. Write the spec file: `1_[feature-slug]_specs.md`
 5. **Board membership check (when a tracker issue ID is present)**: If an issue number is available (i.e., the workflow uses a configured issue tracker and an issue ID was provided or created), call `ensure_on_project_board <issue_number> "Writing Spec"` (sourcing `scripts/development-workflow/workflow-lib.sh`). If the issue is already on the project board, this is a no-op. If it is not, the function adds it and sets initial status to "Writing Spec". On any API failure, the function logs a warning and continues — this step must never block the commit or PR creation. Skip this step entirely when no issue ID is present (no-tracker workflows).
 6. **Do NOT update CHANGELOG**: `spec/*` branches are exempt from CHANGELOG entries. The changelog policy only applies to `feature/*`, `fix/*`, `refactor/*`, and `hotfix/*` branches. Do not create or modify `CHANGELOG.md` in this PR.

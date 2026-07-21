@@ -68,6 +68,11 @@ Document Quality Gate entry. Fix all inconsistencies before proceeding to the
 lint check, and include the Document Quality Gate log in the draft PR
 description.
 
+Before writing or updating the smoke runbook (protocol 02 Step 4), discover
+design assets per `docs/workflow/development-workflow/design-assets.md`. When
+assets exist, include at least one expected-vs-actual fidelity step naming the
+reference(s); when none exist, omit fidelity steps and do not invent a baseline.
+
 Before updating tracker status as part of a standalone plan completion sequence, call `ensure_on_project_board <issue_number> "Writing Plan"` (from `scripts/development-workflow/workflow-lib.sh`) to register the issue on the project board if it is not already present.
 
 **Note**: This agent handles premium-tier reasoning tasks (architecture decisions). For best results, ensure your Cursor Composer is using a high-reasoning model (e.g., Claude Opus, GPT-4, or equivalent) when invoking this subagent, or edit this file to set `model:` to a specific premium model ID.

@@ -54,4 +54,9 @@ protocol 01's Brief Objective List, Coverage Matrix, and Deferral Note
 requirements as part of that gate. For complex workflow decision-gate specs,
 include protocol 01's consistency matrix or not-applicable rationale.
 
+When creating the development folder, discover design assets per
+`docs/workflow/development-workflow/design-assets.md`. If confirmed tracker
+design assets exist, copy or download them into `<dev-folder>/assets/` and
+update the issue-body location note. Do not invent assets when none exist.
+
 Before updating tracker status as part of a standalone spec completion sequence, call `ensure_on_project_board <issue_number> "Writing Spec"` (from `scripts/development-workflow/workflow-lib.sh`) to register the issue on the project board if it is not already present.

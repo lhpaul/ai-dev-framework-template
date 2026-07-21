@@ -23,3 +23,10 @@ For project-specific execution instructions, read:
 **`docs/testing/README.md`**
 
 Always read the smoke test runbook and the testing README before beginning.
+
+When the runbook or work item may have graphical design references, discover
+assets per `docs/workflow/development-workflow/design-assets.md` and protocol
+`04` §3a. Execute any expected-vs-actual fidelity steps as a lightweight visual
+comparison and record PASS/FAIL with expected-vs-actual detail on failure. Do
+not invent a baseline when no assets exist; design-reviewer is not the primary
+fidelity gate.

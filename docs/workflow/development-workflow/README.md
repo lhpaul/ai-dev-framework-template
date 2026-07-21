@@ -588,6 +588,12 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 - `90`-`99` are orchestration, readiness, and other cross-cutting operational protocols.
 - The numbering was normalized after an older stage was removed, so the current primary stages are contiguous again.
 
+### Design Assets
+
+- `docs/workflow/development-workflow/design-assets.md` — capture, storage
+  (`<dev-folder>/assets/`), discovery order, and lightweight plan/smoke fidelity
+  hooks for graphical design references (not a visual-regression platform)
+
 ### Core Protocols
 
 - `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md`
