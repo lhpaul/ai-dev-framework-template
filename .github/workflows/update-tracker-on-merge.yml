@@ -4,6 +4,8 @@
 #   spec/*                                  → Spec Ready
 #   implementation-plan/*                   → Plan Ready
 #   feature/*, fix/*, refactor/*, hotfix/*  → Merged (and close the issue)
+#   develop-<slug> (graduation)             → graduation closeout fallback
+#     (invokes graduation-closeout-from-merged-pr.sh → graduation-closeout.sh)
 #
 # The issue number is extracted from the branch name prefix, e.g.:
 #   fix/463-some-slug         → issue 463
@@ -14,7 +16,7 @@
 #   fix/ENG-456-long-slug     → issue 456 (numeric part extracted)
 #   feature/PROJ-123-title    → issue 123
 # Branches that do not start with a numeric or tracker-prefixed segment are
-# skipped with a warning.
+# skipped with a warning (except graduation heads, which use closeout fallback).
 #
 # Required repository secrets / variables:
 #   GH_PROJECT_TOKEN       — PAT with `project` scope (GITHUB_TOKEN cannot
@@ -66,6 +68,21 @@ jobs:
           elif [[ "$BRANCH" == feature/* || "$BRANCH" == fix/* || "$BRANCH" == refactor/* || "$BRANCH" == hotfix/* ]]; then
             BRANCH_TYPE="impl"
             TARGET_STATUS="Merged"
+          elif [[ "$BRANCH" == develop-* ]]; then
+            SLUG="${BRANCH#develop-}"
+            if [[ -z "$SLUG" || ! "$SLUG" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+              echo "Branch '$BRANCH' looks like a graduation head but slug '$SLUG' is invalid — skipping."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "branch_type=graduation_invalid" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            {
+              echo "branch_type=graduation"
+              echo "graduation_slug=$SLUG"
+              echo "skip=false"
+            } >> "$GITHUB_OUTPUT"
+            echo "Detected: type=graduation, slug=$SLUG (closeout fallback)"
+            exit 0
           else
             echo "Branch '$BRANCH' does not match a tracked prefix — skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -132,8 +149,67 @@ jobs:
           gh issue close "$ISSUE_NUMBER" --repo "$GH_REPO" \
             --comment "Closed automatically: implementation PR merged to develop."
 
+      - name: Checkout repository for graduation closeout
+        if: >
+          steps.detect.outputs.skip == 'false' &&
+          steps.detect.outputs.branch_type == 'graduation'
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+
+      - name: Run graduation closeout fallback
+        if: >
+          steps.detect.outputs.skip == 'false' &&
+          steps.detect.outputs.branch_type == 'graduation'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PROJECT_TOKEN }}
+          GITHUB_PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          GITHUB_PROJECT_OWNER: ${{ vars.PROJECT_OWNER }}
+          GRADUATION_PR: ${{ github.event.pull_request.number }}
+          GRADUATION_SLUG: ${{ steps.detect.outputs.graduation_slug }}
+        run: |
+          set -euo pipefail
+
+          {
+            echo "## Graduation closeout fallback"
+            echo "- PR: #${GRADUATION_PR}"
+            echo "- Head slug: ${GRADUATION_SLUG}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "ERROR: GH_PROJECT_TOKEN is not configured — cannot run graduation closeout." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if [ -z "${GITHUB_PROJECT_NUMBER:-}" ]; then
+            echo "ERROR: PROJECT_NUMBER variable is not set — cannot run graduation closeout." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          echo "Running graduation-closeout-from-merged-pr.sh for PR #${GRADUATION_PR}..."
+          set +e
+          ./scripts/development-workflow/graduation-closeout-from-merged-pr.sh \
+            --graduation-pr "$GRADUATION_PR" | tee /tmp/graduation-closeout.log
+          status=${PIPESTATUS[0]}
+          set -e
+
+          {
+            echo ""
+            echo '```text'
+            cat /tmp/graduation-closeout.log
+            echo '```'
+            if [ "$status" -eq 0 ]; then
+              echo ""
+              echo "Result: **pass**"
+            else
+              echo ""
+              echo "Result: **failed** (exit ${status})"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit "$status"
+
       - name: Update GitHub Projects status after close
-        if: steps.detect.outputs.skip == 'false'
+        if: >
+          steps.detect.outputs.skip == 'false' &&
+          steps.detect.outputs.branch_type != 'graduation'
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
         env:
           PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
@@ -286,5 +362,13 @@ jobs:
           echo "  spec/*                                  → Spec Ready"
           echo "  implementation-plan/*                   → Plan Ready"
           echo "  feature/*, fix/*, refactor/*, hotfix/*  → Merged (and close the issue)"
+          echo "  develop-<slug> (graduation)             → graduation closeout fallback"
           echo "========================================================"
+          if [ "${{ steps.detect.outputs.skip }}" = "true" ]; then
+            echo "This run: SKIP (untracked or invalid branch)"
+          elif [ "${{ steps.detect.outputs.branch_type }}" = "graduation" ]; then
+            echo "This run: RUN graduation closeout fallback"
+          else
+            echo "This run: RUN standard tracker mapping (${{ steps.detect.outputs.branch_type }})"
+          fi
           echo "These mappings are verified by scripts/development-workflow/check-tracker-merge-mapping.sh."

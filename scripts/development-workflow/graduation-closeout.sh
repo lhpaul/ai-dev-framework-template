@@ -440,10 +440,56 @@ process_delivered_issue() {
   record_result "$CLOSED_FILE" "$issue" "$title" "$source" "delivered_terminal"
 }
 
+ensure_defer_epic_close_label() {
+  # Durable automation signal shared with merge-time closeout fallback (AC4).
+  local labels_csv has_label old_ifs label normalized
+  if ! labels_csv="$(gh issue view "$EPIC_ISSUE" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null)"; then
+    echo "ERROR: could not read labels on epic #${EPIC_ISSUE} to ensure defer-epic-close." >&2
+    return 1
+  fi
+  has_label=0
+  if [ -n "$labels_csv" ]; then
+    old_ifs="$IFS"
+    IFS=','
+    # shellcheck disable=SC2086
+    for label in $labels_csv; do
+      normalized="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')"
+      if [ "$normalized" = "defer-epic-close" ]; then
+        has_label=1
+        break
+      fi
+    done
+    IFS="$old_ifs"
+  fi
+  if [ "$has_label" -eq 1 ]; then
+    printf 'DEFER_LABEL=already_present\n'
+    return 0
+  fi
+  if gh issue edit "$EPIC_ISSUE" --add-label "defer-epic-close" >/dev/null 2>&1; then
+    printf 'DEFER_LABEL=added\n'
+    return 0
+  fi
+  # Label may not exist in the repository yet — create then retry once.
+  if gh label create "defer-epic-close" \
+      --description "Operator deferred epic close after graduation; merge-time automation must honor this." \
+      --color "FBCA04" >/dev/null 2>&1 \
+    && gh issue edit "$EPIC_ISSUE" --add-label "defer-epic-close" >/dev/null 2>&1; then
+    printf 'DEFER_LABEL=added\n'
+    return 0
+  fi
+  echo "ERROR: --defer-epic-close requires durable label defer-epic-close on epic #${EPIC_ISSUE}, but the label could not be applied." >&2
+  return 1
+}
+
 process_epic() {
   local failed_count="$1"
   local details title state status
   if [ "$DEFER_EPIC_CLOSE" -eq 1 ]; then
+    if ! ensure_defer_epic_close_label; then
+      printf 'EPIC_RESULT=failed\n'
+      printf 'EPIC_REASON=defer_label_ensure_failed\n'
+      return 1
+    fi
     printf 'EPIC_RESULT=deferred\n'
     printf 'EPIC_REASON=operator_deferred\n'
     return 0
