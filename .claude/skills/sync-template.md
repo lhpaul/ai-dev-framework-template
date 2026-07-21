@@ -473,14 +473,18 @@ Repository role: workflow_hub  (selected: N entries, skipped by mode_scope: M)
   .cursor/rules/code.mdc
   ... (N files)
 
-### Requires manual review (you decide)
-  .claude/settings.json
-    [full diff shown here]
-
-### Optional additive updates (project-specific — you decide)
+### Optional additive updates (project-specific — discretionary)
   AGENTS.md — template has [brief description]; project keeps its own content; suggest adding: ...
   README.md — no template additions suggested
   ...
+
+### Escalation / hard-stop (name path or action to approve)
+  Special-handling paths (never walkthrough yes/skip; never Accept-recommendations auto-apply):
+  .claude/settings.json
+    [full diff shown here]
+  .github/workflows/deploy.yml
+  .github/workflows/e2e-regression.yml
+  e2e/
 
 ### Skipped by repository role
   product_repo_injection:
@@ -488,16 +492,20 @@ Repository role: workflow_hub  (selected: N entries, skipped by mode_scope: M)
   hub_only:
     docs/workflow/
 
-### Rename cleanup (you decide)
+### Rename cleanup (escalation only — name each action)
   docs/ai/ — was the previous location of always-sync content now in docs/workflow/ (renamed in v0.23.0).
-  Stale directory still present. Proposed actions (each requires separate approval):
+  Stale directory still present. Proposed actions (each requires separate named approval):
     1. Delete docs/ai/  (git rm -r docs/ai/)
     2. Update cross-references in project-specific files:
          AGENTS.md  — 3 reference(s) to docs/ai/  →  docs/workflow/
          README.md  — 1 reference(s) to docs/ai/  →  docs/workflow/
 ```
 
-If no rename cleanup candidates were detected, omit the "Rename cleanup" section entirely from the summary.
+**Taxonomy rules for the summary:**
+
+- **Optional additive updates** is the discretionary bucket (walkthrough yes/skip under Decide with me; disposition-table rows under Accept recommendations).
+- **Escalation / hard-stop** lists `categories.special_handling` paths (including `.claude/settings.json`, deploy/e2e workflows, `e2e/`). Do **not** put these under a discretionary “you decide” / manual-review walkthrough heading.
+- **Rename cleanup** is escalation-only. Omit the section entirely when no candidates were detected.
 
 After applying changes, show a final disposition summary with separate counts (AC-5 / UX Rule 4):
 
@@ -508,34 +516,43 @@ Always-sync disposition:
   Updated:              N files
   Up-to-date (skipped): N files
   Declined by maintainer: N files
+
+Discretionary disposition:
+  Applied:   N
+  Skipped:   N
+  Escalated: N
 ```
 
-Then ask:
+Then ask (primary autonomy modes only — do **not** present `"apply all"` / `"apply always-sync only"` as the primary peer pair):
 
-> "Ready to apply the changes above? You have two options:
+> Ready to apply? Choose how to handle discretionary items:
 >
-> - **"apply all"** — Apply the always-sync files in one batch, then walk through each manual-review and optional-additive item inline, presenting the diff and asking you to confirm or skip before moving on.
-> - **"apply always-sync only"** — Apply only the always-sync files now; skip manual-review and optional-additive items entirely.
+> - **"Decide with me"** — Apply always-sync, then walk each discretionary item with my recommendation and a yes/skip prompt.
+> - **"Accept recommendations"** — Show a planned disposition table for every discretionary item; after you confirm once, apply those dispositions and print a disposition log.
 >
-> Special-handling paths (`.github/workflows/deploy.yml`, `e2e-regression.yml`, `e2e/`, `.claude/settings.json`, etc.) are never included in "apply all" — those require you to name each approved path explicitly.
+> Hard-stop items (special-handling paths, rename cleanup, placeholder-guard cases) are never auto-applied in either mode. Name each path/action explicitly to approve (placeholder-guard cases also require a second named confirmation).
 >
-> Which would you like?"
+> Advanced / escape hatch: **"always-sync only"** — apply the always-sync batch and skip discretionary work (hard stops still require explicit naming).
 
-**Do not modify any files until you have explicit confirmation.**
+**Do not modify any files until the maintainer has confirmed a primary mode** (and, for Accept recommendations, confirmed the disposition plan). Neither primary mode mutates files before that confirmation.
 
 ---
 
 ## Step 4 — Apply changes (only after approval)
 
-Apply approved changes:
+Apply approved changes according to the selected mode.
 
-### Always-sync files
+### Shared always-sync batch
 
-Copy/overwrite all **Add** and **Update** files from the always-sync section whenever the user confirms that batch — regardless of whether they said "apply all" or "apply always-sync only".
+Copy/overwrite all **Add** and **Update** files from the always-sync section when the selected mode authorizes that batch:
 
-### Manual-review and optional-additive items ("apply all" path)
+- **Decide with me** — apply always-sync immediately after mode selection, before the discretionary walkthrough.
+- **Accept recommendations** — apply always-sync only after the maintainer confirms the planned disposition table (plan confirmation authorizes always-sync + listed discretionary dispositions).
+- **always-sync only** (escape hatch) — apply always-sync and stop; leave discretionary and hard-stop items unapplied unless later named explicitly.
 
-When the user chooses **"apply all"**, after the always-sync batch is applied, walk through **every** item in the manual-review section and every item in the optional-additive section, **one item at a time**:
+### Decide with me
+
+After the always-sync batch is applied, walk through **every discretionary item** (optional additive updates and any other non-hard-stop “you decide” items), **one item at a time**:
 
 1. Show the item's diff (or proposed addition) inline.
 2. State a recommendation (e.g., "I recommend applying this because …" or "This is optional — your project already has equivalent content").
@@ -543,15 +560,49 @@ When the user chooses **"apply all"**, after the always-sync batch is applied, w
 4. Apply immediately if the user answers "yes"; skip if "skip" (or any non-yes answer).
 5. Proceed to the next item.
 
-Continue until all manual-review and optional-additive items have been presented. This ensures "apply all" genuinely means "walk me through everything and apply what I approve."
+**Exclude hard-stop items from this walkthrough.** Special-handling paths, rename cleanup actions, and placeholder-guard cases escalate separately and are never satisfied by a walkthrough “yes”.
 
-### Always-sync only path
+Legacy bulk phrases such as `"apply all"`, `"apply everything"`, or `"yes to all"` map to Decide with me semantics **only for discretionary items** — they never authorize hard stops.
 
-When the user chooses **"apply always-sync only"**, skip the manual-review and optional-additive walkthrough entirely. Special-handling items are also skipped unless named explicitly.
+### Accept recommendations
 
-### Special-handling paths
+Before any discretionary mutation (and before the always-sync batch in this mode):
 
-Phrases such as "apply all", "apply everything", or "yes to all" **never** authorize applying **special-handling** paths (`.github/workflows/deploy.yml`, `e2e-regression.yml`, `e2e/`, `.claude/settings.json`, etc.). Those require the user to name each approved path explicitly.
+1. Print a **planned disposition table** covering every discretionary item (recommended apply or skip, with a short why).
+2. List hard-stop items under an **Escalated (not auto-applied)** section — they are not disposition rows that can be auto-applied.
+3. Obtain **one** plan confirmation (or decline / switch to Decide with me). **Do not mutate files until the plan is confirmed.**
+4. After confirmation: apply the always-sync batch, then apply each recommended discretionary disposition **without** further per-item prompts.
+5. Print a post-apply **disposition log** with applied / skipped / escalated outcomes (and why for escalations).
+
+Example planned table:
+
+```
+## Planned discretionary dispositions
+| Item | Recommendation | Why |
+| --- | --- | --- |
+| AGENTS.md additive block | apply | Template adds sync-template command mention |
+| README.md | skip | Project already has equivalent section |
+
+## Escalated (not auto-applied)
+| Item | Why blocked |
+| --- | --- |
+| .claude/settings.json | special-handling — name path to approve |
+| delete docs/ai/ | rename cleanup — name action to approve |
+```
+
+### Always-sync only (advanced / escape hatch)
+
+When the maintainer explicitly chooses the demoted **"always-sync only"** escape hatch, apply the always-sync batch and skip the discretionary walkthrough / disposition plan entirely. Hard-stop items remain unapplied unless named explicitly. Do **not** present this option as a peer of the two primary autonomy modes.
+
+### Hard stops (both primary modes)
+
+The following remain unapplied unless the maintainer explicitly names/confirms them:
+
+- **Special-handling paths** (`.github/workflows/deploy.yml`, `e2e-regression.yml`, `e2e/`, `.claude/settings.json`, etc.)
+- **Rename cleanup** actions (delete stale directory; update cross-references)
+- **Placeholder-guard** cases (second named confirmation required)
+
+Phrases such as `"apply all"`, `"apply everything"`, `"yes to all"`, mode selection alone, or Accept-recommendations plan confirmation **never** authorize hard-stop items. Those require the user to name each approved path or action explicitly.
 
 - **Placeholder guard for workflow YAML** (`.github/workflows/deploy.yml`, `.github/workflows/e2e-regression.yml`): Before overwriting the project copy with the template, compare line counts. If the **project** file has **more lines** than the template and the template has **fewer than 70%** of the project's line count, treat this as likely "real implementation → template placeholder" and **refuse** unless the user sends a **second** explicit confirmation naming that exact file.
 
@@ -604,7 +655,7 @@ grep -r "<old_path>" <project_specific_file_list>
 
 If any references remain, list them and ask the maintainer whether to update them or leave them intentionally.
 
-**Bulk phrases do not cover rename cleanup**: "apply all", "apply everything", or "yes to all" never authorize rename cleanup actions. Each rename cleanup action (delete directory, update cross-references) requires the maintainer to name it explicitly.
+**Bulk phrases do not cover rename cleanup**: `"apply all"`, `"apply everything"`, `"yes to all"`, Decide with me walkthrough answers, and Accept recommendations plan confirmation never authorize rename cleanup actions. Each rename cleanup action (delete directory, update cross-references) requires the maintainer to name it explicitly.
 
 If the template source was a remote clone, clean up the exact temp directory recorded in Step 0:
 
@@ -613,7 +664,6 @@ rm -rf "$TEMPLATE_TEMP_DIR"   # use the exact path, not a wildcard
 ```
 
 ---
-
 ## Step 4.5 — CI workflow health check
 
 Run this check **after** applying changes and **before** generating git instructions. It verifies that the project's CI workflows are not silently broken after the sync.
