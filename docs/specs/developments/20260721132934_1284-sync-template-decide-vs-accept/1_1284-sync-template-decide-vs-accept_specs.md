@@ -43,9 +43,10 @@ has been presented; no files have been modified yet.
 1. The agent asks the maintainer how to proceed on discretionary items.
 2. The maintainer chooses **Decide with me**.
 3. The agent applies the always-sync Add and Update batch in one pass.
-4. For each discretionary item (manual-review walkthrough items and optional
-   additive updates), the agent shows the diff or proposed addition, states a
-   recommendation, and asks yes or skip.
+4. For each discretionary item (optional additive updates and any other
+   non-hard-stop items that today appear under a “you decide” walkthrough), the
+   agent shows the diff or proposed addition, states a recommendation, and asks
+   yes or skip.
 5. The agent applies immediately on yes and skips on skip (or any non-yes
    answer), then continues to the next item.
 6. High-blast-radius items (special-handling paths, rename cleanup actions, and
@@ -156,12 +157,15 @@ default mental model remains full discretionary coverage with an autonomy choice
 - BR2: Both primary modes apply the always-sync Add/Update batch after the
   maintainer selects a mode (and, for Accept recommendations, after plan
   confirmation). Neither primary mode is a “skip discretionary work” mode.
-- BR3: Discretionary items are the former manual-review walkthrough items and
-  optional additive updates. They are distinct from hard-stop items.
+- BR3: Discretionary items are optional additive updates and other non-hard-stop
+  “you decide” items. They are distinct from hard-stop items. Paths classified as
+  special-handling are never discretionary, even if a summary section historically
+  labeled them “manual review.”
 - BR4: Hard-stop items always escalate and never auto-apply under either primary
   mode:
   - special-handling paths (for example deploy workflow, e2e regression
-    workflow, e2e suite, Claude settings)
+    workflow, e2e suite, Claude settings), including items formerly shown under a
+    “Requires manual review” heading when those items are special-handling
   - rename cleanup actions (including directory deletes and cross-reference
     rewrites for renamed always-sync trees)
   - placeholder-guard cases (real project workflow versus template stub)
