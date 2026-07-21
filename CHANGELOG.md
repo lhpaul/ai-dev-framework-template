@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Sync-template decide-with-me vs accept-recommendations** (#1284): replaces the primary sync apply confirmation with Decide with me and Accept recommendations, keeps hard stops for special-handling / rename cleanup / placeholder-guard cases, and demotes always-sync-only to an escape hatch.
+
 ### Added
 
 - **Automate graduation closeout on merge** (#1281): invoke the existing
