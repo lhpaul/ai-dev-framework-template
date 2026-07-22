@@ -79,6 +79,11 @@ on:
   pull_request:
     types: [closed]
 
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
 jobs:
   update-tracker:
     runs-on: ubuntu-latest
@@ -94,6 +99,8 @@ jobs:
           elif [[ "$BRANCH" == develop-* ]]; then
             BRANCH_TYPE="graduation"
           fi
+      - name: Checkout repository for graduation closeout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Run graduation closeout fallback
         run: ./scripts/development-workflow/graduation-closeout-from-merged-pr.sh --graduation-pr 1
 YAML
@@ -104,6 +111,49 @@ printf '%s\n' "$valid_output" | grep -q 'All 6 mappings correct (+ graduation cl
   || fail "valid workflow output should confirm all mappings and graduation fallback"
 printf '%s\n' "$valid_output" | grep -q "OK: branch 'develop-\*' → graduation closeout fallback" \
   || fail "valid workflow output should acknowledge graduation closeout fallback"
+printf '%s\n' "$valid_output" | grep -q 'OK: actions/checkout present with contents: read' \
+  || fail "valid workflow output should confirm contents: read for checkout"
+
+missing_contents_workflow="$TMP_DIR/update-tracker-missing-contents.yml"
+cat > "$missing_contents_workflow" <<'YAML'
+name: Update tracker on merge
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  pull-requests: read
+  issues: write
+
+jobs:
+  update-tracker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect branch type
+        run: |
+          if [[ "$BRANCH" == spec/* ]]; then
+            TARGET_STATUS="Spec Ready"
+          elif [[ "$BRANCH" == implementation-plan/* ]]; then
+            TARGET_STATUS="Plan Ready"
+          elif [[ "$BRANCH" == feature/* || "$BRANCH" == fix/* || "$BRANCH" == refactor/* || "$BRANCH" == hotfix/* ]]; then
+            TARGET_STATUS="Merged"
+          elif [[ "$BRANCH" == develop-* ]]; then
+            BRANCH_TYPE="graduation"
+          fi
+      - name: Checkout repository for graduation closeout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+      - name: Run graduation closeout fallback
+        run: ./scripts/development-workflow/graduation-closeout-from-merged-pr.sh --graduation-pr 1
+YAML
+
+missing_contents_exit=0
+missing_contents_output="$(run_with_workflow "$missing_contents_workflow" 2>&1)" \
+  || missing_contents_exit=$?
+[ "$missing_contents_exit" -eq 1 ] \
+  || fail "workflow with checkout but no contents: read should fail"
+printf '%s\n' "$missing_contents_output" | grep -q 'permissions lack contents: read' \
+  || fail "missing contents: read should explain the checkout permission requirement"
 
 missing_graduation_workflow="$TMP_DIR/update-tracker-missing-graduation.yml"
 cat > "$missing_graduation_workflow" <<'YAML'
