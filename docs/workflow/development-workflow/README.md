@@ -162,6 +162,7 @@ The main stage agents map to the authored stages and the final validation checkp
 | **Implementation plan** | `tech-lead`       | Produces the plan PR.                                  |
 | **Implementation**      | `developer`       | Produces the implementation PR.                        |
 | **Smoke test**          | `smoke-tester`    | Executes the smoke test runbook and reports pass/fail. |
+| **Post-merge QA**       | `post-merge-qa`   | QA work already on `develop` / `develop-<slug>`; may open one fix PR. |
 
 ### Internal Review And External Review
 
@@ -218,6 +219,7 @@ The sections below keep this document usable as a master reference after the nar
 | Implement                        | `developer` agent                                                 | `/implement-development`                                      | `workflow-implementer` skill       | `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md`                                                                                                                       |
 | Review gate (spec / plan / code) | Native review against `REVIEW.md`                                 | `/review-spec`, `/review-implementation-plan`, `/review-code` | Native review against `REVIEW.md`  | `REVIEW.md` plus compatibility wrappers in `docs/workflow/development-workflow/protocols/`                                                                                                                |
 | Smoke test                       | `smoke-tester` agent                                              | `/smoke-tester`                                               | —                                  | `docs/workflow/development-workflow/protocols/04-smoke-test-protocol.md`                                                                                                                                  |
+| Post-merge QA                    | `post-merge-qa` agent / `/post-merge-qa` (alias `/merged-qa-tester`) | `/post-merge-qa` (alias `/merged-qa-tester`)               | `/post-merge-qa` alias (or `/merged-qa-tester`) | `docs/workflow/development-workflow/protocols/08-post-merge-qa-protocol.md`                                                                                                                               |
 | Run reviewer loop                | `/run-reviewer-loop` command (or `automated-reviewer-loop` agent) | `/run-reviewer-loop`                                          | `/run-reviewer-loop` alias or `workflow-reviewer-loop` skill     | `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`                                                                                                                     |
 | Advance one item                 | `/run-item` command (or `item-orchestrator` agent)                | `/run-item`                                                   | `/run-item` alias or `workflow-item-orchestrator` skill            | `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md` — `/run-item-work` is a deprecated alias; Cursor `item-orchestrator` is an internal handoff role, not the normal entrypoint |
 | Execute bounded batch            | `/run-items`                                                      | `/run-items`                                                  | `/run-items` alias                                               | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` — Protocol 90 `explicit_list` mode; supply two or more item targets; targets `develop` directly |
@@ -238,7 +240,7 @@ Codex skills are stored in `.agents/skills/` for repo-scoped Codex discovery, wi
 ./scripts/development-workflow/install-codex-skills.sh
 ```
 
-These skills are thin wrappers around the same workflow protocols used by the other tools. Command-style aliases such as `/add-backlog-item`, `/run-work`, `/run-item`, `/run-items`, `/run-item-work` (deprecated alias), `/run-epic`, `/run-reviewer-loop`, `/batch-merge`, `/post-merge-cleanup`, `/prepare-release`, `/graduate-development`, `/retrospective`, and `/sync-template` map to the canonical workflow skills or protocols so Codex can be used with names similar to Claude Code commands. `/run-item` and `/run-epic` are the primary bounded commands (shared prelude + Protocol 91 or 95). `/run-item` prints `policyRecommendation.confirmationSummary` before mutation and records an invocation-scoped item/policy binding after explicit autonomy flags or human acceptance so the same selected policy is not re-prompted. `/run-items` is the bounded multi-item batch execute command (Protocol 90 `explicit_list` mode — two or more items). `/run-work` is the read-only portfolio scan entrypoint via `run-work-router.sh` (Protocol 96) — it proposes batch options but does not execute; single/epic targets redirect to `/run-item` / `/run-epic`. In no-target scan mode, `/run-work` separates `INFORMATIONAL - not actionable in this proposal`, `ACTIONABLE RESUME - can advance now`, `PROPOSED BATCH - your decision`, and `HELD - not included in proposed batch` records; approval or the recommended `/run-items` command applies only to proposed-batch records. `/run-item-work` remains a deprecated alias identical to `/run-item`.
+These skills are thin wrappers around the same workflow protocols used by the other tools. Command-style aliases such as `/add-backlog-item`, `/run-work`, `/run-item`, `/run-items`, `/run-item-work` (deprecated alias), `/run-epic`, `/run-reviewer-loop`, `/batch-merge`, `/post-merge-cleanup`, `/post-merge-qa` (alias `/merged-qa-tester`), `/prepare-release`, `/graduate-development`, `/retrospective`, and `/sync-template` map to the canonical workflow skills or protocols so Codex can be used with names similar to Claude Code commands. `/run-item` and `/run-epic` are the primary bounded commands (shared prelude + Protocol 91 or 95). `/run-item` prints `policyRecommendation.confirmationSummary` before mutation and records an invocation-scoped item/policy binding after explicit autonomy flags or human acceptance so the same selected policy is not re-prompted. `/run-items` is the bounded multi-item batch execute command (Protocol 90 `explicit_list` mode — two or more items). `/run-work` is the read-only portfolio scan entrypoint via `run-work-router.sh` (Protocol 96) — it proposes batch options but does not execute; single/epic targets redirect to `/run-item` / `/run-epic`. In no-target scan mode, `/run-work` separates `INFORMATIONAL - not actionable in this proposal`, `ACTIONABLE RESUME - can advance now`, `PROPOSED BATCH - your decision`, and `HELD - not included in proposed batch` records; approval or the recommended `/run-items` command applies only to proposed-batch records. `/run-item-work` remains a deprecated alias identical to `/run-item`.
 
 ### Workflow Capabilities And Fallbacks
 
@@ -299,7 +301,7 @@ not apply setup, sync files, or change runtime behavior.
 | Release             | `release/v[X.Y.Z]`           | `develop`   |
 | Development integration | `develop-<slug>`         | `develop`   |
 
-**Development integration branches** (`develop-<slug>`) are staging branches that collect all sub-item PRs for a multi-item grouped development. They are created by the orchestrator and deleted after the graduation PR merges to `develop`; graduation closeout then reconciles delivered sub-items and the parent epic to terminal tracker state. Single-item developments do not use integration branches. See `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`.
+**Development integration branches** (`develop-<slug>`) are staging branches that collect all sub-item PRs for a multi-item grouped development. They are created by the orchestrator and deleted after the graduation PR merges to `develop`; graduation closeout (Protocol 05b Step 5 primary path, with merge-time automation fallback via `graduation-closeout-from-merged-pr.sh`) then reconciles delivered sub-items and the parent epic to terminal tracker state. Single-item developments do not use integration branches. See `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`.
 
 Slug format:
 
@@ -587,6 +589,12 @@ Protocol prefixes are stable family identifiers, not a promise of contiguous num
 - Generate and review protocols for the same stage share the same family number.
 - `90`-`99` are orchestration, readiness, and other cross-cutting operational protocols.
 - The numbering was normalized after an older stage was removed, so the current primary stages are contiguous again.
+
+### Design Assets
+
+- `docs/workflow/development-workflow/design-assets.md` — capture, storage
+  (`<dev-folder>/assets/`), discovery order, and lightweight plan/smoke fidelity
+  hooks for graphical design references (not a visual-regression platform)
 
 ### Core Protocols
 

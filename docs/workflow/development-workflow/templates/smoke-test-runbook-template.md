@@ -60,6 +60,21 @@ Before running this smoke test:
 
 <!-- Add steps for each use case and acceptance criterion -->
 
+### Step N (optional): Design fidelity — expected vs actual
+
+> Include this step **only** when design assets were discovered for the item
+> (see `docs/workflow/development-workflow/design-assets.md`). Omit entirely
+> when none exist — do not invent a baseline.
+
+**Maps to**: [Acceptance criterion for UI fidelity, if any]
+
+1. Open the reference asset(s): `[filename(s) under tracker attachments and/or <dev-folder>/assets/]`
+2. Compare the implemented UI against that reference (lightweight visual check; not pixel diff).
+3. Record PASS/FAIL with expected-vs-actual detail on failure.
+
+**Expected result**: Implemented UI matches the named design reference for the
+scoped surfaces; differences that matter for the acceptance criteria are absent.
+
 ### Last Step: Validate & Shut Down
 
 - Verify all assertions in the checklist below are met

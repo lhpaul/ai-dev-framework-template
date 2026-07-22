@@ -280,6 +280,13 @@ After the human merges the graduation PR (must use a **merge commit**):
 
 4. **Run graduation closeout** (BR-8, BR-9, AC-9): Reconcile delivered planned sub-items and the parent epic with the tracker before reporting the integration branch as fully closed.
 
+   **This Step 5 command remains the primary closeout path.** Merge-time automation
+   is a fallback only: when a graduation PR (`develop-<slug>` → `develop`) merges,
+   `.github/workflows/update-tracker-on-merge.yml` invokes
+   `graduation-closeout-from-merged-pr.sh`, which discovers slug/epic/deferral
+   signals and calls the **same** reconciler below. Agent and automation
+   double-runs are safe/idempotent (`already_terminal` / no regressive moves).
+
    ```bash
    ./scripts/development-workflow/graduation-closeout.sh \
      --slug <slug> \
@@ -288,6 +295,13 @@ After the human merges the graduation PR (must use a **merge commit**):
    ```
 
    Add `--exclude-issue <issue-number>` for optional, deferred, cancelled, or explicitly excluded sub-items that must remain open for human disposition. Add `--defer-epic-close` only when the human explicitly requests that the parent epic remain open after the core deliverable graduates.
+
+   **Operator deferral durability:** `--defer-epic-close` also ensures the epic
+   carries the durable label `defer-epic-close` before closeout reports success.
+   Merge-time automation reads that label (and the existing sub-item skip labels
+   `optional`, `deferred`, `cancelled`, `excluded-from-graduation`,
+   `exclude-from-graduation`) so a later fallback run does not force-close a
+   deferred epic or excluded sub-item.
 
    The helper:
    - validates that the graduation PR is already merged from `develop-<slug>` to `develop`;

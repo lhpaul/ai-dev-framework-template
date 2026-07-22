@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-07-21
+
+### Added
+
+- **Post-merge QA command** (#1283): `/post-merge-qa` (alias `/merged-qa-tester`), protocol `08`, and a read-only scope helper to QA work on `develop` or `develop-<slug>`, with optional design-asset fidelity and a single fix-PR path for safely actionable defects.
+- **Automate graduation closeout on merge** (#1281): invoke the graduation closeout reconciler when a `develop-<slug>` graduation PR merges, while keeping Step 5 as the primary path.
+- **Graphical design assets in the workflow** (#1282): capture, storage, discovery, and lightweight plan/smoke fidelity hooks for design references without a visual-regression platform.
+
+### Changed
+
+- **Sync-template decide-with-me vs accept-recommendations** (#1284): replace the primary sync apply confirmation with Decide with me and Accept recommendations; keep hard stops for special-handling / rename cleanup / placeholder-guard cases; demote always-sync-only to an escape hatch.
+
 ## [0.37.1] - 2026-07-20
 
 ### Fixed
@@ -1252,7 +1264,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.37.1...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.38.0...HEAD
+[0.38.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.37.1...v0.38.0
 [0.37.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.37.0...v0.37.1
 [0.37.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.3...v0.37.0
 [0.36.3]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.2...v0.36.3

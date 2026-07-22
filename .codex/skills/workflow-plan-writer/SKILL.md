@@ -31,8 +31,12 @@ Recommended model tier: `premium`
 14. Before opening the draft plan PR, call `ensure_on_project_board <issue_number> "Writing Plan"` from `scripts/development-workflow/workflow-lib.sh`. This is a no-op when the issue is already on the board.
 15. Before creating the plan branch or opening the plan PR for a tracker-backed item, run `run-nested-artifact-guard.sh` with required `--mode`, `--issue`, `--expected-branch`, `--approved-base`, plus the expected `implementation-plan/*` branch and approved artifact base. Stop on missing base, duplicate artifacts, wrong-base PRs, or scan failures.
 16. Keep implementation files off `implementation-plan/*` branches. Before plan PR readiness, Protocol 91 Step 8a must run `check-documentation-stage-alignment.sh`; a mismatch must be corrected or escalated before `ready-for-human-review`.
-17. When the branch is created, continue through reviewer gate, PR creation, and PR readiness unless the protocol surfaces a real human decision.
-18. Resolve repository mode, artifact owner, and artifact base branch before
+17. Before writing or updating the smoke runbook, discover design assets per
+    `docs/workflow/development-workflow/design-assets.md`. When assets exist,
+    include at least one expected-vs-actual fidelity step; when none exist, omit
+    fidelity steps and do not invent a baseline.
+18. When the branch is created, continue through reviewer gate, PR creation, and PR readiness unless the protocol surfaces a real human decision.
+19. Resolve repository mode, artifact owner, and artifact base branch before
     writing: `single_repo` uses the current repository; `workflow_hub` keeps
     plans and plan PRs hub-owned on the hub artifact base branch, even when the
     product implementation base is different; `product_repo` should report the
