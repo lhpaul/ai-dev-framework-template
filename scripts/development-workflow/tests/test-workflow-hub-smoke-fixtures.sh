@@ -399,8 +399,10 @@ run_contains "mode_scope_has_product_entries" "mode_scope: product_repo_injectio
 hub_sync_scope_output="$(python3 "$SYNC_SELECTOR" --manifest "$REPO_ROOT/sync-manifest.yaml" --role workflow_hub)"
 product_sync_scope_output="$(python3 "$SYNC_SELECTOR" --manifest "$REPO_ROOT/sync-manifest.yaml" --role product_repo)"
 run_contains "mode_scope_hub_selects_hub_docs" "SELECTED category=always_sync mode_scope=hub_only path=docs/workflow/ glob=**/*" "$hub_sync_scope_output"
+run_contains "mode_scope_hub_selects_tracker_merge_workflow" "SELECTED category=special_handling mode_scope=shared path=.github/workflows/update-tracker-on-merge.yml glob=" "$hub_sync_scope_output"
 run_contains "mode_scope_hub_skips_product_injection" "SKIPPED category=project_specific mode_scope=product_repo_injection path=AGENTS.md glob= mixed_content=true annotation_scheme=html_comments reason=scope_not_applicable" "$hub_sync_scope_output"
 run_contains "mode_scope_product_selects_injection" "SELECTED category=project_specific mode_scope=product_repo_injection path=AGENTS.md glob=" "$product_sync_scope_output"
+run_contains "mode_scope_product_selects_tracker_merge_workflow" "SELECTED category=special_handling mode_scope=shared path=.github/workflows/update-tracker-on-merge.yml glob=" "$product_sync_scope_output"
 run_contains "mode_scope_product_skips_hub_docs" "SKIPPED category=always_sync mode_scope=hub_only path=docs/workflow/ glob=**/* mixed_content= annotation_scheme= reason=scope_not_applicable" "$product_sync_scope_output"
 run_not_contains "mode_scope_product_does_not_select_hub_docs" "SELECTED category=always_sync mode_scope=hub_only path=docs/workflow/" "$product_sync_scope_output"
 
