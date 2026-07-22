@@ -25,28 +25,49 @@ epic=""
 issues_arg=""
 recent_merged=0
 json_output=0
+missing_value_option=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --base)
       shift
-      base="${1:-}"
-      shift
+      if [ "$#" -eq 0 ] || [[ "$1" == -* ]]; then
+        base=""
+        missing_value_option="--base"
+      else
+        base="$1"
+        shift
+      fi
       ;;
     --epic)
       shift
-      epic="${1:-}"
-      shift
+      if [ "$#" -eq 0 ] || [[ "$1" == -* ]]; then
+        epic=""
+        missing_value_option="--epic"
+      else
+        epic="$1"
+        shift
+      fi
       ;;
     --issues)
       shift
-      issues_arg="${1:-}"
-      shift
+      if [ "$#" -eq 0 ] || [[ "$1" == -* ]]; then
+        issues_arg=""
+        missing_value_option="--issues"
+      else
+        issues_arg="$1"
+        shift
+      fi
       ;;
     --recent-merged-prs)
       shift
-      recent_merged="${1:-0}"
-      shift
+      if [ "$#" -eq 0 ] || [[ "$1" == -* ]]; then
+        recent_merged=""
+        missing_value_option="--recent-merged-prs"
+      else
+        recent_merged="$1"
+        shift
+      fi
       ;;
     --json)
       json_output=1
@@ -63,6 +84,12 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ -n "$missing_value_option" ]; then
+  echo "$missing_value_option requires a value" >&2
+  usage >&2
+  exit 64
+fi
 
 if [ -z "$base" ]; then
   echo "--base is required (develop or develop-<slug>)" >&2
