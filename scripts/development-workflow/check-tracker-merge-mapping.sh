@@ -108,6 +108,16 @@ else
   ERRORS=$((ERRORS + 1))
 fi
 
+# Checkout for graduation closeout requires contents: read when permissions: is explicit.
+if grep -Eq 'uses:[[:space:]]*actions/checkout@' "$WORKFLOW_FILE"; then
+  if grep -Eq '^[[:space:]]*contents:[[:space:]]*read[[:space:]]*$' "$WORKFLOW_FILE"; then
+    echo "OK: actions/checkout present with contents: read"
+  else
+    echo "ERROR: actions/checkout is used but permissions lack contents: read (checkout will 403)"
+    ERRORS=$((ERRORS + 1))
+  fi
+fi
+
 echo ""
 if [ "$ERRORS" -eq 0 ]; then
   echo "All 6 mappings correct (+ graduation closeout fallback)."

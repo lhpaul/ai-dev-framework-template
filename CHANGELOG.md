@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sync tracker-closeout workflow** (#1304): Include the merge-time tracker
   workflow in template-sync review so downstream projects can adopt graduation
   closeout together with its validation helpers.
+- **Graduation closeout checkout** (#1305): Grant the tracker merge workflow
+  read-only repository access required to run the graduation closeout fallback.
 
 ## [0.38.0] - 2026-07-21
 
