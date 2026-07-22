@@ -91,8 +91,12 @@ chmod +x "$MOCK_BIN/gh"
 export PATH="$MOCK_BIN:$PATH"
 
 run_fails_contains "requires_base" "--base is required" "$HELPER" --json
+run_fails_contains "requires_base_value" "--base requires a value" "$HELPER" --base --json
 run_fails_contains "rejects_feature_base" "Disallowed base" "$HELPER" --base feature/foo --json
 run_fails_contains "rejects_bad_recent" "--recent-merged-prs must be" "$HELPER" --base develop --recent-merged-prs no --json
+run_fails_contains "requires_epic_value" "--epic requires a value" "$HELPER" --base develop --epic --json
+run_fails_contains "requires_issues_value" "--issues requires a value" "$HELPER" --base develop --issues --json
+run_fails_contains "requires_recent_value" "--recent-merged-prs requires a value" "$HELPER" --base develop --recent-merged-prs --json
 
 out="$("$HELPER" --base develop --recent-merged-prs 1 --json)" || {
   echo "FAIL: recent_merged helper exited non-zero"

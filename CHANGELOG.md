@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   closeout together with its validation helpers.
 - **Graduation closeout checkout** (#1305): Grant the tracker merge workflow
   read-only repository access required to run the graduation closeout fallback.
+- **Post-merge QA scope flags** (#1306): Report clear validation errors when a
+  valued option is missing its argument instead of consuming the next flag or
+  exiting during argument shifting.
 
 ## [0.38.0] - 2026-07-21
 
