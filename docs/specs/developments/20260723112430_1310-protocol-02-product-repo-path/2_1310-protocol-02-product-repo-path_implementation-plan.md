@@ -41,7 +41,7 @@ exit 0; the two intentional absence checks require exit 1 with no matches.
 | Repo revision | `git rev-parse HEAD` | `21f23e3bbd3edc537381901bd08c9c4b11e28609` |
 | Repository mode | `rg -n "^mode:|^template:|^[[:space:]]+is_template:[[:space:]]+true" .ai-dev-workflow.yaml` | `template.is_template: true`; mode is omitted, so this plan is owned by the current single repository |
 | Tracker status | `gh issue view 1310 --json number,title,projectItems,state` | Issue #1310 is open and has status `Writing Plan` |
-| Merged spec gate | `gh pr list --state merged --search 'head:spec/1310-protocol-02-product-repo-path base:develop' --limit 100 --json number,state,baseRefName,mergedAt` | The exact canonical head/base query returns spec PR #1318 merged to `develop` |
+| Merged spec gate | `gh pr view 1318 --json state,baseRefName,headRefName,mergedAt` | Spec PR #1318 has the canonical head, is merged, and targets `develop` |
 | Obsolete live reference | `rg -n -l "20260420120000_201-tech-lead-parser-regex-plan-requirements" . --hidden --glob '!.git/**'` | The only live occurrence is Protocol 02; the referenced historical file is absent from the current repository |
 | Historical artifact availability | `find docs/specs/developments -maxdepth 2 -type f -name '1_201-tech-lead-parser-regex-plan-requirements_specs.md' -print` | No matching local historical artifact exists |
 | Existing normative topics | `rg -n "Which directives are recognized|Where directives can appear|multiple suppressions|Edge-case enumeration|Unit tests" docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md` | Protocol 02 already states the required directive, placement, multiple-suppression, edge-case, and unit-test topics before the dead reference |
