@@ -91,11 +91,7 @@ edge-case coverage, automated unit-test mapping, or suppression behavior.
 Run:
 
 ```bash
-rg -n -F \
-  -e "Post-apply path verification" \
-  -e "If any path does not resolve" \
-  -e "Collect all broken paths" \
-  .claude/commands/sync-template.md
+sed -n '614,628p' .claude/commands/sync-template.md
 ```
 
 **Expected result**: The canonical sync command still requires every resulting
