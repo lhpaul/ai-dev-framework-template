@@ -1,6 +1,7 @@
 # Planless Batch Overlap Fallback - Implementation Plan
 
 **Spec**: [1_1289-planless-overlap-fallback_specs.md](1_1289-planless-overlap-fallback_specs.md)
+
 **Smoke test runbook**: [1289-planless-overlap-fallback.smoke-test.md](../../../testing/workflow/1289-planless-overlap-fallback.smoke-test.md)
 
 ---
