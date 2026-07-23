@@ -33,6 +33,9 @@ framework or runtime.
 
 ## Verification Log
 
+Commands below were executed from the repository root. Recorded matches require
+exit 0; the two intentional absence checks require exit 1 with no matches.
+
 | Check | Command / query | Result |
 | --- | --- | --- |
 | Repo revision | `git rev-parse HEAD` | `21f23e3bbd3edc537381901bd08c9c4b11e28609` |

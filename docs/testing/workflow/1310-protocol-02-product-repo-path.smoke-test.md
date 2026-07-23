@@ -13,6 +13,8 @@
 Before running this smoke test:
 
 - [ ] The implementation branch for issue #1310 is checked out.
+- [ ] The planned Protocol 02 edit, portability regression script, and
+      `[Unreleased]` changelog entry have been implemented.
 - [ ] `bash`, `python3`, `rg`, `git`, and `npx` are available.
 - [ ] `node_modules` is available or `npx markdownlint-cli2` can resolve the
       configured Markdown linter.
@@ -89,7 +91,10 @@ edge-case coverage, automated unit-test mapping, or suppression behavior.
 Run:
 
 ```bash
-rg -n "Post-apply path verification|If any path does not resolve|Collect all broken paths" \
+rg -n -F \
+  -e "Post-apply path verification" \
+  -e "If any path does not resolve" \
+  -e "Collect all broken paths" \
   .claude/commands/sync-template.md
 ```
 
