@@ -124,11 +124,24 @@ Run:
 
 ```bash
 OBSOLETE_SLUG="20260420120000_201-tech-lead-parser-regex-plan-requirements"
-if rg -n -F "$OBSOLETE_SLUG" \
-  docs/workflow .claude/commands .agents/skills .codex/skills; then
-  exit 1
+set +e
+rg -n -F "$OBSOLETE_SLUG" \
+  docs/workflow .claude/commands .agents/skills .codex/skills
+LIVE_GUIDANCE_STATUS=$?
+set -e
+case "$LIVE_GUIDANCE_STATUS" in
+  0) exit 1 ;;
+  1) ;;
+  *) exit "$LIVE_GUIDANCE_STATUS" ;;
+esac
+
+set +e
+rg -n -F "$OBSOLETE_SLUG" . --hidden --glob '!.git/**'
+EVIDENCE_SEARCH_STATUS=$?
+set -e
+if [ "$EVIDENCE_SEARCH_STATUS" -gt 1 ]; then
+  exit "$EVIDENCE_SEARCH_STATUS"
 fi
-rg -n -F "$OBSOLETE_SLUG" . --hidden --glob '!.git/**' || true
 ```
 
 **Expected result**: The command prints no live guidance occurrence. Any

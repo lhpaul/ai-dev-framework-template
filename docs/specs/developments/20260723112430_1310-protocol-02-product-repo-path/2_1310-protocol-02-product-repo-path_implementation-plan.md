@@ -33,13 +33,15 @@ framework or runtime.
 
 ## Verification Log
 
-Commands below were executed from the repository root. Recorded matches require
-exit 0; the two intentional absence checks require exit 1 with no matches.
+Commands below were executed from the repository root and their exit status was
+checked before output was recorded. Value/match queries required exit 0; the
+two intentional absence searches accepted only exit 1; exit 2 or higher failed
+verification.
 
 | Check | Command / query | Result |
 | --- | --- | --- |
 | Repo revision | `git rev-parse HEAD` | `21f23e3bbd3edc537381901bd08c9c4b11e28609` |
-| Repository mode | `rg -n "^mode:|^template:|^[[:space:]]+is_template:[[:space:]]+true" .ai-dev-workflow.yaml` | `template.is_template: true`; mode is omitted, so this plan is owned by the current single repository |
+| Repository mode | `python3 scripts/development-workflow/workflow-config-resolver.py mode --json` | The canonical resolver returns `single_repo` after applying repository defaults |
 | Tracker status | `gh issue view 1310 --json number,title,projectItems,state` | Issue #1310 is open and has status `Writing Plan` |
 | Merged spec gate | `gh pr view 1318 --json state,baseRefName,headRefName,mergedAt` | Spec PR #1318 has the canonical head, is merged, and targets `develop` |
 | Obsolete live reference | `rg -n -l "20260420120000_201-tech-lead-parser-regex-plan-requirements" . --hidden --glob '!.git/**'` | The only live occurrence is Protocol 02; the referenced historical file is absent from the current repository |
