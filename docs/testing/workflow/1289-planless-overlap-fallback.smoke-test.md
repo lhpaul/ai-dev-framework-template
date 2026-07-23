@@ -1,7 +1,7 @@
 # Smoke Test Runbook: Planless Batch Overlap Fallback
 
 **Feature**: Brief-derived overlap classification for planless batch items
-**Spec**: [1_1289-planless-overlap-fallback_specs.md](../../specs/developments/20260723110047_1289-planless-overlap-fallback/1_1289-planless-overlap-fallback_specs.md)
+**Spec**: [1_1289-planless-overlap-fallback_specs.md](../../specs/developments/20260723115301_1289-planless-overlap-fallback/1_1289-planless-overlap-fallback_specs.md)
 **Created in**: Plan Ready stage
 **Updated in**: In Development stage
 
