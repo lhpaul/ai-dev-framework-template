@@ -92,8 +92,8 @@ Run:
 
 ```bash
 SYNC_COMMAND=".claude/commands/sync-template.md"
-rg -q '^### Post-apply path verification ' "$SYNC_COMMAND" &&
-  sed -n '/^### Post-apply path verification /,/^### /p' "$SYNC_COMMAND"
+rg -q '^### .*path verification ' "$SYNC_COMMAND" &&
+  sed -n '/^### .*path verification /,/^### /p' "$SYNC_COMMAND"
 ```
 
 **Expected result**: The command exits successfully. The canonical sync command
@@ -123,11 +123,12 @@ portability correction does not widen sync scope.
 Run:
 
 ```bash
-rg -n -F "20260420120000_201-tech-lead-parser-regex-plan-requirements" \
-  docs/workflow \
-  .claude/commands \
-  .agents/skills \
-  .codex/skills
+OBSOLETE_SLUG="20260420120000_201-tech-lead-parser-regex-plan-requirements"
+if rg -n -F "$OBSOLETE_SLUG" \
+  docs/workflow .claude/commands .agents/skills .codex/skills; then
+  exit 1
+fi
+rg -n -F "$OBSOLETE_SLUG" . --hidden --glob '!.git/**' || true
 ```
 
 **Expected result**: The command prints no live guidance occurrence. Any
@@ -142,7 +143,12 @@ data.
 Run:
 
 ```bash
-rg -n -F "**Make Protocol 02 parser guidance portable** (#1310):" CHANGELOG.md
+awk -v expected="**Make Protocol 02 parser guidance portable** (#1310):" '
+  /^## \[Unreleased\]/ { in_unreleased = 1; next }
+  in_unreleased && /^## \[/ { exit }
+  in_unreleased && index($0, expected) { print; matches++ }
+  END { exit matches == 1 ? 0 : 1 }
+' CHANGELOG.md
 ```
 
 **Expected result**: Exactly one entry appears under `[Unreleased]` and states
