@@ -137,7 +137,7 @@ remaining occurrence elsewhere is limited to approved spec, plan, regression,
 smoke, or changelog evidence and is explicitly classified as historical/test
 data.
 
-### Step 7: Verify the downstream release note
+### Step 7: Verify the downstream implementation PR release note
 
 **Maps to**: AC6
 
