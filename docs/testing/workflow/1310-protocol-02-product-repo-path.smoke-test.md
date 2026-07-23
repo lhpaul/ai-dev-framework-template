@@ -91,13 +91,15 @@ edge-case coverage, automated unit-test mapping, or suppression behavior.
 Run:
 
 ```bash
-sed -n '614,628p' .claude/commands/sync-template.md
+SYNC_COMMAND=".claude/commands/sync-template.md"
+rg -q '^### Post-apply path verification ' "$SYNC_COMMAND" &&
+  sed -n '/^### Post-apply path verification /,/^### /p' "$SYNC_COMMAND"
 ```
 
-**Expected result**: The canonical sync command still requires every resulting
-required docs path to resolve and prevents commit or requires explicit
-acknowledgement when a genuine missing path remains. No broad hub-only
-allowlist or failure suppression is introduced.
+**Expected result**: The command exits successfully. The canonical sync command
+still requires every resulting required docs path to resolve and prevents
+commit or requires explicit acknowledgement when a genuine missing path
+remains. No broad hub-only allowlist or failure suppression is introduced.
 
 ### Step 5: Verify repository-role selection is unchanged
 
