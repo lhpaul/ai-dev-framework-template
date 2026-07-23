@@ -182,12 +182,18 @@ fresh dispatch.
 
 - Continue unaffected sibling items.
 - Re-dispatch only the stopped item.
+- Wait for active sibling work to reach a safe boundary before retrying a
+  previously paused runner.
 - Halt broader dispatch if main-clone contamination is suspected.
 
 **Considerations**:
 
 - A sibling runner being active never weakens the resumed item's isolation
   requirements.
+- Operators should front-load checkpoint approvals when possible so isolated
+  mutating phases run without a resume boundary. A previously paused runner
+  should not be resumed while a sibling remains active; use a fresh,
+  fully-isolated dispatch after the concurrent risk is cleared.
 
 ### Use Case 5: Keep checkpoint-resume surfaces aligned
 
@@ -253,6 +259,9 @@ item.
 - When safe resume context cannot be reconstructed, recovery guidance must
   prefer a fresh runner that receives the complete isolation assignment and any
   already-approved checkpoint decision at initial dispatch.
+- Operational guidance must advise front-loading checkpoint decisions and must
+  not direct operators to resume a previously paused runner while a sibling
+  runner remains active.
 - The same contract applies to supported item, epic, and portfolio-batch paths
   whenever they resume a worktree-isolated item after a checkpoint.
 - Regression coverage must exercise the real resume handoff and demonstrate
@@ -327,6 +336,10 @@ item.
 - [ ] AC12: A concurrent batch scenario proves that a stopped resumed item does
       not switch, dirty, or commit from the shared main clone while sibling
       runners remain active.
+- [ ] AC13: Operator recovery guidance advises front-loading checkpoint
+      approvals and avoiding resume of a previously paused runner while a
+      sibling remains active; it directs the operator to a fresh, fully-isolated
+      dispatch after concurrent risk is cleared.
 
 ## Out of Scope (MVP)
 
@@ -350,9 +363,9 @@ item.
 | 1. Supply expected worktree, branch, and main root automatically | AC1; Use Case 1; Business Rules |
 | 2. Enforce preflight at the actual resume entry path before mutation | AC2, AC9; Use Cases 1 and 5; Operational Visibility |
 | 3. Fail closed for missing metadata, main-clone CWD, wrong branch, and ambiguity | AC4, AC5, AC6, AC10; Use Cases 2 and 3; Consistency Matrix |
-| 4. Preserve the shared main clone during concurrency | AC12; Use Case 4; Business Rules |
+| 4. Preserve the shared main clone during concurrency | AC12, AC13; Use Case 4; Business Rules |
 | 5. Test the actual checkpoint-resume handoff | AC9, AC10; Use Case 5 |
-| 6. Prefer fresh, pre-approved runner recovery | AC4, AC11; Use Cases 2 and 3; Operational Visibility |
+| 6. Prefer fresh, pre-approved runner recovery | AC4, AC11, AC13; Use Cases 2, 3, and 4; Operational Visibility |
 | 7. Keep supported resume surfaces aligned | AC8; Use Case 5; Consistency Matrix |
 | 8. Keep checkpoint and isolation state separate | AC3, AC7; Use Case 1; Business Rules |
 
