@@ -144,11 +144,14 @@ without listing or scanning every open PR in the repository.
 1. Run:
 
    ```bash
-   bash scripts/development-workflow/tests/test-cross-cutting-plan-assumption-contract.sh
+   bash scripts/development-workflow/tests/test-cross-cutting-plan-assumption-contract.sh \
+     || exit 1
    ```
 
-2. Inspect the output for Protocols 02/03/90/91, the template, review contract,
-   agents, skills, commands, and negative checks.
+2. Confirm the command exits with status `0`, then inspect the output for
+   Protocols 02/03/90/91, the template, review contract, agents, skills,
+   commands, and negative checks. If it exits non-zero, stop and treat the
+   output as a contract failure rather than interpreting partial results.
 
 **Expected result**: The script exits zero and confirms all required evidence
 fields, seven outcomes/next actions, bounded-scope rules, parent/human

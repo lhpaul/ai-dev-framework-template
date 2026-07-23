@@ -32,14 +32,14 @@ protocols. No other item must merge first.
 
 | Check | Command / query | Result |
 | --- | --- | --- |
-| Repo revision | `git rev-parse --short HEAD` | `21f23e3` |
+| Repo revision | `git rev-parse --short HEAD \|\| exit 1` | `21f23e3` |
 | Template fit | Read `.ai-dev-workflow.yaml` | `template.is_template: true`; the feature changes framework-agnostic workflow guidance and passes the template-fit gate. |
-| Approved spec | `git show HEAD:docs/specs/developments/20260723153924_1201-cross-check-cross-cutting-plan-assumptions/1_1201-cross-check-cross-cutting-plan-assumptions_specs.md` | The merged spec defines AC1-AC8 and the seven-row gate consistency matrix. |
-| Direct planning/implementation guidance search | `grep -rl "02-generate-implementation-plan-protocol\|03-implement-development-protocol" .claude/agents/ .cursor/agents/ .codex/skills/` | Six direct invocation files: both developer agents, both tech-lead agents, `workflow-implementer`, and `workflow-plan-writer`. |
+| Approved spec | `git show HEAD:docs/specs/developments/20260723153924_1201-cross-check-cross-cutting-plan-assumptions/1_1201-cross-check-cross-cutting-plan-assumptions_specs.md \|\| exit 1` | The merged spec defines AC1-AC8 and the seven-row gate consistency matrix. |
+| Direct planning/implementation guidance search | `grep -rl "02-generate-implementation-plan-protocol\|03-implement-development-protocol" .claude/agents/ .cursor/agents/ .codex/skills/ \|\| exit 1` | Six direct invocation files: both developer agents, both tech-lead agents, `workflow-implementer`, and `workflow-plan-writer`. |
 | Batch context source | Read Protocol 90 handoff and dispatch sections plus Protocol 91's Batch Context Indicator | Protocol 90 already owns the exact in-scope item list and per-item handoff; Protocol 91 already consumes `BATCH_CONTEXT=true` and explicit-list metadata. |
-| Implementation-start locations | `rg -n "^## Path|^### Step 1:|^### Step 1b:|^### Step 4: Implement" docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` | Full Pipeline, Refactor, Fast Track, and Hotfix have distinct prep/scope sections; the assumption re-verification gate belongs in shared prep plus applicable plan-backed paths before edits. |
-| Existing workflow test pattern | `find scripts/development-workflow/tests -maxdepth 1 -type f -name 'test-*.sh' \| wc -l` | 46 shell tests exist; `test-may-merge-terminal-contract.sh` demonstrates fixed-string contract checks across protocols, agents, skills, and commands. |
-| Bounded in-flight cross-check | Inspect current approved batch PRs `#1334` through `#1343`; inspect related Protocol 02 plan PR `#1339` with `gh pr view 1339 --json title,body,files,headRefName,baseRefName` | `#1339` is the only current-batch plan directly touching Protocol 02. It changes reference portability, not the current repository's artifact ownership or approved `develop` base; no conflict with the operational assumption below. |
+| Implementation-start locations | `rg -n "^## Path|^### Step 1:|^### Step 1b:|^### Step 4: Implement" docs/workflow/development-workflow/protocols/03-implement-development-protocol.md \|\| exit 1` | Full Pipeline, Refactor, Fast Track, and Hotfix have distinct prep/scope sections; the assumption re-verification gate belongs in shared prep plus applicable plan-backed paths before edits. |
+| Existing workflow test pattern | `set -o pipefail; find scripts/development-workflow/tests -maxdepth 1 -type f -name 'test-*.sh' \| wc -l \|\| exit 1` | 46 shell tests exist; `test-may-merge-terminal-contract.sh` demonstrates fixed-string contract checks across protocols, agents, skills, and commands. |
+| Bounded in-flight cross-check | Inspect current approved batch PRs `#1334` through `#1343`; inspect related Protocol 02 plan PR `#1339` with `gh pr view 1339 --json title,body,files,headRefName,baseRefName \|\| exit 1` | `#1339` is the only current-batch plan directly touching Protocol 02. It changes reference portability, not the current repository's artifact ownership or approved `develop` base; no conflict with the operational assumption below. |
 | Design assets | Inspect issue body, linked files, and the development folder's `assets/` path | No UI scope or design assets; fidelity steps are not applicable. |
 
 ---
@@ -288,9 +288,10 @@ and manual smoke review.
 `docs/testing/workflow/1201-cross-check-cross-cutting-plan-assumptions.smoke-test.md`
 
 **Regression suite**: Add and run
-`bash scripts/development-workflow/tests/test-cross-cutting-plan-assumption-contract.sh`.
-Also run the existing relevant workflow contract tests if the implementation
-touches their asserted files.
+`scripts/development-workflow/tests/test-cross-cutting-plan-assumption-contract.sh`.
+Treat any non-zero exit as blocking and do not interpret partial output as
+evidence. Also run the existing relevant workflow contract tests if the
+implementation touches their asserted files.
 
 ---
 
