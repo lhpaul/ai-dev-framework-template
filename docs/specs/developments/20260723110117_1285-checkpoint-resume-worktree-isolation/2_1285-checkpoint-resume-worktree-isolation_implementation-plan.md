@@ -35,10 +35,10 @@ that the template ships to all downstream repositories.
 | Check | Command / query | Result |
 | --- | --- | --- |
 | Repo revision | `git rev-parse HEAD` | `21f23e3bbd3edc537381901bd08c9c4b11e28609` |
-| Repository mode | `sed -n '1,220p' .ai-dev-workflow.yaml` | `template.is_template: true`; mode is omitted, so the repository is `single_repo` and owns the plan |
+| Repository mode | `rg -n "^mode:|^template:|^[[:space:]]+is_template:[[:space:]]+true" .ai-dev-workflow.yaml` | `template.is_template: true`; mode is omitted, so the repository is `single_repo` and owns the plan |
 | Tracker status | `gh issue view 1285 --json number,title,projectItems,state` | Issue #1285 is open and has status `Writing Plan` |
 | Dependency status | `gh issue view 1174 --json number,state,projectItems` | Issue #1174 is closed and has status `Released` |
-| Merged spec gate | `gh pr list --state merged --search 'head:spec/1285-checkpoint-resume-worktree-isolation' --json number,state,baseRefName,mergedAt` | Spec PR #1315 is merged to `develop` |
+| Merged spec gate | `gh pr list --state merged --search 'head:spec/1285-checkpoint-resume-worktree-isolation base:develop' --limit 100 --json number,state,baseRefName,mergedAt` | The exact head/base query can match only the canonical spec branch; spec PR #1315 is merged to `develop` |
 | Existing executable isolation scope | `rg -n -l "worktree-resume-preflight\|checkpoint.resume preflight" scripts/development-workflow --glob '*.sh'` | Existing implementation is `worktree-resume-preflight.sh` plus its unit test; no combined checkpoint/isolation entry gate exists |
 | Unsafe re-entry behavior | `rg -n "RESULT=reenter\|result=\"reenter\"\|re-enter expected worktree" scripts/development-workflow/worktree-resume-preflight.sh docs/workflow/development-workflow/protocols/{91-orchestrate-work-protocol,95-run-epic-protocol}.md` | The helper and Protocols 91/95 currently allow a resumed main-clone session to re-enter an item worktree |
 | Canonical orchestration surfaces | `rg -n -l "checkpoint-resume\|redispatch / resume" docs/workflow/development-workflow/protocols/{90-batch-orchestrate-work-protocol,91-orchestrate-work-protocol,95-run-epic-protocol}.md` | Protocols 90, 91, and 95 own bounded-batch, item, and epic resume behavior |
