@@ -92,8 +92,14 @@ Run:
 
 ```bash
 SYNC_COMMAND=".claude/commands/sync-template.md"
-rg -q '^### .*path verification ' "$SYNC_COMMAND" &&
+SYNC_BLOCK=$(
   sed -n '/^### .*path verification /,/^### /p' "$SYNC_COMMAND"
+)
+SYNC_BLOCK_STATUS=$?
+if [ "$SYNC_BLOCK_STATUS" -ne 0 ] || [ -z "$SYNC_BLOCK" ]; then
+  exit 1
+fi
+printf '%s\n' "$SYNC_BLOCK"
 ```
 
 **Expected result**: The command exits successfully. The canonical sync command
