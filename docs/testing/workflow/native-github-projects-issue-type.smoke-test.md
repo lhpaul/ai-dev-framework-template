@@ -12,6 +12,9 @@
 Before running this smoke test:
 
 - [ ] Check out the implementation branch for issue #1280.
+- [ ] Confirm the In Development stage has added the native Issue Type fixtures
+      and named assertions specified by the implementation plan; this Plan Ready
+      runbook is not executable against the implementation-plan branch alone.
 - [ ] Ensure Bash, Python 3, `jq`, and ShellCheck are available.
 - [ ] Confirm no live GitHub Project mutation is required; the regression
       harness uses a mocked `gh` command and deterministic GraphQL responses.
