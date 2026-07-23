@@ -141,8 +141,8 @@ produce a false base mismatch.
 1. Run:
    - `bash scripts/development-workflow/tests/test-run-nested-artifact-guard.sh`
    - `bash scripts/development-workflow/tests/test-worktree-resume-preflight.sh`
-2. Inspect Protocol 91 and the item-runner files listed in the implementation
-   plan.
+2. Inspect Protocol 91 (the Work Item Runner orchestration protocol) and the
+   item-runner files listed in the implementation plan.
 3. Confirm candidate discovery and nested-artifact validation occur before the
    reuse validator.
 4. Confirm only `compatible` reaches `workflow-next-action.sh`.
