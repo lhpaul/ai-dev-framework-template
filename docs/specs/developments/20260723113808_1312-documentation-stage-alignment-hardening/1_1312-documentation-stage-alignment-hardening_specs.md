@@ -99,8 +99,6 @@ change the alignment outcome.
 
 - The implementation technique for portable decoding is selected during
   implementation planning.
-- A successful command probe must demonstrate actual decoding behavior rather
-  than relying only on command-help text.
 
 ## Business Rules
 
