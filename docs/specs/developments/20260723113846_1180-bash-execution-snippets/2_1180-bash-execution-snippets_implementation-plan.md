@@ -128,9 +128,12 @@ surface uses one adjacent marker:
       identical output records.
 - [ ] Assert item count, item values, and extracted argument groups. A zero exit
       without expected records fails.
-- [ ] Run Bash-contract fixtures through the repository's Bash 3.2 static rules
-      (`workflow-shell-guard-lint.py`, ShellCheck dialect, and WS006). On macOS,
-      also record the available `/bin/bash` version and execute the fixture.
+- [ ] Run fenced Bash-contract fixtures through WS006. Run complete generated
+      script fixtures through WS006 and ShellCheck's Bash dialect. Reserve
+      `workflow-shell-guard-lint.py` for changed stored scripts under its
+      `scripts/development-workflow/**/*.sh` scope; do not cite a clean
+      out-of-scope guard result as fixture evidence. On macOS, also record the
+      available `/bin/bash` version and execute the fixture.
 - [ ] If zsh is unavailable, the behavioral test must fail with a clear missing
       dependency message rather than silently skip cross-shell evidence.
 

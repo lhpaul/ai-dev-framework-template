@@ -101,14 +101,19 @@ passes. Fence syntax highlighting alone is not accepted as enforcement.
 
 **Maps to**: Acceptance Criteria 7
 
-1. Lint Bash-contract fixtures containing associative arrays, `mapfile`, and
-   `readarray`.
-2. Run the accepted fixture through ShellCheck and the existing workflow shell
-   guard.
-3. On macOS, execute it with `/bin/bash` and record `bash --version`.
+1. Lint fenced Bash-contract fixtures containing associative arrays, `mapfile`,
+   and `readarray` with the snippet linter.
+2. Run a complete accepted Bash script fixture through the snippet linter and
+   ShellCheck's Bash dialect.
+3. Run the existing workflow shell guard only for changed stored scripts under
+   `scripts/development-workflow/**/*.sh`; do not treat an out-of-scope clean
+   result as evidence for a fenced or temporary fixture.
+4. On macOS, execute the accepted fixture with `/bin/bash` and record
+   `bash --version`.
 
-**Expected result**: Bash 4+ constructs fail WS006/SH005. Accepted fixtures use
-Bash 3.2-compatible constructs and pass available execution evidence.
+**Expected result**: Bash 4+ fixture constructs fail WS006. SH005 continues to
+guard applicable stored workflow scripts. Accepted fixtures use Bash
+3.2-compatible constructs and pass the checks that actually inspect them.
 
 ### Step 8: Verify Scope and Documentation
 
