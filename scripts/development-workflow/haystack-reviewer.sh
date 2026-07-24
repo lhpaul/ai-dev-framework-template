@@ -244,6 +244,7 @@ haystack_check_run_is_analysis_file_limit_skip() {
     [(.output.title // ""), (.output.summary // "")]
     | join(" ")
     | ascii_downcase
+    | gsub("[-_]"; " ")
     | gsub("[[:space:]]+"; " ")
   ' 2>/dev/null)"; then
     return 1
@@ -256,7 +257,7 @@ haystack_check_run_is_analysis_file_limit_skip() {
   case "$evidence" in
     *exceed*|*over\ the\ limit*|*over\ haystack*)
       case "$evidence" in
-        *haystack\ analysis\ limit*|*haystack\ file\ limit*)
+        *haystack\ analysis\ limit*|*haystack\ file\ limit*|*haystack\'s\ analysis\ limit*|*haystack\'s\ file\ limit*)
           return 0
           ;;
       esac
@@ -290,6 +291,7 @@ emit_haystack_analysis_file_limit_skip_from_json() {
   printf 'CHECK_RUN_CONCLUSION=%s\n' "$conclusion"
   [ -n "$title" ] && printf 'CHECK_RUN_TITLE=%s\n' "$title"
   [ -n "$details_url" ] && printf 'CHECK_RUN_URL=%s\n' "$details_url"
+  return 0
 }
 
 emit_haystack_analysis_file_limit_skip_if_present() {

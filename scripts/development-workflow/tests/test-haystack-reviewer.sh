@@ -1348,7 +1348,34 @@ run_test "file_limit_skip_metadata" "completed,action_required" "$(printf '%s,%s
 run_test "file_limit_skip_exit_code" "3" "$ec"
 run_test "file_limit_skip_avoids_triage" "0" "$calls"
 
+# Equivalent case, whitespace, possessive, and hyphen variants remain
+# authoritative when the completed current-head check carries them.
+MOCK_GH_CHECK_RUNS="$(
+  jq -n '{
+    check_runs: [
+      {
+        name: "Haystack / Review",
+        status: "COMPLETED",
+        conclusion: "action_required",
+        started_at: "2026-07-23T14:00:00Z",
+        output: {
+          title: "Analysis Skipped",
+          summary: "This PR is OVER   Haystack\u0027s FILE-LIMIT."
+        }
+      }
+    ]
+  }'
+)"
+export MOCK_GH_CHECK_RUNS
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+run_test "file_limit_skip_normalized_variant" "REASON=analysis_skipped_file_limit" "$(echo "$output" | grep '^REASON=')"
+
 # Same-head reruns remain terminal and do not enter the polling loop.
+MOCK_GH_CHECK_RUNS="$_file_limit_check_run"
+export MOCK_GH_CHECK_RUNS
+_install_mock_with_exits
 output=$(_run_reviewer 30 1)
 ec=$(cat "$_REVIEWER_EXIT_FILE")
 calls=$(_call_count)
