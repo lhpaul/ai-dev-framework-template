@@ -2621,6 +2621,22 @@ else
 fi
 run_test "bugbot_clean_phrase_is_non_blocking" "clean" "$actual"
 
+bugbot_current_clean_body=$'<!-- BUGBOT_REVIEW -->\n✅ Bugbot reviewed your changes and found no new issues!\n\n_Comment `@cursor review` or `bugbot run` to trigger another review on this PR_\n\n<sup>Reviewed by [Cursor Bugbot](https://cursor.com/bugbot) for commit a195d26744760a2060cc934596779c821394ba21. Configure [here](https://www.cursor.com/dashboard/bugbot).</sup>'
+if is_bugbot_clean_review "$bugbot_current_clean_body"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_current_clean_review_is_non_blocking" "clean" "$actual"
+
+bugbot_current_mixed_body="$bugbot_current_clean_body"$'\n\n**Medium Severity**\n\n<!-- BUGBOT_BUG_ID: abc123 -->'
+if is_bugbot_clean_review "$bugbot_current_mixed_body"; then
+  actual="clean"
+else
+  actual="blocking"
+fi
+run_test "bugbot_current_finding_markers_override_clean_phrase" "blocking" "$actual"
+
 bugbot_mixed_body=$'Cursor Bugbot found no issues in this pull request.\n\n**High Severity**\n\n<!-- BUGBOT_BUG_ID: abc123 -->'
 if is_bugbot_clean_review "$bugbot_mixed_body"; then
   actual="clean"
@@ -2652,7 +2668,7 @@ else
   actual="blocking"
 fi
 run_test "bugbot_same_line_mixed_phrase_is_blocking" "blocking" "$actual"
-unset bugbot_clean_body bugbot_mixed_body bugbot_multiline_body bugbot_same_line_severity_body bugbot_same_line_mixed_body actual
+unset bugbot_clean_body bugbot_current_clean_body bugbot_current_mixed_body bugbot_mixed_body bugbot_multiline_body bugbot_same_line_severity_body bugbot_same_line_mixed_body actual
 
 if is_bugbot_disabled_message "Bugbot is disabled for this repository."; then
   actual="disabled"

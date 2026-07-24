@@ -394,10 +394,13 @@ is_bugbot_clean_review() {
   local body="$1"
   local line
   local normalized_line
-  local non_empty_count=0
+  local reviewed_commit
+  local review_footer_prefix='<sup>Reviewed by [Cursor Bugbot](https://cursor.com/bugbot) for commit '
+  local review_footer_suffix='. Configure [here](https://www.cursor.com/dashboard/bugbot).</sup>'
+  local saw_clean_phrase=0
 
   case "$body" in
-    *BUGBOT_BUG_ID*|*BUGBOT_REVIEW*|*"LOCATIONS START"*|*"DESCRIPTION START"*|*"Triggered by project rule"*|*'**High Severity**'*|*'**Medium Severity**'*|*'**Low Severity**'*)
+    *BUGBOT_BUG_ID*|*"LOCATIONS START"*|*"DESCRIPTION START"*|*"Triggered by project rule"*|*'**High Severity**'*|*'**Medium Severity**'*|*'**Low Severity**'*)
       return 1
       ;;
   esac
@@ -411,17 +414,28 @@ is_bugbot_clean_review() {
     normalized_line="${normalized_line#"${normalized_line%%[![:space:]]*}"}"
     normalized_line="${normalized_line%"${normalized_line##*[![:space:]]}"}"
     [ -z "$normalized_line" ] && continue
-    non_empty_count=$((non_empty_count + 1))
-    if [ "$non_empty_count" -gt 1 ]; then
-      return 1
-    fi
+    case "$normalized_line" in
+      "Cursor Bugbot found no new issues in this pull request."|"Cursor Bugbot found no potential issues in this pull request."|"Cursor Bugbot found no issues in this pull request."|"✅ Bugbot reviewed your changes and found no new issues!")
+        [ "$saw_clean_phrase" -eq 0 ] || return 1
+        saw_clean_phrase=1
+        continue
+        ;;
+      '<!-- BUGBOT_REVIEW -->'|'_Comment `@cursor review` or `bugbot run` to trigger another review on this PR_')
+        continue
+        ;;
+    esac
+    case "$normalized_line" in
+      "$review_footer_prefix"*"$review_footer_suffix")
+        reviewed_commit="${normalized_line#"$review_footer_prefix"}"
+        reviewed_commit="${reviewed_commit%"$review_footer_suffix"}"
+        if [[ "$reviewed_commit" =~ ^[0-9a-f]{40}$ ]]; then
+          continue
+        fi
+        ;;
+    esac
+    return 1
   done <<< "$body"
-  case "$normalized_line" in
-    "Cursor Bugbot found no new issues in this pull request."|"Cursor Bugbot found no potential issues in this pull request."|"Cursor Bugbot found no issues in this pull request.")
-      return 0
-      ;;
-  esac
-  return 1
+  [ "$saw_clean_phrase" -eq 1 ]
 }
 
 is_bugbot_disabled_message() {
