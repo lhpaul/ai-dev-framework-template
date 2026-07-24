@@ -41,6 +41,15 @@ to commit immediately after each completed logical sub-part, avoid batching all
 completed sub-parts into one end-of-run commit, and never commit incomplete,
 failing, or incoherent edits only to satisfy this requirement.
 
+After candidate discovery and a clean nested-artifact guard, run
+`validate-branch-reuse.sh` with the issue, exact expected branch, approved base,
+and artifact repo root. A matching item number alone is insufficient. Only
+`compatible` may resume through `workflow-next-action.sh`;
+`no_existing_branch` follows the fresh path. Stop before mutation on
+`incompatible` or `verification_blocked`, report their distinct evidence and
+human action, and never delete, reset, rebase, check out, or force-push the
+branch automatically. Tracking divergence is diagnostic only.
+
 **Checkpoint-resume worktree preflight**: When resuming after a human-checkpoint
 pause from a prior worktree-isolated run, run Protocol 91's
 `worktree-resume-preflight.sh` before any mutation. Continue only from the

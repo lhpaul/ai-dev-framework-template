@@ -44,7 +44,14 @@ advances exactly one non-epic item through Protocol 91.
    `--allow-split`). Stop on `missing_base`, `blocked_duplicate`, `wrong_base`,
    or `scan_failed`; explicit split work requires parent approval and
    `--allow-split true`.
-7. Before dispatching a Backlog item into Writing Spec, run or consume
+7. After candidate discovery and a clean nested-artifact guard, run
+   `validate-branch-reuse.sh` with the issue, exact expected branch, approved
+   base, and artifact repo root. Only `compatible` may resume with
+   `workflow-next-action.sh`; `no_existing_branch` follows the fresh path.
+   Stop before mutation on `incompatible` or `verification_blocked`, report the
+   evidence and human action, and never delete, reset, rebase, check out, or
+   force-push the branch automatically. Tracking divergence is diagnostic only.
+8. Before dispatching a Backlog item into Writing Spec, run or consume
    `scripts/development-workflow/spec-dispatch-context.sh`. For direct
    single-item runs, pass the selected item plus relevant in-scope Backlog peers
    from the current tracker scan in `--items`; a selected-only scope may collect
@@ -52,7 +59,7 @@ advances exactly one non-epic item through Protocol 91.
    decisions and relationship outcomes to the spec writer; stop on
    `blocking=true` and report the helper's `humanAction`. Shared keywords alone
    are not dependency evidence.
-8. **Guardrails enforcement**: Use portfolio-resolved guardrails from handoff when
+9. **Guardrails enforcement**: Use portfolio-resolved guardrails from handoff when
    available; otherwise resolve from repo `guardrails` config. Report effective
    values before mutation. Enforce gates per
    `docs/workflow/development-workflow/guardrails-enforcement.md` section 3.
@@ -64,11 +71,11 @@ advances exactly one non-epic item through Protocol 91.
    items, run Protocol 91's residual gate before `ready-for-human-review`; block
    or escalate instead of reporting terminal when residual evidence is missing or
    incomplete.
-9. For `spec/*` and `implementation-plan/*` PRs, run Protocol 91 Step 8a's
+10. For `spec/*` and `implementation-plan/*` PRs, run Protocol 91 Step 8a's
    documentation-stage alignment checker before readiness; correct or escalate
    mismatches instead of applying `ready-for-human-review`.
-10. Epic-like targets must use `$run-epic` / `/run-epic`, not this command.
-11. When the delegated merge gate returns `merge_allowed`, continue through merge,
+11. Epic-like targets must use `$run-epic` / `/run-epic`, not this command.
+12. When the delegated merge gate returns `merge_allowed`, continue through merge,
    remote/local branch cleanup, `post-merge-cleanup.sh`, and live tracker
    verification before reporting the item terminal. Do not stop at
    `ready-for-human-review` in a delegated merge run.
@@ -76,7 +83,7 @@ advances exactly one non-epic item through Protocol 91.
    intermediate; `merge_denied` means the ready PR stops as
    `ready_human_merge` and no merge command is run. A merge-granted run that
    stops at readiness without a named blocker is `policy_inconsistent`.
-12. Before reporting any terminal state, run
+13. Before reporting any terminal state, run
     `scripts/development-workflow/item-completion-self-check.sh` for the claimed
     state and include its `## Ground-Truth Completion Verification` section in
     the Work Item Runner Summary. When Step 7 was configured, pass

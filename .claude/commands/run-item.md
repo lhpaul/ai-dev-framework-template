@@ -31,6 +31,11 @@ The prelude command flags mirror this command's scope flags (`--target`, `--issu
   mutation. Worktree re-entry does not satisfy or waive checkpoint state.
 - Resolve exactly one non-epic workflow item
 - Use `scripts/development-workflow/` helpers for next-action classification
+- After candidate discovery and the nested-artifact guard, require a
+  `compatible` result from `validate-branch-reuse.sh` before reusing an existing
+  branch. Stop distinctly on incompatible or unverifiable evidence; never
+  delete or rewrite the branch automatically, and keep tracking divergence
+  diagnostic only.
 - In `workflow_hub`, state product repository and mutation target before implementation mutation
 - Continue until waiting on human, blocked, or escalated
 - If delegated merge authority is active and the merge gate returns

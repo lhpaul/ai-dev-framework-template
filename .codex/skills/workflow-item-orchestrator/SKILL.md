@@ -38,7 +38,8 @@ Recommended model tier: `balanced`
 11. **Main-tree return rule (BATCH_CONTEXT=false / no worktree isolation)**: When dispatched WITHOUT worktree isolation (`BATCH_CONTEXT` is `false` or absent), this skill runs in the main working tree. Before emitting the Work Item Runner Summary and returning, switch the main working tree back to the integration branch (`git switch develop`, or whichever branch `integration_branch` specifies in `.ai-dev-workflow.yaml`). Verify with `git rev-parse --abbrev-ref HEAD`. If uncommitted changes block the switch, commit or stash first. Omitting this return step causes Protocol 90 Step 5.2 to fire "wrong branch + clean" auto-correct on every subsequent item.
 12. Before implementation mutation in `workflow_hub`, state the selected product repository, local path or remote identity, artifact owner, and mutation target. Stop before file edits, branch creation, commits, or implementation PR creation when product repository context is missing or ambiguous. Specs and plans remain hub-owned unless a later protocol says otherwise.
 13. Before dispatching a stage path that may create a branch or open a PR, pass the expected branch, expected worktree when known, approved base, and artifact-owning repo root. Run `run-nested-artifact-guard.sh --mode <pre-create|pre-pr> --issue <number> --expected-branch <branch> --approved-base <branch> --repo-root "$ARTIFACT_REPO_ROOT"` before mutation and stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`.
-14. Before dispatching a Backlog item into Writing Spec, run or consume
+14. After candidate discovery and a clean nested-artifact guard, run `validate-branch-reuse.sh` with the issue, exact expected branch, approved base, and artifact repo root. A matching item number is not sufficient: only `compatible` may resume through `workflow-next-action.sh`, while `no_existing_branch` follows the fresh path. Stop before mutation on `incompatible` or `verification_blocked`, report their distinct evidence and human action, and never delete, reset, rebase, check out, or force-push the branch automatically. Treat tracking divergence as diagnostic only.
+15. Before dispatching a Backlog item into Writing Spec, run or consume
     `scripts/development-workflow/spec-dispatch-context.sh`. For direct
     single-item runs, pass the selected item plus relevant in-scope Backlog peers
     from the current tracker scan in `--items`; a selected-only scope may collect
@@ -46,15 +47,15 @@ Recommended model tier: `balanced`
     decisions and relationship outcomes to the spec writer; stop on
     `blocking=true` and report the helper's `humanAction`. Shared keywords alone
     are not dependency evidence.
-15. **Guardrails enforcement**: At item-run start, use portfolio-resolved guardrails from handoff metadata when available; otherwise resolve from repo `guardrails` config. Report effective values before mutation. Enforce per-stage PR-open, delegated review, delegated merge, and completion gates per `docs/workflow/development-workflow/guardrails-enforcement.md` section 3. When no `guardrails` section is found, apply conservative defaults and state them. When the delegated merge gate returns `merge_allowed`, continue through merge, branch cleanup, `post-merge-cleanup.sh`, and live tracker verification before reporting the item terminal. Treat merge authority explicitly: `merge_granted` means readiness is intermediate; `merge_denied` means the ready PR stops as `ready_human_merge` and no merge command is run. A merge-granted run that stops at readiness without a named blocker is `policy_inconsistent`.
-16. For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
+16. **Guardrails enforcement**: At item-run start, use portfolio-resolved guardrails from handoff metadata when available; otherwise resolve from repo `guardrails` config. Report effective values before mutation. Enforce per-stage PR-open, delegated review, delegated merge, and completion gates per `docs/workflow/development-workflow/guardrails-enforcement.md` section 3. When no `guardrails` section is found, apply conservative defaults and state them. When the delegated merge gate returns `merge_allowed`, continue through merge, branch cleanup, `post-merge-cleanup.sh`, and live tracker verification before reporting the item terminal. Treat merge authority explicitly: `merge_granted` means readiness is intermediate; `merge_denied` means the ready PR stops as `ready_human_merge` and no merge command is run. A merge-granted run that stops at readiness without a named blocker is `policy_inconsistent`.
+17. For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
     items, run `scope-residual-gate.sh` before readiness and treat `block` or
     `escalate` as non-terminal.
-17. For `spec/*` and `implementation-plan/*` PRs, run Protocol 91 Step 8a's
+18. For `spec/*` and `implementation-plan/*` PRs, run Protocol 91 Step 8a's
     documentation-stage alignment checker before readiness. Include the
     alignment result in the runner summary when readiness is blocked; correct
     or escalate mismatches instead of applying `ready-for-human-review`.
-18. Before any terminal Work Item Runner Summary (`ready`, `done`, `blocked`,
+19. Before any terminal Work Item Runner Summary (`ready`, `done`, `blocked`,
     `escalated`, waiting on human, waiting on merge, or cleanup complete), run
     `scripts/development-workflow/item-completion-self-check.sh` for the claimed
     state and paste its `## Ground-Truth Completion Verification` section into
