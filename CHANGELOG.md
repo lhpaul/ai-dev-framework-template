@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Validate Existing Workflow Branches Before Reuse** (#1179): Require
+  positive approved-base ancestry evidence before resuming an existing item
+  branch.
+
 ### Fixed
 
 - **Reliable ready-phase PR review** (#1348): Use Cursor Bugbot instead of
