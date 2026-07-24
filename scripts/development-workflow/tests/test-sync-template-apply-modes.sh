@@ -72,6 +72,9 @@ for f in "${BODIES[@]}"; do
   assert_file_contains "$f" 'Decide with me' "$base has Decide with me"
   assert_file_contains "$f" 'Accept recommendations' "$base has Accept recommendations"
   assert_file_contains "$f" 'Escalation / hard-stop' "$base has hard-stop taxonomy"
+  assert_file_contains "$f" 'analysis_skipped_file_limit' "$base documents Haystack file-limit skip"
+  assert_file_contains "$f" 'other configured reviewers, CI,' "$base preserves other review and CI gates"
+  assert_file_contains "$f" 'unresolved-thread, regression, and readiness gates remain mandatory' "$base preserves terminal gates"
   assert_primary_modes "$f" "$base"
   if awk '/Requires manual review \(you decide\)/,/^### /' "$f" | grep -q '\.claude/settings\.json'; then
     fail "$base lists .claude/settings.json under Requires manual review (you decide)"
@@ -89,6 +92,8 @@ for f in "${WRAPPERS[@]}"; do
   base="${f#"$REPO_ROOT/"}"
   assert_file_contains "$f" 'Decide with me' "$base has Decide with me"
   assert_file_contains "$f" 'Accept recommendations' "$base has Accept recommendations"
+  assert_file_contains "$f" 'analysis_skipped_file_limit' "$base documents Haystack file-limit skip"
+  assert_file_contains "$f" 'unresolved-thread, regression, and readiness gates remain mandatory' "$base preserves terminal gates"
   if grep -qE 'confirmation prompt offers two options — "apply all"' "$f"; then
     fail "$base still documents old primary peer pair"
   else

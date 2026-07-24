@@ -74,6 +74,23 @@ reviewer. This prevents silent reviewer skip while preserving draft-phase
 coverage — CodeRabbit configured with `auto_review.drafts: false` produces no
 comment when it bypasses a draft PR, making the omission invisible to the agent.
 
+#### Haystack large-PR analysis limit
+
+When the current-head `Haystack / Review` check is completed and explicitly
+states that the pull request exceeds Haystack's analysis or file limit,
+`haystack-reviewer.sh` terminates promptly with `RESULT=skipped`,
+`REASON=analysis_skipped_file_limit`, and
+`DISPLAY_RESULT=skipped (analysis file limit)`. This is a permissive skip for
+Haystack only. It remains visible in the script-owned Automated Reviewer Loop
+Summary and `reviewer_loop_history.v1`, and it must not bypass a blocker from
+another reviewer, CI, unresolved review threads, regression, documentation
+alignment, completion verification, or readiness gates.
+
+Generic skip-like text, comments, incomplete check runs, and prior-head
+evidence are not authoritative. If the exact terminal reason is absent, keep
+following the existing pending, unavailable, finding, or timeout path rather
+than manually posting a clean summary.
+
 **Scope note**: This pre-flight checks `review.on_draft.github` and
 `review.on_ready.github` (external reviewers used by Protocol 93 / Step 7). The
 internal reviewer gate in Protocol 91 Step 7a separately checks
