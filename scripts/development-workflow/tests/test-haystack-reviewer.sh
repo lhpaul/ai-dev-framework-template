@@ -217,6 +217,14 @@ case "$*" in
     if [ -n "${MOCK_CALL_LOG:-}" ] && [ -f "$MOCK_CALL_LOG" ]; then
       _mock_haystack_calls=$(wc -l < "$MOCK_CALL_LOG" | tr -d ' ')
     fi
+    case "$*" in
+      *"repos/owner/repo/commits/${MOCK_GH_CHECK_RUNS_HEAD_SHA:-${MOCK_GH_HEAD_SHA:-abc123sha}}/check-runs"*)
+        ;;
+      *)
+        printf '{"check_runs":[]}\n'
+        exit 0
+        ;;
+    esac
     if [ "$_mock_haystack_calls" -gt 0 ] && [ -n "${MOCK_GH_CHECK_RUNS_AFTER_TRIAGE:-}" ]; then
       printf '%s\n' "$MOCK_GH_CHECK_RUNS_AFTER_TRIAGE"
     elif [ -n "${MOCK_GH_CHECK_RUNS:-}" ]; then
@@ -1424,7 +1432,19 @@ _assert_file_limit_lookalike_rejected \
   "PR exceeds the Haystack analysis limit" \
   "This pull request exceeds the Haystack file limit."
 
+MOCK_GH_HEAD_SHA="current-head-sha"
+MOCK_GH_CHECK_RUNS_HEAD_SHA="prior-head-sha"
+MOCK_GH_CHECK_RUNS="$_file_limit_check_run"
+export MOCK_GH_HEAD_SHA MOCK_GH_CHECK_RUNS_HEAD_SHA MOCK_GH_CHECK_RUNS
+MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}'
+MOCK_HAYSTACK_EXITS='0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+run_test "file_limit_rejects_prior_head_check" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+
 unset MOCK_GH_CHECK_RUNS MOCK_GH_CHECK_RUNS_AFTER_TRIAGE
+unset MOCK_GH_HEAD_SHA MOCK_GH_CHECK_RUNS_HEAD_SHA
 unset _file_limit_check_run
 unset -f _assert_file_limit_lookalike_rejected
 

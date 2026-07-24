@@ -14,6 +14,7 @@ Key properties:
 
 - **Poll-retry on pending**: When `haystack triage` returns `status=pending` (analysis still in progress), `haystack-reviewer.sh` waits `HAYSTACK_POLL_INTERVAL` seconds (default: 15) and retries automatically until the analysis completes or the overall `HAYSTACK_REVIEWER_TIMEOUT` budget is exhausted. This eliminates the timing-gap false-negative where the reviewer loop ran within the first 2–4 minutes of a PR push and silently skipped findings.
 - **GitHub App check-run fallback**: When CLI triage is unavailable, times out, or stays pending past the timeout budget, `haystack-reviewer.sh` reads the latest `Haystack / Review` check run for the PR head. The check run is used as fallback/readback evidence; CLI triage remains the preferred source because it exposes richer finding details and fix prompts.
+- **Terminal large-PR skip**: At each normal observation boundary, the adapter checks the current-head `Haystack / Review` run for a completed result that explicitly says the PR exceeds Haystack's analysis or file limit. That authoritative outcome becomes `RESULT=skipped`, `REASON=analysis_skipped_file_limit`, and `DISPLAY_RESULT=skipped (analysis file limit)` immediately. Generic `action_required`, generic `Analysis Skipped` text, numeric counts, unrelated limits, incomplete runs, comments, and prior-head evidence do not match.
 - **Policy-verdict visibility**: After triage completes, `haystack-reviewer.sh` also reads `haystack pr-status <PR> --json`. When Haystack reports `needsHumanReview: true` or `analysisVerdict: "needs-review"`, the reviewer loop keeps the result non-blocking if there are no blocking findings but displays `haystack (needs-review: policy)` in the PR summary instead of `haystack (clean)`. The summary also records the Haystack bucket, `needsHumanReview`, and a disposition such as `blocking`, `policy-human-review`, `advisory-only`, or `good-to-merge`.
 - **No per-hour rate cap**: Unlike some hosted review services, Haystack triage is not subject to hourly review limits (as of the time of writing).
 - **Graceful degradation**: If neither CLI triage nor the GitHub App check run is reachable, the reviewer exits with `UNAVAILABLE` and the review loop continues with the remaining configured platforms.
@@ -203,7 +204,29 @@ If a single `haystack triage` call hangs (e.g., network issue), the script enfor
 
 ## Graceful Degradation
 
-`haystack-reviewer.sh` degrades gracefully in three distinct scenarios:
+`haystack-reviewer.sh` degrades gracefully in four distinct scenarios:
+
+**Analysis skipped because the PR exceeds Haystack's file limit**
+(`REASON=analysis_skipped_file_limit`, exit 3):
+
+```text
+RESULT=skipped
+REASON=analysis_skipped_file_limit
+DISPLAY_RESULT=skipped (analysis file limit)
+BLOCKING_COUNT=0
+SUGGESTION_COUNT=0
+COMMENT_COUNT=0
+```
+
+This is a healthy, terminal platform skip rather than a reviewer-health
+failure. It does not add `reviewer-failed`, and the adapter checks for it before
+each triage observation and again after transient triage output before sleep.
+The result therefore stops the extended polling window promptly and remains
+stable on a same-head rerun. The workflow-owned Automated Reviewer Loop Summary
+and its `reviewer_loop_history.v1` payload preserve the distinct display token.
+The skip is permissive for Haystack only: other reviewer findings, CI failures,
+unresolved review threads, regression checks, and readiness requirements remain
+authoritative.
 
 **CLI not installed or authentication failed** (`REASON=unavailable`, exit 3):
 
@@ -235,9 +258,16 @@ SUGGESTION_COUNT=0
 COMMENT_COUNT=0
 ```
 
-In all three cases, `pr-review-loop.sh` treats the reviewer as unavailable and continues with the remaining platforms. Other platforms are not blocked.
+In all four cases, `pr-review-loop.sh` continues with the remaining platforms.
+Only the file-limit outcome is a healthy skip; the other three are reviewer
+health failures.
 
-When any of these Haystack reviewer-health failures occur, `pr-review-loop.sh` applies the `reviewer-failed` label to the PR so the failure is visible from the PR list or project board. The label is self-healing: a later loop run that reaches healthy reviewer output (`clean`, `needs_fixes`, `needs_rerun`, or only `skipped/not_configured`) removes `reviewer-failed`.
+When any of the three Haystack reviewer-health failures occur,
+`pr-review-loop.sh` applies the `reviewer-failed` label to the PR so the failure
+is visible from the PR list or project board. The label is self-healing: a later
+loop run that reaches healthy reviewer output (`clean`, `needs_fixes`,
+`needs_rerun`, `skipped/not_configured`, or
+`skipped/analysis_skipped_file_limit`) removes `reviewer-failed`.
 
 ---
 
@@ -250,12 +280,30 @@ When any of these Haystack reviewer-health failures occur, `pr-review-loop.sh` a
 | `2` | TIMED_OUT — per-call OS timeout exhausted the overall budget | `skipped` (→ `escalate` via `pr-review-loop.sh`) | `timeout` |
 | `2` | PENDING_TIMEOUT — analysis stayed `pending` until the overall budget expired | `skipped` (→ `escalate` via `pr-review-loop.sh`) | `pending_timeout` |
 | `3` | UNAVAILABLE — CLI not installed, authentication failed, `status=none` | `skipped` | `unavailable` |
+| `3` | ANALYSIS_SKIPPED_FILE_LIMIT — completed current-head check explicitly declines an oversized PR | `skipped` | `analysis_skipped_file_limit` |
 
-The `REASON` field distinguishes the three `skipped` sub-cases so callers can decide whether to retry later (`pending_timeout` — analysis was in progress), investigate connectivity (`timeout` — a call hung), or check authentication (`unavailable` — CLI absent or no analysis submitted).
+The `REASON` field distinguishes reviewer-health failures from the terminal
+file-limit outcome. Callers can retry later for `pending_timeout`, investigate
+connectivity for `timeout`, check authentication for `unavailable`, or continue
+the remaining gates immediately for `analysis_skipped_file_limit`.
 
 ---
 
 ## Troubleshooting
+
+### Haystack reports `Analysis Skipped` for an oversized PR
+
+The adapter accepts this outcome only from a completed `Haystack / Review`
+check fetched for the current PR head, and only when its title or summary
+explicitly says the PR exceeds the Haystack analysis or file limit. When the
+predicate matches, the reviewer loop records
+`analysis_skipped_file_limit`, posts or updates its script-owned summary and
+durable history, and continues with every other configured gate.
+
+Do not reproduce this behavior with a manual summary comment. If the distinct
+reason is absent, inspect the current-head check run and follow the normal
+pending, unavailable, finding, or timeout path. Free-form issue comments and
+prior-head check runs are deliberately not authoritative.
 
 ### `haystack` CLI not found
 

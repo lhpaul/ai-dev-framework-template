@@ -894,6 +894,13 @@ bash scripts/development-workflow/pr-review-loop.sh "$PR_NUMBER"
 
 Monitor the output. If the script reports unresolved findings, apply the required fixes, push, and re-run until the loop exits clean or escalates.
 
+Oversized sync PRs may receive Haystack's authoritative
+`analysis_skipped_file_limit` outcome by design. The script records that
+platform as `skipped (analysis file limit)` in its workflow-owned summary and
+durable history instead of waiting through the extended polling window. This
+skip is permissive only for Haystack: other configured reviewers, CI,
+unresolved-thread, regression, and readiness gates remain mandatory.
+
 ### 6.3 — Apply readiness labels
 
 Once the reviewer loop exits clean:
