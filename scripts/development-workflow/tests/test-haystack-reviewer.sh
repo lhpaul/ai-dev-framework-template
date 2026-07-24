@@ -1385,7 +1385,7 @@ run_test "file_limit_skip_rerun_avoids_triage" "0" "$calls"
 
 # A skip that appears during a transient triage call is observed before sleep
 # or a second triage observation.
-MOCK_GH_CHECK_RUNS='{"check_runs":[]}'
+MOCK_GH_CHECK_RUNS="$(jq -n '{check_runs: []}')"
 MOCK_GH_CHECK_RUNS_AFTER_TRIAGE="$_file_limit_check_run"
 export MOCK_GH_CHECK_RUNS MOCK_GH_CHECK_RUNS_AFTER_TRIAGE
 MOCK_HAYSTACK_OUTPUTS='{"status":"pending"}'
