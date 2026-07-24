@@ -20,6 +20,8 @@
 #      - status=error persisting until timeout → REASON=pending_timeout (not clean)
 #      - completed-with-0-findings → clean (the ONLY path that may yield clean)
 #      - status=error then completed-0-findings → clean (retry succeeds, result is genuinely empty)
+#  10. current-head file-limit skips terminate promptly and fail closed on
+#      ambiguous, stale, incomplete, or non-file-limit evidence
 #
 # Usage: bash scripts/development-workflow/tests/test-haystack-reviewer.sh
 # No external tooling required beyond bash and jq (jq is used to validate JSON
@@ -33,11 +35,10 @@ set -euo pipefail
 # Locate repository root (works inside worktrees and normal checkouts).
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-# Use --git-common-dir (not --show-toplevel) so this resolves correctly even
-# when the harness is run inside a git worktree (--show-toplevel returns the
-# worktree path, not the main repo root).
-GIT_COMMON_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --git-common-dir)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/$GIT_COMMON_DIR/.." && pwd -P)"
+# The active checkout is the source under test. In a worktree, --show-toplevel
+# intentionally resolves to that worktree instead of the main checkout so the
+# harness exercises the branch's implementation.
+REPO_ROOT="$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)"
 
 HAYSTACK_REVIEWER="$REPO_ROOT/scripts/development-workflow/haystack-reviewer.sh"
 
@@ -197,6 +198,7 @@ fi
 exit "$mock_exit"
 MOCK_HAYSTACK
   chmod +x "$MOCK_BIN/haystack"
+  _install_gh_check_run_mock
 }
 
 _install_gh_check_run_mock() {
@@ -211,7 +213,13 @@ case "$*" in
     if [ "${MOCK_GH_CHECK_RUNS_FAIL:-0}" = "1" ]; then
       exit 1
     fi
-    if [ -n "${MOCK_GH_CHECK_RUNS:-}" ]; then
+    _mock_haystack_calls=0
+    if [ -n "${MOCK_CALL_LOG:-}" ] && [ -f "$MOCK_CALL_LOG" ]; then
+      _mock_haystack_calls=$(wc -l < "$MOCK_CALL_LOG" | tr -d ' ')
+    fi
+    if [ "$_mock_haystack_calls" -gt 0 ] && [ -n "${MOCK_GH_CHECK_RUNS_AFTER_TRIAGE:-}" ]; then
+      printf '%s\n' "$MOCK_GH_CHECK_RUNS_AFTER_TRIAGE"
+    elif [ -n "${MOCK_GH_CHECK_RUNS:-}" ]; then
       printf '%s\n' "$MOCK_GH_CHECK_RUNS"
     else
       printf '{"check_runs":[]}\n'
@@ -1046,10 +1054,10 @@ MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,
 MOCK_HAYSTACK_EXITS='0
 0'
 MOCK_HAYSTACK_SLEEPS='0
-2'
+4'
 _install_mock_with_exits
 
-output=$(_run_reviewer 1 1)
+output=$(_run_reviewer 3 1)
 calls=$(_call_count)
 ec=$(cat "$_REVIEWER_EXIT_FILE")
 
@@ -1283,6 +1291,142 @@ run_test "check_run_fallback_pending_reason" "REASON=pending_check_run" "$(echo 
 run_test "check_run_fallback_pending_exit_code" "2" "$ec"
 
 unset MOCK_GH_CHECK_RUNS _check_summary_blocking _check_summary_advisory _check_summary_custom
+
+# ---------------------------------------------------------------------------
+# Area 13: current-head Haystack analysis file-limit skip (#1311)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 13: current-head analysis file-limit skip ==="
+
+_file_limit_check_run="$(
+  jq -n '{
+    check_runs: [
+      {
+        name: "Haystack / Review",
+        status: "completed",
+        conclusion: "action_required",
+        details_url: "https://haystackeditor.com/review/owner/repo/123",
+        started_at: "2026-07-23T14:00:00Z",
+        completed_at: "2026-07-23T14:00:02Z",
+        output: {
+          title: "PR exceeds the Haystack analysis limit",
+          summary: "This pull request has 168 changed files, which exceeds the Haystack analysis limit of 100 files."
+        }
+      }
+    ]
+  }'
+)"
+MOCK_GH_CHECK_RUNS="$_file_limit_check_run"
+export MOCK_GH_CHECK_RUNS
+unset MOCK_GH_CHECK_RUNS_AFTER_TRIAGE
+MOCK_HAYSTACK_OUTPUTS='{"status":"pending"}'
+MOCK_HAYSTACK_EXITS='0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+calls=$(_call_count)
+
+run_test "file_limit_skip_result" "RESULT=skipped" "$(echo "$output" | grep '^RESULT=')"
+run_test "file_limit_skip_reason" "REASON=analysis_skipped_file_limit" "$(echo "$output" | grep '^REASON=')"
+run_test "file_limit_skip_display" "DISPLAY_RESULT=skipped (analysis file limit)" "$(echo "$output" | grep '^DISPLAY_RESULT=')"
+run_test "file_limit_skip_counts" "0,0,0" "$(printf '%s,%s,%s' \
+  "$(echo "$output" | grep '^BLOCKING_COUNT=' | cut -d= -f2)" \
+  "$(echo "$output" | grep '^SUGGESTION_COUNT=' | cut -d= -f2)" \
+  "$(echo "$output" | grep '^COMMENT_COUNT=' | cut -d= -f2)")"
+run_test "file_limit_skip_metadata" "completed,action_required" "$(printf '%s,%s' \
+  "$(echo "$output" | grep '^CHECK_RUN_STATUS=' | cut -d= -f2)" \
+  "$(echo "$output" | grep '^CHECK_RUN_CONCLUSION=' | cut -d= -f2)")"
+run_test "file_limit_skip_exit_code" "3" "$ec"
+run_test "file_limit_skip_avoids_triage" "0" "$calls"
+
+# Same-head reruns remain terminal and do not enter the polling loop.
+output=$(_run_reviewer 30 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+calls=$(_call_count)
+run_test "file_limit_skip_rerun_reason" "REASON=analysis_skipped_file_limit" "$(echo "$output" | grep '^REASON=')"
+run_test "file_limit_skip_rerun_exit_code" "3" "$ec"
+run_test "file_limit_skip_rerun_avoids_triage" "0" "$calls"
+
+# A skip that appears during a transient triage call is observed before sleep
+# or a second triage observation.
+MOCK_GH_CHECK_RUNS='{"check_runs":[]}'
+MOCK_GH_CHECK_RUNS_AFTER_TRIAGE="$_file_limit_check_run"
+export MOCK_GH_CHECK_RUNS MOCK_GH_CHECK_RUNS_AFTER_TRIAGE
+MOCK_HAYSTACK_OUTPUTS='{"status":"pending"}'
+MOCK_HAYSTACK_EXITS='0'
+_install_mock_with_exits
+
+output=$(_run_reviewer 30 1)
+ec=$(cat "$_REVIEWER_EXIT_FILE")
+calls=$(_call_count)
+run_test "file_limit_skip_after_transient_result" "RESULT=skipped" "$(echo "$output" | grep '^RESULT=')"
+run_test "file_limit_skip_after_transient_reason" "REASON=analysis_skipped_file_limit" "$(echo "$output" | grep '^REASON=')"
+run_test "file_limit_skip_after_transient_exit_code" "3" "$ec"
+run_test "file_limit_skip_after_transient_single_triage" "1" "$calls"
+
+_assert_file_limit_lookalike_rejected() {
+  local name="$1"
+  local status="$2"
+  local title="$3"
+  local summary="$4"
+
+  MOCK_GH_CHECK_RUNS="$(
+    jq -n \
+      --arg status "$status" \
+      --arg title "$title" \
+      --arg summary "$summary" \
+      '{
+        check_runs: [
+          {
+            name: "Haystack / Review",
+            status: $status,
+            conclusion: "action_required",
+            started_at: "2026-07-23T14:00:00Z",
+            output: {title: $title, summary: $summary}
+          }
+        ]
+      }'
+  )"
+  export MOCK_GH_CHECK_RUNS
+  unset MOCK_GH_CHECK_RUNS_AFTER_TRIAGE
+  MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}'
+  MOCK_HAYSTACK_EXITS='0'
+  _install_mock_with_exits
+
+  output=$(_run_reviewer 30 1)
+  run_test "$name" "RESULT=clean" "$(echo "$output" | grep '^RESULT=')"
+}
+
+_assert_file_limit_lookalike_rejected \
+  "file_limit_rejects_generic_action_required" \
+  "completed" \
+  "Review requires action" \
+  "A reviewer must inspect this pull request."
+_assert_file_limit_lookalike_rejected \
+  "file_limit_rejects_generic_analysis_skipped" \
+  "completed" \
+  "Analysis Skipped" \
+  "Haystack did not analyze this pull request."
+_assert_file_limit_lookalike_rejected \
+  "file_limit_rejects_numeric_count_only" \
+  "completed" \
+  "Analysis Skipped" \
+  "This pull request changes 168 files."
+_assert_file_limit_lookalike_rejected \
+  "file_limit_rejects_time_limit" \
+  "completed" \
+  "Analysis exceeded the time limit" \
+  "Haystack analysis exceeded its time limit."
+_assert_file_limit_lookalike_rejected \
+  "file_limit_rejects_incomplete_check" \
+  "in_progress" \
+  "PR exceeds the Haystack analysis limit" \
+  "This pull request exceeds the Haystack file limit."
+
+unset MOCK_GH_CHECK_RUNS MOCK_GH_CHECK_RUNS_AFTER_TRIAGE
+unset _file_limit_check_run
+unset -f _assert_file_limit_lookalike_rejected
 
 # ---------------------------------------------------------------------------
 # Summary

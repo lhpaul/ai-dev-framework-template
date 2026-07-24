@@ -1997,7 +1997,9 @@ run_haystack_review() {
   #   2 → RESULT=escalate; REASON forwarded from companion script:
   #         REASON=timeout         — per-call OS timeout exhausted budget
   #         REASON=pending_timeout — analysis stayed pending past timeout budget
-  #   3 → RESULT=skipped; REASON forwarded (unavailable, unauthorized, forbidden, …)
+  #   3 → RESULT=skipped; REASON and DISPLAY_RESULT forwarded
+  #         (unavailable, unauthorized, forbidden,
+  #          analysis_skipped_file_limit, …)
   local pr_number="$1"
   local branch_name="$2"
   # poll_interval and max_wait passed for interface consistency; haystack-reviewer.sh
@@ -2134,10 +2136,13 @@ run_haystack_review() {
     *)
       # Exit 3 (UNAVAILABLE/auth errors) and any unexpected exit code → skipped.
       local haystack_reason
+      local haystack_display_result
       haystack_reason="$(printf '%s\n' "$script_output" | grep '^REASON=' | cut -d= -f2 | head -n 1)"
       haystack_reason="${haystack_reason:-unavailable}"
+      haystack_display_result="$(printf '%s\n' "$script_output" | grep '^DISPLAY_RESULT=' | cut -d= -f2- | head -n 1)"
       print_kv RESULT skipped
       print_kv REASON "$haystack_reason"
+      [ -n "$haystack_display_result" ] && print_kv DISPLAY_RESULT "$haystack_display_result"
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"

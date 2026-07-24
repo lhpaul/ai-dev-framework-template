@@ -1291,6 +1291,43 @@ rm -rf "$_haystack_reviewer_stub"
 unset MOCK_GH_OUTPUT _haystack_auth_overrides actual_output actual_exit
 workflow_repo_root() { printf '%s\n' "${HARNESS_REPO_ROOT:-$REPO_ROOT}"; }
 
+# test: run_haystack_review forwards the terminal file-limit reason and display
+_haystack_file_limit_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+'
+export MOCK_GH_OUTPUT="false"
+_haystack_reviewer_stub="$(mktemp -d)"
+mkdir -p "$_haystack_reviewer_stub/scripts/development-workflow"
+cat > "$_haystack_reviewer_stub/scripts/development-workflow/haystack-reviewer.sh" <<'HAYSTACK_STUB'
+#!/usr/bin/env bash
+printf 'RESULT=skipped\n'
+printf 'REASON=analysis_skipped_file_limit\n'
+printf 'DISPLAY_RESULT=skipped (analysis file limit)\n'
+printf 'BLOCKING_COUNT=0\nSUGGESTION_COUNT=0\nCOMMENT_COUNT=0\n'
+exit 3
+HAYSTACK_STUB
+chmod +x "$_haystack_reviewer_stub/scripts/development-workflow/haystack-reviewer.sh"
+workflow_repo_root() { printf "%s\n" "$_haystack_reviewer_stub"; }
+actual_output="$(
+  eval "$_haystack_file_limit_overrides"
+  _ec=0
+  run_haystack_review "42" "feature/test" "1" "30" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "haystack_file_limit_reason_forwarded" "REASON=analysis_skipped_file_limit" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "haystack_file_limit_display_forwarded" "DISPLAY_RESULT=skipped (analysis file limit)" \
+  "$(printf '%s\n' "$actual_output" | grep "^DISPLAY_RESULT=")"
+run_test "haystack_file_limit_maps_to_healthy_skip" "RESULT=skipped" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "haystack_file_limit_mapping_exit_code" "0" "$actual_exit"
+rm -rf "$_haystack_reviewer_stub"
+unset MOCK_GH_OUTPUT _haystack_file_limit_overrides actual_output actual_exit
+workflow_repo_root() { printf '%s\n' "${HARNESS_REPO_ROOT:-$REPO_ROOT}"; }
+
 # ---------------------------------------------------------------------------
 # Area 10: per-platform result tokens in summary comment (#755)
 #
@@ -1330,6 +1367,14 @@ run_test "policy_review_compare_verdict" "advisory" "$(normalize_platform_verdic
 run_test "policy_review_does_not_override_needs_fixes" "blocking" "$(normalize_platform_verdict needs_fixes "$_platform_output")"
 run_test "policy_review_does_not_override_skipped" "unavailable" "$(normalize_platform_verdict skipped "$_platform_output")"
 unset _platform_output _prt_display_override _prt_disp
+
+_platform_output='RESULT=skipped
+REASON=analysis_skipped_file_limit
+DISPLAY_RESULT=skipped (analysis file limit)'
+_prt_display_override="$(kv_value_default DISPLAY_RESULT "$_platform_output" "")"
+run_test "summary_file_limit_display_override" "skipped (analysis file limit)" "$_prt_display_override"
+run_test "file_limit_skip_compare_verdict" "unavailable" "$(normalize_platform_verdict skipped "$_platform_output")"
+unset _platform_output _prt_display_override
 
 # Test 10.1c: policy metadata is rendered as an explicit handoff note.
 _platform_name="haystack"
@@ -1588,6 +1633,24 @@ _history_same_sha_payload="$(reviewer_loop_history_payload_from_existing "$_hist
 run_test "history_same_sha_duplicate_appends" "2" \
   "$(printf '%s\n' "$_history_same_sha_payload" | jq '(.entries // []) | length')"
 
+_history_file_limit_payload="$(reviewer_loop_history_payload_from_existing "" \
+  "clean" "" "pr-agent (clean), haystack (skipped (analysis file limit))" "0" "0")"
+run_test "history_file_limit_platform_display" "haystack (skipped (analysis file limit))" \
+  "$(printf '%s\n' "$_history_file_limit_payload" | jq -r '.entries[0].platforms[] | select(startswith("haystack "))')"
+_history_file_limit_body="$(cat <<EOF_HISTORY_FILE_LIMIT
+### Automated Reviewer Loop Summary
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+$(printf '%s\n' "$_history_file_limit_payload" | jq '.')
+\`\`\`
+EOF_HISTORY_FILE_LIMIT
+)"
+_history_file_limit_rerun="$(reviewer_loop_history_payload_from_existing "$_history_file_limit_body" \
+  "clean" "" "pr-agent (clean), haystack (skipped (analysis file limit))" "0" "0")"
+run_test "history_file_limit_same_head_rerun_appends" "2" \
+  "$(printf '%s\n' "$_history_file_limit_rerun" | jq '(.entries // []) | length')"
+
 _history_latest_body="$(cat <<EOF_HISTORY_LATEST
 ### Automated Reviewer Loop Summary
 
@@ -1674,6 +1737,7 @@ unset _history_payload _history_existing_body _history_payload_2
 unset _history_empty_entries_body _history_empty_entries_payload
 unset _history_needs_rerun_payload
 unset _history_same_sha_body _history_same_sha_payload
+unset _history_file_limit_payload _history_file_limit_body _history_file_limit_rerun
 unset _history_latest_body _history_latest_payload
 unset _history_summary_comments _history_selected_record
 unset _history_malformed_body _history_malformed_payload
@@ -1876,6 +1940,7 @@ run_test "reviewer_failed_escalate_pending_timeout" "yes" "$(_reviewer_failed_re
 run_test "reviewer_failed_skipped_unavailable" "yes" "$(_reviewer_failed_required skipped unavailable)"
 run_test "reviewer_failed_skipped_thread_check_failed" "yes" "$(_reviewer_failed_required skipped thread-check-failed)"
 run_test "reviewer_failed_skipped_not_configured" "no" "$(_reviewer_failed_required skipped not_configured)"
+run_test "reviewer_failed_skipped_file_limit" "no" "$(_reviewer_failed_required skipped analysis_skipped_file_limit)"
 run_test "reviewer_failed_clean_no" "no" "$(_reviewer_failed_required clean timeout)"
 run_test "reviewer_failed_needs_fixes_no" "no" "$(_reviewer_failed_required needs_fixes '')"
 run_test "reviewer_failed_needs_rerun_no" "no" "$(_reviewer_failed_required needs_rerun '')"

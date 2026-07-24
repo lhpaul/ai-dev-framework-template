@@ -16,7 +16,8 @@
 #   0 — APPROVED   (no blocking findings)
 #   1 — NEEDS_REVISION (one or more blocking findings)
 #   2 — TIMED_OUT  (haystack triage did not return within the configured timeout)
-#   3 — UNAVAILABLE (haystack CLI not installed or triage returned a non-zero exit code)
+#   3 — SKIPPED     (Haystack unavailable, unauthorized, or declined an
+#                     oversized PR because of its analysis file limit)
 #
 # Stdout key-value contract (matched by pr-review-loop.sh):
 #   RESULT=clean|needs_fixes|skipped
@@ -26,7 +27,8 @@
 #   DISPLAY_RESULT=<value> (optional; used by pr-review-loop.sh summaries)
 #   POLICY_REVIEW_REQUIRED=0|1 (optional; present when pr-status is available)
 #   REASON=<value>   (only when RESULT=skipped — values: unavailable, timeout,
-#                     pending_timeout, unauthorized, forbidden)
+#                     pending_timeout, unauthorized, forbidden,
+#                     analysis_skipped_file_limit)
 #
 # Polling behaviour for transient states (status=pending, status=error, etc.):
 #   When `haystack triage --no-wait` returns ANY non-empty status value other
@@ -225,6 +227,80 @@ fetch_haystack_check_run_json() {
   printf '%s\n' "$check_json"
 }
 
+haystack_check_run_is_analysis_file_limit_skip() {
+  local check_json="$1"
+  local status=""
+  local evidence=""
+
+  if ! status="$(printf '%s\n' "$check_json" | jq -r '.status // ""' 2>/dev/null)"; then
+    return 1
+  fi
+  case "$status" in
+    completed|COMPLETED) ;;
+    *) return 1 ;;
+  esac
+
+  if ! evidence="$(printf '%s\n' "$check_json" | jq -r '
+    [(.output.title // ""), (.output.summary // "")]
+    | join(" ")
+    | ascii_downcase
+    | gsub("[[:space:]]+"; " ")
+  ' 2>/dev/null)"; then
+    return 1
+  fi
+
+  # Require both an explicit over-limit relationship and a Haystack
+  # analysis/file-limit subject. Generic action_required conclusions, generic
+  # "Analysis Skipped" text, numeric file counts, and time-limit messages do
+  # not satisfy this predicate.
+  case "$evidence" in
+    *exceed*|*over\ the\ limit*|*over\ haystack*)
+      case "$evidence" in
+        *haystack\ analysis\ limit*|*haystack\ file\ limit*)
+          return 0
+          ;;
+      esac
+      ;;
+  esac
+
+  return 1
+}
+
+emit_haystack_analysis_file_limit_skip_from_json() {
+  local check_json="$1"
+  local status=""
+  local conclusion=""
+  local details_url=""
+  local title=""
+
+  haystack_check_run_is_analysis_file_limit_skip "$check_json" || return 1
+
+  status="$(printf '%s\n' "$check_json" | jq -r '.status // ""')"
+  conclusion="$(printf '%s\n' "$check_json" | jq -r '.conclusion // ""')"
+  details_url="$(printf '%s\n' "$check_json" | jq -r '.details_url // .detailsUrl // ""')"
+  title="$(printf '%s\n' "$check_json" | jq -r '.output.title // ""')"
+
+  printf 'RESULT=skipped\n'
+  printf 'REASON=analysis_skipped_file_limit\n'
+  printf 'DISPLAY_RESULT=skipped (analysis file limit)\n'
+  printf 'BLOCKING_COUNT=0\n'
+  printf 'SUGGESTION_COUNT=0\n'
+  printf 'COMMENT_COUNT=0\n'
+  printf 'CHECK_RUN_STATUS=%s\n' "$status"
+  printf 'CHECK_RUN_CONCLUSION=%s\n' "$conclusion"
+  [ -n "$title" ] && printf 'CHECK_RUN_TITLE=%s\n' "$title"
+  [ -n "$details_url" ] && printf 'CHECK_RUN_URL=%s\n' "$details_url"
+}
+
+emit_haystack_analysis_file_limit_skip_if_present() {
+  local check_json=""
+
+  if ! check_json="$(fetch_haystack_check_run_json)"; then
+    return 1
+  fi
+  emit_haystack_analysis_file_limit_skip_from_json "$check_json"
+}
+
 emit_haystack_check_run_result() {
   local check_json=""
   local status=""
@@ -242,6 +318,10 @@ emit_haystack_check_run_result() {
 
   if ! check_json="$(fetch_haystack_check_run_json)"; then
     return 3
+  fi
+
+  if emit_haystack_analysis_file_limit_skip_from_json "$check_json"; then
+    return 4
   fi
 
   status="$(printf '%s\n' "$check_json" | jq -r '.status // ""')"
@@ -342,6 +422,7 @@ emit_check_run_fallback_or_skip() {
   emit_haystack_check_run_result
   fallback_exit=$?
   set -e
+  [ "$fallback_exit" -eq 4 ] && exit 3
   [ "$fallback_exit" -ne 3 ] && exit "$fallback_exit"
   return 1
 }
@@ -420,6 +501,14 @@ while true; do
   TRIAGE_STDERR=$(mktemp)
   TRIAGE_OUTPUT=""
   TRIAGE_EXIT=0
+
+  # A completed current-head file-limit decline is a terminal, healthy
+  # Haystack skip. Probe before every triage observation so a rerun does not
+  # enter the extended polling window for analysis Haystack already declined.
+  if emit_haystack_analysis_file_limit_skip_if_present; then
+    rm -f "$TRIAGE_STDERR"
+    exit 3
+  fi
 
   # Compute actual elapsed seconds using wall-clock timestamps so the budget
   # tracking reflects real time, not just accumulated sleep intervals.
@@ -614,6 +703,13 @@ while true; do
       # NEVER map an unknown or error status to "clean"; only a genuinely
       # completed result (empty STATUS_VALUE above) may yield RESULT=clean.
       echo "INFO: status='${STATUS_VALUE}' — still synthesizing; waiting ${POLL_INTERVAL}s before retry (${elapsed}s elapsed of ${TIMEOUT}s budget)" >&2
+      # The check run can become terminal while the triage request is in
+      # flight. Probe again before sleeping so the skip is observed at this
+      # standard polling boundary instead of burning the remaining timeout.
+      if emit_haystack_analysis_file_limit_skip_if_present; then
+        rm -f "$TRIAGE_STDERR"
+        exit 3
+      fi
       # Check budget BEFORE sleeping so we don't overshoot the timeout.
       if [ $((elapsed + POLL_INTERVAL)) -ge "$TIMEOUT" ]; then
         # Sleeping would exhaust the budget — exit now with pending_timeout.
