@@ -254,13 +254,13 @@ haystack_check_run_is_analysis_file_limit_skip() {
   # analysis/file-limit subject. Generic action_required conclusions, generic
   # "Analysis Skipped" text, numeric file counts, and time-limit messages do
   # not satisfy this predicate.
+  if [[ ! "$evidence" =~ (^|[^[:alnum:]_])(exceed|exceeds|exceeded|exceeding|over[[:space:]]+the[[:space:]]+limit|over[[:space:]]+haystack)([^[:alnum:]_]|$) ]]; then
+    return 1
+  fi
+
   case "$evidence" in
-    *exceed*|*over\ the\ limit*|*over\ haystack*)
-      case "$evidence" in
-        *haystack\ analysis\ limit*|*haystack\ file\ limit*|*haystack\'s\ analysis\ limit*|*haystack\'s\ file\ limit*)
-          return 0
-          ;;
-      esac
+    *haystack\ analysis\ limit*|*haystack\ file\ limit*|*haystack\'s\ analysis\ limit*|*haystack\'s\ file\ limit*)
+      return 0
       ;;
   esac
 

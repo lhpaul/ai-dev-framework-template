@@ -1454,6 +1454,21 @@ _assert_file_limit_lookalike_rejected \
   "Analysis exceeded the time limit" \
   "Haystack analysis exceeded its time limit."
 _assert_file_limit_lookalike_rejected \
+  "file_limit_rejects_recover_substring" \
+  "completed" \
+  "Recover Haystack analysis limit metadata" \
+  "The reviewer recovered Haystack analysis limit metadata."
+_assert_file_limit_lookalike_rejected \
+  "file_limit_rejects_hover_substring" \
+  "completed" \
+  "Hover Haystack file limit help" \
+  "Hover Haystack file limit help to inspect the policy."
+_assert_file_limit_lookalike_rejected \
+  "file_limit_rejects_discover_over_substring" \
+  "completed" \
+  "Discover the limit documentation" \
+  "Discover the limit before changing the Haystack analysis limit."
+_assert_file_limit_lookalike_rejected \
   "file_limit_rejects_incomplete_check" \
   "in_progress" \
   "PR exceeds the Haystack analysis limit" \
