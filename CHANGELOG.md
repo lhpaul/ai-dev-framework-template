@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Handle Haystack large-PR analysis skips** (#1311): Recognize authoritative current-head file-limit declines as terminal Haystack skips while preserving other reviewer gates and durable loop history.
+- **Reliable ready-phase PR review** (#1348): Use Cursor Bugbot instead of
+  Haystack for the repository's default ready-phase automated reviewer.
 - **Sync tracker-closeout workflow** (#1304): Include the merge-time tracker
   workflow in template-sync review so downstream projects can adopt graduation
   closeout together with its validation helpers.
