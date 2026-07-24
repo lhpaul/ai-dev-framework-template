@@ -2139,7 +2139,7 @@ run_haystack_review() {
       local haystack_display_result
       haystack_reason="$(printf '%s\n' "$script_output" | grep '^REASON=' | cut -d= -f2 | head -n 1)"
       haystack_reason="${haystack_reason:-unavailable}"
-      haystack_display_result="$(printf '%s\n' "$script_output" | grep '^DISPLAY_RESULT=' | cut -d= -f2- | head -n 1)"
+      haystack_display_result="$(kv_value_default DISPLAY_RESULT "$script_output" "")"
       print_kv RESULT skipped
       print_kv REASON "$haystack_reason"
       [ -n "$haystack_display_result" ] && print_kv DISPLAY_RESULT "$haystack_display_result"
