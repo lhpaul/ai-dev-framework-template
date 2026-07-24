@@ -113,6 +113,19 @@ snapshot_repo() {
 
 branch="feature/1179-stale-branch-reuse"
 
+repo="$(make_repo invalid-input)"
+out="$(validator_output --issue 1179 --branch "" --approved-base develop --repo-root "$repo")"
+run_test "empty_branch_rejected" "2" "$(status_code "$out")"
+run_contains "empty_branch_has_clear_error" "missing value for --branch" "$(body "$out")"
+out="$(validator_output --issue 1179 --branch "   " --approved-base develop --repo-root "$repo")"
+run_test "whitespace_branch_rejected" "2" "$(status_code "$out")"
+run_contains "whitespace_branch_has_clear_error" "invalid workflow branch name" "$(body "$out")"
+out="$(validator_output --issue 0 --branch feature/0-invalid --approved-base develop --repo-root "$repo")"
+run_test "zero_issue_rejected" "2" "$(status_code "$out")"
+out="$(validator_output --issue 1 --branch feature/1-minimum --approved-base develop --repo-root "$repo")"
+run_test "minimum_issue_accepted" "0" "$(status_code "$out")"
+run_test "minimum_issue_fresh_path" "no_existing_branch" "$(field RESULT "$(body "$out")")"
+
 repo="$(make_repo no-existing)"
 "$REAL_GIT" -C "$repo" branch feature/11790-lookalike
 "$REAL_GIT" -C "$repo" tag "backup-feature-1179-stale-branch-reuse"
