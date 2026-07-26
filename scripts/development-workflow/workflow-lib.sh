@@ -1446,6 +1446,9 @@ workflow_github_project_item_for_issue() {
                 nodes {
                   id
                   project { id number }
+                  content {
+                    ... on Issue { issueType { name } }
+                  }
                   status: fieldValueByName(name: "Status") {
                     ... on ProjectV2ItemFieldSingleSelectValue { name }
                   }
@@ -1494,10 +1497,13 @@ for item in project_items.get('nodes') or []:
     project = item.get('project') or {}
     if project.get('id') == project_id:
         status_value = item.get('status') or item.get('fieldValueByName') or {}
+        content = item.get('content') or {}
+        native_type = content.get('issueType') if isinstance(content, dict) else None
         type_candidates = []
         if preferred:
             type_candidates.append(item.get('configuredType') or {})
         type_candidates.extend([
+            native_type or {},
             item.get('customType') or {},
             item.get('compactCustomType') or {},
             item.get('type') or {},

@@ -123,6 +123,22 @@ JSON
 	          cat <<'JSON'
 	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Spec Ready"},"configuredType":{"name":"Workflow"},"customType":{"name":"Bug"},"type":{"name":"Bug"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
 JSON
+	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "native_type_only" ]; then
+	          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Spec Ready"},"content":{"issueType":{"name":"Feature"}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
+	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "native_with_custom_type" ]; then
+	          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Spec Ready"},"content":{"issueType":{"name":"Feature"}},"customType":{"name":"Refactor"},"compactCustomType":{"name":"Bug"},"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
+	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "configured_and_native_type" ]; then
+	          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Spec Ready"},"configuredType":{"name":"Workflow"},"content":{"issueType":{"name":"Feature"}},"customType":{"name":"Refactor"},"type":{"name":"Bug"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
+	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "null_native_with_custom_type" ]; then
+	          cat <<'JSON'
+	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Spec Ready"},"content":{"issueType":null},"customType":{"name":"Refactor"},"type":{"name":"Bug"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
 	        elif [ "${MOCK_PROJECT_ITEM_MODE:-existing}" = "released" ]; then
 	          cat <<'JSON'
 	{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_824","project":{"id":"PVT_project_1","number":1},"status":{"name":"Released"},"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
@@ -290,6 +306,43 @@ unset MOCK_PROJECT_ITEM_MODE
 unset MOCK_TRACKER_TYPE_FIELD
 run_test "targeted_type_read_prefers_configured_field" "Workflow" "$tracker_type"
 run_test "configured_type_read_passes_field_name" "1" "$(count_log_matches 'typeFieldName=Configured Type')"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=native_type_only
+tracker_type="$(get_tracker_type_for_issue 824)"
+unset MOCK_PROJECT_ITEM_MODE
+run_test "targeted_type_read_uses_native_issue_type" "Feature" "$tracker_type"
+run_test "native_type_read_requests_issue_type" "1" "$(count_log_matches 'issueType')"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=native_type_only
+native_type_stderr="$(workflow_github_project_item_for_issue 824 1 2>&1 >/dev/null || true)"
+unset MOCK_PROJECT_ITEM_MODE
+case "$native_type_stderr" in
+  *"named exactly 'Type'"*) native_type_warning_result="warned" ;;
+  *) native_type_warning_result="clean" ;;
+esac
+run_test "native_type_read_suppresses_missing_type_warning" "clean" "$native_type_warning_result"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=native_with_custom_type
+tracker_type="$(get_tracker_type_for_issue 824)"
+unset MOCK_PROJECT_ITEM_MODE
+run_test "targeted_type_read_prefers_native_over_custom_fields" "Feature" "$tracker_type"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=configured_and_native_type
+export MOCK_TRACKER_TYPE_FIELD="Configured Type"
+tracker_type="$(get_tracker_type_for_issue 824)"
+unset MOCK_PROJECT_ITEM_MODE
+unset MOCK_TRACKER_TYPE_FIELD
+run_test "targeted_type_read_prefers_configured_over_native" "Workflow" "$tracker_type"
+
+reset_log
+export MOCK_PROJECT_ITEM_MODE=null_native_with_custom_type
+tracker_type="$(get_tracker_type_for_issue 824)"
+unset MOCK_PROJECT_ITEM_MODE
+run_test "targeted_type_read_falls_back_when_native_is_null" "Refactor" "$tracker_type"
 
 reset_log
 export MOCK_PROJECT_ITEM_MODE=paginated
