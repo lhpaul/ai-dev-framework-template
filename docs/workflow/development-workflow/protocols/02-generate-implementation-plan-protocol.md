@@ -214,7 +214,11 @@ If none of these signals apply, skip this entire block.
 - Where directives can appear
 - How multiple suppressions on one line are interpreted
 
-For acceptance intent and terminology, reference `docs/specs/developments/20260420120000_201-tech-lead-parser-regex-plan-requirements/1_201-tech-lead-parser-regex-plan-requirements_specs.md`.
+These parser-risk and suppression requirements are the complete required
+acceptance intent and terminology. Historical template or workflow-hub
+development artifacts may offer supplementary context, but they can be absent
+in receiving repositories and must never block plan authoring or sync
+validation.
 
 ### Cross-cutting checklist plans: safety, quality, or compliance categories
 

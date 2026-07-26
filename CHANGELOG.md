@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Make Protocol 02 parser guidance portable** (#1310): Inline the required
+  parser-risk and suppression intent so synced repositories do not depend on an
+  unavailable historical development fixture.
 - **Native GitHub Issue Type classification** (#1280): Recognize native Issue
   Types while preserving configured and custom-field precedence.
 - **Handle Haystack large-PR analysis skips** (#1311): Recognize authoritative current-head file-limit declines as terminal Haystack skips while preserving other reviewer gates and durable loop history.
