@@ -49,6 +49,9 @@ jobs:
       - name: Run workflow shell guard lint tests
         run: bash scripts/lint/tests/test-workflow-shell-guard-lint.sh
 
+      - name: Install zsh for cross-shell snippet tests
+        run: sudo apt-get update && sudo apt-get install --yes zsh
+
       - name: Run workflow shell snippet lint tests
         run: bash scripts/lint/tests/test-workflow-shell-snippet-lint.sh
 

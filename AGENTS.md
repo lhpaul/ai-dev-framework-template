@@ -92,6 +92,7 @@ The repository ships Codex skill definitions in two compatible locations:
 
 Install them into your local Codex skill directories before first use:
 
+<!-- workflow-shell-contract: bash -->
 ```bash
 ./scripts/development-workflow/install-codex-skills.sh
 ```
@@ -116,6 +117,7 @@ For normal Codex usage, use `/run-work` to scan the portfolio and discover what 
 
 > **TODO**: Fill with your project's actual commands after setup.
 
+<!-- workflow-shell-contract: bash -->
 ```bash
 # Development
 # [your dev server command]

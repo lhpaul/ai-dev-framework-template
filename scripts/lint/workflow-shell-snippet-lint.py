@@ -13,7 +13,7 @@ from pathlib import Path
 ROOTS = ("AGENTS.md", "docs/workflow/", "docs/best-practices/", ".agents/skills/", ".codex/skills/", ".claude/commands/", ".claude/agents/", ".cursor/commands/", ".cursor/agents/", "scripts/development-workflow/")
 FENCE = re.compile(r"^\s*```(?P<lang>bash|sh|shell|zsh)?\s*$", re.I)
 CONTRACT = re.compile(r"^\s*<!--\s*workflow-shell-contract:\s*(bash|bash-zsh)\s*-->\s*$")
-SHELL_SIGNAL = re.compile(r"(?:^|\s)(?:git|gh|bash|zsh|for|while|set|if|cd|export|source)\b")
+SHELL_SIGNAL = re.compile(r"(?m)^\s*(?:git|gh|bash|zsh|for|while|set|if|cd|export|source)\b")
 PORTABLE_FOR = re.compile(r"\bfor\s+\w+\s+in\s+\$[A-Za-z_][A-Za-z0-9_]*\b")
 PORTABLE_SET = re.compile(r"\bset\s+--\s+\$[A-Za-z_][A-Za-z0-9_]*\b")
 BASH_ONLY = re.compile(r"BASH_SOURCE|<\(|\[\[|\$\{|\b(?:readarray|mapfile)\b|\w+=\(")
@@ -29,7 +29,17 @@ class Finding:
 
 
 def in_scope(path: str) -> bool:
-    return path == "AGENTS.md" or path.startswith(ROOTS[1:])
+    return any(
+        path == root.rstrip("/") or path.startswith(f"{root.rstrip('/')}/")
+        for root in ROOTS
+    )
+
+
+def markdown_paths(root: str) -> list[Path]:
+    candidate = Path(root)
+    if candidate.is_file():
+        return [candidate] if candidate.suffix == ".md" else []
+    return list(candidate.rglob("*.md")) if candidate.is_dir() else []
 
 
 def diff_text(base_ref: str | None, input_file: str | None) -> str:
@@ -99,7 +109,8 @@ def lint(path: str, changed: set[int]) -> list[Finding]:
                 findings.append(Finding("WS001", path, line, "missing adjacent workflow-shell-contract marker (bash or bash-zsh)"))
             elif contract == "bash":
                 first = next((row.strip() for row in fence_lines if row.strip() and not row.lstrip().startswith("#")), "")
-                if not (first.startswith("#!/") and "bash" in first or first.startswith("bash ") or first.startswith("bash<<") or first.startswith("bash <<")):
+                launches_bash = any(re.match(r"^\s*bash(?:\s|$)", row) for row in fence_lines)
+                if not (first.startswith("#!/") and "bash" in first or launches_bash):
                     findings.append(Finding("WS002", path, line, "bash contract must visibly launch Bash or start a complete Bash-shebang script"))
                 if BASH4.search(content):
                     findings.append(Finding("WS006", path, line, "bash contract uses Bash 4+ syntax; repository supports Bash 3.2"))
@@ -126,7 +137,7 @@ def main() -> int:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
     if args.all:
-        changed = {str(path): set(range(1, len(path.read_text(encoding="utf-8").splitlines()) + 1)) for root in ROOTS for path in Path(root).rglob("*.md") if path.is_file()}
+        changed = {str(path): set(range(1, len(path.read_text(encoding="utf-8").splitlines()) + 1)) for root in ROOTS for path in markdown_paths(root)}
     findings = [finding for path, lines in changed.items() for finding in lint(path, lines)]
     for finding in findings:
         print(f"{finding.path}:{finding.line}: {finding.rule}: {finding.message}")
