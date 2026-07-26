@@ -200,8 +200,10 @@ list_open_workflow_type_issues
 
 `get_tracker_type_for_issue` and `update_tracker_type_best_effort` use the same
 targeted `repository.issue(...).projectItems` lookup as the Status helpers.
-The field metadata lookup honors `issue_tracker.custom_fields.type_field`, then
-falls back to `Custom Type`, `CustomType`, and `Type`.
+The targeted Type read honors `issue_tracker.custom_fields.type_field`, then
+GitHub's native Issue Type, then `Custom Type`, `CustomType`, and `Type`.
+Type writes remain limited to configured project fields; this does not add
+native Issue Type mutation support.
 `list_open_workflow_type_issues` fetches open issues first and then
 cross-references a single project item-list result, so callers do not perform
 one full-board scan per issue.

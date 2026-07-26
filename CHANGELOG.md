@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Native GitHub Issue Type classification** (#1280): Recognize native Issue
+  Types while preserving configured and custom-field precedence.
 - **Handle Haystack large-PR analysis skips** (#1311): Recognize authoritative current-head file-limit declines as terminal Haystack skips while preserving other reviewer gates and durable loop history.
 - **Bugbot clean-review parsing** (#1350): Recognize Bugbot's current
   no-new-issues review template without hiding mixed messages that contain
