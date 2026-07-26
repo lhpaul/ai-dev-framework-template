@@ -16,7 +16,7 @@ CONTRACT = re.compile(r"^\s*<!--\s*workflow-shell-contract:\s*(bash|bash-zsh)\s*
 SHELL_SIGNAL = re.compile(r"(?m)^\s*(?:git|gh|bash|zsh|for|while|set|if|cd|export|source)\b")
 PORTABLE_FOR = re.compile(r"\bfor\s+\w+\s+in\s+\$[A-Za-z_][A-Za-z0-9_]*\b")
 PORTABLE_SET = re.compile(r"\bset\s+--\s+\$[A-Za-z_][A-Za-z0-9_]*\b")
-BASH_ONLY = re.compile(r"BASH_SOURCE|<\(|\[\[|\$\{|\b(?:readarray|mapfile)\b|\w+=\(")
+BASH_ONLY = re.compile(r"BASH_SOURCE|<\(|\[\[|\$\{![^}]+\}|\b(?:readarray|mapfile)\b|\w+=\(")
 BASH4 = re.compile(r"\b(?:declare|local)\s+-A\b|\b(?:readarray|mapfile)\b")
 
 
@@ -108,7 +108,7 @@ def lint(path: str, changed: set[int]) -> list[Finding]:
             if contract is None:
                 findings.append(Finding("WS001", path, line, "missing adjacent workflow-shell-contract marker (bash or bash-zsh)"))
             elif contract == "bash":
-                first = next((row.strip() for row in fence_lines if row.strip() and not row.lstrip().startswith("#")), "")
+                first = next((row.strip() for row in fence_lines if row.strip()), "")
                 launches_bash = any(re.match(r"^\s*bash(?:\s|$)", row) for row in fence_lines)
                 if not (first.startswith("#!/") and "bash" in first or launches_bash):
                     findings.append(Finding("WS002", path, line, "bash contract must visibly launch Bash or start a complete Bash-shebang script"))
@@ -131,13 +131,14 @@ def main() -> int:
     parser.add_argument("--input", "--diff-file", dest="input_file")
     parser.add_argument("--all", action="store_true")
     args = parser.parse_args()
-    try:
-        changed = changed_lines(diff_text(args.base_ref, args.input_file))
-    except (OSError, RuntimeError) as error:
-        print(f"ERROR: {error}", file=sys.stderr)
-        return 2
     if args.all:
         changed = {str(path): set(range(1, len(path.read_text(encoding="utf-8").splitlines()) + 1)) for root in ROOTS for path in markdown_paths(root)}
+    else:
+        try:
+            changed = changed_lines(diff_text(args.base_ref, args.input_file))
+        except (OSError, RuntimeError) as error:
+            print(f"ERROR: {error}", file=sys.stderr)
+            return 2
     findings = [finding for path, lines in changed.items() for finding in lint(path, lines)]
     for finding in findings:
         print(f"{finding.path}:{finding.line}: {finding.rule}: {finding.message}")
