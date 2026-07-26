@@ -98,7 +98,7 @@ def lint(path: str, changed: set[int]) -> list[Finding]:
         while closer < len(lines) and not lines[closer].lstrip().startswith("```"):
             closer += 1
         fence_lines = lines[index + 1 : closer]
-        changed_here = any(index < number <= closer + 1 for number in changed)
+        changed_here = any(index < number < closer + 1 for number in changed)
         language = (opener.group("lang") or "").lower()
         content = "\n".join(fence_lines)
         executable = language in {"bash", "sh", "shell", "zsh"} or bool(SHELL_SIGNAL.search(content))
