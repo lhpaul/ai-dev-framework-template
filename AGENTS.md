@@ -139,6 +139,9 @@ find docs/specs/developments docs/testing/workflow -name "*.md" -print0 \
 
 # Duplicate section-header check (detects repeated ### Fixed / ### Added etc. within a ## block):
 bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md
+
+# Executable shell guidance lint
+python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop
 ```
 
 ---

@@ -213,6 +213,11 @@ For the complete shell scripting checklist — including jq variable injection, 
 
 The checklist applies equally to `.sh` files and to shell code blocks (` ```bash ` / ` ```sh ` fenced blocks) embedded in protocol and documentation markdown files. Agents and humans copy those snippets verbatim, so the same error-handling and wrong-branch-guard standards apply.
 
+For changed executable framework guidance, put `<!-- workflow-shell-contract: bash -->`
+or `<!-- workflow-shell-contract: bash-zsh -->` immediately before the fence.
+The Bash contract must visibly launch Bash at the copy/paste boundary; portable
+examples must avoid implicit splitting such as `for item in $LIST` and `set -- $pair`.
+
 ---
 
 ## Dependency Management

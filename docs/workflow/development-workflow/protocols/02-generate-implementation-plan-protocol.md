@@ -186,6 +186,14 @@ docs/specs/developments/[timestamp]_[feature-slug]/2_[feature-slug]_implementati
   - For mass-rename or substitution operations: include an explicit "run the command and confirm the output matches expectations" sanity check rather than prescribing the exact expected count — counts go stale as the repo evolves and breed fix commits when reviewers find mismatches.
   - A verification step is correct if a developer can execute it, read the output, and confidently determine pass/fail without consulting an external reference.
 
+### Executable workflow shell snippets
+
+When a plan adds executable shell guidance on a framework-owned surface, name
+its shell contract in the Layer-by-Layer changes: `bash` for snippets that
+launch Bash explicitly, or `bash-zsh` for portable snippets. Include the
+diff-aware snippet-linter command and Bash/zsh behavioral evidence whenever
+iteration or positional argument splitting is illustrated.
+
 ### Parser-risk plans: custom parsers, regex, and structured-text scanning
 
 Treat this block as conditional guidance. Apply it only when the plan is parser-risk.

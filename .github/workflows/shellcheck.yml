@@ -9,6 +9,17 @@ on:
       - 'scripts/development-workflow/**/*.sh'
       - 'scripts/lint/workflow-shell-guard-lint.py'
       - 'scripts/lint/tests/test-workflow-shell-guard-lint.sh'
+      - 'scripts/lint/workflow-shell-snippet-lint.py'
+      - 'scripts/lint/tests/test-workflow-shell-snippet-lint.sh'
+      - 'docs/workflow/**'
+      - 'docs/best-practices/**'
+      - '.agents/skills/**'
+      - '.codex/skills/**'
+      - '.claude/commands/**'
+      - '.claude/agents/**'
+      - '.cursor/commands/**'
+      - '.cursor/agents/**'
+      - 'AGENTS.md'
       - '.shellcheckrc'
       - '.github/workflows/shellcheck.yml'
 
@@ -38,6 +49,9 @@ jobs:
       - name: Run workflow shell guard lint tests
         run: bash scripts/lint/tests/test-workflow-shell-guard-lint.sh
 
+      - name: Run workflow shell snippet lint tests
+        run: bash scripts/lint/tests/test-workflow-shell-snippet-lint.sh
+
       - name: Validate pull request base ref
         run: |
           if [ -z "${GITHUB_BASE_REF:-}" ]; then
@@ -51,3 +65,6 @@ jobs:
 
       - name: Run workflow shell guard lint
         run: python3 scripts/lint/workflow-shell-guard-lint.py --base-ref "origin/$GITHUB_BASE_REF"
+
+      - name: Run workflow shell snippet lint
+        run: python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref "origin/$GITHUB_BASE_REF"

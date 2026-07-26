@@ -80,6 +80,27 @@ RESULT=$(jq -r '.state' <<< "$payload") # workflow-shell-guard: allow SH003 - ca
 python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop
 ```
 
+## workflow-shell-snippet-lint.py
+
+Diff-based guard for executable fenced shell snippets on framework-owned
+guidance surfaces. Put one adjacent marker before each changed executable
+fence:
+
+```text
+<!-- workflow-shell-contract: bash -->
+<!-- workflow-shell-contract: bash-zsh -->
+```
+
+`bash` snippets visibly launch Bash (and remain Bash 3.2 compatible).
+`bash-zsh` snippets must avoid implicit word splitting, `set -- $value`, and
+Bash-only syntax. The linter reports WS001 through WS006 for missing contracts
+or unsafe boundaries.
+
+```bash
+python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop
+bash scripts/lint/tests/test-workflow-shell-snippet-lint.sh
+```
+
 **Tests:**
 
 ```bash

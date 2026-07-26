@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Lint executable workflow shell snippets** (#1180): Require explicit Bash
+  or Bash-zsh contracts for changed framework guidance and validate both shell
+  boundaries in CI.
+
 - **Validate Existing Workflow Branches Before Reuse** (#1179): Require
   positive approved-base ancestry evidence before resuming an existing item
   branch.
