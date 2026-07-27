@@ -131,8 +131,9 @@ shared branch history.
   issue-reference form that includes `#`.
 - A workflow branch name containing `#` is invalid and must be rejected before
   push.
-- Other characters forbidden by the repository workflow branch convention must
-  be rejected by the same validation boundary.
+- The repository workflow branch convention treats `#`, `?`, `^`, `~`, `:`,
+  backslash, and spaces as unsafe in generated workflow names; each must be
+  rejected by the same validation boundary.
 - A rejected branch name must produce an actionable correction that includes a
   compliant issue-prefixed example.
 - The validation must fail safely: it must not create a pull request, push the
@@ -156,8 +157,8 @@ shared branch history.
 - [ ] A generated issue-prefixed workflow branch name uses the bare numeric
       tracker identifier and does not include `#`.
 - [ ] A workflow branch name containing `#` is rejected before it is pushed.
-- [ ] Branch names containing any other characters prohibited by the repository
-      workflow branch convention are rejected at the same validation boundary.
+- [ ] Branch names containing `?`, `^`, `~`, `:`, backslash, or spaces are
+      rejected at the same validation boundary as `#`.
 - [ ] A rejection explains that the name violates the branch convention and
       provides a compliant issue-prefixed example.
 - [ ] A rejected name does not result in a push, pull request, or
