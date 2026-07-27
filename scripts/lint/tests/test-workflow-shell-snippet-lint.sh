@@ -47,6 +47,17 @@ run_fixture portable_for fail $'<!-- workflow-shell-contract: bash-zsh -->\n```s
 run_fixture portable_set fail $'<!-- workflow-shell-contract: bash-zsh -->\n```shell\nset -- $pair\n```'
 run_fixture portable_pass pass $'<!-- workflow-shell-contract: bash-zsh -->\n```shell\nwhile IFS= read -r item; do echo "$item"; done <<EOF\na\nEOF\n```'
 
+fake_git_dir="$TMP_DIR/fake-git"
+mkdir -p "$fake_git_dir"
+printf '%s\n' '#!/usr/bin/env sh' 'exit 1' > "$fake_git_dir/git"
+chmod +x "$fake_git_dir/git"
+if PATH="$fake_git_dir:$PATH" python3 "$LINTER" --base-ref ignored > "$TMP_DIR/diff-exit-one.out" 2>&1; then
+  diff_exit_one=pass
+else
+  diff_exit_one=fail
+fi
+check diff_exit_one pass "$diff_exit_one"
+
 if ! command -v zsh >/dev/null; then
   echo "FAIL: zsh is required for cross-shell fixture coverage"
   exit 1

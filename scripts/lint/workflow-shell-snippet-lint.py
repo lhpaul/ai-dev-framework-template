@@ -46,7 +46,10 @@ def diff_text(base_ref: str | None, input_file: str | None) -> str:
     if input_file:
         return Path(input_file).read_text(encoding="utf-8")
     result = subprocess.run(["git", "diff", "--unified=0", f"{base_ref}...HEAD"], text=True, capture_output=True)
-    if result.returncode:
+    # `git diff --exit-code` uses 1 to report differences. The normal command
+    # above does not request that behavior, but accepting it keeps this helper
+    # correct if the invocation is ever extended with that option.
+    if result.returncode not in (0, 1):
         raise RuntimeError(result.stderr.strip())
     return result.stdout
 
