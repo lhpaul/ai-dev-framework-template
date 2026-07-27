@@ -45,6 +45,11 @@ JSON
 {"number":17,"baseRefName":"develop","headRefName":"feature/1202-self-check","isDraft":false,"labels":[{"name":"ready-for-human-review"}],"files":[{"path":"docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"}],"statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"FAILURE"}],"comments":[{"body":"Automated Reviewer Loop Summary\n\nResult: clean"}]}
 JSON
       ;;
+    stale_ci_success)
+      cat <<'JSON'
+{"number":17,"baseRefName":"develop","headRefName":"feature/1202-self-check","isDraft":false,"labels":[{"name":"ready-for-human-review"}],"files":[{"path":"docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"}],"statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"FAILURE","completedAt":"2026-07-27T14:28:15Z"},{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"2026-07-27T14:32:14Z"}],"comments":[{"body":"Automated Reviewer Loop Summary Result: clean"}]}
+JSON
+      ;;
     failing_status_context)
       cat <<'JSON'
 {"number":17,"baseRefName":"develop","headRefName":"feature/1202-self-check","isDraft":false,"labels":[{"name":"ready-for-human-review"}],"files":[{"path":"docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"}],"statusCheckRollup":[{"context":"legacy-ci","state":"FAILURE"}],"comments":[{"body":"Automated Reviewer Loop Summary\n\nResult: clean"}]}
@@ -418,6 +423,21 @@ out="$(self_check_output \
 unset MOCK_GH_PR_MODE
 run_test "failing_ci_exit_one" "1" "$(status_code "$out")"
 run_contains "failing_ci_discrepancy" "| pull_request.ci | discrepancy | ci:FAILURE |" "$(body "$out")"
+
+repo="$(make_repo stale-ci-success)"
+export MOCK_GH_PR_MODE=stale_ci_success
+export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
+out="$(self_check_output \
+  --repo-root "$repo" \
+  --issue 1202 \
+  --branch feature/1202-self-check \
+  --stage implementation \
+  --worktree-path "$repo" \
+  --pr 17 \
+  --expected-base develop)"
+unset MOCK_GH_PR_MODE
+run_test "stale_ci_success_exit_zero" "0" "$(status_code "$out")"
+run_contains "stale_ci_success_verified" "| pull_request.ci | verified | ci:SUCCESS |" "$(body "$out")"
 
 repo="$(make_repo changed-file-scope)"
 export MOCK_GH_PR_MODE=external_file

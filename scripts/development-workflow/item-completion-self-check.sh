@@ -589,8 +589,30 @@ if [ -n "$pr_number" ]; then
       fi
 
       reviewer_checks="$(reviewer_check_names_json)"
-      if check_summary="$(printf '%s\n' "$pr_json" | jq -r --argjson reviewerChecks "$reviewer_checks" '
+      if normalized_checks="$(printf '%s\n' "$pr_json" | jq '
         (.statusCheckRollup // [])
+        | map(
+            . + {
+              __check_key: (
+                if (.context // "") != "" then
+                  "status:" + .context
+                elif (.workflowName // "") != "" and (.name // "") != "" then
+                  "check:" + .workflowName + "/" + .name
+                elif (.name // "") != "" then
+                  "check:" + .name
+                else
+                  "unknown"
+                end
+              ),
+              __check_ts: (.startedAt // .completedAt // .createdAt // "")
+            }
+          )
+        | sort_by(.__check_key, .__check_ts)
+        | group_by(.__check_key)
+        | map(last | del(.__check_key, .__check_ts))
+      ' 2>&1)" \
+        && check_summary="$(printf '%s\n' "$normalized_checks" | jq -r --argjson reviewerChecks "$reviewer_checks" '
+        .
         | map(select(([.name // "", .context // "", .workflowName // ""] | any(. as $n | ($reviewerChecks | index($n)) != null)) | not))
         | map({
             name: (.name // .context // .workflowName // "unknown"),
@@ -601,9 +623,9 @@ if [ -n "$pr_number" ]; then
         | map(.name + ":" + (if .conclusion != "" then .conclusion elif .state != "" then .state else .status end))
         | join(",")
       ' 2>&1)" \
-        && blocking_checks="$(printf '%s\n' "$pr_json" | jq -r --argjson reviewerChecks "$reviewer_checks" '
+        && blocking_checks="$(printf '%s\n' "$normalized_checks" | jq -r --argjson reviewerChecks "$reviewer_checks" '
           [
-            (.statusCheckRollup // [])[]
+            .[]
             | select(([.name // "", .context // "", .workflowName // ""] | any(. as $n | ($reviewerChecks | index($n)) != null)) | not)
             | {state: (.state // ""), status: (.status // ""), conclusion: (.conclusion // "")}
             | select(

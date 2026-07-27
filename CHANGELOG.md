@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Reject unsafe workflow branch names** (#1286): prevent invalid generated
   workflow branches before push.
+- **Current CI status verification** (#1286): Treat the latest successful
+  check rerun as the current completion evidence.
 - **Make Protocol 02 parser guidance portable** (#1310): Inline the required
   parser-risk and suppression intent so synced repositories do not depend on an
   unavailable historical development fixture.
