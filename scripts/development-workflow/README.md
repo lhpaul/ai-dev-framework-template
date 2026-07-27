@@ -111,6 +111,15 @@ Use this when:
 - The orchestrator needs to verify whether a workflow item has already been started
 - You want to avoid re-dispatching work for an item that already has a branch or worktree
 
+### validate-workflow-branch-name.sh
+
+Validates a tracked workflow branch name before branch creation or push.
+
+It accepts supported workflow prefixes with bare numeric tracker identifiers and
+rejects #, ?, ^, ~, :, backslash, and spaces with a compliant replacement
+example. It does not replace Git ref-format validation; it enforces the
+repository workflow convention before guarded creation and PR paths continue.
+
 ### `run-nested-artifact-guard.sh`
 
 Prevents nested or spawned agents from silently creating duplicate issue-scoped

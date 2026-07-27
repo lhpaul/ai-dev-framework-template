@@ -3,6 +3,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+BRANCH_NAME_VALIDATOR="$SCRIPT_DIR/validate-workflow-branch-name.sh"
+
 MODE=""
 ISSUE_NUMBER=""
 EXPECTED_BRANCH=""
@@ -96,6 +99,7 @@ if ! is_positive_int "$ISSUE_NUMBER"; then
   die_usage "--issue must be a positive integer"
 fi
 [ -n "$EXPECTED_BRANCH" ] || die_usage "--expected-branch is required"
+"$BRANCH_NAME_VALIDATOR" "$EXPECTED_BRANCH"
 case "$ALLOW_SPLIT" in
   true|false) ;;
   *) die_usage "--allow-split must be true or false" ;;

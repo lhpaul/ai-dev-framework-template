@@ -283,6 +283,11 @@ If no blocking human decision remains:
    product implementation base (`--base develop` from `/run-epic`) as proof that
    the hub repository must have `develop`.
 
+   Before branch creation, validate the constructed tracked branch with
+   validate-workflow-branch-name.sh. Use the bare numeric issue identifier
+   (for example, spec/1858-safe-name, never spec/#1858-safe-name); the guard
+   rejects unsafe characters before any push.
+
    Then run the **pre-branch HEAD verification** to prevent stacked-branch
    contamination in shared-checkout parallel execution:
 

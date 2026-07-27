@@ -26,6 +26,9 @@ workflow branch, parent-approved base, and artifact-owning repo root
 artifacts scan the selected product checkout, not the hub. Stop on missing base,
 duplicate artifacts, wrong-base PRs, or scan failures; deliberate splits require
 explicit parent approval.
+Use a bare numeric workflow branch identifier such as feature/1858-safe-name,
+never feature/#1858-safe-name; the guard rejects unsafe names before creation
+or push.
 
 **BATCH_CONTEXT branch-skip rule (read first when BATCH_CONTEXT=true)**: When the handoff metadata includes `BATCH_CONTEXT=true`, the item-orchestrator already created the worktree on the correct branch. Do NOT run any of the following from this agent session: `git checkout develop`, `git checkout -b <branch>`, `git switch <branch>`, `git reset`, or `git restore`. Running these commands from the default CWD (main repo root) will leak a branch-switch into the main working tree, breaking isolation for all concurrent agents. Before the first file edit, branch-changing command, commit, push, PR mutation, or tracker mutation, complete the isolation self-check: verify `isolation: "worktree"`, the expected worktree path, expected branch, artifact repo root, approved base branch, and mutation classification are present; ensure `pwd -P` equals the expected worktree path or begins with the expected worktree path followed by `/` and compare only the expected branch to `git rev-parse --abbrev-ref HEAD`. Stop before mutation on missing metadata, wrong CWD, main-repo CWD, or wrong branch; escalate for human inspection if mutation may already have occurred outside the assigned worktree. Only `git fetch origin` is safe to run without a worktree-path check. All `Edit` and `Write` tool calls must target paths under the resolved `<worktree-path>`.
 

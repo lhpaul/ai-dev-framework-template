@@ -37,10 +37,12 @@ concurrency:
   cancel-in-progress: false
 
 # Least-privilege permissions: only what this workflow needs.
+# - contents: read       — checkout repo for graduation closeout fallback scripts
 # - pull-requests: read  — read PR metadata (head.ref, merged flag)
 # - issues: write        — close the GitHub issue for impl branches
 # Note: Projects v2 mutations require GH_PROJECT_TOKEN (PAT) — not GITHUB_TOKEN.
 permissions:
+  contents: read
   pull-requests: read
   issues: write
 

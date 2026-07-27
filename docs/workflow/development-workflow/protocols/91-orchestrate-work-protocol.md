@@ -490,11 +490,13 @@ If the tracker is unavailable, log a warning and proceed — do not block advanc
 
    - Continue dispatching the implementation stage as if the item was `Plan Ready` (the pre-dispatch tracker status update, which ran earlier in this step and was a no-op because the status was already "In Development", will re-run for the corrected dispatch and advance the tracker back to `In Development`). The brief "Plan Ready" state between the stale reset and the new dispatch is intentional and transient — the orchestrator runs sequentially, so no concurrent observer will act on this intermediate value.
 
-4. **If either check returns non-zero** (branch or PR found): the item is genuinely in progress — do not reset the status. Resume from the existing branch or PR using `workflow-next-action.sh` (AC-8).
+4. **If either check returns non-zero** (branch or PR found): the item is genuinely in progress — do not reset the status. Before reusing a branch, complete the branch-reuse validation gate below. Only a `compatible` result may reach `workflow-next-action.sh` (AC-8).
 
 ### Pre-dispatch branch check
 
-Before dispatching any creator-stage agent, run all three checks below. An existing branch or active worktree means work already exists and should be resumed rather than restarted.
+Before dispatching any creator-stage agent, run all three checks below. An
+existing branch or active worktree means work may already exist, but a matching
+item identifier alone does not authorize reuse.
 
 ```bash
 git branch -r | grep "<branch-prefix>/<slug>"
@@ -509,7 +511,9 @@ git worktree list | grep "<branch-prefix>/<slug>"
 | Implement (Feature)     | `feature/[slug]`               |
 | Implement (Refactor)    | `refactor/[slug]`              |
 
-If any check returns a match: **do not re-dispatch**. Resume from the existing branch or PR with `workflow-next-action.sh`.
+If any check returns a match, record the exact candidate and **do not
+re-dispatch yet**. Continue through the nested-artifact guard and branch-reuse
+validation gate below before calling `workflow-next-action.sh`.
 
 ### Nested artifact guard before child dispatch
 
@@ -538,6 +542,49 @@ Set `ARTIFACT_REPO_ROOT` to the repository that owns the branch and PR being
 guarded. In `workflow_hub` mode, implementation artifacts live in the selected
 product checkout, not the hub checkout; hub-owned spec and plan artifacts keep
 using the hub repository root.
+
+The guard validates the expected workflow branch name before it scans artifacts.
+Use bare numeric identifiers such as feature/1858-safe-name, never
+feature/#1858-safe-name; it rejects unsafe characters before creation or PR
+readiness can continue.
+
+### Existing-branch reuse validation
+
+After candidate discovery and a clean nested-artifact guard, validate the exact
+expected branch against the run's approved base:
+
+```bash
+./scripts/development-workflow/validate-branch-reuse.sh \
+  --issue "$ISSUE_NUMBER" \
+  --branch "<branch-prefix>/<slug>" \
+  --approved-base "$BASE_BRANCH" \
+  --repo-root "$ARTIFACT_REPO_ROOT" \
+  --json
+```
+
+The helper is read-only and does not fetch or mutate refs. Callers must refresh
+required refs before invoking it. It applies the same workflow branch-name
+validation before checking Git ref syntax or ancestry. Route its structured
+`RESULT` as follows:
+
+| Result | Required next action |
+| --- | --- |
+| `no_existing_branch` | Continue the fresh-branch path only when discovery also found no candidate. If a previously discovered candidate disappeared, stop as `reuse_verification_blocked`. |
+| `compatible` | Report the resolved base/candidate refs and tips, keep tracking divergence as separate diagnostic evidence, and resume with `workflow-next-action.sh --branch <branch>`. |
+| `incompatible` | Stop as `incompatible_reuse_blocked` before creator dispatch, file/Git mutation, PR/label mutation, or tracker mutation. Name the item, branch, approved base, failed ancestry evidence, and the helper's `HUMAN_ACTION`. |
+| `verification_blocked` | Stop as `reuse_verification_blocked` before mutation. Name the unavailable or ambiguous evidence and the helper's `HUMAN_ACTION`; do not report it as confirmed incompatibility. |
+
+Only positive evidence from
+`git merge-base --is-ancestor <approved-base-tip> <candidate-tip>` authorizes
+reuse. Local-versus-remote ahead/behind counts are diagnostic and never replace
+the approved-base decision. The runner must not automatically delete, reset,
+rebase, check out, force-push, or otherwise rewrite an incompatible or
+unverifiable branch. Any destructive cleanup or different recovery path
+requires a separate explicit human decision.
+
+Record one of `fresh_branch`, `compatible_reuse`,
+`incompatible_reuse_blocked`, or `reuse_verification_blocked` in the Work Item
+Runner summary.
 
 ### Integration-branch base override (sub-items with `integration-branch:<slug>` label)
 

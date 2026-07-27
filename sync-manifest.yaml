@@ -141,6 +141,9 @@ categories:
     - path: .github/workflows/e2e-regression.yml
       mode_scope: shared
       note: label-gated e2e/regression placeholder; customize with project-specific test logic
+    - path: .github/workflows/update-tracker-on-merge.yml
+      mode_scope: shared
+      note: tracker automation may be customized; review and retain graduation closeout wiring when adopted
     - path: e2e/
       glob: "**/*"
       mode_scope: shared

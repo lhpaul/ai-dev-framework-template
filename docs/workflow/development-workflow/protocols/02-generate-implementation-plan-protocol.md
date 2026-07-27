@@ -186,6 +186,14 @@ docs/specs/developments/[timestamp]_[feature-slug]/2_[feature-slug]_implementati
   - For mass-rename or substitution operations: include an explicit "run the command and confirm the output matches expectations" sanity check rather than prescribing the exact expected count — counts go stale as the repo evolves and breed fix commits when reviewers find mismatches.
   - A verification step is correct if a developer can execute it, read the output, and confidently determine pass/fail without consulting an external reference.
 
+### Executable workflow shell snippets
+
+When a plan adds executable shell guidance on a framework-owned surface, name
+its shell contract in the Layer-by-Layer changes: `bash` for snippets that
+launch Bash explicitly, or `bash-zsh` for portable snippets. Include the
+diff-aware snippet-linter command and Bash/zsh behavioral evidence whenever
+iteration or positional argument splitting is illustrated.
+
 ### Parser-risk plans: custom parsers, regex, and structured-text scanning
 
 Treat this block as conditional guidance. Apply it only when the plan is parser-risk.
@@ -214,7 +222,11 @@ If none of these signals apply, skip this entire block.
 - Where directives can appear
 - How multiple suppressions on one line are interpreted
 
-For acceptance intent and terminology, reference `docs/specs/developments/20260420120000_201-tech-lead-parser-regex-plan-requirements/1_201-tech-lead-parser-regex-plan-requirements_specs.md`.
+These parser-risk and suppression requirements are the complete required
+acceptance intent and terminology. Historical template or workflow-hub
+development artifacts may offer supplementary context, but they can be absent
+in receiving repositories and must never block plan authoring or sync
+validation.
 
 ### Cross-cutting checklist plans: safety, quality, or compliance categories
 
@@ -322,6 +334,12 @@ If no blocking human decision remains:
    repository's artifact base branch, typically the hub default branch. Do not
    use the product implementation base (`--base develop` from `/run-epic`) as
    proof that the hub repository must have `develop`.
+
+   Before branch creation, validate the constructed tracked branch with
+   validate-workflow-branch-name.sh. Use the bare numeric issue identifier
+   (for example, implementation-plan/1858-safe-name, never
+   implementation-plan/#1858-safe-name); the guard rejects unsafe characters
+   before any push.
 
    Then run the **pre-branch HEAD verification** to prevent stacked-branch
    contamination in shared-checkout parallel execution:
