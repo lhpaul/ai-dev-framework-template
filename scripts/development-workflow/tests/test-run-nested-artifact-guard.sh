@@ -146,6 +146,11 @@ run_test "canonical_exit_zero" "0" "$(status_code "$out")"
 run_contains "canonical_clean" "RESULT=clean" "$(body "$out")"
 run_contains "canonical_artifact_reported" "CANONICAL_ARTIFACT" "$(body "$out")"
 
+repo="$(make_repo unsafe-branch)"
+out="$(guard_output --repo-root "$repo" --mode pre-create --issue 1200 --expected-branch "feature/#1200-unsafe-path" --approved-base develop)"
+run_test "unsafe_branch_exit_two" "2" "$(status_code "$out")"
+run_contains "unsafe_branch_stops_before_artifact_scan" "violates the branch convention" "$(body "$out")"
+
 repo="$(make_repo duplicate-local)"
 git -C "$repo" branch feature/1200-duplicate-path
 out="$(guard_output --repo-root "$repo" --mode pre-create --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop)"

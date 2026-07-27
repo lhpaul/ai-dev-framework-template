@@ -92,6 +92,9 @@ if [ "$issue" -le 0 ]; then
   exit 2
 fi
 
+script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+"$script_dir/validate-workflow-branch-name.sh" "$branch"
+
 if ! git check-ref-format --branch "$branch" >/dev/null 2>&1; then
   printf 'ERROR: invalid workflow branch name: %s\n' "$branch" >&2
   exit 2
