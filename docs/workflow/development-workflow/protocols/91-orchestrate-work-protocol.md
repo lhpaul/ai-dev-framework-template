@@ -543,6 +543,11 @@ guarded. In `workflow_hub` mode, implementation artifacts live in the selected
 product checkout, not the hub checkout; hub-owned spec and plan artifacts keep
 using the hub repository root.
 
+The guard validates the expected workflow branch name before it scans artifacts.
+Use bare numeric identifiers such as feature/1858-safe-name, never
+feature/#1858-safe-name; it rejects unsafe characters before creation or PR
+readiness can continue.
+
 ### Existing-branch reuse validation
 
 After candidate discovery and a clean nested-artifact guard, validate the exact
@@ -558,7 +563,9 @@ expected branch against the run's approved base:
 ```
 
 The helper is read-only and does not fetch or mutate refs. Callers must refresh
-required refs before invoking it. Route its structured `RESULT` as follows:
+required refs before invoking it. It applies the same workflow branch-name
+validation before checking Git ref syntax or ancestry. Route its structured
+`RESULT` as follows:
 
 | Result | Required next action |
 | --- | --- |

@@ -163,6 +163,13 @@ This repository follows the default template workflow (documented in `docs/workf
   - Hotfixes: `hotfix/[slug]` (from `main`, then backport to `develop`)
   - Releases: `release/v[X.Y.Z]` (from `develop`)
 
+Workflow branches must use a bare tracker identifier (for example,
+fix/1858-safe-name), never an issue-reference form such as
+fix/#1858-safe-name. The workflow guard rejects #, ?, ^, ~, :, backslash, and
+spaces before branch creation or push. To recover already started work, preserve
+the original branch, create a compliant replacement through the normal PR path,
+verify push-triggered checks start, and never force-push shared history.
+
 ### Tracker Classification
 
 When `issue_tracker.provider: github_projects` is configured, the GitHub

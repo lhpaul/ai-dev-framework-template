@@ -44,6 +44,9 @@ advances exactly one non-epic item through Protocol 91.
    `--allow-split`). Stop on `missing_base`, `blocked_duplicate`, `wrong_base`,
    or `scan_failed`; explicit split work requires parent approval and
    `--allow-split true`.
+   Use a bare numeric workflow branch identifier such as
+   feature/1858-safe-name, never feature/#1858-safe-name; the guard rejects
+   unsafe names before creation or push.
 7. After candidate discovery and a clean nested-artifact guard, run
    `validate-branch-reuse.sh` with the issue, exact expected branch, approved
    base, and artifact repo root. Only `compatible` may resume with
