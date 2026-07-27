@@ -7,41 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-07-27
+
 ### Added
 
-- **Lint executable workflow shell snippets** (#1180): Require explicit Bash
-  or Bash-zsh contracts for changed framework guidance and validate both shell
-  boundaries in CI.
-
-- **Validate Existing Workflow Branches Before Reuse** (#1179): Require
-  positive approved-base ancestry evidence before resuming an existing item
-  branch.
+- **Lint executable workflow shell snippets** (#1180): Validate explicit Bash
+  and Bash-zsh shell contracts in framework guidance and CI.
+- **Validate reusable workflow branches** (#1179): Require approved-base
+  ancestry before resuming an existing item branch.
 
 ### Fixed
 
-- **Reject unsafe workflow branch names** (#1286): prevent invalid generated
-  workflow branches before push.
-- **Current CI status verification** (#1286): Treat the latest successful
-  check rerun as the current completion evidence.
-- **Make Protocol 02 parser guidance portable** (#1310): Inline the required
-  parser-risk and suppression intent so synced repositories do not depend on an
-  unavailable historical development fixture.
-- **Native GitHub Issue Type classification** (#1280): Recognize native Issue
-  Types while preserving configured and custom-field precedence.
-- **Handle Haystack large-PR analysis skips** (#1311): Recognize authoritative current-head file-limit declines as terminal Haystack skips while preserving other reviewer gates and durable loop history.
-- **Bugbot clean-review parsing** (#1350): Recognize Bugbot's current
-  no-new-issues review template without hiding mixed messages that contain
-  blocking finding markers.
-- **Reliable ready-phase PR review** (#1348): Use Cursor Bugbot instead of
-  Haystack for the repository's default ready-phase automated reviewer.
-- **Sync tracker-closeout workflow** (#1304): Include the merge-time tracker
-  workflow in template-sync review so downstream projects can adopt graduation
-  closeout together with its validation helpers.
-- **Graduation closeout checkout** (#1305): Grant the tracker merge workflow
-  read-only repository access required to run the graduation closeout fallback.
-- **Post-merge QA scope flags** (#1306): Report clear validation errors when a
-  valued option is missing its argument instead of consuming the next flag or
-  exiting during argument shifting.
+- **Strengthen workflow branch and CI validation** (#1286): Reject unsafe
+  branch names and use the latest successful check rerun as completion evidence.
+- **Make portable workflow guidance and classification more reliable** (#1310,
+  #1280): Embed parser safeguards and recognize native GitHub Issue Types.
+- **Improve automated review reliability** (#1311, #1350, #1348): Handle
+  authoritative Haystack skips, parse clean Bugbot reviews, and use Bugbot for
+  ready-phase review.
+- **Improve workflow closeout and QA safeguards** (#1304, #1305, #1306): Keep
+  downstream tracker closeout in sync, allow its read-only checkout, and report
+  clear missing scope-flag errors.
 
 ## [0.38.0] - 2026-07-21
 
@@ -1300,7 +1286,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.38.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.39.0...HEAD
+[0.39.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.37.1...v0.38.0
 [0.37.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.37.0...v0.37.1
 [0.37.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.36.3...v0.37.0
