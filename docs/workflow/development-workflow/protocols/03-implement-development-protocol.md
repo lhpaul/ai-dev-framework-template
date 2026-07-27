@@ -66,12 +66,24 @@ new workflow branch and again before opening the PR. Pass the parent-approved
 base branch with `--approved-base`; never infer a PR base silently inside a
 nested or spawned agent.
 
+The nested-artifact guard invokes validate-workflow-branch-name.sh at both
+boundaries. Construct tracked workflow names with a bare numeric identifier
+(for example, feature/1858-safe-name, never feature/#1858-safe-name); do not
+bypass the guard with a direct branch or push command.
+
 - Use `--mode pre-create` immediately before branch creation.
 - Use `--mode pre-pr` after push and before `gh pr create`.
 - Treat `RESULT=missing_base`, `RESULT=blocked_duplicate`,
   `RESULT=wrong_base`, or `RESULT=scan_failed` as a hard stop.
 - A deliberate split requires explicit parent-run approval plus
   `--allow-split true`, with the approved base recorded in the run summary.
+
+### Recovery for an already-started non-compliant branch
+
+Preserve the original branch and create a convention-compliant replacement from
+the approved work through the normal PR path. Do not force-push, rebase, reset,
+or otherwise rewrite shared history. After pushing the replacement, verify that
+its normal push-triggered checks start; escalate if they do not.
 
 ## Scope-Residual Evidence Gate
 
