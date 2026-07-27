@@ -47,6 +47,18 @@ run_fixture portable_for fail $'<!-- workflow-shell-contract: bash-zsh -->\n```s
 run_fixture portable_set fail $'<!-- workflow-shell-contract: bash-zsh -->\n```shell\nset -- $pair\n```'
 run_fixture portable_pass pass $'<!-- workflow-shell-contract: bash-zsh -->\n```shell\nwhile IFS= read -r item; do echo "$item"; done <<EOF\na\nEOF\n```'
 
+contract_doc="docs/workflow/snippet-contract-only.md"
+contract_diff="$TMP_DIR/contract-only.diff"
+printf '%s\n' '<!-- workflow-shell-contract: bash -->' '```bash' 'echo hello' '```' > "$REPO_ROOT/$contract_doc"
+printf '%s\n' "diff --git a/$contract_doc b/$contract_doc" "--- a/$contract_doc" "+++ b/$contract_doc" '@@ -0,0 +1 @@' '+<!-- workflow-shell-contract: bash -->' > "$contract_diff"
+if python3 "$LINTER" --input "$contract_diff" > "$TMP_DIR/contract-only.out" 2>&1; then
+  contract_only=pass
+else
+  contract_only=fail
+fi
+check contract_only_marker fail "$contract_only"
+rm -f "$REPO_ROOT/$contract_doc"
+
 fake_git_dir="$TMP_DIR/fake-git"
 mkdir -p "$fake_git_dir"
 printf '%s\n' '#!/usr/bin/env sh' 'exit 1' > "$fake_git_dir/git"

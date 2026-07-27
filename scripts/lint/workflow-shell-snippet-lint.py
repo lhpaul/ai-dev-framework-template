@@ -101,7 +101,10 @@ def lint(path: str, changed: set[int]) -> list[Finding]:
         while closer < len(lines) and not lines[closer].lstrip().startswith("```"):
             closer += 1
         fence_lines = lines[index + 1 : closer]
-        changed_here = any(index < number < closer + 1 for number in changed)
+        # A changed contract marker immediately above the opener (whose
+        # 1-based line number equals the opener's 0-based index) must also
+        # validate the fence it declares.
+        changed_here = any(index <= number < closer + 1 for number in changed)
         language = (opener.group("lang") or "").lower()
         content = "\n".join(fence_lines)
         executable = language in {"bash", "sh", "shell", "zsh"} or bool(SHELL_SIGNAL.search(content))
