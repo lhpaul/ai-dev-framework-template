@@ -92,8 +92,9 @@ The repository ships Codex skill definitions in two compatible locations:
 
 Install them into your local Codex skill directories before first use:
 
+<!-- workflow-shell-contract: bash -->
 ```bash
-./scripts/development-workflow/install-codex-skills.sh
+bash ./scripts/development-workflow/install-codex-skills.sh
 ```
 
 Installed skills are thin wrappers around the canonical workflow protocols. They do not redefine the workflow; they load the same documents used by other tools and, for orchestration, rely on the helper scripts in `scripts/development-workflow/` to inspect state, resume partial work, and resolve PR readiness deterministically. `/run-item` and `/run-epic` are the primary bounded commands (shared prelude + Protocol 91 or 95). `/run-item` prints `policyRecommendation.confirmationSummary` before mutation and records an invocation-scoped item/policy binding after explicit autonomy flags or human acceptance so the same selected policy is not re-prompted. `/run-items` is the bounded multi-item batch execute command (Protocol 90 `explicit_list` mode — two or more items, targeting `develop` directly). `/run-work` is the read-only portfolio scan entrypoint via `run-work-router.sh` (Protocol 96) — it proposes batch options but does not execute; single/epic targets redirect to `/run-item` / `/run-epic`. In no-target scan mode, `/run-work` separates `INFORMATIONAL - not actionable in this proposal`, `ACTIONABLE RESUME - can advance now`, `PROPOSED BATCH - your decision`, and `HELD - not included in proposed batch` records; approval or the recommended `/run-items` command applies only to proposed-batch records. `/run-item-work` is a deprecated alias identical to `/run-item`. `/run-epic` resolves a bounded execution scope, recommends missing autonomy policy in-place before mutation, captures invocation-scoped delegation policy, uses read-only PR risk classification and `run-epic-delegated-gate.sh` before delegated merge decisions, and records stable PR disposition and epic ledger audit comments after delegated decisions. The command-style aliases exist for parity with Claude Code slash commands; the underlying canonical skills remain the source of the workflow behavior. The bundled skills also include optional `agents/openai.yaml` metadata so downstream projects created from this template have cleaner Codex skill labels and default prompts out of the box.
@@ -116,6 +117,7 @@ For normal Codex usage, use `/run-work` to scan the portfolio and discover what 
 
 > **TODO**: Fill with your project's actual commands after setup.
 
+<!-- workflow-shell-contract: bash -->
 ```bash
 # Development
 # [your dev server command]
@@ -139,6 +141,9 @@ find docs/specs/developments docs/testing/workflow -name "*.md" -print0 \
 
 # Duplicate section-header check (detects repeated ### Fixed / ### Added etc. within a ## block):
 bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md
+
+# Executable shell guidance lint
+python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop
 ```
 
 ---
