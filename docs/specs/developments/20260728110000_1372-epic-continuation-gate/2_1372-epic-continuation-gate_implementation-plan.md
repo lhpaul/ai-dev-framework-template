@@ -7,7 +7,7 @@
 
 ## Summary
 
-**Approach**: Extend the read-only epic scope resolver with one deterministic `continuation` object derived from its final, enriched item groups. It will emit `continue`, `complete`, or `needs_resolution`, name the relevant child items, and render the same result in text mode. Protocol 95 and every run-epic command/skill mirror will require a refresh after each child terminal decision and obey that result.
+**Approach**: Extend the read-only epic scope resolver with one deterministic `continuation` object derived from its final, enriched items, groups, and saved invocation policy. It will emit `continue`, `complete`, or `needs_resolution`, name the relevant child items, and render the same result in text mode. Protocol 95 and every run-epic command/skill mirror will require a refresh after each child terminal decision and obey that result.
 
 **Estimated complexity**: M — the implementation is contained to workflow shell, tests, and mirrored guidance, but changes a cross-cutting terminal decision.
 
@@ -28,10 +28,10 @@
 ### Resolver and tests
 
 - [ ] In `scripts/development-workflow/run-epic-scope-resolver.sh`, add a pure continuation classifier after the final scope groups are known. Its JSON fields must include outcome, terminal flag, next action, remaining items, and named-stop data when resolution is required. It must never mutate tracker, Git, PR, issue, or cleanup state. Maps to AC1-AC6.
-- [ ] Define precedence: empty scope; `ambiguous`, `blocked`, `out_of_scope`, and unauthorized Backlog work yield `needs_resolution`; any in-review, non-Backlog eligible, or authorized Backlog item yields `continue`; only a non-empty all-`already_merged` scope yields `complete`. Include the exact affected item and a concrete human action for resolution. Maps to AC2-AC6.
+- [ ] Define precedence from each enriched item, not groups alone: empty scope; `ambiguous`, `blocked`, or `out_of_scope` groups; and an `eligible` item whose status is `Backlog` while `policy.mayStartBacklog` is false yield `needs_resolution`. Any in-review item, non-Backlog eligible item, or Backlog item with `policy.mayStartBacklog: true` yields `continue`; only a non-empty all-`already_merged` scope yields `complete`. Include the exact affected item and a concrete human action for resolution. Maps to AC2-AC6.
 - [ ] Map every `needs_resolution` result to an existing named stop: empty or ambiguous scope uses `missing_tracker_context`; a blocked dependency uses `unclear_requirements` with the dependency named; an unauthorized Backlog child uses `human_checkpoint_required`; and an out-of-scope item uses `missing_tracker_context` with an instruction to resolve epic membership. Do not create a second guardrail or policy model. Maps to AC5-AC6 and the named-stop contract.
 - [ ] Render stable text keys alongside JSON so manual operators see the outcome and next action. Preserve existing grouping and read-only guarantees. Maps to Operational Visibility and AC8.
-- [ ] Extend `scripts/development-workflow/tests/test-run-epic-scope-resolver.sh` with merged-plus-eligible, all-merged, empty scope, and whitespace-only `--items` cases. Assert the outcome, terminal status, remaining/affected child behavior, and rejection of whitespace-only input. Maps to AC7.
+- [ ] Extend `scripts/development-workflow/tests/test-run-epic-scope-resolver.sh` with merged-plus-eligible, all-merged, empty scope, unauthorized-Backlog, and whitespace-only `--items` cases. Assert the outcome, terminal status, remaining/affected child behavior, policy-sensitive Backlog routing, and rejection of whitespace-only input. Maps to AC7.
 
 ### Protocol and command mirrors
 
