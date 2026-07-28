@@ -29,6 +29,7 @@
 
 - [ ] In `scripts/development-workflow/run-epic-scope-resolver.sh`, add a pure continuation classifier after the final scope groups are known. Its JSON fields must include outcome, terminal flag, next action, remaining items, and named-stop data when resolution is required. It must never mutate tracker, Git, PR, issue, or cleanup state. Maps to AC1-AC6.
 - [ ] Define precedence: empty scope; `ambiguous`, `blocked`, `out_of_scope`, and unauthorized Backlog work yield `needs_resolution`; any in-review, non-Backlog eligible, or authorized Backlog item yields `continue`; only a non-empty all-`already_merged` scope yields `complete`. Include the exact affected item and a concrete human action for resolution. Maps to AC2-AC6.
+- [ ] Map every `needs_resolution` result to an existing named stop: empty or ambiguous scope uses `missing_tracker_context`; a blocked dependency uses `unclear_requirements` with the dependency named; an unauthorized Backlog child uses `human_checkpoint_required`; and an out-of-scope item uses `missing_tracker_context` with an instruction to resolve epic membership. Do not create a second guardrail or policy model. Maps to AC5-AC6 and the named-stop contract.
 - [ ] Render stable text keys alongside JSON so manual operators see the outcome and next action. Preserve existing grouping and read-only guarantees. Maps to Operational Visibility and AC8.
 - [ ] Extend `scripts/development-workflow/tests/test-run-epic-scope-resolver.sh` with merged-plus-eligible, all-merged, empty scope, and whitespace-only `--items` cases. Assert the outcome, terminal status, remaining/affected child behavior, and rejection of whitespace-only input. Maps to AC7.
 
@@ -49,7 +50,7 @@
 | --- | --- | --- | --- |
 | Eligible non-Backlog, authorized Backlog, or in-review child remains | `continue` | Name and advance the child under the saved invocation policy. | Resolver regression and Protocol 95 wording. |
 | Every resolved child is merged and scope is non-empty | `complete` | Verify live child state, then complete epic closeout. | All-merged regression. |
-| Empty scope, ambiguous/blocked/out-of-scope child, or unauthorized Backlog child | `needs_resolution` | Stop with named condition, affected child, and human action. | Empty-scope and authority/resolution assertions. |
+| Empty, ambiguous, blocked, out-of-scope, or unauthorized Backlog child | `needs_resolution` | Stop with the mapped named condition, affected child, and human action. | Empty-scope and authority/resolution assertions. |
 
 ## Testing Strategy
 
