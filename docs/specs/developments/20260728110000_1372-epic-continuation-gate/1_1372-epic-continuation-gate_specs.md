@@ -23,8 +23,8 @@ Derived from issue #1372:
    remain.
 2. Classify remaining work after every child terminal decision as continue,
    complete, or needs resolution.
-3. Continue eligible or in-review work; only report completion when every
-   resolved child is merged.
+3. Continue non-Backlog eligible, authorized Backlog, or in-review work; only
+   report completion when every resolved child is merged.
 4. Require the named-stop contract for unresolved scope.
 5. Add regression coverage for merged-plus-eligible, all-merged, empty-scope,
    and whitespace-only-input cases.
@@ -36,7 +36,8 @@ Derived from issue #1372:
 
 **Actor**: Workflow operator running an approved epic.
 **Preconditions**: One child item has reached a terminal decision and at least
-one other in-scope child remains eligible or is awaiting review.
+one other in-scope child is eligible to advance under the approved
+backlog-start authority or is awaiting review.
 
 **Steps**:
 
@@ -128,8 +129,9 @@ decision or from incomplete scope information.
 
 - Every child terminal decision requires a refreshed epic-scope result before
   the runner may produce an epic summary.
-- Remaining eligible or in-review children require the epic to continue under
-  the approved invocation policy.
+- Remaining non-Backlog eligible children, authorized Backlog children, or
+  in-review children require the epic to continue under the approved invocation
+  policy.
 - An epic may be reported complete only when it has at least one resolved child
   and every resolved child is merged.
 - An epic with no resolved children remains unresolved; it must not be
@@ -153,10 +155,11 @@ decision or from incomplete scope information.
 
 - [ ] After every child terminal decision, the runner refreshes epic scope and
       evaluates a continuation result before producing an epic summary.
-- [ ] A merged child with an eligible sibling produces a non-terminal continue
-      outcome that identifies the sibling as remaining work.
-- [ ] Remaining eligible and in-review children keep the epic active under the
-      approved invocation policy.
+- [ ] A merged child with a non-Backlog eligible sibling, authorized Backlog
+      sibling, or in-review sibling produces a non-terminal continue outcome
+      that identifies the sibling as remaining work.
+- [ ] Remaining non-Backlog eligible, authorized Backlog, and in-review
+      children keep the epic active under the approved invocation policy.
 - [ ] A non-empty scope whose children are all merged produces the sole
       terminal complete outcome and requires live child-state verification
       before epic completion is reported.
