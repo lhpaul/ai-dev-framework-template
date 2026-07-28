@@ -70,12 +70,13 @@ continues until its remaining work reaches a valid terminal outcome.
 ### Use Case 2: Verify a completed epic
 
 **Actor**: Workflow operator closing an epic after its child decisions.
-**Preconditions**: Every resolved in-scope child is merged.
+**Preconditions**: The refreshed scope is non-empty and every resolved
+in-scope child is merged.
 
 **Steps**:
 
 1. The runner refreshes the epic scope after the final child decision.
-2. The continuation result reports completion.
+2. The non-empty scope produces a completion continuation result.
 3. The runner verifies the live child states before reporting or closing the
    epic.
 
