@@ -79,17 +79,16 @@ echo "exit=$?"
 
 ### 8. `continuation_unauthorized_backlog` → `needs_resolution` (mock)
 
-**Expected JSON**: `outcome=needs_resolution`, `stopCondition=human_required` (exact), unauthorized Backlog id in `affectedItems`, `humanAction` asks to grant backlog-start authority.
+**Expected JSON**: `outcome=needs_resolution`, `stopCondition=missing_tracker_context` (exact), unauthorized Backlog id in `affectedItems`, `humanAction` asks for explicit backlog-start authority confirmation.
 
 ### 9. Additional named-stop cases (mock; same harness)
 
-These may ship as dedicated harness cases or be folded into the empty/blocked/out-of-scope fixture set during implementation. Assert exact `stopCondition` values from the plan schema:
+These may ship as dedicated harness cases or be folded into the empty/blocked fixture set during implementation. Assert exact `stopCondition` values from the plan schema:
 
 | Planned case id | Expected `stopCondition` | `affectedItems` |
 | --- | --- | --- |
 | `continuation_ambiguous_scope` | `missing_tracker_context` | `[]` |
 | `continuation_blocked_only` | `unclear_requirements` | blocked child id |
-| `continuation_out_of_scope` | `missing_tracker_context` | out-of-scope item id |
 
 ### 10. Protocol and command mirrors (docs)
 
