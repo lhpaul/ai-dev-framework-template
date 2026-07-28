@@ -43,7 +43,7 @@
 
 ### Protocol and command mirrors
 
-- [ ] Update `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md` Step 11 to re-resolve after every child terminal decision, branch on the continuation result, and forbid completion before live verification of a `complete` result. Specify `needs_resolution` as the named-stop contract. Maps to AC1-AC6.
+- [ ] Update `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md` Step 11 to re-resolve after every child terminal decision, branch on the continuation result, and forbid completion before live verification of a `complete` result. Specify `needs_resolution` as the named-stop contract. The resolver itself does not emit `out_of_scope` items; when a downstream consumer's bounded-handoff comparison detects one, Protocol 95 must stop before closeout with `missing_tracker_context`, list the affected item, and require a human to correct membership or explicitly re-scope it. Maps to AC1-AC6.
 - [ ] Update `.agents/skills/run-epic/SKILL.md` and `.agents/skills/run-epic/agents/openai.yaml` with the same post-child refresh and outcome contract for Codex.
 - [ ] Update `.claude/commands/run-epic.md` and `.cursor/commands/run-epic.md` with equivalent continuation outcomes and next actions. Keep them as mirrors of Protocol 95, not independent policy definitions. Maps to AC8.
 - [ ] Add one `[Unreleased]` entry to `CHANGELOG.md` only in the implementation PR: `- **Add epic continuation gate** (#1372): require delegated epic runs to re-resolve remaining child work before closeout.` Maps to the issue scope.
@@ -59,6 +59,7 @@
 | Eligible non-Backlog, authorized Backlog, or in-review child remains | `continue` | Name and advance the child under the saved invocation policy. | Resolver regression and Protocol 95 wording. |
 | Every resolved child is merged and scope is non-empty | `complete` | Verify live child state, then complete epic closeout. | All-merged regression. |
 | No actionable child remains and scope is empty, ambiguous, blocked, or has unauthorized Backlog work | `needs_resolution` | Stop with the mapped named condition, affected child, and human action. | Empty-scope and authority/resolution assertions. |
+| A downstream bounded-handoff comparison detects an out-of-scope item | `needs_resolution` | Stop before closeout with `missing_tracker_context`; name the item and ask a human to correct membership or explicitly re-scope it. | Protocol 95 and mirror wording assertions. |
 
 ## Continuation Schema (authoritative)
 

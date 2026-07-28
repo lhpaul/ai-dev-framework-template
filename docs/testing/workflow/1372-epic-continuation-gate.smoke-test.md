@@ -97,6 +97,7 @@ For each file, open the epic continuation / Step 11 (or equivalent) section and 
 1. After every child terminal decision, scope is refreshed before an epic summary.
 2. The only continuation outcomes are `continue`, `complete`, and `needs_resolution`.
 3. No alternate guardrail or policy model is introduced.
+4. A downstream-detected out-of-scope item stops closeout with `missing_tracker_context`, names the affected item, and requests membership correction or an explicit re-scope.
 
 ```bash
 files=(
