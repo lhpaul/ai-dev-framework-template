@@ -71,13 +71,15 @@ continues until its remaining work reaches a valid terminal outcome.
 ### Use Case 2: Verify a completed epic
 
 **Actor**: Workflow operator closing an epic after its child decisions.
-**Preconditions**: The refreshed scope is non-empty and every resolved
-in-scope child is merged.
+**Preconditions**: The refreshed scope is non-empty, contains no child that
+requires a continue or needs-resolution outcome, and every in-scope child is
+merged.
 
 **Steps**:
 
 1. The runner refreshes the epic scope after the final child decision.
-2. The non-empty scope produces a completion continuation result.
+2. The scope confirms that every in-scope child is merged and produces a
+   completion continuation result.
 3. The runner verifies the live child states before reporting or closing the
    epic.
 
@@ -132,8 +134,8 @@ decision or from incomplete scope information.
 - Remaining non-Backlog eligible children, authorized Backlog children, or
   in-review children require the epic to continue under the approved invocation
   policy.
-- An epic may be reported complete only when it has at least one resolved child
-  and every resolved child is merged.
+- An epic may be reported complete only when it has at least one in-scope child
+  and every in-scope child is merged.
 - An epic with no resolved children remains unresolved; it must not be
   auto-completed.
 - Any ambiguous, blocked, out-of-scope, or authority-constrained remaining
@@ -160,9 +162,10 @@ decision or from incomplete scope information.
       that identifies the sibling as remaining work.
 - [ ] Remaining non-Backlog eligible, authorized Backlog, and in-review
       children keep the epic active under the approved invocation policy.
-- [ ] A non-empty scope whose children are all merged produces the sole
-      terminal complete outcome and requires live child-state verification
-      before epic completion is reported.
+- [ ] A non-empty scope with no continue or needs-resolution child and whose
+      in-scope children are all merged produces the sole terminal complete
+      outcome and requires live child-state verification before epic completion
+      is reported.
 - [ ] An empty epic scope and every other unresolved scope produce a
       needs-resolution outcome rather than a completion outcome.
 - [ ] An unresolved final stop names the exact stop condition, affected item,
@@ -179,7 +182,7 @@ decision or from incomplete scope information.
 | Eligible non-Backlog child remains | Continue | Name and advance the remaining child under the invocation policy. | Resolver, Protocol 95, Codex skill metadata, Claude and Cursor commands. | One merged child plus one eligible sibling. |
 | Eligible Backlog child remains and backlog start is authorized | Continue | Name and start the remaining child under the invocation policy. | Same as above. | Remaining Backlog child with authority. |
 | Child is in review | Continue | Keep the epic active and advance the applicable review path. | Same as above. | A child awaiting review after a sibling finishes. |
-| Every resolved child is merged and scope is non-empty | Complete | Verify live child states, then report or close the epic. | Resolver and Protocol 95; runner instructions summarize the requirement. | All-merged scope. |
+| Scope is non-empty, every in-scope child is merged, and no child requires continuation or resolution | Complete | Verify live child states, then report or close the epic. | Resolver and Protocol 95; runner instructions summarize the requirement. | All-merged scope. |
 | Empty, ambiguous, blocked, authority-constrained, or otherwise unresolved scope | Needs resolution | Verify the blocker and use the named-stop contract before ending the run. | Resolver, Protocol 95, Codex skill metadata, Claude and Cursor commands. | Empty scope and remaining Backlog work without authority. |
 
 ## Coverage Matrix
