@@ -762,10 +762,11 @@ Use the executable fail-closed gate before any resumed-session mutation:
   --json
 ```
 
-The helper inspects current CWD, current branch, and
-`git worktree list --porcelain`. It must not switch branches, edit files,
-update tracker state, update PRs, apply labels, merge PRs, or satisfy/waive any
-human checkpoint.
+The gate invokes the read-only worktree preflight to inspect current CWD,
+current branch, and `git worktree list --porcelain`. It must not change CWD,
+switch branches, create/delete worktrees, edit files, commit, push, update
+tracker state, update PRs, apply labels, merge PRs, or satisfy/waive any human
+checkpoint.
 
 Handle gate results as follows:
 
