@@ -287,13 +287,15 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 - Any scope changes / decisions in recent comments
 - Any ambiguity or conflict that still requires human confirmation
 
-When dispatching plan-writing work from a batch, include the exact
-current-batch item list and any plausibly related open PR evidence provided by
-the parent orchestrator. The planner uses this bounded context for the
+When dispatching any plan-writing work, include the exact current invocation
+item list (the single item for `/run-item`, or the current-batch item list for
+`/run-items`) and any plausibly related open PR evidence provided by the parent
+orchestrator. The planner uses this bounded context for the
 `Cross-Cutting Operational Assumption Check`; it must not widen scope or scan
 every open PR. If the planner reports `Conflict` evidence for the same
-operational assumption surface, stop implementation with `unclear_requirements`
-until the parent records `Resolved` or the human supplies a decision.
+operational assumption surface, stop plan-stage advancement with
+`unclear_requirements` until the parent records `Resolved` or the human
+supplies a decision.
 
 When advancing a `Plan Ready` item into implementation, read the plan's
 `Cross-Cutting Operational Assumption Check`. Applicable assumptions are handed

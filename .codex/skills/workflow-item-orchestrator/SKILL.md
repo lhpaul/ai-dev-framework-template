@@ -39,12 +39,13 @@ Recommended model tier: `balanced`
 12. Before implementation mutation in `workflow_hub`, state the selected product repository, local path or remote identity, artifact owner, and mutation target. Stop before file edits, branch creation, commits, or implementation PR creation when product repository context is missing or ambiguous. Specs and plans remain hub-owned unless a later protocol says otherwise.
 13. Before dispatching a stage path that may create a branch or open a PR, pass the expected branch, expected worktree when known, approved base, and artifact-owning repo root. Run `run-nested-artifact-guard.sh --mode <pre-create|pre-pr> --issue <number> --expected-branch <branch> --approved-base <branch> --repo-root "$ARTIFACT_REPO_ROOT"` before mutation and stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`.
 14. After candidate discovery and a clean nested-artifact guard, run `validate-branch-reuse.sh` with the issue, exact expected branch, approved base, and artifact repo root. A matching item number is not sufficient: only `compatible` may resume through `workflow-next-action.sh`, while `no_existing_branch` follows the fresh path. Stop before mutation on `incompatible` or `verification_blocked`, report their distinct evidence and human action, and never delete, reset, rebase, check out, or force-push the branch automatically. Treat tracking divergence as diagnostic only.
-15. For plan-writing handoffs from a batch, pass the exact current-batch item
-    list and same-surface open PR evidence to the planner for the
-    `Cross-Cutting Operational Assumption Check`. If the planner or implementer
-    returns `Conflict` / `Stale or conflicting` evidence, stop with
-    `unclear_requirements` until the parent records `Resolved` or a human
-    decision. When advancing a `Plan Ready` item into implementation, hand
+15. For any plan-writing handoff, pass the exact current invocation item list
+    (the single item for `/run-item`, or the current-batch item list for
+    `/run-items`) and same-surface open PR evidence to the planner for the
+    `Cross-Cutting Operational Assumption Check`. If the planner returns
+    `Conflict` evidence, stop plan-stage advancement with `unclear_requirements`
+    until the parent records `Resolved` or a human decision. When advancing a
+    `Plan Ready` item into implementation, hand
     applicable plan assumption records to the implementer and require
     `Still valid` evidence before file edits.
 16. Before dispatching a Backlog item into Writing Spec, run or consume

@@ -78,11 +78,12 @@ That document is the single source of truth for this supporting role. Key respon
 
 - Stay scoped to one item at a time
 - Use `workflow-next-action.sh` to determine the next deterministic action for the selected development folder, branch, or PR
-- For plan-writing handoffs from a batch, pass the exact current-batch item list
-  and same-surface open PR evidence to the planner for the
-  `Cross-Cutting Operational Assumption Check`. If the planner or implementer
-  returns `Conflict` / `Stale or conflicting` evidence, stop with
-  `unclear_requirements` until the parent records `Resolved` or a human decision.
+- For any plan-writing handoff, pass the exact current invocation item list
+  (the single item for `/run-item`, or the current-batch item list for
+  `/run-items`) and same-surface open PR evidence to the planner for the
+  `Cross-Cutting Operational Assumption Check`. If the planner returns
+  `Conflict` evidence, stop plan-stage advancement with `unclear_requirements`
+  until the parent records `Resolved` or a human decision.
 - When advancing a `Plan Ready` item into implementation, hand applicable plan
   assumption records to the implementer and require `Still valid` evidence
   before file edits.
