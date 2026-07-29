@@ -262,6 +262,7 @@ review aggregation and before the final reviewer-loop summary is posted.
 
 Usage:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/run-advisory-checks.sh <pr-number>
 ```
@@ -279,6 +280,7 @@ Customization contract:
 - Write a complete Markdown-ready advisory section to stdout when there is
   useful informational output, including the section heading. Example:
 
+  <!-- workflow-shell-contract: bash-zsh -->
   ```bash
   printf '\n\n**Advisory checks** _(informational - never blocks merge)_\n'
   printf -- '- Dead exports: none found\n'
