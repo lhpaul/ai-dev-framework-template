@@ -287,6 +287,25 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 - Any scope changes / decisions in recent comments
 - Any ambiguity or conflict that still requires human confirmation
 
+When dispatching any plan-writing work, include the exact current invocation
+item list (the single item for `/run-item`, or the current-batch item list for
+`/run-items`) and any same-surface open PR evidence provided by the parent
+orchestrator. "Same-surface" means an open PR whose changed workflow surface
+plausibly affects the same operational assumption; shared issue keywords alone
+are not same-surface evidence. The planner uses this bounded context for the
+`Cross-Cutting Operational Assumption Check`; it must not widen scope or scan
+every open PR. If the planner reports `Conflict` evidence for the same
+operational assumption surface, stop plan-stage advancement with
+`unclear_requirements` until the parent records `Resolved` or the human
+supplies a decision.
+
+When advancing a `Plan Ready` item into implementation, read the plan's
+`Cross-Cutting Operational Assumption Check`. Applicable assumptions are handed
+to the implementer for fresh source verification before file edits. A
+`Still valid` result may proceed. A changed, conflicting, or unverifiable result
+is `Stale or conflicting` and returns to the parent orchestrator before
+mutation.
+
 ---
 
 ## Step 2: Determine the Next Deterministic Action

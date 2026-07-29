@@ -53,6 +53,17 @@ Before finalizing Step 3, also classify concurrent-event-source using the determ
 
 Before finalizing Step 3, also check whether the plan introduces or modifies a cross-cutting checklist (a safety, quality, or compliance category that applies across multiple feature implementations). When cross-cutting checklist applies, enumerate ALL files that need updating — including the developer protocol, all agent/skill guidance files for tech-lead and developer roles, `REVIEW.md`, and any Codex skill files that invoke the affected stage. Run the live search defined in protocol 02's "Cross-cutting checklist plans" block before writing the enumeration. Do not list only the primary protocol file.
 
+Every plan must include the `Cross-Cutting Operational Assumption Check` from
+protocol 02. If the plan relies on an environment target, approved base,
+artifact owner, linked resource, selected product repository, canonical
+configuration value, or similar operational fact, record its value, source,
+verification time, bounded current invocation / same-surface open PR scope, and result. Use
+`Not applicable` only with a concise rationale; do not scan every open PR when
+there is no applicable assumption. Shared keywords alone are not conflict
+evidence. Return same-surface `Conflict` evidence to the parent orchestrator for
+`Resolved` or `Human decision required` handling, and stop plan-stage
+advancement until that resolution or decision is recorded.
+
 When the spec language implies pattern-based completeness, follow protocol 02's live-search vs spec-frozen enumeration rules and include a reproducible Verification Log.
 
 For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
