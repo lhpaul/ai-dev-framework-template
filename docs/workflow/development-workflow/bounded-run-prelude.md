@@ -96,9 +96,16 @@ The JSON output includes:
    themselves. Product checkpoints remain recommended for unresolved product
    language, open questions, empty Acceptance Criteria sections, and
    placeholder-only criteria such as `TBD` or `to be defined`.
-6. **Epic-like items** — `run-item-scope-resolver.sh` rejects epic issues; use
+6. **Data-model checkpoint signal** — incidental issue-body vocabulary such as
+   `schema`, `database`, `SQL`, `persistent data`, or `data model` is not enough
+   to create a technical checkpoint. Data-model checkpoints require an explicit
+   migration/schema label, action-oriented title intent, or migration-specific
+   body phrase such as `CREATE TABLE`, `ALTER TABLE`, `new column`, or
+   `database migration`. The checkpoint reason must name the exact matched
+   signal so the human can see why the checkpoint exists.
+7. **Epic-like items** — `run-item-scope-resolver.sh` rejects epic issues; use
    `--epic` instead.
-7. **Explicit-list base selection** — `--items` considers only the listed items.
+8. **Explicit-list base selection** — `--items` considers only the listed items.
    No integration labels resolve to `develop`. Partial or mixed
    `integration-branch:<slug>` coverage resolves to `develop` with a visible
    warning. A shared label may resolve to `develop-<slug>` only when the current
