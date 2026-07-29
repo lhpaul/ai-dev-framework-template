@@ -91,6 +91,19 @@ evidence are not authoritative. If the exact terminal reason is absent, keep
 following the existing pending, unavailable, finding, or timeout path rather
 than manually posting a clean summary.
 
+#### CodeRabbit CLI unavailable or rate-limited reviews
+
+When `coderabbit-cli` is configured in `review.on_draft.github` or
+`review.on_ready.github`, `pr-review-loop.sh` dispatches
+`coderabbit-cli-reviewer.sh` instead of the CodeRabbit GitHub App path. The CLI
+platform may return `RESULT=skipped` for missing CLI installation, missing auth,
+invalid or ambiguous output, timeout, or warning-policy rate limits. This is
+permissive for aggregate sequencing but is not evidence that a fresh CodeRabbit
+CLI review found no issues.
+
+Strict CLI rate-limit policy returns `RESULT=escalate` with
+`REASON=rate_limited`. Treat that like any other platform escalation.
+
 **Scope note**: This pre-flight checks `review.on_draft.github` and
 `review.on_ready.github` (external reviewers used by Protocol 93 / Step 7). The
 internal reviewer gate in Protocol 91 Step 7a separately checks
@@ -778,6 +791,9 @@ Examples of claims that must be directly supported:
 
 - "CodeRabbit APPROVED" — requires a review event with `state: APPROVED` or a transcript
   excerpt such as "All discussions resolved" or an explicit approval statement.
+- "CodeRabbit CLI found no issues" — requires `coderabbit-cli` script output
+  with `RESULT=clean`; `RESULT=skipped` with `REASON=unavailable`,
+  `unauthorized`, or `rate_limited` is not a clean review.
 - "Devin found no issues" — requires a Devin comment body confirming no findings, not
   merely the absence of a `CHANGES_REQUESTED` review.
 - "All platforms passed" — requires at least one supporting excerpt per platform cited.
@@ -893,6 +909,9 @@ After processing the requested PR(s), report:
 
 - **Ready for human review**: PR link, branch, and that the internal review gate, every configured automated reviewer, and CI are all clean (or skipped). For spec and plan PRs, mention that the `Document Quality Gate` log is present. Confirm that `gh pr ready` was run (after Step 7a APPROVED, before Step 7) to convert the draft PR to non-draft.
 - **Escalated**: PR link, reason (no progress over consecutive cycles, finding reappeared after fix, max cycles, timeout, or review platform escalate).
-- **Skipped**: If no review platform is configured, or a configured platform is currently unsupported and therefore skipped, note that in the result for the listed PR(s).
+- **Skipped**: If no review platform is configured, or a configured platform is
+  currently unsupported, unavailable, unauthenticated, rate-limited under
+  warning policy, or otherwise skipped, note that in the result for the listed
+  PR(s).
 
 The final summary comment posted on the PR (per the PR feedback tracking subsection) serves as the durable record; the summary to the user is a concise pointer to the PR and its outcome.

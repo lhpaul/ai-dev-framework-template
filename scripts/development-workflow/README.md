@@ -233,7 +233,7 @@ Runs one or more automated PR review platforms in order, then classifies finding
 Usage:
 
 ```bash
-./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch feature/my-branch] [--platform greptile] [--platform devin] [--platform coderabbit]
+./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch feature/my-branch] [--platform greptile] [--platform devin] [--platform coderabbit] [--platform coderabbit-cli]
 ```
 
 What it does:
@@ -243,6 +243,9 @@ What it does:
 - Stops on the first platform that reports blocking findings or escalation
 - Reports a stable aggregate `RESULT=clean|needs_fixes|escalate|skipped`
 - Emits ordered per-platform `PLATFORM_<n>_*` records plus the matching compatibility fixer
+- Supports `coderabbit` for the CodeRabbit GitHub App and `coderabbit-cli` for
+  the local CodeRabbit CLI; unavailable CLI/auth/rate-limit states are reported
+  as skipped or escalated evidence, not as a fresh clean review
 - If no GitHub reviewers are configured, reports `RESULT=skipped`
 
 Use this when:

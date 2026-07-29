@@ -43,7 +43,8 @@ review:
     # Ordered list of GitHub/App/CLI reviewers that can safely evaluate draft
     # PRs. These run before the PR is converted to ready.
     # Supported today by pr-review-loop.sh: greptile, devin, coderabbit,
-    # pr-agent, codex-github, claude-code-action, haystack, copilot, bugbot.
+    # coderabbit-cli, pr-agent, codex-github, claude-code-action, haystack,
+    # copilot, bugbot.
     github:
       - pr-agent
 
@@ -52,6 +53,11 @@ review:
     # are clean and the PR has been converted with `gh pr ready`.
     github:
       - bugbot
+  #
+  # CodeRabbit CLI platform options (local CLI reviewer; place "coderabbit-cli"
+  # in on_draft.github or on_ready.github to opt in; independent from the
+  # "coderabbit" GitHub App platform):
+  #   rate_limit_policy: warn      # warn|strict; default warn
   #
   # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")

@@ -16,7 +16,7 @@ CodeRabbit is **optional**. The workflow functions without it. See [`integration
 
 ## Usage Modes
 
-CodeRabbit supports two independent usage modes in this framework:
+CodeRabbit supports three independent usage modes in this framework:
 
 ### CLI-only (Path A — default)
 
@@ -37,13 +37,66 @@ coderabbit auth login
 
 The `.coderabbit.yaml` at the repo root ships with `auto_review.enabled: false` so the GitHub App (if installed) does not auto-review PRs.
 
-### External PR reviewer (Path B)
+### CLI Step 7 reviewer (Path B)
+
+Use the CodeRabbit CLI as a configured Step 7 platform without installing the
+GitHub App. Add `coderabbit-cli` to `review.on_draft.github` or
+`review.on_ready.github`:
+
+```yaml
+review:
+  on_draft:
+    github:
+      - coderabbit-cli
+  coderabbit_cli:
+    rate_limit_policy: warn
+```
+
+The platform runs `cr --agent --base <pr-base>` when `cr` is installed. If `cr`
+is absent and `coderabbit` is available, it runs
+`coderabbit review --agent --base <pr-base>`. The PR base is read with
+`gh pr view <number> --json baseRefName,headRefName`; if that lookup is
+unavailable, the companion script falls back to `develop`.
+
+The CLI path is intentionally not enabled by default. It requires local CLI
+installation and authentication in the runner environment.
+
+#### CLI Result Mapping
+
+`scripts/development-workflow/coderabbit-cli-reviewer.sh` emits the same
+companion-script contract as other CLI reviewers:
+
+- `RESULT=clean` when agent JSON includes a recognized findings array and no
+  blocking findings.
+- `RESULT=needs_fixes` when one or more findings have blocking severity.
+- `RESULT=skipped` with `REASON=unavailable`, `unauthorized`, `invalid_json`,
+  `ambiguous_output`, `no_output`, `timeout`, or `rate_limited` when a fresh
+  reliable review did not complete.
+- `RESULT=escalate` with `REASON=rate_limited` when the rate-limit policy is
+  strict.
+
+The default rate-limit policy is `warn`, which records
+`RESULT=skipped`, `REASON=rate_limited`, and `DISPLAY_RESULT=rate_limited`.
+Set `CODERABBIT_CLI_RATE_LIMIT_POLICY=strict` or configure
+`review.coderabbit_cli.rate_limit_policy: strict` to stop readiness on rate
+limit instead.
+
+`coderabbit-cli` does not post GitHub review threads in this MVP, so
+`bot_login_for_platform coderabbit-cli` returns empty. The script-owned
+Automated Reviewer Loop Summary is the durable evidence. A skipped CLI result
+must be reported as unavailable or rate-limited evidence, not as "CodeRabbit CLI
+found no issues."
+
+### GitHub App PR reviewer (Path C)
 
 To enable CodeRabbit as a Step 7 automated PR reviewer platform:
 
 1. Set `reviews.auto_review.enabled: true` in `.coderabbit.yaml`
 2. Add `coderabbit` to `review.on_draft.github` or `review.on_ready.github` in `.ai-dev-workflow.yaml`
 3. Install the CodeRabbit GitHub App on the repository
+
+The `coderabbit` App platform remains separate from `coderabbit-cli`. It uses
+the `coderabbitai[bot]` review/comment evidence path described below.
 
 ---
 
@@ -110,7 +163,7 @@ If either check fails, `coderabbit` is classified as `unreachable`. The configur
 
 ---
 
-## Setup (Path B only)
+## Setup (Path C only)
 
 ### 1. Install the CodeRabbit GitHub App
 
