@@ -491,7 +491,7 @@ the resumed session:
 ./scripts/development-workflow/checkpoint-resume-gate.sh \
   --item <item-id> \
   --expected-branch <branch-prefix>/<slug> \
-  --expected-worktree <worktree-path-if-known> \
+  --expected-worktree <worktree-path> \
   --main-repo-root <main-repo-root> \
   --checkpoint-state <pending|satisfied|waived> \
   --json
