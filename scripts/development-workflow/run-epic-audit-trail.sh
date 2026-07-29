@@ -8,6 +8,7 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 
 PR_MARKER="<!-- run-epic:pr-disposition -->"
 EPIC_MARKER="<!-- run-epic:epic-ledger -->"
+REVIEWER_ACCESS_BYPASS_MARKER="<!-- reviewer-access-bypass -->"
 
 usage() {
   cat <<'EOF'
@@ -16,6 +17,8 @@ Usage:
   ./scripts/development-workflow/run-epic-audit-trail.sh apply-pr-disposition --input <file> --pr <number>
   ./scripts/development-workflow/run-epic-audit-trail.sh render-epic-ledger --input <file>
   ./scripts/development-workflow/run-epic-audit-trail.sh apply-epic-ledger --input <file> --epic <number>
+  ./scripts/development-workflow/run-epic-audit-trail.sh render-reviewer-access-bypass --input <file>
+  ./scripts/development-workflow/run-epic-audit-trail.sh apply-reviewer-access-bypass --input <file> --pr <number>
 
 Renders or applies stable /run-epic audit comments. Apply mode updates an
 existing marker comment or creates one when no marker exists.
@@ -372,6 +375,66 @@ render_epic_ledger() {
   } | redact_text
 }
 
+render_reviewer_access_bypass() {
+  local json="$1"
+  local missing
+
+  missing="$(printf '%s\n' "$json" | jq -r '
+    [
+      ["authorization.authorized_by", (.authorization.authorized_by // .authorization.authorizedBy)],
+      ["authorization.authorized_at", (.authorization.authorized_at // .authorization.authorizedAt)],
+      ["authorization.authorization_text", (.authorization.authorization_text // .authorization.authorizationText)],
+      ["pr.number", .pr.number],
+      ["pr.head_sha", (.pr.head_sha // .pr.headSha)],
+      ["evidence_fingerprint", (.evidence_fingerprint // .evidenceFingerprint)],
+      ["ci.result", (.ci.result // .ci_result)],
+      ["reviewer.result", (.reviewer.result // .reviewer.status)],
+      ["blocked_check.name", (.blocked_check.name // .blockedCheck.name)],
+      ["access.evidence", (.access.evidence // .accessRestriction.evidence)],
+      ["access.remediation_status", (.access.remediation_status // .access.remediationStatus)],
+      ["access.bypass_reason", (.access.bypass_reason // .access.bypassReason // .accessRestriction.bypassReason)],
+      ["proposed_action", (.proposed_action // .proposedAction)],
+      ["state", .state]
+    ]
+    | map(select(.[1] == null or (.[1] | tostring | length == 0)) | .[0])
+    | join(", ")
+  ')"
+  if [ -n "$missing" ]; then
+    error_exit "missing required reviewer access-bypass fields: $missing"
+  fi
+
+  {
+    printf '%s\n' "$REVIEWER_ACCESS_BYPASS_MARKER"
+    printf '## Reviewer Access Bypass Audit\n\n'
+    printf '%s\n' "$json" | jq -r '
+      "- State: " + (.state | tostring),
+      "- Authorized by: " + ((.authorization.authorized_by // .authorization.authorizedBy) | tostring),
+      "- Authorized at: " + ((.authorization.authorized_at // .authorization.authorizedAt) | tostring),
+      "- Authorization text: " + ((.authorization.authorization_text // .authorization.authorizationText) | tostring),
+      "- PR: #" + (.pr.number | tostring),
+      "- Head SHA: `" + ((.pr.head_sha // .pr.headSha) | tostring) + "`",
+      "- Evidence fingerprint: `" + ((.evidence_fingerprint // .evidenceFingerprint) | tostring) + "`",
+      "- Proposed action: `" + ((.proposed_action // .proposedAction) | tostring) + "`"
+    '
+    printf '\n### Evidence\n\n'
+    printf '%s\n' "$json" | jq -r '
+      "- CI result: " + ((.ci.result // .ci_result) | tostring),
+      "- Reviewer result: " + ((.reviewer.result // .reviewer.status) | tostring),
+      "- Reviewer blocking count: " + ((.reviewer.blocking_count // .reviewer.blockingCount // 0) | tostring),
+      "- Blocked check: " + ((.blocked_check.name // .blockedCheck.name) | tostring) + " (" + ((.blocked_check.state // .blockedCheck.state // .blocked_check.conclusion // .blockedCheck.conclusion // "unknown") | tostring) + ")",
+      "- Access evidence: " + ((.access.evidence // .accessRestriction.evidence) | tostring),
+      "- Remediation: " + ((.access.remediation_status // .access.remediationStatus) | tostring),
+      "- Bypass reason: " + ((.access.bypass_reason // .access.bypassReason // .accessRestriction.bypassReason) | tostring)
+    '
+    printf '\n### Attempt Result\n\n'
+    printf '%s\n' "$json" | jq -r '
+      "- Result: " + ((.attempt.result // "not_attempted") | tostring),
+      "- Command exit: " + ((.attempt.exit_code // .attempt.exitCode // "n/a") | tostring),
+      "- Live PR state: " + ((.attempt.live_pr_state // .attempt.livePrState // "not_recorded") | tostring)
+    '
+  } | redact_text
+}
+
 find_marker_comment_id() {
   local target="$1"
   local marker="$2"
@@ -435,7 +498,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$command" in
-  render-pr-disposition|apply-pr-disposition|render-epic-ledger|apply-epic-ledger)
+  render-pr-disposition|apply-pr-disposition|render-epic-ledger|apply-epic-ledger|render-reviewer-access-bypass|apply-reviewer-access-bypass)
     ;;
   *)
     echo "ERROR: unknown or missing subcommand." >&2
@@ -471,5 +534,15 @@ case "$command" in
     fi
     body="$(render_epic_ledger "$input_json")"
     apply_comment "$epic_number" "$EPIC_MARKER" "$body"
+    ;;
+  render-reviewer-access-bypass)
+    render_reviewer_access_bypass "$input_json"
+    ;;
+  apply-reviewer-access-bypass)
+    if [ -z "$pr_number" ] || ! is_positive_int "$pr_number"; then
+      error_exit "--pr must be a positive integer"
+    fi
+    body="$(render_reviewer_access_bypass "$input_json")"
+    apply_comment "$pr_number" "$REVIEWER_ACCESS_BYPASS_MARKER" "$body"
     ;;
 esac

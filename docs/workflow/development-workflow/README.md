@@ -251,6 +251,13 @@ The sections below keep this document usable as a master reference after the nar
 
 After opening release PRs, protocol `05` treats the release-branch reviewer loop as skipped, applies `ready-for-regression` on the **PR targeting `main`**, and runs the CI loop until checks are green (or escalation) — same persistence contract as other release readiness work.
 
+Verified access restrictions on third-party reviewer checks use a
+remediation-first, human-only exceptional merge gate. See
+[`guardrails-enforcement.md`](guardrails-enforcement.md) Gate 5 and
+[`integrations/haystack-triage.md`](integrations/haystack-triage.md) for the
+required current evidence, named authorization, pre-attempt audit, and one-shot
+`gh pr merge <pr> --admin` boundary.
+
 Codex skills are stored in `.agents/skills/` for repo-scoped Codex discovery, with legacy canonical definitions retained in `.codex/skills/`. Install them into the local Codex environment with:
 
 ```bash

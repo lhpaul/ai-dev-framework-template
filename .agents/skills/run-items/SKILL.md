@@ -91,10 +91,16 @@ proposal step.
    guardrails. When the relevant stages allow `may_merge_pr: true`, run
    Guardrails Enforcement Gate 5 for each in-scope PR, including
    `run-epic-risk-classifier.sh` and `run-epic-delegated-gate.sh`; continue only
-   when every in-scope PR returns `merge_allowed`. The bounded-prelude
+   when every normally merged in-scope PR returns `merge_allowed`. If any PR returns
+   `exceptional_bypass_authorized`, split it out of the normal batch-merge list
+   and require the separate named PR/SHA/fingerprint authorization plus
+   pre-attempt `reviewer-access-bypass` audit before one exact admin merge
+   attempt; delegated/batch approval does not authorize `--admin`. The bounded-prelude
    confirmation (or explicit autonomy flags) recorded for this `/run-items`
-   invocation is the required merge gate for Protocol 90 `explicit_list` batches.
-   Then route into Protocol 94 batch merge using only the explicit in-scope PR list:
+   invocation is the required merge gate for normal Protocol 90 `explicit_list`
+   batches, but it never waives the separate admin-merge authorization.
+   Then route normal candidates into Protocol 94 batch merge using only the
+   explicit in-scope PR list:
    run
    `batch-merge.sh discover --prs <comma-separated-in-scope-prs>` and continue
    through merge, cleanup, and tracker reconciliation. Never use Protocol 94

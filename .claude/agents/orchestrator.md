@@ -86,6 +86,11 @@ That document is the single source of truth for this supporting role. Key respon
   `policy_inconsistent`. With `merge_denied`, ready PRs report
   `ready_human_merge`. Discovered unrelated PRs are `out_of_scope` and are not
   merged.
+- A delegated gate result of `exceptional_bypass_authorized` is not normal batch
+  merge permission. Split that PR out of the Protocol 94 list and require a
+  separate named PR/SHA/fingerprint authorization plus pre-attempt
+  `reviewer-access-bypass` audit marker before one exact human-authorized
+  `gh pr merge <pr> --admin` attempt.
 - Before accepting any item as terminal in the batch summary, require the
   item runner's `## Ground-Truth Completion Verification` section from
   `item-completion-self-check.sh` or run the helper directly from current

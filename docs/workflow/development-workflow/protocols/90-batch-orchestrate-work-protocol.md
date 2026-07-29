@@ -1872,7 +1872,7 @@ The re-trigger uses the same `max_cycles` counter as the normal reviewer loop (S
 
 ## Step 5.5: Batch-Merge Handoff (Merge-Ready Parallel Batches)
 
-When **all PRs in a parallel batch** have reached `ready-for-human-review`, the orchestrator may hand off to the batch-merge flow instead of leaving the human to merge manually. In a merge-granted run this handoff is required for every in-scope PR whose delegated merge gate returns `merge_allowed`; in a merge-denied run this handoff is forbidden and the batch reports `ready_human_merge`.
+When **all PRs in a parallel batch** have reached `ready-for-human-review`, the orchestrator may hand off to the batch-merge flow instead of leaving the human to merge manually. In a merge-granted run this handoff is required for every in-scope PR whose delegated merge gate returns `merge_allowed`; in a merge-denied run this handoff is forbidden and the batch reports `ready_human_merge`. A PR whose gate returns `exceptional_bypass_authorized` is not part of the normal batch-merge list: it requires a separate named human authorization, verified pre-attempt reviewer-access audit, one exact admin merge attempt, fresh base rediscovery after the attempt, and then normal continuation for unaffected PRs.
 
 ### When to activate this step
 
@@ -1917,6 +1917,13 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
 ### Batch-merge routing rule (mandatory)
 
 When merging a parallel implementation batch, **always** invoke `batch-merge.sh discover --prs <list>` followed by execution of `94-batch-merge-protocol.md`. Direct `gh pr merge` calls are only acceptable for single-PR merges or non-implementation PRs (spec, plan). **Never** use `gh pr merge` individually for parallel implementation batches — it bypasses CHANGELOG auto-resolution (Protocol 94 Step 4.3) and active-worktree awareness.
+
+The only exception is an access-restricted reviewer check whose delegated gate
+returns `exceptional_bypass_authorized`. That exception is human-only and
+PR-specific: prior batch approval, delegated merge policy, or risk tolerance
+does not authorize `--admin`. Keep unaffected PRs on the normal Protocol 94
+route, refresh discovery after the one admin attempt, and record final bypass
+state in the stable `reviewer-access-bypass` audit marker.
 
 | Merge scenario                         | Required tool                  |
 | -------------------------------------- | ------------------------------ |

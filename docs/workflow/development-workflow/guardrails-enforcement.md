@@ -190,6 +190,18 @@ following are satisfied**:
 - Required audit evidence is recorded.
 - Classified risk is at or below `stages.<stage>.max_merge_risk`.
 
+If the only remaining blocker is a verified access-restricted third-party
+reviewer check, the delegated gate does **not** return normal `merge_allowed`.
+It returns `human_required` classifications such as `access_restricted`,
+`authorization_required`, `authorization_stale`, or `audit_required` until the
+runner has current CI/reviewer/check evidence, App-access remediation evidence,
+a named human authorization for the exact PR, head SHA, and evidence
+fingerprint, and a verified pre-attempt `<!-- reviewer-access-bypass -->` audit
+record. Only then may the gate return `exceptional_bypass_authorized`, which
+authorizes exactly one named `gh pr merge <pr> --admin` attempt. Delegated mode,
+`may_merge_pr`, batch approval, risk tolerance, or satisfied unrelated
+checkpoints never substitute for that authorization.
+
 **Medium-risk merged decisions** require a complete "why safe to merge"
 explanation covering scope, tests, reviewer outcome, CI outcome, and
 rollback/cleanup risk. Missing this explanation blocks the merge.

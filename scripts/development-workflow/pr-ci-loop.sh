@@ -264,6 +264,9 @@ while :; do
     print_kv FAILING_CHECKS pr_status_fetch_failed
     print_kv PENDING_CHECK_COUNT 0
     print_kv PENDING_CHECKS ""
+    print_kv REVIEWER_CHECK_COUNT 0
+    print_kv REVIEWER_CHECKS ""
+    print_kv REVIEWER_CHECKS_JSON "[]"
     exit 1
   fi
   # statusCheckRollup can include historical duplicates for the same check.
@@ -301,6 +304,9 @@ while :; do
     print_kv FAILING_CHECKS check_json_parse_failed
     print_kv PENDING_CHECK_COUNT 0
     print_kv PENDING_CHECKS ""
+    print_kv REVIEWER_CHECK_COUNT 0
+    print_kv REVIEWER_CHECKS ""
+    print_kv REVIEWER_CHECKS_JSON "[]"
     exit 1
   fi
   reviewer_check_names="$(
@@ -328,6 +334,7 @@ while :; do
     print_kv PENDING_CHECKS ""
     print_kv REVIEWER_CHECK_COUNT 0
     print_kv REVIEWER_CHECKS ""
+    print_kv REVIEWER_CHECKS_JSON "[]"
     exit 1
   fi
   reviewer_check_count="$(
@@ -353,6 +360,27 @@ while :; do
         | (.name // .context // .workflowName // "unknown")
       ]
       | join(",")
+    '
+  )"
+  reviewer_checks_json="$(
+    printf '%s\n' "$normalized_checks_json" | jq -c --argjson reviewer_names "$reviewer_check_names" --arg pr_number "$pr_number" '
+      [
+        .[]
+        | (.name // .context // .workflowName // "unknown") as $check_name
+        | select($reviewer_names | index($check_name))
+        | {
+            name: $check_name,
+            provider: $check_name,
+            status: (.status // ""),
+            conclusion: (.conclusion // ""),
+            state: (.state // ""),
+            detailsUrl: (.detailsUrl // .details_url // .targetUrl // .target_url // ""),
+            startedAt: (.startedAt // ""),
+            completedAt: (.completedAt // ""),
+            createdAt: (.createdAt // ""),
+            pullRequest: ($pr_number | tonumber? // $pr_number)
+          }
+      ]
     '
   )"
   total_check_count="$(
@@ -458,6 +486,7 @@ while :; do
     print_kv PENDING_CHECKS "$pending_list"
     print_kv REVIEWER_CHECK_COUNT "$reviewer_check_count"
     print_kv REVIEWER_CHECKS "$reviewer_check_list"
+    print_kv REVIEWER_CHECKS_JSON "$reviewer_checks_json"
     exit 1
   fi
 
@@ -478,6 +507,7 @@ while :; do
     print_kv PENDING_CHECKS ""
     print_kv REVIEWER_CHECK_COUNT "$reviewer_check_count"
     print_kv REVIEWER_CHECKS "$reviewer_check_list"
+    print_kv REVIEWER_CHECKS_JSON "$reviewer_checks_json"
     exit 0
   fi
 
@@ -492,6 +522,7 @@ while :; do
     print_kv PENDING_CHECKS "$pending_list"
     print_kv REVIEWER_CHECK_COUNT "$reviewer_check_count"
     print_kv REVIEWER_CHECKS "$reviewer_check_list"
+    print_kv REVIEWER_CHECKS_JSON "$reviewer_checks_json"
     exit 2
   fi
 

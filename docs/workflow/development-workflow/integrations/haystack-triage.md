@@ -57,6 +57,15 @@ review:
 
 No other configuration changes are required in `.ai-dev-workflow.yaml`. If a repository uses the Haystack GitHub App check run under a non-default name, set `HAYSTACK_CHECK_NAME` for the reviewer and CI loop; the default is `Haystack / Review`.
 
+Before relying on the GitHub App check run, verify that the organization permits
+the Haystack App and that the current repository is included in the App
+installation. Local CLI authentication is separate from GitHub App access: a
+developer can be authenticated locally while GitHub still reports `Haystack /
+Review` as failed or pending because the App cannot read the repository. A
+healthy setup test is a small PR whose Haystack review completes with zero
+blocking findings and whose `Haystack / Review` check is reachable from the PR
+details URL.
+
 If the repository creates implementation PRs as drafts, prefer
 `review.on_ready.github` for Haystack. In this mode the reviewer loop lets
 draft-compatible platforms clear first, marks the PR ready, and then runs
@@ -324,6 +333,23 @@ INFO: haystack triage returned status=none (no analysis available for this PR ye
 **Cause**: Haystack has no record of this PR. This happens when the PR was not submitted via `haystack submit` and the Haystack GitHub App has not yet picked it up automatically.
 
 **Remediation**: Run `haystack submit` on the branch to trigger analysis, then re-run the review loop.
+
+### Haystack check is access-restricted (`HTTP 403` / `REASON=forbidden`)
+
+**Cause**: The Haystack GitHub App or organization policy cannot access the
+repository even though CLI triage or another reviewer source may show zero
+blocking findings. This is reviewer infrastructure evidence, not a successful
+fresh review.
+
+**Remediation**: Restore repository or organization App access first, then
+rerun the reviewer loop and delegated merge gate. If access cannot be restored
+in the required window and this check is the only remaining protection blocker,
+the delegated gate may present a human-only exceptional path. That path requires
+current green CI, zero blocking reviewer findings, current access-denial
+evidence, remediation evidence, a named authorization for the exact PR/head
+SHA/evidence fingerprint, and a pre-attempt `reviewer-access-bypass` audit
+comment. It authorizes exactly one named `gh pr merge <pr> --admin` attempt; it
+is never implied by delegated merge policy or batch approval.
 
 ### Triage returns `status=pending` (analysis in progress — automatic retry)
 

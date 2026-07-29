@@ -2105,11 +2105,17 @@ is `true` in the effective guardrails, assemble the evidence object and run:
 ./scripts/development-workflow/run-epic-delegated-gate.sh --input <evidence-file>
 ```
 
-Merge only when the gate returns `merge_allowed` **and** every required-evidence
-check in section 3 Gate 5 of `guardrails-enforcement.md` passes. For medium-risk
-decisions, include a complete "why safe to merge" explanation. A risk classified
-above the stage `max_merge_risk` stops the run and names the `high_risk_change`
-guardrail.
+Merge through the normal repository path only when the gate returns
+`merge_allowed` **and** every required-evidence check in section 3 Gate 5 of
+`guardrails-enforcement.md` passes. If the gate reports
+`exceptional_bypass_authorized`, do not treat it as normal delegated merge
+authority: verify the pre-attempt `reviewer-access-bypass` audit marker, execute
+exactly the named `gh pr merge <pr> --admin` command once, immediately verify
+the live PR state, and update the same audit marker with `merged` or `failed`.
+Any head SHA, fingerprint, CI, reviewer, or check-state drift returns to Gate 5
+for fresh authorization. For medium-risk decisions, include a complete "why safe
+to merge" explanation. A risk classified above the stage `max_merge_risk` stops
+the run and names the `high_risk_change` guardrail.
 
 After readiness, branch on the effective merge authority:
 
