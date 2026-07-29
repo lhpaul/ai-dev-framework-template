@@ -19,6 +19,10 @@ Recommended model tier: `economy`
    logical sub-part, do not intentionally batch all completed sub-parts into one
    final commit, and never commit incomplete or failing work only to satisfy the
    rule.
+   For checkpoint-resume redispatch, include checkpoint state with the complete
+   Protocol 90 isolation assignment, use a fresh runner, and require the child
+   to invoke `checkpoint-resume-gate.sh` before mutation. Do not resume a paused
+   runner while sibling runners remain active.
 9. For plan-writing handoffs, include the exact current-batch item list and any
    known same-surface open PR evidence for Protocol 02's
    `Cross-Cutting Operational Assumption Check`. Keep returned `Conflict`

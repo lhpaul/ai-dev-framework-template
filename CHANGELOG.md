@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cross-cutting plan assumptions so concurrent workflow work cannot silently
   invalidate implementation guidance.
 
+### Fixed
+
+- **Fail closed on checkpoint resume isolation** (#1285): Require complete
+  worktree context and stop resumed isolated runners before mutation when the
+  session starts in the main clone or cannot prove its assignment.
+
 ## [0.39.0] - 2026-07-27
 
 ### Added

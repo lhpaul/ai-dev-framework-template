@@ -60,6 +60,11 @@ Key responsibilities:
   duplicate worktree path. Non-isolated runners are allowed only when explicitly
   classified `read_only` and will not edit files, switch branches, commit, push,
   mutate PRs, change labels, or update tracker state.
+- For checkpoint-resume redispatch, pass checkpoint state with the complete
+  isolation assignment to a fresh runner and require `checkpoint-resume-gate.sh`
+  before mutation. Do not resume a paused runner while sibling runners remain
+  active, and do not treat isolation verification as satisfying or waiving the
+  checkpoint.
 - For plan-writing handoffs in the explicit list, pass the exact current-batch
   item list and any known same-surface open PR evidence to Protocol 02's
   `Cross-Cutting Operational Assumption Check`. Keep returned `Conflict`

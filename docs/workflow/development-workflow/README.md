@@ -11,6 +11,14 @@ incremental checkpoint commits after each completed logical sub-part. This gives
 interrupted runs a recoverable boundary without changing review, CI, readiness,
 tracker, or merge gates.
 
+When a checkpointed worktree-isolated run is resumed, the workflow front-loads
+the checkpoint decision and complete isolation context through
+`checkpoint-resume-gate.sh` before any mutation. A runner may continue only from
+the assigned worktree after the gate returns `continue`; pending checkpoints and
+unclear isolation stop for a fresh fully isolated dispatch. Operators should not
+resume a paused runner while sibling runners remain active, and isolation
+verification never satisfies or waives checkpoint state.
+
 ---
 
 ## Why This Workflow Exists
