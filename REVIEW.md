@@ -148,7 +148,8 @@ Check:
 - Cross-cutting operational assumption check:
   - Every plan includes `Cross-Cutting Operational Assumption Check` with either applicable evidence or a concise `Not applicable` rationale.
   - Applicable evidence records the assumption value, authoritative source,
-    verification time, bounded current-batch / related-PR scope, and result.
+    verification time, bounded current invocation / same-surface open PR scope,
+    and result.
   - `Conflict` evidence records competing same-surface evidence, affected plan
     statements, resolution status, and decision owner; unresolved conflicts are
     blocking before implementation.
