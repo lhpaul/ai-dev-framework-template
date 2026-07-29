@@ -723,22 +723,23 @@ artifact base instead, even when product implementation work uses
 
 Before advancing the item, check its spec's `Depends on` field. If any dependency is not yet `Merged` or `Released`, stop and report the blocked state to the human.
 
-### Checkpoint-Resume Worktree Preflight
+### Checkpoint-Resume Gate
 
 When resuming an item after a human-checkpoint pause, and the prior run used a
-dedicated item worktree, run the checkpoint-resume preflight **before any
+dedicated item worktree, run the checkpoint-resume gate **before any
 mutation** (file edit, branch switch, commit, PR update, label update, tracker
 write, or merge). This closes the resume-side gap where a SendMessage or new
 session starts from the main clone instead of the item's isolated worktree.
 
-Use the read-only helper:
+Use the executable fail-closed gate before any resumed-session mutation:
 
 ```bash
-./scripts/development-workflow/worktree-resume-preflight.sh \
+./scripts/development-workflow/checkpoint-resume-gate.sh \
   --item <item-id> \
   --expected-branch <branch-prefix>/<slug> \
   --expected-worktree <worktree-path-if-known> \
   --main-repo-root <main-repo-root> \
+  --checkpoint-state <pending|satisfied|waived> \
   --json
 ```
 
@@ -747,22 +748,21 @@ The helper inspects current CWD, current branch, and
 update tracker state, update PRs, apply labels, merge PRs, or satisfy/waive any
 human checkpoint.
 
-Handle helper results as follows:
+Handle gate results as follows:
 
 | Result | Meaning | Required action |
 | --- | --- | --- |
 | `RESULT=continue` | Current CWD is already inside the expected worktree on the expected branch. | Continue the item run from the current directory. |
-| `RESULT=reenter` | Current CWD is the main clone and exactly one registered worktree matches the expected branch/path. | `cd "$TARGET_WORKTREE"`, run `bash scripts/development-workflow/worktree-cwd-guard.sh --check-cwd "$TARGET_WORKTREE" "$MAIN_REPO_ROOT"`, verify `pwd -P` and `git rev-parse --abbrev-ref HEAD`, then continue. |
-| `RESULT=stop` | The expected worktree is missing, ambiguous, detached, on the wrong branch, or the current CWD is untrusted. | Stop before mutation and report the helper fields to the human. |
+| `RESULT=checkpoint_pending` | Isolation is valid but the human checkpoint remains pending. | Stop for the required human decision. |
+| `RESULT=stop` | Context is missing, ambiguous, detached, wrong-branch, or starts in the main clone. | Stop before mutation; start a fresh runner with the complete assignment. |
 
 Stop output must include: item, expected branch, expected worktree when known,
 target worktree when found, observed directory, observed branch when available,
 failure reason, and human recovery action.
 
-Successful worktree re-entry is only a CWD safety check. It does not satisfy,
-waive, clear, or otherwise modify any pending human checkpoint. Checkpoint
-lifecycle state remains governed by the checkpoint policy and
-`run-epic-checkpoint-lifecycle.sh`.
+Isolation verification never satisfies, waives, clears, or otherwise modifies a
+human checkpoint. A main-clone resume must stop; it must not change directory,
+switch branches, or repair state automatically.
 
 When resuming after an interrupted mutating run, inspect the item branch
 history, local worktree commits, and uncommitted edits before making a new

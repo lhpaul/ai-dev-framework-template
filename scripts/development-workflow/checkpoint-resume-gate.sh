@@ -41,17 +41,51 @@ set +e
 preflight_output="$(bash "$script_dir/worktree-resume-preflight.sh" --item "$item" --expected-worktree "$expected_worktree" --expected-branch "$expected_branch" --main-repo-root "$main_repo_root")"
 preflight_status=$?
 set -e
-isolation_result="$(printf '%s\n' "$preflight_output" | sed -n 's/^RESULT=//p' | tail -1)"
-if [ "$preflight_status" -ne 0 ] || [ "$isolation_result" != "continue" ]; then
-  result="stop"; stop_condition="unclear_requirements"; reason="worktree isolation verification failed"
+
+field() {
+  printf '%s\n' "$preflight_output" | sed -n "s/^$1=//p" | tail -1
+}
+
+preflight_result="$(field RESULT)"
+target_worktree="$(field TARGET_WORKTREE)"
+observed_directory="$(field OBSERVED_DIRECTORY)"
+observed_branch="$(field OBSERVED_BRANCH)"
+preflight_reason="$(field REASON)"
+human_action="$(field HUMAN_ACTION)"
+
+if [ "$preflight_status" -ne 0 ] || [ "$preflight_result" != "continue" ]; then
+  result="stop"
+  isolation_result="stop"
+  stop_condition="unclear_requirements"
+  reason="worktree isolation verification failed: ${preflight_reason:-unknown reason}"
 elif [ "$checkpoint_state" = "pending" ]; then
-  result="checkpoint_pending"; stop_condition="checkpoint_pending"; reason="human checkpoint remains pending"
+  result="checkpoint_pending"
+  isolation_result="pass"
+  stop_condition="checkpoint_pending"
+  reason="human checkpoint remains pending"
+  human_action="satisfy or waive the checkpoint before starting a fresh isolated resume"
 else
-  result="continue"; stop_condition=""; reason="isolation and checkpoint state allow continuation"
+  result="continue"
+  isolation_result="pass"
+  stop_condition=""
+  reason="isolation and checkpoint state allow continuation"
+  human_action="continue from current directory"
 fi
-printf '%s\n' "$preflight_output"
-printf 'RESULT=%s\nISOLATION_RESULT=%s\nCHECKPOINT_STATE=%s\nSTOP_CONDITION=%s\nREASON=%s\n' "$result" "${isolation_result:-stop}" "$checkpoint_state" "$stop_condition" "$reason"
+
+printf 'RESULT=%s\n' "$result"
+printf 'ISOLATION_RESULT=%s\n' "$isolation_result"
+printf 'CHECKPOINT_STATE=%s\n' "$checkpoint_state"
+printf 'STOP_CONDITION=%s\n' "$stop_condition"
+printf 'ITEM=%s\n' "$item"
+printf 'EXPECTED_BRANCH=%s\n' "$expected_branch"
+printf 'EXPECTED_WORKTREE=%s\n' "$expected_worktree"
+printf 'TARGET_WORKTREE=%s\n' "${target_worktree:-}"
+printf 'MAIN_REPO_ROOT=%s\n' "$main_repo_root"
+printf 'OBSERVED_DIRECTORY=%s\n' "${observed_directory:-}"
+printf 'OBSERVED_BRANCH=%s\n' "${observed_branch:-}"
+printf 'REASON=%s\n' "$reason"
+printf 'HUMAN_ACTION=%s\n' "${human_action:-start a fresh runner with the complete isolation assignment before mutation}"
 if [ "$json_output" = "true" ]; then
-  python3 -c 'import json,sys; print(json.dumps(dict(result=sys.argv[1], isolationResult=sys.argv[2], checkpointState=sys.argv[3], stopCondition=sys.argv[4], reason=sys.argv[5])))' "$result" "${isolation_result:-stop}" "$checkpoint_state" "$stop_condition" "$reason"
+  python3 -c 'import json,sys; print(json.dumps(dict(result=sys.argv[1], isolationResult=sys.argv[2], checkpointState=sys.argv[3], stopCondition=sys.argv[4], item=sys.argv[5], expectedBranch=sys.argv[6], expectedWorktree=sys.argv[7], targetWorktree=sys.argv[8], mainRepoRoot=sys.argv[9], observedDirectory=sys.argv[10], observedBranch=sys.argv[11], reason=sys.argv[12], humanAction=sys.argv[13])))' "$result" "$isolation_result" "$checkpoint_state" "$stop_condition" "$item" "$expected_branch" "$expected_worktree" "${target_worktree:-}" "$main_repo_root" "${observed_directory:-}" "${observed_branch:-}" "$reason" "${human_action:-start a fresh runner with the complete isolation assignment before mutation}"
 fi
 [ "$result" = "continue" ]

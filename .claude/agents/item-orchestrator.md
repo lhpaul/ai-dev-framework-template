@@ -50,11 +50,13 @@ and artifact repo root. A matching item number alone is insufficient. Only
 human action, and never delete, reset, rebase, check out, or force-push the
 branch automatically. Tracking divergence is diagnostic only.
 
-**Checkpoint-resume worktree preflight**: When resuming after a human-checkpoint
-pause from a prior worktree-isolated run, run Protocol 91's
-`worktree-resume-preflight.sh` before any mutation. Continue only from the
-expected worktree, or stop with the helper's recovery fields. Worktree re-entry
-does not satisfy or waive checkpoint state.
+**Checkpoint-resume gate**: When resuming after a human-checkpoint pause from a
+prior worktree-isolated run, run Protocol 91's `checkpoint-resume-gate.sh`
+before any mutation with explicit item, expected branch, expected worktree, main
+repo root, and checkpoint state. Continue only on `RESULT=continue`; stop on
+`RESULT=checkpoint_pending` or `RESULT=stop` and report the gate's recovery
+fields. Isolation verification does not satisfy or waive checkpoint state, and a
+main-clone resume must not change directories.
 
 ## Guardrails Enforcement
 

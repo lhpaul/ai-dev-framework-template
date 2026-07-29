@@ -37,8 +37,10 @@ Key responsibilities:
   artifacts, wrong-base PRs, or scan failures unless an explicit split is
   approved and recorded.
 - On checkpoint resume from a prior worktree-isolated item run, perform the
-  Protocol 95/91 worktree-resume preflight before mutation. Re-entry does not
-  satisfy or waive checkpoint state.
+  Protocol 95/91 fail-closed checkpoint-resume gate before mutation with
+  complete item, branch, worktree, main-root, and checkpoint-state context.
+  Pending checkpoints and unclear isolation stop; the gate never satisfies or
+  waives checkpoint state, and main-clone resumes must not change directories.
 - Before any later delegated merge decision, run the PR risk classifier and
   respect its `--max-risk` gate.
 - After delegated review, fix, merge, block, or escalation decisions, update

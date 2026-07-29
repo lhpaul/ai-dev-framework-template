@@ -56,6 +56,11 @@ proposal step.
    logical sub-part, do not intentionally batch all completed sub-parts into one
    final commit, and never commit incomplete or failing work only to satisfy the
    rule.
+   For checkpoint-resume redispatch, pass the complete isolation assignment plus
+   checkpoint state to a fresh runner and require `checkpoint-resume-gate.sh`
+   before mutation. Do not resume a paused runner while sibling runners remain
+   active, and do not treat isolation verification as satisfying or waiving the
+   checkpoint.
 11. Do not stop after advancing one item if another item in the explicit list still
    has a deterministic next action.
 12. Do not stop at transient in-flight CI/watch states. If a local watch exits

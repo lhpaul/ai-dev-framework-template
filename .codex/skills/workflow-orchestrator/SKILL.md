@@ -19,6 +19,10 @@ Recommended model tier: `economy`
    logical sub-part, do not intentionally batch all completed sub-parts into one
    final commit, and never commit incomplete or failing work only to satisfy the
    rule.
+   For checkpoint-resume redispatch, include checkpoint state with the complete
+   Protocol 90 isolation assignment, use a fresh runner, and require the child
+   to invoke `checkpoint-resume-gate.sh` before mutation. Do not resume a paused
+   runner while sibling runners remain active.
 9. Do not stop after dispatching a batch if any selected or approved item still has a deterministic next action.
 10. For `workflow_hub` implementation work, include workflow mode, artifact owner, selected product repository, local path or remote identity, and mutation target in item handoffs; stop before mutation-oriented dispatch when product repository context is missing or ambiguous. Missing mode or `single_repo` does not require `--repo`.
    Include the parent-approved base branch in mutation-oriented handoffs; child runners must use it with `run-nested-artifact-guard.sh --approved-base` before branch or PR creation.

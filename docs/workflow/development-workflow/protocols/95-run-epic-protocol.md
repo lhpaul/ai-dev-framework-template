@@ -482,29 +482,28 @@ contract. Future `/run-epic` parallel dispatch should set `isolation: worktree`
 handing off to each agent, making the pre-branch guard redundant for parallel
 runs while keeping it as a backstop for single-checkout fallback.
 
-**Checkpoint-resume worktree preflight**: When an epic-scoped item resumes
+**Checkpoint-resume gate**: When an epic-scoped item resumes
 after a human-checkpoint pause and the prior run used a dedicated item
-worktree, run Protocol 91's checkpoint-resume preflight before any mutation in
+worktree, run Protocol 91's checkpoint-resume gate before any mutation in
 the resumed session:
 
 ```bash
-./scripts/development-workflow/worktree-resume-preflight.sh \
+./scripts/development-workflow/checkpoint-resume-gate.sh \
   --item <item-id> \
   --expected-branch <branch-prefix>/<slug> \
   --expected-worktree <worktree-path-if-known> \
   --main-repo-root <main-repo-root> \
+  --checkpoint-state <pending|satisfied|waived> \
   --json
 ```
 
-`RESULT=continue` means the session is already inside the expected worktree.
-`RESULT=reenter` means the runner must `cd "$TARGET_WORKTREE"` and verify the
-branch before continuing, including a one-shot
-`worktree-cwd-guard.sh --check-cwd "$TARGET_WORKTREE" "$MAIN_REPO_ROOT"` check.
-`RESULT=stop` means the run must stop before mutation and report the item,
+`RESULT=continue` means the session is already inside the expected worktree and
+the checkpoint is satisfied or waived. `RESULT=checkpoint_pending` stops for a
+human decision. `RESULT=stop` means the run must stop before mutation and report the item,
 expected branch, expected worktree when known, observed directory, observed
-branch when available, failure reason, and human recovery action. The helper is
-read-only and never satisfies, waives, clears, or changes checkpoint state;
-checkpoint lifecycle still requires explicit satisfaction or waiver evidence.
+branch when available, failure reason, and human recovery action. A stopped
+main-clone session must be replaced with a fresh fully isolated runner; it must
+not re-enter a worktree itself. Isolation verification never changes checkpoint state.
 
 When resuming an interrupted mutating child run, inspect the child branch
 history, local worktree commits, and uncommitted edits before mutation. Prefer

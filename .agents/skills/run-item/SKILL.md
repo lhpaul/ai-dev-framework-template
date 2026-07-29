@@ -67,9 +67,12 @@ advances exactly one non-epic item through Protocol 91.
    values before mutation. Enforce gates per
    `docs/workflow/development-workflow/guardrails-enforcement.md` section 3.
    When resuming after a human-checkpoint pause from a prior worktree-isolated
-   run, perform Protocol 91's checkpoint-resume worktree preflight before any
-   mutation. Worktree re-entry is a CWD safety check only; it does not satisfy
-   or waive checkpoint state.
+   run, invoke Protocol 91's `checkpoint-resume-gate.sh` with item, expected
+   branch, expected worktree, main repo root, and checkpoint state before any
+   mutation. Continue only on `RESULT=continue`; `RESULT=checkpoint_pending`
+   and `RESULT=stop` are human-decision or unclear-requirements stops.
+   Isolation verification never satisfies or waives checkpoint state, and a
+   main-clone resume must stop instead of changing directories.
    For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
    items, run Protocol 91's residual gate before `ready-for-human-review`; block
    or escalate instead of reporting terminal when residual evidence is missing or

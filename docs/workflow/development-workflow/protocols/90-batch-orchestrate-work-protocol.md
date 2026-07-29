@@ -944,7 +944,8 @@ For each item in the batch, prepare a short handoff:
 - Isolation assignment for mutating explicit-list batches, including sequential
   fallback: item identifier, expected branch, absolute worktree path,
   `isolation: "worktree"`, mutation classification (`mutating` or
-  `read_only`), artifact repo root, and base branch
+  `read_only`), artifact repo root, base branch, and checkpoint state
+  (`pending`, `satisfied`, or `waived`) for any checkpoint-resume handoff
 - `BATCH_CONTEXT=true` — required for explicit-list batch dispatch so the Work
   Item Runner (protocol 91) activates worktree isolation
 - `BASE_BRANCH=<resolved-base>` — include the bounded-prelude-approved base,
@@ -991,6 +992,8 @@ Each mutating runner entry must include:
 - Mutation classification (`mutating`)
 - Artifact-owning repo root
 - Approved base branch
+- Checkpoint state for resumed checkpointed work (`pending`, `satisfied`, or
+  `waived`)
 
 Pre-dispatch validation is mandatory:
 
@@ -1013,6 +1016,36 @@ mutating runners from sharing one checkout or silently mutating the main tree.
 The terminal batch summary must record whether the isolation manifest passed,
 failed before dispatch, or escalated after detecting possible out-of-worktree
 mutation.
+
+### Checkpoint-resume gate for batch redispatch
+
+When a bounded-batch item is redispatched or continued after a
+human-checkpoint pause, the parent orchestrator must start a fresh runner with
+the complete isolation assignment and front-loaded checkpoint decision. The
+runner must invoke the same executable gate as Protocols 91 and 95 before any
+repository, PR, tracker, label, review, or merge mutation:
+
+```bash
+./scripts/development-workflow/checkpoint-resume-gate.sh \
+  --item <item-id> \
+  --expected-branch <branch-prefix>/<slug> \
+  --expected-worktree <manifest-assigned-worktree-path> \
+  --main-repo-root <artifact-repo-main-root> \
+  --checkpoint-state <pending|satisfied|waived> \
+  --json
+```
+
+`RESULT=continue` permits continuation only from the current expected
+worktree. `RESULT=checkpoint_pending` stops for the human checkpoint decision.
+`RESULT=stop` stops with `STOP_CONDITION=unclear_requirements`; the stopped
+runner must not `cd`, switch branches, recreate worktrees, stash, reset,
+restore, commit, push, update tracker/PR state, or infer missing context.
+
+Isolation verification neither satisfies nor waives checkpoint state. The
+parent orchestrator must report each child gate disposition explicitly in the
+batch summary; a silent child exit is not successful continuation. Do not
+resume a previously paused runner while sibling runners remain active. Use a
+fresh fully isolated dispatch with the approved checkpoint decision instead.
 
 ### Integration-branch base override
 
@@ -1463,7 +1496,7 @@ After a Work Item Runner returns:
 
 1. **Re-check tracker status first** when an issue tracker is configured — query the tracker for the item's current status before consulting VCS state. Do not rely solely on `workflow-next-action.sh` to determine whether an item should advance, as VCS-derived status cannot reliably distinguish certain states (e.g., a spec PR awaiting review vs. one already merged). Use `workflow-next-action.sh` only for VCS-level enrichment (branch existence, PR labels) after the tracker status is known.
 2. If the tracker is unavailable, fall back to `workflow-next-action.sh` but flag to the human that status may be stale.
-3. If the next action is still deterministic because the Work Item Runner returned early or was interrupted, redispatch / resume that same item. **Worktree isolation is mandatory on redispatch**: when the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), every redispatch — including fixer-agent passes triggered by review findings — must carry the full Protocol 90 isolation assignment in the handoff: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, and `isolation: "worktree"`. Redispatching without the full assignment causes fixer agents to use main-repo file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context, leaving uncommitted files in the main working tree instead of the isolated branch.
+3. If the next action is still deterministic because the Work Item Runner returned early or was interrupted, redispatch / resume that same item. **Worktree isolation is mandatory on redispatch**: when the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), every redispatch — including fixer-agent passes triggered by review findings — must carry the full Protocol 90 isolation assignment in the handoff: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, checkpoint state, and `isolation: "worktree"`. Checkpoint-resume redispatch must use a fresh runner that invokes `checkpoint-resume-gate.sh` before mutation; do not resume a paused runner while sibling runners remain active. Redispatching without the full assignment causes fixer agents to use main-repo file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context, leaving uncommitted files in the main working tree instead of the isolated branch.
 4. Stop supervising that item only when it is waiting on a human, blocked, or escalated.
 5. **Collect deferred tracker transitions**: scan the Work Item Runner's summary for any `TRACKER_UPDATE_REQUIRED:` lines. These are transitions that the subagent could not perform (e.g., because the provider requires MCP and MCP is not available in the subagent context). Apply each deferred transition now via MCP before moving on to the next item. For GitHub Projects, subagents use `gh` CLI directly and do not emit `TRACKER_UPDATE_REQUIRED:` — this step only applies to providers without CLI support (e.g., Linear).
 6. **When a human confirms PRs have been merged**: run post-merge status transitions per the table in Step 10 of `91-orchestrate-work-protocol.md` — set tracker status to `Spec Ready`, `Plan Ready`, or `Merged` depending on the branch type of the merged PR — and clean up local branches and worktrees associated with the merged PRs.
@@ -1577,7 +1610,7 @@ If a check requires agent redispatch:
 1. Log the specific failure in your retrospective notes (see "Retrospective notes during supervision" below).
 2. Remove `ready-for-human-review` if it is present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 3. Add the `needs-fixes` label to the PR: `gh pr edit <pr_number> --add-label "needs-fixes"`.
-4. Redispatch / resume the Work Item Runner for that item to address the gap. **Worktree isolation is mandatory**: if the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), the redispatched Work Item Runner must receive the full Protocol 90 isolation assignment: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, and `isolation: "worktree"`. Do not redispatch without these values — fixer agents that run outside the worktree will use main-repo file paths and leave uncommitted changes in the main working tree.
+4. Redispatch / resume the Work Item Runner for that item to address the gap. **Worktree isolation is mandatory**: if the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), the redispatched Work Item Runner must receive the full Protocol 90 isolation assignment: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, checkpoint state, and `isolation: "worktree"`. Checkpoint-resume redispatch must invoke `checkpoint-resume-gate.sh` before mutation. Do not redispatch without these values — fixer agents that run outside the worktree will use main-repo file paths and leave uncommitted changes in the main working tree.
 5. Re-run this verification after the next Work Item Runner return.
 
 Do not consider the batch complete until every dispatched item has reached a real terminal condition.

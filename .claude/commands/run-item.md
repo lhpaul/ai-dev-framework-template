@@ -27,8 +27,11 @@ The prelude command flags mirror this command's scope flags (`--target`, `--issu
 - Pending checkpoints, guardrail stops, review/CI failures, risk violations, and
   missing permissions still stop the run.
 - When resuming after a human-checkpoint pause from a prior worktree-isolated
-  run, perform Protocol 91's checkpoint-resume worktree preflight before any
-  mutation. Worktree re-entry does not satisfy or waive checkpoint state.
+  run, invoke Protocol 91's fail-closed checkpoint-resume gate before any
+  mutation with item, expected branch, expected worktree, main repo root, and
+  checkpoint state. Continue only on `RESULT=continue`; pending checkpoints and
+  unclear isolation stop. The gate never satisfies or waives checkpoint state,
+  and main-clone resumes must not change directories.
 - Resolve exactly one non-epic workflow item
 - Use `scripts/development-workflow/` helpers for next-action classification
 - After candidate discovery and the nested-artifact guard, require a
