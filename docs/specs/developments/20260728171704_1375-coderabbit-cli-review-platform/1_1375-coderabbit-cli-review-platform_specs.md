@@ -84,10 +84,10 @@ Workflow operators need an optional CodeRabbit command-line review source for pu
 
 ## Complex Workflow Decision Matrix
 
-| CLI outcome | Policy | Workflow result | Required next action |
-| --- | --- | --- | --- |
-| Clean | Any | Clean | Continue to the next configured gate. |
-| Blocking findings | Any | Needs changes | Return the pull request for fixes. |
-| Unavailable | Any | Skipped | Surface the reason. |
-| Rate limited | Warn | Skipped | Warn and continue without claiming fresh review. |
-| Rate limited | Strict | Escalated | Stop readiness for operator action. |
+| CLI outcome | Policy | Workflow result | Required next action | Mirror surfaces | Example |
+| --- | --- | --- | --- | --- | --- |
+| Clean | Any | Clean | Continue to the next configured gate. | Review-loop summary, pull-request readiness | A completed CLI review has no blocking findings. |
+| Blocking findings | Any | Needs changes | Return the pull request for fixes. | Review-loop summary, fixer handoff | The CLI identifies a blocking change request. |
+| Unavailable | Any | Skipped | Surface the reason. | Review-loop summary, operator guidance | The CLI is not installed or authenticated. |
+| Rate limited | Warn | Skipped | Warn and continue without claiming fresh review. | Review-loop summary, pull-request evidence | The hourly CLI limit is reached. |
+| Rate limited | Strict | Escalated | Stop readiness for operator action. | Review-loop summary, readiness gate | A repository requires a fresh CLI review. |
