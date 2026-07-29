@@ -85,6 +85,11 @@ advances exactly one non-epic item through Protocol 91.
    remote/local branch cleanup, `post-merge-cleanup.sh`, and live tracker
    verification before reporting the item terminal. Do not stop at
    `ready-for-human-review` in a delegated merge run.
+   When the gate returns `exceptional_bypass_authorized`, do not treat it as
+   normal merge authority; verify the named PR/SHA/fingerprint authorization and
+   pre-attempt `reviewer-access-bypass` audit marker before one exact
+   human-authorized `gh pr merge <pr> --admin` attempt, then verify and update
+   the same audit marker.
    Treat merge authority explicitly: `merge_granted` means readiness is
    intermediate; `merge_denied` means the ready PR stops as
    `ready_human_merge` and no merge command is run. A merge-granted run that

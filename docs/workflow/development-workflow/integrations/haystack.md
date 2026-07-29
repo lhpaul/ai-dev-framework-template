@@ -51,7 +51,7 @@ When using the full Haystack product:
 
 This can run **in parallel** with CodeRabbit/Greptile/Devin configured in `.ai-dev-workflow.yaml`; they address different layers (local commit hygiene vs. hosted PR review).
 
-**Native review platform**: `haystack triage` is also supported as a native automated review platform in `pr-review-loop.sh`. Declare `haystack` under `review.on_ready.github` in `.ai-dev-workflow.yaml` to include Haystack triage in the Step 7 automated reviewer loop after draft reviewers clear. See [`haystack-triage.md`](haystack-triage.md) for setup instructions, severity mapping, and troubleshooting.
+**Native review platform**: `haystack triage` is also supported as a native automated review platform in `pr-review-loop.sh`. Declare `haystack` under `review.on_ready.github` in `.ai-dev-workflow.yaml` to include Haystack triage in the Step 7 automated reviewer loop after draft reviewers clear. See [`haystack-triage.md`](haystack-triage.md) for setup instructions, severity mapping, organization/repository App-access preflight, and troubleshooting.
 
 ### Operating model
 

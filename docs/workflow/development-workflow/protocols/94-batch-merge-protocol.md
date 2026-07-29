@@ -251,6 +251,16 @@ After a clean or resolved merge, in order:
    > emitted to stderr and this MERGED-state poll acts as the safety net. The
    > `delete-branch` subcommand also enforces the MERGED-state guard before deletion.
 
+   > **Exceptional reviewer access bypass**: If a PR was excluded from the
+   > normal batch route because `run-epic-delegated-gate.sh` returned
+   > `exceptional_bypass_authorized`, do not merge it through `batch-merge.sh`.
+   > The runner must use the exact named `gh pr merge <pr> --admin` command only
+   > after verifying the PR/SHA/fingerprint authorization and pre-attempt
+   > `reviewer-access-bypass` audit marker. After the one attempt, verify
+   > GitHub's live PR state, update the same audit marker, fetch the refreshed
+   > base, and rediscover the remaining batch PRs. This exception never applies
+   > to unaffected PRs.
+
 3. **Delete the remote branch** using the guarded helper (which re-checks MERGED
    state immediately before deletion to prevent the CLOSED-not-MERGED failure mode):
 

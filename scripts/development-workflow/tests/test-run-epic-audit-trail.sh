@@ -54,6 +54,15 @@ JSON
       printf '[]\n'
     fi
     ;;
+  api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/issues/42/comments\?per_page=100)
+    if [ "${MOCK_COMMENT_MODE:-missing}" = "existing-bypass" ]; then
+      cat <<'JSON'
+[[{"id":789,"body":"<!-- reviewer-access-bypass -->\nold"}]]
+JSON
+    else
+      printf '[]\n'
+    fi
+    ;;
   api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/123\ --input\ -)
     if [ "${MOCK_COMMENT_MODE:-missing}" = "patch-fail" ]; then
       printf 'patch failed\n' >&2
@@ -64,6 +73,9 @@ JSON
   api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/456\ --input\ -)
     printf '{"id":456}\n'
     ;;
+  api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/789\ --input\ -)
+    printf '{"id":789}\n'
+    ;;
   api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/10/comments\ --input\ -)
     if [ "${MOCK_COMMENT_MODE:-missing}" = "post-fail" ]; then
       printf 'post failed\n' >&2
@@ -73,6 +85,9 @@ JSON
     ;;
   api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/900/comments\ --input\ -)
     printf '{"id":457}\n'
+    ;;
+  api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/42/comments\ --input\ -)
+    printf '{"id":790}\n'
     ;;
   *)
     printf 'unexpected gh invocation: gh %s\n' "$*" >&2
@@ -241,6 +256,46 @@ bad_ledger_fixture="$TMP_ROOT/bad-ledger.json"
 cat > "$bad_ledger_fixture" <<'JSON'
 {"epic": {"number": 916, "title": "Bad"}, "items": "not an array"}
 JSON
+bypass_fixture="$TMP_ROOT/reviewer-access-bypass.json"
+cat > "$bypass_fixture" <<'JSON'
+{
+  "state": "authorized_pending_attempt",
+  "authorization": {
+    "authorized_by": "lhpaul",
+    "authorized_at": "2026-07-29T12:00:00Z",
+    "authorization_text": "Approve gh pr merge 42 --admin for ghp_FAKE_PLACEHOLDER"
+  },
+  "pr": {
+    "number": 42,
+    "head_sha": "abc123"
+  },
+  "evidence_fingerprint": "sha256:abc123",
+  "ci": {
+    "result": "green"
+  },
+  "reviewer": {
+    "result": "clean",
+    "blocking_count": 0
+  },
+  "blocked_check": {
+    "name": "Haystack / Review",
+    "state": "failure"
+  },
+  "access": {
+    "evidence": "HTTP 403 from /Users/lhpaul/private/url",
+    "remediation_status": "org approval requested",
+    "bypass_reason": "release window cannot wait for org approval"
+  },
+  "proposed_action": "gh pr merge 42 --admin",
+  "attempt": {
+    "result": "not_attempted",
+    "exit_code": "",
+    "live_pr_state": "open"
+  }
+}
+JSON
+bad_bypass_fixture="$TMP_ROOT/bad-bypass.json"
+jq 'del(.authorization.authorized_by)' "$bypass_fixture" > "$bad_bypass_fixture"
 empty_fixture="$TMP_ROOT/empty.json"
 : > "$empty_fixture"
 malformed_fixture="$TMP_ROOT/malformed.json"
@@ -255,6 +310,7 @@ run_fails_contains "requires_input" "--input is required" "$HELPER" render-pr-di
 run_fails_contains "requires_advisory_rationale" "non-fixed advisory decisions require rationale" "$HELPER" render-pr-disposition --input "$bad_advisory_fixture"
 run_fails_contains "rejects_missing_pr_required_field" "missing required PR disposition fields" "$HELPER" render-pr-disposition --input "$missing_pr_field_fixture"
 run_fails_contains "rejects_bad_ledger_items_type" "missing required epic ledger fields" "$HELPER" render-epic-ledger --input "$bad_ledger_fixture"
+run_fails_contains "rejects_missing_bypass_required_field" "missing required reviewer access-bypass fields: authorization.authorized_by" "$HELPER" render-reviewer-access-bypass --input "$bad_bypass_fixture"
 run_fails_contains "rejects_missing_input_file" "input file not found" "$HELPER" render-pr-disposition --input "$missing_fixture"
 run_fails_contains "rejects_empty_input_file" "input file is empty" "$HELPER" render-pr-disposition --input "$empty_fixture"
 run_fails_contains "rejects_malformed_input_json" "input file is not valid JSON" "$HELPER" render-pr-disposition --input "$malformed_fixture"
@@ -337,6 +393,21 @@ ledger_update_output="$(MOCK_COMMENT_MODE=existing "$HELPER" apply-epic-ledger -
 run_test "updates_existing_epic_ledger_comment" "UPDATED_COMMENT_ID=456" "$ledger_update_output"
 
 run_test "uses_json_input_for_comments" "yes" "$(grep -q -- '--input -' "$CALL_LOG" && echo yes || echo no)"
+
+bypass_output="$("$HELPER" render-reviewer-access-bypass --input "$bypass_fixture")"
+run_test "renders_reviewer_access_bypass_marker" "yes" "$(grep -q '<!-- reviewer-access-bypass -->' <<< "$bypass_output" && echo yes || echo no)"
+run_test "renders_reviewer_access_bypass_state" "yes" "$(grep -q 'authorized_pending_attempt' <<< "$bypass_output" && echo yes || echo no)"
+run_test "renders_reviewer_access_bypass_action" "yes" "$(grep -q 'gh pr merge 42 --admin' <<< "$bypass_output" && echo yes || echo no)"
+run_test "redacts_bypass_tokens_and_paths" "yes" "$(
+  grep -q '\[REDACTED_TOKEN\]' <<< "$bypass_output" &&
+    grep -q '\[REDACTED_LOCAL_PATH\]' <<< "$bypass_output" &&
+    echo yes || echo no
+)"
+
+bypass_create_output="$("$HELPER" apply-reviewer-access-bypass --input "$bypass_fixture" --pr 42)"
+run_test "creates_reviewer_access_bypass_when_missing" "CREATED_COMMENT=1" "$bypass_create_output"
+bypass_update_output="$(MOCK_COMMENT_MODE=existing-bypass "$HELPER" apply-reviewer-access-bypass --input "$bypass_fixture" --pr 42)"
+run_test "updates_existing_reviewer_access_bypass" "UPDATED_COMMENT_ID=789" "$bypass_update_output"
 
 # --- per-finding advisory warnings ---
 

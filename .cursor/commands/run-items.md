@@ -90,8 +90,12 @@ Key responsibilities:
   guardrails. When the relevant stages allow `may_merge_pr: true`, run
   Guardrails Enforcement Gate 5 for each in-scope PR, including
   `run-epic-risk-classifier.sh` and `run-epic-delegated-gate.sh`; continue only
-  when every in-scope PR returns `merge_allowed`. Then route into Protocol 94
-  batch merge using only the explicit in-scope PR list: run
+  when every normally merged in-scope PR returns `merge_allowed`. If any PR returns
+  `exceptional_bypass_authorized`, split it out of the normal batch-merge list
+  and require separate named PR/SHA/fingerprint authorization plus pre-attempt
+  `reviewer-access-bypass` audit before one exact human-authorized
+  `gh pr merge <pr> --admin` attempt. Then route normal candidates into
+  Protocol 94 batch merge using only the explicit in-scope PR list: run
   `batch-merge.sh discover --prs <comma-separated-in-scope-prs>` and continue
   through merge, cleanup, and tracker reconciliation. Never use Protocol 94
   auto-discovery from `/run-items`. If any stage does not allow merge, finish at the

@@ -610,11 +610,16 @@ Before merge:
     resumed through `/graduate-development <slug>`.
 13. Run `run-epic-delegated-gate.sh` against the assembled evidence.
 
-Proceed to the repository merge protocol only when the delegated gate reports
-`merge_allowed`. If the gate reports `fix_required`, remove readiness labels,
-fix, rerun validation/reviewer/CI, and return to Step 8. If it reports
-`human_required`, stop for human authority, setup, or risk tolerance. If it
-reports `blocked`, stop until required state is available.
+Proceed to the normal repository merge protocol only when the delegated gate
+reports `merge_allowed`. If the gate reports `exceptional_bypass_authorized`,
+execute only the named human-authorized `gh pr merge <pr> --admin` attempt after
+verifying the current PR/SHA/fingerprint authorization and pre-attempt
+`reviewer-access-bypass` audit record, then verify live PR state and update that
+same audit record with the result. If the gate reports `fix_required`, remove
+readiness labels, fix, rerun validation/reviewer/CI, and return to Step 8. If it
+reports `human_required`, stop for human authority, setup, access remediation,
+or risk tolerance. If it reports `blocked`, stop until required state is
+available.
 
 If an in-scope child PR stops at readiness during a merge-granted run without a
 named blocker from this step, report `policy_inconsistent` in the PR

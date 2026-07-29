@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cross-cutting plan assumptions so concurrent workflow work cannot silently
   invalidate implementation guidance.
 
+### Changed
+
+- **Access-restricted reviewer merge gate** (#1288): Distinguish verified
+  reviewer App-access restrictions from CI and review failures, prefer access
+  remediation, and permit an audited protection bypass only after fresh named
+  human authorization.
+
 ### Fixed
 
 - **Fail closed on checkpoint resume isolation** (#1285): Require complete
