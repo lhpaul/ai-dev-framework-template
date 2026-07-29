@@ -466,6 +466,88 @@ run_test "reviewer_access_exceptional_authorization_is_separate_result" "excepti
     jq -r '.decision + ":" + (.mergePermitted|tostring) + ":" + (.exceptionalAdminMergePermitted|tostring) + ":" + .reviewerAccess.proposedAction'
 )"
 
+exceptional_missing_label_fixture="$(write_fixture access-exceptional-missing-label "
+  .repository = \"example/mobile-app\"
+  | .pr.headSha = \"abc123\"
+  | .pr.mergeStateStatus = \"BLOCKED\"
+  | .pr.labels = [\"ready-for-regression\"]
+  | .reviewer.reason = \"forbidden\"
+  | .reviewerChecks = [{\"name\":\"Haystack / Review\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"detailsUrl\":\"https://example.test/haystack\"}]
+  | .accessRestriction = {
+      provider: \"haystack\",
+      reason: \"forbidden\",
+      source: \"reviewer-loop\",
+      evidence: \"HTTP 403 from reviewer details URL\",
+      remediationAttempted: true,
+      cannotUnblockInTime: true,
+      bypassReason: \"organization approval cannot complete before release window\"
+    }
+  | .authorization = {
+      pullRequest: 42,
+      headSha: \"abc123\",
+      evidenceFingerprint: \"$authorization_fingerprint\",
+      authorizedBy: \"lhpaul\",
+      authorizedAt: \"2026-07-29T12:00:00Z\",
+      authorizationText: \"Approve admin merge for PR #42\"
+    }
+  | .bypassAudit = {
+      present: true,
+      state: \"authorized_pending_attempt\",
+      evidenceFingerprint: \"$authorization_fingerprint\",
+      commentId: \"IC_kwDO\"
+    }
+")"
+run_test "reviewer_access_exceptional_does_not_bypass_missing_labels" "blocked:false" "$(
+  "$GATE" --input "$exceptional_missing_label_fixture" --json |
+    jq -r '.decision + ":" + (.exceptionalAdminMergePermitted|tostring)'
+)"
+
+exceptional_not_mergeable_fixture="$(write_fixture access-exceptional-not-mergeable "
+  .repository = \"example/mobile-app\"
+  | .pr.headSha = \"abc123\"
+  | .pr.mergeable = \"CONFLICTING\"
+  | .pr.mergeStateStatus = \"BLOCKED\"
+  | .reviewer.reason = \"forbidden\"
+  | .reviewerChecks = [{\"name\":\"Haystack / Review\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"detailsUrl\":\"https://example.test/haystack\"}]
+  | .accessRestriction = {
+      provider: \"haystack\",
+      reason: \"forbidden\",
+      source: \"reviewer-loop\",
+      evidence: \"HTTP 403 from reviewer details URL\",
+      remediationAttempted: true,
+      cannotUnblockInTime: true,
+      bypassReason: \"organization approval cannot complete before release window\"
+    }
+  | .authorization = {
+      pullRequest: 42,
+      headSha: \"abc123\",
+      evidenceFingerprint: \"$authorization_fingerprint\",
+      authorizedBy: \"lhpaul\",
+      authorizedAt: \"2026-07-29T12:00:00Z\",
+      authorizationText: \"Approve admin merge for PR #42\"
+    }
+  | .bypassAudit = {
+      present: true,
+      state: \"authorized_pending_attempt\",
+      evidenceFingerprint: \"$authorization_fingerprint\",
+      commentId: \"IC_kwDO\"
+    }
+")"
+run_test "reviewer_access_exceptional_requires_mergeable_pr" "blocked:false" "$(
+  "$GATE" --input "$exceptional_not_mergeable_fixture" --json |
+    jq -r '.decision + ":" + (.exceptionalAdminMergePermitted|tostring)'
+)"
+
+access_without_reviewer_checks_fixture="$(write_fixture access-without-reviewer-checks '
+  .pr.headSha = "abc123"
+  | .reviewer.reason = "forbidden"
+  | .accessRestriction = {reason:"forbidden", evidence:"HTTP 403", remediationAttempted:true, cannotUnblockInTime:true, bypassReason:"release window"}
+')"
+run_test "reviewer_access_requires_reviewer_check_evidence" "blocked:insufficient_evidence" "$(
+  "$GATE" --input "$access_without_reviewer_checks_fixture" --json |
+    jq -r '.decision + ":" + .reviewerAccess.classification'
+)"
+
 missing_denial_fixture="$(write_fixture access-missing-denial '
   .pr.headSha = "abc123"
   | .pr.mergeStateStatus = "BLOCKED"
@@ -533,6 +615,10 @@ run_test "reviewer_access_blocking_finding_takes_precedence" "fix_required:revie
 
 text_output="$("$GATE" --input "$risk_fixture")"
 run_test "text_output_includes_decision" "yes" "$(grep -q 'Decision: human_required' <<< "$text_output" && echo yes || echo no)"
+
+exceptional_text_output="$("$GATE" --input "$exceptional_authorized_fixture")"
+run_test "text_output_includes_exceptional_admin_flag" "yes" "$(grep -q 'Exceptional admin merge permitted: true' <<< "$exceptional_text_output" && echo yes || echo no)"
+run_test "text_output_includes_reviewer_access_classification" "yes" "$(grep -q 'Reviewer access classification: exceptional_bypass_authorized' <<< "$exceptional_text_output" && echo yes || echo no)"
 
 run_test "json_read_only_guarantee" "yes" "$(
   "$GATE" --input "$clean_fixture" --json | jq -e '.readOnlyGuarantee | test("No reviewer-loop")' >/dev/null && echo yes || echo no
