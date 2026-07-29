@@ -60,8 +60,8 @@ proposal step.
     item list and any known same-surface open PR evidence to Protocol 02's
     `Cross-Cutting Operational Assumption Check`. Keep returned `Conflict`
     evidence visible until the parent records `Resolved` or stops for
-    `Human decision required`; do not widen the bounded list or replace this
-    with an all-open-PR scan.
+    `unclear_requirements` and request `Human decision required`; do not widen
+    the bounded list or replace this with an all-open-PR scan.
 12. Do not stop after advancing one item if another item in the explicit list still
    has a deterministic next action.
 13. Do not stop at transient in-flight CI/watch states. If a local watch exits

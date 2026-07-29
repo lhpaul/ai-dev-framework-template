@@ -56,7 +56,8 @@ Key rules:
 - For Full Pipeline and Refactor work, read the plan's
   `Cross-Cutting Operational Assumption Check` before file edits. If applicable
   assumptions are recorded, re-read their authoritative sources and record
-  `Still valid` in the Pre-Submission Self-Review Pass before implementation.
+  `Still valid` in implementation-start notes before implementation, then cite
+  that evidence in the Pre-Submission Self-Review Pass before handoff.
   If any source is changed, conflicting, or unverifiable, stop before mutation
   and return `Stale or conflicting` evidence to the parent orchestrator.
 - For UI-facing work, discover design assets per

@@ -277,9 +277,10 @@ surface.
 
 When applicable, include a `Cross-Cutting Operational Assumption Check` section
 with the assumption value, authoritative source, verification time and repo
-revision, bounded current-batch / related-PR scope, and result. The result must
-be `Verified`, `Conflict`, or `Resolved`. A conflict row must record competing
-evidence, affected plan statements, resolution status, and decision owner.
+revision, bounded current invocation / same-surface open PR scope, and result.
+The result must be `Verified`, `Conflict`, or `Resolved`. A conflict row must
+record competing evidence, affected plan statements, resolution status, and
+decision owner.
 
 Do not replace the bounded relevance check with an unbounded scan of every open
 pull request. If no applicable operational assumption exists, include a concise

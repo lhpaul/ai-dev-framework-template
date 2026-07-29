@@ -58,7 +58,7 @@ Every plan must include the `Cross-Cutting Operational Assumption Check` from
 protocol 02. If the plan relies on an environment target, approved base,
 artifact owner, linked resource, selected product repository, canonical
 configuration value, or similar operational fact, record its value, source,
-verification time, bounded current-batch / related-PR scope, and result. Use
+verification time, bounded current invocation / same-surface open PR scope, and result. Use
 `Not applicable` only with a concise rationale; do not scan every open PR when
 there is no applicable assumption. Shared keywords alone are not conflict
 evidence. Return same-surface `Conflict` evidence to the parent orchestrator for

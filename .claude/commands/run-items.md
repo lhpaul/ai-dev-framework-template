@@ -64,8 +64,8 @@ Key responsibilities:
   item list and any known same-surface open PR evidence to Protocol 02's
   `Cross-Cutting Operational Assumption Check`. Keep returned `Conflict`
   evidence visible until the parent records `Resolved` or stops for
-  `Human decision required`; do not widen the bounded list or replace this with
-  an all-open-PR scan.
+  `unclear_requirements` and request `Human decision required`; do not widen
+  the bounded list or replace this with an all-open-PR scan.
 - In `workflow_hub`, state the selected product repository, artifact owner, and mutation
   target before implementation mutation; stop when context is missing or ambiguous.
 - Do not stop after advancing one item if another in the list still has a

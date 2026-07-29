@@ -40,9 +40,11 @@ required. If the section records any applicable operational assumption, re-read
 each authoritative source named by the plan and compare it with the recorded
 value before editing files.
 
-- If every applicable source still matches, record `Still valid` evidence in the
-  PR's Pre-Submission Self-Review Pass.
-- If a source changed, conflicts with current-batch or related-PR evidence, or
+- If every applicable source still matches, record `Still valid` evidence in
+  implementation-start notes, then begin implementation. Repeat or cite that
+  evidence in the PR's Pre-Submission Self-Review Pass before handoff.
+- If a source changed, conflicts with current invocation or same-surface open
+  PR evidence, or
   cannot be verified, stop before file edits and return the evidence to the
   parent orchestrator as `Stale or conflicting`.
 - Do not guess which in-flight interpretation will win. A conflict remains a

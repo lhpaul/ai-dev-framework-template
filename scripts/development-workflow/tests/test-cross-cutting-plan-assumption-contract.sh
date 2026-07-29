@@ -44,7 +44,7 @@ portfolio_protocol="docs/workflow/development-workflow/protocols/90-batch-orches
 item_protocol="docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"
 
 require_contains "protocol 02 defines assumption section" "$canonical_protocol" "Cross-cutting operational assumption check"
-require_contains "protocol 02 requires bounded scope" "$canonical_protocol" "bounded current-batch / related-PR scope"
+require_contains "protocol 02 requires bounded scope" "$canonical_protocol" "bounded current invocation / same-surface open PR scope"
 require_contains "protocol 02 forbids unbounded scan" "$canonical_protocol" "unbounded scan of every open"
 require_contains "protocol 02 rejects keyword-only conflicts" "$canonical_protocol" "Shared keywords alone"
 

@@ -27,7 +27,7 @@ Recommended model tier: `premium`
 13. Every plan must include Protocol 02's
     `Cross-Cutting Operational Assumption Check`. Record applicable
     operational facts with value, source, verification
-    time, bounded current-batch / related-PR scope, and result; otherwise record
+    time, bounded current invocation / same-surface open PR scope, and result; otherwise record
     `Not applicable` with a concise rationale and do not scan every open PR.
     Return same-surface `Conflict` evidence to the parent orchestrator for
     `Resolved` or `Human decision required` handling, and stop plan-stage

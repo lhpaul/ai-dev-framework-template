@@ -23,8 +23,8 @@ Recommended model tier: `economy`
    known same-surface open PR evidence for Protocol 02's
    `Cross-Cutting Operational Assumption Check`. Keep returned `Conflict`
    evidence visible until it is `Resolved` by the parent or stopped for
-   `Human decision required`; do not let planners replace this bounded context
-   with an unbounded scan of every open PR.
+   `unclear_requirements` and request `Human decision required`; do not let
+   planners replace this bounded context with an unbounded scan of every open PR.
 10. Do not stop after dispatching a batch if any selected or approved item still has a deterministic next action.
 11. For `workflow_hub` implementation work, include workflow mode, artifact owner, selected product repository, local path or remote identity, and mutation target in item handoffs; stop before mutation-oriented dispatch when product repository context is missing or ambiguous. Missing mode or `single_repo` does not require `--repo`.
    Include the parent-approved base branch in mutation-oriented handoffs; child runners must use it with `run-nested-artifact-guard.sh --approved-base` before branch or PR creation.
