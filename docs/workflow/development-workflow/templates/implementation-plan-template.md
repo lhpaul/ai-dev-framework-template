@@ -40,7 +40,7 @@
 
 | Assumption surface | Recorded value | Authoritative source | Verified at | Bounded cross-check scope | Result |
 | --- | --- | --- | --- | --- | --- |
-| [environment target / approved base / linked resource / canonical config] | [value] | [source file, tracker field, command, or parent handoff] | [timestamp and repo SHA] | [current-batch items and plausibly related open PRs only] | `Verified` / `Conflict` / `Resolved` |
+| [environment target / approved base / linked resource / canonical config] | [value] | [source file, tracker field, command, or parent handoff] | [timestamp and repo SHA] | [current invocation item list and same-surface open PR evidence only] | `Verified` / `Conflict` / `Resolved` |
 
 If the result is `Conflict`, record the competing evidence, affected plan
 statements, resolution status, and decision owner. Implementation remains

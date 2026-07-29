@@ -30,7 +30,8 @@ Recommended model tier: `premium`
     time, bounded current-batch / related-PR scope, and result; otherwise record
     `Not applicable` with a concise rationale and do not scan every open PR.
     Return same-surface `Conflict` evidence to the parent orchestrator for
-    `Resolved` or `Human decision required` handling before implementation.
+    `Resolved` or `Human decision required` handling, and stop plan-stage
+    advancement until that resolution or decision is recorded.
 14. Before opening the draft plan PR, complete Protocol 02's Document Quality
     Gate and include the gate log in the PR description. For complex workflow
     decision-gate plans, include Protocol 02's matrix classification and

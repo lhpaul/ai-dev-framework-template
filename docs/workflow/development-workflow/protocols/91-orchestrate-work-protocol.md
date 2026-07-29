@@ -289,8 +289,10 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 
 When dispatching any plan-writing work, include the exact current invocation
 item list (the single item for `/run-item`, or the current-batch item list for
-`/run-items`) and any plausibly related open PR evidence provided by the parent
-orchestrator. The planner uses this bounded context for the
+`/run-items`) and any same-surface open PR evidence provided by the parent
+orchestrator. "Same-surface" means an open PR whose changed workflow surface
+plausibly affects the same operational assumption; shared issue keywords alone
+are not same-surface evidence. The planner uses this bounded context for the
 `Cross-Cutting Operational Assumption Check`; it must not widen scope or scan
 every open PR. If the planner reports `Conflict` evidence for the same
 operational assumption surface, stop plan-stage advancement with

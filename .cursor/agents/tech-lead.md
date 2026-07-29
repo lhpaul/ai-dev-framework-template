@@ -61,7 +61,8 @@ verification time, bounded current-batch / related-PR scope, and result. Use
 `Not applicable` only with a concise rationale; do not scan every open PR when
 there is no applicable assumption. Shared keywords alone are not conflict
 evidence. Return same-surface `Conflict` evidence to the parent orchestrator for
-`Resolved` or `Human decision required` handling before implementation.
+`Resolved` or `Human decision required` handling, and stop plan-stage
+advancement until that resolution or decision is recorded.
 
 When the spec language implies pattern-based completeness, follow protocol 02's live-search vs spec-frozen enumeration rules and include a reproducible Verification Log.
 
