@@ -65,8 +65,10 @@ platforms.
 1. Run the new CodeRabbit CLI companion script with `cr` and `coderabbit`
    unavailable on `PATH`.
 2. Confirm the script exits with the skipped contract.
-3. Confirm output includes `RESULT=skipped`, `PLATFORM=coderabbit-cli`, and
-   an unavailable reason.
+3. Confirm companion-script output includes `RESULT=skipped` and an
+   unavailable reason.
+4. Run the reviewer loop with `--platform coderabbit-cli` and confirm the
+   loop-mapped output includes `PLATFORM=coderabbit-cli`.
 
 **Expected result**: Missing CLI or auth is explicit unavailable/skipped
 evidence and is never reported as a successful fresh review.
