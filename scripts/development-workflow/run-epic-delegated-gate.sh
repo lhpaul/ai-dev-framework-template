@@ -230,12 +230,30 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     end;
   def non_green_reviewer_checks:
     reviewer_checks | map(select(reviewer_check_non_green(.)));
+  def reviewer_check_names:
+    reviewer_checks | map(reviewer_check_name(.));
+  def current_ci_blocker:
+    if ci_policy == "none" then
+      false
+    else
+      (reviewer_check_names) as $reviewerNames |
+      (.statusChecks // [])
+      | any(.[]?; . as $check | (($reviewerNames | index(reviewer_check_name($check)) | not) and (($check | success_check) | not)))
+    end;
   def access_obj: (.accessRestriction // .access_restriction // {});
+  def access_denial_reason:
+    (access_obj.reason // access_obj.providerReason // .reviewer.reason // "")
+    | tostring
+    | ascii_downcase;
+  def access_denial_evidence:
+    (access_obj.evidence // access_obj.source // "")
+    | tostring
+    | ascii_downcase;
   def access_denial_verified:
     (
-      ((access_obj.reason // access_obj.providerReason // .reviewer.reason // "") | ascii_downcase | test("forbidden|unauthorized|access[_ -]?restricted|http 403|\\b403\\b"))
+      (access_denial_reason | test("^(forbidden|unauthorized|access[_ -]?restricted|http[ _-]?403|403)$"))
       or
-      ((access_obj.evidence // access_obj.source // "") | tostring | ascii_downcase | test("forbidden|unauthorized|access[_ -]?restricted|http 403|\\b403\\b"))
+      (access_denial_evidence | test("http[[:space:]]*403|\\b403\\b[[:space:]:-]*(forbidden|resource not accessible)|resource not accessible by integration|permission denied|access denied|access[_ -]?restricted|unauthorized"))
     );
   def remediation_ready:
     (access_obj.remediationAttempted // access_obj.remediation_attempted // false) == true
@@ -246,12 +264,10 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   def reviewer_blocks:
     ((.reviewer.blockingCount // .reviewer.blocking_count // 0) | tonumber) > 0
     or ((.reviewer.status // "") | test("needs_fixes|failed|blocked"));
-  def has_ci_blocker($reasons):
-    any($reasons[]?; test("one or more required CI checks are not successful"; "i"));
-  def reviewer_access_classification($reasons):
+  def reviewer_access_classification:
     (non_green_reviewer_checks) as $blockedChecks |
     (.computedEvidenceFingerprint // "") as $fingerprint |
-    if has_ci_blocker($reasons) then "ci_blocker"
+    if current_ci_blocker then "ci_blocker"
     elif reviewer_blocks then "review_blocker"
     elif (($blockedChecks | length) == 0) then "not_applicable"
     elif (access_denial_verified | not) then "insufficient_evidence"
@@ -353,7 +369,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   (if (.pr.auditDispositionPresent // false) != true
    then add_reason($reasons; "PR disposition audit is missing")
    else $reasons end) as $reasons |
-  reviewer_access_classification($reasons) as $reviewerAccessClassification |
+  reviewer_access_classification as $reviewerAccessClassification |
   reviewer_access_summary($reviewerAccessClassification) as $reviewerAccess |
   (reason_count($reasons)) as $count |
   {

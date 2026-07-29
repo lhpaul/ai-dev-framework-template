@@ -477,6 +477,18 @@ run_test "reviewer_access_missing_denial_fails_closed" "blocked:insufficient_evi
     jq -r '.decision + ":" + .reviewerAccess.classification'
 )"
 
+unrelated_denial_evidence_fixture="$(write_fixture access-unrelated-denial-evidence '
+  .pr.headSha = "abc123"
+  | .pr.mergeStateStatus = "BLOCKED"
+  | .reviewer.reason = ""
+  | .reviewerChecks = [{"name":"Haystack / Review","status":"COMPLETED","conclusion":"FAILURE"}]
+  | .accessRestriction = {reason:"", evidence:"https://example.test/api/v3/forbidden-resource?id=4032", remediationAttempted:true, cannotUnblockInTime:true, bypassReason:"release window"}
+')"
+run_test "reviewer_access_unrelated_denial_text_fails_closed" "blocked:insufficient_evidence" "$(
+  "$GATE" --input "$unrelated_denial_evidence_fixture" --json |
+    jq -r '.decision + ":" + .reviewerAccess.classification'
+)"
+
 access_with_ci_failure_fixture="$(write_fixture access-ci-failure '
   .pr.headSha = "abc123"
   | .pr.mergeStateStatus = "BLOCKED"
@@ -487,6 +499,22 @@ access_with_ci_failure_fixture="$(write_fixture access-ci-failure '
 ')"
 run_test "reviewer_access_ci_failure_takes_precedence" "fix_required:ci_blocker" "$(
   "$GATE" --input "$access_with_ci_failure_fixture" --json |
+    jq -r '.decision + ":" + .reviewerAccess.classification'
+)"
+
+access_with_status_reviewer_check_fixture="$(write_fixture access-status-reviewer-check '
+  .pr.headSha = "abc123"
+  | .pr.mergeStateStatus = "BLOCKED"
+  | .statusChecks = [
+      {"name":"guard","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"name":"Haystack / Review","status":"COMPLETED","conclusion":"FAILURE"}
+    ]
+  | .reviewer.reason = "forbidden"
+  | .reviewerChecks = [{"name":"Haystack / Review","status":"COMPLETED","conclusion":"FAILURE"}]
+  | .accessRestriction = {reason:"forbidden", evidence:"HTTP 403", remediationAttempted:false, cannotUnblockInTime:false, bypassReason:""}
+')"
+run_test "reviewer_access_status_reviewer_check_not_ci_blocker" "human_required:access_restricted" "$(
+  "$GATE" --input "$access_with_status_reviewer_check_fixture" --json |
     jq -r '.decision + ":" + .reviewerAccess.classification'
 )"
 
