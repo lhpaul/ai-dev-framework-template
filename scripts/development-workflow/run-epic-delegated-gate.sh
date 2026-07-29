@@ -232,13 +232,16 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     reviewer_checks | map(select(reviewer_check_non_green(.)));
   def reviewer_check_names:
     reviewer_checks | map(reviewer_check_name(.));
+  def ci_status_checks:
+    (reviewer_check_names) as $reviewerNames |
+    (.statusChecks // [])
+    | map(. as $check | select(($reviewerNames | index(reviewer_check_name($check)) | not)));
   def current_ci_blocker:
     if ci_policy == "none" then
       false
     else
-      (reviewer_check_names) as $reviewerNames |
-      (.statusChecks // [])
-      | any(.[]?; . as $check | (($reviewerNames | index(reviewer_check_name($check)) | not) and (($check | success_check) | not)))
+      ci_status_checks
+      | any(.[]?; (success_check | not))
     end;
   def pr_mergeable_ok:
     (.pr.mergeable // .pr.mergeableState // null) as $mergeable |
@@ -351,16 +354,16 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   (if has_label("human-checkpoint-required") and (($pendingCheckpoints | length) == 0)
    then add_reason($reasons; "human_checkpoint_required: human-checkpoint-required label is present; record satisfied or waived checkpoint evidence and remove the label before delegated merge")
    else $reasons end) as $reasons |
-  (if (ci_policy == "none")
-   then $reasons
-   elif ((.statusChecks // []) | length) == 0
-   then add_reason($reasons; "required CI state is missing")
-   else $reasons end) as $reasons |
-  (if (ci_policy == "none")
-   then $reasons
-   elif ((.statusChecks // []) | map(select(success_check | not)) | length) > 0
-   then add_reason($reasons; "one or more required CI checks are not successful")
-   else $reasons end) as $reasons |
+	  (if (ci_policy == "none")
+	   then $reasons
+	   elif (ci_status_checks | length) == 0
+	   then add_reason($reasons; "required CI state is missing")
+	   else $reasons end) as $reasons |
+	  (if (ci_policy == "none")
+	   then $reasons
+	   elif ((ci_status_checks | map(select(success_check | not)) | length) > 0)
+	   then add_reason($reasons; "one or more required CI checks are not successful")
+	   else $reasons end) as $reasons |
   (if (.pr.mergeStateStatus // "") != "CLEAN"
    then add_reason($reasons; "PR merge state is not CLEAN")
    else $reasons end) as $reasons |

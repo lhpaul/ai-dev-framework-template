@@ -466,6 +466,60 @@ run_test "reviewer_access_exceptional_authorization_is_separate_result" "excepti
     jq -r '.decision + ":" + (.mergePermitted|tostring) + ":" + (.exceptionalAdminMergePermitted|tostring) + ":" + .reviewerAccess.proposedAction'
 )"
 
+exceptional_with_status_reviewer_fixture="$(write_fixture access-exceptional-status-reviewer "
+  .repository = \"example/mobile-app\"
+  | .pr.headSha = \"abc123\"
+  | .pr.mergeStateStatus = \"BLOCKED\"
+  | .statusChecks += [{\"name\":\"Haystack / Review\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"detailsUrl\":\"https://example.test/haystack\"}]
+  | .reviewer.reason = \"forbidden\"
+  | .reviewerChecks = [{\"name\":\"Haystack / Review\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"detailsUrl\":\"https://example.test/haystack\"}]
+  | .accessRestriction = {
+      provider: \"haystack\",
+      reason: \"forbidden\",
+      source: \"reviewer-loop\",
+      evidence: \"HTTP 403 from reviewer details URL\",
+      remediationAttempted: true,
+      cannotUnblockInTime: true,
+      bypassReason: \"organization approval cannot complete before release window\"
+    }
+")"
+exceptional_status_reviewer_fingerprint="$("$GATE" --input "$exceptional_with_status_reviewer_fixture" --json | jq -r '.reviewerAccess.evidenceFingerprint')"
+exceptional_with_status_reviewer_authorized_fixture="$(write_fixture access-exceptional-status-reviewer-authorized "
+  .repository = \"example/mobile-app\"
+  | .pr.headSha = \"abc123\"
+  | .pr.mergeStateStatus = \"BLOCKED\"
+  | .statusChecks += [{\"name\":\"Haystack / Review\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"detailsUrl\":\"https://example.test/haystack\"}]
+  | .reviewer.reason = \"forbidden\"
+  | .reviewerChecks = [{\"name\":\"Haystack / Review\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"detailsUrl\":\"https://example.test/haystack\"}]
+  | .accessRestriction = {
+      provider: \"haystack\",
+      reason: \"forbidden\",
+      source: \"reviewer-loop\",
+      evidence: \"HTTP 403 from reviewer details URL\",
+      remediationAttempted: true,
+      cannotUnblockInTime: true,
+      bypassReason: \"organization approval cannot complete before release window\"
+    }
+  | .authorization = {
+      pullRequest: 42,
+      headSha: \"abc123\",
+      evidenceFingerprint: \"$exceptional_status_reviewer_fingerprint\",
+      authorizedBy: \"lhpaul\",
+      authorizedAt: \"2026-07-29T12:00:00Z\",
+      authorizationText: \"Approve admin merge for PR #42\"
+    }
+  | .bypassAudit = {
+      present: true,
+      state: \"authorized_pending_attempt\",
+      evidenceFingerprint: \"$exceptional_status_reviewer_fingerprint\",
+      commentId: \"IC_kwDO\"
+    }
+")"
+run_test "reviewer_status_check_does_not_block_exceptional_bypass" "exceptional_bypass_authorized:true" "$(
+  "$GATE" --input "$exceptional_with_status_reviewer_authorized_fixture" --json |
+    jq -r '.decision + ":" + (.exceptionalAdminMergePermitted|tostring)'
+)"
+
 exceptional_missing_label_fixture="$(write_fixture access-exceptional-missing-label "
   .repository = \"example/mobile-app\"
   | .pr.headSha = \"abc123\"
