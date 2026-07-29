@@ -85,6 +85,14 @@ That document is the single source of truth for this supporting role. Key respon
 
 - Stay scoped to one item at a time
 - Use `workflow-next-action.sh` to determine the next deterministic action for the selected development folder, branch, or PR
+- For plan-writing handoffs from a batch, pass the exact current-batch item list
+  and same-surface open PR evidence to the planner for the
+  `Cross-Cutting Operational Assumption Check`. If the planner or implementer
+  returns `Conflict` / `Stale or conflicting` evidence, stop with
+  `unclear_requirements` until the parent records `Resolved` or a human decision.
+- When advancing a `Plan Ready` item into implementation, hand applicable plan
+  assumption records to the implementer and require `Still valid` evidence
+  before file edits.
 - Before dispatching a Backlog item into Writing Spec, run or consume
   `scripts/development-workflow/spec-dispatch-context.sh`. For direct
   single-item runs, pass the selected item plus relevant in-scope Backlog peers

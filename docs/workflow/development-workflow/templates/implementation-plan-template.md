@@ -30,6 +30,30 @@
 
 ---
 
+## Cross-Cutting Operational Assumption Check
+
+> Required for every plan. Use **one** of the two paths below and delete the
+> other. Do not perform a repository-wide PR scan when the check is not
+> applicable.
+
+### Applicable
+
+| Assumption surface | Recorded value | Authoritative source | Verified at | Bounded cross-check scope | Result |
+| --- | --- | --- | --- | --- | --- |
+| [environment target / approved base / linked resource / canonical config] | [value] | [source file, tracker field, command, or parent handoff] | [timestamp and repo SHA] | [current-batch items and plausibly related open PRs only] | `Verified` / `Conflict` / `Resolved` |
+
+If the result is `Conflict`, record the competing evidence, affected plan
+statements, resolution status, and decision owner. Implementation remains
+blocked until the plan records `Resolved` or a human decision.
+
+### Not applicable
+
+**Result**: `Not applicable` — [short rationale explaining why the plan has no
+cross-cutting operational assumption such as environment target, approved base,
+linked resource, artifact owner, or canonical configuration value].
+
+---
+
 ## Layer-by-Layer Changes
 
 > Delete any layers that don't apply to this feature.

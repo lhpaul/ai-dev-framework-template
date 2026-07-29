@@ -19,23 +19,29 @@ Recommended model tier: `economy`
    logical sub-part, do not intentionally batch all completed sub-parts into one
    final commit, and never commit incomplete or failing work only to satisfy the
    rule.
-9. Do not stop after dispatching a batch if any selected or approved item still has a deterministic next action.
-10. For `workflow_hub` implementation work, include workflow mode, artifact owner, selected product repository, local path or remote identity, and mutation target in item handoffs; stop before mutation-oriented dispatch when product repository context is missing or ambiguous. Missing mode or `single_repo` does not require `--repo`.
+9. For plan-writing handoffs, include the exact current-batch item list and any
+   known same-surface open PR evidence for Protocol 02's
+   `Cross-Cutting Operational Assumption Check`. Keep returned `Conflict`
+   evidence visible until it is `Resolved` by the parent or stopped for
+   `Human decision required`; do not let planners replace this bounded context
+   with an unbounded scan of every open PR.
+10. Do not stop after dispatching a batch if any selected or approved item still has a deterministic next action.
+11. For `workflow_hub` implementation work, include workflow mode, artifact owner, selected product repository, local path or remote identity, and mutation target in item handoffs; stop before mutation-oriented dispatch when product repository context is missing or ambiguous. Missing mode or `single_repo` does not require `--repo`.
    Include the parent-approved base branch in mutation-oriented handoffs; child runners must use it with `run-nested-artifact-guard.sh --approved-base` before branch or PR creation.
-11. **Guardrails enforcement**: Before any artifact-mutating action, resolve the effective guardrails (three-layer precedence: repo config → session overrides → invocation overrides) and report them in the portfolio run summary. Enforce the six gates described in `docs/workflow/development-workflow/guardrails-enforcement.md`: load+report at run start, backlog-start gate, per-stage PR-open gate, delegated review gate, delegated merge gate, and completion gate. When no `guardrails` section is found, state "conservative defaults in effect."
-12. With `merge_granted`, readiness is not terminal; continue through delegated
+12. **Guardrails enforcement**: Before any artifact-mutating action, resolve the effective guardrails (three-layer precedence: repo config → session overrides → invocation overrides) and report them in the portfolio run summary. Enforce the six gates described in `docs/workflow/development-workflow/guardrails-enforcement.md`: load+report at run start, backlog-start gate, per-stage PR-open gate, delegated review gate, delegated merge gate, and completion gate. When no `guardrails` section is found, state "conservative defaults in effect."
+13. With `merge_granted`, readiness is not terminal; continue through delegated
    merge and report each in-scope PR as `merged`, `merge_blocked`, or
    `policy_inconsistent`. With `merge_denied`, ready PRs report
    `ready_human_merge`. Discovered unrelated PRs are `out_of_scope` and are not
    merged.
-13. When supervising sweep, batch, helper-extraction, numeric-target, or
+14. When supervising sweep, batch, helper-extraction, numeric-target, or
    pattern-completeness items, require residual gate evidence before accepting
    `ready-for-human-review` as terminal.
-14. When supervising `spec/*` or `implementation-plan/*` PRs, require Protocol
+15. When supervising `spec/*` or `implementation-plan/*` PRs, require Protocol
     91 Step 8a's documentation-stage alignment checker before accepting
     readiness. A mismatch keeps the item under supervision until corrected or
     escalated.
-15. Before accepting any item as terminal in a batch summary, require the
+16. Before accepting any item as terminal in a batch summary, require the
     Work Item Runner's `## Ground-Truth Completion Verification` section from
     `scripts/development-workflow/item-completion-self-check.sh` or run the
     helper directly from current artifact state. When Step 7 was configured, pass

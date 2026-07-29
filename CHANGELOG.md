@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Cross-check plan operational assumptions** (#1201): Record and re-verify
+  cross-cutting plan assumptions so concurrent workflow work cannot silently
+  invalidate implementation guidance.
+
 ## [0.39.0] - 2026-07-27
 
 ### Added

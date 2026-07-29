@@ -31,6 +31,27 @@ that begin as read-only questions and then become real code or documentation
 changes. The first mutating action must happen after branch/worktree isolation is
 in place.
 
+## Implementation-Start Operational Assumption Re-Verification
+
+For Full Pipeline and Refactor work, read the implementation plan's
+`Cross-Cutting Operational Assumption Check` section before the first file edit.
+If the section records `Not applicable`, no plan-time assumption source scan is
+required. If the section records any applicable operational assumption, re-read
+each authoritative source named by the plan and compare it with the recorded
+value before editing files.
+
+- If every applicable source still matches, record `Still valid` evidence in the
+  PR's Pre-Submission Self-Review Pass.
+- If a source changed, conflicts with current-batch or related-PR evidence, or
+  cannot be verified, stop before file edits and return the evidence to the
+  parent orchestrator as `Stale or conflicting`.
+- Do not guess which in-flight interpretation will win. A conflict remains a
+  named `unclear_requirements` stop until the parent records a resolution or the
+  human decides.
+
+Fast Track and Hotfix paths without an implementation plan do not synthesize a
+plan-time assumption record; use their existing scope, base, and incident checks.
+
 When `BATCH_CONTEXT=true`, the item-orchestrator must provide an isolation
 assignment with the expected worktree path, expected branch, artifact repo root,
 approved base branch, mutation classification, and `isolation: "worktree"`.

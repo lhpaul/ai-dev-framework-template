@@ -134,6 +134,16 @@ Nested or spawned agents must pass that base to
 PR creation. If the base is ambiguous, stop before dispatch rather than letting
 a child agent infer a PR target.
 
+For any item entering the plan-writing stage, also include the exact
+current-batch item list and any known same-surface open PR evidence in the
+handoff. This context is bounded evidence for the plan's
+`Cross-Cutting Operational Assumption Check`; it does not authorize mutations
+outside the explicit list and it must not become an unbounded scan of every open
+PR. If a planner returns `Conflict` evidence, keep the conflict visible in the
+parent summary until it is resolved. Record `Resolved` with the authoritative
+interpretation and decision owner when evidence is sufficient, or stop with
+`unclear_requirements` and request a human decision when it is not.
+
 The Portfolio Orchestrator also owns parent-visible fork enumeration. For each
 dispatched item with a positive numeric issue number, run the nested artifact
 guard in `audit` mode before child dispatch and again after the child returns

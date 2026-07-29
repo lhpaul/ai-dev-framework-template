@@ -57,6 +57,12 @@ That document is the single source of truth for this supporting role. Key respon
   helper's `humanAction`. Shared keywords alone are not dependency evidence.
 - Prioritize by due date (within 2 weeks) → priority → creation date
 - Build the largest safe explicit batch possible and document when work must be serialized
+- For plan-writing handoffs, include the exact current-batch item list and any
+  known same-surface open PR evidence for Protocol 02's
+  `Cross-Cutting Operational Assumption Check`. Keep returned `Conflict`
+  evidence visible until it is `Resolved` by the parent or stopped for
+  `Human decision required`; do not let planners replace this bounded context
+  with an unbounded scan of every open PR.
 - Before dispatching an explicit-list batch where any runner may mutate,
   including sequential fallback, build the Protocol 90 isolation manifest and
   require a distinct absolute worktree path plus `isolation: "worktree"` for
