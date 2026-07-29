@@ -4639,6 +4639,26 @@ ensure_pr_ready_for_after_clean() {
   ensure_pr_ready_for_ready_phase "$@"
 }
 
+run_project_advisory_checks() {
+  local pr_number_arg="${1:-}"
+  local script_path="${2:-$SCRIPT_DIR/run-advisory-checks.sh}"
+  local advisory_output=""
+
+  if [ -z "$pr_number_arg" ] || [ ! -f "$script_path" ]; then
+    return 0
+  fi
+
+  set +e
+  advisory_output="$(bash "$script_path" "$pr_number_arg" 2>/dev/null)"
+  set -e
+
+  if [ -n "$advisory_output" ]; then
+    printf '%s\n' "$advisory_output"
+  fi
+
+  return 0
+}
+
 # --- Compare-mode helpers ---
 # These functions are defined here (before the main execution block) so that
 # the test harness can load them via HARNESS_MODE=1 sourcing without executing
@@ -6098,6 +6118,7 @@ _post_review_summary() {
   local phase_net_new_blocker="${11:-0}"
   local phase_blocking_platform="${12:-}"
   local pre_after_clean_only_mode="${13:-0}"
+  local advisory_checks_section="${14:-}"
 
   if [ -z "$pr_number" ]; then
     return 0
@@ -6273,7 +6294,7 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
 
 **Result:** ${result_line}
 **Platforms:** ${platform_list:-none}${policy_status_section}
-**Findings:** ${blocking} blocking, ${suggestions} suggestions${phase_section}${compare_section}${advisory_section}${regression_label_section}
+**Findings:** ${blocking} blocking, ${suggestions} suggestions${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF
@@ -6592,6 +6613,8 @@ if reviewer_failed_label_required_for_result "$aggregate_result" "$aggregate_rea
 fi
 sync_reviewer_failed_label "$pr_number" "$reviewer_failed_required"
 
+advisory_checks_section="$(run_project_advisory_checks "$pr_number")"
+
 print_kv RESULT "$aggregate_result"
 print_kv PLATFORM "$last_platform"
 [ -n "$aggregate_reason" ] && print_kv REASON "$aggregate_reason"
@@ -6638,7 +6661,8 @@ case "$aggregate_result" in
       "$aggregate_possible_issue_eval_outcome" \
       "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
       "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-      "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
+      "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
+      "$advisory_checks_section"
     exit 0
     ;;
   skipped)
@@ -6652,7 +6676,8 @@ case "$aggregate_result" in
       "$aggregate_possible_issue_eval_outcome" \
       "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
       "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-      "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
+      "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
+      "$advisory_checks_section"
     exit 1
     ;;
   needs_rerun)
@@ -6667,7 +6692,8 @@ case "$aggregate_result" in
       "$aggregate_possible_issue_eval_outcome" \
       "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
       "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-      "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
+      "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
+      "$advisory_checks_section"
     exit 3
     ;;
   escalate)
@@ -6678,7 +6704,8 @@ case "$aggregate_result" in
       "$aggregate_possible_issue_eval_outcome" \
       "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
       "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-      "$phase_after_clean_blocking_platform" "$pre_after_clean_only"
+      "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
+      "$advisory_checks_section"
     exit 2
     ;;
   *)
