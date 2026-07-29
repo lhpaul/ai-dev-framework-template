@@ -232,8 +232,9 @@ Runs one or more automated PR review platforms in order, then classifies finding
 
 Usage:
 
+<!-- workflow-shell-contract: bash -->
 ```bash
-./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch feature/my-branch] [--platform greptile] [--platform devin] [--platform coderabbit] [--platform coderabbit-cli]
+bash ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch feature/my-branch] [--platform greptile] [--platform devin] [--platform coderabbit] [--platform coderabbit-cli]
 ```
 
 What it does:
