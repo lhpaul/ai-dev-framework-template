@@ -255,6 +255,42 @@ Use this when:
 - The orchestrator is resuming a PR after a prior push or interruption
 - More than one automated reviewer is configured for a repository
 
+### `run-advisory-checks.sh`
+
+Optional project extension point invoked by `pr-review-loop.sh` after platform
+review aggregation and before the final reviewer-loop summary is posted.
+
+Usage:
+
+```bash
+./scripts/development-workflow/run-advisory-checks.sh <pr-number>
+```
+
+What it does by default:
+
+- Exits successfully and emits no stdout.
+- Defines the stable customization point for downstream projects that want to
+  append diff-scoped informational checks to the reviewer-loop summary.
+- Receives exactly one positional argument: the pull request number currently
+  being reviewed.
+
+Customization contract:
+
+- Write a complete Markdown-ready advisory section to stdout when there is
+  useful informational output, including the section heading. Example:
+
+  ```bash
+  printf '\n\n**Advisory checks** _(informational - never blocks merge)_\n'
+  printf -- '- Dead exports: none found\n'
+  ```
+
+- Keep diagnostics on stderr. `pr-review-loop.sh` suppresses extension stderr in
+  the summary.
+- The extension is advisory-only. Its output, failure, or absence never changes
+  `RESULT`, blocker counts, readiness labels, or the reviewer-loop exit status.
+- Missing PR context, a missing script, or empty stdout produces no summary
+  section.
+
 ### `workflow-next-action.sh`
 
 Classifies the next deterministic workflow action for a branch, PR, or development folder.

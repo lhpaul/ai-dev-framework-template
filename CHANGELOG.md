@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Add project advisory checks hook** (#1279): Let downstream projects append
+  diff-scoped informational checks to reviewer summaries without changing
+  reviewer results or readiness.
 - **Cross-check plan operational assumptions** (#1201): Record and re-verify
   cross-cutting plan assumptions so concurrent workflow work cannot silently
   invalidate implementation guidance.

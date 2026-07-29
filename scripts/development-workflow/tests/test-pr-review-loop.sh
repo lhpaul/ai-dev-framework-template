@@ -33,6 +33,7 @@ MOCK_BIN="$(mktemp -d)"
 _METRICS_TMP=""
 _METRICS_DIR=""
 _CONFIG_DIR=""
+_ADVISORY_TMP=""
 
 # Single EXIT trap: normalise SIGPIPE exit code (141 -> 0) and clean up temp
 # directories. A second trap would override this one, losing the 141 guard.
@@ -41,6 +42,7 @@ _harness_exit() {
   rm -rf "$MOCK_BIN"
   [ -n "${_METRICS_DIR:-}" ] && rm -rf "$_METRICS_DIR"
   [ -n "${_CONFIG_DIR:-}" ] && rm -rf "$_CONFIG_DIR"
+  [ -n "${_ADVISORY_TMP:-}" ] && rm -rf "$_ADVISORY_TMP"
   case "$status" in
     141) exit 0 ;;
     *)   exit "$status" ;;
@@ -211,6 +213,74 @@ grep_count_or_zero() {
     *) return "$status" ;;
   esac
 }
+
+# ---------------------------------------------------------------------------
+# Area 0a: project advisory checks hook
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 0a: project advisory checks hook ==="
+
+_ADVISORY_TMP="$(mktemp -d)"
+
+set +e
+_default_advisory_output="$(bash "$REPO_ROOT/scripts/development-workflow/run-advisory-checks.sh" 123)"
+_default_advisory_status=$?
+set -e
+run_test "project_advisory_default_stub_exit" "0" "$_default_advisory_status"
+run_test "project_advisory_default_stub_empty" "" "$_default_advisory_output"
+
+_marker_script="$_ADVISORY_TMP/marker-advisory.sh"
+_marker_file="$_ADVISORY_TMP/marker-count.txt"
+_empty_advisory_output_file="$_ADVISORY_TMP/project-advisory-empty.out"
+cat > "$_marker_script" <<'EOF_MARKER_ADVISORY'
+#!/usr/bin/env bash
+printf '%s\n' "${1:-}" >> "$MARKER_FILE"
+printf '\n\n**Advisory checks** _(informational - never blocks merge)_\n'
+printf -- '- marker ran for PR %s\n' "${1:-}"
+EOF_MARKER_ADVISORY
+chmod +x "$_marker_script"
+MARKER_FILE="$_marker_file" run_project_advisory_checks "" "$_marker_script" >"$_empty_advisory_output_file"
+if [ -e "$_marker_file" ]; then
+  _empty_pr_invoked="yes"
+else
+  _empty_pr_invoked="no"
+fi
+run_test "project_advisory_empty_pr_no_invoke" "no" "$_empty_pr_invoked"
+run_test "project_advisory_empty_pr_empty_output" "" "$(cat "$_empty_advisory_output_file")"
+
+_missing_advisory_output="$(run_project_advisory_checks 42 "$_ADVISORY_TMP/missing-advisory.sh")"
+run_test "project_advisory_missing_script_empty" "" "$_missing_advisory_output"
+
+_marker_output="$(MARKER_FILE="$_marker_file" run_project_advisory_checks 42 "$_marker_script")"
+run_test "project_advisory_marker_invoked_once" "1" "$(wc -l < "$_marker_file" | tr -d ' ')"
+run_test "project_advisory_multiline_preserved" "yes" "$(
+  if printf '%s\n' "$_marker_output" | grep -q 'marker ran for PR 42'; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+
+_failing_advisory_script="$_ADVISORY_TMP/failing-advisory.sh"
+cat > "$_failing_advisory_script" <<'EOF_FAILING_ADVISORY'
+#!/usr/bin/env bash
+printf '\n\n**Advisory checks** _(informational - never blocks merge)_\n'
+printf -- '- diagnostic preserved\n'
+exit 17
+EOF_FAILING_ADVISORY
+chmod +x "$_failing_advisory_script"
+set +e
+_failing_advisory_output="$(run_project_advisory_checks 42 "$_failing_advisory_script")"
+_failing_advisory_status=$?
+set -e
+run_test "project_advisory_failure_returns_zero" "0" "$_failing_advisory_status"
+run_test "project_advisory_failure_preserves_stdout" "yes" "$(
+  if printf '%s\n' "$_failing_advisory_output" | grep -q 'diagnostic preserved'; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
 
 # ---------------------------------------------------------------------------
 # Area 0: draft/ready lifecycle config parsing
@@ -1475,16 +1545,17 @@ fi
 run_test "summary_policy_acknowledgements_section" "1" "$_policy_status_summary_count"
 unset _policy_status_summary_count
 
-# Test 10.7: blocking findings and advisory findings both remain visible in the summary.
+# Test 10.7: blocking, platform advisory, and project advisory findings remain
+# visible in the summary in the required order.
 _post_summary_source="$(awk '/^_post_review_summary\(\)/,/^}$/' \
   "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
 eval "$_post_summary_source"
 # shellcheck disable=SC2329 # Invoked indirectly by the eval-loaded function.
 repo_slug() { printf "owner/repo\n"; }
 # shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
-compare_mode=0
+compare_mode=1
 # shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
-compare_verdicts=()
+compare_verdicts=("coderabbit" "clean")
 # shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
 platform_policy_status_notes=()
 # shellcheck disable=SC2034 # Read by the eval-loaded _post_review_summary function.
@@ -1513,16 +1584,37 @@ MOCK_GH_EXIT=0
 export MOCK_GH_EXIT
 MOCK_GH_COMMENTS_OUTPUT='[]'
 export MOCK_GH_COMMENTS_OUTPUT
+_project_advisory_section="
+
+**Advisory checks** _(informational - never blocks merge)_
+- Project-specific note"
 _post_review_summary "needs_fixes" "haystack_blocking_findings" "haystack (needs_fixes)" "1" "1" \
-  "Rules violation@@@https://github.com/lhpaul/ai-dev-framework-template/pull/952#issuecomment-1"
+  "Rules violation@@@https://github.com/lhpaul/ai-dev-framework-template/pull/952#issuecomment-1" \
+  "" "1" "haystack" "1" "0" "" "0" "$_project_advisory_section"
 if [ -n "${_summary_body_capture:-}" ] && grep -q "1 blocking finding(s) require fixes" "$_summary_body_capture" \
     && grep -q "Advisory findings (non-blocking):" "$_summary_body_capture" \
-    && grep -q "Rules violation" "$_summary_body_capture"; then
+    && grep -q "Rules violation" "$_summary_body_capture" \
+    && grep -q "Advisory checks" "$_summary_body_capture" \
+    && grep -q "Project-specific note" "$_summary_body_capture"; then
   _summary_advisory_split="yes"
 else
   _summary_advisory_split="no"
 fi
 run_test "summary_advisory_split_visible" "yes" "$_summary_advisory_split"
+_phase_line="$(grep -n "Ready reviewer phase" "$_summary_body_capture" | cut -d: -f1 | head -1)"
+_compare_line="$(grep -n "Compare mode" "$_summary_body_capture" | cut -d: -f1 | head -1)"
+_platform_advisory_line="$(grep -n "Advisory findings" "$_summary_body_capture" | cut -d: -f1 | head -1)"
+_project_advisory_line="$(grep -n "Advisory checks" "$_summary_body_capture" | cut -d: -f1 | head -1)"
+if [ -n "$_phase_line" ] && [ -n "$_compare_line" ] \
+    && [ -n "$_platform_advisory_line" ] && [ -n "$_project_advisory_line" ] \
+    && [ "$_phase_line" -lt "$_compare_line" ] \
+    && [ "$_compare_line" -lt "$_platform_advisory_line" ] \
+    && [ "$_platform_advisory_line" -lt "$_project_advisory_line" ]; then
+  _summary_project_advisory_order="yes"
+else
+  _summary_project_advisory_order="no"
+fi
+run_test "summary_project_advisory_order" "yes" "$_summary_project_advisory_order"
 rm -f "$_summary_call_log"
 rm -f "$_summary_body_capture"
 
@@ -1549,8 +1641,9 @@ fi
 run_test "summary_comment_read_failure_history_unavailable" "yes" "$_summary_read_failed_history"
 rm -f "$_summary_read_failed_body_capture"
 unset MOCK_GH_CALL_LOG MOCK_GH_BODY_CAPTURE MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT MOCK_GH_COMMENTS_EXIT MOCK_GH_UPDATED_AT
-unset _summary_advisory_split _post_summary_source
+unset _summary_advisory_split _summary_project_advisory_order _post_summary_source
 unset _summary_read_failed_body_capture _summary_read_failed_history
+unset _phase_line _compare_line _platform_advisory_line _project_advisory_line
 unset -f _post_review_summary
 unset compare_mode compare_verdicts platform_policy_status_notes pr_number branch_name
 

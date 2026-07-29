@@ -751,6 +751,35 @@ Any clean exit where the script output includes one or more advisory label entri
 
 This step is mandatory when advisory findings are present. A summary comment that only lists finding names and links without dispositions leaves human reviewers and future retrospectives without visibility into whether findings were considered and why.
 
+### Project advisory checks hook
+
+After configured platform reviewers, review-thread checks, compare-mode
+settlement, and reviewer-failed label reconciliation have completed,
+`pr-review-loop.sh` runs the optional project extension
+`scripts/development-workflow/run-advisory-checks.sh <pr-number>` once when a
+PR number is available and the script exists.
+
+The extension is a summary hook only:
+
+- The supplied template script is a no-op that exits zero and emits no stdout.
+- Downstream projects may customize the script to run diff-scoped static
+  analysis or similar checks.
+- Non-empty stdout is inserted into the automated reviewer summary after ready
+  phase, compare-mode, and platform advisory details, and before any
+  regression-readiness annotation.
+- The extension owns its complete Markdown section heading. The recommended
+  heading is `**Advisory checks** _(informational - never blocks merge)_`.
+- Extension stderr is not included in the summary.
+- Missing PR context, a missing script, empty stdout, or a non-zero extension
+  exit is fail-open and never changes `RESULT`, `REASON`, blocker/suggestion
+  counts, labels, readiness decisions, or the reviewer-loop process exit.
+
+Project advisory checks are distinct from platform advisory dispositions. The
+mandatory `ADVISORY_LABELS` disposition flow above applies only to advisory
+findings emitted by configured review platforms. Project advisory notes are
+informational operator context unless another existing gate independently
+reports the same concern as blocking.
+
 ---
 
 ### Pre-post verification guard (mandatory before every `gh pr comment` / `gh pr review` call)
