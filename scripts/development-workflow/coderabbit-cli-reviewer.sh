@@ -54,6 +54,8 @@ valid_slug_component() {
   esac
 }
 
+AUTH_PATTERN='unauthori[sz]ed|forbidden|(^|[^[:alnum:]_])(401|403)([^[:alnum:]_]|$)|auth(entication)?[[:space:]_-]+(failed|required|error|unavailable)|login[[:space:]_-]+(failed|required)'
+
 if [ "$#" -lt 3 ]; then
   usage
   exit 3
@@ -109,10 +111,9 @@ case "$TIMEOUT" in
     ;;
 esac
 
-rate_limit_policy_from_config() {
-  local config_file
+rate_limit_policy_from_file() {
+  local config_file="$1"
   local value=""
-  config_file="$(workflow_effective_config_file 2>/dev/null || true)"
   if [ -n "$config_file" ] && [ -f "$config_file" ]; then
     value="$(
       awk '
@@ -135,6 +136,24 @@ rate_limit_policy_from_config() {
       ' "$config_file"
     )"
   fi
+  printf '%s' "$value"
+}
+
+rate_limit_policy_from_config() {
+  local config_file
+  local local_file
+  local value=""
+
+  local_file="$(workflow_local_config_file 2>/dev/null || true)"
+  if [ -n "$local_file" ] && [ -f "$local_file" ]; then
+    value="$(rate_limit_policy_from_file "$local_file")"
+  fi
+
+  if [ -z "$value" ]; then
+    config_file="$(workflow_effective_config_file 2>/dev/null || true)"
+    value="$(rate_limit_policy_from_file "$config_file")"
+  fi
+
   printf '%s' "$value"
 }
 
@@ -236,7 +255,7 @@ if [ -z "$(printf '%s' "$cli_stdout" | tr -d '[:space:]')" ]; then
   echo "WARN: CodeRabbit CLI produced no JSON output (exit $cli_exit)" >&2
   if printf '%s\n' "$combined_output" | grep -Eiq 'rate[ -]?limit|too many requests|HTTP[[:space:]]*429'; then
     emit_rate_limited_result
-  elif printf '%s\n' "$cli_stderr" | grep -Eiq 'auth|login|unauthori[sz]ed|forbidden|401|403'; then
+  elif printf '%s\n' "$cli_stderr" | grep -Eiq "$AUTH_PATTERN"; then
     print_result skipped 0 0 0 unauthorized "unavailable"
   else
     print_result skipped 0 0 0 no_output "skipped"
@@ -313,11 +332,11 @@ if printf '%s\n' "$combined_output" | grep -Eiq 'rate[ -]?limit|too many request
   rate_limit_output=true
 fi
 auth_output=false
-if printf '%s\n' "$cli_stderr" | grep -Eiq 'auth|login|unauthori[sz]ed|forbidden|401|403'; then
+if printf '%s\n' "$cli_stderr" | grep -Eiq "$AUTH_PATTERN"; then
   auth_output=true
 elif [ -n "$normalized_stdout_json" ] && printf '%s\n' "$normalized_stdout_json" | jq -e '
   def auth_text:
-    test("auth|login|unauthori[sz]ed|forbidden|401|403"; "i");
+    test("unauthori[sz]ed|forbidden|(^|[^[:alnum:]_])(401|403)([^[:alnum:]_]|$)|auth(entication)?[[:space:]_-]+(failed|required|error|unavailable)|login[[:space:]_-]+(failed|required)"; "i");
   if type == "object" then
     [(.error? // empty), (.reason? // empty), (.status? // empty)]
     | map(select(type == "string"))
@@ -347,6 +366,11 @@ case "$parse_status" in
     if [ "$blocking_count" -gt 0 ]; then
       print_result needs_fixes "$comment_count" "$blocking_count" "$suggestion_count"
       exit 1
+    fi
+    if [ "$cli_exit" -ne 0 ]; then
+      echo "WARN: CodeRabbit CLI exited non-zero after producing non-blocking JSON (exit $cli_exit)" >&2
+      print_result skipped 0 0 0 cli_failed "skipped"
+      exit 3
     fi
     print_result clean "$comment_count" 0 "$suggestion_count"
     exit 0

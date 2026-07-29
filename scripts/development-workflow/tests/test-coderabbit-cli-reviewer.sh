@@ -18,10 +18,11 @@ CALL_LOG="$(mktemp)"
 OUTPUT_FILE="$(mktemp)"
 EXIT_FILE="$(mktemp)"
 POLICY_CONFIG_FILE="$(mktemp)"
+LOCAL_CONFIG_ROOT="$(mktemp -d)"
 
 cleanup() {
   local status=$?
-  rm -rf "$MOCK_BIN" "$NO_CLI_BIN"
+  rm -rf "$MOCK_BIN" "$NO_CLI_BIN" "$LOCAL_CONFIG_ROOT"
   rm -f "$CALL_LOG" "$OUTPUT_FILE" "$EXIT_FILE" "$POLICY_CONFIG_FILE"
   exit "$status"
 }
@@ -97,6 +98,7 @@ reset_mocks() {
   unset MOCK_CODERABBIT_STDOUT MOCK_CODERABBIT_STDERR MOCK_CODERABBIT_EXIT MOCK_CODERABBIT_SLEEP
   unset CODERABBIT_CLI_RATE_LIMIT_POLICY CODERABBIT_CLI_REVIEW_TIMEOUT
   unset AI_DEV_WORKFLOW_CONFIG_FILE
+  unset WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT
 }
 
 set_mock_stdout() {
@@ -242,6 +244,13 @@ run_test "rate_limit_stderr_with_json_result" "RESULT=skipped" "$(line_for RESUL
 run_test "rate_limit_stderr_with_json_reason" "REASON=rate_limited" "$(line_for REASON)"
 
 reset_mocks
+set_mock_stdout '{"findings":[]}'
+MOCK_CODERABBIT_STDERR='author metadata: login hint is informational'
+export MOCK_CODERABBIT_STDERR
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "benign_auth_like_stderr_with_json_result" "RESULT=clean" "$(line_for RESULT)"
+
+reset_mocks
 set_mock_stdout '{"findings":[{"severity":"Critical","message":"fix this"}]}'
 MOCK_CODERABBIT_STDERR='HTTP 429 rate limit exceeded'
 export MOCK_CODERABBIT_STDERR
@@ -264,6 +273,20 @@ run_test "rate_limit_policy_effective_config_result" "RESULT=escalate" "$(line_f
 run_test "rate_limit_policy_effective_config_exit" "2" "$(exit_code)"
 
 reset_mocks
+cat > "$LOCAL_CONFIG_ROOT/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  coderabbit_cli:
+    rate_limit_policy: strict
+YAML
+set_mock_stdout '{"findings":[]}'
+MOCK_CODERABBIT_STDERR='HTTP 429 rate limit exceeded'
+WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$LOCAL_CONFIG_ROOT"
+export MOCK_CODERABBIT_STDERR WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "rate_limit_policy_local_config_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "rate_limit_policy_local_config_exit" "2" "$(exit_code)"
+
+reset_mocks
 set_mock_stdout '{"findings":[]}'
 MOCK_CODERABBIT_SLEEP=2
 CODERABBIT_CLI_REVIEW_TIMEOUT=1
@@ -280,6 +303,15 @@ export MOCK_CODERABBIT_EXIT
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "nonzero_valid_json_result" "RESULT=needs_fixes" "$(line_for RESULT)"
 run_test "nonzero_valid_json_exit" "1" "$(exit_code)"
+
+reset_mocks
+set_mock_stdout '{"findings":[]}'
+MOCK_CODERABBIT_EXIT=7
+export MOCK_CODERABBIT_EXIT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "nonzero_clean_json_result" "RESULT=skipped" "$(line_for RESULT)"
+run_test "nonzero_clean_json_reason" "REASON=cli_failed" "$(line_for REASON)"
+run_test "nonzero_clean_json_exit" "3" "$(exit_code)"
 
 reset_mocks
 MOCK_CODERABBIT_STDOUT=''
