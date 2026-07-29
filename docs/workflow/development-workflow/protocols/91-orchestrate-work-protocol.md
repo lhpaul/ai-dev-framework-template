@@ -752,6 +752,7 @@ session starts from the main clone instead of the item's isolated worktree.
 
 Use the executable fail-closed gate before any resumed-session mutation:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/checkpoint-resume-gate.sh \
   --item <item-id> \

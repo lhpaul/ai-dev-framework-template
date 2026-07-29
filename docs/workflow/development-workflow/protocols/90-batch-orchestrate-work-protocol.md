@@ -552,6 +552,7 @@ After building the initial candidate list from the eligibility table above and a
 
 1. **Guard — skip if issue number is invalid**: Before running the branch and PR checks, verify that `ISSUE_NUMBER` is a non-empty positive integer. An empty or non-numeric value would cause `git ls-remote` to search for patterns like `refs/heads/feature/-*` or `refs/heads/feature/abc-*`, potentially matching unintended branches. GitHub issue numbers are always positive integers, so a non-integer value indicates a data problem in the candidate list:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    if ! echo "${ISSUE_NUMBER:-}" | grep -qE '^[1-9][0-9]*$'; then
      echo "WARNING: invalid ISSUE_NUMBER '${ISSUE_NUMBER:-}' for candidate item — skipping stale detection."
@@ -561,6 +562,7 @@ After building the initial candidate list from the eligibility table above and a
 
 2. **Check for an existing implementation branch or open PR** (fail-open: skip stale correction if either check is unreliable):
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    # Only check implementation-stage branches (feature/fix/refactor/hotfix).
    # spec/* and implementation-plan/* branches persist on the remote after merge
@@ -602,12 +604,13 @@ After building the initial candidate list from the eligibility table above and a
 3. **If both checks return zero** (no branch, no PR): the "In Development" status is stale (BR-5). Apply the correction:
    - Log a `STALE_STATUS_CORRECTION:` line to the run output (BR-10, AC-10):
 
-     ```text
+     ~~~text
      STALE_STATUS_CORRECTION: issue #<N> tracker shows 'In Development' but no branch or PR found. Correcting to 'Plan Ready'.
-     ```
+     ~~~
 
    - Update the tracker status to `Plan Ready` using `update_tracker_status_best_effort` (BR-6):
 
+     <!-- workflow-shell-contract: bash-zsh -->
      ```bash
      update_tracker_status_best_effort "$ISSUE_NUMBER" "Plan Ready"
      ```
@@ -638,6 +641,7 @@ For each item that passed the Step 2 eligibility check:
 
 1. **Ensure the item is on the project board**: check whether the item already exists in the configured project board. If it is missing, add it. Log the result (`already present` / `added to board`). Use `ensure_on_project_board` from `scripts/development-workflow/workflow-lib.sh`:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    # Source workflow-lib.sh to get ensure_on_project_board
    # shellcheck source=scripts/development-workflow/workflow-lib.sh
@@ -660,11 +664,11 @@ For each item that passed the Step 2 eligibility check:
 
 3. **Log each result** for transparency:
 
-   ```text
+   ~~~text
    ✅ #N [slug]: already on board; status Writing Plan → no change (already in-flight)
    ✅ #M [slug]: added to board; status Plan Ready → In Development
    ✅ #K [slug]: already on board; status Backlog → Writing Plan
-   ```
+   ~~~
 
 4. **Tracker unavailability**: if the tracker API is unreachable, log a warning and continue without blocking the batch — matching the "warn and fall back" pattern established in Steps 1a–1c.
 
@@ -697,7 +701,7 @@ After each Work Item Runner returns, the orchestrator must scan the runner's
 complete output for `TRACKER_ACTION_REQUIRED=` and `TRACKER_UPDATE_REQUIRED:`
 signals and apply each one via Linear MCP before proceeding to the next item:
 
-```
+~~~
 for each line in Work Item Runner output:
   case line:
     "TRACKER_ACTION_REQUIRED=set_status issue=<id> target_status=<status>":
@@ -713,7 +717,7 @@ for each line in Work Item Runner output:
     "TRACKER_UPDATE_REQUIRED: set issue #<N> status to \"<status>\"":
       call Linear MCP updateIssue(id=<N>, status=<status>)
       # Priority drift detection applies here too — see linear.md.
-```
+~~~
 
 After each `updateIssue` call, perform a post-write re-read to confirm the
 status write was reflected. If the returned status does not match the target,
@@ -724,9 +728,9 @@ retry rules.
 
 A deferred action that cannot be applied must be logged explicitly:
 
-```
+~~~
 TRACKER_SYNC_SKIPPED: issue=<id> action=<action_type> reason=<reason>
-```
+~~~
 
 Do not silently drop deferred actions — an unapplied transition leaves the
 Linear item out of sync with the workflow stage, which breaks future discovery.
@@ -758,7 +762,7 @@ to a **stage lane** and apply `max_concurrent_by_stage` caps:
 **Configuration** (optional): declare overrides under `guardrails.parallelism` in
 `.ai-dev-workflow.yaml` (documented in `guardrails.md`). Example:
 
-```yaml
+~~~yaml
 guardrails:
   parallelism:
     max_concurrent_by_stage:
@@ -766,7 +770,7 @@ guardrails:
       plan: 0
       review: 0
       implementation: 2
-```
+~~~
 
 A value of `0` means unlimited for that lane.
 
@@ -1038,6 +1042,7 @@ the complete isolation assignment and front-loaded checkpoint decision. The
 runner must invoke the same executable gate as Protocols 91 and 95 before any
 repository, PR, tracker, label, review, or merge mutation:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/checkpoint-resume-gate.sh \
   --item <item-id> \

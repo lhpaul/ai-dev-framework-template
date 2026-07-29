@@ -487,6 +487,7 @@ after a human-checkpoint pause and the prior run used a dedicated item
 worktree, run Protocol 91's checkpoint-resume gate before any mutation in
 the resumed session:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/checkpoint-resume-gate.sh \
   --item <item-id> \

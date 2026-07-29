@@ -46,6 +46,7 @@ run_fixture bash_contract_pass pass $'<!-- workflow-shell-contract: bash -->\n``
 run_fixture portable_for fail $'<!-- workflow-shell-contract: bash-zsh -->\n```shell\nfor item in $ITEMS; do echo "$item"; done\n```'
 run_fixture portable_set fail $'<!-- workflow-shell-contract: bash-zsh -->\n```shell\nset -- $pair\n```'
 run_fixture portable_pass pass $'<!-- workflow-shell-contract: bash-zsh -->\n```shell\nwhile IFS= read -r item; do echo "$item"; done <<EOF\na\nEOF\n```'
+run_fixture typed_non_shell_boundary pass $'```text\nstatus only\n```\n\ngit status is referenced in prose, not a snippet.\n\n<!-- workflow-shell-contract: bash-zsh -->\n```bash\necho hello\n```'
 
 contract_doc="docs/workflow/snippet-contract-only.md"
 contract_diff="$TMP_DIR/contract-only.diff"
