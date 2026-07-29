@@ -112,7 +112,7 @@ esac
 rate_limit_policy_from_config() {
   local config_file
   local value=""
-  config_file="$(workflow_config_file 2>/dev/null || true)"
+  config_file="$(workflow_effective_config_file 2>/dev/null || true)"
   if [ -n "$config_file" ] && [ -f "$config_file" ]; then
     value="$(
       awk '
@@ -232,40 +232,11 @@ if [ "$cli_exit" -eq 124 ]; then
   exit 3
 fi
 
-stdout_is_json=false
-if printf '%s\n' "$cli_stdout" | jq -e 'type == "object" or type == "array"' >/dev/null 2>&1; then
-  stdout_is_json=true
-fi
-
-stdout_json_rate_limited=false
-if [ "$stdout_is_json" = true ] && printf '%s\n' "$cli_stdout" | jq -e '
-  def rate_limit_text:
-    test("rate[ -]?limit|too many requests|HTTP[[:space:]]*429"; "i");
-  if ((.findings? // null) | type) == "array" then
-    false
-  else
-    [
-      .. | objects
-      | (.error? // empty), (.reason? // empty), (.status? // empty)
-      | strings
-      | select(rate_limit_text)
-    ] | length > 0
-  end
-' >/dev/null 2>&1; then
-  stdout_json_rate_limited=true
-fi
-
-if printf '%s\n' "$cli_stderr" | grep -Eiq 'rate[ -]?limit|too many requests|HTTP[[:space:]]*429'; then
-  emit_rate_limited_result
-elif [ "$stdout_json_rate_limited" = true ]; then
-  emit_rate_limited_result
-elif [ "$stdout_is_json" = false ] && printf '%s\n' "$combined_output" | grep -Eiq 'rate[ -]?limit|too many requests|HTTP[[:space:]]*429'; then
-  emit_rate_limited_result
-fi
-
 if [ -z "$(printf '%s' "$cli_stdout" | tr -d '[:space:]')" ]; then
   echo "WARN: CodeRabbit CLI produced no JSON output (exit $cli_exit)" >&2
-  if printf '%s\n' "$combined_output" | grep -Eiq 'auth|login|unauthori[sz]ed|forbidden|401|403'; then
+  if printf '%s\n' "$combined_output" | grep -Eiq 'rate[ -]?limit|too many requests|HTTP[[:space:]]*429'; then
+    emit_rate_limited_result
+  elif printf '%s\n' "$combined_output" | grep -Eiq 'auth|login|unauthori[sz]ed|forbidden|401|403'; then
     print_result skipped 0 0 0 unauthorized "unavailable"
   else
     print_result skipped 0 0 0 no_output "skipped"
@@ -324,6 +295,10 @@ parse_result="$(
 )" || parse_result=""
 
 parse_status="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "PARSE_STATUS" { print $2; exit }')"
+rate_limit_output=false
+if printf '%s\n' "$combined_output" | grep -Eiq 'rate[ -]?limit|too many requests|HTTP[[:space:]]*429'; then
+  rate_limit_output=true
+fi
 case "$parse_status" in
   ok)
     comment_count="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "COMMENT_COUNT" { print $2; exit }')"
@@ -332,6 +307,9 @@ case "$parse_status" in
     comment_count="${comment_count:-0}"
     blocking_count="${blocking_count:-0}"
     suggestion_count="${suggestion_count:-0}"
+    if [ "$comment_count" -eq 0 ] && [ "$rate_limit_output" = true ]; then
+      emit_rate_limited_result
+    fi
     if [ "$blocking_count" -gt 0 ]; then
       print_result needs_fixes "$comment_count" "$blocking_count" "$suggestion_count"
       exit 1
@@ -340,7 +318,7 @@ case "$parse_status" in
     exit 0
     ;;
   missing_findings)
-    if printf '%s\n' "$combined_output" | grep -Eiq 'rate[ -]?limit|too many requests|HTTP[[:space:]]*429'; then
+    if [ "$rate_limit_output" = true ]; then
       emit_rate_limited_result
     elif printf '%s\n' "$combined_output" | grep -Eiq 'auth|login|unauthori[sz]ed|forbidden|401|403'; then
       echo "WARN: CodeRabbit CLI authentication appears unavailable" >&2
@@ -357,7 +335,7 @@ case "$parse_status" in
     exit 3
     ;;
   *)
-    if printf '%s\n' "$combined_output" | grep -Eiq 'rate[ -]?limit|too many requests|HTTP[[:space:]]*429'; then
+    if [ "$rate_limit_output" = true ]; then
       emit_rate_limited_result
     elif printf '%s\n' "$combined_output" | grep -Eiq 'auth|login|unauthori[sz]ed|forbidden|401|403'; then
       echo "WARN: CodeRabbit CLI authentication appears unavailable" >&2

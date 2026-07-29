@@ -2183,11 +2183,16 @@ run_coderabbit_cli_review() {
   reviewer_script="$(workflow_repo_root)/scripts/development-workflow/coderabbit-cli-reviewer.sh"
 
   local coderabbit_cli_stderr_file
+  local coderabbit_cli_config_file="${AI_DEV_WORKFLOW_CONFIG_FILE:-${config_file:-}}"
   coderabbit_cli_stderr_file="$(mktemp)"
   trap 'rm -f "${coderabbit_cli_stderr_file:-}"' RETURN
 
   set +e
-  script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" 2>"$coderabbit_cli_stderr_file")"
+  if [ -n "$coderabbit_cli_config_file" ] && [ -f "$coderabbit_cli_config_file" ]; then
+    script_output="$(AI_DEV_WORKFLOW_CONFIG_FILE="$coderabbit_cli_config_file" "$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" 2>"$coderabbit_cli_stderr_file")"
+  else
+    script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" 2>"$coderabbit_cli_stderr_file")"
+  fi
   script_exit=$?
   set -e
 

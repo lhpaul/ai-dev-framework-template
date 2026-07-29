@@ -17,11 +17,12 @@ NO_CLI_BIN="$(mktemp -d)"
 CALL_LOG="$(mktemp)"
 OUTPUT_FILE="$(mktemp)"
 EXIT_FILE="$(mktemp)"
+POLICY_CONFIG_FILE="$(mktemp)"
 
 cleanup() {
   local status=$?
   rm -rf "$MOCK_BIN" "$NO_CLI_BIN"
-  rm -f "$CALL_LOG" "$OUTPUT_FILE" "$EXIT_FILE"
+  rm -f "$CALL_LOG" "$OUTPUT_FILE" "$EXIT_FILE" "$POLICY_CONFIG_FILE"
   exit "$status"
 }
 trap cleanup EXIT
@@ -95,6 +96,7 @@ reset_mocks() {
   export MOCK_CALL_LOG
   unset MOCK_CODERABBIT_STDOUT MOCK_CODERABBIT_STDERR MOCK_CODERABBIT_EXIT MOCK_CODERABBIT_SLEEP
   unset CODERABBIT_CLI_RATE_LIMIT_POLICY CODERABBIT_CLI_REVIEW_TIMEOUT
+  unset AI_DEV_WORKFLOW_CONFIG_FILE
 }
 
 set_mock_stdout() {
@@ -155,6 +157,12 @@ run_test "json_rate_limit_result" "RESULT=skipped" "$(line_for RESULT)"
 run_test "json_rate_limit_reason" "REASON=rate_limited" "$(line_for REASON)"
 
 reset_mocks
+set_mock_stdout '{"findings":[],"error":"HTTP 429 rate limit exceeded"}'
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "empty_findings_json_rate_limit_result" "RESULT=skipped" "$(line_for RESULT)"
+run_test "empty_findings_json_rate_limit_reason" "REASON=rate_limited" "$(line_for REASON)"
+
+reset_mocks
 set_mock_stdout '{"error":"Unauthorized. Run coderabbit auth login --agent."}'
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "json_unauthorized_result" "RESULT=skipped" "$(line_for RESULT)"
@@ -206,6 +214,28 @@ export MOCK_CODERABBIT_STDERR
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "rate_limit_stderr_with_json_result" "RESULT=skipped" "$(line_for RESULT)"
 run_test "rate_limit_stderr_with_json_reason" "REASON=rate_limited" "$(line_for REASON)"
+
+reset_mocks
+set_mock_stdout '{"findings":[{"severity":"Critical","message":"fix this"}]}'
+MOCK_CODERABBIT_STDERR='HTTP 429 rate limit exceeded'
+export MOCK_CODERABBIT_STDERR
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "blocking_json_with_rate_limit_stderr_result" "RESULT=needs_fixes" "$(line_for RESULT)"
+run_test "blocking_json_with_rate_limit_stderr_exit" "1" "$(exit_code)"
+
+reset_mocks
+cat > "$POLICY_CONFIG_FILE" <<'YAML'
+review:
+  coderabbit_cli:
+    rate_limit_policy: strict
+YAML
+set_mock_stdout '{"findings":[]}'
+MOCK_CODERABBIT_STDERR='HTTP 429 rate limit exceeded'
+AI_DEV_WORKFLOW_CONFIG_FILE="$POLICY_CONFIG_FILE"
+export MOCK_CODERABBIT_STDERR AI_DEV_WORKFLOW_CONFIG_FILE
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "rate_limit_policy_effective_config_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "rate_limit_policy_effective_config_exit" "2" "$(exit_code)"
 
 reset_mocks
 set_mock_stdout '{"findings":[]}'
