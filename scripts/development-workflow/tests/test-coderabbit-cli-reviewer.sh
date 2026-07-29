@@ -72,6 +72,9 @@ printf '%s\n' "$0 $*" >> "$MOCK_CALL_LOG"
 if [ -n "${MOCK_CODERABBIT_STDERR:-}" ]; then
   printf '%s\n' "$MOCK_CODERABBIT_STDERR" >&2
 fi
+if [ -n "${MOCK_CODERABBIT_SLEEP:-}" ]; then
+  sleep "$MOCK_CODERABBIT_SLEEP"
+fi
 if [ -n "${MOCK_CODERABBIT_STDOUT:-}" ]; then
   printf '%s\n' "$MOCK_CODERABBIT_STDOUT"
 fi
@@ -90,7 +93,7 @@ reset_mocks() {
   install_cli_mock cr
   install_cli_mock coderabbit
   export MOCK_CALL_LOG
-  unset MOCK_CODERABBIT_STDOUT MOCK_CODERABBIT_STDERR MOCK_CODERABBIT_EXIT
+  unset MOCK_CODERABBIT_STDOUT MOCK_CODERABBIT_STDERR MOCK_CODERABBIT_EXIT MOCK_CODERABBIT_SLEEP
   unset CODERABBIT_CLI_RATE_LIMIT_POLICY CODERABBIT_CLI_REVIEW_TIMEOUT
 }
 
@@ -195,6 +198,24 @@ set_mock_stdout '{"findings":[{"severity":"Minor","message":"mentions HTTP 429 i
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "rate_limit_text_inside_json_result" "RESULT=clean" "$(line_for RESULT)"
 run_test "rate_limit_text_inside_json_suggestions" "SUGGESTION_COUNT=1" "$(line_for SUGGESTION_COUNT)"
+
+reset_mocks
+set_mock_stdout '{"findings":[]}'
+MOCK_CODERABBIT_STDERR='HTTP 429 rate limit exceeded'
+export MOCK_CODERABBIT_STDERR
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "rate_limit_stderr_with_json_result" "RESULT=skipped" "$(line_for RESULT)"
+run_test "rate_limit_stderr_with_json_reason" "REASON=rate_limited" "$(line_for REASON)"
+
+reset_mocks
+set_mock_stdout '{"findings":[]}'
+MOCK_CODERABBIT_SLEEP=2
+CODERABBIT_CLI_REVIEW_TIMEOUT=1
+export MOCK_CODERABBIT_SLEEP CODERABBIT_CLI_REVIEW_TIMEOUT
+run_reviewer "$MOCK_BIN:$NO_CLI_BIN"
+run_test "fallback_timeout_result" "RESULT=skipped" "$(line_for RESULT)"
+run_test "fallback_timeout_reason" "REASON=timeout" "$(line_for REASON)"
+run_test "fallback_timeout_exit" "3" "$(exit_code)"
 
 reset_mocks
 set_mock_stdout '{"findings":[{"severity":"Minor"},{"severity":"Critical"}]}'

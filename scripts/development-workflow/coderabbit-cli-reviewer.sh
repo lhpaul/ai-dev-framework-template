@@ -195,7 +195,7 @@ run_with_timeout() {
     sleep 1
     elapsed=$((elapsed + 1))
   done
-  if kill -0 "$child_pid" 2>/dev/null; then
+  if [ "$elapsed" -ge "$timeout_seconds" ]; then
     kill "$child_pid" 2>/dev/null || true
     wait "$child_pid" 2>/dev/null || true
     return 124
@@ -232,12 +232,35 @@ if [ "$cli_exit" -eq 124 ]; then
   exit 3
 fi
 
-if printf '%s\n' "$combined_output" | grep -Eiq 'rate[ -]?limit|too many requests|HTTP[[:space:]]*429'; then
-  if printf '%s\n' "$cli_stdout" | jq -e 'type == "object" or type == "array"' >/dev/null 2>&1; then
-    :
+stdout_is_json=false
+if printf '%s\n' "$cli_stdout" | jq -e 'type == "object" or type == "array"' >/dev/null 2>&1; then
+  stdout_is_json=true
+fi
+
+stdout_json_rate_limited=false
+if [ "$stdout_is_json" = true ] && printf '%s\n' "$cli_stdout" | jq -e '
+  def rate_limit_text:
+    test("rate[ -]?limit|too many requests|HTTP[[:space:]]*429"; "i");
+  if ((.findings? // null) | type) == "array" then
+    false
   else
-    emit_rate_limited_result
-  fi
+    [
+      .. | objects
+      | (.error? // empty), (.reason? // empty), (.status? // empty)
+      | strings
+      | select(rate_limit_text)
+    ] | length > 0
+  end
+' >/dev/null 2>&1; then
+  stdout_json_rate_limited=true
+fi
+
+if printf '%s\n' "$cli_stderr" | grep -Eiq 'rate[ -]?limit|too many requests|HTTP[[:space:]]*429'; then
+  emit_rate_limited_result
+elif [ "$stdout_json_rate_limited" = true ]; then
+  emit_rate_limited_result
+elif [ "$stdout_is_json" = false ] && printf '%s\n' "$combined_output" | grep -Eiq 'rate[ -]?limit|too many requests|HTTP[[:space:]]*429'; then
+  emit_rate_limited_result
 fi
 
 if [ -z "$(printf '%s' "$cli_stdout" | tr -d '[:space:]')" ]; then
