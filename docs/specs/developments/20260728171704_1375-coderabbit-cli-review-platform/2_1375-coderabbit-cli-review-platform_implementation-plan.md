@@ -55,17 +55,16 @@ live smoke execution. Missing install or auth must be treated as
 - [ ] Prefer `cr --agent --base <base>` when `cr` is installed. Fall back to
   `coderabbit review --agent --base <base>` only when `cr` is absent and
   `coderabbit` is available.
-- [ ] Emit the standard companion output:
+- [ ] Emit the standard companion-script output:
   - `RESULT=clean|needs_fixes|skipped|escalate`
-  - `PLATFORM=coderabbit-cli`
-  - `PR_NUMBER=<number>`
-  - `BRANCH=<head branch>`
-  - `FIX_AGENT=<reviewer_for_branch output from pr-review-loop.sh>`
   - `COMMENT_COUNT=<n>`
   - `BLOCKING_COUNT=<n>`
   - `SUGGESTION_COUNT=<n>`
   - `REASON=<token>` when skipped or escalated by policy
   - optional `DISPLAY_RESULT=<token>` for summaries
+- [ ] Have `pr-review-loop.sh` add the loop-owned fields when mapping the
+  companion exit code: `PLATFORM=coderabbit-cli`, `PR_NUMBER=<number>`,
+  `BRANCH=<head branch>`, and `FIX_AGENT=<reviewer_for_branch output>`.
 - [ ] Map output conservatively:
   - No blocking findings: `RESULT=clean`, exit `0`.
   - Any blocking finding: `RESULT=needs_fixes`, exit `1`.
