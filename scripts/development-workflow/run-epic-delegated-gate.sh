@@ -316,6 +316,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   def exceptional_bypass_preconditions($reasons; $classification):
     $classification == "exceptional_bypass_authorized"
     and pr_mergeable_ok
+    and (($reasons | length) > 0)
     and ($reasons | all(. == "PR merge state is not CLEAN"));
 
   . as $state |
@@ -403,7 +404,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
       else "blocked"
       end
     ),
-    mergePermitted: ($count == 0 and $reviewerAccessClassification == "not_applicable"),
+    mergePermitted: ($count == 0 and ($reviewerAccessClassification | IN("not_applicable", "exceptional_bypass_authorized"))),
     exceptionalAdminMergePermitted: $exceptionalBypassPermitted,
     reasons: $reasons,
     reviewerAccess: $reviewerAccess,
