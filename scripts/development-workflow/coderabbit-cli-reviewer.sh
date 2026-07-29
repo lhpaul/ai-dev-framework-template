@@ -339,6 +339,11 @@ case "$parse_status" in
     if [ "$comment_count" -eq 0 ] && [ "$rate_limit_output" = true ]; then
       emit_rate_limited_result
     fi
+    if [ "$comment_count" -eq 0 ] && [ "$auth_output" = true ]; then
+      echo "WARN: CodeRabbit CLI authentication appears unavailable" >&2
+      print_result skipped 0 0 0 unauthorized "unavailable"
+      exit 3
+    fi
     if [ "$blocking_count" -gt 0 ]; then
       print_result needs_fixes "$comment_count" "$blocking_count" "$suggestion_count"
       exit 1

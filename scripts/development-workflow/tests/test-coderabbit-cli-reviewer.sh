@@ -189,6 +189,12 @@ run_test "json_unauthorized_result" "RESULT=skipped" "$(line_for RESULT)"
 run_test "json_unauthorized_reason" "REASON=unauthorized" "$(line_for REASON)"
 
 reset_mocks
+set_mock_stdout '{"findings":[],"error":"Unauthorized. Run coderabbit auth login --agent."}'
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "empty_findings_json_unauthorized_result" "RESULT=skipped" "$(line_for RESULT)"
+run_test "empty_findings_json_unauthorized_reason" "REASON=unauthorized" "$(line_for REASON)"
+
+reset_mocks
 set_mock_stdout '{"findings":[{"severity":"Needs Triage","message":"unclear"}]}'
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "ambiguous_finding_result" "RESULT=skipped" "$(line_for RESULT)"
