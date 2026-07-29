@@ -236,7 +236,7 @@ if [ -z "$(printf '%s' "$cli_stdout" | tr -d '[:space:]')" ]; then
   echo "WARN: CodeRabbit CLI produced no JSON output (exit $cli_exit)" >&2
   if printf '%s\n' "$combined_output" | grep -Eiq 'rate[ -]?limit|too many requests|HTTP[[:space:]]*429'; then
     emit_rate_limited_result
-  elif printf '%s\n' "$combined_output" | grep -Eiq 'auth|login|unauthori[sz]ed|forbidden|401|403'; then
+  elif printf '%s\n' "$cli_stderr" | grep -Eiq 'auth|login|unauthori[sz]ed|forbidden|401|403'; then
     print_result skipped 0 0 0 unauthorized "unavailable"
   else
     print_result skipped 0 0 0 no_output "skipped"
@@ -244,8 +244,21 @@ if [ -z "$(printf '%s' "$cli_stdout" | tr -d '[:space:]')" ]; then
   exit 3
 fi
 
+normalized_stdout_json="$(
+  printf '%s\n' "$cli_stdout" | jq -sc '
+    def event_finding:
+      select(((.type // "") | tostring | ascii_downcase) == "finding")
+      | (.finding // .data // .);
+    if length == 1 then
+      .[0]
+    else
+      {findings: [.[] | objects | event_finding]}
+    end
+  ' 2>/dev/null
+)" || normalized_stdout_json=""
+
 parse_result="$(
-  printf '%s\n' "$cli_stdout" | jq -r '
+  printf '%s\n' "$normalized_stdout_json" | jq -r '
     def walk_scalars:
       if type == "object" then .[] | walk_scalars
       elif type == "array" then .[] | walk_scalars
@@ -299,6 +312,22 @@ rate_limit_output=false
 if printf '%s\n' "$combined_output" | grep -Eiq 'rate[ -]?limit|too many requests|HTTP[[:space:]]*429'; then
   rate_limit_output=true
 fi
+auth_output=false
+if printf '%s\n' "$cli_stderr" | grep -Eiq 'auth|login|unauthori[sz]ed|forbidden|401|403'; then
+  auth_output=true
+elif [ -n "$normalized_stdout_json" ] && printf '%s\n' "$normalized_stdout_json" | jq -e '
+  def auth_text:
+    test("auth|login|unauthori[sz]ed|forbidden|401|403"; "i");
+  if type == "object" then
+    [(.error? // empty), (.reason? // empty), (.status? // empty)]
+    | map(select(type == "string"))
+    | any(auth_text)
+  else
+    false
+  end
+' >/dev/null 2>&1; then
+  auth_output=true
+fi
 case "$parse_status" in
   ok)
     comment_count="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "COMMENT_COUNT" { print $2; exit }')"
@@ -320,7 +349,7 @@ case "$parse_status" in
   missing_findings)
     if [ "$rate_limit_output" = true ]; then
       emit_rate_limited_result
-    elif printf '%s\n' "$combined_output" | grep -Eiq 'auth|login|unauthori[sz]ed|forbidden|401|403'; then
+    elif [ "$auth_output" = true ]; then
       echo "WARN: CodeRabbit CLI authentication appears unavailable" >&2
       print_result skipped 0 0 0 unauthorized "unavailable"
     else
@@ -337,7 +366,7 @@ case "$parse_status" in
   *)
     if [ "$rate_limit_output" = true ]; then
       emit_rate_limited_result
-    elif printf '%s\n' "$combined_output" | grep -Eiq 'auth|login|unauthori[sz]ed|forbidden|401|403'; then
+    elif [ "$auth_output" = true ]; then
       echo "WARN: CodeRabbit CLI authentication appears unavailable" >&2
       print_result skipped 0 0 0 unauthorized "unavailable"
     else

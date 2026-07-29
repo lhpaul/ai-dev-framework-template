@@ -138,6 +138,20 @@ run_test "blocking_finding_count" "BLOCKING_COUNT=1" "$(line_for BLOCKING_COUNT)
 run_test "blocking_finding_exit" "1" "$(exit_code)"
 
 reset_mocks
+set_mock_stdout '{"type":"finding","finding":{"severity":"High","message":"fix this"}}
+{"type":"complete","summary":"done"}'
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "ndjson_blocking_finding_result" "RESULT=needs_fixes" "$(line_for RESULT)"
+run_test "ndjson_blocking_finding_count" "BLOCKING_COUNT=1" "$(line_for BLOCKING_COUNT)"
+
+reset_mocks
+set_mock_stdout '{"type":"status","message":"review started"}
+{"type":"complete","summary":"done"}'
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "ndjson_no_findings_result" "RESULT=clean" "$(line_for RESULT)"
+run_test "ndjson_no_findings_comments" "COMMENT_COUNT=0" "$(line_for COMMENT_COUNT)"
+
+reset_mocks
 set_mock_stdout '{"findings":[{"severity":"Minor","message":"consider this"}]}'
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "advisory_only_result" "RESULT=clean" "$(line_for RESULT)"
@@ -149,6 +163,12 @@ run_reviewer "$MOCK_BIN:$PATH"
 run_test "missing_findings_result" "RESULT=skipped" "$(line_for RESULT)"
 run_test "missing_findings_reason" "REASON=invalid_json" "$(line_for REASON)"
 run_test "missing_findings_exit" "3" "$(exit_code)"
+
+reset_mocks
+set_mock_stdout '{"summary":"authentication docs mention login behavior"}'
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "missing_findings_auth_text_result" "RESULT=skipped" "$(line_for RESULT)"
+run_test "missing_findings_auth_text_reason" "REASON=invalid_json" "$(line_for REASON)"
 
 reset_mocks
 set_mock_stdout '{"error":"HTTP 429 rate limit exceeded"}'
