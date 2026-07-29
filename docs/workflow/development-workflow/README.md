@@ -78,6 +78,15 @@ This stage protects the codebase from "understood in my head" engineering. It al
 
 When relevant, the plan should make observability and analytics explicit instead of leaving them implicit. That can include frontend crash reporting, backend logging and alerting, product analytics events, and any downstream analytical-data handling needed to make the feature measurable and supportable in production.
 
+Plans must also record the `Cross-Cutting Operational Assumption Check`. When a
+plan depends on an operational fact that concurrent work could invalidate, such
+as an environment target, approved base branch, artifact owner, linked resource,
+or canonical configuration value, the planner records the value, source,
+verification time, bounded current-batch / related-PR scope, and result. The
+parent orchestrator owns same-surface conflict resolution. Implementers
+re-verify applicable sources before file edits and stop on `Stale or
+conflicting` evidence instead of guessing.
+
 ### Implementation
 
 Implementation turns the approved plan into code, tests, docs, and changelog updates. This is where the repository changes, but it is not a license to improvise on scope. If implementation reveals a missing requirement or a design gap that the plan cannot safely answer, the workflow stops and asks for a decision instead of silently inventing one.
