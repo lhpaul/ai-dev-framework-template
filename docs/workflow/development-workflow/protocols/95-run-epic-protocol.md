@@ -100,8 +100,10 @@ Before mutation, the recommender classifies per-item human checkpoints from
 read-only scope metadata (title, type, labels, tracker status). High-leverage
 signals default to checkpoints:
 
-- **Plan + technical**: database schema, migration, or persistent data-model
-  wording.
+- **Plan + technical**: explicit migration/schema labels, action-oriented title
+  intent, or migration-specific body phrases. Generic issue-body mentions of
+  `schema`, `database`, `SQL`, `persistent data`, or `data model` are not enough
+  by themselves.
 - **Spec + product**: unresolved product language, open questions, empty
   Acceptance Criteria sections, or placeholder-only acceptance criteria when
   the item is still in Backlog or spec stage. A populated Acceptance Criteria
@@ -127,11 +129,12 @@ The preflight summary must show checkpoint policy alongside autonomy policy so
 the human can accept, customize, or waive checkpoints before mutation. Two common
 examples:
 
-- **Plan-stage database/schema checkpoint**: an item titled "Add tenant billing
-  migrations" should recommend a `plan` / `technical` checkpoint with a required
-  action such as "approve the migration and rollback plan". A later
-  implementation PR remains blocked until that plan-stage checkpoint is
-  `satisfied` or `waived`.
+- **Plan-stage database/schema checkpoint**: an item with a
+  `database-migration` label, a title such as "Add tenant billing schema
+  column", or body text containing `ALTER TABLE` should recommend a `plan` /
+  `technical` checkpoint with a reason that names the exact matched label,
+  title phrase, or body phrase. A later implementation PR remains blocked until
+  that plan-stage checkpoint is `satisfied` or `waived`.
 - **Implementation-stage sensitive-change checkpoint**: an item touching auth,
   permissions, security-sensitive automation, or merge behavior should recommend
   an `implementation` / `technical` checkpoint with a required action such as
@@ -352,9 +355,10 @@ Recommended defaults should favor the most automatic safe configuration:
 - `--max-risk medium` for workflow scripts, orchestration behavior, merge or
   cleanup automation, or shared workflow tooling when later
   `why_safe_to_merge` evidence can be produced.
-- Human-checkpoint recommendations per eligible item when metadata signals
-  schema/migration, product ambiguity, tradeoff ambiguity, or sensitive
-  implementation work (see **Human-checkpoint recommendations** above).
+- Human-checkpoint recommendations per eligible item when source-aware metadata
+  signals explicit schema/migration work, product ambiguity, tradeoff ambiguity,
+  or sensitive implementation work (see **Human-checkpoint recommendations**
+  above).
 - Never recommend `high` by default. High-risk work requires explicit human
   selection.
 

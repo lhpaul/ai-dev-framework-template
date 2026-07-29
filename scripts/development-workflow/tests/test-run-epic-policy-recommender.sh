@@ -284,6 +284,124 @@ run_test "schema_scope_recommends_plan_checkpoint" "plan:technical" "$(printf '%
 run_test "schema_checkpoint_pending" "pending" "$(printf '%s\n' "$schema_output" | jq -r '.recommendedPolicy.checkpoints[0].satisfaction_state')"
 run_test "schema_checkpoint_requires_confirmation" "true" "$(printf '%s\n' "$schema_output" | jq -r '.requiresConfirmation')"
 run_test "schema_copy_paste_includes_checkpoint_file" "yes" "$(printf '%s\n' "$schema_output" | jq -r '.copyPasteCommand' | grep -Fq -- '--checkpoints-file checkpoint-policy.json' && echo yes || echo no)"
+run_test "schema_checkpoint_reason_names_title_signal" "yes" "$(printf '%s\n' "$schema_output" | jq -r '.recommendedPolicy.checkpoints[0].reason' | grep -Fq "title phrase 'database migration'" && echo yes || echo no)"
+
+generic_data_body_fixture="$(write_fixture generic-data-body '{
+  "scopeSource": "items",
+  "epicNumber": null,
+  "itemInput": "201",
+  "baseBranch": "develop",
+  "baseAmbiguous": false,
+  "baseReason": "no integration branch label",
+  "policy": {"delegateReview": false, "mayMerge": false, "mayStartBacklog": false, "maxRisk": "low"},
+  "groups": {
+    "eligible": [{"number": 201, "title": "Classify transient PostgREST responses", "body": "The response schema includes SQL and database-shaped persistent data in a data model-like payload, but no migration is proposed.", "status": "Plan Ready", "type": "Workflow", "labels": [], "dependencies": {"state": "none"}}],
+    "blocked": [],
+    "already_merged": [],
+    "in_review": [],
+    "ambiguous": []
+  },
+  "items": [
+    {"number": 201, "title": "Classify transient PostgREST responses", "body": "The response schema includes SQL and database-shaped persistent data in a data model-like payload, but no migration is proposed.", "status": "Plan Ready", "type": "Workflow", "labels": []}
+  ]
+}')"
+generic_data_body_output="$(recommend_json "$generic_data_body_fixture" "\$run-epic --items 201")"
+run_test "generic_data_body_terms_do_not_checkpoint" "0" "$(printf '%s\n' "$generic_data_body_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "plan" and .domain == "technical")] | length')"
+
+resilient_read_fixture="$(write_fixture resilient-read "$(jq '
+  .groups.eligible[0].number = 202
+  | .groups.eligible[0].title = "resilient-read helper for raw PostgREST transient error classification"
+  | .groups.eligible[0].body = "Classifies raw PostgREST responses, transient error shapes, database-facing responses, and schema-shaped payloads without changing tables or persistent data."
+  | .items[0] = .groups.eligible[0]
+' "$generic_data_body_fixture")")"
+resilient_read_output="$(recommend_json "$resilient_read_fixture" "\$run-epic --items 202")"
+run_test "resilient_read_body_has_no_data_model_checkpoint" "0" "$(printf '%s\n' "$resilient_read_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "plan" and .domain == "technical")] | length')"
+
+generic_label_fixture="$(write_fixture generic-label "$(jq '
+  .groups.eligible[0].number = 203
+  | .groups.eligible[0].title = "Tune database-facing report wording"
+  | .groups.eligible[0].body = "No migration work."
+  | .groups.eligible[0].labels = ["database"]
+  | .items[0] = .groups.eligible[0]
+' "$generic_data_body_fixture")")"
+generic_label_output="$(recommend_json "$generic_label_fixture" "\$run-epic --items 203")"
+run_test "generic_database_label_does_not_checkpoint" "0" "$(printf '%s\n' "$generic_label_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "plan" and .domain == "technical")] | length')"
+
+label_signal_fixture="$(write_fixture label-signal "$(jq '
+  .groups.eligible[0].number = 204
+  | .groups.eligible[0].title = "Prepare release migration runbook"
+  | .groups.eligible[0].body = "No extra signal."
+  | .groups.eligible[0].labels = ["Database Migration", "schema-change"]
+  | .items[0] = .groups.eligible[0]
+' "$generic_data_body_fixture")")"
+label_signal_output="$(recommend_json "$label_signal_fixture" "\$run-epic --items 204")"
+run_test "explicit_migration_labels_checkpoint_with_exact_reason" "yes" "$(printf '%s\n' "$label_signal_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "plan" and .domain == "technical") | .reason' | grep -Fq "label 'Database Migration'; label 'schema-change'" && echo yes || echo no)"
+
+action_title_fixture="$(write_fixture action-title "$(jq '
+  .groups.eligible[0].number = 205
+  | .groups.eligible[0].title = "Add customer schema column"
+  | .groups.eligible[0].body = "Plan-ready implementation."
+  | .groups.eligible[0].labels = []
+  | .items[0] = .groups.eligible[0]
+' "$generic_data_body_fixture")")"
+action_title_output="$(recommend_json "$action_title_fixture" "\$run-epic --items 205")"
+run_test "action_oriented_schema_title_checkpoints" "yes" "$(printf '%s\n' "$action_title_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "plan" and .domain == "technical") | .reason' | grep -Fq "title phrase 'Add customer schema column'" && echo yes || echo no)"
+
+false_signal_title_fixture="$(write_fixture false-signal-title "$(jq '
+  .groups.eligible[0].number = 206
+  | .groups.eligible[0].title = "Fix false data-model change signal"
+  | .groups.eligible[0].body = "The bug is a checkpoint false positive."
+  | .items[0] = .groups.eligible[0]
+' "$generic_data_body_fixture")")"
+false_signal_title_output="$(recommend_json "$false_signal_title_fixture" "\$run-epic --items 206")"
+run_test "false_signal_title_does_not_checkpoint" "0" "$(printf '%s\n' "$false_signal_title_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "plan" and .domain == "technical")] | length')"
+
+migration_title_fixture="$(write_fixture migration-title "$(jq '
+  .groups.eligible[0].number = 207
+  | .groups.eligible[0].title = "Plan database migration rollout"
+  | .groups.eligible[0].body = "Plan-ready implementation."
+  | .items[0] = .groups.eligible[0]
+' "$generic_data_body_fixture")")"
+migration_title_output="$(recommend_json "$migration_title_fixture" "\$run-epic --items 207")"
+run_test "migration_title_phrases_checkpoint" "yes" "$(printf '%s\n' "$migration_title_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "plan" and .domain == "technical") | .reason' | grep -Fq "title phrase 'database migration'" && echo yes || echo no)"
+
+body_phrase_fixture="$(write_fixture body-phrase "$(jq '
+  .groups.eligible[0].number = 208
+  | .groups.eligible[0].title = "Apply stored procedure updates"
+  | .groups.eligible[0].body = "Use CREATE TABLE for the fixture, ALTER TABLE for the rollout, add a new column, and document the database migration."
+  | .items[0] = .groups.eligible[0]
+' "$generic_data_body_fixture")")"
+body_phrase_output="$(recommend_json "$body_phrase_fixture" "\$run-epic --items 208")"
+run_test "migration_body_phrases_checkpoint_with_exact_reason" "yes" "$(printf '%s\n' "$body_phrase_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "plan" and .domain == "technical") | .reason' | grep -Fq "body phrase 'CREATE TABLE'; body phrase 'ALTER TABLE'; body phrase 'new column'; body phrase 'database migration'" && echo yes || echo no)"
+
+lookalike_migration_fixture="$(write_fixture lookalike-migration "$(jq '
+  .groups.eligible[0].number = 209
+  | .groups.eligible[0].title = "Document SQL vocabulary"
+  | .groups.eligible[0].body = "CREATE TABLETOP, ALTER TABLET, a new columnist, and database migration-guide text are not migration evidence."
+  | .items[0] = .groups.eligible[0]
+' "$generic_data_body_fixture")")"
+lookalike_migration_output="$(recommend_json "$lookalike_migration_fixture" "\$run-epic --items 209")"
+run_test "migration_phrase_lookalikes_do_not_checkpoint" "0" "$(printf '%s\n' "$lookalike_migration_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "plan" and .domain == "technical")] | length')"
+
+multi_signal_fixture="$(write_fixture multi-signal "$(jq '
+  .groups.eligible[0].number = 210
+  | .groups.eligible[0].title = "Add account table"
+  | .groups.eligible[0].body = "CREATE TABLE accounts. CREATE TABLE accounts."
+  | .groups.eligible[0].labels = ["database-migration", "database-migration"]
+  | .items[0] = .groups.eligible[0]
+' "$generic_data_body_fixture")")"
+multi_signal_output="$(recommend_json "$multi_signal_fixture" "\$run-epic --items 210")"
+run_test "data_model_signals_are_ordered_and_deduplicated" "data-model checkpoint matched label 'database-migration'; title phrase 'Add account table'; body phrase 'CREATE TABLE'" "$(printf '%s\n' "$multi_signal_output" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "plan" and .domain == "technical") | .reason')"
+
+variant_item_output="$(recommend_json "$schema_fixture" "/run-item 200")"
+variant_items_output="$(recommend_json "$schema_fixture" "/run-items 200 201")"
+variant_epic_output="$(recommend_json "$schema_fixture" "\$run-epic --items 200")"
+run_test "bounded_command_variants_share_data_model_classifier" "yes" "$(
+  item_reason="$(printf '%s\n' "$variant_item_output" | jq -r '.recommendedPolicy.checkpoints[0].reason')"
+  items_reason="$(printf '%s\n' "$variant_items_output" | jq -r '.recommendedPolicy.checkpoints[0].reason')"
+  epic_reason="$(printf '%s\n' "$variant_epic_output" | jq -r '.recommendedPolicy.checkpoints[0].reason')"
+  [ "$item_reason" = "$items_reason" ] && [ "$items_reason" = "$epic_reason" ] && echo yes || echo no
+)"
 
 sensitive_fixture="$(write_fixture sensitive '{
   "scopeSource": "items",
@@ -402,7 +520,7 @@ printf '%s\n' '[{
   "item_number": 200,
   "stage": "plan",
   "domain": "technical",
-  "reason": "issue signals database schema, migration, or persistent data-model changes",
+  "reason": "schema change is additive only",
   "required_human_action": "review and approve proposed data model in the plan before implementation proceeds",
   "satisfaction_state": "waived",
   "waiver_rationale": "schema change is additive only and pre-approved in epic brief"
@@ -411,6 +529,20 @@ waived_output="$("$HELPER" --scope "$schema_fixture" --original-command "\$run-e
 run_test "explicit_checkpoint_override_source" "explicit" "$(printf '%s\n' "$waived_output" | jq -r '.fieldSources.checkpoints')"
 run_test "waived_checkpoint_preserved" "waived" "$(printf '%s\n' "$waived_output" | jq -r '.effectivePolicy.checkpoints[0].satisfaction_state')"
 run_test "checkpoint_policy_audit_fields_present" "yes" "$(printf '%s\n' "$waived_output" | jq -e '.checkpointPolicy.recommended and .checkpointPolicy.selected and .checkpointPolicy.effective' >/dev/null && echo yes || echo no)"
+
+satisfied_file="$TMP_ROOT/satisfied-checkpoints.json"
+printf '%s\n' '[{
+  "item_number": 200,
+  "stage": "plan",
+  "domain": "technical",
+  "reason": "human-approved migration plan",
+  "required_human_action": "review and approve proposed data model in the plan before implementation proceeds",
+  "satisfaction_state": "satisfied",
+  "satisfied_by": "workflow operator",
+  "satisfaction_evidence": "approved in implementation handoff"
+}]' > "$satisfied_file"
+satisfied_output="$("$HELPER" --scope "$schema_fixture" --original-command "\$run-epic --items 200" --checkpoints-file "$satisfied_file" --json)"
+run_test "satisfied_checkpoint_preserved" "satisfied:human-approved migration plan" "$(printf '%s\n' "$satisfied_output" | jq -r '.effectivePolicy.checkpoints[0] | .satisfaction_state + ":" + .reason')"
 
 invalid_waived_file="$TMP_ROOT/invalid-waived.json"
 printf '%s\n' '[{"item_number": 200, "stage": "plan", "domain": "technical", "satisfaction_state": "waived"}]' > "$invalid_waived_file"

@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fail closed on checkpoint resume isolation** (#1285): Require complete
   worktree context and stop resumed isolated runners before mutation when the
   session starts in the main clone or cannot prove its assignment.
+- **Fix bounded-prelude data-model checkpoint signals** (#1287): Stop incidental
+  data-adjacent issue-body terms from creating technical checkpoints while
+  preserving explainable checkpoints for explicit migration and schema-change
+  evidence.
 
 ## [0.39.0] - 2026-07-27
 
