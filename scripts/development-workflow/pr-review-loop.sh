@@ -172,7 +172,7 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,codex-github,claude-code-action,copilot,haystack,bugbot] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,coderabbit-cli,codex-github,claude-code-action,copilot,haystack,bugbot] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
        ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number>
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
@@ -2150,6 +2150,120 @@ run_haystack_review() {
       print_kv COMMENT_COUNT 0
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT 0
+      return 0
+      ;;
+  esac
+}
+
+run_coderabbit_cli_review() {
+  # Runs coderabbit-cli-reviewer.sh and maps its exit codes to the standard
+  # pr-review-loop key=value output contract. This is separate from the
+  # coderabbit GitHub App platform, which uses bot comments/reviews.
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="coderabbit-cli"
+  local reviewer_script
+  local script_exit=0
+  local script_output=""
+  local blocking_count=0
+  local suggestion_count=0
+  local comment_count=0
+
+  : "$poll_interval"
+  require_gh
+  cd_workflow_repo_root
+
+  local owner repo_name repo
+  repo="$(repo_slug)"
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/coderabbit-cli-reviewer.sh"
+
+  local coderabbit_cli_stderr_file
+  local coderabbit_cli_config_file="${AI_DEV_WORKFLOW_CONFIG_FILE:-${config_file:-}}"
+  coderabbit_cli_stderr_file="$(mktemp)"
+  trap 'rm -f "${coderabbit_cli_stderr_file:-}"' RETURN
+
+  set +e
+  if [ -n "$coderabbit_cli_config_file" ] && [ -f "$coderabbit_cli_config_file" ]; then
+    script_output="$(AI_DEV_WORKFLOW_CONFIG_FILE="$coderabbit_cli_config_file" "$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" 2>"$coderabbit_cli_stderr_file")"
+  else
+    script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" 2>"$coderabbit_cli_stderr_file")"
+  fi
+  script_exit=$?
+  set -e
+
+  if [ -s "$coderabbit_cli_stderr_file" ]; then
+    echo "INFO: coderabbit-cli-reviewer.sh stderr:" >&2
+    cat "$coderabbit_cli_stderr_file" >&2
+  fi
+  rm -f "$coderabbit_cli_stderr_file"
+
+  blocking_count="$(kv_value_default BLOCKING_COUNT "$script_output" 0)"
+  suggestion_count="$(kv_value_default SUGGESTION_COUNT "$script_output" 0)"
+  comment_count="$(kv_value_default COMMENT_COUNT "$script_output" 0)"
+
+  case "$script_exit" in
+    0)
+      print_kv RESULT clean
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      return 0
+      ;;
+    1)
+      [ "$blocking_count" -eq 0 ] && blocking_count=1
+      [ "$comment_count" -eq 0 ] && comment_count=1
+      print_kv RESULT needs_fixes
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REASON coderabbit_cli_blocking_findings
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT "$blocking_count"
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      return 1
+      ;;
+    2)
+      local coderabbit_cli_reason
+      local coderabbit_cli_display_result
+      coderabbit_cli_reason="$(kv_value_default REASON "$script_output" rate_limited)"
+      coderabbit_cli_display_result="$(kv_value_default DISPLAY_RESULT "$script_output" "")"
+      print_kv RESULT escalate
+      print_kv REASON "$coderabbit_cli_reason"
+      [ -n "$coderabbit_cli_display_result" ] && print_kv DISPLAY_RESULT "$coderabbit_cli_display_result"
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT "$blocking_count"
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      return 2
+      ;;
+    *)
+      local coderabbit_cli_reason
+      local coderabbit_cli_display_result
+      coderabbit_cli_reason="$(kv_value_default REASON "$script_output" unavailable)"
+      coderabbit_cli_display_result="$(kv_value_default DISPLAY_RESULT "$script_output" "")"
+      print_kv RESULT skipped
+      print_kv REASON "$coderabbit_cli_reason"
+      [ -n "$coderabbit_cli_display_result" ] && print_kv DISPLAY_RESULT "$coderabbit_cli_display_result"
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT "$blocking_count"
+      print_kv SUGGESTION_COUNT "$suggestion_count"
       return 0
       ;;
   esac
@@ -4312,6 +4426,7 @@ bot_login_for_platform() {
   # threads from any other GHA workflow to PR-Agent.
   case "$1" in
     coderabbit)   printf 'coderabbitai\n' ;;
+    coderabbit-cli) printf '\n' ;;
     devin)        printf 'devin-ai-integration\n' ;;
     greptile)     printf 'greptile-apps\n' ;;
     pr-agent)     printf '\n' ;;
@@ -4459,6 +4574,9 @@ run_platform_review() {
       ;;
     coderabbit)
       run_coderabbit_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    coderabbit-cli)
+      run_coderabbit_cli_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     pr-agent)
       run_pr_agent_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"

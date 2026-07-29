@@ -371,6 +371,10 @@ Typical `important` issues:
 - Use the CodeRabbit CLI as an optional pre-push review tool for local changes.
 - In Claude Code: `/coderabbit:review`. Standalone: `cr` or `cr --agent`.
 - CodeRabbit CLI findings complement the pre-PR review gate but do not replace it.
+- When `coderabbit-cli` is configured as a Step 7 platform, require script
+  evidence from `pr-review-loop.sh`: `RESULT=clean` is fresh review evidence;
+  `RESULT=skipped` with unavailable, auth, timeout, invalid-output, or
+  rate-limit reasons is only availability evidence.
 - See [`docs/workflow/development-workflow/integrations/coderabbit.md`](docs/workflow/development-workflow/integrations/coderabbit.md) for setup and usage modes.
 
 ### Automated PR Reviewers
