@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Agent model defaults** (#1394): Use Cursor `fast` for economy coordination
+  agents, `auto` for lower-risk balanced agents, and Grok 4.5 High for complex
+  Cursor authoring and review agents; update Claude Code agents to Sonnet 5 /
+  Opus 5, and document Codex tier mappings for GPT-5.6 Luna / Terra / Sol.
 - **Access-restricted reviewer merge gate** (#1288): Distinguish verified
   reviewer App-access restrictions from CI and review failures, prefer access
   remediation, and permit an audited protection bypass only after fresh named
@@ -29,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Bugbot usage-limit reviewer classification** (#1394): Escalate Cursor
+  Bugbot usage/spend-limit responses instead of treating neutral checks as
+  clean.
 - **Fail closed on checkpoint resume isolation** (#1285): Require complete
   worktree context and stop resumed isolated runners before mutation when the
   session starts in the main clone or cannot prove its assignment.

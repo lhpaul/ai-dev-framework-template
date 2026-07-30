@@ -1,6 +1,6 @@
 ---
 name: item-orchestrator
-model: claude-sonnet-4-6
+model: auto
 description: Internal Cursor handoff agent for a single workflow item after /run-item resolves the bounded prelude; direct use is legacy compatibility. Runs Protocol 91 until waiting on a human, blocked, or escalated.
 ---
 

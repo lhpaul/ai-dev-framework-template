@@ -1,6 +1,6 @@
 ---
 name: post-merge-qa
-model: claude-sonnet-4-6
+model: auto
 description: Post-merge QA on develop or develop-<slug>. Discovers confirmed scope, preflights the environment, exercises flows, optional design-asset fidelity, and opens one fix PR when safely actionable defects exist (no new backlog item).
 ---
 

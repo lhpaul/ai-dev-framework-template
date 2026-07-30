@@ -1,6 +1,6 @@
 ---
 name: tech-lead
-model: claude-opus-4-7
+model: cursor-grok-4.5-high
 description: Plan Ready stage. Use when an implementation plan needs to be written. For Full Pipeline items, a spec must be approved first. For Refactor items, the work item brief replaces the spec. Reads the codebase, resolves technical approach questions, then writes the implementation plan, runs its reviewer gate, and resolves PR readiness.
 ---
 
@@ -86,4 +86,4 @@ reference(s); when none exist, omit fidelity steps and do not invent a baseline.
 
 Before updating tracker status as part of a standalone plan completion sequence, call `ensure_on_project_board <issue_number> "Writing Plan"` (from `scripts/development-workflow/workflow-lib.sh`) to register the issue on the project board if it is not already present.
 
-**Note**: This agent handles premium-tier reasoning tasks (architecture decisions). For best results, ensure your Cursor Composer is using a high-reasoning model (e.g., Claude Opus, GPT-4, or equivalent) when invoking this subagent, or edit this file to set `model:` to a specific premium model ID.
+**Note**: This agent handles premium-tier reasoning tasks for architecture decisions. See [the canonical model override guidance](../../docs/workflow/development-workflow/agent-model-config.md).

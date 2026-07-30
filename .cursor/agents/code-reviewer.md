@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-model: claude-sonnet-4-6
+model: cursor-grok-4.5-high
 description: Development review stage. Use when an implementation PR needs review against the spec, plan, and best practices. Applies fixes directly for blocking and important issues. Reports issues requiring human/product decisions.
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: implementation-plan-reviewer
-model: claude-sonnet-4-6
+model: claude-sonnet-5
 description: Plan review stage. Use when an implementation plan branch or PR needs review for spec alignment, completeness, and feasibility. Reads the spec, plan, and codebase to validate the approach, and can push reviewer-loop fixes.
 tools: Read, Grep, Glob, Write, Edit, Bash
 ---

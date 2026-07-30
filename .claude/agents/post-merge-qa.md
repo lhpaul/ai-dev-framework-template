@@ -1,6 +1,6 @@
 ---
 name: post-merge-qa
-model: claude-sonnet-4-6
+model: claude-sonnet-5
 description: Post-merge QA on develop or develop-<slug>. Confirmed scope, environment preflight, flow/UX exercise, optional design-asset fidelity, one fix PR for safe defects (no backlog item).
 ---
 

@@ -1165,6 +1165,42 @@ bugbot_return_disabled() {
   return 2
 }
 
+bugbot_return_usage_limit() {
+  local pr_number="$1"
+  local branch_name="$2"
+
+  echo "INFO: Bugbot could not run because the Cursor usage or spend limit was reached. Raise the limit or wait for quota reset, then rerun the reviewer loop." >&2
+  print_kv RESULT escalate
+  print_kv REASON bugbot-usage-limit
+  print_kv PLATFORM bugbot
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  print_kv COMMENT_COUNT 0
+  print_kv BLOCKING_COUNT 0
+  print_kv SUGGESTION_COUNT 0
+  return 2
+}
+
+bugbot_since_iso_for_sha() {
+  local repo="$1"
+  local head_sha="$2"
+  local since_iso
+  local _bb_now_iso
+
+  if ! since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty' 2>/dev/null)"; then
+    return 1
+  fi
+  if [ -z "$since_iso" ]; then
+    return 1
+  fi
+  _bb_now_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  if [ "$since_iso" \> "$_bb_now_iso" ]; then
+    return 1
+  fi
+  printf '%s\n' "$since_iso"
+}
+
 bugbot_check_disabled_issue_comments() {
   local repo="$1"
   local pr_number="$2"
@@ -1190,6 +1226,51 @@ bugbot_check_disabled_issue_comments() {
     return 1
   fi
   printf '%s\n' "$output"
+  return 0
+}
+
+bugbot_escalate_for_unavailable_issue_comments() {
+  local repo="$1"
+  local pr_number="$2"
+  local branch_name="$3"
+  local bot_login="$4"
+  local since_iso="$5"
+  local context="$6"
+  local allow_usage_limit="${7:-1}"
+  local body
+  local unavailable_bodies
+  local _comments_rc=0
+
+  set +e
+  unavailable_bodies="$(bugbot_check_disabled_issue_comments "$repo" "$pr_number" "$bot_login" "$since_iso")"
+  _comments_rc=$?
+  set -e
+  if [ "$_comments_rc" -ne 0 ]; then
+    echo "WARN: run_bugbot_review: ${context} issue-comment fetch failed for PR #$pr_number" >&2
+    print_kv RESULT escalate
+    print_kv REASON fetch-failed
+    print_kv PLATFORM bugbot
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
+
+  while IFS= read -r body; do
+    [ -z "$body" ] && continue
+    if is_bugbot_disabled_message "$body"; then
+      bugbot_return_disabled "$pr_number" "$branch_name"
+      return 2
+    fi
+    if [ "$allow_usage_limit" -eq 1 ] && is_bugbot_usage_limit_message "$body"; then
+      bugbot_return_usage_limit "$pr_number" "$branch_name"
+      return 2
+    fi
+  done <<< "$unavailable_bodies"
+
   return 0
 }
 
@@ -1270,9 +1351,6 @@ bugbot_escalate_if_disabled_without_check_run() {
   local since_iso="$5"
   local head_sha="$6"
   local check_name="$7"
-  local body
-  local disabled_bodies
-  local _comments_rc=0
   local _preflight_rc=0
 
   set +e
@@ -1297,30 +1375,13 @@ bugbot_escalate_if_disabled_without_check_run() {
   fi
 
   set +e
-  disabled_bodies="$(bugbot_check_disabled_issue_comments "$repo" "$pr_number" "$bot_login" "$since_iso")"
-  _comments_rc=$?
+  bugbot_escalate_for_unavailable_issue_comments \
+    "$repo" "$pr_number" "$branch_name" "$bot_login" "$since_iso" "disabled-preflight" 0
+  local _unavailable_comments_rc=$?
   set -e
-  if [ "$_comments_rc" -ne 0 ]; then
-    echo "WARN: run_bugbot_review: disabled-preflight issue-comment fetch failed for PR #$pr_number" >&2
-    print_kv RESULT escalate
-    print_kv REASON fetch-failed
-    print_kv PLATFORM bugbot
-    print_kv PR_NUMBER "$pr_number"
-    print_kv BRANCH "$branch_name"
-    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-    print_kv COMMENT_COUNT 0
-    print_kv BLOCKING_COUNT 0
-    print_kv SUGGESTION_COUNT 0
+  if [ "$_unavailable_comments_rc" -eq 2 ]; then
     return 2
   fi
-
-  while IFS= read -r body; do
-    [ -z "$body" ] && continue
-    if is_bugbot_disabled_message "$body"; then
-      bugbot_return_disabled "$pr_number" "$branch_name"
-      return 2
-    fi
-  done <<< "$disabled_bodies"
 
   return 0
 }
@@ -1399,16 +1460,19 @@ run_bugbot_review() {
   fi
 
   # Resolve the commit timestamp to scope findings to this HEAD.
-  set +e
-  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty' 2>/dev/null)"
-  set -e
-  if [ -z "$since_iso" ]; then
-    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
+  if ! since_iso="$(bugbot_since_iso_for_sha "$repo" "$head_sha")"; then
+    echo "WARN: run_bugbot_review: could not resolve commit timestamp for PR #$pr_number (SHA=$head_sha) — returning unavailable" >&2
+    print_kv RESULT escalate
+    print_kv REASON fetch-failed
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
   fi
-  # Cap to now to handle clock-skew / rebase that produces a future committer.date.
-  _bb_now_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  [ "$since_iso" \> "$_bb_now_iso" ] && since_iso="$_bb_now_iso"
-  unset _bb_now_iso
 
   # --- Phase 1: Check for existing blocking cursor[bot] findings on current HEAD ---
   # If blocking findings already exist (e.g. from a previous trigger in the same
@@ -1418,9 +1482,9 @@ run_bugbot_review() {
   local _existing_reviews_rc=0
   existing_comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg sha "$head_sha" '
           .[]
-          | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .in_reply_to_id == null)
+          | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
           | { path, line: (.line // .original_line // 0), body: (.body // "") }
           | @json
         ' 2>/dev/null
@@ -1428,11 +1492,12 @@ run_bugbot_review() {
   _existing_comments_rc=$?
   existing_reviews="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg sha "$head_sha" '
           .[]
           | select(
               (.user.login == $bot or .user.login == ($bot + "[bot]")) and
               .submitted_at > $since and
+              .commit_id == $sha and
               (
                 .state == "CHANGES_REQUESTED" or
                 .state == "COMMENTED"
@@ -1645,6 +1710,20 @@ run_bugbot_review() {
       _current_sha="$head_sha"
     fi
     unset _sha_rc
+    local _current_since_iso
+    if ! _current_since_iso="$(bugbot_since_iso_for_sha "$repo" "$_current_sha")"; then
+      echo "WARN: run_bugbot_review: could not resolve commit timestamp for PR #$pr_number (SHA=$_current_sha) — returning unavailable" >&2
+      print_kv RESULT escalate
+      print_kv REASON fetch-failed
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+    fi
 
     set +e
     local _fetch_rc=0
@@ -1659,7 +1738,7 @@ run_bugbot_review() {
                 )
             ]
             | sort_by(.started_at) | last
-            | ((.status // "") + " " + (.conclusion // ""))
+            | ((.status // "") + " " + (.conclusion // "") + " " + (.started_at // ""))
           ' 2>/dev/null
     )"
     _fetch_rc=$?
@@ -1677,14 +1756,16 @@ run_bugbot_review() {
       print_kv SUGGESTION_COUNT 0
       return 2
     fi
-    read -r status_val conclusion <<< "$_fetch_output"
+    local check_started_at=""
+    read -r status_val conclusion check_started_at <<< "$_fetch_output"
     status_val="${status_val:-}"
     conclusion="${conclusion:-}"
+    check_started_at="${check_started_at:-}"
 
     if [ "$status_val" != "completed" ]; then
       set +e
       bugbot_escalate_if_disabled_without_check_run \
-        "$repo" "$pr_number" "$branch_name" "$bot_login" "$since_iso" "$_current_sha" "$check_name"
+        "$repo" "$pr_number" "$branch_name" "$bot_login" "$_current_since_iso" "$_current_sha" "$check_name"
       local _bb_disabled_poll_rc=$?
       set -e
       if [ "$_bb_disabled_poll_rc" -eq 2 ]; then
@@ -1700,14 +1781,14 @@ run_bugbot_review() {
           # comments to confirm and collect any suggestions.
           blocking_lines_file="$(mktemp)"
           set +e
-          local _clean_comments
-          local _clean_comments_rc=0
-          _clean_comments="$(
-            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
-              | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
-                  .[]
-                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .in_reply_to_id == null)
-                  | { path, line: (.line // .original_line // 0), body: (.body // "") }
+	          local _clean_comments
+	          local _clean_comments_rc=0
+	          _clean_comments="$(
+	            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
+	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
+	                  .[]
+	                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
+	                  | { path, line: (.line // .original_line // 0), body: (.body // "") }
                   | @json
                 ' 2>/dev/null
           )"
@@ -1778,27 +1859,28 @@ run_bugbot_review() {
           # Blocking findings. Read cursor[bot] reviews/comments for the summary.
           blocking_lines_file="$(mktemp)"
           set +e
-          local _blocking_comments _blocking_reviews
-          local _blocking_comments_rc=0
-          local _blocking_reviews_rc=0
-          _blocking_comments="$(
-            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
-              | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
-                  .[]
-                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .in_reply_to_id == null)
-                  | { path, line: (.line // .original_line // 0), body: (.body // "") }
+	          local _blocking_comments _blocking_reviews
+	          local _blocking_comments_rc=0
+	          local _blocking_reviews_rc=0
+	          _blocking_comments="$(
+	            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
+	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
+	                  .[]
+	                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
+	                  | { path, line: (.line // .original_line // 0), body: (.body // "") }
                   | @json
                 ' 2>/dev/null
           )"
-          _blocking_comments_rc=$?
-          _blocking_reviews="$(
-            gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
-              | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
-                  .[]
-                  | select(
-                      (.user.login == $bot or .user.login == ($bot + "[bot]")) and
-                      .submitted_at > $since and
-                      (
+	          _blocking_comments_rc=$?
+	          _blocking_reviews="$(
+	            gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
+	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
+	                  .[]
+	                  | select(
+	                      (.user.login == $bot or .user.login == ($bot + "[bot]")) and
+	                      .submitted_at > $since and
+	                      .commit_id == $sha and
+	                      (
                         .state == "CHANGES_REQUESTED" or
                         .state == "COMMENTED"
                       )
@@ -1900,6 +1982,21 @@ run_bugbot_review() {
           ;;
 
         neutral|cancelled|skipped)
+          # A neutral check is clean only when Cursor did not also post an
+          # unavailable/quota issue comment for this head.
+          local _unavailable_since_iso="$_current_since_iso"
+          if [ -n "$check_started_at" ] && [ "$check_started_at" \> "$_unavailable_since_iso" ]; then
+            _unavailable_since_iso="$check_started_at"
+          fi
+          set +e
+          bugbot_escalate_for_unavailable_issue_comments \
+            "$repo" "$pr_number" "$branch_name" "$bot_login" "$_unavailable_since_iso" "neutral-conclusion" 1
+          local _bb_neutral_unavailable_rc=$?
+          set -e
+          if [ "$_bb_neutral_unavailable_rc" -eq 2 ]; then
+            return 2
+          fi
+
           # Non-blocking informational outcome — clean, no real findings.
           print_kv RESULT clean
           print_kv PLATFORM "$platform"

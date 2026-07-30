@@ -1,6 +1,6 @@
 ---
 name: retrospective
-model: claude-sonnet-4-6
+model: auto
 description: Retrospective analysis agent. Analyzes completed work (a batch or individual item) to identify process improvement opportunities, presents them to the human, and executes the chosen action for each.
 ---
 

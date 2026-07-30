@@ -449,6 +449,12 @@ is_bugbot_disabled_message() {
   return 1
 }
 
+is_bugbot_usage_limit_message() {
+  local body="$1"
+
+  printf '%s\n' "$body" | grep -Eiq 'usage or spend limit|usage[/-]spend[ -]?limit|usage[ -]?limit|spend[ -]?limit'
+}
+
 open_pr_number_for_branch() {
   require_gh
   gh pr list --head "$1" --state open --limit 100 --json number --jq '.[0].number // empty'
