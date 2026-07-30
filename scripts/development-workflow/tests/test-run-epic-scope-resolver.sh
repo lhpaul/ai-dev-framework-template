@@ -379,19 +379,19 @@ run_test "shared_integration_label_base" "develop-delegated-epic-orchestration" 
 run_test "merged_plan_pr_not_complete" "eligible" "$(printf '%s\n' "$items_output" | jq -r '.items[] | select(.number == 101) | .group')"
 run_test "in_review_group_detected" "102" "$(printf '%s\n' "$items_output" | jq -r '.groups.in_review[0].number')"
 run_test "continuation_merged_plus_eligible" "continue" "$(printf '%s\n' "$items_output" | jq -r '.continuation.outcome')"
-run_test "continuation_merged_plus_eligible_remaining" "101,102" "$(printf '%s\n' "$items_output" | jq -r '[.continuation.remainingItems[].number] | join(",")')"
+run_test "continuation_merged_plus_eligible_remaining" "101,102" "$(printf '%s\n' "$items_output" | jq -r '.continuation.remainingItems | join(",")')"
 
 authorized_backlog_output="$(run_json --items 101 --may-start-backlog true)"
 run_test "continuation_authorized_backlog" "continue" "$(printf '%s\n' "$authorized_backlog_output" | jq -r '.continuation.outcome')"
-run_test "continuation_authorized_backlog_remaining" "101" "$(printf '%s\n' "$authorized_backlog_output" | jq -r '[.continuation.remainingItems[].number] | join(",")')"
+run_test "continuation_authorized_backlog_remaining" "101" "$(printf '%s\n' "$authorized_backlog_output" | jq -r '.continuation.remainingItems | join(",")')"
 
 in_review_continuation_output="$(run_json --items 102 --may-start-backlog false)"
 run_test "continuation_in_review" "continue" "$(printf '%s\n' "$in_review_continuation_output" | jq -r '.continuation.outcome')"
-run_test "continuation_in_review_remaining" "102" "$(printf '%s\n' "$in_review_continuation_output" | jq -r '[.continuation.remainingItems[].number] | join(",")')"
+run_test "continuation_in_review_remaining" "102" "$(printf '%s\n' "$in_review_continuation_output" | jq -r '.continuation.remainingItems | join(",")')"
 
 eligible_blocked_output="$(run_json --items 125,107 --may-start-backlog false)"
 run_test "continuation_eligible_plus_blocked" "continue" "$(printf '%s\n' "$eligible_blocked_output" | jq -r '.continuation.outcome')"
-run_test "continuation_eligible_plus_blocked_remaining" "125" "$(printf '%s\n' "$eligible_blocked_output" | jq -r '[.continuation.remainingItems[].number] | join(",")')"
+run_test "continuation_eligible_plus_blocked_remaining" "125" "$(printf '%s\n' "$eligible_blocked_output" | jq -r '.continuation.remainingItems | join(",")')"
 run_test "continuation_eligible_plus_blocked_affected_empty" "0" "$(printf '%s\n' "$eligible_blocked_output" | jq '.continuation.affectedItems | length')"
 
 text_output="$("$RESOLVER" --items 101 --delegate-review --may-start-backlog false --max-risk high)"
@@ -451,7 +451,7 @@ blocked_output="$(run_json --items 107)"
 run_test "blocked_dependency_group_detected" "blocked" "$(printf '%s\n' "$blocked_output" | jq -r '.items[0].group')"
 run_test "continuation_blocked_stop" "needs_resolution" "$(printf '%s\n' "$blocked_output" | jq -r '.continuation.outcome')"
 run_test "continuation_blocked_stop_condition" "unclear_requirements" "$(printf '%s\n' "$blocked_output" | jq -r '.continuation.stopCondition')"
-run_test "continuation_blocked_affected" "107" "$(printf '%s\n' "$blocked_output" | jq -r '[.continuation.affectedItems[].number] | join(",")')"
+run_test "continuation_blocked_affected" "107" "$(printf '%s\n' "$blocked_output" | jq -r '.continuation.affectedItems | join(",")')"
 run_test "continuation_blocked_human_action_names_dependency" "true" "$(printf '%s\n' "$blocked_output" | jq -r '.continuation.humanAction | test("#108")')"
 
 blocked_variant_output="$(run_json --items 111)"
@@ -525,7 +525,7 @@ run_test "continuation_empty_scope_condition" "missing_tracker_context" "$(print
 
 unauthorized_backlog_output="$(run_json --items 101 --may-start-backlog false)"
 run_test "continuation_unauthorized_backlog" "needs_resolution" "$(printf '%s\n' "$unauthorized_backlog_output" | jq -r '.continuation.outcome')"
-run_test "continuation_unauthorized_backlog_affected" "101" "$(printf '%s\n' "$unauthorized_backlog_output" | jq -r '[.continuation.affectedItems[].number] | join(",")')"
+run_test "continuation_unauthorized_backlog_affected" "101" "$(printf '%s\n' "$unauthorized_backlog_output" | jq -r '.continuation.affectedItems | join(",")')"
 run_test "continuation_unauthorized_backlog_condition" "missing_tracker_context" "$(printf '%s\n' "$unauthorized_backlog_output" | jq -r '.continuation.stopCondition')"
 run_test "json_read_only_guarantee" "yes" "$(
   printf '%s\n' "$items_output" | jq -e '.readOnlyGuarantee | test("No tracker status")' >/dev/null && echo yes || echo no

@@ -342,8 +342,8 @@ rediscover remaining work before closeout:
 - `outcome`: one of `continue`, `complete`, or `needs_resolution`.
 - `terminal`: boolean stop/continue signal for the current epic runner pass.
 - `nextAction`: non-empty machine-readable next action.
-- `remainingItems`: child items that can continue now.
-- `affectedItems`: child items that caused a stop condition.
+- `remainingItems`: child item numbers that can continue now.
+- `affectedItems`: child item numbers that caused a stop condition.
 - `stopCondition`: `missing_tracker_context`, `unclear_requirements`, or `null`.
 - `humanAction`: specific human action text or `null`.
 

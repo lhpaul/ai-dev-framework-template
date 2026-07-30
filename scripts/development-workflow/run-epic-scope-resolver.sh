@@ -947,7 +947,7 @@ summary_json="$(jq -n \
         outcome: "continue",
         terminal: false,
         nextAction: "advance_remaining_child_work",
-        remainingItems: $actionable,
+        remainingItems: ($actionable | map(.number)),
         affectedItems: [],
         stopCondition: null,
         humanAction: null
@@ -984,7 +984,7 @@ summary_json="$(jq -n \
         terminal: true,
         nextAction: "resolve_blocked_dependency",
         remainingItems: [],
-        affectedItems: $summary.groups.blocked,
+        affectedItems: ($summary.groups.blocked | map(.number)),
         stopCondition: "unclear_requirements",
         humanAction: (if $blockedAction == "" then null else $blockedAction end)
       }
@@ -993,7 +993,7 @@ summary_json="$(jq -n \
         terminal: true,
         nextAction: "resolve_tracker_context",
         remainingItems: [],
-        affectedItems: ($summary.groups.eligible | map(select((.status // "") == "Backlog"))),
+        affectedItems: ($summary.groups.eligible | map(select((.status // "") == "Backlog")) | map(.number)),
         stopCondition: "missing_tracker_context",
         humanAction: null
       }
@@ -1040,8 +1040,8 @@ printf 'Read-only: %s\n\n' "$(printf '%s\n' "$summary_json" | jq -r '.readOnlyGu
 printf 'continuation.outcome=%s\n' "$(printf '%s\n' "$summary_json" | jq -r '.continuation.outcome')"
 printf 'continuation.terminal=%s\n' "$(printf '%s\n' "$summary_json" | jq -r '.continuation.terminal')"
 printf 'continuation.next_action=%s\n' "$(printf '%s\n' "$summary_json" | jq -r '.continuation.nextAction')"
-printf 'continuation.remaining_items=%s\n' "$(printf '%s\n' "$summary_json" | jq -r '[.continuation.remainingItems[].number] | join(",")')"
-printf 'continuation.affected_items=%s\n' "$(printf '%s\n' "$summary_json" | jq -r '[.continuation.affectedItems[].number] | join(",")')"
+printf 'continuation.remaining_items=%s\n' "$(printf '%s\n' "$summary_json" | jq -r '.continuation.remainingItems | join(",")')"
+printf 'continuation.affected_items=%s\n' "$(printf '%s\n' "$summary_json" | jq -r '.continuation.affectedItems | join(",")')"
 continuation_stop_condition="$(printf '%s\n' "$summary_json" | jq -r '.continuation.stopCondition // empty')"
 if [ -n "$continuation_stop_condition" ]; then
   printf 'continuation.stop_condition=%s\n' "$continuation_stop_condition"
