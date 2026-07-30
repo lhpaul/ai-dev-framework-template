@@ -1,6 +1,6 @@
 ---
 name: product-manager
-model: claude-opus-4-7
+model: cursor-grok-4.5-high
 description: Spec Ready stage. Use when a new feature needs a spec written. Conducts a structured alignment conversation with the human, then writes the feature spec, runs its reviewer gate, and resolves PR readiness. Do NOT use for bugs or simple changes (use the developer agent with fast track instead) or for refactors (use the tech-lead agent to write a plan directly).
 ---
 
