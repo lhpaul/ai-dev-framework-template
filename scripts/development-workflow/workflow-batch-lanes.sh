@@ -162,6 +162,38 @@ report_reason_for_item() {
   esac
 }
 
+append_alias() {
+  local alias_file="$1"
+  local value="$2"
+  [ -n "$value" ] || return 0
+  printf '%s\n' "$value" >> "$alias_file"
+}
+
+block_alias_file() {
+  local block_file="$1"
+  local alias_file="$2"
+  local item_id="" development_path="" target="" slug_issue=""
+
+  : > "$alias_file"
+  while IFS='=' read -r key value; do
+    case "$key" in
+      SLUG) item_id="$value" ;;
+      DEVELOPMENT_PATH) development_path="$value" ;;
+      TARGET) target="$value" ;;
+    esac
+  done < "$block_file"
+
+  append_alias "$alias_file" "$item_id"
+  append_alias "$alias_file" "$development_path"
+  append_alias "$alias_file" "$target"
+  if [[ "$item_id" =~ ^([0-9]+)(-|$) ]]; then
+    slug_issue="${BASH_REMATCH[1]}"
+    append_alias "$alias_file" "$slug_issue"
+  fi
+  awk 'NF && !seen[$0]++' "$alias_file" > "$alias_file.tmp"
+  mv "$alias_file.tmp" "$alias_file"
+}
+
 parallelism_config_file() {
   local repo_root="$1"
   if [ -n "${AI_DEV_WORKFLOW_CONFIG_FILE:-}" ] && [ -f "${AI_DEV_WORKFLOW_CONFIG_FILE}" ]; then
@@ -292,7 +324,8 @@ fi
 TMP_BLOCKS="$(mktemp)"
 TMP_META="$(mktemp)"
 TMP_OVERLAP="$(mktemp)"
-trap 'rm -f "$TMP_BLOCKS" "$TMP_META" "$TMP_OVERLAP"' EXIT
+TMP_ALIASES="$(mktemp)"
+trap 'rm -f "$TMP_BLOCKS" "$TMP_META" "$TMP_OVERLAP" "$TMP_ALIASES"' EXIT
 
 # Parse item blocks (blank-line separated key=value groups).
 block_idx=0
@@ -437,17 +470,13 @@ if [ -n "$overlap_input" ]; then
       hold_reason="$hr"
     fi
 
-    item_id=""
-    development_path=""
-    while IFS='=' read -r key value; do
-      case "$key" in
-        SLUG) item_id="$value" ;;
-        DEVELOPMENT_PATH) development_path="$value" ;;
-      esac
-    done < "$TMP_BLOCKS.$block_index"
-    [ -z "$item_id" ] && item_id="$development_path"
-
-    overlap_group="$(jq -r --arg id "$item_id" '.serialGroups[]? | select((.heldItemIds // []) | index($id)) | .groupId' "$TMP_OVERLAP" | head -1)"
+    block_alias_file "$TMP_BLOCKS.$block_index" "$TMP_ALIASES"
+    overlap_group=""
+    while IFS= read -r alias_id; do
+      [ -n "$alias_id" ] || continue
+      overlap_group="$(jq -r --arg id "$alias_id" '.serialGroups[]? | select((.heldItemIds // []) | index($id)) | .groupId' "$TMP_OVERLAP" | head -1)"
+      [ -n "$overlap_group" ] && break
+    done < "$TMP_ALIASES"
     if [ -n "$overlap_group" ] && [ "$stage_lane" = "implementation" ] && [ "$dispatch" = "proposed" ]; then
       dispatch="held"
       hold_reason="planless overlap serialization (${overlap_group}); held until prior item merges into approved base"
@@ -502,7 +531,12 @@ while [ "$idx" -lt "$block_idx" ]; do
   report_label="$(report_label_for_category "$report_category")"
   report_reason="$(report_reason_for_item "$report_category" "$dispatch" "$status" "$next_action" "$hold_reason" "$skip_reason" "$labels" "$pr_metadata_status" "$pr_metadata_reason")"
   if [ -n "$overlap_input" ]; then
-    overlap_group="$(jq -r --arg id "$item_id" '.serialGroups[]? | select(((.itemIds // []) | index($id)) or ((.heldItemIds // []) | index($id)) or (.keepItemId == $id)) | .groupId' "$TMP_OVERLAP" | head -1)"
+    block_alias_file "$TMP_BLOCKS.$idx" "$TMP_ALIASES"
+    while IFS= read -r alias_id; do
+      [ -n "$alias_id" ] || continue
+      overlap_group="$(jq -r --arg id "$alias_id" '.serialGroups[]? | select(((.itemIds // []) | index($id)) or ((.heldItemIds // []) | index($id)) or (.keepItemId == $id)) | .groupId' "$TMP_OVERLAP" | head -1)"
+      [ -n "$overlap_group" ] && break
+    done < "$TMP_ALIASES"
   fi
 
   cat "$TMP_BLOCKS.$idx"

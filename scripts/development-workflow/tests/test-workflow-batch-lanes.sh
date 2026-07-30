@@ -180,6 +180,39 @@ run_test "overlap_held_item_serialized" "held" "$(block_value "$overlap_output" 
 run_test "overlap_hold_reason" "planless overlap serialization (overlap-a--overlap-b); held until prior item merges into approved base" "$(block_value "$overlap_output" "overlap-b" "HOLD_REASON")"
 run_test "overlap_group_visible" "overlap-a--overlap-b" "$(block_value "$overlap_output" "overlap-b" "OVERLAP_SERIAL_GROUP")"
 
+numeric_overlap_batch="$TMP_ROOT/numeric-overlap.batch"
+: > "$numeric_overlap_batch"
+write_batch_block "$numeric_overlap_batch" "1001-overlap-a" "implement" "" "Plan Ready"
+write_batch_block "$numeric_overlap_batch" "1002-overlap-b" "implement" "" "Plan Ready"
+numeric_overlap_input="$TMP_ROOT/numeric-overlap-input.json"
+jq -n '{
+  items: [
+    {
+      id: "1001",
+      title: "Users endpoint",
+      brief: "Update GET /api/users.",
+      fileSet: "unknown",
+      priority: "High",
+      createdAt: "2026-01-01T00:00:00Z",
+      nextAction: "implement"
+    },
+    {
+      id: "1002",
+      title: "User details",
+      brief: "Update GET /api/users/:id.",
+      fileSet: "unknown",
+      priority: "Normal",
+      createdAt: "2026-01-02T00:00:00Z",
+      nextAction: "implement"
+    }
+  ]
+}' > "$numeric_overlap_input"
+export WORKFLOW_MAX_CONCURRENT_IMPLEMENTATION=3
+numeric_overlap_output="$("$LANES" --repo-root "$high_parallel_repo" --overlap-input "$numeric_overlap_input" < "$numeric_overlap_batch")"
+unset WORKFLOW_MAX_CONCURRENT_IMPLEMENTATION
+run_test "overlap_numeric_issue_alias_holds_slug" "held" "$(block_value "$numeric_overlap_output" "1002-overlap-b" "DISPATCH")"
+run_test "overlap_numeric_group_visible_on_slug" "1001--1002" "$(block_value "$numeric_overlap_output" "1002-overlap-b" "OVERLAP_SERIAL_GROUP")"
+
 # classify_local_runtime via workflow-batch-plan on a synthetic plan folder
 runtime_dev="$fixture_repo/docs/specs/developments/20260624120000_999-runtime-test"
 mkdir -p "$runtime_dev"
