@@ -86,4 +86,4 @@ reference(s); when none exist, omit fidelity steps and do not invent a baseline.
 
 Before updating tracker status as part of a standalone plan completion sequence, call `ensure_on_project_board <issue_number> "Writing Plan"` (from `scripts/development-workflow/workflow-lib.sh`) to register the issue on the project board if it is not already present.
 
-**Note**: This agent handles premium-tier reasoning tasks (architecture decisions). The template pins it to Grok 4.5 High for Cursor runs; if Cursor exposes that model under a different local ID, update the `model:` field to match your model picker.
+**Note**: This agent handles premium-tier reasoning tasks for architecture decisions. See `docs/workflow/development-workflow/agent-model-config.md` for canonical model override guidance.

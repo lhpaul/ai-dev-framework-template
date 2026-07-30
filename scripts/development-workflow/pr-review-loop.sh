@@ -1182,6 +1182,21 @@ bugbot_return_usage_limit() {
   return 2
 }
 
+bugbot_since_iso_for_sha() {
+  local repo="$1"
+  local head_sha="$2"
+  local since_iso
+  local _bb_now_iso
+
+  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty' 2>/dev/null || true)"
+  if [ -z "$since_iso" ]; then
+    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
+  fi
+  _bb_now_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  [ "$since_iso" \> "$_bb_now_iso" ] && since_iso="$_bb_now_iso"
+  printf '%s\n' "$since_iso"
+}
+
 bugbot_check_disabled_issue_comments() {
   local repo="$1"
   local pr_number="$2"
@@ -1440,16 +1455,7 @@ run_bugbot_review() {
   fi
 
   # Resolve the commit timestamp to scope findings to this HEAD.
-  set +e
-  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty' 2>/dev/null)"
-  set -e
-  if [ -z "$since_iso" ]; then
-    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
-  fi
-  # Cap to now to handle clock-skew / rebase that produces a future committer.date.
-  _bb_now_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  [ "$since_iso" \> "$_bb_now_iso" ] && since_iso="$_bb_now_iso"
-  unset _bb_now_iso
+  since_iso="$(bugbot_since_iso_for_sha "$repo" "$head_sha")"
 
   # --- Phase 1: Check for existing blocking cursor[bot] findings on current HEAD ---
   # If blocking findings already exist (e.g. from a previous trigger in the same
@@ -1943,9 +1949,11 @@ run_bugbot_review() {
         neutral|cancelled|skipped)
           # A neutral check is clean only when Cursor did not also post an
           # unavailable/quota issue comment for this head.
+          local _bb_neutral_since_iso
+          _bb_neutral_since_iso="$(bugbot_since_iso_for_sha "$repo" "$_current_sha")"
           set +e
           bugbot_escalate_for_unavailable_issue_comments \
-            "$repo" "$pr_number" "$branch_name" "$bot_login" "$since_iso" "neutral-conclusion"
+            "$repo" "$pr_number" "$branch_name" "$bot_login" "$_bb_neutral_since_iso" "neutral-conclusion"
           local _bb_neutral_unavailable_rc=$?
           set -e
           if [ "$_bb_neutral_unavailable_rc" -eq 2 ]; then

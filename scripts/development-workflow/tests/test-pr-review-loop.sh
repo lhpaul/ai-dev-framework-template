@@ -3489,6 +3489,53 @@ run_test "bugbot_neutral_usage_limit_exit_code" "2" "$actual_exit"
 rm -rf "$_bugbot_mock_dir_1691"
 unset _bugbot_mock_dir_1691 actual_output actual_exit
 
+# Test 16.9.2: neutral usage-limit comment from prior head is ignored
+_bugbot_mock_dir_1692="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_1692/gh" <<'BUGBOT_GH_1692'
+#!/usr/bin/env bash
+case "$*" in
+  *"commits/abc1692old"*".commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"commits/abc1692new"*".commit.committer.date"*)
+    printf '2020-01-03T00:00:00Z\n'; exit 0 ;;
+  *"--jq .head.sha"*)
+    printf 'abc1692old\n'; exit 0 ;;
+  *"--method POST"*)
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","body":"Bugbot could not run - usage limit reached."}]\n'
+    exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"neutral","started_at":"2020-01-03T00:00:01Z"}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc1692new\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_1692
+chmod +x "$_bugbot_mock_dir_1692/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_1692:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_neutral_stale_usage_limit_result" "RESULT=clean" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_neutral_stale_usage_limit_exit_code" "0" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_1692"
+unset _bugbot_mock_dir_1692 actual_output actual_exit
+
 # ---------------------------------------------------------------------------
 # Test 16.10: run_platform_review routes "bugbot" to run_bugbot_review
 # ---------------------------------------------------------------------------
