@@ -98,8 +98,8 @@ non-secret release information the hub is allowed to store.
 
 1. The maintainer records the product repository release contract in the
    appropriate versioned configuration surface.
-2. The maintainer keeps machine-local checkout paths, credentials, and secret
-   names out of the contract.
+2. The maintainer keeps every value from the canonical forbidden-data list out
+   of the contract.
 3. The workflow validates the contract before any product release artifact is
    created or mutated.
 4. The maintainer receives a clear stop reason when required non-secret
@@ -167,10 +167,10 @@ surface, and no repository receives files outside its ownership role.
 ## Product Release Contract Fields
 
 The product release contract is a non-secret, reviewable description of how a
-workflow hub identifies a product repository and its release behavior. The
-canonical forbidden-data list for versioned product release configuration is:
-local checkout paths, credentials, tokens, secret names, secret values, and
-environment-specific account details.
+workflow hub identifies a product repository and its release behavior.
+
+Canonical forbidden-data list: local checkout paths, credentials, tokens,
+secret names, secret values, and environment-specific account details.
 
 Branch contract values must be machine-checkable without depending on a
 particular Git client. A branch name is valid when it is a non-empty sequence of
@@ -189,7 +189,7 @@ selected product repository key, it must produce exactly one valid branch name.
 | Product repository key | Required in `workflow_hub` for product-owned release work | One stable product repository key from hub configuration | No default when more than one product repository is configured | Missing key, unknown key, or multiple keys for one product item stops before release mutation |
 | GitHub repository | Required for each configured product repository | Owner/repository slug | No implicit fallback in `workflow_hub`; current repository in `single_repo` | Missing or malformed slug stops before branch, PR, tag, GitHub Release, or cleanup mutation |
 | Default release base | Optional | One valid branch name using the branch contract above | Product repository default branch when omitted; current release base in `single_repo` | Empty, invalid, or unresolved branch names stop before branch creation |
-| Release branch pattern | Optional | One branch pattern using the placeholder rules above | Existing single-repository release branch convention when omitted | Multiple active patterns, unknown placeholders, unresolved placeholders, or a pattern that does not resolve to exactly one valid branch name are ambiguous |
+| Release branch pattern | Optional | One branch pattern using the placeholder rules above | `release/v{version}` for `single_repo`, `workflow_hub` product releases, and `product_repo` product releases | Multiple active patterns, unknown placeholders, unresolved placeholders, or a pattern that does not resolve to exactly one valid branch name are ambiguous |
 | Changelog owner | Optional | Product repository or not applicable | Product repository for product-owned releases; current repository in `single_repo` | Hub-owned changelog for product code is invalid unless a later contract explicitly allows it |
 | Tag owner | Optional | Product repository or not applicable | Product repository for product-owned releases; current repository in `single_repo` | Hub-owned product tags are invalid unless a later contract explicitly allows them |
 | GitHub Release owner | Optional | Product repository or not applicable | Product repository for product-owned releases; current repository in `single_repo` | "Release record" means a GitHub Release; any other record type must be named separately before implementation |
@@ -219,9 +219,8 @@ must verify.
   require workflow-hub or product-repository configuration.
 - Product release configuration is versioned only when it is non-secret and
   portable across machines.
-- Local checkout paths, credentials, tokens, secret names, secret values, and
-  environment-specific account details are never part of the versioned product
-  release contract.
+- Values from the canonical forbidden-data list are never part of the versioned
+  product release contract.
 - Role-aware sync must fail closed when a repository role is unknown or when a
   file has no documented ownership.
 - Product repositories receive the minimum release runtime surface needed to
@@ -272,8 +271,7 @@ must verify.
 - [ ] Validation fails before release-artifact mutation when required product
       release contract information is missing or ambiguous.
 - [ ] Validation confirms that versioned product release configuration does not
-      include local checkout paths, credentials, tokens, secret names, secret
-      values, or environment-specific account details.
+      include any value from the canonical forbidden-data list.
 - [ ] Role-aware sync behavior includes the minimum product release runtime
       files for product repositories and excludes hub-only coordination files.
 - [ ] Automated tests prove the selected sync file set matches the documented
