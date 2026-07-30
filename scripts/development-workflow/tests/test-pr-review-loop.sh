@@ -2931,7 +2931,7 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
-    printf '[{"user":{"login":"cursor[bot]"},"submitted_at":"2020-01-02T00:00:00Z","state":"CHANGES_REQUESTED","body":"Cursor Bugbot found no issues in this pull request."}]\n'
+    printf '[{"user":{"login":"cursor[bot]"},"submitted_at":"2020-01-02T00:00:00Z","commit_id":"abc162bsha","state":"CHANGES_REQUESTED","body":"Cursor Bugbot found no issues in this pull request."}]\n'
     exit 0 ;;
   *"check-runs"*)
     printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"success","started_at":"2020-01-01T00:00:00Z"}]}\n'
@@ -2975,7 +2975,7 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
-    printf '[{"user":{"login":"cursor[bot]"},"submitted_at":"2020-01-02T00:00:00Z","state":"CHANGES_REQUESTED","body":""}]\n'
+    printf '[{"user":{"login":"cursor[bot]"},"submitted_at":"2020-01-02T00:00:00Z","commit_id":"abc162csha","state":"CHANGES_REQUESTED","body":""}]\n'
     exit 0 ;;
   *"check-runs"*)
     printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"success","started_at":"2020-01-01T00:00:00Z"}]}\n'
@@ -3158,7 +3158,7 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   # Phase 1 reviews — one blocking CHANGES_REQUESTED from cursor[bot]
   *"pulls/"*"/reviews"*)
-    printf '[{"user":{"login":"cursor[bot]"},"submitted_at":"2020-01-02T00:00:00Z","state":"CHANGES_REQUESTED","body":"BUGBOT_REVIEW: null pointer at src/lib.c:10"}]\n'
+    printf '[{"user":{"login":"cursor[bot]"},"submitted_at":"2020-01-02T00:00:00Z","commit_id":"abc166sha","state":"CHANGES_REQUESTED","body":"BUGBOT_REVIEW: null pointer at src/lib.c:10"}]\n'
     exit 0 ;;
   # check-runs and trigger POST must NOT be reached (function returns early)
   *"check-runs"*)
@@ -3524,7 +3524,7 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"check-runs"*)
-    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"neutral","started_at":"2020-01-03T00:00:01Z"}]}\n'
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"neutral","started_at":"2020-01-01T00:00:01Z"}]}\n'
     exit 0 ;;
   *"headRefOid"*)
     printf 'abc1692new\n'; exit 0 ;;

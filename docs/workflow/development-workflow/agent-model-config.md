@@ -70,7 +70,7 @@ Codex skills intentionally store recommended tiers rather than concrete model ID
 
 ### Cursor model defaults (template)
 
-Set models in `.cursor/agents/*.md` so subagents do not inherit the parent Composer model during long orchestration or review-fix loops. The template default is `auto` for most agents and `cursor-grok-4.5-high` for complex authoring and review work. If Cursor's model picker exposes Grok 4.5 under a different local ID, update the pinned value but preserve the same split. **`inherit` is acceptable only for ad-hoc, single-turn invocations** where you intentionally want the current Composer model — not for orchestrators, item runners, fixer agents, or reviewer-loop agents.
+Set models in `.cursor/agents/*.md` so subagents do not inherit the parent Composer model during long orchestration or review-fix loops. The template default is `auto` for most agents and `cursor-grok-4.5-high` for complex authoring and review work. If Cursor's model picker exposes Grok 4.5 under a different local ID, update the pinned value but preserve the same split. See the Cursor model field value guide below for when `inherit` is acceptable.
 
 | Agent | Tier | Cursor `model` (template default) |
 | ----- | ---- | ----------------------------------- |

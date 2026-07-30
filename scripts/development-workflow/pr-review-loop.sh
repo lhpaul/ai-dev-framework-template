@@ -1188,13 +1188,15 @@ bugbot_since_iso_for_sha() {
   local since_iso
   local _bb_now_iso
 
-  since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty' 2>/dev/null || true)"
+  if ! since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty' 2>/dev/null)"; then
+    return 1
+  fi
   if [ -z "$since_iso" ]; then
-    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
+    return 1
   fi
   _bb_now_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   if [ "$since_iso" \> "$_bb_now_iso" ]; then
-    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
+    return 1
   fi
   printf '%s\n' "$since_iso"
 }
@@ -1457,7 +1459,19 @@ run_bugbot_review() {
   fi
 
   # Resolve the commit timestamp to scope findings to this HEAD.
-  since_iso="$(bugbot_since_iso_for_sha "$repo" "$head_sha")"
+  if ! since_iso="$(bugbot_since_iso_for_sha "$repo" "$head_sha")"; then
+    echo "WARN: run_bugbot_review: could not resolve commit timestamp for PR #$pr_number (SHA=$head_sha) — returning unavailable" >&2
+    print_kv RESULT escalate
+    print_kv REASON fetch-failed
+    print_kv PLATFORM "$platform"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
 
   # --- Phase 1: Check for existing blocking cursor[bot] findings on current HEAD ---
   # If blocking findings already exist (e.g. from a previous trigger in the same
@@ -1467,9 +1481,9 @@ run_bugbot_review() {
   local _existing_reviews_rc=0
   existing_comments="$(
     gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg sha "$head_sha" '
           .[]
-          | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .in_reply_to_id == null)
+          | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
           | { path, line: (.line // .original_line // 0), body: (.body // "") }
           | @json
         ' 2>/dev/null
@@ -1477,11 +1491,12 @@ run_bugbot_review() {
   _existing_comments_rc=$?
   existing_reviews="$(
     gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
-      | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+      | jq -r --arg bot "$bot_login" --arg since "$since_iso" --arg sha "$head_sha" '
           .[]
           | select(
               (.user.login == $bot or .user.login == ($bot + "[bot]")) and
               .submitted_at > $since and
+              .commit_id == $sha and
               (
                 .state == "CHANGES_REQUESTED" or
                 .state == "COMMENTED"
@@ -1695,7 +1710,19 @@ run_bugbot_review() {
     fi
     unset _sha_rc
     local _current_since_iso
-    _current_since_iso="$(bugbot_since_iso_for_sha "$repo" "$_current_sha")"
+    if ! _current_since_iso="$(bugbot_since_iso_for_sha "$repo" "$_current_sha")"; then
+      echo "WARN: run_bugbot_review: could not resolve commit timestamp for PR #$pr_number (SHA=$_current_sha) — returning unavailable" >&2
+      print_kv RESULT escalate
+      print_kv REASON fetch-failed
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+    fi
 
     set +e
     local _fetch_rc=0
@@ -1755,10 +1782,10 @@ run_bugbot_review() {
 	          local _clean_comments_rc=0
 	          _clean_comments="$(
 	            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
-	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" '
-                  .[]
-                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .in_reply_to_id == null)
-                  | { path, line: (.line // .original_line // 0), body: (.body // "") }
+	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
+	                  .[]
+	                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
+	                  | { path, line: (.line // .original_line // 0), body: (.body // "") }
                   | @json
                 ' 2>/dev/null
           )"
@@ -1834,22 +1861,23 @@ run_bugbot_review() {
 	          local _blocking_reviews_rc=0
 	          _blocking_comments="$(
 	            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
-	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" '
-                  .[]
-                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .in_reply_to_id == null)
-                  | { path, line: (.line // .original_line // 0), body: (.body // "") }
+	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
+	                  .[]
+	                  | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .commit_id == $sha and .in_reply_to_id == null)
+	                  | { path, line: (.line // .original_line // 0), body: (.body // "") }
                   | @json
                 ' 2>/dev/null
           )"
 	          _blocking_comments_rc=$?
 	          _blocking_reviews="$(
 	            gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
-	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" '
-                  .[]
-                  | select(
-                      (.user.login == $bot or .user.login == ($bot + "[bot]")) and
-                      .submitted_at > $since and
-                      (
+	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" --arg sha "$_current_sha" '
+	                  .[]
+	                  | select(
+	                      (.user.login == $bot or .user.login == ($bot + "[bot]")) and
+	                      .submitted_at > $since and
+	                      .commit_id == $sha and
+	                      (
                         .state == "CHANGES_REQUESTED" or
                         .state == "COMMENTED"
                       )
