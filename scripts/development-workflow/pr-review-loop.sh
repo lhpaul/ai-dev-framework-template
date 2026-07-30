@@ -1236,6 +1236,7 @@ bugbot_escalate_for_unavailable_issue_comments() {
   local bot_login="$4"
   local since_iso="$5"
   local context="$6"
+  local allow_usage_limit="${7:-1}"
   local body
   local unavailable_bodies
   local _comments_rc=0
@@ -1264,7 +1265,7 @@ bugbot_escalate_for_unavailable_issue_comments() {
       bugbot_return_disabled "$pr_number" "$branch_name"
       return 2
     fi
-    if is_bugbot_usage_limit_message "$body"; then
+    if [ "$allow_usage_limit" -eq 1 ] && is_bugbot_usage_limit_message "$body"; then
       bugbot_return_usage_limit "$pr_number" "$branch_name"
       return 2
     fi
@@ -1375,7 +1376,7 @@ bugbot_escalate_if_disabled_without_check_run() {
 
   set +e
   bugbot_escalate_for_unavailable_issue_comments \
-    "$repo" "$pr_number" "$branch_name" "$bot_login" "$since_iso" "disabled-preflight"
+    "$repo" "$pr_number" "$branch_name" "$bot_login" "$since_iso" "disabled-preflight" 0
   local _unavailable_comments_rc=$?
   set -e
   if [ "$_unavailable_comments_rc" -eq 2 ]; then
@@ -1737,7 +1738,7 @@ run_bugbot_review() {
                 )
             ]
             | sort_by(.started_at) | last
-            | ((.status // "") + " " + (.conclusion // ""))
+            | ((.status // "") + " " + (.conclusion // "") + " " + (.started_at // ""))
           ' 2>/dev/null
     )"
     _fetch_rc=$?
@@ -1755,9 +1756,11 @@ run_bugbot_review() {
       print_kv SUGGESTION_COUNT 0
       return 2
     fi
-    read -r status_val conclusion <<< "$_fetch_output"
+    local check_started_at=""
+    read -r status_val conclusion check_started_at <<< "$_fetch_output"
     status_val="${status_val:-}"
     conclusion="${conclusion:-}"
+    check_started_at="${check_started_at:-}"
 
     if [ "$status_val" != "completed" ]; then
       set +e
@@ -1981,9 +1984,13 @@ run_bugbot_review() {
         neutral|cancelled|skipped)
           # A neutral check is clean only when Cursor did not also post an
           # unavailable/quota issue comment for this head.
+          local _unavailable_since_iso="$_current_since_iso"
+          if [ -n "$check_started_at" ] && [ "$check_started_at" \> "$_unavailable_since_iso" ]; then
+            _unavailable_since_iso="$check_started_at"
+          fi
           set +e
           bugbot_escalate_for_unavailable_issue_comments \
-            "$repo" "$pr_number" "$branch_name" "$bot_login" "$_current_since_iso" "neutral-conclusion"
+            "$repo" "$pr_number" "$branch_name" "$bot_login" "$_unavailable_since_iso" "neutral-conclusion" 1
           local _bb_neutral_unavailable_rc=$?
           set -e
           if [ "$_bb_neutral_unavailable_rc" -eq 2 ]; then
