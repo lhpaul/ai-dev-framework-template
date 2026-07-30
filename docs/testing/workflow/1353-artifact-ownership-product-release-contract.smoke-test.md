@@ -11,6 +11,9 @@
 ## Prerequisites
 
 - [ ] Use the implementation branch for issue #1353.
+- [ ] The #1353 implementation and its tests have landed, either as the merged
+      implementation commit or as an equivalent checked-out implementation
+      commit.
 - [ ] `bash`, `python3`, `jq`, `rg`, and Node/npm for markdownlint are
       available.
 - [ ] No test fixture contains real local checkout paths, credentials, tokens,
@@ -90,6 +93,8 @@ machine-checkable before any release artifact is created.
 2. Preview the real manifest selections:
 
    ```bash
+   set -euo pipefail
+
    python3 scripts/development-workflow/select-sync-manifest-entries.py \
      --manifest sync-manifest.yaml \
      --role product_repo
@@ -120,6 +125,8 @@ all supported roles and fails closed for unknown roles.
 1. Run:
 
    ```bash
+   set -euo pipefail
+
    bash scripts/development-workflow/tests/test-workflow-hub-skeletons.sh
    python3 scripts/development-workflow/validate-workflow-hub-skeletons.py
    ```
@@ -140,6 +147,8 @@ all supported roles and fails closed for unknown roles.
 1. Inspect:
 
    ```bash
+   set -euo pipefail
+
    docs=(
      docs/workflow/development-workflow/repository-modes.md
      docs/workflow/development-workflow/workflow-hub-setup.md
@@ -187,6 +196,8 @@ artifact before mutating product or hub release state.
 1. Run:
 
    ```bash
+   set -euo pipefail
+
    npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "CHANGELOG.md"
    bash -o pipefail -c \
      'find docs/specs/developments docs/testing/workflow -name "*.md" -print0 \
