@@ -128,8 +128,9 @@ Use your runner’s “one-off model override” mechanism.
 
 Claude Code example (if applicable):
 
+<!-- workflow-shell-contract: bash -->
 ```bash
-claude --agent developer --model claude-opus-5
+bash -lc 'claude --agent developer --model claude-opus-5'
 ```
 
 **Cursor:**
