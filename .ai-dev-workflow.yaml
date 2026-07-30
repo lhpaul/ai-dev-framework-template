@@ -52,7 +52,7 @@ review:
     # Ordered list of GitHub/App/CLI reviewers that run only after draft gates
     # are clean and the PR has been converted with `gh pr ready`.
     github:
-      - bugbot
+      - coderabbit
   #
   # CodeRabbit CLI platform options (local CLI reviewer; place "coderabbit-cli"
   # in on_draft.github or on_ready.github to opt in; independent from the

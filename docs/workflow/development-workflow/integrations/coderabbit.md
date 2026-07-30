@@ -18,7 +18,7 @@ CodeRabbit is **optional**. The workflow functions without it. See [`integration
 
 CodeRabbit supports three independent usage modes in this framework:
 
-### CLI-only (Path A — default)
+### CLI-only (Path A)
 
 Use the CodeRabbit CLI locally before pushing. No GitHub App needed.
 
@@ -35,7 +35,9 @@ coderabbit auth login
 /coderabbit:review
 ```
 
-The `.coderabbit.yaml` at the repo root ships with `auto_review.enabled: false` so the GitHub App (if installed) does not auto-review PRs.
+Use this mode by keeping `reviews.auto_review.enabled: false` in
+`.coderabbit.yaml` and leaving `coderabbit` out of `review.on_draft.github` and
+`review.on_ready.github`.
 
 ### CLI Step 7 reviewer (Path B)
 
@@ -97,6 +99,10 @@ To enable CodeRabbit as a Step 7 automated PR reviewer platform:
 
 The `coderabbit` App platform remains separate from `coderabbit-cli`. It uses
 the `coderabbitai[bot]` review/comment evidence path described below.
+
+This template repository uses this mode for ready-phase PR review: CodeRabbit
+auto-review is enabled for non-draft PRs targeting `develop`, and
+`.ai-dev-workflow.yaml` lists `coderabbit` under `review.on_ready.github`.
 
 ---
 
