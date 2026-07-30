@@ -1,6 +1,6 @@
 ---
 name: automated-reviewer-loop
-model: auto
+model: fast
 description: Run the automated reviewer loop (and CI loop) for a PR. Use when the user wants to run the reviewer loop on a specific PR or the current branch's PR until it is ready for human review or escalated.
 ---
 

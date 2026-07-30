@@ -70,14 +70,14 @@ Codex skills intentionally store recommended tiers rather than concrete model ID
 
 ### Cursor model defaults (template)
 
-Set models in `.cursor/agents/*.md` so subagents do not inherit the parent Composer model during long orchestration or review-fix loops. The template default is `auto` for most agents and `cursor-grok-4.5-high` for complex authoring and review work. If Cursor's model picker exposes Grok 4.5 under a different local ID, update the pinned value but preserve the same split. See the Cursor model field value guide below for when `inherit` is acceptable.
+Set models in `.cursor/agents/*.md` so subagents do not inherit the parent Composer model during long orchestration or review-fix loops. The template default is `fast` for economy coordination agents, `auto` for lower-risk balanced agents, and `cursor-grok-4.5-high` for complex authoring and review work. If Cursor's model picker exposes Grok 4.5 under a different local ID, update the pinned value but preserve the same split. See the Cursor model field value guide below for when `inherit` is acceptable.
 
-The `auto` assignments below are intentional for economy and lower-risk balanced agents that primarily coordinate, verify, or run checklist-style workflows. Cursor may route those runs to different concrete models over time, so their cost and latency can vary by workspace settings. Balanced agents that author production code or perform deep review stay pinned to Grok 4.5 High to keep complex reasoning capacity predictable.
+The `fast` economy assignments below are intentional for high-volume orchestration loops where predictable cost and latency matter more than deep reasoning. The remaining `auto` assignments are for lower-risk balanced agents that primarily verify or run checklist-style workflows; Cursor may route those runs to different concrete models over time, so their cost and latency can vary by workspace settings. Balanced agents that author production code or perform deep review stay pinned to Grok 4.5 High to keep complex reasoning capacity predictable.
 
 | Agent | Tier | Cursor `model` (template default) |
 | ----- | ---- | ----------------------------------- |
-| `orchestrator` | `economy` | `auto` |
-| `automated-reviewer-loop` | `economy` | `auto` |
+| `orchestrator` | `economy` | `fast` |
+| `automated-reviewer-loop` | `economy` | `fast` |
 | `item-orchestrator` | `balanced` | `auto` |
 | `developer` | `balanced` | `cursor-grok-4.5-high` |
 | `code-reviewer` | `balanced` | `cursor-grok-4.5-high` |
@@ -151,8 +151,8 @@ This affects all future invocations until changed back.
 
 **Cursor model field values:**
 
-- `auto`: Lets Cursor route to an appropriate model (template default for most coordination, QA, setup, and retrospective agents)
-- `fast`: Uses Cursor's fast model (use only when you intentionally want the cheapest/fastest path)
+- `fast`: Uses Cursor's fast model (template default for economy coordination agents where predictable cost and latency matter most)
+- `auto`: Lets Cursor route to an appropriate model (template default for lower-risk balanced QA, setup, and retrospective agents)
 - Pinned model ID: Uses that exact model (template default for complex authoring and review agents, e.g. `cursor-grok-4.5-high`)
 - `inherit`: Uses the current Composer model — **discouraged** for orchestrators, item runners, fixer agents, and reviewer-loop agents because it leaks parent-session cost into long runs; reserve for intentional one-off overrides
 
