@@ -167,21 +167,35 @@ surface, and no repository receives files outside its ownership role.
 ## Product Release Contract Fields
 
 The product release contract is a non-secret, reviewable description of how a
-workflow hub identifies a product repository and its release behavior. Local
-checkout paths, credentials, tokens, secret values, and environment-specific
-account details are local-only and invalid in the versioned contract.
+workflow hub identifies a product repository and its release behavior. The
+canonical forbidden-data list for versioned product release configuration is:
+local checkout paths, credentials, tokens, secret names, secret values, and
+environment-specific account details.
+
+Branch contract values must be machine-checkable without depending on a
+particular Git client. A branch name is valid when it is a non-empty sequence of
+slash-separated segments, every segment contains only letters, numbers, `.`,
+`_`, or `-`, no segment is empty, and the full value contains none of these
+portable forbidden forms: whitespace, `..`, `@{`, `//`, a leading slash, a
+trailing slash, `?`, `^`, `~`, `:`, backslash, or `#`. A branch value is
+unresolved when a required input such as the product repository key or release
+version is missing, or when placeholder text remains after resolution. A release
+branch pattern is a human-readable template that may use only `{version}` and
+`{product_repo}` placeholders; after substituting one release version and one
+selected product repository key, it must produce exactly one valid branch name.
 
 | Field | Required | Allowed values | Default semantics | Ambiguity rules |
 | --- | --- | --- | --- | --- |
 | Product repository key | Required in `workflow_hub` for product-owned release work | One stable product repository key from hub configuration | No default when more than one product repository is configured | Missing key, unknown key, or multiple keys for one product item stops before release mutation |
 | GitHub repository | Required for each configured product repository | Owner/repository slug | No implicit fallback in `workflow_hub`; current repository in `single_repo` | Missing or malformed slug stops before branch, PR, tag, GitHub Release, or cleanup mutation |
-| Default release base | Optional | Stable branch name | Product repository default branch when omitted; current release base in `single_repo` | Empty, unsafe, or unresolved branch names stop before branch creation |
-| Release branch pattern | Optional | Human-readable branch naming rule | Existing single-repository release branch convention when omitted | Multiple active patterns or a pattern that cannot produce one branch name is ambiguous |
+| Default release base | Optional | One valid branch name using the branch contract above | Product repository default branch when omitted; current release base in `single_repo` | Empty, invalid, or unresolved branch names stop before branch creation |
+| Release branch pattern | Optional | One branch pattern using the placeholder rules above | Existing single-repository release branch convention when omitted | Multiple active patterns, unknown placeholders, unresolved placeholders, or a pattern that does not resolve to exactly one valid branch name are ambiguous |
 | Changelog owner | Optional | Product repository or not applicable | Product repository for product-owned releases; current repository in `single_repo` | Hub-owned changelog for product code is invalid unless a later contract explicitly allows it |
 | Tag owner | Optional | Product repository or not applicable | Product repository for product-owned releases; current repository in `single_repo` | Hub-owned product tags are invalid unless a later contract explicitly allows them |
 | GitHub Release owner | Optional | Product repository or not applicable | Product repository for product-owned releases; current repository in `single_repo` | "Release record" means a GitHub Release; any other record type must be named separately before implementation |
 | Deployment evidence owner | Optional | Product repository, hub reference, or not applicable | Product repository records source evidence; hub may reference it in delivery coordination | Evidence with no product source or only a hub assertion is incomplete |
-| Cleanup evidence owner | Optional | Product repository, hub reference, or current repository | Product repository records product branch/PR cleanup; hub records tracker reconciliation | Cleanup ownership is ambiguous when branch cleanup and tracker reconciliation are not separated |
+| Product branch/PR cleanup evidence owner | Optional | Product repository, current repository, or not applicable | Product repository for product-owned releases; current repository in `single_repo` | Missing product branch or PR cleanup evidence is incomplete for product-owned releases |
+| Tracker reconciliation evidence owner | Optional | Hub repository, current repository, or not applicable | Hub repository for hub-managed product releases; current repository in `single_repo` | Tracker reconciliation evidence is ambiguous when it is recorded only in the product repository for hub-tracked work |
 
 ## Role-Aware Sync Oracle
 
@@ -205,8 +219,9 @@ must verify.
   require workflow-hub or product-repository configuration.
 - Product release configuration is versioned only when it is non-secret and
   portable across machines.
-- Local checkout paths, credentials, tokens, and secret values are never part of
-  the versioned product release contract.
+- Local checkout paths, credentials, tokens, secret names, secret values, and
+  environment-specific account details are never part of the versioned product
+  release contract.
 - Role-aware sync must fail closed when a repository role is unknown or when a
   file has no documented ownership.
 - Product repositories receive the minimum release runtime surface needed to
@@ -228,7 +243,8 @@ must verify.
 | GitHub Releases | Current repository | Product repository for product releases; hub for hub-only releases | Product repository |
 | Deployment evidence | Current repository | Product repository records source evidence; hub may reference it | Product repository |
 | Delivery manifests | Current repository when a single-repo delivery manifest exists | Hub repository | Hub repository |
-| Branch and PR cleanup evidence | Current repository | Product repository for product branch/PR cleanup; hub for tracker reconciliation | Product repository for branch/PR cleanup; hub for tracker reconciliation |
+| Product branch and PR cleanup evidence | Current repository | Product repository | Product repository |
+| Tracker reconciliation evidence | Current repository | Hub repository | Hub repository |
 
 ## Operational Visibility
 
@@ -256,7 +272,8 @@ must verify.
 - [ ] Validation fails before release-artifact mutation when required product
       release contract information is missing or ambiguous.
 - [ ] Validation confirms that versioned product release configuration does not
-      include local checkout paths, credentials, tokens, or secret values.
+      include local checkout paths, credentials, tokens, secret names, secret
+      values, or environment-specific account details.
 - [ ] Role-aware sync behavior includes the minimum product release runtime
       files for product repositories and excludes hub-only coordination files.
 - [ ] Automated tests prove the selected sync file set matches the documented
