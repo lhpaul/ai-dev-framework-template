@@ -45,7 +45,28 @@ Use the tier names as stable policy and map them to whatever your current runner
 
 - In Claude Code, map the tier to the model family or explicit model ID configured in `.claude/agents/*.md`.
 - In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary coordination and QA agents, and pin an explicit high-reasoning model for agents that author or deeply review specs, plans, and code.
+- In Codex, keep skills tier-based (`economy`, `balanced`, `premium`) and map the active runner model to the current OpenAI model family.
 - In any runner, prefer keeping the tier intent stable even when provider model names change.
+
+### Claude Code model defaults (template)
+
+Claude Code agents pin concrete model IDs in `.claude/agents/*.md`.
+
+| Tier | Claude Code `model` (template default) | Used for |
+| ---- | -------------------------------------- | -------- |
+| `economy` | `claude-haiku-4-5-20251001` | Portfolio orchestration and mechanical reviewer-loop coordination |
+| `balanced` | `claude-sonnet-5` | Implementation, review, setup, QA, smoke testing, item orchestration, and retrospectives |
+| `premium` | `claude-opus-5` | Spec writing and technical planning |
+
+### Codex / OpenAI model mapping (template)
+
+Codex skills intentionally store recommended tiers rather than concrete model IDs. Map those tiers to the current OpenAI family in the Codex runner or model picker:
+
+| Tier | OpenAI model mapping | Used for |
+| ---- | -------------------- | -------- |
+| `economy` | `gpt-5.6-luna` | Mechanical coordination and high-volume checklist work |
+| `balanced` | `gpt-5.6-terra` | Implementation, review, setup, QA, item orchestration, and retrospectives |
+| `premium` | `gpt-5.6-sol` | Spec writing and technical planning |
 
 ### Cursor model defaults (template)
 
@@ -68,7 +89,7 @@ Set models in `.cursor/agents/*.md` so subagents do not inherit the parent Compo
 | `product-manager` | `premium` | `cursor-grok-4.5-high` |
 | `tech-lead` | `premium` | `cursor-grok-4.5-high` |
 
-Claude Code equivalents live in `.claude/agents/*.md` (Haiku for economy, Sonnet for balanced, Opus for premium). Update pinned IDs when your provider deprecates a model; keep the tier intent stable.
+Update pinned IDs and tier mappings when your provider deprecates a model; keep the tier intent stable.
 
 See also:
 
@@ -108,7 +129,7 @@ Use your runner’s “one-off model override” mechanism.
 Claude Code example (if applicable):
 
 ```bash
-claude --agent developer --model claude-opus-4-7
+claude --agent developer --model claude-opus-5
 ```
 
 **Cursor:**

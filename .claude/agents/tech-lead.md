@@ -1,6 +1,6 @@
 ---
 name: tech-lead
-model: claude-opus-4-8
+model: claude-opus-5
 description: Plan Ready stage. Use when an implementation plan needs to be written. For Full Pipeline items, a spec must be approved first. For Refactor items, the work item brief replaces the spec. Reads the codebase, resolves technical approach questions, then writes the implementation plan, runs its reviewer gate, and resolves PR readiness.
 tools: Read, Grep, Glob, Write, Edit, Bash
 ---

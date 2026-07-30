@@ -1,6 +1,6 @@
 ---
 name: item-orchestrator
-model: claude-sonnet-4-6
+model: claude-sonnet-5
 description: Coordination agent for a single workflow item via /run-item (or deprecated /run-item-work). Runs the shared bounded prelude then Protocol 91 until waiting on a human, blocked, or escalated.
 tools: Read, Grep, Glob, Write, Edit, Bash, Agent
 ---

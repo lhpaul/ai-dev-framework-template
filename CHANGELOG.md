@@ -22,8 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Cursor agent model defaults** (#1394): Use Cursor `auto` for most
-  subagents and pin Grok 4.5 High for complex authoring and review agents.
+- **Agent model defaults** (#1394): Use Cursor `auto` for most subagents, pin
+  Grok 4.5 High for complex Cursor authoring and review agents, update Claude
+  Code agents to Sonnet 5 / Opus 5, and document Codex tier mappings for
+  GPT-5.6 Luna / Terra / Sol.
 - **Access-restricted reviewer merge gate** (#1288): Distinguish verified
   reviewer App-access restrictions from CI and review failures, prefer access
   remediation, and permit an audited protection bypass only after fresh named
