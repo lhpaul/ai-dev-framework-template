@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CodeRabbit ready-phase reviewer**: Replace Bugbot with CodeRabbit as the
+  default ready-phase external PR reviewer and enable budget-conscious
+  non-draft `develop` auto-review.
 - **Agent model defaults** (#1394): Use Cursor `fast` for economy coordination
   agents, `auto` for lower-risk balanced agents, and Grok 4.5 High for complex
   Cursor authoring and review agents; update Claude Code agents to Sonnet 5 /
