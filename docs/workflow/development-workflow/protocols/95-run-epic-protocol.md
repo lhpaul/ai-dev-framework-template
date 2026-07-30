@@ -336,6 +336,37 @@ The output must also include the invocation policy:
 - Backlog-start policy.
 - Maximum allowed autonomous merge risk.
 
+The resolver output must include a `continuation` object so delegated runs can
+rediscover remaining work before closeout:
+
+- `outcome`: one of `continue`, `complete`, or `needs_resolution`.
+- `terminal`: boolean stop/continue signal for the current epic runner pass.
+- `nextAction`: non-empty machine-readable next action.
+- `remainingItems`: child item numbers that can continue now.
+- `affectedItems`: child item numbers that caused a stop condition.
+- `stopCondition`: `missing_tracker_context`, `unclear_requirements`, or `null`.
+- `humanAction`: specific human action text or `null`.
+
+Continuation classification uses this precedence:
+
+1. Any `in_review` item, non-Backlog `eligible` item, or Backlog `eligible`
+   item when `--may-start-backlog true` produces `outcome: "continue"` and
+   lists only those actionable children in `remainingItems`.
+2. If no child can continue and every non-empty child is `already_merged`, emit
+   `outcome: "complete"`.
+3. Empty native scope, ambiguous scope, or Backlog-only work without
+   Backlog-start authority emits `outcome: "needs_resolution"` with
+   `stopCondition: "missing_tracker_context"`.
+4. Blocked children emit `outcome: "needs_resolution"` with
+   `stopCondition: "unclear_requirements"` and `humanAction` naming the
+   dependency to resolve.
+
+In text mode, print stable keys for automation:
+`continuation.outcome`, `continuation.terminal`,
+`continuation.next_action`, `continuation.remaining_items`, and
+`continuation.affected_items`. Print `continuation.stop_condition` and
+`continuation.human_action` only when those values are non-null.
+
 ### Step 6a: Recommend Missing Autonomy Policy
 
 If any effective policy value was not explicitly supplied by the human, or if
@@ -679,7 +710,11 @@ When all gates permit merge:
       re-apply also fails.
 
 6. Update the epic ledger.
-7. Rerun scope resolution so newly unblocked items can advance.
+7. Rerun scope resolution so newly unblocked items can advance, then inspect
+   the returned `continuation` object before closeout. Continue delegated
+   execution when `continuation.outcome` is `continue`; stop with the named
+   `stopCondition` and `humanAction` when it is `needs_resolution`; only treat
+   the epic as ready for closeout when it is `complete`.
 
 After the final native child item reaches a terminal state, verify live native
 sub-issues and Project statuses before closing the parent epic or marking it

@@ -25,6 +25,10 @@ Key responsibilities:
   do not block because it is absent from the hub repository.
 - Group items as `eligible`, `blocked`, `already_merged`, `in_review`,
   `ambiguous`, or `out_of_scope`.
+- Read the resolver's `continuation` object after initial scope resolution and
+  every later rediscovery. `continue` advances the named `remainingItems`;
+  `needs_resolution` stops with the named `stopCondition` / `humanAction`;
+  `complete` is the only closeout-ready outcome.
 - Keep the resolver phase read-only: no tracker updates, branches, PRs, merges,
   issue closure, or cleanup during scope resolution.
 - When autonomy policy is missing or ambiguous, run the read-only policy
@@ -54,7 +58,7 @@ Key responsibilities:
   `gh pr merge <pr> --admin` attempt; delegated epic policy is not enough.
 - After `merge_allowed`, continue through Protocol 95 Step 11: merge, merge
   verification, branch deletion/pruning, `post-merge-cleanup.sh`, live tracker
-  verification, audit update, and rediscovery.
+  verification, audit update, rediscovery, and continuation inspection.
 - Treat merge authority explicitly: `merge_granted` makes readiness
   intermediate for in-scope child PRs; `merge_denied` stops at
   `ready_human_merge`; unexplained stalled-at-ready child PRs are

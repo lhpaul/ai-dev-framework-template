@@ -908,7 +908,106 @@ summary_json="$(jq -n \
       out_of_scope: [$items[] | select(.group == "out_of_scope")]
     },
     items: $items
-  }')"
+  }
+  | . as $summary
+  | (
+      $summary.items
+      | map(select(
+          .group == "in_review"
+          or (
+            .group == "eligible"
+            and (
+              (.status // "") != "Backlog"
+              or $summary.policy.mayStartBacklog
+            )
+          )
+        ))
+    ) as $actionable
+  | (
+      $summary.groups.blocked
+      | map(
+          "Resolve dependency for #"
+          + (.number | tostring)
+          + (
+            [
+              .dependencies.issues[]?
+              | select((.state // "") != "CLOSED")
+              | "#" + (.number | tostring)
+            ] as $openDeps
+            | if ($openDeps | length) > 0
+              then " (blocked by " + ($openDeps | join(", ")) + ")"
+            else ""
+            end
+          )
+        )
+      | join("; ")
+    ) as $blockedAction
+  | .continuation = (
+      if ($actionable | length) > 0 then {
+        outcome: "continue",
+        terminal: false,
+        nextAction: "advance_remaining_child_work",
+        remainingItems: ($actionable | map(.number)),
+        affectedItems: [],
+        stopCondition: null,
+        humanAction: null
+      }
+      elif $summary.emptyEpicScope then {
+        outcome: "needs_resolution",
+        terminal: true,
+        nextAction: "resolve_tracker_context",
+        remainingItems: [],
+        affectedItems: [],
+        stopCondition: "missing_tracker_context",
+        humanAction: null
+      }
+      elif (($summary.items | length) > 0 and ($summary.items | all(.group == "already_merged"))) then {
+        outcome: "complete",
+        terminal: true,
+        nextAction: "no_remaining_child_work",
+        remainingItems: [],
+        affectedItems: [],
+        stopCondition: null,
+        humanAction: null
+      }
+      elif ($summary.groups.ambiguous | length) > 0 then {
+        outcome: "needs_resolution",
+        terminal: true,
+        nextAction: "resolve_tracker_context",
+        remainingItems: [],
+        affectedItems: [],
+        stopCondition: "missing_tracker_context",
+        humanAction: null
+      }
+      elif ($summary.groups.blocked | length) > 0 then {
+        outcome: "needs_resolution",
+        terminal: true,
+        nextAction: "resolve_blocked_dependency",
+        remainingItems: [],
+        affectedItems: ($summary.groups.blocked | map(.number)),
+        stopCondition: "unclear_requirements",
+        humanAction: (if $blockedAction == "" then null else $blockedAction end)
+      }
+      elif ($summary.groups.eligible | map(select((.status // "") == "Backlog")) | length) > 0 then {
+        outcome: "needs_resolution",
+        terminal: true,
+        nextAction: "resolve_tracker_context",
+        remainingItems: [],
+        affectedItems: ($summary.groups.eligible | map(select((.status // "") == "Backlog")) | map(.number)),
+        stopCondition: "missing_tracker_context",
+        humanAction: null
+      }
+      else {
+        outcome: "needs_resolution",
+        terminal: true,
+        nextAction: "resolve_tracker_context",
+        remainingItems: [],
+        affectedItems: [],
+        stopCondition: "missing_tracker_context",
+        humanAction: null
+      }
+      end
+    )')"
 
 if [ "$json_output" -eq 1 ]; then
   printf '%s\n' "$summary_json"
@@ -938,6 +1037,20 @@ printf 'May merge: %s\n' "$(printf '%s\n' "$summary_json" | jq -r '.policy.mayMe
 printf 'May start Backlog: %s\n' "$(printf '%s\n' "$summary_json" | jq -r '.policy.mayStartBacklog')"
 printf 'Max risk: %s\n' "$(printf '%s\n' "$summary_json" | jq -r '.policy.maxRisk')"
 printf 'Read-only: %s\n\n' "$(printf '%s\n' "$summary_json" | jq -r '.readOnlyGuarantee')"
+printf 'continuation.outcome=%s\n' "$(printf '%s\n' "$summary_json" | jq -r '.continuation.outcome')"
+printf 'continuation.terminal=%s\n' "$(printf '%s\n' "$summary_json" | jq -r '.continuation.terminal')"
+printf 'continuation.next_action=%s\n' "$(printf '%s\n' "$summary_json" | jq -r '.continuation.nextAction')"
+printf 'continuation.remaining_items=%s\n' "$(printf '%s\n' "$summary_json" | jq -r '.continuation.remainingItems | join(",")')"
+printf 'continuation.affected_items=%s\n' "$(printf '%s\n' "$summary_json" | jq -r '.continuation.affectedItems | join(",")')"
+continuation_stop_condition="$(printf '%s\n' "$summary_json" | jq -r '.continuation.stopCondition // empty')"
+if [ -n "$continuation_stop_condition" ]; then
+  printf 'continuation.stop_condition=%s\n' "$continuation_stop_condition"
+fi
+continuation_human_action="$(printf '%s\n' "$summary_json" | jq -r '.continuation.humanAction // empty')"
+if [ -n "$continuation_human_action" ]; then
+  printf 'continuation.human_action=%s\n' "$continuation_human_action"
+fi
+printf '\n'
 
 for group in eligible blocked already_merged in_review ambiguous out_of_scope; do
   count="$(printf '%s\n' "$summary_json" | jq ".groups.${group} | length")"

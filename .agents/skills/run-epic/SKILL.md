@@ -26,6 +26,11 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
 4. Treat resolver output as the bounded scope contract. The resolver itself is
    read-only: do not update tracker status, create branches, open PRs, merge
    PRs, close issues, or delete branches from the resolver phase.
+   The resolver also emits `continuation`; after every later rediscovery, obey
+   that object before closeout: `continue` means advance the named
+   `remainingItems`, `needs_resolution` means stop with the named
+   `stopCondition` / `humanAction`, and `complete` is the only closeout-ready
+   outcome.
 5. When autonomy policy values are missing or ambiguous, run
    `./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command "<requested command>"`
    with any supplied policy flags, including `--no-delegate-review` or
@@ -58,8 +63,8 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    attempt; delegated epic policy does not authorize `--admin`.
    After `merge_allowed`, follow Protocol 95 Step 11 through merge, merge
    verification, branch deletion/pruning, `post-merge-cleanup.sh`, live tracker
-   verification, audit update, and rediscovery before treating that PR as
-   complete.
+   verification, audit update, rediscovery, and the continuation result before
+   treating that PR as complete.
    Treat merge authority explicitly: `merge_granted` makes readiness
    intermediate for in-scope child PRs; `merge_denied` stops at
    `ready_human_merge`; unexplained stalled-at-ready child PRs are

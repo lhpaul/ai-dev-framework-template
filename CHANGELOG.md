@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cross-check plan operational assumptions** (#1201): Record and re-verify
   cross-cutting plan assumptions so concurrent workflow work cannot silently
   invalidate implementation guidance.
+- **Add epic continuation gate** (#1372): require delegated epic runs to re-resolve remaining child work before closeout.
 - **CodeRabbit CLI review platform** (#1375): Add an optional Step 7 CodeRabbit
   CLI reviewer with explicit skipped and rate-limit handling.
 
