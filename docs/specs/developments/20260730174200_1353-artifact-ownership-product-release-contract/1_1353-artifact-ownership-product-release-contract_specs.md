@@ -56,8 +56,10 @@ evaluated for workflow-hub adoption.
 2. The operator identifies each release artifact involved in the delivery.
 3. The operator confirms whether each artifact is owned by the hub, the
    selected product repository, or the current single-repository workflow.
-4. The operator uses the ownership map to choose the correct repository before
-   starting release, cleanup, or evidence collection work.
+4. The operator uses the ownership map together with
+   [Repository Modes](../../../workflow/development-workflow/repository-modes.md)
+   to choose the correct repository before starting release, cleanup, or
+   evidence collection work.
 
 **Postconditions**: Every release artifact has exactly one documented owner for
 the selected repository mode.
@@ -80,6 +82,9 @@ the selected repository mode.
   artifacts.
 - Product-owned release artifacts must not be created in the hub repository
   merely because the hub owns tracker coordination.
+- Supported mode names, display labels, and fallback behavior remain defined in
+  the repository-mode source of truth; this spec only adds release-specific
+  artifact ownership and product-release contract expectations.
 
 ---
 
@@ -153,15 +158,49 @@ surface, and no repository receives files outside its ownership role.
 - Accept the selected sync set.
 - Stop and correct role configuration when the selection is ambiguous.
 
+**Considerations**:
+
+- Unknown or mixed repository roles stop before file selection.
+- The `single_repo` result preserves the current manifest selection.
+- Invalid or stale sync selections must be corrected before apply mode runs.
+
+## Product Release Contract Fields
+
+The product release contract is a non-secret, reviewable description of how a
+workflow hub identifies a product repository and its release behavior. Local
+checkout paths, credentials, tokens, secret values, and environment-specific
+account details are local-only and invalid in the versioned contract.
+
+| Field | Required | Allowed values | Default semantics | Ambiguity rules |
+| --- | --- | --- | --- | --- |
+| Product repository key | Required in `workflow_hub` for product-owned release work | One stable product repository key from hub configuration | No default when more than one product repository is configured | Missing key, unknown key, or multiple keys for one product item stops before release mutation |
+| GitHub repository | Required for each configured product repository | Owner/repository slug | No implicit fallback in `workflow_hub`; current repository in `single_repo` | Missing or malformed slug stops before branch, PR, tag, GitHub Release, or cleanup mutation |
+| Default release base | Optional | Stable branch name | Product repository default branch when omitted; current release base in `single_repo` | Empty, unsafe, or unresolved branch names stop before branch creation |
+| Release branch pattern | Optional | Human-readable branch naming rule | Existing single-repository release branch convention when omitted | Multiple active patterns or a pattern that cannot produce one branch name is ambiguous |
+| Changelog owner | Optional | Product repository or not applicable | Product repository for product-owned releases; current repository in `single_repo` | Hub-owned changelog for product code is invalid unless a later contract explicitly allows it |
+| Tag owner | Optional | Product repository or not applicable | Product repository for product-owned releases; current repository in `single_repo` | Hub-owned product tags are invalid unless a later contract explicitly allows them |
+| GitHub Release owner | Optional | Product repository or not applicable | Product repository for product-owned releases; current repository in `single_repo` | "Release record" means a GitHub Release; any other record type must be named separately before implementation |
+| Deployment evidence owner | Optional | Product repository, hub reference, or not applicable | Product repository records source evidence; hub may reference it in delivery coordination | Evidence with no product source or only a hub assertion is incomplete |
+| Cleanup evidence owner | Optional | Product repository, hub reference, or current repository | Product repository records product branch/PR cleanup; hub records tracker reconciliation | Cleanup ownership is ambiguous when branch cleanup and tracker reconciliation are not separated |
+
+## Role-Aware Sync Oracle
+
+Role-aware sync compares selected files against logical release surfaces, not
+against product-specific path guesses. The repository-mode document defines the
+`mode_scope` mechanics; this spec defines the release-specific oracle that tests
+must verify.
+
+| Repository role | Required included logical surfaces | Required excluded logical surfaces | Expected result |
+| --- | --- | --- | --- |
+| `single_repo` | Existing shared, hub, product, release, setup, and workflow surfaces selected by the current manifest | None beyond existing manifest exclusions | Unchanged file-selection behavior |
+| `workflow_hub` | Shared workflow surfaces, hub tracker coordination, hub specs/plans, delivery coordination guidance, hub release manifest guidance, and product contract documentation | Product-only runtime wrappers, product-local release execution files, product smoke fixtures, local checkout paths, and credentials | Hub can coordinate release ownership without receiving product-only runtime state |
+| `product_repo` | Shared workflow surfaces, product release runtime wrappers, product CI/reviewer handoff guidance, product smoke/runbook scaffolding, and product-local cleanup helpers required for product-owned release work | Hub tracker state, historical hub specs/plans, hub-only delivery coordination records, cross-product portfolio state, and hub-only runbooks | Product repository can execute product-owned release work without inheriting hub coordination state |
+| Unknown or invalid role | None | All mutating apply selections | Fail closed before file changes |
+
 ## Business Rules
 
 - Every release artifact named by the workflow has exactly one owner in each
   repository mode.
-- Workflow hubs own tracker coordination, specs, plans, delivery coordination,
-  and hub release records unless a later contract explicitly moves an artifact.
-- Product repositories own product code, product release branches, product
-  changelog entries, product tags, product release records, product deployment
-  evidence, and product cleanup evidence.
 - Single-repository mode keeps its current ownership behavior and must not
   require workflow-hub or product-repository configuration.
 - Product release configuration is versioned only when it is non-secret and
@@ -173,6 +212,23 @@ surface, and no repository receives files outside its ownership role.
 - Product repositories receive the minimum release runtime surface needed to
   execute product-owned release work; hub-only coordination files remain
   hub-owned.
+- "Release record" means a GitHub Release unless another record type is named
+  explicitly in a later spec.
+
+## Release Artifact Ownership Table
+
+| Release artifact | `single_repo` owner | `workflow_hub` owner | `product_repo` owner |
+| --- | --- | --- | --- |
+| Tracker work | Current repository tracker | Hub tracker | Hub tracker |
+| Specs and plans | Current repository | Hub repository | Hub repository |
+| Product code | Current repository | Selected product repository for product work; hub only for hub-owned workflow code | Product repository |
+| Changelog entries | Current repository | Product repository for product releases; hub for hub-only releases | Product repository |
+| Release branches | Current repository | Product repository for product releases; hub for hub-only releases | Product repository |
+| Tags | Current repository | Product repository for product releases; hub for hub-only releases | Product repository |
+| GitHub Releases | Current repository | Product repository for product releases; hub for hub-only releases | Product repository |
+| Deployment evidence | Current repository | Product repository records source evidence; hub may reference it | Product repository |
+| Delivery manifests | Current repository when a single-repo delivery manifest exists | Hub repository | Hub repository |
+| Branch and PR cleanup evidence | Current repository | Product repository for product branch/PR cleanup; hub for tracker reconciliation | Product repository for branch/PR cleanup; hub for tracker reconciliation |
 
 ## Operational Visibility
 
