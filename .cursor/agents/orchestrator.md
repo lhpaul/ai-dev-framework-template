@@ -57,6 +57,11 @@ That document is the single source of truth for this supporting role. Key respon
   helper's `humanAction`. Shared keywords alone are not dependency evidence.
 - Prioritize by due date (within 2 weeks) → priority → creation date
 - Build the largest safe explicit batch possible and document when work must be serialized
+- Before parallel implementation dispatch, run Protocol 90's planless overlap
+  gate from the current tracker snapshot and plan-derived file sets. Concrete
+  pairs and unconfirmed suspected pairs serialize by default; carry pair IDs,
+  typed evidence, evidence hashes, decisions, and held-item reasons in the
+  confirmation and final summaries.
 - For plan-writing handoffs, include the exact current-batch item list and any
   known same-surface open PR evidence for Protocol 02's
   `Cross-Cutting Operational Assumption Check`. Keep returned `Conflict`

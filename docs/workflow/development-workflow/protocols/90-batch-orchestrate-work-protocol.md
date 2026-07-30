@@ -931,10 +931,52 @@ Priority is determined by the orchestrator using the following ordered tiebreake
 The batch summary must list the conflicting item pair, the overlapping file path(s), and the
 resulting batch assignment for each item (BR-7).
 
-**Unknown-set handling** (BR-3): Items with `FILE_SET=unknown` are not automatically serialized
-but are flagged in the batch summary with a warning noting that file-level conflict detection was
-not possible for that item (no plan document, or plan contains no extractable file list). The
-batch proceeds as-is with the unknown-set items included.
+**Unknown-set handling and brief fallback** (BR-3): Items with `FILE_SET=unknown`
+must pass the planless overlap fallback before parallel dispatch. The
+orchestrator assembles a provider-neutral current snapshot for the remaining
+implementation candidates after dependency and tool-fix filtering:
+
+- `id`
+- current tracker `title`
+- current tracker `brief` or description
+- plan-derived `fileSet`
+- `priority`
+- `createdAt`
+- `nextAction`
+
+Run:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/workflow-batch-overlap.sh --input <snapshot.json> --json
+```
+
+The helper preserves exact plan-file intersections as the highest-confidence
+`concrete` result. For planless or empty file sets, it extracts explicit typed
+targets from titles and briefs: repo-relative file paths, route literals,
+function/method identifiers, and explicitly cued modules/helpers/scripts or
+services. Generic shared workflow words alone are not overlap evidence.
+
+Pair classifications are:
+
+- `concrete`: serialize the pair; the later item starts only after the prior
+  item's implementation PR is merged into the approved base.
+- `suspected`: serialize by default unless a current pair-scoped decision record
+  authorizes `allow_parallel` for the same batch fingerprint, pair ID, and
+  evidence hash.
+- `no_actionable_overlap`: keep the items parallel-eligible while preserving
+  all other dependency, tool-fix, runtime, lane-capacity, isolation, and nested
+  artifact gates. This is not proof of independence.
+
+When the classifier emits `serialGroups`, pass the same overlap input to
+`workflow-batch-lanes.sh --overlap-input <snapshot.json>` or otherwise apply
+the identical result: keep the highest-priority member of each serial group in
+the current lane and hold the remaining members with the reason
+`held — pending overlap-serialized item merge`. The batch confirmation summary
+must list every `concrete` or `suspected` pair, its typed evidence, evidence
+hash, default dispatch, and required next action. The final batch summary must
+include the resulting overlap disposition and any accepted or rejected stale
+pair-scoped human decision.
 
 **Human override** (BR-6): The orchestrator must **never** autonomously dispatch an override.
 Only an explicit human instruction enables parallel dispatch when a conflict has been detected.

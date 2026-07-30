@@ -27,6 +27,11 @@ For single-item work use `/run-item`. For bounded multi-item batch execution use
 When mode is `no_target_scan`, follow Protocol 90 Steps 1–3 (scan + propose)
 only. Do not dispatch items under `/run-work`:
 
+For multi-item implementation proposals, include Protocol 90's planless overlap
+disposition from `workflow-batch-overlap.sh`. Concrete pairs and unconfirmed
+suspected pairs are serialized by default, and the proposal must show pair IDs,
+typed evidence, evidence hashes, and held-item reasons.
+
 In `workflow_hub`, preserve selected product repository context in
 implementation handoffs so mutation-oriented follow-up commands can route the
 artifact owner, local path or remote identity, and PR/reviewer/cleanup work

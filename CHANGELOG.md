@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Add Planless Batch Overlap Fallback** (#1289): Derive explicit brief targets for planless implementation pairs and serialize concrete or unconfirmed suspected overlaps.
 - **Add project advisory checks hook** (#1279): Let downstream projects append
   diff-scoped informational checks to reviewer summaries without changing
   reviewer results or readiness.

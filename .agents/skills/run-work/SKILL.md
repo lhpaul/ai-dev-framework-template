@@ -26,6 +26,11 @@ command. It performs no mutation in any routing mode.
 4. For `no_target_scan`, follow Protocol 90 Steps 1–3 (scan + propose) only.
    Do **not** dispatch items — present the proposal and emit the recommended
    `/run-items` command for the operator to execute.
+   When proposing multiple implementation items, include Protocol 90's
+   planless overlap disposition from `workflow-batch-overlap.sh`: concrete
+   pairs and unconfirmed suspected pairs are serialized by default, and the
+   proposal shows pair IDs, typed evidence, evidence hashes, and held-item
+   reasons.
 5. In `no_target_scan` output, keep Protocol 90 report categories distinct:
    `INFORMATIONAL - not actionable in this proposal`,
    `ACTIONABLE RESUME - can advance now`,

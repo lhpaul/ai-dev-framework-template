@@ -340,16 +340,50 @@ Use this when:
 - The batch orchestrator needs a deterministic first-pass list of development-folder candidates
 - You want to separate portfolio-level batch planning from single-item orchestration
 
-### `workflow-batch-lanes.sh`
+### `workflow-batch-overlap.sh`
 
-Assigns stage lanes and `proposed` vs `held` dispatch status for portfolio batch
-proposals. Consumes `workflow-batch-plan.sh` output (or `--scan`).
+Classifies concrete, suspected, and non-actionable implementation overlap for
+multi-item batch proposals from a provider-neutral item snapshot.
 
 Usage:
 
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/workflow-batch-overlap.sh --input batch-items.json --json
+```
+
+Input items include `id`, current tracker `title` and `brief`, plan-derived
+`fileSet`, `priority`, `createdAt`, and `nextAction`. Optional JSONL decision
+records can authorize `allow_parallel` only for a suspected pair when the batch
+fingerprint, pair ID, and evidence hash match the current proposal.
+
+What it does:
+
+- Preserves exact plan file-set intersections as concrete overlap
+- Extracts explicit file, route, function, and module/helper/script targets from
+  planless item briefs
+- Serializes concrete overlaps and unconfirmed suspected overlaps by default
+- Emits stable pair IDs, evidence hashes, accepted/stale decisions, and
+  transitive serial groups
+
+Use this when:
+
+- Protocol 90 needs to evaluate implementation overlap before assigning
+  multiple planless or mixed-evidence items to parallel lanes
+
+### `workflow-batch-lanes.sh`
+
+Assigns stage lanes and `proposed` vs `held` dispatch status for portfolio batch
+proposals. Consumes `workflow-batch-plan.sh` output (or `--scan`) and can apply
+serial groups from `workflow-batch-overlap.sh`.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/workflow-batch-plan.sh | ./scripts/development-workflow/workflow-batch-lanes.sh
 ./scripts/development-workflow/workflow-batch-lanes.sh --scan
+./scripts/development-workflow/workflow-batch-lanes.sh --overlap-input batch-items.json < batch-plan-output.txt
 ```
 
 What it does:
@@ -357,6 +391,8 @@ What it does:
 - Applies `max_concurrent_by_stage` caps (default: unlimited spec/plan/review, implementation `1`)
 - Emits `STAGE_LANE`, `DISPATCH`, `HOLD_REASON`, and `HELD_SUMMARY` per item
 - Honors `LOCAL_RUNTIME=exclusive` holds when multiple implementation items would contend
+- Holds lower-priority members of classifier serial groups until the prior item
+  merges into the approved base
 
 Use this when:
 
