@@ -325,11 +325,6 @@ workflow_hub:
    then run the smoke commands in the runbook.
 7. Update `CHANGELOG.md` under `[Unreleased]` using:
    `- **Artifact ownership and product release contract** (#1353): documents and validates multi-repository release artifact ownership and product release configuration for workflow hubs.`
-8. Run verification:
-   `bash scripts/development-workflow/tests/test-workflow-config-resolver.sh`,
-   `bash scripts/development-workflow/tests/test-sync-template-mode-scopes.sh`,
-   `bash scripts/development-workflow/tests/test-workflow-hub-skeletons.sh`,
-   `bash scripts/development-workflow/tests/test-workflow-hub-docs.sh`,
-   `python3 scripts/development-workflow/validate-workflow-hub-skeletons.py`,
-   `npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "CHANGELOG.md"`, and
-   `find docs/specs/developments docs/testing/workflow -name "*.md" -print0 | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md`.
+8. Run the implementation-specific regression tests listed in **Regression
+   suite**, then execute the linked smoke-test runbook as the source of truth
+   for smoke and markdown verification commands.

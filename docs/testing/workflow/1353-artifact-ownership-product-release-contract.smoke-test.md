@@ -140,12 +140,32 @@ all supported roles and fails closed for unknown roles.
 1. Inspect:
 
    ```bash
-   rg -n "Release artifact|Product release contract|changelog|GitHub Release|tracker reconciliation" \
-     docs/workflow/development-workflow/repository-modes.md \
-     docs/workflow/development-workflow/workflow-hub-setup.md \
-     docs/workflow/development-workflow/product-repo-injection.md \
-     docs/workflow/development-workflow/cross-repo-pr-flow.md \
+   docs=(
+     docs/workflow/development-workflow/repository-modes.md
+     docs/workflow/development-workflow/workflow-hub-setup.md
+     docs/workflow/development-workflow/product-repo-injection.md
+     docs/workflow/development-workflow/cross-repo-pr-flow.md
      docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md
+   )
+   for category in \
+     "tracker work" \
+     "specs" \
+     "plans" \
+     "product code" \
+     "changelog" \
+     "release branch" \
+     "tag" \
+     "GitHub Release" \
+     "deployment evidence" \
+     "delivery manifest" \
+     "cleanup evidence" \
+     "tracker reconciliation"
+   do
+     rg -i "$category" "${docs[@]}" >/dev/null || {
+       echo "missing ownership evidence for: $category" >&2
+       exit 1
+     }
+   done
    ```
 
 2. Confirm tracker work, specs/plans, product code, changelog entries, release
@@ -168,8 +188,9 @@ artifact before mutating product or hub release state.
 
    ```bash
    npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "CHANGELOG.md"
-   find docs/specs/developments docs/testing/workflow -name "*.md" -print0 \
-     | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md
+   bash -o pipefail -c \
+     'find docs/specs/developments docs/testing/workflow -name "*.md" -print0 \
+       | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md'
    ```
 
 2. Confirm no markdown, relative-link, or heuristic errors remain.
