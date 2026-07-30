@@ -2791,6 +2791,20 @@ else
 fi
 run_test "bugbot_usage_limit_message_detected" "usage_limit" "$actual"
 
+if is_bugbot_usage_limit_message "Bugbot could not run: usage/spend limit reached"; then
+  actual="usage_limit"
+else
+  actual="active"
+fi
+run_test "bugbot_usage_spend_slash_message_detected" "usage_limit" "$actual"
+
+if is_bugbot_usage_limit_message "Bugbot could not run: usage/spend-limit reached"; then
+  actual="usage_limit"
+else
+  actual="active"
+fi
+run_test "bugbot_usage_spend_hyphen_message_detected" "usage_limit" "$actual"
+
 if is_bugbot_usage_limit_message "Cursor Bugbot found no issues in this pull request."; then
   actual="usage_limit"
 else

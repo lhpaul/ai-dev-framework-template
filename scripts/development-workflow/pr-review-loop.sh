@@ -1193,7 +1193,9 @@ bugbot_since_iso_for_sha() {
     since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   fi
   _bb_now_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  [ "$since_iso" \> "$_bb_now_iso" ] && since_iso="$_bb_now_iso"
+  if [ "$since_iso" \> "$_bb_now_iso" ]; then
+    since_iso="$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '24 hours ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
+  fi
   printf '%s\n' "$since_iso"
 }
 
@@ -1692,6 +1694,8 @@ run_bugbot_review() {
       _current_sha="$head_sha"
     fi
     unset _sha_rc
+    local _current_since_iso
+    _current_since_iso="$(bugbot_since_iso_for_sha "$repo" "$_current_sha")"
 
     set +e
     local _fetch_rc=0
@@ -1731,7 +1735,7 @@ run_bugbot_review() {
     if [ "$status_val" != "completed" ]; then
       set +e
       bugbot_escalate_if_disabled_without_check_run \
-        "$repo" "$pr_number" "$branch_name" "$bot_login" "$since_iso" "$_current_sha" "$check_name"
+        "$repo" "$pr_number" "$branch_name" "$bot_login" "$_current_since_iso" "$_current_sha" "$check_name"
       local _bb_disabled_poll_rc=$?
       set -e
       if [ "$_bb_disabled_poll_rc" -eq 2 ]; then
@@ -1747,11 +1751,11 @@ run_bugbot_review() {
           # comments to confirm and collect any suggestions.
           blocking_lines_file="$(mktemp)"
           set +e
-          local _clean_comments
-          local _clean_comments_rc=0
-          _clean_comments="$(
-            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
-              | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+	          local _clean_comments
+	          local _clean_comments_rc=0
+	          _clean_comments="$(
+	            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
+	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" '
                   .[]
                   | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .in_reply_to_id == null)
                   | { path, line: (.line // .original_line // 0), body: (.body // "") }
@@ -1825,22 +1829,22 @@ run_bugbot_review() {
           # Blocking findings. Read cursor[bot] reviews/comments for the summary.
           blocking_lines_file="$(mktemp)"
           set +e
-          local _blocking_comments _blocking_reviews
-          local _blocking_comments_rc=0
-          local _blocking_reviews_rc=0
-          _blocking_comments="$(
-            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
-              | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+	          local _blocking_comments _blocking_reviews
+	          local _blocking_comments_rc=0
+	          local _blocking_reviews_rc=0
+	          _blocking_comments="$(
+	            gh api "repos/$repo/pulls/$pr_number/comments" --paginate 2>/dev/null \
+	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" '
                   .[]
                   | select((.user.login == $bot or .user.login == ($bot + "[bot]")) and .created_at > $since and .in_reply_to_id == null)
                   | { path, line: (.line // .original_line // 0), body: (.body // "") }
                   | @json
                 ' 2>/dev/null
           )"
-          _blocking_comments_rc=$?
-          _blocking_reviews="$(
-            gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
-              | jq -r --arg bot "$bot_login" --arg since "$since_iso" '
+	          _blocking_comments_rc=$?
+	          _blocking_reviews="$(
+	            gh api "repos/$repo/pulls/$pr_number/reviews" --paginate 2>/dev/null \
+	              | jq -r --arg bot "$bot_login" --arg since "$_current_since_iso" '
                   .[]
                   | select(
                       (.user.login == $bot or .user.login == ($bot + "[bot]")) and
@@ -1949,11 +1953,9 @@ run_bugbot_review() {
         neutral|cancelled|skipped)
           # A neutral check is clean only when Cursor did not also post an
           # unavailable/quota issue comment for this head.
-          local _bb_neutral_since_iso
-          _bb_neutral_since_iso="$(bugbot_since_iso_for_sha "$repo" "$_current_sha")"
           set +e
           bugbot_escalate_for_unavailable_issue_comments \
-            "$repo" "$pr_number" "$branch_name" "$bot_login" "$_bb_neutral_since_iso" "neutral-conclusion"
+            "$repo" "$pr_number" "$branch_name" "$bot_login" "$_current_since_iso" "neutral-conclusion"
           local _bb_neutral_unavailable_rc=$?
           set -e
           if [ "$_bb_neutral_unavailable_rc" -eq 2 ]; then

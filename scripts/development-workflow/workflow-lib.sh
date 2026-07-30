@@ -452,7 +452,7 @@ is_bugbot_disabled_message() {
 is_bugbot_usage_limit_message() {
   local body="$1"
 
-  printf '%s\n' "$body" | grep -Eiq 'usage or spend limit|usage[ -]?limit|spend[ -]?limit'
+  printf '%s\n' "$body" | grep -Eiq 'usage or spend limit|usage[/-]spend[ -]?limit|usage[ -]?limit|spend[ -]?limit'
 }
 
 open_pr_number_for_branch() {
