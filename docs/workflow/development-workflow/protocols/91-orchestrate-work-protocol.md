@@ -287,6 +287,25 @@ When dispatching a subagent for this item, include a short "Tracker Work Item Su
 - Any scope changes / decisions in recent comments
 - Any ambiguity or conflict that still requires human confirmation
 
+When dispatching any plan-writing work, include the exact current invocation
+item list (the single item for `/run-item`, or the current-batch item list for
+`/run-items`) and any same-surface open PR evidence provided by the parent
+orchestrator. "Same-surface" means an open PR whose changed workflow surface
+plausibly affects the same operational assumption; shared issue keywords alone
+are not same-surface evidence. The planner uses this bounded context for the
+`Cross-Cutting Operational Assumption Check`; it must not widen scope or scan
+every open PR. If the planner reports `Conflict` evidence for the same
+operational assumption surface, stop plan-stage advancement with
+`unclear_requirements` until the parent records `Resolved` or the human
+supplies a decision.
+
+When advancing a `Plan Ready` item into implementation, read the plan's
+`Cross-Cutting Operational Assumption Check`. Applicable assumptions are handed
+to the implementer for fresh source verification before file edits. A
+`Still valid` result may proceed. A changed, conflicting, or unverifiable result
+is `Stale or conflicting` and returns to the parent orchestrator before
+mutation.
+
 ---
 
 ## Step 2: Determine the Next Deterministic Action
@@ -723,46 +742,48 @@ artifact base instead, even when product implementation work uses
 
 Before advancing the item, check its spec's `Depends on` field. If any dependency is not yet `Merged` or `Released`, stop and report the blocked state to the human.
 
-### Checkpoint-Resume Worktree Preflight
+### Checkpoint-Resume Gate
 
 When resuming an item after a human-checkpoint pause, and the prior run used a
-dedicated item worktree, run the checkpoint-resume preflight **before any
+dedicated item worktree, run the checkpoint-resume gate **before any
 mutation** (file edit, branch switch, commit, PR update, label update, tracker
 write, or merge). This closes the resume-side gap where a SendMessage or new
 session starts from the main clone instead of the item's isolated worktree.
 
-Use the read-only helper:
+Use the executable fail-closed gate before any resumed-session mutation:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-./scripts/development-workflow/worktree-resume-preflight.sh \
+./scripts/development-workflow/checkpoint-resume-gate.sh \
   --item <item-id> \
   --expected-branch <branch-prefix>/<slug> \
-  --expected-worktree <worktree-path-if-known> \
+  --expected-worktree <worktree-path> \
   --main-repo-root <main-repo-root> \
+  --checkpoint-state <pending|satisfied|waived> \
   --json
 ```
 
-The helper inspects current CWD, current branch, and
-`git worktree list --porcelain`. It must not switch branches, edit files,
-update tracker state, update PRs, apply labels, merge PRs, or satisfy/waive any
-human checkpoint.
+The gate invokes the read-only worktree preflight to inspect current CWD,
+current branch, and `git worktree list --porcelain`. It must not change CWD,
+switch branches, create/delete worktrees, edit files, commit, push, update
+tracker state, update PRs, apply labels, merge PRs, or satisfy/waive any human
+checkpoint.
 
-Handle helper results as follows:
+Handle gate results as follows:
 
 | Result | Meaning | Required action |
 | --- | --- | --- |
 | `RESULT=continue` | Current CWD is already inside the expected worktree on the expected branch. | Continue the item run from the current directory. |
-| `RESULT=reenter` | Current CWD is the main clone and exactly one registered worktree matches the expected branch/path. | `cd "$TARGET_WORKTREE"`, run `bash scripts/development-workflow/worktree-cwd-guard.sh --check-cwd "$TARGET_WORKTREE" "$MAIN_REPO_ROOT"`, verify `pwd -P` and `git rev-parse --abbrev-ref HEAD`, then continue. |
-| `RESULT=stop` | The expected worktree is missing, ambiguous, detached, on the wrong branch, or the current CWD is untrusted. | Stop before mutation and report the helper fields to the human. |
+| `RESULT=checkpoint_pending` | Isolation is valid but the human checkpoint remains pending. | Stop for the required human decision. |
+| `RESULT=stop` | Context is missing, ambiguous, detached, wrong-branch, or starts in the main clone. | Stop before mutation; start a fresh runner with the complete assignment. |
 
 Stop output must include: item, expected branch, expected worktree when known,
 target worktree when found, observed directory, observed branch when available,
 failure reason, and human recovery action.
 
-Successful worktree re-entry is only a CWD safety check. It does not satisfy,
-waive, clear, or otherwise modify any pending human checkpoint. Checkpoint
-lifecycle state remains governed by the checkpoint policy and
-`run-epic-checkpoint-lifecycle.sh`.
+Isolation verification never satisfies, waives, clears, or otherwise modifies a
+human checkpoint. A main-clone resume must stop; it must not change directory,
+switch branches, or repair state automatically.
 
 When resuming after an interrupted mutating run, inspect the item branch
 history, local worktree commits, and uncommitted edits before making a new
@@ -2084,11 +2105,17 @@ is `true` in the effective guardrails, assemble the evidence object and run:
 ./scripts/development-workflow/run-epic-delegated-gate.sh --input <evidence-file>
 ```
 
-Merge only when the gate returns `merge_allowed` **and** every required-evidence
-check in section 3 Gate 5 of `guardrails-enforcement.md` passes. For medium-risk
-decisions, include a complete "why safe to merge" explanation. A risk classified
-above the stage `max_merge_risk` stops the run and names the `high_risk_change`
-guardrail.
+Merge through the normal repository path only when the gate returns
+`merge_allowed` **and** every required-evidence check in section 3 Gate 5 of
+`guardrails-enforcement.md` passes. If the gate reports
+`exceptional_bypass_authorized`, do not treat it as normal delegated merge
+authority: verify the pre-attempt `reviewer-access-bypass` audit marker, execute
+exactly the named `gh pr merge <pr> --admin` command once, immediately verify
+the live PR state, and update the same audit marker with `merged` or `failed`.
+Any head SHA, fingerprint, CI, reviewer, or check-state drift returns to Gate 5
+for fresh authorization. For medium-risk decisions, include a complete "why safe
+to merge" explanation. A risk classified above the stage `max_merge_risk` stops
+the run and names the `high_risk_change` guardrail.
 
 After readiness, branch on the effective merge authority:
 

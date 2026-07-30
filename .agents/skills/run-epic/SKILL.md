@@ -26,6 +26,11 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
 4. Treat resolver output as the bounded scope contract. The resolver itself is
    read-only: do not update tracker status, create branches, open PRs, merge
    PRs, close issues, or delete branches from the resolver phase.
+   The resolver also emits `continuation`; after every later rediscovery, obey
+   that object before closeout: `continue` means advance the named
+   `remainingItems`, `needs_resolution` means stop with the named
+   `stopCondition` / `humanAction`, and `complete` is the only closeout-ready
+   outcome.
 5. When autonomy policy values are missing or ambiguous, run
    `./scripts/development-workflow/run-epic-policy-recommender.sh --scope <resolver-json> --original-command "<requested command>"`
    with any supplied policy flags, including `--no-delegate-review` or
@@ -52,18 +57,25 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    scope, reviewer, CI, risk, and audit evidence; pass `--policy <file>` when
    the resolver policy is captured separately. Merge only when the gate reports
    `merge_allowed`.
+   If it reports `exceptional_bypass_authorized`, verify the separate named
+   PR/SHA/fingerprint authorization and pre-attempt `reviewer-access-bypass`
+   audit marker before one exact human-authorized `gh pr merge <pr> --admin`
+   attempt; delegated epic policy does not authorize `--admin`.
    After `merge_allowed`, follow Protocol 95 Step 11 through merge, merge
    verification, branch deletion/pruning, `post-merge-cleanup.sh`, live tracker
-   verification, audit update, and rediscovery before treating that PR as
-   complete.
+   verification, audit update, rediscovery, and the continuation result before
+   treating that PR as complete.
    Treat merge authority explicitly: `merge_granted` makes readiness
    intermediate for in-scope child PRs; `merge_denied` stops at
    `ready_human_merge`; unexplained stalled-at-ready child PRs are
    `policy_inconsistent`; discovered unrelated PRs remain `out_of_scope`.
    When resuming an epic-scoped item after a human-checkpoint pause from a
-   prior worktree-isolated run, run the Protocol 95/91 checkpoint-resume
-   worktree preflight before any mutation. Re-entering the worktree is a CWD
-   safety check only; it does not satisfy, waive, or clear checkpoint state.
+   prior worktree-isolated run, run the Protocol 95/91 checkpoint-resume gate
+   before any mutation with complete item, branch, worktree, main-root, and
+   checkpoint-state context. Continue only on `RESULT=continue`; pending
+   checkpoints and unclear isolation are stops. Isolation verification does not
+   satisfy, waive, or clear checkpoint state, and a main-clone resume must not
+   re-enter the worktree itself.
    For substantial or multi-part mutating child work, commit immediately after
    each completed logical sub-part, do not intentionally batch all completed
    sub-parts into one end-of-run commit, and never commit incomplete, failing,

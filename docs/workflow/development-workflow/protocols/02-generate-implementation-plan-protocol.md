@@ -260,6 +260,53 @@ grep -rl "02-generate-implementation-plan-protocol\|03-implement-development-pro
 
 The tech-lead must explicitly include all applicable targets in the plan's "Files to modify" section rather than delegating discovery to the implementation agent.
 
+### Cross-cutting operational assumption check
+
+Treat this block as mandatory for every implementation plan. Its purpose is to
+prevent a plan from silently encoding an operational fact that another item or
+pull request is changing in the same workflow window.
+
+**Classification:** classify the check as applicable when the plan relies on a
+cross-cutting operational assumption that concurrent work could invalidate.
+Examples include environment targets, linked cloud projects, approved base
+branches, artifact ownership, selected product repositories, canonical
+configuration values, or similarly shared operational facts. Architecture
+choices, implementation preferences, and shared terminology are not sufficient
+by themselves; the evidence must concern the same operational assumption
+surface.
+
+When applicable, include a `Cross-Cutting Operational Assumption Check` section
+with the assumption value, authoritative source, verification time and repo
+revision, bounded current invocation / same-surface open PR scope, and result.
+The result must be `Verified`, `Conflict`, or `Resolved`. A conflict row must
+record competing evidence, affected plan statements, resolution status, and
+decision owner.
+
+Do not replace the bounded relevance check with an unbounded scan of every open
+pull request. If no applicable operational assumption exists, include a concise
+`Not applicable` rationale and do not scan every open PR. Shared keywords alone
+must not be classified as a conflict unless another item or PR changes the same
+operational assumption surface.
+
+When the bounded check finds a conflict or unverifiable source, return the
+evidence to the parent orchestrator. The parent records either `Resolved` with
+the authoritative interpretation and decision owner, or stops with
+`Human decision required` / `unclear_requirements` when available evidence is
+insufficient. Implementation must remain blocked until the plan records that
+resolution.
+
+The seven logical outcomes for this gate are:
+
+| Gate input | Allowed outcome | Required next action |
+| --- | --- | --- |
+| Applicable operational assumption and bounded evidence agrees | `Verified` | Record value, source, verification time, bounded scope, and result; continue planning |
+| Applicable assumption has conflicting or unverifiable evidence | `Conflict` | Record competing evidence and affected statements; return to the parent orchestrator |
+| Parent has sufficient authoritative evidence | `Resolved` | Record selected interpretation and decision owner; update the plan |
+| Parent lacks sufficient evidence | `Human decision required` | Stop with `unclear_requirements` and request a human decision |
+| No applicable operational assumption | `Not applicable` | Record concise rationale; do not scan every open PR |
+| Implementation-start source check matches plan record | `Still valid` | Record the current result and begin implementation |
+| Implementation-start source changed, conflicts, or cannot be verified | `Stale or conflicting` | Stop before file edits and return evidence to the parent orchestrator |
+
 ### Concurrent-event-source plans: async and concurrency safety
 
 Treat this block as conditional guidance. Apply it only when the plan introduces or modifies code with two or more concurrent event sources (e.g., real-time data listeners, network socket callbacks, timers or scheduled callbacks) that share mutable state.

@@ -17,6 +17,7 @@ The alias inherits `/run-item` preflight confirmation behavior, including
 `policyRecommendation.confirmationSummary` and the invocation-scoped
 `RUN_ITEM_POLICY_CONFIRMED` item/policy binding.
 
-It also inherits `/run-item` checkpoint-resume worktree preflight behavior: a
-checkpointed worktree-isolated run must re-enter the expected item worktree
-before mutation, and re-entry does not satisfy or waive checkpoint state.
+It also inherits `/run-item` checkpoint-resume gate behavior: a checkpointed
+worktree-isolated run must invoke the fail-closed gate with complete context
+before mutation. A main-clone resume stops instead of re-entering the worktree,
+and isolation verification does not satisfy or waive checkpoint state.

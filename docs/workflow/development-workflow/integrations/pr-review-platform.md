@@ -6,7 +6,8 @@ Platform-specific setup lives in each platform's own integration doc. See:
 
 - [`integrations/bugbot.md`](bugbot.md)
 - [`integrations/claude-code-action.md`](claude-code-action.md)
-- [`integrations/coderabbit.md`](coderabbit.md)
+- [`integrations/coderabbit.md`](coderabbit.md) for both `coderabbit` and
+  `coderabbit-cli`
 - [`integrations/greptile.md`](greptile.md)
 - [`integrations/devin.md`](devin.md)
 - [`integrations/haystack-triage.md`](haystack-triage.md)
@@ -61,6 +62,9 @@ Additional rules:
 - Suggestions are non-blocking regardless of platform
 - `needs_fixes` summaries should include the blocking reviewer tool identity
 - Unsupported configured platforms may be reported as `skipped` with a reason such as `unsupported-platform`
+- A configured platform that reports `skipped` is not evidence of a fresh clean
+  review. Treat the platform reason as availability evidence, for example
+  missing CLI, missing authentication, or rate limiting.
 - CI starts only after the aggregate reviewer result is `clean` or `skipped`
 
 ---
@@ -86,6 +90,10 @@ review:
     # and authenticated via `haystack setup`. No GitHub App required.
     # See integrations/haystack-triage.md for setup instructions.
       - haystack
+    # coderabbit-cli: CodeRabbit CLI reviewer. Requires `cr` or `coderabbit`
+    # installed and authenticated locally. No GitHub App required. Missing CLI
+    # or auth emits RESULT=skipped, not clean review evidence.
+    # - coderabbit-cli
 ```
 
 The helper script reads this file automatically when no `--platform` flag is
@@ -130,6 +138,8 @@ The script emits:
 - One aggregate `RESULT=...`
 - Ordered `PLATFORM_<n>_NAME` / `PLATFORM_<n>_RESULT` records
 - Platform-specific counts and blocking summaries for the platform that stopped the loop
+- Platform-specific `REASON=` / `DISPLAY_RESULT=` records for skipped or
+  escalated reviewer availability states when the platform emits them
 
 ---
 

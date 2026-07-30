@@ -145,6 +145,16 @@ Check:
 - Cross-cutting checklist completeness (when protocol `02-generate-implementation-plan-protocol.md` Step 3 cross-cutting checklist signals apply):
   - The plan's "Files to modify" section explicitly enumerates all applicable targets: the developer implementation protocol, all agent/skill guidance files for tech-lead and developer roles, `REVIEW.md`, and any Codex skill files that invoke the affected stage
   - The enumeration is not limited to the primary protocol file — no required target is missing
+- Cross-cutting operational assumption check:
+  - Every plan includes `Cross-Cutting Operational Assumption Check` with either applicable evidence or a concise `Not applicable` rationale.
+  - Applicable evidence records the assumption value, authoritative source,
+    verification time, bounded current invocation / same-surface open PR scope,
+    and result.
+  - `Conflict` evidence records competing same-surface evidence, affected plan
+    statements, resolution status, and decision owner; unresolved conflicts are
+    blocking before implementation.
+  - A not-applicable result does not perform or require a repository-wide open
+    PR scan, and shared keywords alone are not treated as conflict evidence.
 - Documentation updates are listed or intentionally declared unnecessary
 - Seed data, generated artifacts, and follow-up tasks are called out when applicable
 - The proposed approach matches existing architecture and repo patterns
@@ -198,12 +208,19 @@ Check:
 - Implementation matches the approved spec and plan (or the plan and work item brief for Refactor items), or any deviations are documented. All acceptance criteria addressed, no out-of-scope behaviour, no missing or extra behaviours.
 - CHANGELOG and workflow-specific artifacts are updated when required (spec/plan-only PRs are exempt; fixes to unreleased work update existing entries rather than adding new ones; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved by batch-merge auto-resolution per protocol 94 Step 4.3)
 - For implementation PRs, flag stale debug comments, newly introduced `TODO`/`FIXME` markers, review-marker comments, sibling/caller inconsistencies, or uncovered spec/plan/issue-body requirements that should have been caught by the Protocol 03 Pre-Submission Self-Review Pass.
+- For Full Pipeline and Refactor implementation PRs, verify the
+  Pre-Submission Self-Review Pass records implementation-start re-verification
+  of every applicable plan operational assumption as `Still valid`, or records
+  a prior parent/human resolution for changed evidence. Implementing after
+  `Stale or conflicting` evidence without a recorded resolution is blocking.
 
 Typical `blocking` issues:
 
 - Implementation diverges from the approved spec or plan in a way that changes observable behaviour
 - Missing acceptance criteria coverage
 - Stale markers, caller inconsistencies, or uncovered spec/plan/issue-body requirements remain in the PR after the pre-submission pass
+- Missing implementation-start operational-assumption re-verification for a
+  plan-backed implementation whose plan recorded applicable assumptions
 - CHANGELOG entry absent when required, or present when exempt (spec/plan PRs)
 
 ### Pass 2: Code Quality
@@ -354,6 +371,10 @@ Typical `important` issues:
 - Use the CodeRabbit CLI as an optional pre-push review tool for local changes.
 - In Claude Code: `/coderabbit:review`. Standalone: `cr` or `cr --agent`.
 - CodeRabbit CLI findings complement the pre-PR review gate but do not replace it.
+- When `coderabbit-cli` is configured as a Step 7 platform, require script
+  evidence from `pr-review-loop.sh`: `RESULT=clean` is fresh review evidence;
+  `RESULT=skipped` with unavailable, auth, timeout, invalid-output, or
+  rate-limit reasons is only availability evidence.
 - See [`docs/workflow/development-workflow/integrations/coderabbit.md`](docs/workflow/development-workflow/integrations/coderabbit.md) for setup and usage modes.
 
 ### Automated PR Reviewers

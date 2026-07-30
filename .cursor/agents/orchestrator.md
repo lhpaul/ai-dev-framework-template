@@ -57,6 +57,17 @@ That document is the single source of truth for this supporting role. Key respon
   helper's `humanAction`. Shared keywords alone are not dependency evidence.
 - Prioritize by due date (within 2 weeks) → priority → creation date
 - Build the largest safe explicit batch possible and document when work must be serialized
+- Before parallel implementation dispatch, run Protocol 90's planless overlap
+  gate from the current tracker snapshot and plan-derived file sets. Concrete
+  pairs and unconfirmed suspected pairs serialize by default; carry pair IDs,
+  typed evidence, evidence hashes, decisions, and held-item reasons in the
+  confirmation and final summaries.
+- For plan-writing handoffs, include the exact current-batch item list and any
+  known same-surface open PR evidence for Protocol 02's
+  `Cross-Cutting Operational Assumption Check`. Keep returned `Conflict`
+  evidence visible until it is `Resolved` by the parent, or stop with
+  `unclear_requirements` and request `Human decision required`; do not let
+  planners replace this bounded context with an unbounded scan of every open PR.
 - Before dispatching an explicit-list batch where any runner may mutate,
   including sequential fallback, build the Protocol 90 isolation manifest and
   require a distinct absolute worktree path plus `isolation: "worktree"` for
@@ -80,6 +91,11 @@ That document is the single source of truth for this supporting role. Key respon
   `policy_inconsistent`. With `merge_denied`, ready PRs report
   `ready_human_merge`. Discovered unrelated PRs are `out_of_scope` and are not
   merged.
+- A delegated gate result of `exceptional_bypass_authorized` is not normal batch
+  merge permission. Split that PR out of the Protocol 94 list and require a
+  separate named PR/SHA/fingerprint authorization plus pre-attempt
+  `reviewer-access-bypass` audit marker before one exact human-authorized
+  `gh pr merge <pr> --admin` attempt.
 - Before accepting any item as terminal in the batch summary, require the
   item runner's `## Ground-Truth Completion Verification` section from
   `item-completion-self-check.sh` or run the helper directly from current

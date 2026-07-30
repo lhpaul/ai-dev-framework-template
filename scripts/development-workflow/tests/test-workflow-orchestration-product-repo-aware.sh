@@ -342,6 +342,7 @@ ci_haystack_review_output="$(
 )"
 run_contains "ci_loop_ignores_configured_haystack_review_check" "RESULT=green" "$ci_haystack_review_output"
 run_contains "ci_loop_reports_ignored_reviewer_check" "REVIEWER_CHECKS=Haystack / Review" "$ci_haystack_review_output"
+run_contains "ci_loop_reports_structured_reviewer_check_json" 'REVIEWER_CHECKS_JSON=[{"name":"Haystack / Review","provider":"Haystack / Review","status":"COMPLETED","conclusion":"FAILURE"' "$ci_haystack_review_output"
 run_contains "ci_loop_counts_only_ci_checks" "TOTAL_CHECK_COUNT=1" "$ci_haystack_review_output"
 
 ci_custom_haystack_review_output="$(
@@ -356,6 +357,7 @@ ci_custom_haystack_review_output="$(
 )"
 run_contains "ci_loop_uses_custom_haystack_check_name" "RESULT=green" "$ci_custom_haystack_review_output"
 run_contains "ci_loop_reports_custom_reviewer_check" "REVIEWER_CHECKS=Custom Haystack Review" "$ci_custom_haystack_review_output"
+run_contains "ci_loop_structured_reviewer_check_uses_custom_name" '"name":"Custom Haystack Review"' "$ci_custom_haystack_review_output"
 
 run_fails_contains \
   "ci_loop_still_fails_real_ci_with_haystack_review_check" \

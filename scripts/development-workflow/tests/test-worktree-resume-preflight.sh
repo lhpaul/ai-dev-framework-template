@@ -80,14 +80,18 @@ run_test "already_in_expected_worktree_json" "continue" "$(printf '%s\n' "$out1"
 repo2="$(setup_repo main-clone-reentry)"
 wt2="$TMP_ROOT/worktree with spaces"
 make_worktree "$repo2" "$expected_branch" "$wt2"
-out2="$(cd "$repo2" && "$HELPER" --item 1174 --expected-branch "$expected_branch" --main-repo-root "$repo2")"
-run_test "main_clone_single_matching_worktree_returns_reentry" "reenter" "$(result_field "$out2" RESULT)"
+set +e
+out2="$(cd "$repo2" && "$HELPER" --item 1174 --expected-branch "$expected_branch" --expected-worktree "$wt2" --main-repo-root "$repo2")"
+out2_status=$?
+set -e
+run_test "main_clone_stops_before_mutation" "stop" "$(result_field "$out2" RESULT)"
+run_test "main_clone_stop_exit" "1" "$out2_status"
 run_test "worktree_path_with_spaces_is_preserved" "$(cd "$wt2" && pwd -P)" "$(result_field "$out2" TARGET_WORKTREE)"
 
 repo3="$(setup_repo missing-worktree)"
 run_fails_contains "main_clone_missing_worktree_stops_before_mutation" \
   "no registered worktree matches" \
-  bash -c "cd '$repo3' && '$HELPER' --item 1174 --expected-branch '$expected_branch' --main-repo-root '$repo3'"
+  bash -c "cd '$repo3' && '$HELPER' --item 1174 --expected-branch '$expected_branch' --expected-worktree '$TMP_ROOT/missing-wt' --main-repo-root '$repo3'"
 
 repo4="$(setup_repo expected-path-authoritative)"
 git -C "$repo4" checkout -q -b "$expected_branch"
@@ -125,7 +129,7 @@ repo8="$(setup_repo branch-lookalike)"
 make_worktree "$repo8" "implementation-plan/11740-worktree-cwd-restore-sendmessage" "$TMP_ROOT/wt8"
 run_fails_contains "branch_lookalikes_do_not_match" \
   "no registered worktree matches" \
-  bash -c "cd '$repo8' && '$HELPER' --item 1174 --expected-branch '$expected_branch' --main-repo-root '$repo8'"
+  bash -c "cd '$repo8' && '$HELPER' --item 1174 --expected-branch '$expected_branch' --expected-worktree '$TMP_ROOT/missing-branch-wt' --main-repo-root '$repo8'"
 
 mock_bin="$TMP_ROOT/bin"
 mkdir -p "$mock_bin"
@@ -144,7 +148,7 @@ branch refs/heads/develop
 worktree $TMP_ROOT/mock-one
 branch refs/heads/$expected_branch
 
-worktree $TMP_ROOT/mock-two
+worktree $TMP_ROOT/mock-one
 branch refs/heads/$expected_branch
 EOF
   exit 0
@@ -157,11 +161,11 @@ MOCK_GIT
 chmod +x "$mock_bin/git"
 run_fails_contains "ambiguous_matching_worktrees_stop_before_mutation" \
   "multiple registered worktrees match" \
-  bash -c "cd '$repo1' && PATH='$mock_bin':\$PATH WORKTREE_PREFLIGHT_MOCK_MODE=ambiguous '$HELPER' --item 1174 --expected-branch '$expected_branch' --main-repo-root '$repo1'"
+  bash -c "cd '$repo1' && PATH='$mock_bin':\$PATH WORKTREE_PREFLIGHT_MOCK_MODE=ambiguous '$HELPER' --item 1174 --expected-branch '$expected_branch' --expected-worktree '$TMP_ROOT/mock-one' --main-repo-root '$repo1'"
 repo10="$(setup_repo worktree-list-fail)"
 run_fails_contains "worktree_list_failure_stops_before_mutation" \
   "git worktree list failed" \
-  bash -c "cd '$repo10' && PATH='$mock_bin':\$PATH WORKTREE_PREFLIGHT_MOCK_MODE=list-fail '$HELPER' --item 1174 --expected-branch '$expected_branch' --main-repo-root '$repo10'"
+  bash -c "cd '$repo10' && PATH='$mock_bin':\$PATH WORKTREE_PREFLIGHT_MOCK_MODE=list-fail '$HELPER' --item 1174 --expected-branch '$expected_branch' --expected-worktree '$TMP_ROOT/missing-list-wt' --main-repo-root '$repo10'"
 
 printf '\nWorktree resume preflight tests: %s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 [ "$FAIL_COUNT" -eq 0 ]

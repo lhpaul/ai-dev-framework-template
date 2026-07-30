@@ -100,8 +100,10 @@ Before mutation, the recommender classifies per-item human checkpoints from
 read-only scope metadata (title, type, labels, tracker status). High-leverage
 signals default to checkpoints:
 
-- **Plan + technical**: database schema, migration, or persistent data-model
-  wording.
+- **Plan + technical**: explicit migration/schema labels, action-oriented title
+  intent, or migration-specific body phrases. Generic issue-body mentions of
+  `schema`, `database`, `SQL`, `persistent data`, or `data model` are not enough
+  by themselves.
 - **Spec + product**: unresolved product language, open questions, empty
   Acceptance Criteria sections, or placeholder-only acceptance criteria when
   the item is still in Backlog or spec stage. A populated Acceptance Criteria
@@ -127,11 +129,12 @@ The preflight summary must show checkpoint policy alongside autonomy policy so
 the human can accept, customize, or waive checkpoints before mutation. Two common
 examples:
 
-- **Plan-stage database/schema checkpoint**: an item titled "Add tenant billing
-  migrations" should recommend a `plan` / `technical` checkpoint with a required
-  action such as "approve the migration and rollback plan". A later
-  implementation PR remains blocked until that plan-stage checkpoint is
-  `satisfied` or `waived`.
+- **Plan-stage database/schema checkpoint**: an item with a
+  `database-migration` label, a title such as "Add tenant billing schema
+  column", or body text containing `ALTER TABLE` should recommend a `plan` /
+  `technical` checkpoint with a reason that names the exact matched label,
+  title phrase, or body phrase. A later implementation PR remains blocked until
+  that plan-stage checkpoint is `satisfied` or `waived`.
 - **Implementation-stage sensitive-change checkpoint**: an item touching auth,
   permissions, security-sensitive automation, or merge behavior should recommend
   an `implementation` / `technical` checkpoint with a required action such as
@@ -333,6 +336,37 @@ The output must also include the invocation policy:
 - Backlog-start policy.
 - Maximum allowed autonomous merge risk.
 
+The resolver output must include a `continuation` object so delegated runs can
+rediscover remaining work before closeout:
+
+- `outcome`: one of `continue`, `complete`, or `needs_resolution`.
+- `terminal`: boolean stop/continue signal for the current epic runner pass.
+- `nextAction`: non-empty machine-readable next action.
+- `remainingItems`: child item numbers that can continue now.
+- `affectedItems`: child item numbers that caused a stop condition.
+- `stopCondition`: `missing_tracker_context`, `unclear_requirements`, or `null`.
+- `humanAction`: specific human action text or `null`.
+
+Continuation classification uses this precedence:
+
+1. Any `in_review` item, non-Backlog `eligible` item, or Backlog `eligible`
+   item when `--may-start-backlog true` produces `outcome: "continue"` and
+   lists only those actionable children in `remainingItems`.
+2. If no child can continue and every non-empty child is `already_merged`, emit
+   `outcome: "complete"`.
+3. Empty native scope, ambiguous scope, or Backlog-only work without
+   Backlog-start authority emits `outcome: "needs_resolution"` with
+   `stopCondition: "missing_tracker_context"`.
+4. Blocked children emit `outcome: "needs_resolution"` with
+   `stopCondition: "unclear_requirements"` and `humanAction` naming the
+   dependency to resolve.
+
+In text mode, print stable keys for automation:
+`continuation.outcome`, `continuation.terminal`,
+`continuation.next_action`, `continuation.remaining_items`, and
+`continuation.affected_items`. Print `continuation.stop_condition` and
+`continuation.human_action` only when those values are non-null.
+
 ### Step 6a: Recommend Missing Autonomy Policy
 
 If any effective policy value was not explicitly supplied by the human, or if
@@ -352,9 +386,10 @@ Recommended defaults should favor the most automatic safe configuration:
 - `--max-risk medium` for workflow scripts, orchestration behavior, merge or
   cleanup automation, or shared workflow tooling when later
   `why_safe_to_merge` evidence can be produced.
-- Human-checkpoint recommendations per eligible item when metadata signals
-  schema/migration, product ambiguity, tradeoff ambiguity, or sensitive
-  implementation work (see **Human-checkpoint recommendations** above).
+- Human-checkpoint recommendations per eligible item when source-aware metadata
+  signals explicit schema/migration work, product ambiguity, tradeoff ambiguity,
+  or sensitive implementation work (see **Human-checkpoint recommendations**
+  above).
 - Never recommend `high` by default. High-risk work requires explicit human
   selection.
 
@@ -482,29 +517,29 @@ contract. Future `/run-epic` parallel dispatch should set `isolation: worktree`
 handing off to each agent, making the pre-branch guard redundant for parallel
 runs while keeping it as a backstop for single-checkout fallback.
 
-**Checkpoint-resume worktree preflight**: When an epic-scoped item resumes
+**Checkpoint-resume gate**: When an epic-scoped item resumes
 after a human-checkpoint pause and the prior run used a dedicated item
-worktree, run Protocol 91's checkpoint-resume preflight before any mutation in
+worktree, run Protocol 91's checkpoint-resume gate before any mutation in
 the resumed session:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-./scripts/development-workflow/worktree-resume-preflight.sh \
+./scripts/development-workflow/checkpoint-resume-gate.sh \
   --item <item-id> \
   --expected-branch <branch-prefix>/<slug> \
-  --expected-worktree <worktree-path-if-known> \
+  --expected-worktree <worktree-path> \
   --main-repo-root <main-repo-root> \
+  --checkpoint-state <pending|satisfied|waived> \
   --json
 ```
 
-`RESULT=continue` means the session is already inside the expected worktree.
-`RESULT=reenter` means the runner must `cd "$TARGET_WORKTREE"` and verify the
-branch before continuing, including a one-shot
-`worktree-cwd-guard.sh --check-cwd "$TARGET_WORKTREE" "$MAIN_REPO_ROOT"` check.
-`RESULT=stop` means the run must stop before mutation and report the item,
+`RESULT=continue` means the session is already inside the expected worktree and
+the checkpoint is satisfied or waived. `RESULT=checkpoint_pending` stops for a
+human decision. `RESULT=stop` means the run must stop before mutation and report the item,
 expected branch, expected worktree when known, observed directory, observed
-branch when available, failure reason, and human recovery action. The helper is
-read-only and never satisfies, waives, clears, or changes checkpoint state;
-checkpoint lifecycle still requires explicit satisfaction or waiver evidence.
+branch when available, failure reason, and human recovery action. A stopped
+main-clone session must be replaced with a fresh fully isolated runner; it must
+not re-enter a worktree itself. Isolation verification never changes checkpoint state.
 
 When resuming an interrupted mutating child run, inspect the child branch
 history, local worktree commits, and uncommitted edits before mutation. Prefer
@@ -610,11 +645,16 @@ Before merge:
     resumed through `/graduate-development <slug>`.
 13. Run `run-epic-delegated-gate.sh` against the assembled evidence.
 
-Proceed to the repository merge protocol only when the delegated gate reports
-`merge_allowed`. If the gate reports `fix_required`, remove readiness labels,
-fix, rerun validation/reviewer/CI, and return to Step 8. If it reports
-`human_required`, stop for human authority, setup, or risk tolerance. If it
-reports `blocked`, stop until required state is available.
+Proceed to the normal repository merge protocol only when the delegated gate
+reports `merge_allowed`. If the gate reports `exceptional_bypass_authorized`,
+execute only the named human-authorized `gh pr merge <pr> --admin` attempt after
+verifying the current PR/SHA/fingerprint authorization and pre-attempt
+`reviewer-access-bypass` audit record, then verify live PR state and update that
+same audit record with the result. If the gate reports `fix_required`, remove
+readiness labels, fix, rerun validation/reviewer/CI, and return to Step 8. If it
+reports `human_required`, stop for human authority, setup, access remediation,
+or risk tolerance. If it reports `blocked`, stop until required state is
+available.
 
 If an in-scope child PR stops at readiness during a merge-granted run without a
 named blocker from this step, report `policy_inconsistent` in the PR
@@ -670,7 +710,11 @@ When all gates permit merge:
       re-apply also fails.
 
 6. Update the epic ledger.
-7. Rerun scope resolution so newly unblocked items can advance.
+7. Rerun scope resolution so newly unblocked items can advance, then inspect
+   the returned `continuation` object before closeout. Continue delegated
+   execution when `continuation.outcome` is `continue`; stop with the named
+   `stopCondition` and `humanAction` when it is `needs_resolution`; only treat
+   the epic as ready for closeout when it is `complete`.
 
 After the final native child item reaches a terminal state, verify live native
 sub-issues and Project statuses before closing the parent epic or marking it

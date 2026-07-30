@@ -25,6 +25,10 @@ Key responsibilities:
   do not block because it is absent from the hub repository.
 - Group items as `eligible`, `blocked`, `already_merged`, `in_review`,
   `ambiguous`, or `out_of_scope`.
+- Read the resolver's `continuation` object after initial scope resolution and
+  every later rediscovery. `continue` advances the named `remainingItems`;
+  `needs_resolution` stops with the named `stopCondition` / `humanAction`;
+  `complete` is the only closeout-ready outcome.
 - Keep the resolver phase read-only: no tracker updates, branches, PRs, merges,
   issue closure, or cleanup during scope resolution.
 - When autonomy policy is missing or ambiguous, run the read-only policy
@@ -37,8 +41,10 @@ Key responsibilities:
   artifacts, wrong-base PRs, or scan failures unless an explicit split is
   approved and recorded.
 - On checkpoint resume from a prior worktree-isolated item run, perform the
-  Protocol 95/91 worktree-resume preflight before mutation. Re-entry does not
-  satisfy or waive checkpoint state.
+  Protocol 95/91 fail-closed checkpoint-resume gate before mutation with
+  complete item, branch, worktree, main-root, and checkpoint-state context.
+  Pending checkpoints and unclear isolation stop; the gate never satisfies or
+  waives checkpoint state, and main-clone resumes must not change directories.
 - Before any later delegated merge decision, run the PR risk classifier and
   respect its `--max-risk` gate.
 - After delegated review, fix, merge, block, or escalation decisions, update
@@ -46,9 +52,13 @@ Key responsibilities:
   recommended, selected, and effective policy plus checkpoint state.
 - Before merge, run the delegated gate with current scope, policy, reviewer,
   CI, risk, and audit evidence. Merge only when it reports `merge_allowed`.
+- If the gate reports `exceptional_bypass_authorized`, require the separate
+  named PR/SHA/fingerprint authorization and pre-attempt
+  `reviewer-access-bypass` audit marker before one exact human-authorized
+  `gh pr merge <pr> --admin` attempt; delegated epic policy is not enough.
 - After `merge_allowed`, continue through Protocol 95 Step 11: merge, merge
   verification, branch deletion/pruning, `post-merge-cleanup.sh`, live tracker
-  verification, audit update, and rediscovery.
+  verification, audit update, rediscovery, and continuation inspection.
 - Treat merge authority explicitly: `merge_granted` makes readiness
   intermediate for in-scope child PRs; `merge_denied` stops at
   `ready_human_merge`; unexplained stalled-at-ready child PRs are

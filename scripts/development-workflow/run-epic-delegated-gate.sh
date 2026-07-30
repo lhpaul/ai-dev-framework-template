@@ -114,6 +114,34 @@ fi
 effective_root="${repo_root:-$(workflow_repo_root)}"
 state_json="$(workflow_merge_ci_policy_into_json "$state_json" "$effective_root" "$product_repo")"
 
+material_evidence_json="$(printf '%s\n' "$state_json" | jq -cS '
+  def reviewer_checks:
+    if ((.reviewerChecks // null) | type) == "array" then .reviewerChecks
+    elif ((.reviewer_checks // null) | type) == "array" then .reviewer_checks
+    elif ((.reviewerChecksJson // null) | type) == "string" then ((try (.reviewerChecksJson | fromjson) catch []) // [])
+    elif ((.reviewer_checks_json // null) | type) == "string" then ((try (.reviewer_checks_json | fromjson) catch []) // [])
+    elif ((.ci.reviewerChecksJson // null) | type) == "string" then ((try (.ci.reviewerChecksJson | fromjson) catch []) // [])
+    elif ((.ci.reviewer_checks_json // null) | type) == "string" then ((try (.ci.reviewer_checks_json | fromjson) catch []) // [])
+    else [] end;
+  {
+    pr: {
+      number: (.pr.number // null),
+      repository: (.repository // .repo // ""),
+      headSha: (.pr.headSha // .pr.head_sha // .pr.headRefOid // "")
+    },
+    ci: (.statusChecks // []),
+    reviewer: {
+      status: (.reviewer.status // ""),
+      reason: (.reviewer.reason // ""),
+      blockingCount: (.reviewer.blockingCount // .reviewer.blocking_count // 0)
+    },
+    reviewerChecks: reviewer_checks,
+    accessRestriction: (.accessRestriction // .access_restriction // {})
+  }
+' 2>/dev/null)" || error_exit "failed to assemble material evidence fingerprint input"
+material_fingerprint="$(printf '%s' "$material_evidence_json" | openssl dgst -sha256 -r | awk '{print $1}')"
+state_json="$(printf '%s\n' "$state_json" | jq --arg fp "sha256:${material_fingerprint}" '.computedEvidenceFingerprint = $fp' 2>/dev/null)" || error_exit "failed to attach material evidence fingerprint"
+
 decision_json="$(printf '%s\n' "$state_json" | jq '
   def policy: if (.policy | type) == "object" then .policy else {} end;
   def ci_policy: (.ciPolicy // .ci_policy // "required");
@@ -179,8 +207,117 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     elif (.risk // {}) | has("merge_permitted") then .risk.merge_permitted
     else false
     end;
+  def reviewer_checks:
+    if ((.reviewerChecks // null) | type) == "array" then .reviewerChecks
+    elif ((.reviewer_checks // null) | type) == "array" then .reviewer_checks
+    elif ((.reviewerChecksJson // null) | type) == "string" then ((try (.reviewerChecksJson | fromjson) catch []) // [])
+    elif ((.reviewer_checks_json // null) | type) == "string" then ((try (.reviewer_checks_json | fromjson) catch []) // [])
+    elif ((.ci.reviewerChecksJson // null) | type) == "string" then ((try (.ci.reviewerChecksJson | fromjson) catch []) // [])
+    elif ((.ci.reviewer_checks_json // null) | type) == "string" then ((try (.ci.reviewer_checks_json | fromjson) catch []) // [])
+    else [] end;
+  def reviewer_check_name($check):
+    ($check.name // $check.context // $check.workflowName // $check.provider // "unknown");
+  def reviewer_check_non_green($check):
+    (($check.conclusion // "") | ascii_downcase) as $conclusion |
+    (($check.status // "") | ascii_downcase) as $status |
+    (($check.state // "") | ascii_downcase) as $state |
+    if ($state | length) > 0 and ($status | length) == 0 then
+      ($state != "success")
+    elif ($status | length) > 0 then
+      ($status != "completed") or (($conclusion | IN("success", "skipped", "neutral")) | not)
+    else
+      ($conclusion | length) > 0 and (($conclusion | IN("success", "skipped", "neutral")) | not)
+    end;
+  def non_green_reviewer_checks:
+    reviewer_checks | map(select(reviewer_check_non_green(.)));
+  def reviewer_check_names:
+    reviewer_checks | map(reviewer_check_name(.));
+  def ci_status_checks:
+    (reviewer_check_names) as $reviewerNames |
+    (.statusChecks // [])
+    | map(. as $check | select(($reviewerNames | index(reviewer_check_name($check)) | not)));
+  def current_ci_blocker:
+    if ci_policy == "none" then
+      false
+    else
+      ci_status_checks
+      | any(.[]?; (success_check | not))
+    end;
+  def pr_mergeable_ok:
+    (.pr.mergeable // .pr.mergeableState // null) as $mergeable |
+    if $mergeable == null then true
+    else (($mergeable | tostring | ascii_downcase) | IN("mergeable", "true"))
+    end;
+  def access_obj: (.accessRestriction // .access_restriction // {});
+  def access_obj_present:
+    (access_obj | type) == "object" and ((access_obj | length) > 0);
+  def access_denial_reason:
+    (access_obj.reason // access_obj.providerReason // .reviewer.reason // "")
+    | tostring
+    | ascii_downcase;
+  def access_denial_evidence:
+    (access_obj.evidence // access_obj.source // "")
+    | tostring
+    | ascii_downcase;
+  def access_denial_verified:
+    (
+      (access_denial_reason | test("^(forbidden|unauthorized|access[_ -]?restricted|http[ _-]?403|403)$"))
+      or
+      (access_denial_evidence | test("http[[:space:]]*403|\\b403\\b[[:space:]:-]*(forbidden|resource not accessible)|resource not accessible by integration|permission denied|access denied|access[_ -]?restricted|unauthorized"))
+    );
+  def remediation_ready:
+    (access_obj.remediationAttempted // access_obj.remediation_attempted // false) == true
+    and (access_obj.cannotUnblockInTime // access_obj.cannot_unblock_in_time // false) == true
+    and ((access_obj.bypassReason // access_obj.bypass_reason // "") | tostring | length) > 0;
+  def authorization: (.authorization // .reviewerAccessAuthorization // .reviewer_access_authorization // {});
+  def bypass_audit: (.bypassAudit // .bypass_audit // {});
+  def reviewer_blocks:
+    ((.reviewer.blockingCount // .reviewer.blocking_count // 0) | tonumber) > 0
+    or ((.reviewer.status // "") | test("needs_fixes|failed|blocked"));
+  def reviewer_access_classification:
+    (non_green_reviewer_checks) as $blockedChecks |
+    (.computedEvidenceFingerprint // "") as $fingerprint |
+    if current_ci_blocker then "ci_blocker"
+    elif reviewer_blocks then "review_blocker"
+    elif (($blockedChecks | length) == 0) and access_obj_present then "insufficient_evidence"
+    elif (($blockedChecks | length) == 0) then "not_applicable"
+    elif (access_denial_verified | not) then "insufficient_evidence"
+    elif (remediation_ready | not) then "access_restricted"
+    elif ((authorization.pullRequest // authorization.pull_request // null) == null) then "authorization_required"
+    elif (((authorization.pullRequest // authorization.pull_request) | tostring) != ((.pr.number // "") | tostring)
+       or ((authorization.headSha // authorization.head_sha // "") != (.pr.headSha // .pr.head_sha // .pr.headRefOid // ""))
+       or ((authorization.evidenceFingerprint // authorization.evidence_fingerprint // "") != $fingerprint)) then "authorization_stale"
+    elif ((bypass_audit.present // false) != true
+       or ((bypass_audit.evidenceFingerprint // bypass_audit.evidence_fingerprint // "") != $fingerprint)
+       or ((bypass_audit.state // "") != "authorized_pending_attempt")) then "audit_required"
+    else "exceptional_bypass_authorized" end;
+  def reviewer_access_summary($classification):
+    {
+      classification: $classification,
+      pullRequest: (.pr.number // null),
+      headSha: (.pr.headSha // .pr.head_sha // .pr.headRefOid // ""),
+      evidenceFingerprint: (.computedEvidenceFingerprint // ""),
+      blockedReviewerChecks: (non_green_reviewer_checks | map(reviewer_check_name(.))),
+      primaryAction: (
+        if $classification == "access_restricted" then "restore repository or organization App access and rerun reviewer evidence"
+        elif $classification == "authorization_required" then "obtain fresh named human authorization for the exact PR, head SHA, and evidence fingerprint"
+        elif $classification == "authorization_stale" then "refresh evidence and obtain a new named authorization"
+        elif $classification == "audit_required" then "write and verify the pre-attempt reviewer access-bypass audit record"
+        elif $classification == "exceptional_bypass_authorized" then "execute exactly the named gh pr merge --admin action once, then verify and update audit"
+        elif $classification == "insufficient_evidence" then "refresh reviewer check and provider access-denial evidence"
+        elif $classification == "ci_blocker" then "fix or complete CI before considering reviewer access restriction"
+        elif $classification == "review_blocker" then "fix reviewer findings before considering reviewer access restriction"
+        else "not applicable" end
+      ),
+      proposedAction: (if $classification == "exceptional_bypass_authorized" then "gh pr merge " + ((.pr.number // "") | tostring) + " --admin" else "" end)
+    };
   def add_reason($reasons; $reason): $reasons + [$reason];
   def reason_count($reasons): $reasons | length;
+  def exceptional_bypass_preconditions($reasons; $classification):
+    $classification == "exceptional_bypass_authorized"
+    and pr_mergeable_ok
+    and (($reasons | length) > 0)
+    and ($reasons | all(. == "PR merge state is not CLEAN"));
 
   . as $state |
   [] as $reasons |
@@ -218,18 +355,21 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   (if has_label("human-checkpoint-required") and (($pendingCheckpoints | length) == 0)
    then add_reason($reasons; "human_checkpoint_required: human-checkpoint-required label is present; record satisfied or waived checkpoint evidence and remove the label before delegated merge")
    else $reasons end) as $reasons |
-  (if (ci_policy == "none")
-   then $reasons
-   elif ((.statusChecks // []) | length) == 0
-   then add_reason($reasons; "required CI state is missing")
-   else $reasons end) as $reasons |
-  (if (ci_policy == "none")
-   then $reasons
-   elif ((.statusChecks // []) | map(select(success_check | not)) | length) > 0
-   then add_reason($reasons; "one or more required CI checks are not successful")
-   else $reasons end) as $reasons |
+	  (if (ci_policy == "none")
+	   then $reasons
+	   elif (ci_status_checks | length) == 0
+	   then add_reason($reasons; "required CI state is missing")
+	   else $reasons end) as $reasons |
+	  (if (ci_policy == "none")
+	   then $reasons
+	   elif ((ci_status_checks | map(select(success_check | not)) | length) > 0)
+	   then add_reason($reasons; "one or more required CI checks are not successful")
+	   else $reasons end) as $reasons |
   (if (.pr.mergeStateStatus // "") != "CLEAN"
    then add_reason($reasons; "PR merge state is not CLEAN")
+   else $reasons end) as $reasons |
+  (if (pr_mergeable_ok | not)
+   then add_reason($reasons; "PR is not mergeable")
    else $reasons end) as $reasons |
   (if ((.pr.unresolvedBlockingThreads // 0) | tonumber) > 0
    then add_reason($reasons; "unresolved blocking review threads remain")
@@ -248,19 +388,30 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   (if (.pr.auditDispositionPresent // false) != true
    then add_reason($reasons; "PR disposition audit is missing")
    else $reasons end) as $reasons |
+  reviewer_access_classification as $reviewerAccessClassification |
+  reviewer_access_summary($reviewerAccessClassification) as $reviewerAccess |
+  (exceptional_bypass_preconditions($reasons; $reviewerAccessClassification)) as $exceptionalBypassPermitted |
   (reason_count($reasons)) as $count |
   {
     decision: (
-      if $count == 0 then "merge_allowed"
+      if $exceptionalBypassPermitted then "exceptional_bypass_authorized"
+      elif $reviewerAccessClassification == "ci_blocker" or $reviewerAccessClassification == "review_blocker" then "fix_required"
+      elif $reviewerAccessClassification == "insufficient_evidence" then "blocked"
+      elif ($reviewerAccessClassification | IN("access_restricted", "authorization_required", "authorization_stale", "audit_required")) then "human_required"
+      elif $count == 0 then "merge_allowed"
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "fix_required"
       elif ($reasons | any(test("authority|risk gate|needs-setup|not in the resolved|Backlog|human_checkpoint_required|human-checkpoint|graduation_approval_required"))) then "human_required"
       else "blocked"
       end
     ),
-    mergePermitted: ($count == 0),
+    mergePermitted: ($count == 0 and ($reviewerAccessClassification | IN("not_applicable", "exceptional_bypass_authorized"))),
+    exceptionalAdminMergePermitted: $exceptionalBypassPermitted,
     reasons: $reasons,
+    reviewerAccess: $reviewerAccess,
     nextAction: (
-      if $count == 0 then "record merge evidence and use the repository merge protocol"
+      if $exceptionalBypassPermitted then "execute exactly the named admin merge once, then verify merge state, cleanup, tracker reconciliation, and audit update"
+      elif ($reviewerAccessClassification | IN("access_restricted", "authorization_required", "authorization_stale", "audit_required", "insufficient_evidence")) then $reviewerAccess.primaryAction
+      elif $count == 0 then "record merge evidence and use the repository merge protocol"
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "remove readiness labels, fix, rerun validation, reviewer loop, CI loop, and this gate"
       elif ($reasons | any(test("human_checkpoint_required|human-checkpoint"))) then "stop for the named human checkpoint action, record satisfied or waived evidence, sync labels, and rerun this gate"
       elif ($reasons | any(test("graduation_approval_required"))) then "stop for explicit graduation approval via /graduate-development before mutating"
@@ -303,6 +454,9 @@ fi
 printf 'Run Epic Delegated Gate\n'
 printf 'Decision: %s\n' "$(printf '%s\n' "$decision_json" | jq -r '.decision')"
 printf 'Merge permitted: %s\n' "$(printf '%s\n' "$decision_json" | jq -r '.mergePermitted')"
+printf 'Exceptional admin merge permitted: %s\n' "$(printf '%s\n' "$decision_json" | jq -r '.exceptionalAdminMergePermitted')"
+printf 'Reviewer access classification: %s\n' "$(printf '%s\n' "$decision_json" | jq -r '.reviewerAccess.classification')"
+printf 'Reviewer access proposed action: %s\n' "$(printf '%s\n' "$decision_json" | jq -r '.reviewerAccess.proposedAction')"
 printf 'Next action: %s\n' "$(printf '%s\n' "$decision_json" | jq -r '.nextAction')"
 printf 'Read-only: %s\n' "$(printf '%s\n' "$decision_json" | jq -r '.readOnlyGuarantee')"
 printf 'Reasons:\n'

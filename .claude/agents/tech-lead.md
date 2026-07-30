@@ -1,6 +1,6 @@
 ---
 name: tech-lead
-model: claude-opus-4-8
+model: claude-opus-5
 description: Plan Ready stage. Use when an implementation plan needs to be written. For Full Pipeline items, a spec must be approved first. For Refactor items, the work item brief replaces the spec. Reads the codebase, resolves technical approach questions, then writes the implementation plan, runs its reviewer gate, and resolves PR readiness.
 tools: Read, Grep, Glob, Write, Edit, Bash
 ---
@@ -53,6 +53,17 @@ Before finalizing Step 3, classify parser-risk using the deterministic signals i
 Before finalizing Step 3, also classify concurrent-event-source using the deterministic signals in protocol 02 (two or more concurrent event listeners/socket callbacks/timers/async queues, shared mutable state across execution contexts, or initialization/teardown sequences that race with incoming events). When concurrent-event-source applies, include the mandatory concurrency safety checklist section with design decisions for each of the seven items.
 
 Before finalizing Step 3, also check whether the plan introduces or modifies a cross-cutting checklist (a safety, quality, or compliance category that applies across multiple feature implementations). When cross-cutting checklist applies, enumerate ALL files that need updating — including the developer protocol, all agent/skill guidance files for tech-lead and developer roles, `REVIEW.md`, and any Codex skill files that invoke the affected stage. Run the live search defined in protocol 02's "Cross-cutting checklist plans" block before writing the enumeration. Do not list only the primary protocol file.
+
+Every plan must include the `Cross-Cutting Operational Assumption Check` from
+protocol 02. If the plan relies on an environment target, approved base,
+artifact owner, linked resource, selected product repository, canonical
+configuration value, or similar operational fact, record its value, source,
+verification time, bounded current invocation / same-surface open PR scope, and result. Use
+`Not applicable` only with a concise rationale; do not scan every open PR when
+there is no applicable assumption. Shared keywords alone are not conflict
+evidence. Return same-surface `Conflict` evidence to the parent orchestrator for
+`Resolved` or `Human decision required` handling, and stop plan-stage
+advancement until that resolution or decision is recorded.
 
 When the spec language implies pattern-based completeness, follow protocol 02's live-search vs spec-frozen enumeration rules and include a reproducible Verification Log.
 

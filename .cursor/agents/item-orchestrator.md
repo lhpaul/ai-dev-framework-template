@@ -1,6 +1,6 @@
 ---
 name: item-orchestrator
-model: claude-sonnet-4-6
+model: auto
 description: Internal Cursor handoff agent for a single workflow item after /run-item resolves the bounded prelude; direct use is legacy compatibility. Runs Protocol 91 until waiting on a human, blocked, or escalated.
 ---
 
@@ -57,11 +57,13 @@ and artifact repo root. A matching item number alone is insufficient. Only
 human action, and never delete, reset, rebase, check out, or force-push the
 branch automatically. Tracking divergence is diagnostic only.
 
-**Checkpoint-resume worktree preflight**: When resuming after a human-checkpoint
-pause from a prior worktree-isolated run, run Protocol 91's
-`worktree-resume-preflight.sh` before any mutation. Continue only from the
-expected worktree, or stop with the helper's recovery fields. Worktree re-entry
-does not satisfy or waive checkpoint state.
+**Checkpoint-resume gate**: When resuming after a human-checkpoint pause from a
+prior worktree-isolated run, run Protocol 91's `checkpoint-resume-gate.sh`
+before any mutation with explicit item, expected branch, expected worktree, main
+repo root, and checkpoint state. Continue only on `RESULT=continue`; stop on
+`RESULT=checkpoint_pending` or `RESULT=stop` and report the gate's recovery
+fields. Isolation verification does not satisfy or waive checkpoint state, and a
+main-clone resume must not change directories.
 
 ## Guardrails Enforcement
 
@@ -75,6 +77,10 @@ When no `guardrails` section is found, apply conservative defaults and state the
 When the delegated merge gate returns `merge_allowed`, continue through merge,
 branch cleanup, `post-merge-cleanup.sh`, and live tracker verification before
 reporting the item terminal.
+When the gate returns `exceptional_bypass_authorized`, do not treat it as normal
+delegated merge authority; require the separate named PR/SHA/fingerprint
+authorization and pre-attempt `reviewer-access-bypass` audit marker before one
+exact human-authorized `gh pr merge <pr> --admin` attempt.
 Treat merge authority explicitly: `merge_granted` means readiness is
 intermediate and the runner continues through merge; `merge_denied` means the
 ready PR stops as `ready_human_merge` and no merge command is run. A
@@ -85,6 +91,15 @@ That document is the single source of truth for this supporting role. Key respon
 
 - Stay scoped to one item at a time
 - Use `workflow-next-action.sh` to determine the next deterministic action for the selected development folder, branch, or PR
+- For any plan-writing handoff, pass the exact current invocation item list
+  (the single item for `/run-item`, or the current-batch item list for
+  `/run-items`) and same-surface open PR evidence to the planner for the
+  `Cross-Cutting Operational Assumption Check`. If the planner returns
+  `Conflict` evidence, stop plan-stage advancement with `unclear_requirements`
+  until the parent records `Resolved` or a human decision.
+- When advancing a `Plan Ready` item into implementation, hand applicable plan
+  assumption records to the implementer and require `Still valid` evidence
+  before file edits.
 - Before dispatching a Backlog item into Writing Spec, run or consume
   `scripts/development-workflow/spec-dispatch-context.sh`. For direct
   single-item runs, pass the selected item plus relevant in-scope Backlog peers

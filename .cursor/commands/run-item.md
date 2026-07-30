@@ -43,8 +43,11 @@ Key responsibilities:
 - Pending checkpoints, guardrail stops, review/CI failures, risk violations, and
   missing permissions still stop the run.
 - When resuming after a human-checkpoint pause from a prior worktree-isolated
-  run, perform Protocol 91's checkpoint-resume worktree preflight before any
-  mutation. Worktree re-entry does not satisfy or waive checkpoint state.
+  run, invoke Protocol 91's fail-closed checkpoint-resume gate before any
+  mutation with item, expected branch, expected worktree, main repo root, and
+  checkpoint state. Continue only on `RESULT=continue`; pending checkpoints and
+  unclear isolation stop. The gate never satisfies or waives checkpoint state,
+  and main-clone resumes must not change directories.
 - Resolve the request to exactly one non-epic workflow item
 - Use helper scripts in `scripts/development-workflow/` for next-action classification
 - After candidate discovery and the nested-artifact guard, require a
@@ -58,6 +61,10 @@ Key responsibilities:
   `merge_allowed`, continue through merge, branch cleanup,
   `post-merge-cleanup.sh`, and live tracker verification before reporting
   terminal
+- If the merge gate returns `exceptional_bypass_authorized`, require the
+  separate named PR/SHA/fingerprint authorization and pre-attempt
+  `reviewer-access-bypass` audit marker before one exact human-authorized
+  `gh pr merge <pr> --admin` attempt; delegated merge authority is not enough
 - Treat merge authority explicitly: `merge_granted` means readiness is
   intermediate and the runner continues through merge; `merge_denied` means the
   ready PR stops as `ready_human_merge` and no merge command is run. Stopping

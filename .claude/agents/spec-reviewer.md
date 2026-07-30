@@ -1,6 +1,6 @@
 ---
 name: spec-reviewer
-model: claude-sonnet-4-6
+model: claude-sonnet-5
 description: Spec review stage. Use when a spec branch or PR needs review for completeness, clarity, and testability. Applies fixes directly where possible, can push reviewer-loop fixes, and reports issues requiring human input.
 tools: Read, Grep, Glob, Write, Edit, Bash
 ---

@@ -134,6 +134,19 @@ Nested or spawned agents must pass that base to
 PR creation. If the base is ambiguous, stop before dispatch rather than letting
 a child agent infer a PR target.
 
+For any item entering the plan-writing stage, also include the exact
+current-batch item list and any known same-surface open PR evidence in the
+handoff. This context is bounded evidence for the plan's
+`Cross-Cutting Operational Assumption Check`; it does not authorize mutations
+outside the explicit list and it must not become an unbounded scan of every open
+PR. "Same-surface" means an open PR whose changed workflow surface plausibly
+affects the same operational assumption; shared issue keywords alone are not
+same-surface evidence. If a planner returns `Conflict` evidence, keep the
+conflict visible in the parent summary until it is resolved. Record `Resolved`
+with the authoritative interpretation and decision owner when evidence is
+sufficient, or stop with `unclear_requirements` and request a human decision
+when it is not.
+
 The Portfolio Orchestrator also owns parent-visible fork enumeration. For each
 dispatched item with a positive numeric issue number, run the nested artifact
 guard in `audit` mode before child dispatch and again after the child returns
@@ -539,6 +552,7 @@ After building the initial candidate list from the eligibility table above and a
 
 1. **Guard — skip if issue number is invalid**: Before running the branch and PR checks, verify that `ISSUE_NUMBER` is a non-empty positive integer. An empty or non-numeric value would cause `git ls-remote` to search for patterns like `refs/heads/feature/-*` or `refs/heads/feature/abc-*`, potentially matching unintended branches. GitHub issue numbers are always positive integers, so a non-integer value indicates a data problem in the candidate list:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    if ! echo "${ISSUE_NUMBER:-}" | grep -qE '^[1-9][0-9]*$'; then
      echo "WARNING: invalid ISSUE_NUMBER '${ISSUE_NUMBER:-}' for candidate item — skipping stale detection."
@@ -548,6 +562,7 @@ After building the initial candidate list from the eligibility table above and a
 
 2. **Check for an existing implementation branch or open PR** (fail-open: skip stale correction if either check is unreliable):
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    # Only check implementation-stage branches (feature/fix/refactor/hotfix).
    # spec/* and implementation-plan/* branches persist on the remote after merge
@@ -589,12 +604,13 @@ After building the initial candidate list from the eligibility table above and a
 3. **If both checks return zero** (no branch, no PR): the "In Development" status is stale (BR-5). Apply the correction:
    - Log a `STALE_STATUS_CORRECTION:` line to the run output (BR-10, AC-10):
 
-     ```text
+     ~~~text
      STALE_STATUS_CORRECTION: issue #<N> tracker shows 'In Development' but no branch or PR found. Correcting to 'Plan Ready'.
-     ```
+     ~~~
 
    - Update the tracker status to `Plan Ready` using `update_tracker_status_best_effort` (BR-6):
 
+     <!-- workflow-shell-contract: bash-zsh -->
      ```bash
      update_tracker_status_best_effort "$ISSUE_NUMBER" "Plan Ready"
      ```
@@ -625,6 +641,7 @@ For each item that passed the Step 2 eligibility check:
 
 1. **Ensure the item is on the project board**: check whether the item already exists in the configured project board. If it is missing, add it. Log the result (`already present` / `added to board`). Use `ensure_on_project_board` from `scripts/development-workflow/workflow-lib.sh`:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    # Source workflow-lib.sh to get ensure_on_project_board
    # shellcheck source=scripts/development-workflow/workflow-lib.sh
@@ -647,11 +664,11 @@ For each item that passed the Step 2 eligibility check:
 
 3. **Log each result** for transparency:
 
-   ```text
+   ~~~text
    ✅ #N [slug]: already on board; status Writing Plan → no change (already in-flight)
    ✅ #M [slug]: added to board; status Plan Ready → In Development
    ✅ #K [slug]: already on board; status Backlog → Writing Plan
-   ```
+   ~~~
 
 4. **Tracker unavailability**: if the tracker API is unreachable, log a warning and continue without blocking the batch — matching the "warn and fall back" pattern established in Steps 1a–1c.
 
@@ -684,7 +701,7 @@ After each Work Item Runner returns, the orchestrator must scan the runner's
 complete output for `TRACKER_ACTION_REQUIRED=` and `TRACKER_UPDATE_REQUIRED:`
 signals and apply each one via Linear MCP before proceeding to the next item:
 
-```
+~~~
 for each line in Work Item Runner output:
   case line:
     "TRACKER_ACTION_REQUIRED=set_status issue=<id> target_status=<status>":
@@ -700,7 +717,7 @@ for each line in Work Item Runner output:
     "TRACKER_UPDATE_REQUIRED: set issue #<N> status to \"<status>\"":
       call Linear MCP updateIssue(id=<N>, status=<status>)
       # Priority drift detection applies here too — see linear.md.
-```
+~~~
 
 After each `updateIssue` call, perform a post-write re-read to confirm the
 status write was reflected. If the returned status does not match the target,
@@ -711,9 +728,9 @@ retry rules.
 
 A deferred action that cannot be applied must be logged explicitly:
 
-```
+~~~
 TRACKER_SYNC_SKIPPED: issue=<id> action=<action_type> reason=<reason>
-```
+~~~
 
 Do not silently drop deferred actions — an unapplied transition leaves the
 Linear item out of sync with the workflow stage, which breaks future discovery.
@@ -745,7 +762,7 @@ to a **stage lane** and apply `max_concurrent_by_stage` caps:
 **Configuration** (optional): declare overrides under `guardrails.parallelism` in
 `.ai-dev-workflow.yaml` (documented in `guardrails.md`). Example:
 
-```yaml
+~~~yaml
 guardrails:
   parallelism:
     max_concurrent_by_stage:
@@ -753,7 +770,7 @@ guardrails:
       plan: 0
       review: 0
       implementation: 2
-```
+~~~
 
 A value of `0` means unlimited for that lane.
 
@@ -914,10 +931,52 @@ Priority is determined by the orchestrator using the following ordered tiebreake
 The batch summary must list the conflicting item pair, the overlapping file path(s), and the
 resulting batch assignment for each item (BR-7).
 
-**Unknown-set handling** (BR-3): Items with `FILE_SET=unknown` are not automatically serialized
-but are flagged in the batch summary with a warning noting that file-level conflict detection was
-not possible for that item (no plan document, or plan contains no extractable file list). The
-batch proceeds as-is with the unknown-set items included.
+**Unknown-set handling and brief fallback** (BR-3): Items with `FILE_SET=unknown`
+must pass the planless overlap fallback before parallel dispatch. The
+orchestrator assembles a provider-neutral current snapshot for the remaining
+implementation candidates after dependency and tool-fix filtering:
+
+- `id`
+- current tracker `title`
+- current tracker `brief` or description
+- plan-derived `fileSet`
+- `priority`
+- `createdAt`
+- `nextAction`
+
+Run:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/workflow-batch-overlap.sh --input <snapshot.json> --json
+```
+
+The helper preserves exact plan-file intersections as the highest-confidence
+`concrete` result. For planless or empty file sets, it extracts explicit typed
+targets from titles and briefs: repo-relative file paths, route literals,
+function/method identifiers, and explicitly cued modules/helpers/scripts or
+services. Generic shared workflow words alone are not overlap evidence.
+
+Pair classifications are:
+
+- `concrete`: serialize the pair; the later item starts only after the prior
+  item's implementation PR is merged into the approved base.
+- `suspected`: serialize by default unless a current pair-scoped decision record
+  authorizes `allow_parallel` for the same batch fingerprint, pair ID, and
+  evidence hash.
+- `no_actionable_overlap`: keep the items parallel-eligible while preserving
+  all other dependency, tool-fix, runtime, lane-capacity, isolation, and nested
+  artifact gates. This is not proof of independence.
+
+When the classifier emits `serialGroups`, pass the same overlap input to
+`workflow-batch-lanes.sh --overlap-input <snapshot.json>` or otherwise apply
+the identical result: keep the highest-priority member of each serial group in
+the current lane and hold the remaining members with the reason
+`held — pending overlap-serialized item merge`. The batch confirmation summary
+must list every `concrete` or `suspected` pair, its typed evidence, evidence
+hash, default dispatch, and required next action. The final batch summary must
+include the resulting overlap disposition and any accepted or rejected stale
+pair-scoped human decision.
 
 **Human override** (BR-6): The orchestrator must **never** autonomously dispatch an override.
 Only an explicit human instruction enables parallel dispatch when a conflict has been detected.
@@ -944,7 +1003,8 @@ For each item in the batch, prepare a short handoff:
 - Isolation assignment for mutating explicit-list batches, including sequential
   fallback: item identifier, expected branch, absolute worktree path,
   `isolation: "worktree"`, mutation classification (`mutating` or
-  `read_only`), artifact repo root, and base branch
+  `read_only`), artifact repo root, base branch, and checkpoint state
+  (`pending`, `satisfied`, or `waived`) for any checkpoint-resume handoff
 - `BATCH_CONTEXT=true` — required for explicit-list batch dispatch so the Work
   Item Runner (protocol 91) activates worktree isolation
 - `BASE_BRANCH=<resolved-base>` — include the bounded-prelude-approved base,
@@ -991,6 +1051,8 @@ Each mutating runner entry must include:
 - Mutation classification (`mutating`)
 - Artifact-owning repo root
 - Approved base branch
+- Checkpoint state for resumed checkpointed work (`pending`, `satisfied`, or
+  `waived`)
 
 Pre-dispatch validation is mandatory:
 
@@ -1013,6 +1075,37 @@ mutating runners from sharing one checkout or silently mutating the main tree.
 The terminal batch summary must record whether the isolation manifest passed,
 failed before dispatch, or escalated after detecting possible out-of-worktree
 mutation.
+
+### Checkpoint-resume gate for batch redispatch
+
+When a bounded-batch item is redispatched or continued after a
+human-checkpoint pause, the parent orchestrator must start a fresh runner with
+the complete isolation assignment and front-loaded checkpoint decision. The
+runner must invoke the same executable gate as Protocols 91 and 95 before any
+repository, PR, tracker, label, review, or merge mutation:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/checkpoint-resume-gate.sh \
+  --item <item-id> \
+  --expected-branch <branch-prefix>/<slug> \
+  --expected-worktree <manifest-assigned-worktree-path> \
+  --main-repo-root <artifact-repo-main-root> \
+  --checkpoint-state <pending|satisfied|waived> \
+  --json
+```
+
+`RESULT=continue` permits continuation only from the current expected
+worktree. `RESULT=checkpoint_pending` stops for the human checkpoint decision.
+`RESULT=stop` stops with `STOP_CONDITION=unclear_requirements`; the stopped
+runner must not `cd`, switch branches, recreate worktrees, stash, reset,
+restore, commit, push, update tracker/PR state, or infer missing context.
+
+Isolation verification neither satisfies nor waives checkpoint state. The
+parent orchestrator must report each child gate disposition explicitly in the
+batch summary; a silent child exit is not successful continuation. Do not
+resume a previously paused runner while sibling runners remain active. Use a
+fresh fully isolated dispatch with the approved checkpoint decision instead.
 
 ### Integration-branch base override
 
@@ -1463,7 +1556,7 @@ After a Work Item Runner returns:
 
 1. **Re-check tracker status first** when an issue tracker is configured — query the tracker for the item's current status before consulting VCS state. Do not rely solely on `workflow-next-action.sh` to determine whether an item should advance, as VCS-derived status cannot reliably distinguish certain states (e.g., a spec PR awaiting review vs. one already merged). Use `workflow-next-action.sh` only for VCS-level enrichment (branch existence, PR labels) after the tracker status is known.
 2. If the tracker is unavailable, fall back to `workflow-next-action.sh` but flag to the human that status may be stale.
-3. If the next action is still deterministic because the Work Item Runner returned early or was interrupted, redispatch / resume that same item. **Worktree isolation is mandatory on redispatch**: when the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), every redispatch — including fixer-agent passes triggered by review findings — must carry the full Protocol 90 isolation assignment in the handoff: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, and `isolation: "worktree"`. Redispatching without the full assignment causes fixer agents to use main-repo file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context, leaving uncommitted files in the main working tree instead of the isolated branch.
+3. If the next action is still deterministic because the Work Item Runner returned early or was interrupted, redispatch / resume that same item. **Worktree isolation is mandatory on redispatch**: when the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), every redispatch — including fixer-agent passes triggered by review findings — must carry the full Protocol 90 isolation assignment in the handoff: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, checkpoint state, and `isolation: "worktree"`. Checkpoint-resume redispatch must use a fresh runner that invokes `checkpoint-resume-gate.sh` before mutation; do not resume a paused runner while sibling runners remain active. Redispatching without the full assignment causes fixer agents to use main-repo file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context, leaving uncommitted files in the main working tree instead of the isolated branch.
 4. Stop supervising that item only when it is waiting on a human, blocked, or escalated.
 5. **Collect deferred tracker transitions**: scan the Work Item Runner's summary for any `TRACKER_UPDATE_REQUIRED:` lines. These are transitions that the subagent could not perform (e.g., because the provider requires MCP and MCP is not available in the subagent context). Apply each deferred transition now via MCP before moving on to the next item. For GitHub Projects, subagents use `gh` CLI directly and do not emit `TRACKER_UPDATE_REQUIRED:` — this step only applies to providers without CLI support (e.g., Linear).
 6. **When a human confirms PRs have been merged**: run post-merge status transitions per the table in Step 10 of `91-orchestrate-work-protocol.md` — set tracker status to `Spec Ready`, `Plan Ready`, or `Merged` depending on the branch type of the merged PR — and clean up local branches and worktrees associated with the merged PRs.
@@ -1577,7 +1670,7 @@ If a check requires agent redispatch:
 1. Log the specific failure in your retrospective notes (see "Retrospective notes during supervision" below).
 2. Remove `ready-for-human-review` if it is present: `gh pr edit <pr_number> --remove-label "ready-for-human-review"`.
 3. Add the `needs-fixes` label to the PR: `gh pr edit <pr_number> --add-label "needs-fixes"`.
-4. Redispatch / resume the Work Item Runner for that item to address the gap. **Worktree isolation is mandatory**: if the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), the redispatched Work Item Runner must receive the full Protocol 90 isolation assignment: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, and `isolation: "worktree"`. Do not redispatch without these values — fixer agents that run outside the worktree will use main-repo file paths and leave uncommitted changes in the main working tree.
+4. Redispatch / resume the Work Item Runner for that item to address the gap. **Worktree isolation is mandatory**: if the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), the redispatched Work Item Runner must receive the full Protocol 90 isolation assignment: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, checkpoint state, and `isolation: "worktree"`. Checkpoint-resume redispatch must invoke `checkpoint-resume-gate.sh` before mutation. Do not redispatch without these values — fixer agents that run outside the worktree will use main-repo file paths and leave uncommitted changes in the main working tree.
 5. Re-run this verification after the next Work Item Runner return.
 
 Do not consider the batch complete until every dispatched item has reached a real terminal condition.
@@ -1821,7 +1914,7 @@ The re-trigger uses the same `max_cycles` counter as the normal reviewer loop (S
 
 ## Step 5.5: Batch-Merge Handoff (Merge-Ready Parallel Batches)
 
-When **all PRs in a parallel batch** have reached `ready-for-human-review`, the orchestrator may hand off to the batch-merge flow instead of leaving the human to merge manually. In a merge-granted run this handoff is required for every in-scope PR whose delegated merge gate returns `merge_allowed`; in a merge-denied run this handoff is forbidden and the batch reports `ready_human_merge`.
+When **all PRs in a parallel batch** have reached `ready-for-human-review`, the orchestrator may hand off to the batch-merge flow instead of leaving the human to merge manually. In a merge-granted run this handoff is required for every in-scope PR whose delegated merge gate returns `merge_allowed`; in a merge-denied run this handoff is forbidden and the batch reports `ready_human_merge`. A PR whose gate returns `exceptional_bypass_authorized` is not part of the normal batch-merge list: it requires a separate named human authorization, verified pre-attempt reviewer-access audit, one exact admin merge attempt, fresh base rediscovery after the attempt, and then normal continuation for unaffected PRs.
 
 ### When to activate this step
 
@@ -1866,6 +1959,13 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
 ### Batch-merge routing rule (mandatory)
 
 When merging a parallel implementation batch, **always** invoke `batch-merge.sh discover --prs <list>` followed by execution of `94-batch-merge-protocol.md`. Direct `gh pr merge` calls are only acceptable for single-PR merges or non-implementation PRs (spec, plan). **Never** use `gh pr merge` individually for parallel implementation batches — it bypasses CHANGELOG auto-resolution (Protocol 94 Step 4.3) and active-worktree awareness.
+
+The only exception is an access-restricted reviewer check whose delegated gate
+returns `exceptional_bypass_authorized`. That exception is human-only and
+PR-specific: prior batch approval, delegated merge policy, or risk tolerance
+does not authorize `--admin`. Keep unaffected PRs on the normal Protocol 94
+route, refresh discovery after the one admin attempt, and record final bypass
+state in the stable `reviewer-access-bypass` audit marker.
 
 | Merge scenario                         | Required tool                  |
 | -------------------------------------- | ------------------------------ |

@@ -13,29 +13,44 @@ Recommended model tier: `economy`
 4. Treat the protocol as canonical. Use `workflow-item-orchestrator` for each selected or approved item when your runner supports skill-to-skill handoff; otherwise continue in the current session by following `91-orchestrate-work-protocol.md` item by item.
 5. Keep batching and prioritization decisions explicit, especially when work must be serialized because the runner cannot execute multiple item orchestrators concurrently.
 6. Before dispatching any Backlog item into Writing Spec, run `scripts/development-workflow/spec-dispatch-context.sh` for the selected item and in-scope batch. Pass non-blocking confirmed decisions and relationship outcomes to the item/spec handoff; stop on `blocking=true` and report the helper's `humanAction`. Shared keywords alone are not dependency evidence.
-7. Before dispatching an explicit-list batch where any runner may mutate, including sequential fallback, build the Protocol 90 isolation manifest and require a distinct absolute worktree path plus `isolation: "worktree"` for every mutating item. Stop before dispatch on missing isolation assignment or duplicate worktree path; non-isolated runners are allowed only when explicitly classified `read_only` and will not edit files, switch branches, commit, push, mutate PRs, change labels, or update tracker state.
-8. Include the incremental commit requirement in every substantial or
+7. Before parallel implementation dispatch, run Protocol 90's planless overlap
+   gate from the current tracker snapshot and plan-derived file sets. Concrete
+   pairs and unconfirmed suspected pairs serialize by default; carry pair IDs,
+   typed evidence, evidence hashes, decisions, and held-item reasons in the
+   confirmation and final summaries.
+8. Before dispatching an explicit-list batch where any runner may mutate, including sequential fallback, build the Protocol 90 isolation manifest and require a distinct absolute worktree path plus `isolation: "worktree"` for every mutating item. Stop before dispatch on missing isolation assignment or duplicate worktree path; non-isolated runners are allowed only when explicitly classified `read_only` and will not edit files, switch branches, commit, push, mutate PRs, change labels, or update tracker state.
+9. Include the incremental commit requirement in every substantial or
    multi-part mutating item handoff: commit immediately after each completed
    logical sub-part, do not intentionally batch all completed sub-parts into one
    final commit, and never commit incomplete or failing work only to satisfy the
    rule.
-9. Do not stop after dispatching a batch if any selected or approved item still has a deterministic next action.
-10. For `workflow_hub` implementation work, include workflow mode, artifact owner, selected product repository, local path or remote identity, and mutation target in item handoffs; stop before mutation-oriented dispatch when product repository context is missing or ambiguous. Missing mode or `single_repo` does not require `--repo`.
+   For checkpoint-resume redispatch, include checkpoint state with the complete
+   Protocol 90 isolation assignment, use a fresh runner, and require the child
+   to invoke `checkpoint-resume-gate.sh` before mutation. Do not resume a paused
+   runner while sibling runners remain active.
+10. For plan-writing handoffs, include the exact current-batch item list and any
+   known same-surface open PR evidence for Protocol 02's
+   `Cross-Cutting Operational Assumption Check`. Keep returned `Conflict`
+   evidence visible until it is `Resolved` by the parent or stopped for
+   `unclear_requirements` and request `Human decision required`; do not let
+   planners replace this bounded context with an unbounded scan of every open PR.
+11. Do not stop after dispatching a batch if any selected or approved item still has a deterministic next action.
+12. For `workflow_hub` implementation work, include workflow mode, artifact owner, selected product repository, local path or remote identity, and mutation target in item handoffs; stop before mutation-oriented dispatch when product repository context is missing or ambiguous. Missing mode or `single_repo` does not require `--repo`.
    Include the parent-approved base branch in mutation-oriented handoffs; child runners must use it with `run-nested-artifact-guard.sh --approved-base` before branch or PR creation.
-11. **Guardrails enforcement**: Before any artifact-mutating action, resolve the effective guardrails (three-layer precedence: repo config → session overrides → invocation overrides) and report them in the portfolio run summary. Enforce the six gates described in `docs/workflow/development-workflow/guardrails-enforcement.md`: load+report at run start, backlog-start gate, per-stage PR-open gate, delegated review gate, delegated merge gate, and completion gate. When no `guardrails` section is found, state "conservative defaults in effect."
-12. With `merge_granted`, readiness is not terminal; continue through delegated
+13. **Guardrails enforcement**: Before any artifact-mutating action, resolve the effective guardrails (three-layer precedence: repo config → session overrides → invocation overrides) and report them in the portfolio run summary. Enforce the six gates described in `docs/workflow/development-workflow/guardrails-enforcement.md`: load+report at run start, backlog-start gate, per-stage PR-open gate, delegated review gate, delegated merge gate, and completion gate. When no `guardrails` section is found, state "conservative defaults in effect."
+14. With `merge_granted`, readiness is not terminal; continue through delegated
    merge and report each in-scope PR as `merged`, `merge_blocked`, or
    `policy_inconsistent`. With `merge_denied`, ready PRs report
    `ready_human_merge`. Discovered unrelated PRs are `out_of_scope` and are not
    merged.
-13. When supervising sweep, batch, helper-extraction, numeric-target, or
+15. When supervising sweep, batch, helper-extraction, numeric-target, or
    pattern-completeness items, require residual gate evidence before accepting
    `ready-for-human-review` as terminal.
-14. When supervising `spec/*` or `implementation-plan/*` PRs, require Protocol
+16. When supervising `spec/*` or `implementation-plan/*` PRs, require Protocol
     91 Step 8a's documentation-stage alignment checker before accepting
     readiness. A mismatch keeps the item under supervision until corrected or
     escalated.
-15. Before accepting any item as terminal in a batch summary, require the
+17. Before accepting any item as terminal in a batch summary, require the
     Work Item Runner's `## Ground-Truth Completion Verification` section from
     `scripts/development-workflow/item-completion-self-check.sh` or run the
     helper directly from current artifact state. When Step 7 was configured, pass

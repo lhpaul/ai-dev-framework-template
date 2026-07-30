@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-07-30
+
+### Added
+
+- **Planless batch overlap fallback** (#1289): Derive explicit implementation
+  targets for planless item pairs and serialize confirmed or suspected overlap.
+- **Project advisory checks** (#1279): Let downstream projects append
+  diff-scoped informational checks to reviewer summaries without changing
+  reviewer outcomes.
+- **Plan assumption cross-checks** (#1201): Re-verify cross-cutting plan
+  assumptions so concurrent workflow work cannot silently invalidate
+  implementation guidance.
+- **Epic continuation gate** (#1372): Require delegated epic runs to re-resolve
+  remaining child work before closeout.
+- **CodeRabbit CLI review platform** (#1375): Add an optional Step 7 CodeRabbit
+  CLI reviewer with explicit skipped and rate-limit handling.
+
+### Changed
+
+- **Ready-phase reviewer defaults** (#1375): Replace Bugbot with CodeRabbit as
+  the default ready-phase external PR reviewer and enable budget-conscious
+  non-draft `develop` auto-review.
+- **Agent model defaults** (#1394): Refresh Cursor, Claude Code, and Codex model
+  mappings for economy, balanced, and complex workflow agents.
+- **Access-restricted reviewer merge gate** (#1288): Distinguish verified
+  reviewer App-access restrictions from CI and review failures, prefer access
+  remediation, and permit audited protection bypass only after fresh named
+  human authorization.
+
+### Fixed
+
+- **Bugbot usage-limit reviewer classification** (#1394): Escalate Cursor
+  Bugbot usage/spend-limit responses instead of treating neutral checks as
+  clean.
+- **Checkpoint resume isolation** (#1285): Require complete worktree context and
+  stop resumed isolated runners before mutation when assignment cannot be
+  proven.
+- **Bounded-prelude data-model checkpoint signals** (#1287): Stop incidental
+  data-adjacent issue-body terms from creating technical checkpoints while
+  preserving explainable checkpoints for explicit migration and schema-change
+  evidence.
+
 ## [0.39.0] - 2026-07-27
 
 ### Added
@@ -1286,7 +1328,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.39.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.40.0...HEAD
+[0.40.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.37.1...v0.38.0
 [0.37.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.37.0...v0.37.1

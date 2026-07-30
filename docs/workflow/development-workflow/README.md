@@ -11,6 +11,14 @@ incremental checkpoint commits after each completed logical sub-part. This gives
 interrupted runs a recoverable boundary without changing review, CI, readiness,
 tracker, or merge gates.
 
+When a checkpointed worktree-isolated run is resumed, the workflow front-loads
+the checkpoint decision and complete isolation context through
+`checkpoint-resume-gate.sh` before any mutation. A runner may continue only from
+the assigned worktree after the gate returns `continue`; pending checkpoints and
+unclear isolation stop for a fresh fully isolated dispatch. Operators should not
+resume a paused runner while sibling runners remain active, and isolation
+verification never satisfies or waives checkpoint state.
+
 ---
 
 ## Why This Workflow Exists
@@ -69,6 +77,15 @@ The implementation plan picks up after the spec is merged. It explains **how** t
 This stage protects the codebase from "understood in my head" engineering. It also gives future reviewers a concrete basis for deciding whether the implementation stayed on course, including whether the testing strategy covers the tricky or failure-prone cases rather than only the happy path.
 
 When relevant, the plan should make observability and analytics explicit instead of leaving them implicit. That can include frontend crash reporting, backend logging and alerting, product analytics events, and any downstream analytical-data handling needed to make the feature measurable and supportable in production.
+
+Plans must also record the `Cross-Cutting Operational Assumption Check`. When a
+plan depends on an operational fact that concurrent work could invalidate, such
+as an environment target, approved base branch, artifact owner, linked resource,
+or canonical configuration value, the planner records the value, source,
+verification time, bounded current-batch / related-PR scope, and result. The
+parent orchestrator owns same-surface conflict resolution. Implementers
+re-verify applicable sources before file edits and stop on `Stale or
+conflicting` evidence instead of guessing.
 
 ### Implementation
 
@@ -233,6 +250,13 @@ The sections below keep this document usable as a master reference after the nar
 | Feedback triage                  | —                                                                 | —                                                             | —                                  | `docs/workflow/development-workflow/protocols/07-feedback-triage-protocol.md` — periodically review GitHub Discussions in the "Feedback & Ideas" category and promote high-signal items to backlog issues |
 
 After opening release PRs, protocol `05` treats the release-branch reviewer loop as skipped, applies `ready-for-regression` on the **PR targeting `main`**, and runs the CI loop until checks are green (or escalation) — same persistence contract as other release readiness work.
+
+Verified access restrictions on third-party reviewer checks use a
+remediation-first, human-only exceptional merge gate. See
+[`guardrails-enforcement.md`](guardrails-enforcement.md) Gate 5 and
+[`integrations/haystack-triage.md`](integrations/haystack-triage.md) for the
+required current evidence, named authorization, pre-attempt audit, and one-shot
+`gh pr merge <pr> --admin` boundary.
 
 Codex skills are stored in `.agents/skills/` for repo-scoped Codex discovery, with legacy canonical definitions retained in `.codex/skills/`. Install them into the local Codex environment with:
 

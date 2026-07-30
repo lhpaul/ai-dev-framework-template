@@ -210,6 +210,54 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   def item_signal_text($item):
     (($item.title // "") + " " + ($item.body // "") + " " + ($item.type // "") + " " + (($item.labels // []) | join(" ")) + " " + ($item.integrationBranchLabel // ""))
     | ascii_downcase;
+  def stable_unique:
+    reduce .[] as $value ([]; if index($value) then . else . + [$value] end);
+  def normalize_signal_label:
+    ascii_downcase | gsub("[ _]+"; "-");
+  def data_model_label_signals($item):
+    [
+      ($item.labels // [])[]?
+      | tostring as $label
+      | ($label | normalize_signal_label) as $normalized
+      | select($normalized | IN(
+          "migration",
+          "database-migration",
+          "schema-migration",
+          "db-migration",
+          "schema-change",
+          "data-model-change"
+        ))
+      | "label '\''\($label)'\''"
+    ];
+  def regex_matches($text; $regex):
+    [$text | match($regex; "ig").string];
+  def title_regex_matches($text; $regex):
+    regex_matches($text; $regex) | map("title phrase '\''\(.)'\''");
+  def body_regex_matches($text; $regex):
+    regex_matches($text; $regex)
+    | map(gsub("^[^[:alnum:]]+"; "") | gsub("[^[:alnum:]]+$"; ""))
+    | map("body phrase '\''\(.)'\''");
+  def data_model_title_signals($item):
+    ($item.title // "") as $title |
+    (
+      title_regex_matches($title; "\\b(database[[:space:]-]+migration|schema[[:space:]-]+migration|data[ -]?model[[:space:]-]+migration)\\b")
+      +
+      title_regex_matches($title; "\\b(add|create|alter|change|update|modify|rename|drop|remove|migrate)\\b.{0,80}\\b(schema|table|column|database|data[ -]?model|persistent[ -]?model)\\b")
+    );
+  def data_model_body_signals($item):
+    ($item.body // "") as $body |
+    (
+      body_regex_matches($body; "\\bCREATE[[:space:]]+TABLE\\b")
+      +
+      body_regex_matches($body; "\\bALTER[[:space:]]+TABLE\\b")
+      +
+      body_regex_matches($body; "\\bnew[[:space:]]+column\\b")
+      +
+      body_regex_matches($body; "(^|[^[:alnum:]_-])database[[:space:]]+migration($|[^[:alnum:]_-])")
+    );
+  def data_model_signals($item):
+    (data_model_label_signals($item) + data_model_title_signals($item) + data_model_body_signals($item))
+    | stable_unique;
   def has_nonblank_lines($lines):
     any($lines[]?; (gsub("^[[:space:]]+"; "") | gsub("[[:space:]]+$"; "") | length) > 0);
   def heading_level($line):
@@ -281,6 +329,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
       end;
   def recommend_checkpoints_for_item($item):
     item_signal_text($item) as $text |
+    data_model_signals($item) as $data_model_signals |
     infer_workflow_stage($item) as $stage |
     acceptance_criteria_problem($item) as $criteria_problem |
     ($text | test("ambiguous|unclear|\\btbd\\b|open question|unresolved product")) as $unresolved_product_signal |
@@ -298,12 +347,12 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
             satisfaction_state: "pending"
           }]
         else . end
-      | if $text | test("schema|migration|database|data[ -]?model|\\bsql\\b|persistent data") then
+      | if ($data_model_signals | length) > 0 then
           . + [{
             item_number: $num,
             stage: "plan",
             domain: "technical",
-            reason: "issue signals database schema, migration, or persistent data-model changes",
+            reason: ("data-model checkpoint matched " + ($data_model_signals | join("; "))),
             required_human_action: "review and approve proposed data model in the plan before implementation proceeds",
             satisfaction_state: "pending"
           }]

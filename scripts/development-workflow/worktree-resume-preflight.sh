@@ -2,18 +2,19 @@
 # worktree-resume-preflight.sh
 #
 # Read-only preflight for checkpoint resumes. It proves that a resumed
-# item-orchestrator is already inside the expected worktree or emits a safe
-# re-entry directive for the matching registered worktree.
+# item-orchestrator is already inside the expected worktree. Resume context is
+# fail-closed: the helper never re-enters a worktree from the main clone.
 
 set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: worktree-resume-preflight.sh --item <id> --expected-branch <branch> [options]
+Usage: worktree-resume-preflight.sh --item <id> --expected-branch <branch> \
+  --expected-worktree <path> --main-repo-root <path> [options]
 
 Options:
-  --expected-worktree <path>  Expected worktree path when known
-  --main-repo-root <path>     Main repository root; defaults from git metadata
+  --expected-worktree <path>  Expected worktree path
+  --main-repo-root <path>     Main repository root
   --json                     Emit a JSON record after key=value lines
   --help                     Show this help
 USAGE
@@ -38,21 +39,25 @@ cwd_guard="$script_dir/worktree-cwd-guard.sh"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --item)
+      [ "$item" = "" ] || { printf 'ERROR: repeated option: --item\n' >&2; exit 2; }
       require_value "$@"
       item="${2:-}"
       shift 2
       ;;
     --expected-branch)
+      [ "$expected_branch" = "" ] || { printf 'ERROR: repeated option: --expected-branch\n' >&2; exit 2; }
       require_value "$@"
       expected_branch="${2:-}"
       shift 2
       ;;
     --expected-worktree)
+      [ "$expected_worktree" = "" ] || { printf 'ERROR: repeated option: --expected-worktree\n' >&2; exit 2; }
       require_value "$@"
       expected_worktree="${2:-}"
       shift 2
       ;;
     --main-repo-root)
+      [ "$main_repo_root" = "" ] || { printf 'ERROR: repeated option: --main-repo-root\n' >&2; exit 2; }
       require_value "$@"
       main_repo_root="${2:-}"
       shift 2
@@ -73,7 +78,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-if [ -z "$item" ] || [ -z "$expected_branch" ]; then
+if [ -z "$item" ] || [ -z "$expected_branch" ] || [ -z "$expected_worktree" ] || [ -z "$main_repo_root" ]; then
   usage >&2
   exit 2
 fi
@@ -113,23 +118,7 @@ git_output_or_empty() {
 current_cwd="$(pwd -P 2>/dev/null || pwd)"
 observed_branch="$(git_output_or_empty rev-parse --abbrev-ref HEAD)"
 
-if [ -z "$main_repo_root" ]; then
-  git_common_dir="$(git_output_or_empty rev-parse --git-common-dir)"
-  if [ -n "$git_common_dir" ]; then
-    case "$git_common_dir" in
-      /*) main_repo_root="$(cd "$git_common_dir/.." && pwd -P)" ;;
-      *) main_repo_root="$(cd "$git_common_dir/.." && pwd -P)" ;;
-    esac
-  fi
-fi
-
-if [ -z "$main_repo_root" ]; then
-  result="stop"
-  action="none"
-  target_worktree=""
-  reason="main repository root could not be resolved"
-else
-  main_repo_root="$(canon_path "$main_repo_root")"
+main_repo_root="$(canon_path "$main_repo_root")"
 
   worktree_output=""
   if ! worktree_output="$(git -C "$main_repo_root" worktree list --porcelain 2>/dev/null)"; then
@@ -227,9 +216,9 @@ EOF
           reason="worktree CWD guard rejected current directory"
         fi
       elif path_contains "$main_repo_root" "$current_cwd"; then
-        result="reenter"
-        action="cd"
-        reason="current directory is the main clone; re-enter expected worktree before mutation"
+        result="stop"
+        action="none"
+        reason="current directory is the main clone; start a fresh runner in the expected worktree"
       else
         result="stop"
         action="none"
@@ -237,18 +226,14 @@ EOF
       fi
     fi
   fi
-fi
 
 human_action=""
 case "${result:-stop}" in
   continue)
     human_action="continue from current directory"
     ;;
-  reenter)
-    human_action="cd to target worktree before any mutation"
-    ;;
   *)
-    human_action="stop before mutation and recover the expected worktree state"
+    human_action="start a fresh runner with the complete isolation assignment before mutation"
     ;;
 esac
 
@@ -262,6 +247,11 @@ printf 'MAIN_REPO_ROOT=%s\n' "${main_repo_root:-}"
 printf 'OBSERVED_DIRECTORY=%s\n' "$current_cwd"
 printf 'OBSERVED_BRANCH=%s\n' "$observed_branch"
 printf 'REASON=%s\n' "${reason:-}"
+if [ "${result:-stop}" = "stop" ]; then
+  printf 'STOP_CONDITION=unclear_requirements\n'
+else
+  printf 'STOP_CONDITION=\n'
+fi
 printf 'HUMAN_ACTION=%s\n' "$human_action"
 
 if [ "$json_output" = "true" ]; then
@@ -276,11 +266,12 @@ if [ "$json_output" = "true" ]; then
   printf '"observedDirectory":%s,' "$(json_quote "$current_cwd")"
   printf '"observedBranch":%s,' "$(json_quote "$observed_branch")"
   printf '"reason":%s,' "$(json_quote "${reason:-}")"
+  printf '"stopCondition":%s,' "$(json_quote "$([ "${result:-stop}" = "stop" ] && printf 'unclear_requirements')")"
   printf '"humanAction":%s' "$(json_quote "$human_action")"
   printf '}\n'
 fi
 
 case "${result:-stop}" in
-  continue|reenter) exit 0 ;;
+  continue) exit 0 ;;
   *) exit 1 ;;
 esac

@@ -56,9 +56,27 @@ proposal step.
    logical sub-part, do not intentionally batch all completed sub-parts into one
    final commit, and never commit incomplete or failing work only to satisfy the
    rule.
-11. Do not stop after advancing one item if another item in the explicit list still
+   For checkpoint-resume redispatch, pass the complete isolation assignment plus
+   checkpoint state to a fresh runner and require `checkpoint-resume-gate.sh`
+   before mutation. Do not resume a paused runner while sibling runners remain
+   active, and do not treat isolation verification as satisfying or waiving the
+   checkpoint.
+11. For plan-writing handoffs in the explicit list, pass the exact current-batch
+    item list and any known same-surface open PR evidence to Protocol 02's
+    `Cross-Cutting Operational Assumption Check`. Keep returned `Conflict`
+    evidence visible until the parent records `Resolved` or stops for
+    `unclear_requirements` and request `Human decision required`; do not widen
+    the bounded list or replace this with an all-open-PR scan.
+12. Before parallel implementation dispatch, run Protocol 90's planless overlap
+   gate from the current tracker snapshot and plan-derived file sets. Concrete
+   overlap pairs and suspected pairs without a matching current `allow_parallel`
+   decision are serialized by default; pass serial groups into
+   `workflow-batch-lanes.sh --overlap-input` or apply the identical hold result.
+   Keep the pair IDs, typed evidence, evidence hashes, accepted/stale decisions,
+   and held-item reasons visible in the confirmation and final summaries.
+13. Do not stop after advancing one item if another item in the explicit list still
    has a deterministic next action.
-12. Do not stop at transient in-flight CI/watch states. If a local watch exits
+14. Do not stop at transient in-flight CI/watch states. If a local watch exits
    early, duplicate checks are skipped/cancelled, or GitHub still shows pending
    or incomplete check evidence, re-query authoritative PR/check state and keep
    supervising until every in-scope PR is green, blocked, escalated, merged, or
@@ -66,24 +84,30 @@ proposal step.
    For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
    items, require residual gate evidence before accepting an item as
    `ready-for-human-review`.
-13. For `spec/*` and `implementation-plan/*` PRs, require Protocol 91 Step 8a's
+15. For `spec/*` and `implementation-plan/*` PRs, require Protocol 91 Step 8a's
    documentation-stage alignment checker before accepting readiness. A
    mismatch keeps the item under supervision until corrected or escalated.
-14. Before accepting any in-scope item as terminal, require the item runner's
+16. Before accepting any in-scope item as terminal, require the item runner's
    `## Ground-Truth Completion Verification` output from
    `item-completion-self-check.sh` or run the helper directly from current
    artifact state. When Step 7 was configured, pass `--require-review-summary true`
    and `--require-review-threads true` (helper defaults are false). Missing
    self-check evidence, `discrepancy`, or `unavailable_required` keeps the item
    under Protocol 90 Step 5 supervision.
-15. After all in-scope PRs reach `ready-for-human-review`, inspect the effective
+17. After all in-scope PRs reach `ready-for-human-review`, inspect the effective
    guardrails. When the relevant stages allow `may_merge_pr: true`, run
    Guardrails Enforcement Gate 5 for each in-scope PR, including
    `run-epic-risk-classifier.sh` and `run-epic-delegated-gate.sh`; continue only
-   when every in-scope PR returns `merge_allowed`. The bounded-prelude
+   when every normally merged in-scope PR returns `merge_allowed`. If any PR returns
+   `exceptional_bypass_authorized`, split it out of the normal batch-merge list
+   and require the separate named PR/SHA/fingerprint authorization plus
+   pre-attempt `reviewer-access-bypass` audit before one exact admin merge
+   attempt; delegated/batch approval does not authorize `--admin`. The bounded-prelude
    confirmation (or explicit autonomy flags) recorded for this `/run-items`
-   invocation is the required merge gate for Protocol 90 `explicit_list` batches.
-   Then route into Protocol 94 batch merge using only the explicit in-scope PR list:
+   invocation is the required merge gate for normal Protocol 90 `explicit_list`
+   batches, but it never waives the separate admin-merge authorization.
+   Then route normal candidates into Protocol 94 batch merge using only the
+   explicit in-scope PR list:
    run
    `batch-merge.sh discover --prs <comma-separated-in-scope-prs>` and continue
    through merge, cleanup, and tracker reconciliation. Never use Protocol 94
@@ -97,7 +121,7 @@ proposal step.
    `out_of_scope`. A `merge_granted` PR that stops at readiness without a
    named blocker is `policy_inconsistent`; a `merge_denied` PR stops at
    `ready_human_merge`.
-16. For single-item advancement use `$run-item`; for epic-scoped runs use `$run-epic`;
+18. For single-item advancement use `$run-item`; for epic-scoped runs use `$run-epic`;
    for read-only portfolio scan and proposal use `$run-work`.
 
 > **Deprecation notice**: `/run-epic --items` is deprecated. Use `/run-items` for

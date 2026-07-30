@@ -60,6 +60,24 @@ Key responsibilities:
   duplicate worktree path. Non-isolated runners are allowed only when explicitly
   classified `read_only` and will not edit files, switch branches, commit, push,
   mutate PRs, change labels, or update tracker state.
+- For checkpoint-resume redispatch, pass checkpoint state with the complete
+  isolation assignment to a fresh runner and require `checkpoint-resume-gate.sh`
+  before mutation. Do not resume a paused runner while sibling runners remain
+  active, and do not treat isolation verification as satisfying or waiving the
+  checkpoint.
+- For plan-writing handoffs in the explicit list, pass the exact current-batch
+  item list and any known same-surface open PR evidence to Protocol 02's
+  `Cross-Cutting Operational Assumption Check`. Keep returned `Conflict`
+  evidence visible until the parent records `Resolved` or stops for
+  `unclear_requirements` and request `Human decision required`; do not widen
+  the bounded list or replace this with an all-open-PR scan.
+- Before parallel implementation dispatch, run Protocol 90's planless overlap
+  gate from the current tracker snapshot and plan-derived file sets. Concrete
+  pairs and suspected pairs without a matching current `allow_parallel` decision
+  are serialized by default; pass serial groups into
+  `workflow-batch-lanes.sh --overlap-input` or apply the identical hold result.
+  Keep pair IDs, typed evidence, evidence hashes, accepted/stale decisions, and
+  held-item reasons visible in confirmation and final summaries.
 - In `workflow_hub`, state the selected product repository, artifact owner, and mutation
   target before implementation mutation; stop when context is missing or ambiguous.
 - Do not stop after advancing one item if another in the list still has a
@@ -80,8 +98,12 @@ Key responsibilities:
   guardrails. When the relevant stages allow `may_merge_pr: true`, run
   Guardrails Enforcement Gate 5 for each in-scope PR, including
   `run-epic-risk-classifier.sh` and `run-epic-delegated-gate.sh`; continue only
-  when every in-scope PR returns `merge_allowed`. Then route into Protocol 94
-  batch merge using only the explicit in-scope PR list: run
+  when every normally merged in-scope PR returns `merge_allowed`. If any PR returns
+  `exceptional_bypass_authorized`, split it out of the normal batch-merge list
+  and require separate named PR/SHA/fingerprint authorization plus pre-attempt
+  `reviewer-access-bypass` audit before one exact human-authorized
+  `gh pr merge <pr> --admin` attempt. Then route normal candidates into
+  Protocol 94 batch merge using only the explicit in-scope PR list: run
   `batch-merge.sh discover --prs <comma-separated-in-scope-prs>` and continue
   through merge, cleanup, and tracker reconciliation. Never use Protocol 94
   auto-discovery from `/run-items`. If any stage does not allow merge, finish at the

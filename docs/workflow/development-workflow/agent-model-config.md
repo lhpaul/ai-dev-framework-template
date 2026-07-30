@@ -44,30 +44,54 @@ If you prefer different names (`small/medium/large`, `fast/standard/pro`, etc.),
 Use the tier names as stable policy and map them to whatever your current runner and provider support.
 
 - In Claude Code, map the tier to the model family or explicit model ID configured in `.claude/agents/*.md`.
-- In Cursor, pin explicit model IDs in `.cursor/agents/*.md` for every long-running or review-loop agent. Use `fast` for `economy` tier agents only.
+- In Cursor, set `.cursor/agents/*.md` to `auto` for ordinary coordination and QA agents, and pin an explicit high-reasoning model for agents that author or deeply review specs, plans, and code.
+- In Codex, keep skills tier-based (`economy`, `balanced`, `premium`) and map the active runner model to the current OpenAI model family.
 - In any runner, prefer keeping the tier intent stable even when provider model names change.
+
+### Claude Code model defaults (template)
+
+Claude Code agents pin concrete model IDs in `.claude/agents/*.md`.
+
+| Tier | Claude Code `model` (template default) | Used for |
+| ---- | -------------------------------------- | -------- |
+| `economy` | `claude-haiku-4-5-20251001` | Portfolio orchestration and mechanical reviewer-loop coordination |
+| `balanced` | `claude-sonnet-5` | Implementation, review, setup, QA, smoke testing, item orchestration, and retrospectives |
+| `premium` | `claude-opus-5` | Spec writing and technical planning |
+
+### Codex / OpenAI model mapping (template)
+
+Codex skills intentionally store recommended tiers rather than concrete model IDs. Map those tiers to the current OpenAI family in the Codex runner or model picker:
+
+| Tier | OpenAI model mapping | Used for |
+| ---- | -------------------- | -------- |
+| `economy` | `gpt-5.6-luna` | Mechanical coordination and high-volume checklist work |
+| `balanced` | `gpt-5.6-terra` | Implementation, review, setup, QA, item orchestration, and retrospectives |
+| `premium` | `gpt-5.6-sol` | Spec writing and technical planning |
 
 ### Cursor model defaults (template)
 
-Pin models in `.cursor/agents/*.md` so subagents do not inherit the parent Composer model during long orchestration or review-fix loops. **`inherit` is acceptable only for ad-hoc, single-turn invocations** where you intentionally want the current Composer model — not for orchestrators, item runners, fixer agents, or reviewer-loop agents.
+Set models in `.cursor/agents/*.md` so subagents do not inherit the parent Composer model during long orchestration or review-fix loops. The template default is `fast` for economy coordination agents, `auto` for lower-risk balanced agents, and `cursor-grok-4.5-high` for complex authoring and review work. If Cursor's model picker exposes Grok 4.5 under a different local ID, update the pinned value but preserve the same split. See the Cursor model field value guide below for when `inherit` is acceptable.
+
+The `fast` economy assignments below are intentional for high-volume orchestration loops where predictable cost and latency matter more than deep reasoning. The remaining `auto` assignments are for lower-risk balanced agents that primarily verify or run checklist-style workflows; Cursor may route those runs to different concrete models over time, so their cost and latency can vary by workspace settings. Balanced agents that author production code or perform deep review stay pinned to Grok 4.5 High to keep complex reasoning capacity predictable.
 
 | Agent | Tier | Cursor `model` (template default) |
 | ----- | ---- | ----------------------------------- |
 | `orchestrator` | `economy` | `fast` |
 | `automated-reviewer-loop` | `economy` | `fast` |
-| `item-orchestrator` | `balanced` | `claude-sonnet-4-6` |
-| `developer` | `balanced` | `claude-sonnet-4-6` |
-| `code-reviewer` | `balanced` | `claude-sonnet-4-6` |
-| `spec-reviewer` | `balanced` | `claude-sonnet-4-6` |
-| `implementation-plan-reviewer` | `balanced` | `claude-sonnet-4-6` |
-| `smoke-tester` | `balanced` | `claude-sonnet-4-6` |
-| `retrospective` | `balanced` | `claude-sonnet-4-6` |
-| `project-setup` | `balanced` | `claude-sonnet-4-6` |
-| `design-reviewer` | `balanced` | `claude-sonnet-4-6` |
-| `product-manager` | `premium` | `claude-opus-4-7` |
-| `tech-lead` | `premium` | `claude-opus-4-7` |
+| `item-orchestrator` | `balanced` | `auto` |
+| `developer` | `balanced` | `cursor-grok-4.5-high` |
+| `code-reviewer` | `balanced` | `cursor-grok-4.5-high` |
+| `spec-reviewer` | `balanced` | `cursor-grok-4.5-high` |
+| `implementation-plan-reviewer` | `balanced` | `cursor-grok-4.5-high` |
+| `smoke-tester` | `balanced` | `auto` |
+| `retrospective` | `balanced` | `auto` |
+| `project-setup` | `balanced` | `auto` |
+| `design-reviewer` | `balanced` | `auto` |
+| `post-merge-qa` | `balanced` | `auto` |
+| `product-manager` | `premium` | `cursor-grok-4.5-high` |
+| `tech-lead` | `premium` | `cursor-grok-4.5-high` |
 
-Claude Code equivalents live in `.claude/agents/*.md` (Haiku for economy, Sonnet for balanced, Opus for premium). Update pinned IDs when your provider deprecates a model; keep the tier intent stable.
+Update pinned IDs and tier mappings when your provider deprecates a model; keep the tier intent stable.
 
 See also:
 
@@ -106,8 +130,9 @@ Use your runner’s “one-off model override” mechanism.
 
 Claude Code example (if applicable):
 
+<!-- workflow-shell-contract: bash -->
 ```bash
-claude --agent developer --model claude-opus-4-7
+bash -lc 'claude --agent developer --model claude-opus-5'
 ```
 
 **Cursor:**
@@ -120,14 +145,15 @@ Cursor subagents use the `model` field in `.cursor/agents/<agent>.md`. To overri
 Edit the model configuration for the agent:
 
 - **Claude Code**: Edit the `model` field in `.claude/agents/*.md`
-- **Cursor**: Edit the `model` field in `.cursor/agents/*.md` (values: `fast`, `inherit`, or a specific model ID)
+- **Cursor**: Edit the `model` field in `.cursor/agents/*.md` (values: `auto`, `fast`, `inherit`, or a specific model ID)
 
 This affects all future invocations until changed back.
 
 **Cursor model field values:**
 
-- `fast`: Uses Cursor's fast model (recommended for `economy`-tier agents only)
-- Pinned model ID: Uses that exact model (recommended for `balanced` and `premium` agents, e.g. `claude-sonnet-4-6`, `claude-opus-4-7`)
+- `fast`: Uses Cursor's fast model (template default for economy coordination agents where predictable cost and latency matter most)
+- `auto`: Lets Cursor route to an appropriate model (template default for lower-risk balanced QA, setup, and retrospective agents)
+- Pinned model ID: Uses that exact model (template default for complex authoring and review agents, e.g. `cursor-grok-4.5-high`)
 - `inherit`: Uses the current Composer model — **discouraged** for orchestrators, item runners, fixer agents, and reviewer-loop agents because it leaks parent-session cost into long runs; reserve for intentional one-off overrides
 
 **Precedence**: When multiple agent locations exist (`.cursor/agents/`, `.claude/agents/`, `.codex/agents/`), Cursor uses `.cursor/agents/` first, then `.claude/agents/`, then `.codex/agents/`.

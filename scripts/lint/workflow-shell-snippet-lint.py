@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOTS = ("AGENTS.md", "docs/workflow/", "docs/best-practices/", ".agents/skills/", ".codex/skills/", ".claude/commands/", ".claude/agents/", ".cursor/commands/", ".cursor/agents/", "scripts/development-workflow/")
-FENCE = re.compile(r"^\s*```(?P<lang>bash|sh|shell|zsh)?\s*$", re.I)
+FENCE = re.compile(r"^\s*```(?P<lang>[A-Za-z0-9_-]+)?\s*$", re.I)
 CONTRACT = re.compile(r"^\s*<!--\s*workflow-shell-contract:\s*(bash|bash-zsh)\s*-->\s*$")
 SHELL_SIGNAL = re.compile(r"(?m)^\s*(?:git|gh|bash|zsh|for|while|set|if|cd|export|source)\b")
 PORTABLE_FOR = re.compile(r"\bfor\s+\w+\s+in\s+\$[A-Za-z_][A-Za-z0-9_]*\b")

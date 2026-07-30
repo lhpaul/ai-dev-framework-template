@@ -1,6 +1,6 @@
 ---
 name: smoke-tester
-model: claude-sonnet-4-6
+model: claude-sonnet-5
 description: Smoke test stage. Use when a code review has been approved and the implementation needs manual smoke testing before merge. Executes the smoke test runbook using browser automation.
 tools: Read, Grep, Glob, Bash, Write
 ---

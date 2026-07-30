@@ -232,8 +232,9 @@ Runs one or more automated PR review platforms in order, then classifies finding
 
 Usage:
 
+<!-- workflow-shell-contract: bash -->
 ```bash
-./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch feature/my-branch] [--platform greptile] [--platform devin] [--platform coderabbit]
+bash ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch feature/my-branch] [--platform greptile] [--platform devin] [--platform coderabbit] [--platform coderabbit-cli]
 ```
 
 What it does:
@@ -243,6 +244,9 @@ What it does:
 - Stops on the first platform that reports blocking findings or escalation
 - Reports a stable aggregate `RESULT=clean|needs_fixes|escalate|skipped`
 - Emits ordered per-platform `PLATFORM_<n>_*` records plus the matching compatibility fixer
+- Supports `coderabbit` for the CodeRabbit GitHub App and `coderabbit-cli` for
+  the local CodeRabbit CLI; unavailable CLI/auth/rate-limit states are reported
+  as skipped or escalated evidence, not as a fresh clean review
 - If no GitHub reviewers are configured, reports `RESULT=skipped`
 
 Use this when:
@@ -250,6 +254,44 @@ Use this when:
 - A stage has pushed to a PR branch and must resolve automated review before requesting human review
 - The orchestrator is resuming a PR after a prior push or interruption
 - More than one automated reviewer is configured for a repository
+
+### `run-advisory-checks.sh`
+
+Optional project extension point invoked by `pr-review-loop.sh` after platform
+review aggregation and before the final reviewer-loop summary is posted.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/run-advisory-checks.sh <pr-number>
+```
+
+What it does by default:
+
+- Exits successfully and emits no stdout.
+- Defines the stable customization point for downstream projects that want to
+  append diff-scoped informational checks to the reviewer-loop summary.
+- Receives exactly one positional argument: the pull request number currently
+  being reviewed.
+
+Customization contract:
+
+- Write a complete Markdown-ready advisory section to stdout when there is
+  useful informational output, including the section heading. Example:
+
+  <!-- workflow-shell-contract: bash-zsh -->
+  ```bash
+  printf '\n\n**Advisory checks** _(informational - never blocks merge)_\n'
+  printf -- '- Dead exports: none found\n'
+  ```
+
+- Keep diagnostics on stderr. `pr-review-loop.sh` suppresses extension stderr in
+  the summary.
+- The extension is advisory-only. Its output, failure, or absence never changes
+  `RESULT`, blocker counts, readiness labels, or the reviewer-loop exit status.
+- Missing PR context, a missing script, or empty stdout produces no summary
+  section.
 
 ### `workflow-next-action.sh`
 
@@ -298,16 +340,50 @@ Use this when:
 - The batch orchestrator needs a deterministic first-pass list of development-folder candidates
 - You want to separate portfolio-level batch planning from single-item orchestration
 
-### `workflow-batch-lanes.sh`
+### `workflow-batch-overlap.sh`
 
-Assigns stage lanes and `proposed` vs `held` dispatch status for portfolio batch
-proposals. Consumes `workflow-batch-plan.sh` output (or `--scan`).
+Classifies concrete, suspected, and non-actionable implementation overlap for
+multi-item batch proposals from a provider-neutral item snapshot.
 
 Usage:
 
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/workflow-batch-overlap.sh --input batch-items.json --json
+```
+
+Input items include `id`, current tracker `title` and `brief`, plan-derived
+`fileSet`, `priority`, `createdAt`, and `nextAction`. Optional JSONL decision
+records can authorize `allow_parallel` only for a suspected pair when the batch
+fingerprint, pair ID, and evidence hash match the current proposal.
+
+What it does:
+
+- Preserves exact plan file-set intersections as concrete overlap
+- Extracts explicit file, route, function, and module/helper/script targets from
+  planless item briefs
+- Serializes concrete overlaps and unconfirmed suspected overlaps by default
+- Emits stable pair IDs, evidence hashes, accepted/stale decisions, and
+  transitive serial groups
+
+Use this when:
+
+- Protocol 90 needs to evaluate implementation overlap before assigning
+  multiple planless or mixed-evidence items to parallel lanes
+
+### `workflow-batch-lanes.sh`
+
+Assigns stage lanes and `proposed` vs `held` dispatch status for portfolio batch
+proposals. Consumes `workflow-batch-plan.sh` output (or `--scan`) and can apply
+serial groups from `workflow-batch-overlap.sh`.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/workflow-batch-plan.sh | ./scripts/development-workflow/workflow-batch-lanes.sh
 ./scripts/development-workflow/workflow-batch-lanes.sh --scan
+./scripts/development-workflow/workflow-batch-lanes.sh --overlap-input batch-items.json < batch-plan-output.txt
 ```
 
 What it does:
@@ -315,6 +391,8 @@ What it does:
 - Applies `max_concurrent_by_stage` caps (default: unlimited spec/plan/review, implementation `1`)
 - Emits `STAGE_LANE`, `DISPATCH`, `HOLD_REASON`, and `HELD_SUMMARY` per item
 - Honors `LOCAL_RUNTIME=exclusive` holds when multiple implementation items would contend
+- Holds lower-priority members of classifier serial groups until the prior item
+  merges into the approved base
 
 Use this when:
 

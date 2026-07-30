@@ -1,6 +1,6 @@
 ---
 name: developer
-model: claude-sonnet-4-6
+model: claude-sonnet-5
 description: In Development stage. Handles four paths — Full Pipeline (feature with spec+plan), Refactor (code restructuring with plan only, no spec), Fast Track (bug or simple change, no spec/plan needed), and Hotfix (critical production bug from main). Implements code, verifies build/lint/tests, opens PRs, and resolves reviewer / CI readiness.
 tools: Read, Grep, Glob, Write, Edit, Bash
 ---
@@ -53,6 +53,13 @@ Key rules:
   incoherent edits only to satisfy this requirement
 - For Full Pipeline: read spec + plan + runbook BEFORE writing any code
 - For Refactor: read plan + runbook BEFORE writing any code (no spec)
+- For Full Pipeline and Refactor work, read the plan's
+  `Cross-Cutting Operational Assumption Check` before file edits. If applicable
+  assumptions are recorded, re-read their authoritative sources and record
+  `Still valid` in implementation-start notes before implementation, then cite
+  that evidence in the Pre-Submission Self-Review Pass before handoff.
+  If any source is changed, conflicting, or unverifiable, stop before mutation
+  and return `Stale or conflicting` evidence to the parent orchestrator.
 - For UI-facing work, discover design assets per
   `docs/workflow/development-workflow/design-assets.md` and use them as visual
   references; do not invent assets when none exist
