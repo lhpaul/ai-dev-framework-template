@@ -145,6 +145,41 @@ unset WORKFLOW_MAX_CONCURRENT_IMPLEMENTATION
 run_test "exclusive_holds_second_impl" "held" "$(block_value "$exclusive_output" "impl-y" "DISPATCH")"
 run_test "exclusive_hold_reason" "local runtime exclusivity (another implementation item requires exclusive local runtime)" "$(block_value "$exclusive_output" "impl-y" "HOLD_REASON")"
 
+overlap_batch="$TMP_ROOT/overlap.batch"
+: > "$overlap_batch"
+write_batch_block "$overlap_batch" "overlap-a" "implement" "" "Plan Ready"
+write_batch_block "$overlap_batch" "overlap-b" "implement" "" "Plan Ready"
+overlap_input="$TMP_ROOT/overlap-input.json"
+jq -n '{
+  items: [
+    {
+      id: "overlap-a",
+      title: "Users endpoint",
+      brief: "Update GET /api/users.",
+      fileSet: "unknown",
+      priority: "High",
+      createdAt: "2026-01-01T00:00:00Z",
+      nextAction: "implement"
+    },
+    {
+      id: "overlap-b",
+      title: "User details",
+      brief: "Update GET /api/users/:id.",
+      fileSet: "unknown",
+      priority: "Normal",
+      createdAt: "2026-01-02T00:00:00Z",
+      nextAction: "implement"
+    }
+  ]
+}' > "$overlap_input"
+export WORKFLOW_MAX_CONCURRENT_IMPLEMENTATION=3
+overlap_output="$("$LANES" --repo-root "$high_parallel_repo" --overlap-input "$overlap_input" < "$overlap_batch")"
+unset WORKFLOW_MAX_CONCURRENT_IMPLEMENTATION
+run_test "overlap_keep_item_proposed" "proposed" "$(block_value "$overlap_output" "overlap-a" "DISPATCH")"
+run_test "overlap_held_item_serialized" "held" "$(block_value "$overlap_output" "overlap-b" "DISPATCH")"
+run_test "overlap_hold_reason" "planless overlap serialization (overlap-a--overlap-b); held until prior item merges into approved base" "$(block_value "$overlap_output" "overlap-b" "HOLD_REASON")"
+run_test "overlap_group_visible" "overlap-a--overlap-b" "$(block_value "$overlap_output" "overlap-b" "OVERLAP_SERIAL_GROUP")"
+
 # classify_local_runtime via workflow-batch-plan on a synthetic plan folder
 runtime_dev="$fixture_repo/docs/specs/developments/20260624120000_999-runtime-test"
 mkdir -p "$runtime_dev"

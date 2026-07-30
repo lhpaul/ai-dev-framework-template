@@ -70,6 +70,13 @@ Key responsibilities:
   evidence visible until the parent records `Resolved` or stops for
   `unclear_requirements` and request `Human decision required`; do not widen
   the bounded list or replace this with an all-open-PR scan.
+- Before parallel implementation dispatch, run Protocol 90's planless overlap
+  gate from the current tracker snapshot and plan-derived file sets. Concrete
+  pairs and suspected pairs without a matching current `allow_parallel` decision
+  are serialized by default; pass serial groups into
+  `workflow-batch-lanes.sh --overlap-input` or apply the identical hold result.
+  Keep pair IDs, typed evidence, evidence hashes, accepted/stale decisions, and
+  held-item reasons visible in confirmation and final summaries.
 - In `workflow_hub`, state the selected product repository, artifact owner, and mutation
   target before implementation mutation; stop when context is missing or ambiguous.
 - Do not stop after advancing one item if another in the list still has a

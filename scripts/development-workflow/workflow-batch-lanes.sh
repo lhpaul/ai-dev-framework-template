@@ -9,8 +9,8 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/development-workflow/workflow-batch-lanes.sh [--repo-root <path>] [--scan [development-path ...]]
-  ./scripts/development-workflow/workflow-batch-lanes.sh [--repo-root <path>] < batch-plan-output
+  ./scripts/development-workflow/workflow-batch-lanes.sh [--repo-root <path>] [--overlap-input <json-file>] [--scan [development-path ...]]
+  ./scripts/development-workflow/workflow-batch-lanes.sh [--repo-root <path>] [--overlap-input <json-file>] < batch-plan-output
 
 Assigns stage lanes and dispatch vs held status for portfolio batch proposals.
 Reads workflow-batch-plan.sh key=value blocks from stdin, or runs --scan to
@@ -219,6 +219,7 @@ PYEOF
 
 repo_root=""
 scan_mode=0
+overlap_input=""
 development_paths=()
 
 while [ "$#" -gt 0 ]; do
@@ -230,6 +231,11 @@ while [ "$#" -gt 0 ]; do
       ;;
     --scan)
       scan_mode=1
+      shift
+      ;;
+    --overlap-input)
+      shift
+      overlap_input="${1:-}"
       shift
       ;;
     -h|--help)
@@ -285,7 +291,8 @@ fi
 
 TMP_BLOCKS="$(mktemp)"
 TMP_META="$(mktemp)"
-trap 'rm -f "$TMP_BLOCKS" "$TMP_META"' EXIT
+TMP_OVERLAP="$(mktemp)"
+trap 'rm -f "$TMP_BLOCKS" "$TMP_META" "$TMP_OVERLAP"' EXIT
 
 # Parse item blocks (blank-line separated key=value groups).
 block_idx=0
@@ -414,6 +421,44 @@ if [ "$exclusive_in_batch" -eq 1 ] && [ "$proposed_impl_count" -gt 1 ]; then
   mv "$TMP_META.new" "$TMP_META"
 fi
 
+# Planless/brief overlap dispositions: Protocol 90 may supply a provider-neutral
+# item snapshot for workflow-batch-overlap.sh. Serial groups hold every member
+# except the group's selected keep item before dispatch.
+if [ -n "$overlap_input" ]; then
+  if [ ! -f "$overlap_input" ]; then
+    echo "ERROR: overlap input file not found: $overlap_input" >&2
+    exit 1
+  fi
+  "$SCRIPT_DIR/workflow-batch-overlap.sh" --input "$overlap_input" --json > "$TMP_OVERLAP"
+  : > "$TMP_META.new"
+  while IFS=$'\t' read -r block_index stage_lane dispatch hr local_runtime; do
+    hold_reason=""
+    if [ "$hr" != "-" ]; then
+      hold_reason="$hr"
+    fi
+
+    item_id=""
+    development_path=""
+    while IFS='=' read -r key value; do
+      case "$key" in
+        SLUG) item_id="$value" ;;
+        DEVELOPMENT_PATH) development_path="$value" ;;
+      esac
+    done < "$TMP_BLOCKS.$block_index"
+    [ -z "$item_id" ] && item_id="$development_path"
+
+    overlap_group="$(jq -r --arg id "$item_id" '.serialGroups[]? | select((.heldItemIds // []) | index($id)) | .groupId' "$TMP_OVERLAP" | head -1)"
+    if [ -n "$overlap_group" ] && [ "$stage_lane" = "implementation" ] && [ "$dispatch" = "proposed" ]; then
+      dispatch="held"
+      hold_reason="planless overlap serialization (${overlap_group}); held until prior item merges into approved base"
+    fi
+
+    hold_field="${hold_reason:--}"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$block_index" "$stage_lane" "$dispatch" "$hold_field" "$local_runtime" >> "$TMP_META.new"
+  done < "$TMP_META"
+  mv "$TMP_META.new" "$TMP_META"
+fi
+
 idx=0
 while [ "$idx" -lt "$block_idx" ]; do
   stage_lane=""
@@ -438,6 +483,7 @@ while [ "$idx" -lt "$block_idx" ]; do
   skip_reason=""
   pr_metadata_status=""
   pr_metadata_reason=""
+  overlap_group=""
   while IFS='=' read -r key value; do
     case "$key" in
       SLUG) item_id="$value" ;;
@@ -455,8 +501,14 @@ while [ "$idx" -lt "$block_idx" ]; do
   report_category="$(report_category_for_item "$dispatch" "$status" "$next_action" "$labels" "$pr_metadata_status")"
   report_label="$(report_label_for_category "$report_category")"
   report_reason="$(report_reason_for_item "$report_category" "$dispatch" "$status" "$next_action" "$hold_reason" "$skip_reason" "$labels" "$pr_metadata_status" "$pr_metadata_reason")"
+  if [ -n "$overlap_input" ]; then
+    overlap_group="$(jq -r --arg id "$item_id" '.serialGroups[]? | select(((.itemIds // []) | index($id)) or ((.heldItemIds // []) | index($id)) or (.keepItemId == $id)) | .groupId' "$TMP_OVERLAP" | head -1)"
+  fi
 
   cat "$TMP_BLOCKS.$idx"
+  if [ -n "$overlap_group" ]; then
+    print_kv OVERLAP_SERIAL_GROUP "$overlap_group"
+  fi
   print_kv STAGE_LANE "$stage_lane"
   print_kv DISPATCH "$dispatch"
   print_kv REPORT_CATEGORY "$report_category"
