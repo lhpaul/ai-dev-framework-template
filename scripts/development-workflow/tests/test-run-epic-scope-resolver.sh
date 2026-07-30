@@ -72,6 +72,7 @@ JSON
           104) status="Backlog" ;;
           105) status="Backlog" ;;
           106) status="Backlog" ;;
+          125) status="Plan Ready" ;;
           *) status="Backlog" ;;
         esac
         jq -n --arg status "$status" --arg type "$type" '{
@@ -157,6 +158,7 @@ JSON
 	      122) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
 	      123) labels_json='[{"name":"integration-branch:stale"}]' ;;
 	      124) labels_json='[]' ;;
+	      125) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
 	    esac
     jq -n \
       --argjson number "$issue_number" \
@@ -190,6 +192,7 @@ JSON
 	      122) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
 	      123) labels_json='[{"name":"integration-branch:stale"}]' ;;
 	      124) labels_json='[]' ;;
+	      125) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
 	    esac
     jq -n --argjson labels "$labels_json" '{labels:$labels}'
     ;;
@@ -358,6 +361,7 @@ run_fails_contains "requires_scope" "--epic <issue-number> is required" "$RESOLV
 run_fails_contains "rejects_both_scope_inputs" "not both" "$RESOLVER" --epic 900 --items 101
 run_fails_contains "rejects_invalid_items" "not a positive integer" "$RESOLVER" --items "101,nope"
 run_fails_contains "rejects_empty_item_token" "contains an empty item" "$RESOLVER" --items "101,,102"
+run_fails_contains "continuation_whitespace_items" "contains an empty item" "$RESOLVER" --items "   "
 run_fails_contains "rejects_invalid_may_start_backlog" "--may-start-backlog must be true or false" "$RESOLVER" --items 101 --may-start-backlog maybe
 run_fails_contains "rejects_invalid_max_risk" "--max-risk must be one of low, medium, or high" "$RESOLVER" --items 101 --max-risk blocked
 run_fails_contains "rejects_flag_as_may_start_backlog_value" "--may-start-backlog requires a value" "$RESOLVER" --items 101 --may-start-backlog --json
@@ -374,11 +378,35 @@ run_test "policy_max_risk" "medium" "$(printf '%s\n' "$items_output" | jq -r '.p
 run_test "shared_integration_label_base" "develop-delegated-epic-orchestration" "$(printf '%s\n' "$items_output" | jq -r '.baseBranch')"
 run_test "merged_plan_pr_not_complete" "eligible" "$(printf '%s\n' "$items_output" | jq -r '.items[] | select(.number == 101) | .group')"
 run_test "in_review_group_detected" "102" "$(printf '%s\n' "$items_output" | jq -r '.groups.in_review[0].number')"
+run_test "continuation_merged_plus_eligible" "continue" "$(printf '%s\n' "$items_output" | jq -r '.continuation.outcome')"
+run_test "continuation_merged_plus_eligible_remaining" "101,102" "$(printf '%s\n' "$items_output" | jq -r '[.continuation.remainingItems[].number] | join(",")')"
+
+authorized_backlog_output="$(run_json --items 101 --may-start-backlog true)"
+run_test "continuation_authorized_backlog" "continue" "$(printf '%s\n' "$authorized_backlog_output" | jq -r '.continuation.outcome')"
+run_test "continuation_authorized_backlog_remaining" "101" "$(printf '%s\n' "$authorized_backlog_output" | jq -r '[.continuation.remainingItems[].number] | join(",")')"
+
+in_review_continuation_output="$(run_json --items 102 --may-start-backlog false)"
+run_test "continuation_in_review" "continue" "$(printf '%s\n' "$in_review_continuation_output" | jq -r '.continuation.outcome')"
+run_test "continuation_in_review_remaining" "102" "$(printf '%s\n' "$in_review_continuation_output" | jq -r '[.continuation.remainingItems[].number] | join(",")')"
+
+eligible_blocked_output="$(run_json --items 125,107 --may-start-backlog false)"
+run_test "continuation_eligible_plus_blocked" "continue" "$(printf '%s\n' "$eligible_blocked_output" | jq -r '.continuation.outcome')"
+run_test "continuation_eligible_plus_blocked_remaining" "125" "$(printf '%s\n' "$eligible_blocked_output" | jq -r '[.continuation.remainingItems[].number] | join(",")')"
+run_test "continuation_eligible_plus_blocked_affected_empty" "0" "$(printf '%s\n' "$eligible_blocked_output" | jq '.continuation.affectedItems | length')"
 
 text_output="$("$RESOLVER" --items 101 --delegate-review --may-start-backlog false --max-risk high)"
 run_test "text_policy_includes_delegate_review" "yes" "$(grep -q 'Delegated review: true' <<< "$text_output" && echo yes || echo no)"
 run_test "text_policy_includes_backlog_policy" "yes" "$(grep -q 'May start Backlog: false' <<< "$text_output" && echo yes || echo no)"
 run_test "text_policy_includes_max_risk" "yes" "$(grep -q 'Max risk: high' <<< "$text_output" && echo yes || echo no)"
+run_test "text_continuation_stable_keys" "yes" "$(
+  grep -q 'continuation.outcome=needs_resolution' <<< "$text_output" &&
+    grep -q 'continuation.terminal=true' <<< "$text_output" &&
+    grep -q 'continuation.next_action=resolve_tracker_context' <<< "$text_output" &&
+    grep -q 'continuation.affected_items=101' <<< "$text_output" &&
+    grep -q 'continuation.stop_condition=missing_tracker_context' <<< "$text_output" &&
+    ! grep -q 'continuation.human_action=' <<< "$text_output" &&
+    echo yes || echo no
+)"
 
 override_output="$(run_json --items 105,106 --base develop-custom)"
 run_test "base_override_wins" "develop-custom" "$(printf '%s\n' "$override_output" | jq -r '.baseBranch')"
@@ -421,12 +449,18 @@ run_test "resolver_items_include_issue_body" "Depends on #103" "$(printf '%s\n' 
 
 blocked_output="$(run_json --items 107)"
 run_test "blocked_dependency_group_detected" "blocked" "$(printf '%s\n' "$blocked_output" | jq -r '.items[0].group')"
+run_test "continuation_blocked_stop" "needs_resolution" "$(printf '%s\n' "$blocked_output" | jq -r '.continuation.outcome')"
+run_test "continuation_blocked_stop_condition" "unclear_requirements" "$(printf '%s\n' "$blocked_output" | jq -r '.continuation.stopCondition')"
+run_test "continuation_blocked_affected" "107" "$(printf '%s\n' "$blocked_output" | jq -r '[.continuation.affectedItems[].number] | join(",")')"
+run_test "continuation_blocked_human_action_names_dependency" "true" "$(printf '%s\n' "$blocked_output" | jq -r '.continuation.humanAction | test("#108")')"
 
 blocked_variant_output="$(run_json --items 111)"
 run_test "blocked_dependency_variant_detected" "blocked" "$(printf '%s\n' "$blocked_variant_output" | jq -r '.items[0].group')"
 
 merged_output="$(run_json --items 103)"
 run_test "merged_pr_group_detected" "already_merged" "$(printf '%s\n' "$merged_output" | jq -r '.items[0].group')"
+run_test "continuation_all_merged" "complete" "$(printf '%s\n' "$merged_output" | jq -r '.continuation.outcome')"
+run_test "continuation_all_merged_terminal" "true" "$(printf '%s\n' "$merged_output" | jq -r '.continuation.terminal')"
 
 unready_pr_output="$(run_json --items 110)"
 run_test "unready_open_pr_remains_eligible" "eligible" "$(printf '%s\n' "$unready_pr_output" | jq -r '.items[0].group')"
@@ -470,6 +504,8 @@ run_test "head_search_fallback_uses_broad_prefix_query" "yes" "$(
 
 closed_output="$(run_json --items 109)"
 run_test "closed_not_planned_not_complete" "ambiguous" "$(printf '%s\n' "$closed_output" | jq -r '.items[0].group')"
+run_test "continuation_ambiguous_stop" "needs_resolution" "$(printf '%s\n' "$closed_output" | jq -r '.continuation.outcome')"
+run_test "continuation_ambiguous_stop_condition" "missing_tracker_context" "$(printf '%s\n' "$closed_output" | jq -r '.continuation.stopCondition')"
 
 epic_output="$(run_json --epic 900)"
 run_test "epic_subissues_resolved" "101,102" "$(printf '%s\n' "$epic_output" | jq -r '[.items[].number] | join(",")')"
@@ -484,6 +520,13 @@ run_test "epic_mixed_labels_mark_items_ambiguous" "2" "$(printf '%s\n' "$epic_mi
 
 empty_output="$(MOCK_EPIC_MODE=empty run_json --epic 900)"
 run_test "empty_epic_reports_scope" "true" "$(printf '%s\n' "$empty_output" | jq -r '.emptyEpicScope')"
+run_test "continuation_empty_scope" "needs_resolution" "$(printf '%s\n' "$empty_output" | jq -r '.continuation.outcome')"
+run_test "continuation_empty_scope_condition" "missing_tracker_context" "$(printf '%s\n' "$empty_output" | jq -r '.continuation.stopCondition')"
+
+unauthorized_backlog_output="$(run_json --items 101 --may-start-backlog false)"
+run_test "continuation_unauthorized_backlog" "needs_resolution" "$(printf '%s\n' "$unauthorized_backlog_output" | jq -r '.continuation.outcome')"
+run_test "continuation_unauthorized_backlog_affected" "101" "$(printf '%s\n' "$unauthorized_backlog_output" | jq -r '[.continuation.affectedItems[].number] | join(",")')"
+run_test "continuation_unauthorized_backlog_condition" "missing_tracker_context" "$(printf '%s\n' "$unauthorized_backlog_output" | jq -r '.continuation.stopCondition')"
 run_test "json_read_only_guarantee" "yes" "$(
   printf '%s\n' "$items_output" | jq -e '.readOnlyGuarantee | test("No tracker status")' >/dev/null && echo yes || echo no
 )"
