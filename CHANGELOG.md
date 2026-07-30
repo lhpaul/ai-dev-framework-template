@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Bugbot usage-limit reviewer classification** (#1394): Escalate Cursor
+  Bugbot usage/spend-limit responses instead of treating neutral checks as
+  clean.
 - **Fail closed on checkpoint resume isolation** (#1285): Require complete
   worktree context and stop resumed isolated runners before mutation when the
   session starts in the main clone or cannot prove its assignment.

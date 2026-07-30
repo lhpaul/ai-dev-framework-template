@@ -1165,6 +1165,23 @@ bugbot_return_disabled() {
   return 2
 }
 
+bugbot_return_usage_limit() {
+  local pr_number="$1"
+  local branch_name="$2"
+
+  echo "INFO: Bugbot could not run because the Cursor usage or spend limit was reached. Raise the limit or wait for quota reset, then rerun the reviewer loop." >&2
+  print_kv RESULT escalate
+  print_kv REASON bugbot-usage-limit
+  print_kv PLATFORM bugbot
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  print_kv COMMENT_COUNT 0
+  print_kv BLOCKING_COUNT 0
+  print_kv SUGGESTION_COUNT 0
+  return 2
+}
+
 bugbot_check_disabled_issue_comments() {
   local repo="$1"
   local pr_number="$2"
@@ -1190,6 +1207,50 @@ bugbot_check_disabled_issue_comments() {
     return 1
   fi
   printf '%s\n' "$output"
+  return 0
+}
+
+bugbot_escalate_for_unavailable_issue_comments() {
+  local repo="$1"
+  local pr_number="$2"
+  local branch_name="$3"
+  local bot_login="$4"
+  local since_iso="$5"
+  local context="$6"
+  local body
+  local unavailable_bodies
+  local _comments_rc=0
+
+  set +e
+  unavailable_bodies="$(bugbot_check_disabled_issue_comments "$repo" "$pr_number" "$bot_login" "$since_iso")"
+  _comments_rc=$?
+  set -e
+  if [ "$_comments_rc" -ne 0 ]; then
+    echo "WARN: run_bugbot_review: ${context} issue-comment fetch failed for PR #$pr_number" >&2
+    print_kv RESULT escalate
+    print_kv REASON fetch-failed
+    print_kv PLATFORM bugbot
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv COMMENT_COUNT 0
+    print_kv BLOCKING_COUNT 0
+    print_kv SUGGESTION_COUNT 0
+    return 2
+  fi
+
+  while IFS= read -r body; do
+    [ -z "$body" ] && continue
+    if is_bugbot_disabled_message "$body"; then
+      bugbot_return_disabled "$pr_number" "$branch_name"
+      return 2
+    fi
+    if is_bugbot_usage_limit_message "$body"; then
+      bugbot_return_usage_limit "$pr_number" "$branch_name"
+      return 2
+    fi
+  done <<< "$unavailable_bodies"
+
   return 0
 }
 
@@ -1270,9 +1331,6 @@ bugbot_escalate_if_disabled_without_check_run() {
   local since_iso="$5"
   local head_sha="$6"
   local check_name="$7"
-  local body
-  local disabled_bodies
-  local _comments_rc=0
   local _preflight_rc=0
 
   set +e
@@ -1297,30 +1355,13 @@ bugbot_escalate_if_disabled_without_check_run() {
   fi
 
   set +e
-  disabled_bodies="$(bugbot_check_disabled_issue_comments "$repo" "$pr_number" "$bot_login" "$since_iso")"
-  _comments_rc=$?
+  bugbot_escalate_for_unavailable_issue_comments \
+    "$repo" "$pr_number" "$branch_name" "$bot_login" "$since_iso" "disabled-preflight"
+  local _unavailable_comments_rc=$?
   set -e
-  if [ "$_comments_rc" -ne 0 ]; then
-    echo "WARN: run_bugbot_review: disabled-preflight issue-comment fetch failed for PR #$pr_number" >&2
-    print_kv RESULT escalate
-    print_kv REASON fetch-failed
-    print_kv PLATFORM bugbot
-    print_kv PR_NUMBER "$pr_number"
-    print_kv BRANCH "$branch_name"
-    print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
-    print_kv COMMENT_COUNT 0
-    print_kv BLOCKING_COUNT 0
-    print_kv SUGGESTION_COUNT 0
+  if [ "$_unavailable_comments_rc" -eq 2 ]; then
     return 2
   fi
-
-  while IFS= read -r body; do
-    [ -z "$body" ] && continue
-    if is_bugbot_disabled_message "$body"; then
-      bugbot_return_disabled "$pr_number" "$branch_name"
-      return 2
-    fi
-  done <<< "$disabled_bodies"
 
   return 0
 }
@@ -1900,6 +1941,17 @@ run_bugbot_review() {
           ;;
 
         neutral|cancelled|skipped)
+          # A neutral check is clean only when Cursor did not also post an
+          # unavailable/quota issue comment for this head.
+          set +e
+          bugbot_escalate_for_unavailable_issue_comments \
+            "$repo" "$pr_number" "$branch_name" "$bot_login" "$since_iso" "neutral-conclusion"
+          local _bb_neutral_unavailable_rc=$?
+          set -e
+          if [ "$_bb_neutral_unavailable_rc" -eq 2 ]; then
+            return 2
+          fi
+
           # Non-blocking informational outcome — clean, no real findings.
           print_kv RESULT clean
           print_kv PLATFORM "$platform"

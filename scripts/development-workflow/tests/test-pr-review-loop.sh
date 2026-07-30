@@ -2784,6 +2784,20 @@ else
 fi
 run_test "bugbot_generic_disabled_phrase_not_matched" "active" "$actual"
 
+if is_bugbot_usage_limit_message "Bugbot couldn't run - usage limit reached"; then
+  actual="usage_limit"
+else
+  actual="active"
+fi
+run_test "bugbot_usage_limit_message_detected" "usage_limit" "$actual"
+
+if is_bugbot_usage_limit_message "Cursor Bugbot found no issues in this pull request."; then
+  actual="usage_limit"
+else
+  actual="active"
+fi
+run_test "bugbot_clean_phrase_not_usage_limit" "active" "$actual"
+
 # ---------------------------------------------------------------------------
 # Test 16.1: clean path — check run conclusion=success, no blocking comments
 # ---------------------------------------------------------------------------
@@ -3421,6 +3435,59 @@ run_test "bugbot_neutral_suggestion_count" "SUGGESTION_COUNT=0" \
 run_test "bugbot_neutral_exit_code" "0" "$actual_exit"
 rm -rf "$_bugbot_mock_dir_169"
 unset _bugbot_mock_dir_169 actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.9.1: neutral usage-limit comment escalates
+#
+# Cursor can conclude the check run as neutral while posting an issue comment
+# that Bugbot could not run because a usage/spend limit was reached. That is
+# unavailable, not clean.
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_1691="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_1691/gh" <<'BUGBOT_GH_1691'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc1691sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"--method POST"*)
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-01T00:00:01Z","body":"Bugbot could not run - usage limit reached. The organization hit a usage or spend limit."}]\n'
+    exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"neutral","started_at":"2020-01-01T00:00:00Z"}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc1691sha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_1691
+chmod +x "$_bugbot_mock_dir_1691/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_1691:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_neutral_usage_limit_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_neutral_usage_limit_reason" "REASON=bugbot-usage-limit" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_neutral_usage_limit_exit_code" "2" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_1691"
+unset _bugbot_mock_dir_1691 actual_output actual_exit
 
 # ---------------------------------------------------------------------------
 # Test 16.10: run_platform_review routes "bugbot" to run_bugbot_review
