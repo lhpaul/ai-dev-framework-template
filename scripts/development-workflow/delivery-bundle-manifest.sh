@@ -158,8 +158,6 @@ def blocker_for_component(component):
         return "conflicting_component_evidence"
     if state == "stale":
         return "stale_readiness"
-    if state in ("missing", "partial") and component.get("evidence_schema_version") != EVIDENCE_SCHEMA:
-        return "missing_component_evidence"
     if state in ("missing", "partial"):
         return "missing_component_evidence"
     if component.get("evidence_schema_version") != EVIDENCE_SCHEMA:
