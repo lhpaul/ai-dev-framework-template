@@ -78,6 +78,20 @@ run_contains "single_repo_shell_allowed" "MUTATION_ALLOWED=true" "$single_output
 run_contains "single_repo_shell_release_owner" "ARTIFACT_OWNER_RELEASE=current_repository" "$single_output"
 run_contains "single_repo_shell_revision" "CONTRACT_REVISION=sha256:" "$single_output"
 
+bad_single_repo="$TMP_ROOT/bad-single-repo"
+cp -R "$single_repo" "$bad_single_repo"
+python3 - "$bad_single_repo/.ai-dev-workflow.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(text.replace("branch_pattern: release/v{version}", "branch_pattern: release/static"), encoding="utf-8")
+PY
+bad_single_json="$(bash "$TARGET_HELPER" --repo-root "$bad_single_repo" --json)"
+run_test "single_repo_invalid_contract_outcome" "invalid_release_contract" "$(jq -r '.routing_outcome' <<< "$bad_single_json")"
+run_test "single_repo_invalid_contract_disallows_mutation" "false" "$(jq -r '.mutation_allowed' <<< "$bad_single_json")"
+
 component_json="$(bash "$TARGET_HELPER" --repo-root "$hub_repo" --repo mobile-app --json)"
 run_test "component_json_schema" "component_release_target.v1" "$(jq -r '.schema_version' <<< "$component_json")"
 run_test "component_json_outcome" "component_release_routed" "$(jq -r '.routing_outcome' <<< "$component_json")"

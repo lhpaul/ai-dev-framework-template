@@ -43,6 +43,10 @@ run_test() {
 }
 
 run_not_equal() {
+  if [ "$#" -ne 3 ]; then
+    printf 'ERROR: run_not_equal requires exactly 3 arguments; got %s\n' "$#" >&2
+    return 2
+  fi
   local name="$1"
   local left="$2"
   local right="$3"

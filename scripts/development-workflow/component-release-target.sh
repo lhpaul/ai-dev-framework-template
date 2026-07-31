@@ -223,7 +223,14 @@ if [ "$MODE" = "single_repo" ]; then
   if [ "$REQUIRE_LOCAL" = "true" ]; then
     resolver_args+=(--require-local)
   fi
-  output="$(python3 "$RESOLVER" "${resolver_args[@]}")"
+  set +e
+  output="$(python3 "$RESOLVER" "${resolver_args[@]}" 2>&1)"
+  resolver_status=$?
+  set -e
+  if [ "$resolver_status" -ne 0 ]; then
+    emit_stop "invalid_release_contract" "correct single-repository release configuration before mutation"
+    exit 0
+  fi
   identity="$(jq -r '.TARGET_GITHUB_REPO // ""' <<< "$output")"
   if [ -z "$identity" ]; then
     identity="$(jq -r '.TARGET_LOCAL_PATH // ""' <<< "$output")"
