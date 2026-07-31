@@ -42,6 +42,23 @@ run_test() {
   fi
 }
 
+run_not_equal() {
+  if [ "$#" -ne 3 ]; then
+    printf 'ERROR: run_not_equal requires exactly 3 arguments; got %s\n' "$#" >&2
+    return 2
+  fi
+  local name="$1"
+  local left="$2"
+  local right="$3"
+  if [ "$left" != "$right" ]; then
+    echo "PASS: $name"
+    PASS_COUNT=$((PASS_COUNT + 1))
+  else
+    echo "FAIL: $name - expected values to differ, both were '${left}'"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
+}
+
 run_contains() {
   local name="$1"
   local expected="$2"
@@ -112,6 +129,23 @@ run_contains "single_repo_context_default_branch" "TARGET_DEFAULT_BRANCH=main" "
 run_contains "single_repo_release_default_tag_owner" "TARGET_RELEASE_TAG_OWNER=current_repo" "$single_repo_output"
 run_contains "single_repo_release_default_changelog_owner" "TARGET_RELEASE_CHANGELOG_OWNER=current_repo" "$single_repo_output"
 run_contains "single_repo_release_default_tracker_owner" "TARGET_RELEASE_TRACKER_RECONCILIATION_OWNER=current_repo" "$single_repo_output"
+run_contains "single_repo_release_contract_revision" "TARGET_RELEASE_CONTRACT_REVISION=sha256:" "$single_repo_output"
+single_repo_repeat_output="$(workflow_repository_context "" "$single_repo_dir")"
+single_repo_revision="$(printf '%s\n' "$single_repo_output" | sed -n "s/^TARGET_RELEASE_CONTRACT_REVISION='\\{0,1\\}\\([^']*\\)'\\{0,1\\}$/\\1/p")"
+single_repo_repeat_revision="$(printf '%s\n' "$single_repo_repeat_output" | sed -n "s/^TARGET_RELEASE_CONTRACT_REVISION='\\{0,1\\}\\([^']*\\)'\\{0,1\\}$/\\1/p")"
+run_test "single_repo_release_revision_stable" "$single_repo_revision" "$single_repo_repeat_revision"
+single_repo_changed_dir="$(fixture_dir single-repo-changed-release)"
+mkdir -p "$single_repo_changed_dir/.git"
+cat > "$single_repo_changed_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: single_repo
+default_branch: develop
+release:
+  branch_pattern: "release/component/v{version}"
+YAML
+changed_single_output="$(workflow_repository_context "" "$single_repo_changed_dir")"
+changed_single_revision="$(printf '%s\n' "$changed_single_output" | sed -n "s/^TARGET_RELEASE_CONTRACT_REVISION='\\{0,1\\}\\([^']*\\)'\\{0,1\\}$/\\1/p")"
+run_not_equal "single_repo_release_revision_changes_with_pattern" "$single_repo_revision" "$changed_single_revision"
 validator_output="$(bash "$VALIDATOR" --repo-root "$single_repo_dir")"
 run_contains "validate_workflow_config_sh_repo_root_arg" "TARGET_REPO_NAME=single-repo" "$validator_output"
 
@@ -259,6 +293,34 @@ run_contains "workflow_hub_release_pattern" "TARGET_RELEASE_BRANCH_PATTERN='{pro
 run_contains "workflow_hub_release_pattern_source" "TARGET_RELEASE_BRANCH_PATTERN_SOURCE=explicit" "$release_contract_output"
 run_contains "workflow_hub_release_changelog_owner" "TARGET_RELEASE_CHANGELOG_OWNER=product_repo" "$release_contract_output"
 run_contains "workflow_hub_release_tracker_owner" "TARGET_RELEASE_TRACKER_RECONCILIATION_OWNER=hub" "$release_contract_output"
+run_contains "workflow_hub_release_contract_revision" "TARGET_RELEASE_CONTRACT_REVISION=sha256:" "$release_contract_output"
+release_contract_repeat_output="$(workflow_repository_context mobile-app "$release_contract_dir")"
+release_contract_revision="$(printf '%s\n' "$release_contract_output" | sed -n "s/^TARGET_RELEASE_CONTRACT_REVISION='\\{0,1\\}\\([^']*\\)'\\{0,1\\}$/\\1/p")"
+release_contract_repeat_revision="$(printf '%s\n' "$release_contract_repeat_output" | sed -n "s/^TARGET_RELEASE_CONTRACT_REVISION='\\{0,1\\}\\([^']*\\)'\\{0,1\\}$/\\1/p")"
+run_test "workflow_hub_release_revision_stable" "$release_contract_revision" "$release_contract_repeat_revision"
+release_owner_changed_dir="$(fixture_dir release-owner-changed)"
+cat > "$release_owner_changed_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      default_branch: develop
+      release:
+        base: release-base
+        branch_pattern: "{product_repo}/release/v{version}"
+        changelog_owner: current_repo
+        tag_owner: product_repo
+        github_release_owner: product_repo
+        deployment_evidence_owner: product_repo
+        cleanup_evidence_owner: product_repo
+        tracker_reconciliation_owner: hub
+YAML
+release_owner_changed_output="$(workflow_repository_context mobile-app "$release_owner_changed_dir")"
+release_owner_changed_revision="$(printf '%s\n' "$release_owner_changed_output" | sed -n "s/^TARGET_RELEASE_CONTRACT_REVISION='\\{0,1\\}\\([^']*\\)'\\{0,1\\}$/\\1/p")"
+run_not_equal "workflow_hub_release_revision_changes_with_owner" "$release_contract_revision" "$release_owner_changed_revision"
 
 release_defaults_dir="$(fixture_dir release-defaults)"
 cat > "$release_defaults_dir/.ai-dev-workflow.yaml" <<'YAML'

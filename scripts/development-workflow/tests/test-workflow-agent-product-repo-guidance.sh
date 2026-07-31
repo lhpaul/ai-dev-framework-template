@@ -121,6 +121,12 @@ run_contains "codex_reviewer_loop_context" \
 run_contains "agents_run_work_context" \
   ".agents/skills/run-work/SKILL.md" \
   "preserve selected product repository"
+run_contains "agents_prepare_release_component_target" \
+  ".agents/skills/prepare-release/SKILL.md" \
+  "component-release-target.sh"
+run_contains "agents_prepare_release_evidence_file" \
+  ".agents/skills/prepare-release/SKILL.md" \
+  "--evidence-file"
 run_contains "agents_openai_default_prompt_context" \
   ".agents/skills/run-work/agents/openai.yaml" \
   "selected product repository context"

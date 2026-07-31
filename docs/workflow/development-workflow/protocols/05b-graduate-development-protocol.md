@@ -13,6 +13,12 @@ evidence remain hub-owned, while product changelog, release branch, tag,
 GitHub Release, deployment evidence, and product cleanup evidence remain owned
 by the selected product repository.
 
+When graduation hands off to component release preparation, carry forward the
+`component_release_target.v1` binding and `component_release_evidence.v1`
+record produced by `scripts/development-workflow/component-release-target.sh`
+and `scripts/development-workflow/component-release-evidence.sh`; do not infer
+the product repository from the hub checkout or integration branch name.
+
 ---
 
 ## Prerequisites

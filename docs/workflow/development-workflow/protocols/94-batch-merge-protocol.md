@@ -17,6 +17,13 @@ branches, tags, GitHub Releases, deployment evidence, and product cleanup
 evidence are product-repository-owned; delivery manifests and tracker
 reconciliation evidence are hub-owned.
 
+Use `scripts/development-workflow/component-release-target.sh` and
+`scripts/development-workflow/component-release-evidence.sh` from the hub
+checkout to preserve the selected product repository, artifact owners,
+`release_correlation_key`, and `contract_revision` through any release evidence
+handoff. See the [Prepare Release Protocol](05-prepare-release-protocol.md)
+before preparing or cleaning a component release branch.
+
 ---
 
 ## When to use this protocol

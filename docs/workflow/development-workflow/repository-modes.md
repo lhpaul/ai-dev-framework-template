@@ -59,6 +59,26 @@ Release branch patterns may use `{version}` and `{product_repo}` placeholders
 and must resolve to one valid portable branch name before a release artifact is
 created.
 
+`scripts/development-workflow/component-release-target.sh` is the canonical
+adapter for release routing. It
+emits `schema_version=component_release_target.v1`, one routing outcome, a
+`mutation_allowed` decision, artifact owners, `release_correlation_key`, and
+`contract_revision`. `single_repo_release` and `component_release_routed` are
+the continue outcomes. `missing_product_selection`, `multiple_product_targets`,
+`unknown_product_repository`, `ambiguous_product_selection`,
+`invalid_release_contract`, `unavailable_product_repository_checkout`, and
+`unsupported_repository_mode` are fail-closed stop outcomes. Stop outcomes never
+report product-owned mutable artifacts.
+
+`scripts/development-workflow/component-release-evidence.sh` renders
+deterministic `component_release_evidence.v1` records from an independent target
+binding.
+Release cleanup reruns must compare the current target binding to the persisted
+evidence before deleting product release branches, tags, cleanup evidence, or
+updating hub tracker state. Duplicate cleanup attempts use a per-release lease
+keyed by `release_correlation_key`; a completed evidence record is the
+idempotent rerun signal.
+
 In `single_repo` mode, all artifact ownership stays exactly as it works today:
 the tracker item, spec, plan, implementation branch, PR, CI, reviewer loop, smoke
 runbook, and release evidence are all handled in the same repository.
@@ -128,6 +148,10 @@ allowing implementation actions to target a selected product repository.
 - `post-merge-cleanup.sh --repo <name> <branch>` cleans implementation branches
   in the selected product checkout in `workflow_hub` mode, then returns tracker
   updates to the hub repository.
+- `prepare-release-post-merge-cleanup.sh "$RELEASE_BRANCH" --repo <name>
+  --evidence-file <path>` cleans component release branches in the selected
+  product checkout after validating `component_release_evidence.v1`, then
+  returns tracker release stamping and status transitions to the hub repository.
 - Spec, plan, and tracker operations remain hub-owned. Product repository
   selection must not redirect GitHub Projects reads or status updates unless a
   later workflow contract explicitly changes tracker ownership.

@@ -356,10 +356,14 @@ TARGET_JSON="$SMOKE_TMP/component-target.json"
 TARGET_BINDING_JSON="$SMOKE_TMP/component-target-binding.json"
 EVIDENCE_JSON="$SMOKE_TMP/component-evidence.json"
 EVIDENCE_DUPLICATE_JSON="$SMOKE_TMP/component-evidence-duplicate.json"
+RELEASE_BRANCH_PATTERN="$(jq -r '.release_branch_pattern' "$TARGET_JSON")"
+RELEASE_BRANCH="${RELEASE_BRANCH_PATTERN//\{version\}/$RELEASE_VERSION}"
+RELEASE_BRANCH="${RELEASE_BRANCH//\{product_repo\}/$PRODUCT_REPO_KEY}"
 
 scripts/development-workflow/component-release-evidence.sh \
   --target-file "$TARGET_JSON" \
   --binding-file "$TARGET_BINDING_JSON" \
+  --release-branch "$RELEASE_BRANCH" \
   --release-outcome pending \
   --ci-outcome pending \
   --deployment-outcome not_applicable \
@@ -384,6 +388,7 @@ jq --arg expected "$TEST_TRACKER_ISSUE" \
 scripts/development-workflow/component-release-evidence.sh \
   --target-file "$TARGET_JSON" \
   --binding-file "$TARGET_BINDING_JSON" \
+  --release-branch "$RELEASE_BRANCH" \
   --release-outcome pending \
   --ci-outcome pending \
   --deployment-outcome not_applicable \
@@ -398,6 +403,7 @@ do
   scripts/development-workflow/component-release-evidence.sh \
     --target-file "$TARGET_JSON" \
     --binding-file "$TARGET_BINDING_JSON" \
+    --release-branch "$RELEASE_BRANCH" \
     --release-outcome "$release_outcome" \
     --ci-outcome passed \
     --deployment-outcome recorded \
@@ -419,6 +425,7 @@ do
   if scripts/development-workflow/component-release-evidence.sh \
     --target-file "$MISMATCH_TARGET" \
     --binding-file "$TARGET_BINDING_JSON" \
+    --release-branch "$RELEASE_BRANCH" \
     --release-outcome pending \
     --ci-outcome pending \
     --deployment-outcome not_applicable \
@@ -442,6 +449,7 @@ MISMATCHES
 if scripts/development-workflow/component-release-evidence.sh \
   --target-file "$TARGET_JSON" \
   --binding-file "$TARGET_BINDING_JSON" \
+  --release-branch "$RELEASE_BRANCH" \
   --release-outcome invalid \
   --ci-outcome pending \
   --deployment-outcome not_applicable \
@@ -509,6 +517,7 @@ git -C "$PRODUCT_REPO_PATH" ls-remote --heads --tags origin \
   > "$PRODUCT_STATE_BEFORE"
 
 scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+  "$RELEASE_BRANCH" \
   --repo "$PRODUCT_REPO_KEY" \
   --repo-root "$HUB_FIXTURE" \
   --evidence-file "$EVIDENCE_JSON" \
@@ -516,6 +525,7 @@ scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
   --json > "$CLEANUP_JSON"
 
 scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+  "$RELEASE_BRANCH" \
   --repo "$PRODUCT_REPO_KEY" \
   --repo-root "$HUB_FIXTURE" \
   --evidence-file "$EVIDENCE_JSON" \
@@ -546,6 +556,7 @@ git -C "$PRODUCT_REPO_PATH" ls-remote --heads --tags origin \
 cp "$TRACKER_STATE_FILE" "$TRACKER_STATE_BEFORE_REJECT"
 
 if scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+  "$RELEASE_BRANCH" \
   --repo "$PRODUCT_REPO_KEY" \
   --repo-root "$HUB_FIXTURE" \
   --evidence-file "$MISMATCHED_EVIDENCE_FILE" \

@@ -71,15 +71,30 @@ repository's `default_branch`, `branch_pattern` defaults to
 Before creating product-owned changelog entries, release branches, tags, GitHub
 Releases, deployment evidence, or cleanup evidence, run:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-scripts/development-workflow/validate-workflow-config.sh --repo faind-mobile-app
+TARGET_REPO_KEY="faind-mobile-app"
+TARGET_BINDING_SAFE_KEY="$(printf '%s' "$TARGET_REPO_KEY" | tr -c 'A-Za-z0-9._-' '_')"
+TARGET_BINDING_FILE="$(mktemp "${TMPDIR:-/tmp}/component-release-target.${TARGET_BINDING_SAFE_KEY}.XXXXXX")"
+TARGET_BINDING_TMP="${TARGET_BINDING_FILE}.$$"
+scripts/development-workflow/component-release-target.sh \
+  --repo "$TARGET_REPO_KEY" \
+  --json > "$TARGET_BINDING_TMP"
+mv "$TARGET_BINDING_TMP" "$TARGET_BINDING_FILE"
 ```
 
-Validation stops when the selected product repository is missing or ambiguous,
-when `github_repo` / `git_url` is missing, when release branch values are not
-portable, or when the versioned release contract contains local checkout paths,
-credentials, token values, secret names, secret values, or environment-specific
-account details.
+Continue only when the helper reports `component_release_routed` and
+`mutation_allowed=true`. See
+[Repository modes](repository-modes.md#release-artifact-ownership) for the
+canonical routing outcomes, validation rules, and binding fields.
+The versioned release contract must still exclude local checkout paths,
+credentials, token values, secret names, secret values, and
+environment-specific account details.
+
+After resolving a component release target, store the generated target binding
+with the release evidence record. The local checkout path comes only from
+`.ai-dev-workflow.local.yaml`; never add checkout paths or secret references to
+the versioned `release` block.
 
 ## Local Hub Config
 

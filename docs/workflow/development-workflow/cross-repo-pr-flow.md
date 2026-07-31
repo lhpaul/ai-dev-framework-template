@@ -38,14 +38,47 @@ step.
 
 Run from the hub checkout:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-scripts/development-workflow/validate-workflow-config.sh --repo faind-mobile-app
+TARGET_REPO_KEY="faind-mobile-app"
+TARGET_BINDING_SAFE_KEY="$(printf '%s' "$TARGET_REPO_KEY" | tr -c 'A-Za-z0-9._-' '_')"
+TARGET_BINDING_FILE="$(mktemp "${TMPDIR:-/tmp}/component-release-target.${TARGET_BINDING_SAFE_KEY}.XXXXXX")"
+TARGET_BINDING_TMP="${TARGET_BINDING_FILE}.$$"
+scripts/development-workflow/component-release-target.sh \
+  --repo "$TARGET_REPO_KEY" \
+  --json > "$TARGET_BINDING_TMP"
+mv "$TARGET_BINDING_TMP" "$TARGET_BINDING_FILE"
 ```
 
-Stop before release mutation when product selection is missing or ambiguous, a
-release branch value is invalid, or versioned release config contains local
-paths, credentials, token values, secret names, secret values, or
-environment-specific account details.
+Continue only when the helper reports `component_release_routed` and
+`mutation_allowed=true`. Then persist the target binding and create a release
+evidence handoff:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+scripts/development-workflow/component-release-evidence.sh \
+  --target-file "$TARGET_BINDING_FILE" \
+  --binding-file "$TARGET_BINDING_FILE" \
+  --release-branch "$RELEASE_BRANCH" \
+  --release-outcome pending \
+  --ci-outcome pending \
+  --deployment-outcome pending \
+  --cleanup-outcome not_started \
+  --hub-tracker-ref "#123" \
+  --output /path/to/component-release-evidence.json
+```
+
+Stop before release mutation when product selection is missing, multiple,
+unknown, or ambiguous; a release branch value is invalid; the product checkout
+is unavailable; or versioned release config contains local paths, credentials,
+token values, secret names, secret values, or environment-specific account
+details.
+
+After both release PRs merge, run component release cleanup from the hub with
+the same product key and evidence file. Follow
+[Prepare Release](protocols/05-prepare-release-protocol.md) and the canonical
+[repository-mode release contract](repository-modes.md#release-artifact-ownership)
+for cleanup validation rules.
 
 Hub-only workflow improvements, such as updates to orchestration scripts or
 workflow docs, still open implementation PRs in the hub repository.
@@ -56,6 +89,7 @@ Run location: hub checkout.
 
 Confirm the next action and selected product repository:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 scripts/development-workflow/workflow-next-action.sh \
   --repo faind-mobile-app \

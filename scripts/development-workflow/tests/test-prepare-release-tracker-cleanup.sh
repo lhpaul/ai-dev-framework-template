@@ -65,6 +65,18 @@ case "$*" in
   "pr list --state open --head release/v1.18.0 --base develop --json number --jq .[0].number // empty")
     printf '\n'
     ;;
+  "pr list --repo example/mobile-app --state merged --head mobile-app/release/v1.18.0 --base main --json number --jq .[0].number // empty")
+    printf '500\n'
+    ;;
+  "pr list --repo example/mobile-app --state merged --head mobile-app/release/v1.18.0 --base release-base --json number --jq .[0].number // empty")
+    printf '501\n'
+    ;;
+  "pr list --repo example/mobile-app --state open --head mobile-app/release/v1.18.0 --base main --json number --jq .[0].number // empty")
+    printf '\n'
+    ;;
+  "pr list --repo example/mobile-app --state open --head mobile-app/release/v1.18.0 --base release-base --json number --jq .[0].number // empty")
+    printf '\n'
+    ;;
   "pr list --state merged --head mobile-app/release/v1.18.0 --base main --json number --jq .[0].number // empty")
     printf '400\n'
     ;;
@@ -124,6 +136,24 @@ case "$*" in
     ;;
   "show-ref --quiet refs/heads/release/v1.18.0")
     exit 1
+    ;;
+  -C\ */mobile-app\ fetch\ origin\ --prune)
+    exit 0
+    ;;
+  -C\ */mobile-app\ ls-remote\ --exit-code\ --heads\ origin\ mobile-app/release/v1.18.0)
+    exit 0
+    ;;
+  -C\ */mobile-app\ push\ origin\ --delete\ mobile-app/release/v1.18.0)
+    exit 0
+    ;;
+  -C\ */mobile-app\ show-ref\ --quiet\ refs/heads/mobile-app/release/v1.18.0)
+    exit 0
+    ;;
+  -C\ */mobile-app\ branch\ --show-current)
+    printf 'develop\n'
+    ;;
+  -C\ */mobile-app\ branch\ -D\ mobile-app/release/v1.18.0)
+    exit 0
     ;;
   "ls-remote --exit-code --heads origin mobile-app/release/v1.18.0")
     exit 2
@@ -254,6 +284,138 @@ run_test "nested_release_branch_exits_zero" "0" "$status"
 run_contains "nested_release_branch_preserved" "Release branch: release/mobile-app/v1.18.0" "$output"
 run_contains "nested_release_version_basename" "Release version: v1.18.0" "$output"
 run_contains "nested_release_merged_prs" "Merged PRs verified (main #402, release-base #403)." "$output"
+
+fixture_component_cleanup_repo() {
+  local name="$1"
+  local path="$TMP_ROOT/$name"
+  local product_path="$TMP_ROOT/mobile-app"
+  mkdir -p "$path/scripts/development-workflow" "$product_path/.git"
+  cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" "$path/scripts/development-workflow/workflow-lib.sh"
+  cp "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh" "$path/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+  cp "$REPO_ROOT/scripts/development-workflow/component-release-target.sh" "$path/scripts/development-workflow/component-release-target.sh"
+  cp "$REPO_ROOT/scripts/development-workflow/workflow-config-resolver.py" "$path/scripts/development-workflow/workflow-config-resolver.py"
+  chmod +x "$path/scripts/development-workflow/"*.sh
+  cat > "$path/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+issue_tracker:
+  provider: linear
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      default_branch: release-base
+      release:
+        base: release-base
+        branch_pattern: "{product_repo}/release/v{version}"
+        changelog_owner: product_repo
+        tag_owner: product_repo
+        github_release_owner: product_repo
+        deployment_evidence_owner: product_repo
+        cleanup_evidence_owner: product_repo
+        tracker_reconciliation_owner: hub
+YAML
+  cat > "$path/.ai-dev-workflow.local.yaml" <<'YAML'
+product_repos:
+  - name: mobile-app
+    local_path: ../mobile-app
+YAML
+  (
+    cd "$path"
+    target_json="$(./scripts/development-workflow/component-release-target.sh --repo-root "$path" --repo mobile-app --json)"
+    jq -nS --argjson target "$target_json" \
+      '{
+        schema_version:"component_release_evidence.v1",
+        target_binding:$target,
+        release_branch:"mobile-app/release/v1.18.0",
+        release_outcome:"completed",
+        ci_outcome:"passed",
+        deployment_outcome:"recorded",
+        cleanup_outcome:"not_started",
+        hub_tracker_ref:"#1356"
+      }' > "$path/component-release-evidence.json"
+  )
+  printf '%s\n' "$path"
+}
+
+repo_component_cleanup="$(fixture_component_cleanup_repo component-cleanup)"
+result="$(run_cleanup "$repo_component_cleanup" --repo mobile-app --repo-root "$repo_component_cleanup" --evidence-file "$repo_component_cleanup/component-release-evidence.json" --issue LEA-210 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "component_cleanup_exits_zero" "0" "$status"
+run_contains "component_cleanup_target_logged" "Component release target: mobile-app (example/mobile-app)" "$output"
+run_contains "component_cleanup_branch_from_evidence" "Release branch: mobile-app/release/v1.18.0" "$output"
+run_contains "component_cleanup_product_prs" "Merged PRs verified (main #500, release-base #501)." "$output"
+run_contains "component_cleanup_remote_delete" "Deleting remote branch 'mobile-app/release/v1.18.0'" "$output"
+run_contains "component_cleanup_local_delete" "Deleting local branch 'mobile-app/release/v1.18.0'" "$output"
+run_contains "component_cleanup_linear_action" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
+
+complete_evidence="$repo_component_cleanup/component-release-evidence-complete.json"
+jq '.cleanup_outcome = "complete"' \
+  "$repo_component_cleanup/component-release-evidence.json" > "$complete_evidence"
+result="$(run_cleanup "$repo_component_cleanup" --repo mobile-app --repo-root "$repo_component_cleanup" --evidence-file "$complete_evidence" --issue LEA-212 --best-effort --json)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "component_cleanup_complete_exits_zero" "0" "$status"
+run_contains "component_cleanup_complete_idempotent" "Component release cleanup evidence is already complete" "$output"
+run_contains "component_cleanup_complete_json" '"cleanup_outcome":"already_complete"' "$output"
+
+target_json="$repo_component_cleanup/component-release-target.json"
+(cd "$repo_component_cleanup" && ./scripts/development-workflow/component-release-target.sh --repo-root "$repo_component_cleanup" --repo mobile-app --json > "$target_json")
+lock_key="$(printf '%s' "$(jq -r '.release_correlation_key' "$target_json")" | tr -c 'A-Za-z0-9._-' '_')"
+mkdir -p "$TMP_ROOT/mobile-app/.git/component-release-cleanup-locks/$lock_key.lock"
+result="$(run_cleanup "$repo_component_cleanup" --repo mobile-app --repo-root "$repo_component_cleanup" --evidence-file "$repo_component_cleanup/component-release-evidence.json" --issue LEA-213 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "component_cleanup_lock_exits_nonzero" "1" "$status"
+run_contains "component_cleanup_lock_rejected" "Component release cleanup lock is already held" "$output"
+rmdir "$TMP_ROOT/mobile-app/.git/component-release-cleanup-locks/$lock_key.lock"
+
+result="$(run_cleanup "$repo_component_cleanup" mobile-app/release/v9.9.9 --repo mobile-app --repo-root "$repo_component_cleanup" --evidence-file "$repo_component_cleanup/component-release-evidence.json" --issue LEA-214 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "component_cleanup_branch_mismatch_exits_nonzero" "1" "$status"
+run_contains "component_cleanup_branch_mismatch_rejected" "Component release evidence release_branch mismatch" "$output"
+
+repo_invalid_identity="$(fixture_component_cleanup_repo component-invalid-identity)"
+python3 - "$repo_invalid_identity/.ai-dev-workflow.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(text.replace("github_repo: example/mobile-app", "github_repo: bad/repo/slug"), encoding="utf-8")
+PY
+(
+  cd "$repo_invalid_identity"
+  target_json="$(./scripts/development-workflow/component-release-target.sh --repo-root "$repo_invalid_identity" --repo mobile-app --json)"
+  jq -nS --argjson target "$target_json" \
+    '{
+      schema_version:"component_release_evidence.v1",
+      target_binding:$target,
+      release_branch:"mobile-app/release/v1.18.0",
+      release_outcome:"completed",
+      ci_outcome:"passed",
+      deployment_outcome:"recorded",
+      cleanup_outcome:"not_started",
+      hub_tracker_ref:"#1356"
+    }' > "$repo_invalid_identity/component-release-evidence.json"
+)
+result="$(run_cleanup "$repo_invalid_identity" --repo mobile-app --repo-root "$repo_invalid_identity" --evidence-file "$repo_invalid_identity/component-release-evidence.json" --issue LEA-215 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "component_cleanup_invalid_identity_exits_nonzero" "1" "$status"
+run_contains "component_cleanup_invalid_identity_rejected" "COMPONENT_CLEANUP_ERROR=invalid_repository_identity" "$output"
+
+mismatch_evidence="$repo_component_cleanup/component-release-evidence-mismatch.json"
+jq '.target_binding.contract_revision = "sha256:mismatch"' \
+  "$repo_component_cleanup/component-release-evidence.json" > "$mismatch_evidence"
+result="$(run_cleanup "$repo_component_cleanup" --repo mobile-app --repo-root "$repo_component_cleanup" --evidence-file "$mismatch_evidence" --issue LEA-211 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "component_cleanup_mismatch_exits_nonzero" "1" "$status"
+run_contains "component_cleanup_rejects_mismatch" "Component release evidence mismatch for .contract_revision" "$output"
 
 repo_bad_backport_base="$(fixture_repo bad-backport-base)"
 result="$(run_cleanup "$repo_bad_backport_base" v1.17.0 --backport-base "bad branch" --issue LEA-202)"

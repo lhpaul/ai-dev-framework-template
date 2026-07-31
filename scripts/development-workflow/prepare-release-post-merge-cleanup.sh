@@ -9,7 +9,7 @@
 #   fail-closed tracker handoff when shell automation cannot complete them
 #
 # Usage:
-#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort]
+#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--repo NAME --repo-root PATH --evidence-file PATH] [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort]
 #
 # Examples:
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh 1.2.3
@@ -49,12 +49,20 @@ MERGED_LABEL="${GITHUB_PROJECT_STATUS_MERGED:-Merged}"
 RELEASED_LABEL="${GITHUB_PROJECT_STATUS_RELEASED:-Released}"
 RELEASE_INPUT=""
 BACKPORT_BASE="${RELEASE_BACKPORT_BASE:-develop}"
+BACKPORT_BASE_OVERRIDE=""
 BEST_EFFORT=false
 FROM_CHANGELOG=false
+PRODUCT_REPO=""
+REPO_ROOT_OVERRIDE=""
+EVIDENCE_FILE=""
+JSON_OUTPUT=false
+COMPONENT_TARGET_FILE=""
+COMPONENT_LOCK_DIR=""
+COMPONENT_LOCK_CREATED=false
 declare -a ISSUE_NUMBERS=()
 
 usage() {
-  echo "Usage: $0 <version|release-branch> [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort]" >&2
+  echo "Usage: $0 <version|release-branch> [--repo NAME --repo-root PATH --evidence-file PATH] [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort] [--json]" >&2
 }
 
 normalize_release_branch() {
@@ -86,6 +94,162 @@ validate_portable_branch_name() {
     echo "Invalid ${label} branch name: $value" >&2
     exit 2
   fi
+}
+
+canonical_dir() {
+  local path="$1"
+  (CDPATH='' cd -- "$path" && pwd -P)
+}
+
+cleanup_component_lock() {
+  if [ "$COMPONENT_LOCK_CREATED" = "true" ] && [ -n "$COMPONENT_LOCK_DIR" ] && [ -d "$COMPONENT_LOCK_DIR" ]; then
+    rmdir "$COMPONENT_LOCK_DIR" 2>/dev/null || true
+  fi
+  if [ -n "$COMPONENT_TARGET_FILE" ] && [ -f "$COMPONENT_TARGET_FILE" ]; then
+    rm -f "$COMPONENT_TARGET_FILE"
+  fi
+}
+
+json_field() {
+  local path="$1"
+  local query="$2"
+  jq -r "$query // \"\"" "$path"
+}
+
+cleanup_git() {
+  if [ -n "$COMPONENT_TARGET_FILE" ]; then
+    git -C "$(json_field "$COMPONENT_TARGET_FILE" '.local_checkout.path')" "$@"
+  else
+    git "$@"
+  fi
+}
+
+cleanup_gh_pr_list() {
+  local identity
+  if [ -n "$COMPONENT_TARGET_FILE" ]; then
+    identity="$(json_field "$COMPONENT_TARGET_FILE" '.canonical_repository_identity')"
+    if ! workflow_is_valid_github_repo_slug "$identity"; then
+      echo "COMPONENT_CLEANUP_ERROR=invalid_repository_identity IDENTITY=${identity:-<empty>}" >&2
+      return 1
+    fi
+    gh pr list --repo "$identity" "$@"
+    return $?
+  fi
+  gh pr list "$@"
+}
+
+compare_component_field() {
+  local field="$1"
+  local current
+  local recorded
+  current="$(jq -c "$field" "$COMPONENT_TARGET_FILE")"
+  recorded="$(jq -c ".target_binding${field}" "$EVIDENCE_FILE")"
+  if [ "$current" != "$recorded" ]; then
+    echo "Component release evidence mismatch for $field: current=$current evidence=$recorded" >&2
+    exit 1
+  fi
+}
+
+validate_component_release_cleanup() {
+  local hub_root="$1"
+  local target_path target_outcome evidence_schema evidence_cleanup lock_key lock_parent safe_lock_key evidence_branch contract_base
+
+  if [ -z "$PRODUCT_REPO" ] && [ -z "$EVIDENCE_FILE" ]; then
+    return 0
+  fi
+  if [ -z "$PRODUCT_REPO" ]; then
+    echo "--repo is required when --evidence-file is supplied for component release cleanup." >&2
+    exit 2
+  fi
+  if [ -z "$EVIDENCE_FILE" ]; then
+    echo "--evidence-file is required for component release cleanup in workflow_hub mode." >&2
+    exit 2
+  fi
+  if [ ! -f "$EVIDENCE_FILE" ]; then
+    echo "Component release evidence file not found: $EVIDENCE_FILE" >&2
+    exit 2
+  fi
+  if ! jq -e 'type == "object"' "$EVIDENCE_FILE" >/dev/null 2>&1; then
+    echo "Component release evidence file must contain a JSON object: $EVIDENCE_FILE" >&2
+    exit 2
+  fi
+
+  evidence_schema="$(json_field "$EVIDENCE_FILE" '.schema_version')"
+  if [ "$evidence_schema" != "component_release_evidence.v1" ]; then
+    echo "Component release evidence must use schema_version component_release_evidence.v1." >&2
+    exit 2
+  fi
+
+  COMPONENT_TARGET_FILE="$(mktemp "${TMPDIR:-/tmp}/component-release-target.XXXXXX")"
+  trap cleanup_component_lock EXIT
+  if ! "$SCRIPT_DIR/component-release-target.sh" --repo-root "$hub_root" --repo "$PRODUCT_REPO" --json > "$COMPONENT_TARGET_FILE"; then
+    echo "Could not resolve current component release target for '$PRODUCT_REPO'." >&2
+    exit 1
+  fi
+  target_outcome="$(json_field "$COMPONENT_TARGET_FILE" '.routing_outcome')"
+  if [ "$target_outcome" != "component_release_routed" ]; then
+    echo "Component release target is not mutation-allowed: $target_outcome" >&2
+    exit 1
+  fi
+
+  compare_component_field '.routing_outcome'
+  compare_component_field '.selected_product_repo_key'
+  compare_component_field '.canonical_repository_identity'
+  compare_component_field '.artifact_owners'
+  compare_component_field '.release_correlation_key'
+  compare_component_field '.contract_revision'
+
+  target_path="$(json_field "$COMPONENT_TARGET_FILE" '.local_checkout.path')"
+  if [ -z "$target_path" ] || [ ! -d "$target_path" ]; then
+    echo "Resolved product checkout is unavailable: ${target_path:-<empty>}" >&2
+    exit 1
+  fi
+  if [ ! -d "$target_path/.git" ]; then
+    echo "Resolved product checkout is not a git repository: $target_path" >&2
+    exit 1
+  fi
+
+  evidence_branch="$(json_field "$EVIDENCE_FILE" '.release_branch')"
+  if [ -z "$RELEASE_INPUT" ] && [ -n "$evidence_branch" ]; then
+    RELEASE_INPUT="$evidence_branch"
+  fi
+  if [ -z "$RELEASE_INPUT" ]; then
+    echo "Component release cleanup requires a release branch/version argument or evidence.release_branch." >&2
+    exit 2
+  fi
+  if [ -n "$evidence_branch" ] && [ "$(normalize_release_branch "$RELEASE_INPUT")" != "$evidence_branch" ]; then
+    echo "Component release evidence release_branch mismatch: input=$(normalize_release_branch "$RELEASE_INPUT") evidence=$evidence_branch" >&2
+    exit 1
+  fi
+
+  evidence_cleanup="$(json_field "$EVIDENCE_FILE" '.cleanup_outcome')"
+  if [ "$evidence_cleanup" = "complete" ]; then
+    echo "Component release cleanup evidence is already complete; exiting idempotently."
+    if [ "$JSON_OUTPUT" = "true" ]; then
+      jq -cnS --slurpfile evidence "$EVIDENCE_FILE" '{cleanup_outcome:"already_complete", evidence:$evidence[0]}'
+    fi
+    exit 0
+  fi
+
+  lock_key="$(json_field "$COMPONENT_TARGET_FILE" '.release_correlation_key')"
+  safe_lock_key="$(printf '%s' "$lock_key" | tr -c 'A-Za-z0-9._-' '_')"
+  lock_parent="$target_path/.git/component-release-cleanup-locks"
+  mkdir -p "$lock_parent"
+  COMPONENT_LOCK_DIR="$lock_parent/$safe_lock_key.lock"
+  if ! mkdir "$COMPONENT_LOCK_DIR" 2>/dev/null; then
+    echo "Component release cleanup lock is already held for $lock_key at $COMPONENT_LOCK_DIR." >&2
+    exit 1
+  fi
+  COMPONENT_LOCK_CREATED=true
+
+  echo "Component release target: $PRODUCT_REPO ($(json_field "$COMPONENT_TARGET_FILE" '.canonical_repository_identity'))"
+  echo "Component checkout: $target_path"
+  contract_base="$(json_field "$COMPONENT_TARGET_FILE" '.release_base')"
+  if [ -n "$BACKPORT_BASE_OVERRIDE" ] && [ "$BACKPORT_BASE_OVERRIDE" != "$contract_base" ]; then
+    echo "--backport-base '$BACKPORT_BASE_OVERRIDE' conflicts with the component release contract base '$contract_base'." >&2
+    exit 2
+  fi
+  BACKPORT_BASE="$contract_base"
 }
 
 # Returns 0 (true) if the token is a valid issue identifier for the current
@@ -721,6 +885,7 @@ while [ $# -gt 0 ]; do
         exit 2
       fi
       BACKPORT_BASE="$2"
+      BACKPORT_BASE_OVERRIDE="$2"
       shift 2
       ;;
     --from-changelog)
@@ -729,6 +894,34 @@ while [ $# -gt 0 ]; do
       ;;
     --best-effort)
       BEST_EFFORT=true
+      shift
+      ;;
+    --repo)
+      if [ $# -lt 2 ]; then
+        usage
+        exit 2
+      fi
+      PRODUCT_REPO="$2"
+      shift 2
+      ;;
+    --repo-root)
+      if [ $# -lt 2 ]; then
+        usage
+        exit 2
+      fi
+      REPO_ROOT_OVERRIDE="$2"
+      shift 2
+      ;;
+    --evidence-file)
+      if [ $# -lt 2 ]; then
+        usage
+        exit 2
+      fi
+      EVIDENCE_FILE="$2"
+      shift 2
+      ;;
+    --json)
+      JSON_OUTPUT=true
       shift
       ;;
     -h|--help)
@@ -751,6 +944,21 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+
+HUB_REPO_ROOT="$PWD"
+if [ -n "$REPO_ROOT_OVERRIDE" ]; then
+  if [ ! -d "$REPO_ROOT_OVERRIDE" ]; then
+    echo "--repo-root does not exist or is not a directory: $REPO_ROOT_OVERRIDE" >&2
+    exit 2
+  fi
+  if [ "$(canonical_dir "$REPO_ROOT_OVERRIDE")" != "$(canonical_dir "$HUB_REPO_ROOT")" ]; then
+    echo "--repo-root must point at the current workflow hub checkout for release tracker cleanup." >&2
+    exit 2
+  fi
+  HUB_REPO_ROOT="$(canonical_dir "$REPO_ROOT_OVERRIDE")"
+fi
+
+validate_component_release_cleanup "$HUB_REPO_ROOT"
 
 if [ -z "$RELEASE_INPUT" ]; then
   usage
@@ -782,10 +990,10 @@ if [ "$FROM_CHANGELOG" = "true" ]; then
 fi
 
 echo "Verifying merged PRs for release branch..."
-MAIN_PR=$(gh pr list --state merged --head "$RELEASE_BRANCH" --base main --json number --jq '.[0].number // empty')
-DEVELOP_PR=$(gh pr list --state merged --head "$RELEASE_BRANCH" --base "$BACKPORT_BASE" --json number --jq '.[0].number // empty')
-OPEN_MAIN_PR=$(gh pr list --state open --head "$RELEASE_BRANCH" --base main --json number --jq '.[0].number // empty')
-OPEN_DEVELOP_PR=$(gh pr list --state open --head "$RELEASE_BRANCH" --base "$BACKPORT_BASE" --json number --jq '.[0].number // empty')
+MAIN_PR=$(cleanup_gh_pr_list --state merged --head "$RELEASE_BRANCH" --base main --json number --jq '.[0].number // empty')
+DEVELOP_PR=$(cleanup_gh_pr_list --state merged --head "$RELEASE_BRANCH" --base "$BACKPORT_BASE" --json number --jq '.[0].number // empty')
+OPEN_MAIN_PR=$(cleanup_gh_pr_list --state open --head "$RELEASE_BRANCH" --base main --json number --jq '.[0].number // empty')
+OPEN_DEVELOP_PR=$(cleanup_gh_pr_list --state open --head "$RELEASE_BRANCH" --base "$BACKPORT_BASE" --json number --jq '.[0].number // empty')
 
 if [ -n "$OPEN_MAIN_PR" ] || [ -n "$OPEN_DEVELOP_PR" ]; then
   echo "Release PRs are still open (main: ${OPEN_MAIN_PR:-none}, ${BACKPORT_BASE}: ${OPEN_DEVELOP_PR:-none})."
@@ -802,25 +1010,25 @@ fi
 echo "Merged PRs verified (main #$MAIN_PR, ${BACKPORT_BASE} #$DEVELOP_PR)."
 
 echo "Fetching origin refs..."
-git fetch origin --prune
+cleanup_git fetch origin --prune
 
-if git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
+if cleanup_git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
   echo "Deleting remote branch '$RELEASE_BRANCH'..."
-  git push origin --delete "$RELEASE_BRANCH"
+  cleanup_git push origin --delete "$RELEASE_BRANCH"
 else
   echo "Remote branch '$RELEASE_BRANCH' is already absent; skipping remote delete."
 fi
 
-if git show-ref --quiet "refs/heads/$RELEASE_BRANCH"; then
-  CURRENT_BRANCH="$(git branch --show-current)"
+if cleanup_git show-ref --quiet "refs/heads/$RELEASE_BRANCH"; then
+  CURRENT_BRANCH="$(cleanup_git branch --show-current)"
   if [ "$CURRENT_BRANCH" = "$RELEASE_BRANCH" ]; then
     echo "Local branch '$RELEASE_BRANCH' is currently checked out; switching to '$BACKPORT_BASE' first..."
-    git switch "$BACKPORT_BASE"
+    cleanup_git switch "$BACKPORT_BASE"
   fi
 
   echo "Deleting local branch '$RELEASE_BRANCH'..."
   # -D is intentional: squash/rebase merges often make -d fail despite merged PRs.
-  if ! git branch -D "$RELEASE_BRANCH"; then
+  if ! cleanup_git branch -D "$RELEASE_BRANCH"; then
     echo "Could not delete local branch '$RELEASE_BRANCH' cleanly." >&2
     echo "If it is checked out elsewhere, switch away in that worktree and retry." >&2
     exit 1

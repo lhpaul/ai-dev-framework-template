@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configuration for workflow hubs.
 - **One product repository per implementation item** (#1354): enforce
   one-target workflow-hub routing before product implementation mutation.
+- **Route component releases to selected product repositories** (#1356): add
+  canonical component release target and evidence helpers, plus product-aware
+  release cleanup validation for workflow hubs.
 
 ## [0.40.0] - 2026-07-30
 
