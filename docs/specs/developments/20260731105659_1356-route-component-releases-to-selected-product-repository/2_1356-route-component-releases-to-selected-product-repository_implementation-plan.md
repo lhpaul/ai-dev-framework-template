@@ -70,12 +70,39 @@ checkout availability, and persisted release evidence.
 | One selected value cannot resolve to one product repository | `ambiguous_product_selection` | Stop | Correct selection or contract before mutation | Resolver output and release target helper |
 | Release contract would route product artifacts to the wrong owner or lacks required portable fields | `invalid_release_contract` | Stop | Correct versioned release contract before mutation | Resolver validation, prepare-release protocol, smoke runbook |
 | Product checkout required but unavailable locally | `unavailable_product_repository_checkout` | Stop | Correct local-only checkout config before local mutation | Resolver `--require-local`, hub status/sync guidance |
+| Repository mode is unsupported for component releases | `unsupported_repository_mode` | Stop | Correct repository mode or use the supported single-repository release workflow | Release target helper, prepare-release protocol |
 | Exactly one valid product target and required local checkout available | `component_release_routed` | Continue | Mutate product-owned release artifacts in the selected product repository and hub-owned tracker reconciliation in the hub | Release summary, PR body, cleanup log, component release evidence |
 
 Validation precedence is the table order above. Every mutating release or
 cleanup command must produce exactly one canonical routing outcome code before
 it mutates files, branches, pull requests, tags, deployment evidence, cleanup
 evidence, or tracker state.
+
+### Release Target Adapter Contract
+
+`component-release-target.sh --json` must emit versioned JSON with
+`schema_version="component_release_target.v1"` and these exact keys:
+`routing_outcome`, `mutation_allowed`, `selected_product_repo_key`,
+`canonical_repository_identity`, `local_checkout.path`,
+`local_checkout.source`, `release_base`, `release_branch_pattern`,
+`artifact_owners.release`, `artifact_owners.ci`,
+`artifact_owners.deployment`, `artifact_owners.cleanup`,
+`artifact_owners.tracker`, `release_correlation_key`, `contract_revision`, and
+`human_action`. The shell output mode must use the same contract with uppercase
+keys: `SCHEMA_VERSION`, `ROUTING_OUTCOME`, `MUTATION_ALLOWED`,
+`SELECTED_PRODUCT_REPO_KEY`, `CANONICAL_REPOSITORY_IDENTITY`,
+`LOCAL_CHECKOUT_PATH`, `LOCAL_CHECKOUT_SOURCE`, `RELEASE_BASE`,
+`RELEASE_BRANCH_PATTERN`, `ARTIFACT_OWNER_RELEASE`, `ARTIFACT_OWNER_CI`,
+`ARTIFACT_OWNER_DEPLOYMENT`, `ARTIFACT_OWNER_CLEANUP`,
+`ARTIFACT_OWNER_TRACKER`, `RELEASE_CORRELATION_KEY`, `CONTRACT_REVISION`, and
+`HUMAN_ACTION`.
+
+The release target adapter may consume existing resolver or routing outputs
+such as `outcome_code` and singular `artifact_owner`, but those names are
+internal inputs only. Evidence records, cleanup validation, fixtures, and smoke
+assertions must use the versioned release target keys above. Unsupported
+repository modes map to `unsupported_repository_mode` with
+`mutation_allowed=false`.
 
 ---
 
@@ -229,6 +256,11 @@ workflow command tests, and smoke/manual release runbook verification.
 - [ ] Add `scripts/development-workflow/tests/test-component-release-evidence.sh`
       for evidence record validation, cross-field relationship checks, and
       deterministic JSON output.
+- [ ] Add `scripts/development-workflow/tests/setup-component-release-fixture.sh`
+      for the smoke runbook. It must create temporary single-repository and
+      workflow-hub fixtures, two product repository checkouts, local-only
+      checkout entries, invalid-selection variants, seeded branch/tag/evidence
+      cleanup state, lock state, and a mocked or disposable tracker state file.
 - [ ] Extend `scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh`
       for workflow-hub product release cleanup with matching and mismatched
       evidence plus duplicate/concurrent cleanup lock behavior.
@@ -393,17 +425,42 @@ existing Bash/Python helper style in `scripts/development-workflow/`.
    - Extend release cleanup, config resolver, product repo commands, docs, and
      agent guidance tests.
 7. Run verification:
-   - `for script in scripts/development-workflow/component-release-target.sh scripts/development-workflow/component-release-evidence.sh scripts/development-workflow/prepare-release-post-merge-cleanup.sh; do bash -n "$script"; done`
-   - `bash scripts/development-workflow/tests/test-component-release-target.sh`
-   - `bash scripts/development-workflow/tests/test-component-release-evidence.sh`
-   - `bash scripts/development-workflow/tests/test-workflow-config-resolver.sh`
-   - `bash scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh`
-   - `bash scripts/development-workflow/tests/test-workflow-hub-product-repo-commands.sh`
-   - `bash scripts/development-workflow/tests/test-workflow-agent-product-repo-guidance.sh`
-   - `bash scripts/development-workflow/tests/test-workflow-hub-docs.sh`
-   - `npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "CHANGELOG.md"`
-   - `find docs/specs/developments docs/testing/workflow -name "*.md" -print0 | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md`
-   - `python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop-multi-repo-releases`
-   - `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop-multi-repo-releases`
+
+   ```bash
+   set -euo pipefail
+
+   changed_shell_files=(
+     scripts/development-workflow/component-release-target.sh
+     scripts/development-workflow/component-release-evidence.sh
+     scripts/development-workflow/prepare-release-post-merge-cleanup.sh
+     scripts/development-workflow/tests/test-component-release-target.sh
+     scripts/development-workflow/tests/test-component-release-evidence.sh
+     scripts/development-workflow/tests/setup-component-release-fixture.sh
+   )
+
+   for script in "${changed_shell_files[@]}"; do
+     bash -n "$script"
+   done
+
+   shellcheck "${changed_shell_files[@]}"
+   bash scripts/development-workflow/tests/test-component-release-target.sh
+   bash scripts/development-workflow/tests/test-component-release-evidence.sh
+   bash scripts/development-workflow/tests/test-workflow-config-resolver.sh
+   bash scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh
+   bash scripts/development-workflow/tests/test-workflow-hub-product-repo-commands.sh
+   bash scripts/development-workflow/tests/test-workflow-agent-product-repo-guidance.sh
+   bash scripts/development-workflow/tests/test-workflow-hub-docs.sh
+   npx markdownlint-cli2 \
+     "docs/specs/developments/**/*.md" \
+     "docs/testing/workflow/**/*.md" \
+     "CHANGELOG.md"
+   find docs/specs/developments docs/testing/workflow -name "*.md" -print0 \
+     | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md
+   python3 scripts/lint/workflow-shell-snippet-lint.py \
+     --base-ref origin/develop-multi-repo-releases
+   python3 scripts/lint/workflow-shell-guard-lint.py \
+     --base-ref origin/develop-multi-repo-releases
+   ```
+
 8. Update `CHANGELOG.md` under `[Unreleased]` during implementation with:
    `- **Route component releases to selected product repositories** (#1356): Add workflow-hub component release routing, cleanup, and evidence handling for selected product repositories.`
