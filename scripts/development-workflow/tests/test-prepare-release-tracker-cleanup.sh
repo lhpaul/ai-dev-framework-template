@@ -372,6 +372,42 @@ run_test "component_cleanup_lock_exits_nonzero" "1" "$status"
 run_contains "component_cleanup_lock_rejected" "Component release cleanup lock is already held" "$output"
 rmdir "$TMP_ROOT/mobile-app/.git/component-release-cleanup-locks/$lock_key.lock"
 
+result="$(run_cleanup "$repo_component_cleanup" mobile-app/release/v9.9.9 --repo mobile-app --repo-root "$repo_component_cleanup" --evidence-file "$repo_component_cleanup/component-release-evidence.json" --issue LEA-214 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "component_cleanup_branch_mismatch_exits_nonzero" "1" "$status"
+run_contains "component_cleanup_branch_mismatch_rejected" "Component release evidence release_branch mismatch" "$output"
+
+repo_invalid_identity="$(fixture_component_cleanup_repo component-invalid-identity)"
+python3 - "$repo_invalid_identity/.ai-dev-workflow.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(text.replace("github_repo: example/mobile-app", "github_repo: bad/repo/slug"), encoding="utf-8")
+PY
+(
+  cd "$repo_invalid_identity"
+  target_json="$(./scripts/development-workflow/component-release-target.sh --repo-root "$repo_invalid_identity" --repo mobile-app --json)"
+  jq -nS --argjson target "$target_json" \
+    '{
+      schema_version:"component_release_evidence.v1",
+      target_binding:$target,
+      release_branch:"mobile-app/release/v1.18.0",
+      release_outcome:"completed",
+      ci_outcome:"passed",
+      deployment_outcome:"recorded",
+      cleanup_outcome:"not_started",
+      hub_tracker_ref:"#1356"
+    }' > "$repo_invalid_identity/component-release-evidence.json"
+)
+result="$(run_cleanup "$repo_invalid_identity" --repo mobile-app --repo-root "$repo_invalid_identity" --evidence-file "$repo_invalid_identity/component-release-evidence.json" --issue LEA-215 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "component_cleanup_invalid_identity_exits_nonzero" "1" "$status"
+run_contains "component_cleanup_invalid_identity_rejected" "COMPONENT_CLEANUP_ERROR=invalid_repository_identity" "$output"
+
 mismatch_evidence="$repo_component_cleanup/component-release-evidence-mismatch.json"
 jq '.target_binding.contract_revision = "sha256:mismatch"' \
   "$repo_component_cleanup/component-release-evidence.json" > "$mismatch_evidence"

@@ -40,10 +40,12 @@ Run from the hub checkout:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
-TARGET_BINDING_FILE="${TMPDIR:-/tmp}/component-release-target.json"
+TARGET_REPO_KEY="faind-mobile-app"
+TARGET_BINDING_SAFE_KEY="$(printf '%s' "$TARGET_REPO_KEY" | tr -c 'A-Za-z0-9._-' '_')"
+TARGET_BINDING_FILE="$(mktemp "${TMPDIR:-/tmp}/component-release-target.${TARGET_BINDING_SAFE_KEY}.XXXXXX")"
 TARGET_BINDING_TMP="${TARGET_BINDING_FILE}.$$"
 scripts/development-workflow/component-release-target.sh \
-  --repo faind-mobile-app \
+  --repo "$TARGET_REPO_KEY" \
   --json > "$TARGET_BINDING_TMP"
 mv "$TARGET_BINDING_TMP" "$TARGET_BINDING_FILE"
 ```

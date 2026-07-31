@@ -58,6 +58,7 @@ EVIDENCE_FILE=""
 JSON_OUTPUT=false
 COMPONENT_TARGET_FILE=""
 COMPONENT_LOCK_DIR=""
+COMPONENT_LOCK_CREATED=false
 declare -a ISSUE_NUMBERS=()
 
 usage() {
@@ -101,7 +102,7 @@ canonical_dir() {
 }
 
 cleanup_component_lock() {
-  if [ -n "$COMPONENT_LOCK_DIR" ] && [ -d "$COMPONENT_LOCK_DIR" ]; then
+  if [ "$COMPONENT_LOCK_CREATED" = "true" ] && [ -n "$COMPONENT_LOCK_DIR" ] && [ -d "$COMPONENT_LOCK_DIR" ]; then
     rmdir "$COMPONENT_LOCK_DIR" 2>/dev/null || true
   fi
   if [ -n "$COMPONENT_TARGET_FILE" ] && [ -f "$COMPONENT_TARGET_FILE" ]; then
@@ -127,12 +128,12 @@ cleanup_gh_pr_list() {
   local identity
   if [ -n "$COMPONENT_TARGET_FILE" ]; then
     identity="$(json_field "$COMPONENT_TARGET_FILE" '.canonical_repository_identity')"
-    case "$identity" in
-      */*)
-        gh pr list --repo "$identity" "$@"
-        return $?
-        ;;
-    esac
+    if ! workflow_is_valid_github_repo_slug "$identity"; then
+      echo "COMPONENT_CLEANUP_ERROR=invalid_repository_identity IDENTITY=${identity:-<empty>}" >&2
+      return 1
+    fi
+    gh pr list --repo "$identity" "$@"
+    return $?
   fi
   gh pr list "$@"
 }
@@ -180,6 +181,7 @@ validate_component_release_cleanup() {
   fi
 
   COMPONENT_TARGET_FILE="$(mktemp "${TMPDIR:-/tmp}/component-release-target.XXXXXX")"
+  trap cleanup_component_lock EXIT
   if ! "$SCRIPT_DIR/component-release-target.sh" --repo-root "$hub_root" --repo "$PRODUCT_REPO" --json > "$COMPONENT_TARGET_FILE"; then
     echo "Could not resolve current component release target for '$PRODUCT_REPO'." >&2
     exit 1
@@ -215,6 +217,10 @@ validate_component_release_cleanup() {
     echo "Component release cleanup requires a release branch/version argument or evidence.release_branch." >&2
     exit 2
   fi
+  if [ -n "$evidence_branch" ] && [ "$(normalize_release_branch "$RELEASE_INPUT")" != "$evidence_branch" ]; then
+    echo "Component release evidence release_branch mismatch: input=$(normalize_release_branch "$RELEASE_INPUT") evidence=$evidence_branch" >&2
+    exit 1
+  fi
 
   evidence_cleanup="$(json_field "$EVIDENCE_FILE" '.cleanup_outcome')"
   if [ "$evidence_cleanup" = "complete" ]; then
@@ -234,7 +240,7 @@ validate_component_release_cleanup() {
     echo "Component release cleanup lock is already held for $lock_key at $COMPONENT_LOCK_DIR." >&2
     exit 1
   fi
-  trap cleanup_component_lock EXIT
+  COMPONENT_LOCK_CREATED=true
 
   echo "Component release target: $PRODUCT_REPO ($(json_field "$COMPONENT_TARGET_FILE" '.canonical_repository_identity'))"
   echo "Component checkout: $target_path"

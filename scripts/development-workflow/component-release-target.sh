@@ -45,11 +45,12 @@ emit_target() {
   local release_branch_pattern="$8"
   local owner_release="$9"
   local owner_ci="${10}"
-  local owner_deployment="${11}"
-  local owner_cleanup="${12}"
-  local owner_tracker="${13}"
-  local contract_revision="${14}"
-  local human_action="${15}"
+  local owner_github_release="${11}"
+  local owner_deployment="${12}"
+  local owner_cleanup="${13}"
+  local owner_tracker="${14}"
+  local contract_revision="${15}"
+  local human_action="${16}"
 
   local correlation_input release_correlation_key
   correlation_input="$(jq -cn \
@@ -76,6 +77,7 @@ emit_target() {
       --arg release_branch_pattern "$release_branch_pattern" \
       --arg owner_release "$owner_release" \
       --arg owner_ci "$owner_ci" \
+      --arg owner_github_release "$owner_github_release" \
       --arg owner_deployment "$owner_deployment" \
       --arg owner_cleanup "$owner_cleanup" \
       --arg owner_tracker "$owner_tracker" \
@@ -94,6 +96,7 @@ emit_target() {
         artifact_owners:{
           release:$owner_release,
           ci:$owner_ci,
+          github_release:$owner_github_release,
           deployment:$owner_deployment,
           cleanup:$owner_cleanup,
           tracker:$owner_tracker
@@ -116,6 +119,7 @@ emit_target() {
   printf 'RELEASE_BRANCH_PATTERN=%s\n' "$release_branch_pattern"
   printf 'ARTIFACT_OWNER_RELEASE=%s\n' "$owner_release"
   printf 'ARTIFACT_OWNER_CI=%s\n' "$owner_ci"
+  printf 'ARTIFACT_OWNER_GITHUB_RELEASE=%s\n' "$owner_github_release"
   printf 'ARTIFACT_OWNER_DEPLOYMENT=%s\n' "$owner_deployment"
   printf 'ARTIFACT_OWNER_CLEANUP=%s\n' "$owner_cleanup"
   printf 'ARTIFACT_OWNER_TRACKER=%s\n' "$owner_tracker"
@@ -129,7 +133,7 @@ emit_stop() {
   local action="$2"
   local tracker_owner="${3:-not_applicable}"
   emit_target "$outcome" "false" "" "" "" "" "" "" \
-    "not_applicable" "not_applicable" "not_applicable" "not_applicable" "$tracker_owner" "" "$action"
+    "not_applicable" "not_applicable" "not_applicable" "not_applicable" "not_applicable" "$tracker_owner" "" "$action"
 }
 
 resolve_mode() {
@@ -229,7 +233,7 @@ if [ "$MODE" = "single_repo" ]; then
     "$(jq -r '.TARGET_LOCAL_PATH_SOURCE // ""' <<< "$output")" \
     "$(jq -r '.TARGET_RELEASE_BASE // ""' <<< "$output")" \
     "$(jq -r '.TARGET_RELEASE_BRANCH_PATTERN // ""' <<< "$output")" \
-    "current_repository" "current_repository" "current_repository" "current_repository" "current_repository" \
+    "current_repository" "current_repository" "current_repository" "current_repository" "current_repository" "current_repository" \
     "$(jq -r '.TARGET_RELEASE_CONTRACT_REVISION // ""' <<< "$output")" ""
   exit 0
 fi
@@ -279,15 +283,17 @@ fi
 
 release_owner="$(owner_from_resolver "$(jq -r '.TARGET_RELEASE_CHANGELOG_OWNER // ""' <<< "$resolver_output")")"
 ci_owner="$(owner_from_resolver "$(jq -r '.TARGET_RELEASE_TAG_OWNER // ""' <<< "$resolver_output")")"
+github_release_owner="$(owner_from_resolver "$(jq -r '.TARGET_RELEASE_GITHUB_RELEASE_OWNER // ""' <<< "$resolver_output")")"
 deployment_owner="$(owner_from_resolver "$(jq -r '.TARGET_RELEASE_DEPLOYMENT_EVIDENCE_OWNER // ""' <<< "$resolver_output")")"
 cleanup_owner="$(owner_from_resolver "$(jq -r '.TARGET_RELEASE_CLEANUP_EVIDENCE_OWNER // ""' <<< "$resolver_output")")"
 tracker_owner="$(owner_from_resolver "$(jq -r '.TARGET_RELEASE_TRACKER_RECONCILIATION_OWNER // ""' <<< "$resolver_output")")"
 if [ "$release_owner" != "product_repository" ] || \
    [ "$ci_owner" != "product_repository" ] || \
+   [ "$github_release_owner" != "product_repository" ] || \
    [ "$deployment_owner" != "product_repository" ] || \
    [ "$cleanup_owner" != "product_repository" ] || \
    [ "$tracker_owner" != "hub_repository" ]; then
-  emit_stop "invalid_release_contract" "route release, ci, deployment, and cleanup artifacts to the product repository and tracker reconciliation to the hub" "hub_repository"
+  emit_stop "invalid_release_contract" "route release, ci, GitHub release, deployment, and cleanup artifacts to the product repository and tracker reconciliation to the hub" "hub_repository"
   exit 0
 fi
 
@@ -300,5 +306,5 @@ emit_target "component_release_routed" "true" "$PRODUCT_REPO" "$identity" \
   "$(jq -r '.TARGET_LOCAL_PATH_SOURCE // ""' <<< "$resolver_output")" \
   "$(jq -r '.TARGET_RELEASE_BASE // ""' <<< "$resolver_output")" \
   "$(jq -r '.TARGET_RELEASE_BRANCH_PATTERN // ""' <<< "$resolver_output")" \
-  "product_repository" "product_repository" "product_repository" "product_repository" "hub_repository" \
+  "product_repository" "product_repository" "product_repository" "product_repository" "product_repository" "hub_repository" \
   "$(jq -r '.TARGET_RELEASE_CONTRACT_REVISION // ""' <<< "$resolver_output")" ""
