@@ -400,8 +400,8 @@ workflow_pr_output="$(
     --repo-root "$typed_hub_dir" \
     --pr 901
 )"
-run_contains "workflow_pr_type_routes_hub_only" "ROUTING_OUTCOME_CODE=hub_only" "$workflow_pr_output"
-run_contains "workflow_pr_type_uses_hub_owner" "ACTION_REPOSITORY_KIND=hub_owned" "$workflow_pr_output"
+run_contains "workflow_pr_without_repo_fails_closed" "NEXT_ACTION=resolve-repository-selection" "$workflow_pr_output"
+run_contains "workflow_pr_without_repo_missing_target" "ROUTING_OUTCOME_CODE=missing_target" "$workflow_pr_output"
 
 discover_output="$(
   PATH="$stub_bin:$PATH" "$REPO_ROOT/scripts/development-workflow/discover-workflow-state.sh" \

@@ -116,26 +116,53 @@ implementation_issue_number() {
   return 1
 }
 
+repo_root_tracker_provider() {
+  local config_file="$repo_root/.ai-dev-workflow.yaml"
+  local raw_provider=""
+
+  if [ -f "$config_file" ]; then
+    raw_provider="$(workflow_config_provider issue_tracker "$config_file")"
+  fi
+  workflow_normalize_issue_tracker_provider "$raw_provider"
+}
+
 implementation_item_is_hub_only() {
   local issue_number=""
+  local tracker_provider=""
   local tracker_type=""
 
   issue_number="$(implementation_issue_number 2>/dev/null)" || return 1
-  tracker_type="$(get_tracker_type_for_issue "$issue_number")" || true
+  tracker_provider="$(repo_root_tracker_provider)"
+  if [ "$tracker_provider" != "github_projects" ]; then
+    return 1
+  fi
+  if ! tracker_type="$(get_tracker_type_for_issue "$issue_number")"; then
+    return 2
+  fi
   [ "$tracker_type" = "Workflow" ]
 }
 
 _implementation_hub_only_cache=""
 
 implementation_item_is_hub_only_cached() {
+  local hub_only_status=0
+
   if [ -z "$_implementation_hub_only_cache" ]; then
     if implementation_item_is_hub_only; then
       _implementation_hub_only_cache="true"
     else
-      _implementation_hub_only_cache="false"
+      hub_only_status=$?
+      case "$hub_only_status" in
+        2) _implementation_hub_only_cache="error" ;;
+        *) _implementation_hub_only_cache="false" ;;
+      esac
     fi
   fi
-  [ "$_implementation_hub_only_cache" = "true" ]
+  case "$_implementation_hub_only_cache" in
+    true) return 0 ;;
+    error) return 2 ;;
+    *) return 1 ;;
+  esac
 }
 
 repository_context_for_action() {
@@ -164,9 +191,14 @@ repository_context_for_action() {
         if [ -n "$target_repo" ]; then
           routing_args+=(--selected-product-repo-key "$target_repo")
         fi
-        if implementation_item_is_hub_only_cached; then
-          routing_args+=(--hub-only)
-        fi
+        set +e
+        implementation_item_is_hub_only_cached
+        hub_only_status=$?
+        set -e
+        case "$hub_only_status" in
+          0) routing_args+=(--hub-only) ;;
+          2) return 1 ;;
+        esac
         if ! routing_json="$("${routing_args[@]}")"; then
           return 1
         fi
@@ -220,10 +252,18 @@ github_repo_args_for_action() {
   local action_kind="$1"
   local context=""
   local action_github_repo=""
+  local hub_only_status=0
 
   if [ "$workflow_mode" = "workflow_hub" ] && [ "$action_kind" = "implementation" ]; then
-    if implementation_item_is_hub_only_cached; then
+    set +e
+    implementation_item_is_hub_only_cached
+    hub_only_status=$?
+    set -e
+    if [ "$hub_only_status" -eq 0 ]; then
       return 0
+    fi
+    if [ "$hub_only_status" -eq 2 ]; then
+      return 1
     fi
     context="$(workflow_repository_context "$target_repo" "$repo_root")"
     action_github_repo="$(workflow_github_repo_from_context "$context")"
@@ -236,14 +276,6 @@ github_repo_args_for_action() {
 
 if [ -n "$pr_number" ]; then
   if [ "$workflow_mode" = "workflow_hub" ] && [ -z "$target_repo" ]; then
-    require_gh
-    pr_probe_json=""
-    if workflow_run_gh_capture_stderr pr view "$pr_number" --json headRefName; then
-      pr_probe_json="$__workflow_last_gh_stdout"
-      branch_name="$(printf '%s\n' "$pr_probe_json" | jq -r '.headRefName // ""')"
-    else
-      echo "Warning: could not probe PR #${pr_number} head branch: ${__workflow_last_gh_stderr:-unknown gh failure}" >&2
-    fi
     set +e
     pr_action_context="$(repository_context_for_action implementation 2>&1)"
     pr_action_status=$?
@@ -282,7 +314,10 @@ if [ -n "$pr_number" ]; then
       exit 1
     fi
   fi
-  branch_name="$(printf '%s\n' "$pr_json" | jq -r '.headRefName')"
+  if ! branch_name="$(printf '%s\n' "$pr_json" | jq -er '.headRefName | strings | select(length > 0)')"; then
+    echo "ERROR: PR #${pr_number} has no non-empty headRefName." >&2
+    exit 1
+  fi
   labels="$(printf '%s\n' "$pr_json" | jq -r '[.labels[].name] | join(",")')"
   case "$(branch_prefix "$branch_name")" in
     feature|refactor|fix|hotfix) repository_context_for_action implementation ;;

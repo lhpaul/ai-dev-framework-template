@@ -24,10 +24,11 @@ consume its structured routing result before using mapped
 `ROUTING_CONTINUE_ALLOWED=true`. `hub_only` with
 `ROUTING_ARTIFACT_OWNER=hub_repository` mutates the hub and does not require a
 selected product repository; product repository selection is required only for
-`product_owned`. Carry `ROUTING_OUTCOME_CODE`, `ROUTING_ARTIFACT_OWNER`,
-`ROUTING_SELECTED_PRODUCT_REPO_KEY`, and `ROUTING_FINGERPRINT` into the handoff
-evidence. Stop before mutation and report evidence when `ROUTING_STOP_REASON`
-or `ROUTING_REQUIRED_HUMAN_ACTION` is non-empty.
+`product_owned`. Carry `ROUTING_CONTINUE_ALLOWED`, `ROUTING_OUTCOME_CODE`,
+`ROUTING_ARTIFACT_OWNER`, `ROUTING_SELECTED_PRODUCT_REPO_KEY`, and
+`ROUTING_FINGERPRINT` into the handoff evidence. Stop before mutation and
+report evidence when `ROUTING_STOP_REASON` or
+`ROUTING_REQUIRED_HUMAN_ACTION` is non-empty.
 
 Before creating an implementation branch or opening an implementation PR for a
 tracker-backed item, run `run-nested-artifact-guard.sh` with required `--mode`, `--issue`, `--expected-branch`, `--approved-base`, and the expected
