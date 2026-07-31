@@ -281,9 +281,9 @@ all required evidence for those components is available.
 4. The workflow verifies the manifest does not contain conflicting component
    versions, stale evidence, or stale readiness computed for an older manifest
    revision as part of the finalization attempt.
-5. The workflow moves the bundle from ready to finalize to finalized, increments
-   the manifest revision, and appends the finalization audit event in one atomic
-   bundle commit.
+5. The workflow moves the bundle from `ready_to_finalize` to `finalized`,
+   increments the manifest revision, and appends the finalization audit event in
+   one atomic bundle commit.
 
 **Postconditions**: The delivery bundle is finalized and represents the
 customer-facing composition of independently released product components.
@@ -430,9 +430,9 @@ Component evidence states shown inside a bundle:
 - [ ] Finalization is blocked when any declared component has failed, blocked,
   pending, missing, conflicting, or stale outcomes.
 - [ ] Finalization succeeds only when every declared component has complete and
-  consistent evidence for the current manifest revision, and the ready to
-  finalize to finalized transition records the finalization state, revision
-  increment, and audit event atomically.
+  consistent evidence for the current manifest revision, and the
+  `ready_to_finalize` -> `finalized` transition records the finalization state,
+  revision increment, and audit event atomically.
 - [ ] Finalization records a completed hub-owned delivery bundle without
   creating a shared suite version or shared release branch.
 - [ ] Existing independently owned component release evidence remains unchanged
