@@ -15,9 +15,9 @@ by the selected product repository.
 
 When graduation hands off to component release preparation, carry forward the
 `component_release_target.v1` binding and `component_release_evidence.v1`
-record produced by `component-release-target.sh` and
-`component-release-evidence.sh`; do not infer the product repository from the
-hub checkout or integration branch name.
+record produced by `scripts/development-workflow/component-release-target.sh`
+and `scripts/development-workflow/component-release-evidence.sh`; do not infer
+the product repository from the hub checkout or integration branch name.
 
 ---
 

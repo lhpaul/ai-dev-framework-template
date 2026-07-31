@@ -24,7 +24,14 @@ json_quote() {
 }
 
 sha256_string() {
-  shasum -a 256 | awk '{print $1}'
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | awk '{print $1}'
+  else
+    echo "no SHA-256 utility available; install sha256sum or shasum" >&2
+    return 1
+  fi
 }
 
 emit_target() {
@@ -255,7 +262,7 @@ if [ "$resolver_status" -ne 0 ]; then
       emit_stop "unavailable_product_repository_checkout" "configure a local checkout path for the selected product repository" "hub_repository"
       exit 0
       ;;
-    *".release."*|*"release."*|*"forbidden local or secret value"*)
+    *workflow_hub.product_repos*.release.*|*product_repo.release.*|*"contains forbidden local or secret value"*)
       emit_stop "invalid_release_contract" "correct the selected product repository release contract before mutation" "hub_repository"
       exit 0
       ;;

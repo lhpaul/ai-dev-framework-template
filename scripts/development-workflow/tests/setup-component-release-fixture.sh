@@ -69,10 +69,7 @@ default_branch: develop
 release:
   branch_pattern: release/v{version}
 YAML
-cat > "$SINGLE_REPO/.git/config" <<'GITCONFIG'
-[remote "origin"]
-  url = https://github.com/example/single-repo.git
-GITCONFIG
+git -C "$SINGLE_REPO" remote add origin https://github.com/example/single-repo.git
 
 cat > "$HUB_REPO/.ai-dev-workflow.yaml" <<'YAML'
 schema_version: 2
@@ -125,8 +122,8 @@ mode: workflow_hub
 
 workflow_hub:
   product_repos:
-    - name: mobile-app
-      github_repo: example/mobile-app
+    - name: other-app
+      github_repo: example/other-app
 YAML
 
 cat > "$NO_LOCAL_REPO/.ai-dev-workflow.yaml" <<'YAML'
@@ -183,6 +180,7 @@ if [ "$JSON_OUTPUT" = "true" ]; then
     --arg no_local_repo "$NO_LOCAL_REPO" \
     --arg malformed_repo "$MALFORMED_REPO" \
     --arg mismatch_dir "$MISMATCH_DIR" \
+    --arg work_dir "$WORK_DIR" \
     --arg tracker_state_file "$WORK_DIR/tracker-state.json" \
     '{
       hub_repo:$hub_repo,
@@ -220,7 +218,7 @@ if [ "$JSON_OUTPUT" = "true" ]; then
         seeded_branch:true,
         seeded_tag:true,
         seeded_lock:true,
-        mismatched_evidence_file:($mismatch_dir + "/../mismatched-cleanup-evidence.json")
+        mismatched_evidence_file:($work_dir + "/mismatched-cleanup-evidence.json")
       }
     }'
 else

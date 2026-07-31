@@ -17,17 +17,21 @@ repository name and resolve the canonical component release target:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
-scripts/development-workflow/component-release-target.sh --repo <product-repo> --json
+TARGET_BINDING_FILE="${TMPDIR:-/tmp}/component-release-target.json"
+TARGET_BINDING_TMP="${TARGET_BINDING_FILE}.$$"
+scripts/development-workflow/component-release-target.sh \
+  --repo <product-repo> \
+  --json > "$TARGET_BINDING_TMP"
+mv "$TARGET_BINDING_TMP" "$TARGET_BINDING_FILE"
 ```
 
 Continue only when the helper reports
 `routing_outcome=component_release_routed` and `mutation_allowed=true`. Stop
-before mutation for `missing_product_selection`, `multiple_product_targets`,
-`unknown_product_repository`, `ambiguous_product_selection`,
-`invalid_release_contract`, `unavailable_product_repository_checkout`, or
-`unsupported_repository_mode`. These stop outcomes are successful
-classifications; do not convert them into release branches, tags, changelog
-edits, deployment evidence, cleanup evidence, or tracker changes.
+before mutation for any stop outcome defined in
+[Repository modes](../repository-modes.md#release-artifact-ownership). These
+stop outcomes are successful classifications; do not convert them into release
+branches, tags, changelog edits, deployment evidence, cleanup evidence, or
+tracker changes.
 
 Also record the normalized release fields from the resolver output:
 
@@ -125,8 +129,9 @@ binding produced by `component-release-target.sh` and must preserve
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 scripts/development-workflow/component-release-evidence.sh \
-  --target-file /path/to/component-release-target.json \
-  --binding-file /path/to/component-release-target.json \
+  --target-file "$TARGET_BINDING_FILE" \
+  --binding-file "$TARGET_BINDING_FILE" \
+  --release-branch "$RELEASE_BRANCH" \
   --release-outcome pending \
   --ci-outcome pending \
   --deployment-outcome pending \

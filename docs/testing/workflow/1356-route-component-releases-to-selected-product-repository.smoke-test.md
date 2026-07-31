@@ -356,10 +356,14 @@ TARGET_JSON="$SMOKE_TMP/component-target.json"
 TARGET_BINDING_JSON="$SMOKE_TMP/component-target-binding.json"
 EVIDENCE_JSON="$SMOKE_TMP/component-evidence.json"
 EVIDENCE_DUPLICATE_JSON="$SMOKE_TMP/component-evidence-duplicate.json"
+RELEASE_BRANCH_PATTERN="$(jq -r '.release_branch_pattern' "$TARGET_JSON")"
+RELEASE_BRANCH="${RELEASE_BRANCH_PATTERN//\{version\}/$RELEASE_VERSION}"
+RELEASE_BRANCH="${RELEASE_BRANCH//\{product_repo\}/$PRODUCT_REPO_KEY}"
 
 scripts/development-workflow/component-release-evidence.sh \
   --target-file "$TARGET_JSON" \
   --binding-file "$TARGET_BINDING_JSON" \
+  --release-branch "$RELEASE_BRANCH" \
   --release-outcome pending \
   --ci-outcome pending \
   --deployment-outcome not_applicable \
@@ -384,6 +388,7 @@ jq --arg expected "$TEST_TRACKER_ISSUE" \
 scripts/development-workflow/component-release-evidence.sh \
   --target-file "$TARGET_JSON" \
   --binding-file "$TARGET_BINDING_JSON" \
+  --release-branch "$RELEASE_BRANCH" \
   --release-outcome pending \
   --ci-outcome pending \
   --deployment-outcome not_applicable \
@@ -398,6 +403,7 @@ do
   scripts/development-workflow/component-release-evidence.sh \
     --target-file "$TARGET_JSON" \
     --binding-file "$TARGET_BINDING_JSON" \
+    --release-branch "$RELEASE_BRANCH" \
     --release-outcome "$release_outcome" \
     --ci-outcome passed \
     --deployment-outcome recorded \
@@ -419,6 +425,7 @@ do
   if scripts/development-workflow/component-release-evidence.sh \
     --target-file "$MISMATCH_TARGET" \
     --binding-file "$TARGET_BINDING_JSON" \
+    --release-branch "$RELEASE_BRANCH" \
     --release-outcome pending \
     --ci-outcome pending \
     --deployment-outcome not_applicable \
@@ -442,6 +449,7 @@ MISMATCHES
 if scripts/development-workflow/component-release-evidence.sh \
   --target-file "$TARGET_JSON" \
   --binding-file "$TARGET_BINDING_JSON" \
+  --release-branch "$RELEASE_BRANCH" \
   --release-outcome invalid \
   --ci-outcome pending \
   --deployment-outcome not_applicable \

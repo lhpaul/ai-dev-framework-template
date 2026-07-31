@@ -109,6 +109,8 @@ What it does:
   `release_correlation_key`, and `contract_revision`.
 - Fails closed for missing, multiple, unknown, ambiguous, invalid, unavailable,
   or unsupported component release targets before mutation.
+- Uses the canonical component release contract documented in
+  `docs/workflow/development-workflow/repository-modes.md`.
 
 ### `component-release-evidence.sh`
 
@@ -123,6 +125,7 @@ Usage:
 ./scripts/development-workflow/component-release-evidence.sh \
   --target-file /tmp/component-release-target.json \
   --binding-file /tmp/component-release-target.json \
+  --release-branch mobile-app/release/v1.2.3 \
   --release-outcome pending \
   --ci-outcome pending \
   --deployment-outcome pending \

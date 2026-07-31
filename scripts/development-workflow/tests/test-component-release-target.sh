@@ -51,6 +51,19 @@ run_contains() {
   fi
 }
 
+run_not_equal() {
+  local name="$1"
+  local left="$2"
+  local right="$3"
+  if [ "$left" != "$right" ]; then
+    echo "PASS: $name"
+    PASS_COUNT=$((PASS_COUNT + 1))
+  else
+    echo "FAIL: $name - expected values to differ, both were '${left}'"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
+}
+
 echo ""
 echo "=== Component release target ==="
 
@@ -77,6 +90,23 @@ run_test "component_json_release_owner" "product_repository" "$(jq -r '.artifact
 run_test "component_json_tracker_owner" "hub_repository" "$(jq -r '.artifact_owners.tracker' <<< "$component_json")"
 run_contains "component_json_contract_revision" "sha256:" "$(jq -r '.contract_revision' <<< "$component_json")"
 run_contains "component_json_correlation_key" "sha256:" "$(jq -r '.release_correlation_key' <<< "$component_json")"
+component_json_repeat="$(bash "$TARGET_HELPER" --repo-root "$hub_repo" --repo mobile-app --json)"
+run_test "component_contract_revision_stable" "$(jq -r '.contract_revision' <<< "$component_json")" "$(jq -r '.contract_revision' <<< "$component_json_repeat")"
+run_test "component_correlation_key_stable" "$(jq -r '.release_correlation_key' <<< "$component_json")" "$(jq -r '.release_correlation_key' <<< "$component_json_repeat")"
+
+variant_hub="$TMP_ROOT/revision-variant-hub"
+cp -R "$hub_repo" "$variant_hub"
+python3 - "$variant_hub/.ai-dev-workflow.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(text.replace("release-base", "release-alt"), encoding="utf-8")
+PY
+variant_json="$(bash "$TARGET_HELPER" --repo-root "$variant_hub" --repo mobile-app --json)"
+run_not_equal "component_contract_revision_changes_with_base" "$(jq -r '.contract_revision' <<< "$component_json")" "$(jq -r '.contract_revision' <<< "$variant_json")"
+run_not_equal "component_correlation_key_changes_with_revision" "$(jq -r '.release_correlation_key' <<< "$component_json")" "$(jq -r '.release_correlation_key' <<< "$variant_json")"
 
 missing_json="$(bash "$TARGET_HELPER" --repo-root "$hub_repo" --json)"
 run_test "missing_repo_outcome" "missing_product_selection" "$(jq -r '.routing_outcome' <<< "$missing_json")"

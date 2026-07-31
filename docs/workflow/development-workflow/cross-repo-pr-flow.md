@@ -40,9 +40,12 @@ Run from the hub checkout:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+TARGET_BINDING_FILE="${TMPDIR:-/tmp}/component-release-target.json"
+TARGET_BINDING_TMP="${TARGET_BINDING_FILE}.$$"
 scripts/development-workflow/component-release-target.sh \
   --repo faind-mobile-app \
-  --json
+  --json > "$TARGET_BINDING_TMP"
+mv "$TARGET_BINDING_TMP" "$TARGET_BINDING_FILE"
 ```
 
 Continue only when the helper reports `component_release_routed` and
@@ -52,8 +55,9 @@ evidence handoff:
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 scripts/development-workflow/component-release-evidence.sh \
-  --target-file /path/to/component-release-target.json \
-  --binding-file /path/to/component-release-target.json \
+  --target-file "$TARGET_BINDING_FILE" \
+  --binding-file "$TARGET_BINDING_FILE" \
+  --release-branch "$RELEASE_BRANCH" \
   --release-outcome pending \
   --ci-outcome pending \
   --deployment-outcome pending \
@@ -69,10 +73,10 @@ token values, secret names, secret values, or environment-specific account
 details.
 
 After both release PRs merge, run component release cleanup from the hub with
-the same product key and evidence file. The cleanup helper re-resolves the
-current target and rejects mismatched repository identity, artifact owners,
-release correlation key, or `contract_revision` before deleting product-owned
-branches or updating hub-owned tracker state.
+the same product key and evidence file. Follow
+[Prepare Release](protocols/05-prepare-release-protocol.md) and the canonical
+[repository-mode release contract](repository-modes.md#release-artifact-ownership)
+for cleanup validation rules.
 
 Hub-only workflow improvements, such as updates to orchestration scripts or
 workflow docs, still open implementation PRs in the hub repository.
@@ -83,6 +87,7 @@ Run location: hub checkout.
 
 Confirm the next action and selected product repository:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 scripts/development-workflow/workflow-next-action.sh \
   --repo faind-mobile-app \

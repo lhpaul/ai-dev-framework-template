@@ -49,6 +49,7 @@ MERGED_LABEL="${GITHUB_PROJECT_STATUS_MERGED:-Merged}"
 RELEASED_LABEL="${GITHUB_PROJECT_STATUS_RELEASED:-Released}"
 RELEASE_INPUT=""
 BACKPORT_BASE="${RELEASE_BACKPORT_BASE:-develop}"
+BACKPORT_BASE_OVERRIDE=""
 BEST_EFFORT=false
 FROM_CHANGELOG=false
 PRODUCT_REPO=""
@@ -103,6 +104,9 @@ cleanup_component_lock() {
   if [ -n "$COMPONENT_LOCK_DIR" ] && [ -d "$COMPONENT_LOCK_DIR" ]; then
     rmdir "$COMPONENT_LOCK_DIR" 2>/dev/null || true
   fi
+  if [ -n "$COMPONENT_TARGET_FILE" ] && [ -f "$COMPONENT_TARGET_FILE" ]; then
+    rm -f "$COMPONENT_TARGET_FILE"
+  fi
 }
 
 json_field() {
@@ -147,7 +151,7 @@ compare_component_field() {
 
 validate_component_release_cleanup() {
   local hub_root="$1"
-  local target_path target_outcome evidence_schema evidence_cleanup lock_key lock_parent safe_lock_key evidence_branch
+  local target_path target_outcome evidence_schema evidence_cleanup lock_key lock_parent safe_lock_key evidence_branch contract_base
 
   if [ -z "$PRODUCT_REPO" ] && [ -z "$EVIDENCE_FILE" ]; then
     return 0
@@ -198,6 +202,10 @@ validate_component_release_cleanup() {
     echo "Resolved product checkout is unavailable: ${target_path:-<empty>}" >&2
     exit 1
   fi
+  if [ ! -d "$target_path/.git" ]; then
+    echo "Resolved product checkout is not a git repository: $target_path" >&2
+    exit 1
+  fi
 
   evidence_branch="$(json_field "$EVIDENCE_FILE" '.release_branch')"
   if [ -z "$RELEASE_INPUT" ] && [ -n "$evidence_branch" ]; then
@@ -219,7 +227,7 @@ validate_component_release_cleanup() {
 
   lock_key="$(json_field "$COMPONENT_TARGET_FILE" '.release_correlation_key')"
   safe_lock_key="$(printf '%s' "$lock_key" | tr -c 'A-Za-z0-9._-' '_')"
-  lock_parent="$target_path/.component-release-cleanup-locks"
+  lock_parent="$target_path/.git/component-release-cleanup-locks"
   mkdir -p "$lock_parent"
   COMPONENT_LOCK_DIR="$lock_parent/$safe_lock_key.lock"
   if ! mkdir "$COMPONENT_LOCK_DIR" 2>/dev/null; then
@@ -230,7 +238,12 @@ validate_component_release_cleanup() {
 
   echo "Component release target: $PRODUCT_REPO ($(json_field "$COMPONENT_TARGET_FILE" '.canonical_repository_identity'))"
   echo "Component checkout: $target_path"
-  BACKPORT_BASE="$(json_field "$COMPONENT_TARGET_FILE" '.release_base')"
+  contract_base="$(json_field "$COMPONENT_TARGET_FILE" '.release_base')"
+  if [ -n "$BACKPORT_BASE_OVERRIDE" ] && [ "$BACKPORT_BASE_OVERRIDE" != "$contract_base" ]; then
+    echo "--backport-base '$BACKPORT_BASE_OVERRIDE' conflicts with the component release contract base '$contract_base'." >&2
+    exit 2
+  fi
+  BACKPORT_BASE="$contract_base"
 }
 
 # Returns 0 (true) if the token is a valid issue identifier for the current
@@ -866,6 +879,7 @@ while [ $# -gt 0 ]; do
         exit 2
       fi
       BACKPORT_BASE="$2"
+      BACKPORT_BASE_OVERRIDE="$2"
       shift 2
       ;;
     --from-changelog)

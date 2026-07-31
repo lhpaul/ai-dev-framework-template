@@ -86,6 +86,7 @@ cp "$target_file" "$binding_file"
 evidence_json="$(bash "$EVIDENCE_HELPER" \
   --target-file "$target_file" \
   --binding-file "$binding_file" \
+  --release-branch mobile-app/release/v1.18.0 \
   --release-outcome completed \
   --ci-outcome passed \
   --deployment-outcome recorded \
@@ -98,6 +99,7 @@ run_test "evidence_schema" "component_release_evidence.v1" "$(jq -r '.schema_ver
 run_test "evidence_target_outcome" "component_release_routed" "$(jq -r '.target_binding.routing_outcome' <<< "$evidence_json")"
 run_test "evidence_top_level_outcome" "component_release_routed" "$(jq -r '.routing_outcome' <<< "$evidence_json")"
 run_test "evidence_top_level_identity" "example/mobile-app" "$(jq -r '.canonical_repository_identity' <<< "$evidence_json")"
+run_test "evidence_release_branch" "mobile-app/release/v1.18.0" "$(jq -r '.release_branch' <<< "$evidence_json")"
 run_test "evidence_release_outcome" "completed" "$(jq -r '.release_outcome' <<< "$evidence_json")"
 run_test "evidence_ci_outcome" "passed" "$(jq -r '.ci_outcome' <<< "$evidence_json")"
 run_test "evidence_cleanup_outcome" "complete" "$(jq -r '.cleanup_outcome' <<< "$evidence_json")"
@@ -111,6 +113,7 @@ run_fails_contains \
   bash "$EVIDENCE_HELPER" \
     --target-file "$target_file" \
     --binding-file "$mismatch_file" \
+    --release-branch mobile-app/release/v1.18.0 \
     --release-outcome completed \
     --ci-outcome passed \
     --deployment-outcome recorded \
@@ -126,6 +129,7 @@ run_fails_contains \
   bash "$EVIDENCE_HELPER" \
     --target-file "$target_file" \
     --binding-file "$owner_mismatch" \
+    --release-branch mobile-app/release/v1.18.0 \
     --release-outcome completed \
     --ci-outcome passed \
     --deployment-outcome recorded \
@@ -139,6 +143,7 @@ run_fails_contains \
   bash "$EVIDENCE_HELPER" \
     --target-file "$target_file" \
     --binding-file "$binding_file" \
+    --release-branch mobile-app/release/v1.18.0 \
     --release-outcome done \
     --ci-outcome passed \
     --deployment-outcome recorded \
@@ -154,6 +159,7 @@ run_fails_contains \
   bash "$EVIDENCE_HELPER" \
     --target-file "$stop_target" \
     --binding-file "$stop_target" \
+    --release-branch mobile-app/release/v1.18.0 \
     --release-outcome blocked \
     --ci-outcome not_applicable \
     --deployment-outcome not_applicable \

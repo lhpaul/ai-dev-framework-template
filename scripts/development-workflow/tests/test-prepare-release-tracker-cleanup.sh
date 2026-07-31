@@ -141,10 +141,19 @@ case "$*" in
     exit 0
     ;;
   -C\ */mobile-app\ ls-remote\ --exit-code\ --heads\ origin\ mobile-app/release/v1.18.0)
-    exit 2
+    exit 0
+    ;;
+  -C\ */mobile-app\ push\ origin\ --delete\ mobile-app/release/v1.18.0)
+    exit 0
     ;;
   -C\ */mobile-app\ show-ref\ --quiet\ refs/heads/mobile-app/release/v1.18.0)
-    exit 1
+    exit 0
+    ;;
+  -C\ */mobile-app\ branch\ --show-current)
+    printf 'develop\n'
+    ;;
+  -C\ */mobile-app\ branch\ -D\ mobile-app/release/v1.18.0)
+    exit 0
     ;;
   "ls-remote --exit-code --heads origin mobile-app/release/v1.18.0")
     exit 2
@@ -280,7 +289,7 @@ fixture_component_cleanup_repo() {
   local name="$1"
   local path="$TMP_ROOT/$name"
   local product_path="$TMP_ROOT/mobile-app"
-  mkdir -p "$path/scripts/development-workflow" "$product_path"
+  mkdir -p "$path/scripts/development-workflow" "$product_path/.git"
   cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" "$path/scripts/development-workflow/workflow-lib.sh"
   cp "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh" "$path/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
   cp "$REPO_ROOT/scripts/development-workflow/component-release-target.sh" "$path/scripts/development-workflow/component-release-target.sh"
@@ -338,7 +347,30 @@ run_test "component_cleanup_exits_zero" "0" "$status"
 run_contains "component_cleanup_target_logged" "Component release target: mobile-app (example/mobile-app)" "$output"
 run_contains "component_cleanup_branch_from_evidence" "Release branch: mobile-app/release/v1.18.0" "$output"
 run_contains "component_cleanup_product_prs" "Merged PRs verified (main #500, release-base #501)." "$output"
+run_contains "component_cleanup_remote_delete" "Deleting remote branch 'mobile-app/release/v1.18.0'" "$output"
+run_contains "component_cleanup_local_delete" "Deleting local branch 'mobile-app/release/v1.18.0'" "$output"
 run_contains "component_cleanup_linear_action" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
+
+complete_evidence="$repo_component_cleanup/component-release-evidence-complete.json"
+jq '.cleanup_outcome = "complete"' \
+  "$repo_component_cleanup/component-release-evidence.json" > "$complete_evidence"
+result="$(run_cleanup "$repo_component_cleanup" --repo mobile-app --repo-root "$repo_component_cleanup" --evidence-file "$complete_evidence" --issue LEA-212 --best-effort --json)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "component_cleanup_complete_exits_zero" "0" "$status"
+run_contains "component_cleanup_complete_idempotent" "Component release cleanup evidence is already complete" "$output"
+run_contains "component_cleanup_complete_json" '"cleanup_outcome":"already_complete"' "$output"
+
+target_json="$repo_component_cleanup/component-release-target.json"
+(cd "$repo_component_cleanup" && ./scripts/development-workflow/component-release-target.sh --repo-root "$repo_component_cleanup" --repo mobile-app --json > "$target_json")
+lock_key="$(printf '%s' "$(jq -r '.release_correlation_key' "$target_json")" | tr -c 'A-Za-z0-9._-' '_')"
+mkdir -p "$TMP_ROOT/mobile-app/.git/component-release-cleanup-locks/$lock_key.lock"
+result="$(run_cleanup "$repo_component_cleanup" --repo mobile-app --repo-root "$repo_component_cleanup" --evidence-file "$repo_component_cleanup/component-release-evidence.json" --issue LEA-213 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "component_cleanup_lock_exits_nonzero" "1" "$status"
+run_contains "component_cleanup_lock_rejected" "Component release cleanup lock is already held" "$output"
+rmdir "$TMP_ROOT/mobile-app/.git/component-release-cleanup-locks/$lock_key.lock"
 
 mismatch_evidence="$repo_component_cleanup/component-release-evidence-mismatch.json"
 jq '.target_binding.contract_revision = "sha256:mismatch"' \
