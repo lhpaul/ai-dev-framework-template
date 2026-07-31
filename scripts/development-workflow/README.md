@@ -165,15 +165,46 @@ Usage:
   --component-version 1.4.0 \
   --source-pr 1411 \
   --release-pr 1501 \
+  --hub-tracker-reconciliation-outcome complete \
   --child-item "#1356" \
   --child-release-state merged \
+  --json
+
+./scripts/development-workflow/delivery-bundle-manifest.sh add-component \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --expected-revision 2 \
+  --component-key web-app \
+  --json
+
+./scripts/development-workflow/delivery-bundle-manifest.sh remove-component \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --expected-revision 3 \
+  --component-key web-app \
+  --reason "Moved to a later delivery" \
   --json
 
 ./scripts/development-workflow/delivery-bundle-manifest.sh inspect \
   --manifest /tmp/delivery-bundle.json \
   --bundle-key mobile-web-july-delivery \
   --json
+
+./scripts/development-workflow/delivery-bundle-manifest.sh finalize \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --expected-revision 4 \
+  --json
 ```
+
+| Subcommand | Required flags beyond `--manifest` and `--bundle-key` |
+| --- | --- |
+| `create` | `--title`, `--purpose`, `--parent-ref`, `--component`, `--finalization-owner` |
+| `add-component` | `--expected-revision`, `--component-key` |
+| `update-component` | `--expected-revision`, `--component-key`, `--evidence-file`, `--component-tag`, `--source-pr`, `--release-pr`, `--child-item`, `--child-release-state` |
+| `remove-component` | `--expected-revision`, `--component-key`, `--reason` |
+| `inspect` | none |
+| `finalize` | `--expected-revision` |
 
 What it does:
 
@@ -186,6 +217,9 @@ What it does:
   the hub manifest.
 - Uses a manifest lock, expected-revision checks, staged JSON validation, and
   atomic replacement for accepted mutations.
+- Records lock owner metadata in `<manifest>.lock/owner.json`; if a process is
+  killed mid-mutation, inspect that file and remove the lock directory only
+  after confirming the owner process is no longer active.
 - Fails closed with stable `ERROR_CODE=<code>` stderr for stale revisions,
   conflicting evidence, malformed JSON, missing component tags, incomplete
   evidence, and blocked finalization outcomes.

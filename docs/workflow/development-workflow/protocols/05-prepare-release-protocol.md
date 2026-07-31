@@ -149,16 +149,21 @@ release artifact owner or create a shared suite branch:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+DELIVERY_BUNDLE_MANIFEST="${DELIVERY_BUNDLE_MANIFEST:?}"
+DELIVERY_BUNDLE_KEY="${DELIVERY_BUNDLE_KEY:?}"
+DELIVERY_BUNDLE_REVISION="$(jq -r '.revision' "$DELIVERY_BUNDLE_MANIFEST")"
+
 scripts/development-workflow/delivery-bundle-manifest.sh update-component \
   --manifest "$DELIVERY_BUNDLE_MANIFEST" \
   --bundle-key "$DELIVERY_BUNDLE_KEY" \
-  --expected-revision "$DELIVERY_BUNDLE_REVISION" \
-  --component-key "$TARGET_REPO_KEY" \
+  --expected-revision "${DELIVERY_BUNDLE_REVISION:?}" \
+  --component-key "${TARGET_REPO_KEY:?}" \
   --evidence-file /path/to/component-release-evidence.json \
-  --component-tag "$COMPONENT_TAG" \
-  --component-version "$VERSION" \
-  --source-pr "$SOURCE_PR_NUMBER" \
-  --release-pr "$RELEASE_PR_NUMBER" \
+  --component-tag "${COMPONENT_TAG:?}" \
+  --component-version "${VERSION:?}" \
+  --source-pr "${SOURCE_PR_NUMBER:?}" \
+  --release-pr "${RELEASE_PR_NUMBER:?}" \
+  --hub-tracker-reconciliation-outcome complete \
   --child-item "<tracker-item-or-child>" \
   --child-release-state merged \
   --json

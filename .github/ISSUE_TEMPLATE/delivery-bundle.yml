@@ -19,6 +19,14 @@ body:
     validations:
       required: true
   - type: input
+    id: bundle-key
+    attributes:
+      label: Bundle key
+      description: Immutable delivery bundle key. Use only A-Z, a-z, 0-9, dot, underscore, or hyphen.
+      placeholder: mobile-web-july-delivery
+    validations:
+      required: true
+  - type: input
     id: parent-ref
     attributes:
       label: Parent epic or request

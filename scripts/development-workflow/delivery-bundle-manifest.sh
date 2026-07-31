@@ -4,6 +4,11 @@
 
 set -euo pipefail
 
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "ERROR_CODE=missing_python3 message='python3 is required'" >&2
+  exit 2
+fi
+
 python3 - "$@" <<'PY'
 import argparse
 import copy
@@ -103,12 +108,23 @@ def atomic_write(path, data):
 
 def with_lock(path, bundle_key, mutate):
     lock_dir = f"{path}.lock"
+    parent = os.path.dirname(os.path.abspath(path)) or "."
+    try:
+        os.makedirs(parent, exist_ok=True)
+    except OSError as exc:
+        fail("manifest_write_failed", f"failed to create manifest directory: {exc}")
     try:
         os.mkdir(lock_dir)
     except FileExistsError:
         fail("lock_unavailable", f"manifest lock is already held: {lock_dir}")
     except OSError as exc:
         fail("lock_unavailable", f"failed to acquire manifest lock: {exc}")
+    owner_path = os.path.join(lock_dir, "owner.json")
+    try:
+        atomic_write(owner_path, {"pid": os.getpid(), "acquired_at": now()})
+    except SystemExit:
+        shutil.rmtree(lock_dir, ignore_errors=True)
+        raise
     try:
         current = load_json_file(path, "manifest", required=False)
         if current is not None:
@@ -313,7 +329,7 @@ def component_from_evidence(args):
     ]
     if missing:
         fail("invalid_evidence_identity", "evidence is missing stable identity fields: " + ", ".join(missing))
-    return component
+    return component_view(component)
 
 
 def find_component(components, key):
@@ -518,7 +534,7 @@ def main():
     update.add_argument("--child-release-state", required=True, dest="child_release_state")
     update.add_argument(
         "--hub-tracker-reconciliation-outcome",
-        default="complete",
+        default="pending",
         dest="hub_tracker_reconciliation_outcome",
     )
     update.set_defaults(func=cmd_update_component)

@@ -7,6 +7,13 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
 HELPER="$REPO_ROOT/scripts/development-workflow/delivery-bundle-manifest.sh"
 
+for tool in jq git python3; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "SETUP_ERROR=$tool is required" >&2
+    exit 2
+  fi
+done
+
 TMP_ROOT="$(mktemp -d)"
 TMP_ROOT="$(CDPATH='' cd -- "$TMP_ROOT" && pwd -P)"
 
@@ -142,6 +149,7 @@ update_component() {
     --component-version "$version" \
     --source-pr "$source_pr" \
     --release-pr "$release_pr" \
+    --hub-tracker-reconciliation-outcome complete \
     --child-item "$child_item" \
     --child-release-state merged \
     --json
@@ -161,6 +169,22 @@ run_test "create_schema" "delivery_bundle_manifest.v1" "$(jq -r '.schema_version
 run_test "create_bundle_key" "mobile-web-july-delivery" "$(jq -r '.bundle_key' "$manifest")"
 run_test "create_revision" "1" "$(jq -r '.revision' "$manifest")"
 run_test "create_components" "2" "$(jq -r '.components | length' "$manifest")"
+
+nested_manifest="$TMP_ROOT/nested/path/delivery-bundle.json"
+create_bundle "$nested_manifest"
+run_test "create_nested_manifest_directory" "delivery_bundle_manifest.v1" "$(jq -r '.schema_version' "$nested_manifest")"
+
+shell_manifest="$TMP_ROOT/shell-output.json"
+shell_output="$(bash "$HELPER" create \
+  --manifest "$shell_manifest" \
+  --bundle-key mobile-web-july-delivery \
+  --title "Mobile and Web July delivery" \
+  --purpose "Coordinated customer-facing July workflow-hub delivery" \
+  --parent-ref "#1352" \
+  --component mobile-app \
+  --finalization-owner "@workflow-operator")"
+run_contains "create_shell_output_result" "RESULT=created" "$shell_output"
+run_contains "create_shell_output_manifest" "MANIFEST=" "$shell_output"
 
 update_component "$manifest" mobile-app "$mobile_evidence" mobile-v1.4.0 1.4.0 1411 1501 "#1356" >/dev/null
 run_test "update_revision" "2" "$(jq -r '.revision' "$manifest")"
@@ -223,6 +247,43 @@ bash "$HELPER" add-component \
   --component-key api-service \
   --json >/dev/null
 run_test "add_invalidates_readiness" "null" "$(jq -c '.readiness' "$ready_add")"
+
+add_revision="$(jq -r '.revision' "$ready_add")"
+add_output="$(bash "$HELPER" add-component \
+  --manifest "$ready_add" \
+  --bundle-key mobile-web-july-delivery \
+  --expected-revision "$add_revision" \
+  --component-key api-service \
+  --json)"
+run_test "add_component_idempotent_result" "idempotent" "$(jq -r '.result' <<< "$add_output")"
+run_test "add_component_idempotent_revision" "$add_revision" "$(jq -r '.revision' "$ready_add")"
+
+run_fails_contains \
+  "invalid_bundle_key_rejected" \
+  "ERROR_CODE=invalid_bundle_key" \
+  bash "$HELPER" inspect --manifest "$ready_bundle" --bundle-key "bad key/#1" --json
+
+pending_default="$TMP_ROOT/pending-default.json"
+create_bundle "$pending_default"
+bash "$HELPER" update-component \
+  --manifest "$pending_default" \
+  --bundle-key mobile-web-july-delivery \
+  --expected-revision "$(jq -r '.revision' "$pending_default")" \
+  --component-key mobile-app \
+  --evidence-file "$mobile_evidence" \
+  --component-tag mobile-v1.4.0 \
+  --component-version 1.4.0 \
+  --source-pr 1411 \
+  --release-pr 1501 \
+  --child-item "#1356" \
+  --child-release-state merged \
+  --json >/dev/null
+run_test "hub_reconciliation_defaults_pending" "pending" \
+  "$(jq -r '.components[] | select(.component_key == "mobile-app") | .hub_tracker_reconciliation_outcome' "$pending_default")"
+run_test "pending_default_persisted_partial" "partial" \
+  "$(jq -r '.components[] | select(.component_key == "mobile-app") | .evidence_state' "$pending_default")"
+run_contains "pending_default_records_blocker" "pending_component_outcome" \
+  "$(jq -c '.components[] | select(.component_key == "mobile-app") | .blockers' "$pending_default")"
 
 missing_tag="$TMP_ROOT/missing-tag.json"
 missing_evidence="$TMP_ROOT/missing-evidence.json"
