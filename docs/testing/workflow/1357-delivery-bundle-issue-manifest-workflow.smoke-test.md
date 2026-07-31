@@ -246,6 +246,10 @@ STALE_REVISION="$(jq -r '.revision' "$BUNDLE")"
   --reason "Temporarily split web delivery from this bundle" \
   --json
 
+REVISION_AFTER_REMOVAL="$(jq -r '.revision' "$BUNDLE")"
+test "$REVISION_AFTER_REMOVAL" -gt "$STALE_REVISION"
+jq -e '([.components[] | select(.component_key == "web-app")] | length) == 0' "$BUNDLE"
+
 MANIFEST_HASH_BEFORE="$(git hash-object "$BUNDLE")"
 
 if "$HELPER" finalize \
@@ -352,7 +356,10 @@ For the add case:
 
 jq -e '
   (.status == "open" or .status == "blocked") and
-  (.readiness.revision == .revision or .readiness == null)
+  (
+    .readiness == null or
+    (.readiness.revision == .revision and .readiness.status != "ready_to_finalize")
+  )
 ' "$SMOKE_TMP/ready-add.json"
 ```
 
@@ -374,7 +381,10 @@ For the update case:
 
 jq -e '
   (.status == "open" or .status == "blocked") and
-  (.readiness.revision == .revision or .readiness == null)
+  (
+    .readiness == null or
+    (.readiness.revision == .revision and .readiness.status != "ready_to_finalize")
+  )
 ' "$SMOKE_TMP/ready-update.json"
 ```
 
@@ -390,7 +400,10 @@ For the removal case:
 
 jq -e '
   (.status == "open" or .status == "blocked") and
-  (.readiness.revision == .revision or .readiness == null)
+  (
+    .readiness == null or
+    (.readiness.revision == .revision and .readiness.status != "ready_to_finalize")
+  )
 ' "$SMOKE_TMP/ready-remove.json"
 ```
 
