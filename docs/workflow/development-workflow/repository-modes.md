@@ -121,7 +121,8 @@ allowing implementation actions to target a selected product repository.
   `display_label` field. Consumers must continue only when the script succeeds
   and `ROUTING_CONTINUE_ALLOWED=true`. `missing_target`, `ambiguous_target`,
   and `multiple_targets` are stop outcomes even though they are reported as
-  structured routing results.
+  structured routing results. `hub_only` may continue with
+  `ROUTING_ARTIFACT_OWNER=hub_repository` and no selected product repository.
 - `pr-review-loop.sh` and `pr-ci-loop.sh` can target implementation PRs outside
   the hub by accepting `--repo <owner/repo>` or `--product-repo <name>`.
 - `post-merge-cleanup.sh --repo <name> <branch>` cleans implementation branches

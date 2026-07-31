@@ -143,9 +143,21 @@ implementation_item_is_hub_only() {
 }
 
 _implementation_hub_only_cache=""
+_implementation_hub_only_cache_key=""
+
+implementation_item_identity_key() {
+  printf '%s|%s|%s|%s\n' "$repo_root" "${branch_name:-}" "${development_path:-}" "${pr_number:-}"
+}
 
 implementation_item_is_hub_only_cached() {
+  local cache_key=""
   local hub_only_status=0
+
+  cache_key="$(implementation_item_identity_key)"
+  if [ "$_implementation_hub_only_cache_key" != "$cache_key" ]; then
+    _implementation_hub_only_cache=""
+    _implementation_hub_only_cache_key="$cache_key"
+  fi
 
   if [ -z "$_implementation_hub_only_cache" ]; then
     if implementation_item_is_hub_only; then
@@ -336,9 +348,27 @@ if [ -n "$pr_number" ]; then
   fi
   labels="$(printf '%s\n' "$pr_json" | jq -r '[.labels[].name] | join(",")')"
   case "$(branch_prefix "$branch_name")" in
-    feature|refactor|fix|hotfix) repository_context_for_action implementation ;;
-    *) repository_context_for_action hub ;;
+    feature|refactor|fix|hotfix) pr_action_kind="implementation" ;;
+    *) pr_action_kind="hub" ;;
   esac
+  set +e
+  pr_action_context="$(repository_context_for_action "$pr_action_kind" 2>&1)"
+  pr_action_status=$?
+  set -e
+  if [ "$pr_action_status" -ne 0 ]; then
+    if [ "$pr_action_status" -ne 2 ]; then
+      echo "ERROR: $pr_action_context" >&2
+      exit "$pr_action_status"
+    fi
+    printf '%s\n' "$pr_action_context"
+    print_kv TARGET "pr:$pr_number"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv NEXT_ACTION "resolve-repository-selection"
+    exit 0
+  fi
+  printf '%s\n' "$pr_action_context"
 
   print_kv TARGET "pr:$pr_number"
   print_kv PR_NUMBER "$pr_number"

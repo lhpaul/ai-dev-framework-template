@@ -403,6 +403,16 @@ workflow_pr_output="$(
 run_contains "workflow_pr_without_repo_fails_closed" "NEXT_ACTION=resolve-repository-selection" "$workflow_pr_output"
 run_contains "workflow_pr_without_repo_missing_target" "ROUTING_OUTCOME_CODE=missing_target" "$workflow_pr_output"
 
+workflow_pr_selected_repo_output="$(
+  GH_PR_VIEW_JSON='{"headRefName":"feature/901-routing","labels":[],"isDraft":false,"comments":[],"statusCheckRollup":[]}' \
+  PATH="$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$typed_hub_dir" \
+    --repo mobile-app \
+    --pr 901
+)"
+run_contains "workflow_pr_selected_repo_rechecks_branch_identity" "NEXT_ACTION=resolve-repository-selection" "$workflow_pr_selected_repo_output"
+run_contains "workflow_pr_selected_repo_hub_only_conflict" "ROUTING_OUTCOME_CODE=ambiguous_target" "$workflow_pr_selected_repo_output"
+
 discover_output="$(
   PATH="$stub_bin:$PATH" "$REPO_ROOT/scripts/development-workflow/discover-workflow-state.sh" \
     --repo-root "$hub_dir" \
