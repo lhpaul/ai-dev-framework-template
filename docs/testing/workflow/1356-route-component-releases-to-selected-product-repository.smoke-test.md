@@ -10,19 +10,26 @@
 
 ## Prerequisites
 
-Before running this smoke test:
+Before running every scenario:
 
 - [ ] The implementation branch for #1356 is checked out or merged into the
       test branch.
-- [ ] Steps 2 through 5 are run from the workflow hub checkout.
-- [ ] Step 1 has a single-repository fixture or temporary checkout available.
-- [ ] Steps 2 through 5 have a workflow-hub fixture or test repository
-      configuration with at least two product repositories and local-only
-      checkout entries for the selected product repository.
-- [ ] The selected product repository checkout is clean.
 - [ ] Hub tracker mutation uses a mocked tracker or disposable fixture issue.
       The smoke test must reject live work-item references unless the operator
       passes an explicit destructive-test option supported by the implementation.
+
+Before Step 1:
+
+- [ ] A single-repository fixture or temporary checkout is available. Step 1
+      must not require workflow-hub fixture data or a product selector.
+
+Before Steps 2 through 5:
+
+- [ ] You are in the workflow hub checkout.
+- [ ] A workflow-hub fixture or test repository configuration has at least two
+      product repositories and local-only checkout entries for the selected
+      product repository.
+- [ ] The selected product repository checkout is clean.
 
 ---
 
@@ -54,14 +61,24 @@ Before running this smoke test:
 ```bash
 SINGLE_REPO_FIXTURE="/tmp/1356-single-repo"
 TARGET_JSON="/tmp/1356-single-repo-target.json"
+SINGLE_REPO_STATUS_BEFORE="/tmp/1356-single-repo-status-before.txt"
+SINGLE_REPO_STATUS_AFTER="/tmp/1356-single-repo-status-after.txt"
+
+test -d "$SINGLE_REPO_FIXTURE/.git"
+git -C "$SINGLE_REPO_FIXTURE" status --porcelain \
+  > "$SINGLE_REPO_STATUS_BEFORE"
 
 scripts/development-workflow/component-release-target.sh \
   --repo-root "$SINGLE_REPO_FIXTURE" \
   --json > "$TARGET_JSON"
 
+git -C "$SINGLE_REPO_FIXTURE" status --porcelain \
+  > "$SINGLE_REPO_STATUS_AFTER"
+
 jq -e '.routing_outcome == "single_repo_release"' "$TARGET_JSON"
 jq -e '.selected_product_repo_key == null' "$TARGET_JSON"
 jq -e '.mutation_allowed == true' "$TARGET_JSON"
+cmp "$SINGLE_REPO_STATUS_BEFORE" "$SINGLE_REPO_STATUS_AFTER"
 ```
 
 **Expected result**: The release path remains current-repository owned and does
@@ -84,12 +101,20 @@ not require workflow-hub product selection.
 HUB_FIXTURE="/tmp/1356-workflow-hub"
 PRODUCT_REPO_KEY="mobile-app"
 TARGET_JSON="/tmp/1356-component-target.json"
+HUB_STATUS_BEFORE="/tmp/1356-hub-status-before.txt"
+HUB_STATUS_AFTER="/tmp/1356-hub-status-after.txt"
+
+test -d "$HUB_FIXTURE/.git"
+git -C "$HUB_FIXTURE" status --porcelain > "$HUB_STATUS_BEFORE"
 
 scripts/development-workflow/component-release-target.sh \
   --repo "$PRODUCT_REPO_KEY" \
   --repo-root "$HUB_FIXTURE" \
   --require-local \
   --json > "$TARGET_JSON"
+
+git -C "$HUB_FIXTURE" status --porcelain > "$HUB_STATUS_AFTER"
+PRODUCT_REPO_PATH="$(jq -r '.local_checkout.path' "$TARGET_JSON")"
 
 jq -e '.routing_outcome == "component_release_routed"' "$TARGET_JSON"
 jq -e '.selected_product_repo_key == env.PRODUCT_REPO_KEY' "$TARGET_JSON"
@@ -101,6 +126,9 @@ jq -e '.artifact_owners.release == "product_repository"' "$TARGET_JSON"
 jq -e '.artifact_owners.tracker == "hub_repository"' "$TARGET_JSON"
 jq -e '.release_correlation_key | length > 0' "$TARGET_JSON"
 jq -e '.contract_revision | length > 0' "$TARGET_JSON"
+test -d "$PRODUCT_REPO_PATH/.git"
+test -z "$(git -C "$PRODUCT_REPO_PATH" status --porcelain)"
+cmp "$HUB_STATUS_BEFORE" "$HUB_STATUS_AFTER"
 ```
 
 **Expected result**: Product release artifacts are assigned only to the selected
@@ -162,6 +190,14 @@ do
 
   jq -e '.mutation_allowed == false' "$TARGET_JSON"
 done
+
+if scripts/development-workflow/component-release-target.sh \
+  --repo-root "$HUB_FIXTURE/fixtures/malformed" \
+  --json > /tmp/1356-malformed-target.json
+then
+  echo "malformed target input was accepted" >&2
+  exit 1
+fi
 ```
 
 **Expected result**: Each run stops before mutation and reports exactly one
@@ -208,6 +244,21 @@ jq -e --arg value "$TARGET_REVISION" \
 jq -e '.routing_outcome == "component_release_routed"' "$EVIDENCE_JSON"
 jq -e '.hub_tracker_ref == "fixture:1356-smoke"' "$EVIDENCE_JSON"
 
+for release_outcome in completed failed blocked
+do
+  scripts/development-workflow/component-release-evidence.sh \
+    --target-file "$TARGET_JSON" \
+    --release-outcome "$release_outcome" \
+    --ci-outcome passed \
+    --deployment-outcome recorded \
+    --cleanup-outcome complete \
+    --hub-tracker-ref "fixture:1356-smoke" \
+    --json > "/tmp/1356-${release_outcome}-evidence.json"
+
+  jq -e --arg value "$release_outcome" \
+    '.release_outcome == $value' "/tmp/1356-${release_outcome}-evidence.json"
+done
+
 if scripts/development-workflow/component-release-evidence.sh \
   --target-file "$TARGET_JSON" \
   --release-outcome invalid \
@@ -247,6 +298,10 @@ TARGET_JSON="/tmp/1356-component-target.json"
 EVIDENCE_JSON="/tmp/1356-component-evidence.json"
 TEST_TRACKER_REF="fixture:1356-smoke"
 TEST_TRACKER_ISSUE="fixture-1356-smoke"
+CLEANUP_JSON="/tmp/1356-cleanup-output.json"
+CLEANUP_RERUN_JSON="/tmp/1356-cleanup-rerun-output.json"
+PRODUCT_REPO_PATH="$(jq -r '.local_checkout.path' "$TARGET_JSON")"
+RELEASE_BRANCH="release/v9.9.9-test"
 
 case "$TEST_TRACKER_REF" in
   test:*|mock:*|fixture:*) ;;
@@ -261,25 +316,33 @@ scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
   --repo-root "$HUB_FIXTURE" \
   --evidence-file "$EVIDENCE_JSON" \
   --issues "$TEST_TRACKER_ISSUE" \
-  --best-effort
+  --best-effort \
+  --json > "$CLEANUP_JSON"
 
 scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
   --repo "$PRODUCT_REPO_KEY" \
   --repo-root "$HUB_FIXTURE" \
   --evidence-file "$EVIDENCE_JSON" \
   --issues "$TEST_TRACKER_ISSUE" \
-  --best-effort
+  --best-effort \
+  --json > "$CLEANUP_RERUN_JSON"
 
-jq -e '.cleanup_outcome == "complete"' "$EVIDENCE_JSON"
-jq -e '.tracker_mutation.repository_owner == "hub_repository"' "$EVIDENCE_JSON"
-jq -e '.product_cleanup.repository_key == env.PRODUCT_REPO_KEY' "$EVIDENCE_JSON"
+jq -e '.cleanup_outcome == "complete"' "$CLEANUP_JSON"
+jq -e '.tracker_mutation.repository_owner == "hub_repository"' "$CLEANUP_JSON"
+jq -e '.tracker_mutation.issue == env.TEST_TRACKER_ISSUE' "$CLEANUP_JSON"
+jq -e '.product_cleanup.repository_key == env.PRODUCT_REPO_KEY' "$CLEANUP_JSON"
+jq -e '.product_cleanup.already_complete == true' "$CLEANUP_RERUN_JSON"
+test -z "$(git -C "$PRODUCT_REPO_PATH" status --porcelain)"
+! git -C "$PRODUCT_REPO_PATH" ls-remote --exit-code --heads origin \
+  "$RELEASE_BRANCH"
 
 if scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
   --repo "$PRODUCT_REPO_KEY" \
   --repo-root "$HUB_FIXTURE" \
   --evidence-file "/tmp/1356-mismatched-evidence.json" \
   --issues "$TEST_TRACKER_ISSUE" \
-  --best-effort
+  --best-effort \
+  --json > /tmp/1356-mismatched-cleanup.json
 then
   echo "mismatched evidence cleanup was accepted" >&2
   exit 1
@@ -293,6 +356,17 @@ mismatched evidence stops before product or hub tracker mutation.
 
 - Verify all assertions below are satisfied.
 - Remove any temporary fixture files or test branches created for the smoke run.
+
+```bash
+rm -f /tmp/1356-*.json /tmp/1356-*.txt
+
+for repo in "$SINGLE_REPO_FIXTURE" "$HUB_FIXTURE" "$PRODUCT_REPO_PATH"
+do
+  if [ -n "${repo:-}" ] && [ -d "$repo/.git" ]; then
+    test -z "$(git -C "$repo" status --porcelain)"
+  fi
+done
+```
 
 ---
 
