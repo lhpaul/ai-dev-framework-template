@@ -1,0 +1,15 @@
+{
+  "repository_mode": "workflow_hub",
+  "product_repos": [
+    {
+      "name": "mobile-app",
+      "github_repo": "example/mobile-app",
+      "default_branch": "main"
+    },
+    {
+      "name": "admin-portal",
+      "github_repo": "example/admin-portal",
+      "default_branch": "develop"
+    }
+  ]
+}

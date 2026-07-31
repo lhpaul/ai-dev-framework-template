@@ -32,11 +32,12 @@ Follow the **`/run-item`** bounded command contract:
 ## Repository Mode Context
 
 Before implementation mutation in `workflow_hub`, state the selected product
-repository, local path or remote identity, artifact owner, and mutation target.
-Stop before file edits, branch creation, commits, or implementation PR creation
-when product repository context is missing or ambiguous. Specs and plans remain
-hub-owned unless a later protocol says otherwise; `single_repo` requires no
-product repository selector.
+repository, local path or remote identity, artifact owner, mutation target,
+routing outcome, and routing fingerprint. Continue only when
+`ROUTING_CONTINUE_ALLOWED=true`. Stop before file edits, branch creation, commits, or implementation PR creation when product repository context is
+missing, ambiguous, or selects multiple product repositories. Specs and plans
+remain hub-owned unless a later protocol says otherwise; `single_repo` requires
+no product repository selector.
 
 Before dispatching any stage agent that may create a branch or open a PR, pass
 the expected branch, expected worktree when known, approved base, and

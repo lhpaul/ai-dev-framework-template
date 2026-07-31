@@ -37,8 +37,9 @@ proposal step.
 7. Target `develop` directly; `/run-items` does not create or target
    `develop-<slug>` integration branches.
 8. Before implementation mutation in `workflow_hub`, state the selected product
-   repository, artifact owner, and mutation target; stop when context is missing
-   or ambiguous.
+   repository, artifact owner, mutation target, routing outcome, and routing
+   fingerprint. Continue only when `ROUTING_CONTINUE_ALLOWED=true`; stop when
+   context is missing, ambiguous, or selects multiple product repositories.
 9. For each in-scope item, pass the approved base and artifact-owning repo root
    to branch and PR creation paths and require
    `run-nested-artifact-guard.sh --mode <pre-create|pre-pr> --issue <number> --expected-branch <branch> --approved-base <branch> --repo-root "$ARTIFACT_REPO_ROOT"` before mutation. Stop on

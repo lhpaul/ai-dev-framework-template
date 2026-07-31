@@ -18,6 +18,11 @@ In `workflow_hub`, product implementation work must mutate the selected product
 repository, not the hub. Stop before mutation if product repository context is
 missing or ambiguous. Missing mode or `single_repo` keeps the current repository
 as the mutation target and does not require `--repo`.
+Use the structured routing fields from `workflow-next-action.sh` or
+`work-item-repository-routing.py`; continue only when
+`ROUTING_CONTINUE_ALLOWED=true`, and carry `ROUTING_OUTCOME_CODE`,
+`ROUTING_ARTIFACT_OWNER`, `ROUTING_SELECTED_PRODUCT_REPO_KEY`, and
+`ROUTING_FINGERPRINT` into the handoff evidence.
 
 Before creating an implementation branch or opening an implementation PR for a
 tracker-backed item, run `run-nested-artifact-guard.sh` with required `--mode`, `--issue`, `--expected-branch`, `--approved-base`, and the expected

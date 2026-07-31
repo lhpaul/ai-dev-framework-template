@@ -1,0 +1,7 @@
+{
+  "repository_mode": "workflow_hub",
+  "stage": "implementation",
+  "item_identifier": "1354-hub-only-child",
+  "hub_only": true,
+  "selected_product_repo_keys": []
+}

@@ -94,6 +94,41 @@ cd "$repo_root"
 mode_context="$(workflow_repository_mode "$repo_root")"
 workflow_mode="$(workflow_context_value WORKFLOW_MODE "$mode_context")"
 
+implementation_issue_number() {
+  local source="${branch_name:-}"
+  local slug=""
+
+  if [ -n "$source" ]; then
+    if [[ "$source" =~ ^(feature|fix|refactor|hotfix)/([0-9]+)($|-) ]]; then
+      printf '%s\n' "${BASH_REMATCH[2]}"
+      return 0
+    fi
+    if [[ "$source" =~ ^(feature|fix|refactor|hotfix)/([A-Za-z]{2,8}-)?([0-9]+)($|-) ]]; then
+      printf '%s\n' "${BASH_REMATCH[3]}"
+      return 0
+    fi
+  fi
+
+  if [ -n "$development_path" ]; then
+    slug="$(basename "$development_path" | sed 's/^[0-9]\{14\}_//')"
+    if [[ "$slug" =~ ^([0-9]+)- ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+implementation_item_is_hub_only() {
+  local issue_number=""
+  local tracker_type=""
+
+  issue_number="$(implementation_issue_number 2>/dev/null)" || return 1
+  tracker_type="$(get_tracker_type_for_issue "$issue_number" 2>/dev/null || true)"
+  [ "$tracker_type" = "Workflow" ]
+}
+
 repository_context_for_action() {
   local action_kind="$1"
   local context=""
@@ -101,17 +136,56 @@ repository_context_for_action() {
   local action_repository=""
   local action_github_repo=""
   local action_local_path=""
+  local routing_json=""
+  local routing_outcome=""
+  local routing_continue=""
+  local routing_args=()
 
   if [ "$workflow_mode" = "workflow_hub" ]; then
     case "$action_kind" in
       implementation)
-        if ! context="$(workflow_repository_context "$target_repo" "$repo_root")"; then
+        routing_args=(
+          python3 "$SCRIPT_DIR/work-item-repository-routing.py"
+          --repo-root "$repo_root"
+          --repository-mode "$workflow_mode"
+          --stage implementation
+          --item-identifier "${branch_name:-${development_path:-${pr_number:-implementation}}}"
+          --json
+        )
+        if [ -n "$target_repo" ]; then
+          routing_args+=(--selected-product-repo-key "$target_repo")
+        fi
+        if implementation_item_is_hub_only; then
+          routing_args+=(--hub-only)
+        fi
+        if ! routing_json="$("${routing_args[@]}")"; then
           return 1
         fi
-        action_repository_kind="product_repo_owned"
-        action_repository="$(workflow_context_value TARGET_REPO_NAME "$context")"
-        action_github_repo="$(workflow_github_repo_from_context "$context")"
-        action_local_path="$(workflow_context_value TARGET_LOCAL_PATH "$context")"
+        routing_outcome="$(printf '%s\n' "$routing_json" | jq -r '.outcome_code')"
+        print_kv ROUTING_OUTCOME_CODE "$routing_outcome"
+        print_kv ROUTING_DISPLAY_LABEL "$(printf '%s\n' "$routing_json" | jq -r '.display_label')"
+        print_kv ROUTING_CONTINUE_ALLOWED "$(printf '%s\n' "$routing_json" | jq -r '.continue_allowed')"
+        print_kv ROUTING_ARTIFACT_OWNER "$(printf '%s\n' "$routing_json" | jq -r '.artifact_owner')"
+        print_kv ROUTING_SELECTED_PRODUCT_REPO_KEY "$(printf '%s\n' "$routing_json" | jq -r '.selected_product_repo_key // ""')"
+        print_kv ROUTING_STOP_REASON "$(printf '%s\n' "$routing_json" | jq -r '.stop_reason // ""')"
+        print_kv ROUTING_REQUIRED_HUMAN_ACTION "$(printf '%s\n' "$routing_json" | jq -r '.required_human_action // ""')"
+        print_kv ROUTING_FINGERPRINT "$(printf '%s\n' "$routing_json" | jq -r '.fingerprint')"
+        routing_continue="$(printf '%s\n' "$routing_json" | jq -r '.continue_allowed')"
+        if [ "$routing_continue" != "true" ]; then
+          return 2
+        fi
+        if [ "$routing_outcome" = "hub_only" ]; then
+          action_repository_kind="hub_owned"
+          action_repository="$(basename "$repo_root")"
+        else
+          if ! context="$(workflow_repository_context "$target_repo" "$repo_root")"; then
+            return 1
+          fi
+          action_repository_kind="product_repo_owned"
+          action_repository="$(workflow_context_value TARGET_REPO_NAME "$context")"
+          action_github_repo="$(workflow_github_repo_from_context "$context")"
+          action_local_path="$(workflow_context_value TARGET_LOCAL_PATH "$context")"
+        fi
         ;;
       *)
         action_repository_kind="hub_owned"
@@ -150,6 +224,11 @@ github_repo_args_for_action() {
 
 if [ -n "$pr_number" ]; then
   if [ "$workflow_mode" = "workflow_hub" ] && [ -z "$target_repo" ]; then
+    require_gh
+    pr_probe_json=""
+    if pr_probe_json="$(gh pr view "$pr_number" --json headRefName 2>/dev/null)"; then
+      branch_name="$(printf '%s\n' "$pr_probe_json" | jq -r '.headRefName // ""')"
+    fi
     if ! pr_action_context="$(repository_context_for_action implementation 2>&1)"; then
       print_kv WORKFLOW_MODE "$workflow_mode"
       print_kv ACTION_REPOSITORY_KIND "repository_selection_required"
@@ -464,8 +543,12 @@ fi
 case "$next_action" in
   implement|resolve-development-pr)
     if ! action_context_output="$(repository_context_for_action implementation 2>&1)"; then
-      echo "ERROR: $action_context_output" >&2
-      exit 1
+      printf '%s\n' "$action_context_output"
+      print_kv TARGET "development:$development_path"
+      [ -n "$spec_file" ] && print_kv SPEC_FILE "$spec_file"
+      print_kv STATUS "$status_line"
+      print_kv NEXT_ACTION "resolve-repository-selection"
+      exit 0
     fi
     ;;
   *)
