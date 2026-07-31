@@ -20,6 +20,7 @@ TMP_ROOT="$(CDPATH='' cd -- "$TMP_ROOT" && pwd -P)"
 _harness_exit() {
   local status=$?
   rm -rf "$TMP_ROOT"
+  # 141 is SIGPIPE from a downstream consumer closing stdout early, not a test failure.
   case "$status" in
     141) exit 0 ;;
     *)   exit "$status" ;;
