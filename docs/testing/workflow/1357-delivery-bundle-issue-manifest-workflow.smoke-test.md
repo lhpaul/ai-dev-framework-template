@@ -32,6 +32,7 @@ Before running this smoke test:
 | Finalization owner | `@workflow-operator` |
 | Rollout notes | `Roll out mobile and web components independently; no shared suite branch.` |
 | Known child items | `#1356`, `#1357` |
+| Bundle key | `mobile-web-july-delivery` |
 | Manifest path | `$SMOKE_TMP/delivery-bundle.json` |
 | Component A | `mobile-app`, tag `mobile-v1.4.0`, version `1.4.0` |
 | Component B | `web-app`, tag `web-v2.8.1`, version `2.8.1` |
@@ -41,10 +42,21 @@ Before running this smoke test:
 Create a temp directory and common shell variables before running the steps:
 
 ```bash
-SMOKE_TMP="$(mktemp -d)"
-trap 'rm -rf "$SMOKE_TMP"' EXIT
+set -euo pipefail
+
+if ! SMOKE_TMP="$(mktemp -d)" || [ -z "$SMOKE_TMP" ] || [ ! -d "$SMOKE_TMP" ]; then
+  echo "ERROR_CODE=smoke_tmp_setup_failed message='failed to create temp directory'" >&2
+  exit 1
+fi
+cleanup_smoke_tmp() {
+  if [ -n "${SMOKE_TMP:-}" ] && [ -d "$SMOKE_TMP" ]; then
+    rm -rf "$SMOKE_TMP"
+  fi
+}
+trap cleanup_smoke_tmp EXIT
 
 HELPER="scripts/development-workflow/delivery-bundle-manifest.sh"
+BUNDLE_KEY="mobile-web-july-delivery"
 BUNDLE="$SMOKE_TMP/delivery-bundle.json"
 MOBILE_EVIDENCE="$SMOKE_TMP/mobile-evidence.json"
 WEB_EVIDENCE="$SMOKE_TMP/web-evidence.json"
@@ -76,6 +88,7 @@ test "$BEFORE_HASH" = "$AFTER_HASH"
 ```bash
 "$HELPER" create \
   --manifest "$BUNDLE" \
+  --bundle-key "$BUNDLE_KEY" \
   --title "Mobile and Web July delivery" \
   --purpose "Coordinated customer-facing July workflow-hub delivery" \
   --parent-ref "#1352" \
@@ -89,6 +102,7 @@ test "$BEFORE_HASH" = "$AFTER_HASH"
 
 jq -e '
   .schema_version == "delivery_bundle_manifest.v1" and
+  .bundle_key == "mobile-web-july-delivery" and
   .revision == 1 and
   .status == "open" and
   .parent_ref == "#1352" and
@@ -111,6 +125,7 @@ REVISION="$(jq -r '.revision' "$BUNDLE")"
 
 "$HELPER" update-component \
   --manifest "$BUNDLE" \
+  --bundle-key "$BUNDLE_KEY" \
   --expected-revision "$REVISION" \
   --component-key mobile-app \
   --evidence-file "$MOBILE_EVIDENCE" \
@@ -149,6 +164,7 @@ AUDIT_COUNT_BEFORE="$(jq -r '.audit_events | length' "$BUNDLE")"
 
 "$HELPER" update-component \
   --manifest "$BUNDLE" \
+  --bundle-key "$BUNDLE_KEY" \
   --expected-revision "$REVISION_BEFORE" \
   --component-key mobile-app \
   --evidence-file "$MOBILE_EVIDENCE" \
@@ -175,6 +191,7 @@ audit-event count, and component entry count stay unchanged.
 ```bash
 "$HELPER" inspect \
   --manifest "$BUNDLE" \
+  --bundle-key "$BUNDLE_KEY" \
   --json > "$SMOKE_TMP/inspect-partial.json"
 
 jq -e '
@@ -210,6 +227,7 @@ REVISION="$(jq -r '.revision' "$BUNDLE")"
 
 if "$HELPER" update-component \
   --manifest "$BUNDLE" \
+  --bundle-key "$BUNDLE_KEY" \
   --expected-revision "$REVISION" \
   --component-key mobile-app \
   --evidence-file "$SMOKE_TMP/mobile-conflict.json" \
@@ -241,6 +259,7 @@ STALE_REVISION="$(jq -r '.revision' "$BUNDLE")"
 
 "$HELPER" remove-component \
   --manifest "$BUNDLE" \
+  --bundle-key "$BUNDLE_KEY" \
   --expected-revision "$STALE_REVISION" \
   --component-key web-app \
   --reason "Temporarily split web delivery from this bundle" \
@@ -254,6 +273,7 @@ MANIFEST_HASH_BEFORE="$(git hash-object "$BUNDLE")"
 
 if "$HELPER" finalize \
   --manifest "$BUNDLE" \
+  --bundle-key "$BUNDLE_KEY" \
   --expected-revision "$STALE_REVISION" \
   --json 2> "$SMOKE_TMP/stale.err"
 then
@@ -297,6 +317,7 @@ separate add, update, and removal cases:
 ```bash
 "$HELPER" create \
   --manifest "$SMOKE_TMP/ready-bundle.json" \
+  --bundle-key "$BUNDLE_KEY" \
   --title "Mobile and Web July delivery" \
   --purpose "Coordinated customer-facing July workflow-hub delivery" \
   --parent-ref "#1352" \
@@ -310,6 +331,7 @@ separate add, update, and removal cases:
 
 "$HELPER" update-component \
   --manifest "$SMOKE_TMP/ready-bundle.json" \
+  --bundle-key "$BUNDLE_KEY" \
   --expected-revision "$(jq -r '.revision' "$SMOKE_TMP/ready-bundle.json")" \
   --component-key mobile-app \
   --evidence-file "$MOBILE_EVIDENCE" \
@@ -323,6 +345,7 @@ separate add, update, and removal cases:
 
 "$HELPER" update-component \
   --manifest "$SMOKE_TMP/ready-bundle.json" \
+  --bundle-key "$BUNDLE_KEY" \
   --expected-revision "$(jq -r '.revision' "$SMOKE_TMP/ready-bundle.json")" \
   --component-key web-app \
   --evidence-file "$WEB_EVIDENCE" \
@@ -336,6 +359,7 @@ separate add, update, and removal cases:
 
 "$HELPER" inspect \
   --manifest "$SMOKE_TMP/ready-bundle.json" \
+  --bundle-key "$BUNDLE_KEY" \
   --json > "$SMOKE_TMP/ready-inspect.json"
 
 jq -e '.status == "ready_to_finalize"' "$SMOKE_TMP/ready-inspect.json"
@@ -350,6 +374,7 @@ For the add case:
 ```bash
 "$HELPER" add-component \
   --manifest "$SMOKE_TMP/ready-add.json" \
+  --bundle-key "$BUNDLE_KEY" \
   --expected-revision "$(jq -r '.revision' "$SMOKE_TMP/ready-add.json")" \
   --component-key api-service \
   --json
@@ -368,6 +393,7 @@ For the update case:
 ```bash
 "$HELPER" update-component \
   --manifest "$SMOKE_TMP/ready-update.json" \
+  --bundle-key "$BUNDLE_KEY" \
   --expected-revision "$(jq -r '.revision' "$SMOKE_TMP/ready-update.json")" \
   --component-key mobile-app \
   --evidence-file "$MOBILE_EVIDENCE" \
@@ -393,6 +419,7 @@ For the removal case:
 ```bash
 "$HELPER" remove-component \
   --manifest "$SMOKE_TMP/ready-remove.json" \
+  --bundle-key "$BUNDLE_KEY" \
   --expected-revision "$(jq -r '.revision' "$SMOKE_TMP/ready-remove.json")" \
   --component-key web-app \
   --reason "Exclude web from this finalized bundle" \
@@ -416,7 +443,7 @@ revision; stale readiness from the prior revision is not retained.
 **Maps to**: Acceptance Criteria 10, 11, and 12
 
 ```bash
-jq '(.components[] | select(.component_key == "mobile-app")).component_tag = null' \
+jq 'del((.components[] | select(.component_key == "mobile-app")).component_tag)' \
   "$SMOKE_TMP/ready-bundle.json" > "$SMOKE_TMP/missing-tag.json"
 jq '(.components[] | select(.component_key == "web-app")).evidence_state = "missing"' \
   "$SMOKE_TMP/ready-bundle.json" > "$SMOKE_TMP/missing-evidence.json"
@@ -446,6 +473,7 @@ do
   MANIFEST_HASH_BEFORE="$(git hash-object "$fixture_path")"
   if "$HELPER" finalize \
     --manifest "$fixture_path" \
+    --bundle-key "$BUNDLE_KEY" \
     --expected-revision "$(jq -r '.revision' "$fixture_path")" \
     --json 2> "$stderr_path"
   then
@@ -469,12 +497,14 @@ REVISION="$(jq -r '.revision' "$BUNDLE")"
 
 "$HELPER" add-component \
   --manifest "$BUNDLE" \
+  --bundle-key "$BUNDLE_KEY" \
   --expected-revision "$REVISION" \
   --component-key web-app \
   --json
 
 "$HELPER" update-component \
   --manifest "$BUNDLE" \
+  --bundle-key "$BUNDLE_KEY" \
   --expected-revision "$(jq -r '.revision' "$BUNDLE")" \
   --component-key web-app \
   --evidence-file "$WEB_EVIDENCE" \
@@ -488,6 +518,7 @@ REVISION="$(jq -r '.revision' "$BUNDLE")"
 
 "$HELPER" inspect \
   --manifest "$BUNDLE" \
+  --bundle-key "$BUNDLE_KEY" \
   --json > "$SMOKE_TMP/inspect-ready.json"
 
 jq -e '.status == "ready_to_finalize"' "$SMOKE_TMP/inspect-ready.json"
@@ -500,6 +531,7 @@ SHARED_REFS_BEFORE="$(
 
 "$HELPER" finalize \
   --manifest "$BUNDLE" \
+  --bundle-key "$BUNDLE_KEY" \
   --expected-revision "$REVISION_BEFORE_FINALIZE" \
   --json
 

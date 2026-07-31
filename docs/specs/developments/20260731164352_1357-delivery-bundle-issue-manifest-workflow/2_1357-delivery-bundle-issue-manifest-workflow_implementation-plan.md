@@ -37,6 +37,7 @@ semantics and fail closed on stale or conflicting structured evidence.
 | Existing issue-template surface | `find .github -maxdepth 3 -type f \| sort` | The repository currently has GitHub Actions workflows but no issue-template files; #1357 should introduce the first `.github/ISSUE_TEMPLATE/` file deliberately. |
 | Component release evidence surface | `rg -n "component_release_evidence\|release_outcome\|cleanup_outcome\|hub_tracker_ref\|contract_revision" scripts/development-workflow docs/workflow/development-workflow docs/testing/workflow -g '*.sh' -g '*.md'` | Existing #1356 runtime and tests define `component_release_evidence.v1`, stable identity fields, release outcome fields, cleanup outcome fields, and hub tracker references that #1357 consumes. |
 | Existing workflow test harness | `find scripts/development-workflow/tests -maxdepth 1 -type f -name 'test-*.sh' \| sort` | Shell test coverage already includes component release evidence, workflow hub behavior, release cleanup, and run-epic helpers; add one focused delivery-bundle manifest test file. |
+| Implementation validation requirements | `rg -n "markdownlint-cli2\|markdown-heuristic-lint.py\|workflow-shell-snippet-lint.py\|shellcheck" AGENTS.md scripts/development-workflow docs/workflow/development-workflow` | Existing repo guidance requires standard Markdown linting, heuristic Markdown linting, workflow shell snippet linting, and shell linting for shell changes; keep these explicit in the implementation checklist. |
 
 ---
 
@@ -71,10 +72,17 @@ semantics and fail closed on stale or conflicting structured evidence.
       `update-component`, `inspect`, `remove-component`, and `finalize`. Map to
       AC1-AC15.
 - [ ] Define `delivery_bundle_manifest.v1` as a machine-readable JSON object
-      with bundle metadata, lifecycle status, current revision, declared
-      components, removed component history, readiness data tied to the current
-      revision, finalization data, and append-only audit events. Map to AC2,
-      AC5, AC8, AC9, and AC13.
+      with immutable `bundle_key`, bundle metadata, lifecycle status, current
+      revision, declared components, removed component history, readiness data
+      tied to the current revision, finalization data, and append-only audit
+      events. Map to AC2, AC5, AC8, AC9, and AC13.
+- [ ] Define the manifest-targeting contract for every helper command. The CLI
+      must require `--manifest PATH` and `--bundle-key KEY` for mutating and
+      inspection commands. `--manifest` selects the hub-owned evidence file;
+      `--bundle-key` is the immutable logical delivery identity stored in the
+      manifest. Commands must reject a missing key, a malformed key, or a key
+      that does not match the manifest contents before any mutation. Map to AC1,
+      AC2, AC6, and AC13.
 - [ ] Implement atomic update semantics for every accepted mutation. Hold an
       inter-process exclusive lock from manifest read through replacement,
       including new-manifest creation. Recheck the expected current revision
@@ -197,6 +205,8 @@ with the existing shell workflow test harness pattern.
   - Missing, invalid, or unsupported manifest `schema_version`.
   - Malformed JSON, non-object JSON, empty JSON, and missing required bundle
     metadata.
+  - Missing, malformed, or mismatched immutable `bundle_key` compared with the
+    CLI `--bundle-key` target.
   - Duplicate component identity using the same selected product repository
     key, canonical repository identity, release correlation key, and contract
     revision.
@@ -213,6 +223,8 @@ with the existing shell workflow test harness pattern.
   - Atomic temporary-file validation failure before replacement.
   - Missing lock acquisition, lost-update race, and check-then-create race for a
     new manifest.
+  - Structured error propagation for argument validation, JSON parsing, staging,
+    schema validation, lock acquisition, and replacement failures.
 - **Unit test mapping**:
   `scripts/development-workflow/tests/test-delivery-bundle-manifest.sh` should
   include one named assertion group per edge case above, plus positive coverage
@@ -238,7 +250,13 @@ with the existing shell workflow test harness pattern.
   read of the same manifest.
 - **Race conditions at teardown**: Not applicable; no teardown lifecycle exists.
 - **Error propagation across async boundaries**: Not applicable; shell command
-  failures should return non-zero status and stable stderr text.
+  failures should return non-zero status and stable structured stderr text. The
+  helper must validate arguments before mutation; emit `ERROR_CODE=<stable_code>`
+  plus a human-readable message; propagate required failures from JSON parsing,
+  staging, schema validation, lock acquisition, temporary-file creation, and
+  replacement commands; and preserve the previous manifest unchanged on every
+  failure. `test-delivery-bundle-manifest.sh` must cover each failure path and
+  assert its non-zero exit status and error code.
 
 ---
 
@@ -254,16 +272,10 @@ with the existing shell workflow test harness pattern.
 
 ## Documentation Updates
 
-- [ ] `docs/workflow/development-workflow/repository-modes.md` - document
-      hub-owned delivery bundle manifest ownership and finalization boundaries.
-- [ ] `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md`
-      - document optional delivery bundle handoff from product release evidence.
-- [ ] `scripts/development-workflow/README.md` - document
-      `delivery-bundle-manifest.sh` commands and output.
-- [ ] `.github/ISSUE_TEMPLATE/delivery-bundle.yml` - introduce the delivery
-      bundle issue intake template.
-- [ ] `CHANGELOG.md` - add the #1357 implementation entry under
-      `[Unreleased]`.
+The authoritative documentation checklist is in
+**Documentation / Workflow Guides** above. Do not duplicate those entries during
+implementation; complete that section and keep the implementation PR diff
+aligned with it.
 
 ---
 
@@ -298,5 +310,12 @@ with the existing shell workflow test harness pattern.
    differ from the final implementation.
 9. Update `CHANGELOG.md` under `[Unreleased]` with the #1357 implementation
    entry.
-10. Run targeted tests, markdown lint, shell lint where applicable, and
-    `git diff --check` before opening the implementation PR.
+10. Run the explicit validation suite before opening the implementation PR:
+    targeted shell tests including
+    `scripts/development-workflow/tests/test-delivery-bundle-manifest.sh`,
+    standard Markdown lint with `npx markdownlint-cli2`, heuristic Markdown lint
+    with `python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md`, the
+    workflow shell snippet guard with
+    `python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop`,
+    ShellCheck for changed shell scripts when available, and
+    `git diff --check`.
