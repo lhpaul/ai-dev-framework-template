@@ -51,10 +51,21 @@ Before running this smoke test:
    ```bash
    python3 scripts/development-workflow/work-item-repository-routing.py \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/product-owned.json \
-     --json
+     --json | tee /tmp/1354-routing-product-owned.json
    ```
 
 2. Confirm the command exits `0`.
+3. Run:
+
+   ```bash
+   jq -e '
+     .outcome_code == "product_owned"
+     and .continue_allowed == true
+     and .selected_product_repo_key == "mobile-app"
+     and .artifact_owner == "selected_product_repository"
+     and .stop_reason == null
+   ' /tmp/1354-routing-product-owned.json
+   ```
 
 **Expected result**: The output shows `Product owned`, selected key
 `mobile-app`, `outcome_code=product_owned`, `continue_allowed=true`, artifact
@@ -69,16 +80,32 @@ owner `selected_product_repository`, and no stop reason.
    ```bash
    python3 scripts/development-workflow/work-item-repository-routing.py \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/missing-target.json \
-     --json
+     --json | tee /tmp/1354-routing-missing-target.json
    ```
 
 2. Confirm the command exits `0`.
-3. Run the corresponding orchestration dry-run fixture and confirm no product
-   branch, PR, reviewer, CI, or cleanup command is invoked.
+3. Run:
+
+   ```bash
+   jq -e '
+     .outcome_code == "missing_target"
+     and .continue_allowed == false
+     and .selected_product_repo_key == null
+     and .artifact_owner == "none"
+     and .stop_reason != null
+   ' /tmp/1354-routing-missing-target.json
+   ```
+
+4. Run the orchestration regression that exercises the same stop fixture:
+
+   ```bash
+   bash scripts/development-workflow/tests/test-workflow-orchestration-product-repo-aware.sh
+   ```
 
 **Expected result**: The output shows `Missing target` or equivalent stop
 evidence, `outcome_code=missing_target`, `continue_allowed=false`, and allows
-only hub-owned stop evidence to be recorded.
+only hub-owned stop evidence to be recorded. The orchestration regression
+asserts that no product branch, PR, reviewer, CI, or cleanup command is invoked.
 
 ### Step 3: Ambiguous Product Target Stops Before Mutation
 
@@ -89,16 +116,32 @@ only hub-owned stop evidence to be recorded.
    ```bash
    python3 scripts/development-workflow/work-item-repository-routing.py \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/ambiguous-target.json \
-     --json
+     --json | tee /tmp/1354-routing-ambiguous-target.json
    ```
 
 2. Confirm the command exits `0`.
-3. Run the corresponding orchestration dry-run fixture and confirm no product
-   branch, PR, reviewer, CI, or cleanup command is invoked.
+3. Run:
+
+   ```bash
+   jq -e '
+     .outcome_code == "ambiguous_target"
+     and .continue_allowed == false
+     and .selected_product_repo_key == null
+     and .artifact_owner == "none"
+     and .required_human_action != null
+   ' /tmp/1354-routing-ambiguous-target.json
+   ```
+
+4. Run the orchestration regression that exercises the same stop fixture:
+
+   ```bash
+   bash scripts/development-workflow/tests/test-workflow-orchestration-product-repo-aware.sh
+   ```
 
 **Expected result**: The output shows `Ambiguous target` or equivalent stop
 evidence, `outcome_code=ambiguous_target`, `continue_allowed=false`, and
-identifies the required routing clarification.
+identifies the required routing clarification. The orchestration regression
+asserts that no product branch, PR, reviewer, CI, or cleanup command is invoked.
 
 ### Step 4: Multiple Product Targets Require Split Or Narrowing
 
@@ -109,11 +152,21 @@ identifies the required routing clarification.
    ```bash
    python3 scripts/development-workflow/work-item-repository-routing.py \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/multiple-targets.json \
-     --json
+     --json | tee /tmp/1354-routing-multiple-targets.json
    ```
 
 2. Confirm the command exits `0`.
-3. Inspect the required next action.
+3. Run:
+
+   ```bash
+   jq -e '
+     .outcome_code == "multiple_targets"
+     and .continue_allowed == false
+     and .selected_product_repo_key == null
+     and .artifact_owner == "none"
+     and (.required_human_action | test("split|narrow"; "i"))
+   ' /tmp/1354-routing-multiple-targets.json
+   ```
 
 **Expected result**: The output shows `Multiple targets` and instructs the
 operator to split the request into repository-scoped children or narrow the
@@ -148,11 +201,20 @@ and each product-owned child has exactly one selected product repository key.
    ```bash
    python3 scripts/development-workflow/work-item-repository-routing.py \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/hub-only.json \
-     --json
+     --json | tee /tmp/1354-routing-hub-only.json
    ```
 
 2. Confirm the command exits `0`.
-3. Inspect artifact owner and mutation target output.
+3. Run:
+
+   ```bash
+   jq -e '
+     .outcome_code == "hub_only"
+     and .continue_allowed == true
+     and .selected_product_repo_key == null
+     and .artifact_owner == "hub_repository"
+   ' /tmp/1354-routing-hub-only.json
+   ```
 
 **Expected result**: The output shows `Hub only`, routes hub-owned artifacts to
 the hub repository, does not require a product repository selector, and includes
@@ -167,11 +229,20 @@ the hub repository, does not require a product repository selector, and includes
    ```bash
    python3 scripts/development-workflow/work-item-repository-routing.py \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/single-repo.json \
-     --json
+     --json | tee /tmp/1354-routing-single-repo.json
    ```
 
 2. Confirm the command exits `0`.
-3. Confirm no product repository selector is required.
+3. Run:
+
+   ```bash
+   jq -e '
+     .outcome_code == "single_repo"
+     and .continue_allowed == true
+     and .selected_product_repo_key == null
+     and .artifact_owner == "current_repository"
+   ' /tmp/1354-routing-single-repo.json
+   ```
 
 **Expected result**: The output shows single-repository behavior using the
 current repository as artifact owner and includes `outcome_code=single_repo`.
@@ -183,12 +254,22 @@ current repository as artifact owner and includes `outcome_code=single_repo`.
 1. Run:
 
    ```bash
-   rg -n "#1356|#1357|#1358|#1359|release execution|delivery-bundle|milestone|adoption" \
-     docs/workflow/development-workflow \
-     docs/specs/developments/20260731064618_1354-one-product-repository-per-implementation-item
+   changed_files="$(git diff --name-only origin/develop-multi-repo-releases...HEAD -- \
+     scripts/development-workflow docs/workflow/development-workflow)"
+   match_count=0
+   if [ -n "$changed_files" ]; then
+     printf '%s\n' "$changed_files" > /tmp/1354-routing-changed-files.txt
+     while IFS= read -r file; do
+       if rg -n "#1356|#1357|#1358|#1359|release execution|delivery-bundle|milestone|adoption" "$file"; then
+         match_count=$((match_count + 1))
+       fi
+     done < /tmp/1354-routing-changed-files.txt
+   fi
+   test "$match_count" -eq 0
    ```
 
-2. Confirm #1354 only enforces one-target routing and tracker decomposition.
+2. Confirm the command exits `0`, proving the #1354 implementation changed
+   files did not absorb peer epic behavior.
 
 **Expected result**: Product release execution remains scoped to #1356,
 delivery-bundle behavior to #1357, milestone reconciliation to #1358, and
@@ -200,7 +281,7 @@ adoption assurance to #1359.
 - Remove any temporary smoke output files created during the smoke run:
 
   ```bash
-  rm -f /tmp/1354-routing-*.json
+  rm -f /tmp/1354-routing-*.json /tmp/1354-routing-changed-files.txt
   ```
 
 ---

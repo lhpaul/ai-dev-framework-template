@@ -107,9 +107,12 @@ product key.
       `fingerprint` string; and `schema_version` string. The classifier exits
       `0` when it emits this contract for any classified outcome, `2` for
       malformed input or unreadable configuration, and nonzero for unexpected
-      runtime errors. Classifier and orchestration tests must assert the same
-      field names, nullability, enum values, and exit-status semantics. Map to
-      AC1-AC8.
+      runtime errors. Because stop outcomes also exit `0`, every mutating
+      consumer must parse `continue_allowed` and refuse branch, PR, reviewer,
+      CI, or cleanup mutation when it is `false`; no wrapper may treat exit
+      status alone as permission to continue. Classifier and orchestration tests
+      must assert the same field names, nullability, enum values, exit-status
+      semantics, and `continue_allowed` gating. Map to AC1-AC8.
 - [ ] Extend `scripts/development-workflow/workflow-config-resolver.py` or its
       tests only where needed to expose configured product repository keys in a
       reusable form. Do not duplicate key validation outside the resolver; the
@@ -118,7 +121,8 @@ product key.
       implementation-stage decisions in `workflow_hub` call the shared
       classifier before branch, PR, reviewer, CI, or cleanup routing. It should
       print the routing outcome, selected product repository key, artifact owner,
-      and stop evidence. Map to AC1-AC4 and AC7.
+      and stop evidence, then gate mutation exclusively on `continue_allowed`.
+      Map to AC1-AC4 and AC7.
 - [ ] Update `scripts/development-workflow/discover-workflow-state.sh`,
       `run-item-scope-resolver.sh`, `run-epic-scope-resolver.sh`, and relevant
       run-item/run-items handoff code so summaries preserve the classifier
@@ -181,7 +185,7 @@ workflow command tests, and smoke/manual review.
 
 1. `single_repo` mode returns the current repository target without requiring a
    product repository key. Maps to AC8.
-2. `workflow_hub` product-owned work with exactly one configured selected key
+2. `workflow_hub` product-owned work with exactly one valid selected key
    returns `Product owned`, artifact owner `selected product repository`, and
    includes the same key in handoff output. Maps to AC1 and AC7.
 3. Product-owned work with no key returns `Missing target`, stops before
