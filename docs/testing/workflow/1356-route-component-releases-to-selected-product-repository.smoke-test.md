@@ -199,6 +199,9 @@ jq -e '.local_checkout.path | length > 0' "$TARGET_JSON"
 jq -e '.release_base | length > 0' "$TARGET_JSON"
 jq -e '.release_branch_pattern | length > 0' "$TARGET_JSON"
 jq -e '.artifact_owners.release == "product_repository"' "$TARGET_JSON"
+jq -e '.artifact_owners.ci == "product_repository"' "$TARGET_JSON"
+jq -e '.artifact_owners.deployment == "product_repository"' "$TARGET_JSON"
+jq -e '.artifact_owners.cleanup == "product_repository"' "$TARGET_JSON"
 jq -e '.artifact_owners.tracker == "hub_repository"' "$TARGET_JSON"
 jq -e '.release_correlation_key | length > 0' "$TARGET_JSON"
 jq -e '.contract_revision | length > 0' "$TARGET_JSON"
@@ -291,7 +294,7 @@ scripts/development-workflow/component-release-evidence.sh \
   --ci-outcome pending \
   --deployment-outcome not_applicable \
   --cleanup-outcome not_started \
-  --hub-tracker-ref "fixture:1356-smoke" \
+  --hub-tracker-ref "$TEST_TRACKER_ISSUE" \
   --json > "$EVIDENCE_JSON"
 
 TARGET_REPOSITORY="$(jq -r '.canonical_repository_identity' "$TARGET_JSON")"
@@ -305,7 +308,8 @@ jq -e --arg value "$TARGET_CORRELATION" \
 jq -e --arg value "$TARGET_REVISION" \
   '.contract_revision == $value' "$EVIDENCE_JSON"
 jq -e '.routing_outcome == "component_release_routed"' "$EVIDENCE_JSON"
-jq -e '.hub_tracker_ref == "fixture:1356-smoke"' "$EVIDENCE_JSON"
+jq --arg expected "$TEST_TRACKER_ISSUE" \
+  -e '.hub_tracker_ref == $expected' "$EVIDENCE_JSON"
 
 scripts/development-workflow/component-release-evidence.sh \
   --target-file "$TARGET_JSON" \
@@ -313,7 +317,7 @@ scripts/development-workflow/component-release-evidence.sh \
   --ci-outcome pending \
   --deployment-outcome not_applicable \
   --cleanup-outcome not_started \
-  --hub-tracker-ref "fixture:1356-smoke" \
+  --hub-tracker-ref "$TEST_TRACKER_ISSUE" \
   --json > "$EVIDENCE_DUPLICATE_JSON"
 
 cmp "$EVIDENCE_JSON" "$EVIDENCE_DUPLICATE_JSON"
@@ -326,7 +330,7 @@ do
     --ci-outcome passed \
     --deployment-outcome recorded \
     --cleanup-outcome complete \
-    --hub-tracker-ref "fixture:1356-smoke" \
+    --hub-tracker-ref "$TEST_TRACKER_ISSUE" \
     --json > "$SMOKE_TMP/${release_outcome}-evidence.json"
 
   jq -e --arg value "$release_outcome" \
@@ -345,7 +349,7 @@ do
     --ci-outcome pending \
     --deployment-outcome not_applicable \
     --cleanup-outcome not_started \
-    --hub-tracker-ref "fixture:1356-smoke" \
+    --hub-tracker-ref "$TEST_TRACKER_ISSUE" \
     --json > "$MISMATCH_OUTPUT"
   then
     echo "mismatched evidence was accepted: $mismatch" >&2
@@ -367,7 +371,7 @@ if scripts/development-workflow/component-release-evidence.sh \
   --ci-outcome pending \
   --deployment-outcome not_applicable \
   --cleanup-outcome not_started \
-  --hub-tracker-ref "fixture:1356-smoke" \
+  --hub-tracker-ref "$TEST_TRACKER_ISSUE" \
   --json > "$SMOKE_TMP/invalid-evidence.json"
 then
   echo "invalid evidence was accepted" >&2

@@ -104,6 +104,17 @@ assertions must use the versioned release target keys above. Unsupported
 repository modes map to `unsupported_repository_mode` with
 `mutation_allowed=false`.
 
+Allowed artifact owner values are `current_repository`, `product_repository`,
+`hub_repository`, and `not_applicable`. For `single_repo_release`, all five
+`artifact_owners.*` fields map to `current_repository`. For
+`component_release_routed`, a singular classifier owner of `product_repository`
+maps `artifact_owners.release`, `artifact_owners.ci`,
+`artifact_owners.deployment`, and `artifact_owners.cleanup` to
+`product_repository`, and maps `artifact_owners.tracker` to `hub_repository`.
+For stop outcomes, mutable owners map to `not_applicable` unless the helper can
+prove a read-only hub tracker owner; it must never report a product owner for a
+blocked or unsupported target.
+
 ---
 
 ## Layer-by-Layer Changes
