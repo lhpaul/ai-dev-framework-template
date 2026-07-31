@@ -106,6 +106,8 @@ artifact:
 Workflow orchestration scripts keep planning and tracker state in the hub while
 allowing implementation actions to target a selected product repository.
 
+### Implementation Routing Classifier
+
 - `discover-workflow-state.sh`, `workflow-next-action.sh`, and
   `workflow-batch-plan.sh` accept `--repo <name>` and report
   `WORKFLOW_MODE`, `ACTION_REPOSITORY_KIND`, and the selected repository

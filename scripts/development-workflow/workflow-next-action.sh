@@ -99,10 +99,6 @@ implementation_issue_number() {
   local slug=""
 
   if [ -n "$source" ]; then
-    if [[ "$source" =~ ^(feature|fix|refactor|hotfix)/([0-9]+)($|-) ]]; then
-      printf '%s\n' "${BASH_REMATCH[2]}"
-      return 0
-    fi
     if [[ "$source" =~ ^(feature|fix|refactor|hotfix)/([A-Za-z]{2,8}-)?([0-9]+)($|-) ]]; then
       printf '%s\n' "${BASH_REMATCH[3]}"
       return 0
@@ -213,6 +209,9 @@ github_repo_args_for_action() {
   local action_github_repo=""
 
   if [ "$workflow_mode" = "workflow_hub" ] && [ "$action_kind" = "implementation" ]; then
+    if implementation_item_is_hub_only; then
+      return 0
+    fi
     context="$(workflow_repository_context "$target_repo" "$repo_root")"
     action_github_repo="$(workflow_github_repo_from_context "$context")"
     if [ -n "$action_github_repo" ]; then
@@ -226,8 +225,10 @@ if [ -n "$pr_number" ]; then
   if [ "$workflow_mode" = "workflow_hub" ] && [ -z "$target_repo" ]; then
     require_gh
     pr_probe_json=""
-    if pr_probe_json="$(gh pr view "$pr_number" --json headRefName 2>/dev/null)"; then
+    if pr_probe_json="$(gh pr view "$pr_number" --json headRefName 2>&1)"; then
       branch_name="$(printf '%s\n' "$pr_probe_json" | jq -r '.headRefName // ""')"
+    else
+      echo "Warning: could not probe PR #${pr_number} head branch: ${pr_probe_json}" >&2
     fi
     if ! pr_action_context="$(repository_context_for_action implementation 2>&1)"; then
       print_kv WORKFLOW_MODE "$workflow_mode"

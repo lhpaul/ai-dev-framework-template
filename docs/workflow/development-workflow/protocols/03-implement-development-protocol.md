@@ -606,14 +606,16 @@ and product mutation target before changing files. If the selected product
 repository is missing or ambiguous for product-owned implementation work, stop
 before mutation.
 
-For workflow-hub implementation actions, consume the structured routing result
-from `workflow-next-action.sh` or `work-item-repository-routing.py`. Continue
-only when the command exits successfully and `ROUTING_CONTINUE_ALLOWED=true`.
-Record `ROUTING_OUTCOME_CODE`, `ROUTING_ARTIFACT_OWNER`,
+For workflow-hub implementation actions, prefer `workflow-next-action.sh` and
+consume its structured routing result. If using
+`work-item-repository-routing.py` directly, map the JSON keys to the same
+`ROUTING_*` evidence names before handoff. Continue only when the command exits
+successfully and `ROUTING_CONTINUE_ALLOWED=true`. Record
+`ROUTING_OUTCOME_CODE`, `ROUTING_ARTIFACT_OWNER`,
 `ROUTING_SELECTED_PRODUCT_REPO_KEY`, and `ROUTING_FINGERPRINT` in the
 implementation-start notes. If `ROUTING_STOP_REASON` or
-`ROUTING_REQUIRED_HUMAN_ACTION` is present, stop before mutation and report that
-evidence instead of inferring a product repository.
+`ROUTING_REQUIRED_HUMAN_ACTION` is non-empty, stop before mutation and report
+that evidence instead of inferring a product repository.
 
 1. **Enumerate all files** that need changes. List every file path explicitly.
 2. **For each file**, describe the specific changes needed (e.g., "add section X", "update step Y to handle case Z").

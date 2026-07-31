@@ -19,7 +19,10 @@ OUTCOME_LABELS = {
     "ambiguous_target": "Ambiguous target",
     "multiple_targets": "Multiple targets",
     "single_repo": "Single-repository",
+    "unsupported_mode": "Unsupported repository mode",
 }
+
+VALID_REPOSITORY_MODES = {"single_repo", "workflow_hub", "product_repo"}
 
 
 def load_json(path: str | None, label: str) -> dict[str, Any]:
@@ -127,7 +130,12 @@ def classify(
     required_human_action: str | None = None
     selected_key: str | None = None
 
-    if repository_mode == "workflow_hub":
+    if repository_mode not in VALID_REPOSITORY_MODES:
+        outcome = "unsupported_mode"
+        artifact_owner = "none"
+        stop_reason = f"repository mode '{repository_mode}' is not supported"
+        required_human_action = "fix repository mode configuration before routing implementation work"
+    elif repository_mode == "workflow_hub":
         if hub_only and selected:
             outcome = "ambiguous_target"
             artifact_owner = "none"

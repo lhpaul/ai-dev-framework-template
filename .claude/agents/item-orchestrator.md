@@ -30,7 +30,9 @@ routing outcome, and routing fingerprint. Continue only when
 `ROUTING_CONTINUE_ALLOWED=true`. Stop before file edits, branch creation, commits, or implementation PR creation when product repository context is
 missing, ambiguous, or selects multiple product repositories. Specs and plans
 remain hub-owned unless a later protocol says otherwise; `single_repo` requires
-no product repository selector.
+no product repository selector. `hub_only` with
+`ROUTING_ARTIFACT_OWNER=hub_repository` routes to the hub with no selected
+product repository.
 
 Before dispatching any stage agent that may create a branch or open a PR, pass
 the expected branch, expected worktree when known, approved base, and

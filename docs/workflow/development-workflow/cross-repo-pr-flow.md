@@ -63,11 +63,9 @@ scripts/development-workflow/workflow-next-action.sh \
 ```
 
 The output should name the workflow mode, action repository kind, action
-repository, GitHub repository, routing outcome, artifact owner, and routing
-fingerprint. Continue only when `ROUTING_CONTINUE_ALLOWED=true`. Stop if
-product repository selection is missing, ambiguous, or names multiple product
-repositories; report `ROUTING_STOP_REASON` and
-`ROUTING_REQUIRED_HUMAN_ACTION`.
+repository, and GitHub repository. Follow the canonical
+[implementation routing classifier](repository-modes.md#implementation-routing-classifier)
+contract for routing outcome, artifact owner, fingerprint, and stop evidence.
 
 ## Prepare The Product Checkout
 

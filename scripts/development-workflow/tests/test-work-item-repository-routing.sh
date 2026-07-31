@@ -55,6 +55,8 @@ run_case "multiple_targets_contract" "multiple-targets.json" \
   "$contract_expression and .outcome_code == \"multiple_targets\" and .continue_allowed == false and (.selected_product_repo_keys == [\"admin-portal\", \"mobile-app\"])"
 run_case "hub_only_contract" "hub-only.json" \
   "$contract_expression and .outcome_code == \"hub_only\" and .continue_allowed == true and .artifact_owner == \"hub_repository\""
+run_case "unsupported_mode_contract" "unsupported-mode.json" \
+  "(.schema_version == \"work_item_repository_routing.v1\") and .outcome_code == \"unsupported_mode\" and .continue_allowed == false and .artifact_owner == \"none\" and .stop_reason != null and .required_human_action != null"
 
 single_output="$(python3 "$CLASSIFIER" --fixture "$FIXTURE_DIR/single-repo.json" --json)"
 if jq -e '
@@ -72,8 +74,9 @@ else
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
+error_file="$(mktemp)"
 set +e
-python3 "$CLASSIFIER" --config "$FIXTURE_DIR/missing-config.json" --fixture "$FIXTURE_DIR/product-owned.json" --json >/tmp/1354-routing-error.txt 2>&1
+python3 "$CLASSIFIER" --config "$FIXTURE_DIR/missing-config.json" --fixture "$FIXTURE_DIR/product-owned.json" --json >"$error_file" 2>&1
 missing_status=$?
 set -e
 if [ "$missing_status" -eq 2 ]; then
@@ -81,10 +84,10 @@ if [ "$missing_status" -eq 2 ]; then
   PASS_COUNT=$((PASS_COUNT + 1))
 else
   echo "FAIL: malformed_or_unreadable_config_exits_2"
-  cat /tmp/1354-routing-error.txt
+  cat "$error_file"
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
-rm -f /tmp/1354-routing-error.txt
+rm -f "$error_file"
 
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
