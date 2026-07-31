@@ -112,6 +112,7 @@ run_contains "single_repo_context_default_branch" "TARGET_DEFAULT_BRANCH=main" "
 run_contains "single_repo_release_default_tag_owner" "TARGET_RELEASE_TAG_OWNER=current_repo" "$single_repo_output"
 run_contains "single_repo_release_default_changelog_owner" "TARGET_RELEASE_CHANGELOG_OWNER=current_repo" "$single_repo_output"
 run_contains "single_repo_release_default_tracker_owner" "TARGET_RELEASE_TRACKER_RECONCILIATION_OWNER=current_repo" "$single_repo_output"
+run_contains "single_repo_release_contract_revision" "TARGET_RELEASE_CONTRACT_REVISION=sha256:" "$single_repo_output"
 validator_output="$(bash "$VALIDATOR" --repo-root "$single_repo_dir")"
 run_contains "validate_workflow_config_sh_repo_root_arg" "TARGET_REPO_NAME=single-repo" "$validator_output"
 
@@ -259,6 +260,7 @@ run_contains "workflow_hub_release_pattern" "TARGET_RELEASE_BRANCH_PATTERN='{pro
 run_contains "workflow_hub_release_pattern_source" "TARGET_RELEASE_BRANCH_PATTERN_SOURCE=explicit" "$release_contract_output"
 run_contains "workflow_hub_release_changelog_owner" "TARGET_RELEASE_CHANGELOG_OWNER=product_repo" "$release_contract_output"
 run_contains "workflow_hub_release_tracker_owner" "TARGET_RELEASE_TRACKER_RECONCILIATION_OWNER=hub" "$release_contract_output"
+run_contains "workflow_hub_release_contract_revision" "TARGET_RELEASE_CONTRACT_REVISION=sha256:" "$release_contract_output"
 
 release_defaults_dir="$(fixture_dir release-defaults)"
 cat > "$release_defaults_dir/.ai-dev-workflow.yaml" <<'YAML'

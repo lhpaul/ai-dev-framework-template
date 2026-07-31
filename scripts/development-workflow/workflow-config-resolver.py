@@ -10,6 +10,7 @@ Unsupported or malformed structures fail closed with a file-specific error.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -702,12 +703,25 @@ def release_contract_context(prefix: str, release_contract: dict[str, str]) -> d
         f"{prefix}_RELEASE_BASE_SOURCE": release_contract.get("base_source", ""),
         f"{prefix}_RELEASE_BRANCH_PATTERN": release_contract.get("branch_pattern", ""),
         f"{prefix}_RELEASE_BRANCH_PATTERN_SOURCE": release_contract.get("branch_pattern_source", ""),
+        f"{prefix}_RELEASE_CONTRACT_REVISION": release_contract_revision(release_contract),
     }
     for field in RELEASE_OWNER_FIELDS:
         key = f"{prefix}_RELEASE_{field.upper()}"
         context[key] = release_contract.get(field, "")
         context[f"{key}_SOURCE"] = release_contract.get(f"{field}_source", "")
     return context
+
+
+def release_contract_revision(release_contract: dict[str, str]) -> str:
+    revision_input = {
+        "schema_version": "workflow_release_contract.v1",
+        "base": release_contract.get("base", ""),
+        "branch_pattern": release_contract.get("branch_pattern", ""),
+    }
+    for field in RELEASE_OWNER_FIELDS:
+        revision_input[field] = release_contract.get(field, "")
+    canonical = json.dumps(revision_input, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def github_repo_from_url(value: str) -> str:
