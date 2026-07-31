@@ -275,7 +275,7 @@ but each record identifies exactly one release target.
 | CI outcome | Required once product CI runs | `pending`, `passed`, `failed`, or `not_applicable` | One outcome for the product release validation surface | Lets bundle reconciliation distinguish validated and blocked releases. |
 | Deployment evidence outcome | Required when deployment evidence is expected | `pending`, `recorded`, `failed`, or `not_applicable` | One outcome for the deployment evidence surface | Shows whether product deployment evidence exists. |
 | Cleanup outcome | Required once cleanup starts | `not_started`, `partial`, `complete`, or `blocked` | One cleanup state for the selected product repository | Lets reruns and bundle reconciliation detect incomplete cleanup. |
-| Routing outcome | Required | Routing outcome display label or code | One value from the routing outcomes table | Explains whether release routing continued or stopped. |
+| Routing outcome | Required | Canonical routing outcome code | One code from the `Routing outcome` column in the routing outcomes table | Explains whether release routing continued or stopped. |
 | Release outcome | Required | `pending`, `completed`, `failed`, or `blocked` | Overall component release lifecycle state | Distinguishes final release state from routing validation state. |
 | Hub tracker reference | Required | Hub issue, project item, or tracker URL | One hub-owned tracker reference | Connects product evidence back to hub reconciliation. |
 | Human action required | Required when blocked | Short text instruction | One actionable correction or not applicable | Gives operators the next required step when routing or cleanup stops. |
