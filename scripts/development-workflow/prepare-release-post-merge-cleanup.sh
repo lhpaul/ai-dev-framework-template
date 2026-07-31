@@ -75,6 +75,19 @@ release_version_from_branch() {
   printf '%s\n' "${value##*/}"
 }
 
+validate_portable_branch_name() {
+  local label="$1"
+  local value="$2"
+  if [ -z "$value" ]; then
+    echo "Invalid ${label} branch name: value is empty" >&2
+    exit 2
+  fi
+  if ! git check-ref-format --branch "$value" >/dev/null 2>&1; then
+    echo "Invalid ${label} branch name: $value" >&2
+    exit 2
+  fi
+}
+
 # Returns 0 (true) if the token is a valid issue identifier for the current
 # tracker provider, 1 (false) otherwise.
 #   - Numeric-only IDs are accepted for any provider.
@@ -746,6 +759,8 @@ fi
 
 RELEASE_BRANCH="$(normalize_release_branch "$RELEASE_INPUT")"
 RELEASE_VERSION="$(release_version_from_branch "$RELEASE_BRANCH")"
+validate_portable_branch_name "release" "$RELEASE_BRANCH"
+validate_portable_branch_name "backport base" "$BACKPORT_BASE"
 echo "Release branch: $RELEASE_BRANCH"
 echo "Release version: $RELEASE_VERSION"
 echo "Backport base: $BACKPORT_BASE"

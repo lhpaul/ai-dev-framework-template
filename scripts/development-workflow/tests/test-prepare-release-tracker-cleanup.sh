@@ -104,6 +104,12 @@ MOCK_GH
 cat > "$MOCK_BIN/git" <<'MOCK_GIT'
 #!/usr/bin/env bash
 case "$*" in
+  "check-ref-format --branch bad branch")
+    exit 1
+    ;;
+  check-ref-format\ --branch\ *)
+    exit 0
+    ;;
   "fetch origin --prune")
     exit 0
     ;;
@@ -248,6 +254,13 @@ run_test "nested_release_branch_exits_zero" "0" "$status"
 run_contains "nested_release_branch_preserved" "Release branch: release/mobile-app/v1.18.0" "$output"
 run_contains "nested_release_version_basename" "Release version: v1.18.0" "$output"
 run_contains "nested_release_merged_prs" "Merged PRs verified (main #402, release-base #403)." "$output"
+
+repo_bad_backport_base="$(fixture_repo bad-backport-base)"
+result="$(run_cleanup "$repo_bad_backport_base" v1.17.0 --backport-base "bad branch" --issue LEA-202)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "bad_backport_base_exits_usage" "2" "$status"
+run_contains "bad_backport_base_rejected" "Invalid backport base branch name: bad branch" "$output"
 
 repo_missing_scope="$(fixture_repo missing-scope)"
 result="$(run_cleanup "$repo_missing_scope" v1.17.0)"
