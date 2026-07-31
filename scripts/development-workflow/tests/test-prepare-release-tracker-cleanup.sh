@@ -65,6 +65,18 @@ case "$*" in
   "pr list --state open --head release/v1.18.0 --base develop --json number --jq .[0].number // empty")
     printf '\n'
     ;;
+  "pr list --state merged --head mobile-app/release/v1.18.0 --base main --json number --jq .[0].number // empty")
+    printf '400\n'
+    ;;
+  "pr list --state merged --head mobile-app/release/v1.18.0 --base release-base --json number --jq .[0].number // empty")
+    printf '401\n'
+    ;;
+  "pr list --state open --head mobile-app/release/v1.18.0 --base main --json number --jq .[0].number // empty")
+    printf '\n'
+    ;;
+  "pr list --state open --head mobile-app/release/v1.18.0 --base release-base --json number --jq .[0].number // empty")
+    printf '\n'
+    ;;
   issue\ view\ *\ --json\ state\ --jq\ .state)
     # Return OPEN for any issue view query so the issue loop proceeds to
     # update_tracker_status_best_effort (which is stubbed in the fixture lib).
@@ -93,6 +105,12 @@ case "$*" in
     exit 2
     ;;
   "show-ref --quiet refs/heads/release/v1.18.0")
+    exit 1
+    ;;
+  "ls-remote --exit-code --heads origin mobile-app/release/v1.18.0")
+    exit 2
+    ;;
+  "show-ref --quiet refs/heads/mobile-app/release/v1.18.0")
     exit 1
     ;;
   *)
@@ -193,6 +211,16 @@ status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
 run_test "linear_best_effort_exits_zero" "0" "$status"
 run_contains "linear_best_effort_still_reports_action" "TRACKER_ACTION=linear_mcp_or_api_required" "$output"
+
+repo_custom_branch="$(fixture_repo custom-branch)"
+result="$(run_cleanup "$repo_custom_branch" mobile-app/release/v1.18.0 --backport-base release-base --issue LEA-200 --best-effort)"
+status="$(printf '%s\n' "$result" | sed -n '1p')"
+output="$(printf '%s\n' "$result" | sed '1d')"
+run_test "custom_release_branch_exits_zero" "0" "$status"
+run_contains "custom_release_branch_preserved" "Release branch: mobile-app/release/v1.18.0" "$output"
+run_contains "custom_release_version_basename" "Release version: v1.18.0" "$output"
+run_contains "custom_release_backport_base" "Backport base: release-base" "$output"
+run_contains "custom_release_merged_prs" "Merged PRs verified (main #400, release-base #401)." "$output"
 
 repo_missing_scope="$(fixture_repo missing-scope)"
 result="$(run_cleanup "$repo_missing_scope" v1.17.0)"
