@@ -71,15 +71,25 @@ repository's `default_branch`, `branch_pattern` defaults to
 Before creating product-owned changelog entries, release branches, tags, GitHub
 Releases, deployment evidence, or cleanup evidence, run:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-scripts/development-workflow/validate-workflow-config.sh --repo faind-mobile-app
+scripts/development-workflow/component-release-target.sh \
+  --repo faind-mobile-app \
+  --json
 ```
 
-Validation stops when the selected product repository is missing or ambiguous,
-when `github_repo` / `git_url` is missing, when release branch values are not
-portable, or when the versioned release contract contains local checkout paths,
-credentials, token values, secret names, secret values, or environment-specific
-account details.
+Continue only when the helper reports `component_release_routed` and
+`mutation_allowed=true`. Validation stops when the selected product repository
+is missing, multiple, unknown, or ambiguous; when the product checkout is
+unavailable; when `github_repo` / `git_url` is missing; when release branch
+values are not portable; or when the versioned release contract contains local
+checkout paths, credentials, token values, secret names, secret values, or
+environment-specific account details.
+
+After resolving a component release target, store the generated target binding
+with the release evidence record. The local checkout path comes only from
+`.ai-dev-workflow.local.yaml`; never add checkout paths or secret references to
+the versioned `release` block.
 
 ## Local Hub Config
 

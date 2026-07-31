@@ -509,6 +509,7 @@ git -C "$PRODUCT_REPO_PATH" ls-remote --heads --tags origin \
   > "$PRODUCT_STATE_BEFORE"
 
 scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+  "$RELEASE_BRANCH" \
   --repo "$PRODUCT_REPO_KEY" \
   --repo-root "$HUB_FIXTURE" \
   --evidence-file "$EVIDENCE_JSON" \
@@ -516,6 +517,7 @@ scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
   --json > "$CLEANUP_JSON"
 
 scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+  "$RELEASE_BRANCH" \
   --repo "$PRODUCT_REPO_KEY" \
   --repo-root "$HUB_FIXTURE" \
   --evidence-file "$EVIDENCE_JSON" \
@@ -546,6 +548,7 @@ git -C "$PRODUCT_REPO_PATH" ls-remote --heads --tags origin \
 cp "$TRACKER_STATE_FILE" "$TRACKER_STATE_BEFORE_REJECT"
 
 if scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+  "$RELEASE_BRANCH" \
   --repo "$PRODUCT_REPO_KEY" \
   --repo-root "$HUB_FIXTURE" \
   --evidence-file "$MISMATCHED_EVIDENCE_FILE" \

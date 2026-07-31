@@ -55,8 +55,8 @@ echo ""
 echo "=== Component release target ==="
 
 fixture_json="$(bash "$FIXTURE_HELPER" --work-dir "$TMP_ROOT/fixtures" --json)"
-single_repo="$(jq -r '.single_repo' <<< "$fixture_json")"
-hub_repo="$(jq -r '.hub_repo' <<< "$fixture_json")"
+single_repo="$(jq -r '.single_repo.path // .single_repo' <<< "$fixture_json")"
+hub_repo="$(jq -r '.workflow_hub.path // .hub_repo' <<< "$fixture_json")"
 bad_release_repo="$(jq -r '.bad_release_repo' <<< "$fixture_json")"
 
 single_output="$(bash "$TARGET_HELPER" --repo-root "$single_repo")"

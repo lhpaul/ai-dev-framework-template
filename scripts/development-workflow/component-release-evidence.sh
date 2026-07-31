@@ -156,6 +156,12 @@ evidence="$(jq -cnS \
   '{
     schema_version:"component_release_evidence.v1",
     target_binding:$target[0],
+    routing_outcome:$target[0].routing_outcome,
+    selected_product_repo_key:$target[0].selected_product_repo_key,
+    canonical_repository_identity:$target[0].canonical_repository_identity,
+    artifact_owners:$target[0].artifact_owners,
+    release_correlation_key:$target[0].release_correlation_key,
+    contract_revision:$target[0].contract_revision,
     release_outcome:$release_outcome,
     ci_outcome:$ci_outcome,
     deployment_outcome:$deployment_outcome,

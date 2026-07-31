@@ -38,14 +38,41 @@ step.
 
 Run from the hub checkout:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-scripts/development-workflow/validate-workflow-config.sh --repo faind-mobile-app
+scripts/development-workflow/component-release-target.sh \
+  --repo faind-mobile-app \
+  --json
 ```
 
-Stop before release mutation when product selection is missing or ambiguous, a
-release branch value is invalid, or versioned release config contains local
-paths, credentials, token values, secret names, secret values, or
-environment-specific account details.
+Continue only when the helper reports `component_release_routed` and
+`mutation_allowed=true`. Then persist the target binding and create a release
+evidence handoff:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+scripts/development-workflow/component-release-evidence.sh \
+  --target-file /path/to/component-release-target.json \
+  --binding-file /path/to/component-release-target.json \
+  --release-outcome pending \
+  --ci-outcome pending \
+  --deployment-outcome pending \
+  --cleanup-outcome not_started \
+  --hub-tracker-ref "#123" \
+  --output /path/to/component-release-evidence.json
+```
+
+Stop before release mutation when product selection is missing, multiple,
+unknown, or ambiguous; a release branch value is invalid; the product checkout
+is unavailable; or versioned release config contains local paths, credentials,
+token values, secret names, secret values, or environment-specific account
+details.
+
+After both release PRs merge, run component release cleanup from the hub with
+the same product key and evidence file. The cleanup helper re-resolves the
+current target and rejects mismatched repository identity, artifact owners,
+release correlation key, or `contract_revision` before deleting product-owned
+branches or updating hub-owned tracker state.
 
 Hub-only workflow improvements, such as updates to orchestration scripts or
 workflow docs, still open implementation PRs in the hub repository.

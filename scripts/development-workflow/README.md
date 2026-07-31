@@ -88,6 +88,49 @@ Use this when:
 - You want a quick view of what work is already in progress
 - The orchestrator needs a deterministic summary before choosing the next stage
 
+### `component-release-target.sh`
+
+Resolves the canonical release target before a single-repo or workflow-hub
+component release mutates changelog entries, branches, tags, release evidence,
+or tracker state.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/component-release-target.sh --json
+./scripts/development-workflow/component-release-target.sh --repo mobile-app --json
+```
+
+What it does:
+
+- Emits `component_release_target.v1` in shell or JSON form.
+- Reports one routing outcome, `mutation_allowed`, artifact owners,
+  `release_correlation_key`, and `contract_revision`.
+- Fails closed for missing, multiple, unknown, ambiguous, invalid, unavailable,
+  or unsupported component release targets before mutation.
+
+### `component-release-evidence.sh`
+
+Renders deterministic component release evidence from an independent target
+binding and rejects mismatched repository identity, artifact owners,
+`release_correlation_key`, or `contract_revision`.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/component-release-evidence.sh \
+  --target-file /tmp/component-release-target.json \
+  --binding-file /tmp/component-release-target.json \
+  --release-outcome pending \
+  --ci-outcome pending \
+  --deployment-outcome pending \
+  --cleanup-outcome not_started \
+  --hub-tracker-ref "#123" \
+  --output /tmp/component-release-evidence.json
+```
+
 ### `check-workflow-branch.sh`
 
 Checks whether a specific workflow branch already exists locally, remotely, or in an active worktree.

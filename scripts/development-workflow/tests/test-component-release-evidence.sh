@@ -75,7 +75,7 @@ echo ""
 echo "=== Component release evidence ==="
 
 fixture_json="$(bash "$FIXTURE_HELPER" --work-dir "$TMP_ROOT/fixtures" --json)"
-hub_repo="$(jq -r '.hub_repo' <<< "$fixture_json")"
+hub_repo="$(jq -r '.workflow_hub.path // .hub_repo' <<< "$fixture_json")"
 target_file="$TMP_ROOT/target.json"
 binding_file="$TMP_ROOT/binding.json"
 evidence_file="$TMP_ROOT/evidence.json"
@@ -96,6 +96,8 @@ evidence_json="$(bash "$EVIDENCE_HELPER" \
 
 run_test "evidence_schema" "component_release_evidence.v1" "$(jq -r '.schema_version' <<< "$evidence_json")"
 run_test "evidence_target_outcome" "component_release_routed" "$(jq -r '.target_binding.routing_outcome' <<< "$evidence_json")"
+run_test "evidence_top_level_outcome" "component_release_routed" "$(jq -r '.routing_outcome' <<< "$evidence_json")"
+run_test "evidence_top_level_identity" "example/mobile-app" "$(jq -r '.canonical_repository_identity' <<< "$evidence_json")"
 run_test "evidence_release_outcome" "completed" "$(jq -r '.release_outcome' <<< "$evidence_json")"
 run_test "evidence_ci_outcome" "passed" "$(jq -r '.ci_outcome' <<< "$evidence_json")"
 run_test "evidence_cleanup_outcome" "complete" "$(jq -r '.cleanup_outcome' <<< "$evidence_json")"

@@ -12,9 +12,26 @@ contract before creating or mutating product-owned release artifacts such as
 changelog entries, release branches, tags, GitHub Releases, deployment
 evidence, or product cleanup evidence.
 
-From the hub checkout in `workflow_hub` mode, pass the selected product
-repository name and record the normalized release fields from the output:
+From the hub checkout in `workflow_hub` mode, pass exactly one selected product
+repository name and resolve the canonical component release target:
 
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+scripts/development-workflow/component-release-target.sh --repo <product-repo> --json
+```
+
+Continue only when the helper reports
+`routing_outcome=component_release_routed` and `mutation_allowed=true`. Stop
+before mutation for `missing_product_selection`, `multiple_product_targets`,
+`unknown_product_repository`, `ambiguous_product_selection`,
+`invalid_release_contract`, `unavailable_product_repository_checkout`, or
+`unsupported_repository_mode`. These stop outcomes are successful
+classifications; do not convert them into release branches, tags, changelog
+edits, deployment evidence, cleanup evidence, or tracker changes.
+
+Also record the normalized release fields from the resolver output:
+
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 scripts/development-workflow/validate-workflow-config.sh --repo <product-repo>
 ```
@@ -23,6 +40,7 @@ From a product checkout in `product_repo` mode, omit `--repo`; validation reads
 `product_repo.release` from the current repository config or applies the
 product-repository defaults:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 scripts/development-workflow/validate-workflow-config.sh
 ```
@@ -34,6 +52,8 @@ mutation. Use these resolved values for the rest of the protocol:
 - `TARGET_RELEASE_BASE`: source/backport base branch.
 - `TARGET_RELEASE_BRANCH_PATTERN`: release branch pattern.
 - `TARGET_REPO_NAME`: product repository placeholder value.
+- `TARGET_RELEASE_CONTRACT_REVISION`: stable digest of the normalized portable
+  release contract.
 
 Resolve the release branch by replacing `{version}` with the confirmed version
 and `{product_repo}` with `TARGET_REPO_NAME`. If validation did not emit these
@@ -41,6 +61,7 @@ fields, or the resolved checkout is missing, stop before mutation.
 
 Bind the product checkout and release base before pre-flight:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 cd "${TARGET_LOCAL_PATH:?}"
 RELEASE_BASE="${TARGET_RELEASE_BASE:?}"
@@ -61,6 +82,7 @@ Before doing anything, verify the artifact-owning checkout:
 1. Working directory is clean (`git status` returns no uncommitted changes). If not, stop and report.
 2. Fetch and pull the resolved release base so the release branch is created from up-to-date state:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    git fetch origin
    git switch "$RELEASE_BASE"
@@ -83,6 +105,7 @@ Wait for human confirmation before proceeding.
 
 After confirmation, bind the release branch from the normalized pattern:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 VERSION="X.Y.Z"
 PRODUCT_REPO_NAME="${PRODUCT_REPO_NAME:-}"
@@ -93,10 +116,30 @@ RELEASE_BRANCH="${RELEASE_BRANCH//\{product_repo\}/$PRODUCT_REPO_NAME}"
 If `RELEASE_BRANCH` is empty or differs from the validated pattern semantics,
 stop before branch creation.
 
+For workflow-hub component releases, persist a component release evidence
+record before opening release PRs. The evidence must be derived from the target
+binding produced by `component-release-target.sh` and must preserve
+`selected_product_repo_key`, `canonical_repository_identity`,
+`artifact_owners`, `release_correlation_key`, and `contract_revision`:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+scripts/development-workflow/component-release-evidence.sh \
+  --target-file /path/to/component-release-target.json \
+  --binding-file /path/to/component-release-target.json \
+  --release-outcome pending \
+  --ci-outcome pending \
+  --deployment-outcome pending \
+  --cleanup-outcome not_started \
+  --hub-tracker-ref "<tracker-item-or-epic>" \
+  --output /path/to/component-release-evidence.json
+```
+
 ---
 
 ## Step 2: Create the Release Branch
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 git checkout -b "$RELEASE_BRANCH"
 ```
@@ -142,6 +185,7 @@ chore(release): v[X.Y.Z]
 
 ## Step 6: Push and Open Two PRs
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 git push -u origin "$RELEASE_BRANCH"
 ```
@@ -157,6 +201,7 @@ Use title `chore(release): v[X.Y.Z]` for both. Include the CHANGELOG entries for
 
 Example:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # 1) Production release PR (configured release branch -> main)
 gh pr create --base main --title "chore(release): v[X.Y.Z]" --body-file /tmp/release-notes.md
@@ -181,6 +226,7 @@ Note: release PRs use a simplified readiness flow (the CI loop step applies `rea
 
 Identify the open PR from the resolved release branch to `main`, for example:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh pr list --head "$RELEASE_BRANCH" --base main --state open --json number --jq '.[0].number'
 ```
@@ -203,6 +249,7 @@ were filed from downstream sync retrospectives. When `issue_tracker.provider` is
 `github_projects`, use the project Type field instead of the legacy `workflow`
 label:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 bash -lc 'source scripts/development-workflow/workflow-lib.sh; list_open_workflow_type_issues'
 ```
@@ -210,6 +257,7 @@ bash -lc 'source scripts/development-workflow/workflow-lib.sh; list_open_workflo
 When the provider is `github_issues`, use the repository's configured
 classification convention. Older repositories may still use:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh issue list --label workflow --state open --limit 200
 ```
@@ -224,6 +272,7 @@ configured real regression checks, or an explicitly enabled placeholder, can run
 (see [`integrations/e2e-regression.md`](../integrations/e2e-regression.md) and
 `.github/workflows/e2e-regression.yml`).
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 gh pr edit <pr_number> --add-label "ready-for-regression"
 ```
@@ -234,6 +283,7 @@ This mirrors Step 7b in `91` for implementation PRs, but scoped here to the rele
 
 Run `pr-ci-loop.sh` and wait until required checks settle (including the e2e/regression check when configured):
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/pr-ci-loop.sh <pr_number>
 ```
@@ -288,17 +338,36 @@ scope from the whole project board.
 
 Use the helper script:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh "$RELEASE_BRANCH" --backport-base "$RELEASE_BASE" --from-changelog
+```
+
+For workflow-hub component releases, run cleanup from the hub checkout and pass
+the same selected product repository plus the persisted evidence file:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+  "$RELEASE_BRANCH" \
+  --repo <product-repo> \
+  --repo-root "$(pwd)" \
+  --evidence-file /path/to/component-release-evidence.json \
+  --from-changelog
 ```
 
 The script performs all required checks and actions in order:
 
 1. Verifies both merged PRs exist (`main` and `RELEASE_BASE`) and no open PR remains.
-2. Deletes remote branch `RELEASE_BRANCH` (or logs that it is already absent).
-3. Deletes local branch `RELEASE_BRANCH` when safe.
-4. Records the production release version on each explicit in-scope tracker item.
-5. Transitions explicit in-scope tracker items from merged-to-integration to released-to-production.
+2. In workflow-hub component mode, re-resolves the current release target and
+   rejects mismatched repository identity, release correlation key, artifact
+   owners, or `contract_revision` before mutation.
+3. Acquires a per-release cleanup lease keyed by `release_correlation_key`.
+4. Deletes remote branch `RELEASE_BRANCH` in the artifact-owning checkout (or
+   logs that it is already absent).
+5. Deletes local branch `RELEASE_BRANCH` in the artifact-owning checkout when safe.
+6. Records the production release version on each explicit in-scope tracker item.
+7. Transitions explicit in-scope tracker items from merged-to-integration to released-to-production.
 
 Use `--issues <issue1,issue2,...>` or repeated `--issue <issue>` only when the
 CHANGELOG section cannot be used and a human has confirmed the shipped issue
@@ -306,6 +375,7 @@ scope.
 
 ### 9.3 Manual equivalent (when script cannot be used)
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # verify merged PRs first (examples)
 gh pr list --head "$RELEASE_BRANCH" --base main --state merged --json number
