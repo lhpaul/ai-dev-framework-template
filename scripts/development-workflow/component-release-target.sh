@@ -215,7 +215,11 @@ esac
 MODE="$(resolve_mode)"
 
 if [ "$MODE" = "single_repo" ]; then
-  output="$(python3 "$RESOLVER" validate --repo-root "$REPO_ROOT" --json)"
+  resolver_args=(validate --repo-root "$REPO_ROOT" --json)
+  if [ "$REQUIRE_LOCAL" = "true" ]; then
+    resolver_args+=(--require-local)
+  fi
+  output="$(python3 "$RESOLVER" "${resolver_args[@]}")"
   identity="$(jq -r '.TARGET_GITHUB_REPO // ""' <<< "$output")"
   if [ -z "$identity" ]; then
     identity="$(jq -r '.TARGET_LOCAL_PATH // ""' <<< "$output")"
