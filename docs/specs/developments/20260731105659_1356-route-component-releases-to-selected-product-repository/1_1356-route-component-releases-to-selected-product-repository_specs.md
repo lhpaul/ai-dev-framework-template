@@ -2,6 +2,8 @@
 
 **Depends on**:
 [1353-artifact-ownership-product-release-contract](../20260730174200_1353-artifact-ownership-product-release-contract/1_1353-artifact-ownership-product-release-contract_specs.md)
+and
+[1354-one-product-repository-per-implementation-item](../20260731064618_1354-one-product-repository-per-implementation-item/1_1354-one-product-repository-per-implementation-item_specs.md)
 
 ---
 
@@ -50,11 +52,14 @@ Confirmed relationship decisions for epic #1352:
 
 - #1356 depends on #1353 as the foundational artifact ownership and product
   release contract.
+- #1356 depends on #1354 for the upstream one-product-repository selection and
+  pre-mutation blocking rules. This spec applies those rules to component
+  release preparation and cleanup rather than redefining the routing contract.
 - #1356 is not dependent on #1357. This spec provides component release
   evidence that the later delivery-bundle workflow may consume, but it does not
   define the delivery-bundle issue or manifest workflow.
-- #1356 is orthogonal to #1354, #1358, and #1359 beyond shared workflow-hub
-  release terminology.
+- #1356 is orthogonal to #1358 and #1359 beyond shared workflow-hub release
+  terminology.
 
 ## Use Cases
 
@@ -208,15 +213,19 @@ state.
 
 ## Component Release Routing Gate
 
-| Gate input | Allowed outcome | Required next action | Mirror surface | Example |
-| --- | --- | --- | --- | --- |
-| Exactly one selected product repository with a valid release contract | Continue | Prepare or clean up release artifacts in the selected product repository and reconcile tracker state in the hub | Release summary, PR body, cleanup log, and tracker comment | `faind-mobile-app` is selected and owns release branch, changelog, tag, deployment evidence, and cleanup evidence. |
-| No selected product repository in workflow-hub mode | Stop | Ask for one product repository selection before branch, pull request, tag, or tracker mutation | Stop summary and tracker-visible blocker evidence | The hub has multiple product repositories but the release command names none. |
-| More than one selected product repository | Stop | Split the release into one component release per product repository or choose one product | Stop summary and tracker-visible blocker evidence | The release request names both mobile and web product repositories. |
-| Unknown product repository | Stop | Correct product release configuration before mutation | Stop summary and validation output | The selected key is not in the product release contract. |
-| Unavailable product repository checkout | Stop | Correct local-only checkout configuration before local mutation | Stop summary and validation output | The selected product repository is known, but its local checkout cannot be resolved when cleanup needs local files. |
-| Invalid release artifact ownership | Stop | Correct the release contract before mutation | Validation output and stop summary | The contract would write a product changelog, tag, or release record to the hub for a product-owned release. |
-| Single-repository mode | Continue with existing behavior | Use current release and hotfix paths without requiring a product repository selector | Release summary and existing PR evidence | A repository without workflow-hub mode prepares its own release from the current checkout. |
+Validation precedence is top-to-bottom. The first matching gate row determines
+the canonical routing outcome for release and cleanup summaries.
+
+| Gate input | Routing outcome | Allowed outcome | Required next action | Mirror surface | Example |
+| --- | --- | --- | --- | --- | --- |
+| Single-repository mode | `single_repo_release` | Continue with existing behavior | Use current release and hotfix paths without requiring a product repository selector | Release summary and existing PR evidence | A repository without workflow-hub mode prepares its own release from the current checkout. |
+| No selected product repository in workflow-hub mode | `missing_product_selection` | Stop | Ask for one product repository selection before branch, pull request, tag, or tracker mutation | Stop summary and tracker-visible blocker evidence | The hub has multiple product repositories but the release command names none. |
+| More than one selected product repository | `multiple_product_targets` | Stop | Split the release into one component release per product repository or choose one product | Stop summary and tracker-visible blocker evidence | The release request names both mobile and web product repositories. |
+| Unknown product repository | `unknown_product_repository` | Stop | Correct product release configuration before mutation | Stop summary and validation output | The selected key is not in the product release contract. |
+| One selected product repository cannot resolve to exactly one configured product repository | `ambiguous_product_selection` | Stop | Correct the selection or contract so one selected value maps to one product repository | Stop summary and validation output | A product alias matches multiple configured product repositories. |
+| Invalid release artifact ownership | `invalid_release_contract` | Stop | Correct the release contract before mutation | Validation output and stop summary | The contract would write a product changelog, tag, or release record to the hub for a product-owned release. |
+| Unavailable product repository checkout | `unavailable_product_repository_checkout` | Stop | Correct local-only checkout configuration before local mutation | Stop summary and validation output | The selected product repository is known, but its local checkout cannot be resolved when cleanup needs local files. |
+| Exactly one selected product repository with a valid release contract and required checkout availability | `component_release_routed` | Continue | Prepare or clean up release artifacts in the selected product repository and reconcile tracker state in the hub | Release summary, PR body, cleanup log, and tracker comment | `faind-mobile-app` is selected and owns release branch, changelog, tag, deployment evidence, and cleanup evidence. |
 
 ## Business Rules
 
@@ -256,7 +265,7 @@ but each record identifies exactly one release target.
 | Field | Presence | Type | Allowed values or format | Purpose |
 | --- | --- | --- | --- | --- |
 | Canonical product repository identity | Required | Owner and repository identity | One product repository from the release contract | Proves which product owns release artifacts. |
-| Product repository key | Required | Stable product key | One configured key from the hub product list | Lets hub summaries and operators match the contract entry. |
+| Product repository key | Required | Stable product key | One configured key from the product release contract | Lets hub summaries and operators match the contract entry accepted by routing. |
 | Release correlation key | Required | Stable text identifier | One value per attempted component release | Distinguishes separate releases for the same product repository. |
 | Release contract revision | Required | Version, commit, or digest reference | The contract version used when release preparation began | Lets cleanup detect contract drift before mutation. |
 | Release branch reference | Required when a release branch exists | Branch name or pull request branch reference | One valid branch reference for the selected product repository | Locates the product release branch. |
@@ -267,6 +276,7 @@ but each record identifies exactly one release target.
 | Deployment evidence outcome | Required when deployment evidence is expected | `pending`, `recorded`, `failed`, or `not_applicable` | One outcome for the deployment evidence surface | Shows whether product deployment evidence exists. |
 | Cleanup outcome | Required once cleanup starts | `not_started`, `partial`, `complete`, or `blocked` | One cleanup state for the selected product repository | Lets reruns and bundle reconciliation detect incomplete cleanup. |
 | Routing outcome | Required | Routing outcome display label or code | One value from the routing outcomes table | Explains whether release routing continued or stopped. |
+| Release outcome | Required | `pending`, `completed`, `failed`, or `blocked` | Overall component release lifecycle state | Distinguishes final release state from routing validation state. |
 | Hub tracker reference | Required | Hub issue, project item, or tracker URL | One hub-owned tracker reference | Connects product evidence back to hub reconciliation. |
 | Human action required | Required when blocked | Short text instruction | One actionable correction or not applicable | Gives operators the next required step when routing or cleanup stops. |
 
@@ -276,19 +286,19 @@ No new tracker statuses are introduced. Existing workflow statuses keep their
 current display labels and meanings. The values below are release-routing
 outcomes that must be visible in release and cleanup summaries.
 
-Validation precedence is top-to-bottom. The first matching failure maps to the
-canonical outcome for release and cleanup summaries.
+Validation precedence is the same order as the Component Release Routing Gate.
+The first matching gate row maps to exactly one canonical outcome.
 
 | Routing outcome | Display label | Description |
 | --- | --- | --- |
-| `component_release_routed` | Component release routed | One selected product repository and a valid release contract allow release or cleanup to continue. |
+| `single_repo_release` | Single-repository release | The current repository owns the release path and no product repository selector is required. |
 | `missing_product_selection` | Missing product selection | No product repository was selected for a workflow-hub component release. |
 | `multiple_product_targets` | Multiple product targets | The release request names more than one product repository up front and must be split or narrowed. |
 | `unknown_product_repository` | Unknown product repository | The selected product repository key is not present in the product release contract. |
 | `ambiguous_product_selection` | Ambiguous product selection | One requested product selection is present, but it cannot be resolved to exactly one known product repository. |
 | `invalid_release_contract` | Invalid release contract | The selected product repository release contract is missing required portable release fields, contains unsafe values, or would route product artifacts to the wrong owner. |
 | `unavailable_product_repository_checkout` | Unavailable product repository checkout | The selected product repository is known, but the local checkout needed for release or cleanup mutation is not available from local-only configuration. |
-| `single_repo_release` | Single-repository release | The current repository owns the release path and no product repository selector is required. |
+| `component_release_routed` | Component release routed | One selected product repository, a valid release contract, and required checkout availability allow release or cleanup to continue. |
 
 ## Operational Visibility
 
