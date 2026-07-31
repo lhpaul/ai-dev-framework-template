@@ -414,14 +414,15 @@ run_contains "workflow_pr_selected_repo_rechecks_branch_identity" "NEXT_ACTION=r
 run_contains "workflow_pr_selected_repo_hub_only_conflict" "ROUTING_OUTCOME_CODE=ambiguous_target" "$workflow_pr_selected_repo_output"
 
 provider_fail_bin="$TMP_ROOT/provider-fail-bin"
+real_awk="$(command -v awk)"
 mkdir -p "$provider_fail_bin"
-cat > "$provider_fail_bin/awk" <<'SH'
+cat > "$provider_fail_bin/awk" <<SH
 #!/usr/bin/env bash
-if [ "${1:-}" = "-v" ] && [ "${2:-}" = "section=issue_tracker" ]; then
+if [ "\${1:-}" = "-v" ] && [ "\${2:-}" = "section=issue_tracker" ]; then
   echo "simulated provider resolver failure" >&2
   exit 2
 fi
-exec /usr/bin/awk "$@"
+exec "$real_awk" "\$@"
 SH
 chmod +x "$provider_fail_bin/awk"
 run_fails_contains \
