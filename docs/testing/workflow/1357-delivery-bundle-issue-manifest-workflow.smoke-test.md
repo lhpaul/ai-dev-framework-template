@@ -28,22 +28,42 @@ Before running this smoke test:
 | --- | --- |
 | Parent epic | `#1352` |
 | Bundle title | `Mobile and Web July delivery` |
+| Delivery purpose | `Coordinated customer-facing July workflow-hub delivery` |
+| Finalization owner | `@workflow-operator` |
+| Rollout notes | `Roll out mobile and web components independently; no shared suite branch.` |
+| Known child items | `#1356`, `#1357` |
 | Manifest path | `$SMOKE_TMP/delivery-bundle.json` |
-| Component A | `mobile-app` with complete release evidence |
-| Component B | `web-app` with complete release evidence |
-| Negative component | `api-service` with pending or failed outcome evidence |
+| Component A | `mobile-app`, tag `mobile-v1.4.0`, version `1.4.0` |
+| Component B | `web-app`, tag `web-v2.8.1`, version `2.8.1` |
+| Incomplete component fixture | `web-app` declared in Step 1 but missing evidence until Step 10 |
+| Negative fixture source | Mutated copies of `mobile-app` or `web-app` evidence |
 
-Create a temp directory before running the steps:
+Create a temp directory and common shell variables before running the steps:
 
 ```bash
 SMOKE_TMP="$(mktemp -d)"
 trap 'rm -rf "$SMOKE_TMP"' EXIT
+
+HELPER="scripts/development-workflow/delivery-bundle-manifest.sh"
+BUNDLE="$SMOKE_TMP/delivery-bundle.json"
+MOBILE_EVIDENCE="$SMOKE_TMP/mobile-evidence.json"
+WEB_EVIDENCE="$SMOKE_TMP/web-evidence.json"
 ```
 
 The implementation may provide a fixture helper. If it does, use that helper to
-write the component evidence files. If no helper exists, create minimal
-`component_release_evidence.v1` JSON files matching the final helper's required
-fields.
+write `$MOBILE_EVIDENCE` and `$WEB_EVIDENCE`. If no helper exists, create
+minimal `component_release_evidence.v1` JSON files matching the final helper's
+required fields.
+
+Use this evidence-integrity guard immediately before and after every command
+that reads a `component_release_evidence.v1` file:
+
+```bash
+BEFORE_HASH="$(git hash-object "$MOBILE_EVIDENCE" "$WEB_EVIDENCE" 2>/dev/null || true)"
+# Run exactly one bundle command here.
+AFTER_HASH="$(git hash-object "$MOBILE_EVIDENCE" "$WEB_EVIDENCE" 2>/dev/null || true)"
+test "$BEFORE_HASH" = "$AFTER_HASH"
+```
 
 ---
 
@@ -53,62 +73,160 @@ fields.
 
 **Maps to**: Acceptance Criteria 1 and 2
 
-1. Run the delivery bundle helper's create command with bundle title, purpose,
-   parent epic `#1352`, declared components `mobile-app` and `web-app`, known
-   child items, finalization owner, and rollout notes.
-2. Write the manifest to `$SMOKE_TMP/delivery-bundle.json`.
-3. Inspect the JSON with `jq`.
+```bash
+"$HELPER" create \
+  --manifest "$BUNDLE" \
+  --title "Mobile and Web July delivery" \
+  --purpose "Coordinated customer-facing July workflow-hub delivery" \
+  --parent-ref "#1352" \
+  --component mobile-app \
+  --component web-app \
+  --child-item "#1356" \
+  --child-item "#1357" \
+  --finalization-owner "@workflow-operator" \
+  --rollout-notes "Roll out mobile and web components independently; no shared suite branch." \
+  --json
+
+jq -e '
+  .schema_version == "delivery_bundle_manifest.v1" and
+  .revision == 1 and
+  .status == "open" and
+  .parent_ref == "#1352" and
+  (.components | length) == 2 and
+  (.audit_events | length) == 1
+' "$BUNDLE"
+```
 
 **Expected result**: The manifest uses schema
 `delivery_bundle_manifest.v1`, has revision `1`, status `open`, includes the
-bundle metadata, records declared components, and has a creation audit event.
+bundle metadata, records `mobile-app` and `web-app`, and has a creation audit
+event.
 
 ### Step 2: Attach Complete Component Evidence
 
 **Maps to**: Acceptance Criterion 3
 
-1. Generate or provide a complete `component_release_evidence.v1` file for
-   `mobile-app`.
-2. Run the helper's component update command against the current manifest
-   revision.
-3. Inspect the updated manifest.
+```bash
+REVISION="$(jq -r '.revision' "$BUNDLE")"
 
-**Expected result**: The manifest revision increments, the `mobile-app`
-component entry records stable identity fields, version or tag, source and
-release pull requests, routing outcome, release outcome, CI outcome, deployment
-outcome, cleanup outcome, hub tracker reconciliation outcome, child release
-state, and an update audit event. The `web-app` entry remains present.
+"$HELPER" update-component \
+  --manifest "$BUNDLE" \
+  --expected-revision "$REVISION" \
+  --component-key mobile-app \
+  --evidence-file "$MOBILE_EVIDENCE" \
+  --component-tag mobile-v1.4.0 \
+  --component-version 1.4.0 \
+  --source-pr 1411 \
+  --release-pr 1501 \
+  --child-item "#1356" \
+  --child-release-state merged \
+  --json
+
+jq -e '
+  .revision == 2 and
+  (.components[] | select(.component_key == "mobile-app") |
+    .component_tag == "mobile-v1.4.0" and
+    .component_version == "1.4.0" and
+    .evidence_state == "verified") and
+  (.components[] | select(.component_key == "web-app"))
+' "$BUNDLE"
+```
+
+**Expected result**: The manifest revision increments. The `mobile-app` entry
+records stable identity fields, required component tag, optional component
+version, source and release pull requests, routing outcome, release outcome, CI
+outcome, deployment outcome, cleanup outcome, hub tracker reconciliation
+outcome, child release state, and an update audit event. The `web-app` entry
+remains present and incomplete.
 
 ### Step 3: Reapply Identical Evidence
 
 **Maps to**: Acceptance Criterion 4
 
-1. Re-run the same component update command with the same `mobile-app` evidence.
-2. Inspect the manifest and helper output.
+```bash
+REVISION_BEFORE="$(jq -r '.revision' "$BUNDLE")"
+AUDIT_COUNT_BEFORE="$(jq -r '.audit_events | length' "$BUNDLE")"
 
-**Expected result**: The helper reports an idempotent replay or no-op. The
-manifest does not contain a duplicate `mobile-app` component entry.
+"$HELPER" update-component \
+  --manifest "$BUNDLE" \
+  --expected-revision "$REVISION_BEFORE" \
+  --component-key mobile-app \
+  --evidence-file "$MOBILE_EVIDENCE" \
+  --component-tag mobile-v1.4.0 \
+  --component-version 1.4.0 \
+  --source-pr 1411 \
+  --release-pr 1501 \
+  --child-item "#1356" \
+  --child-release-state merged \
+  --json
+
+test "$REVISION_BEFORE" = "$(jq -r '.revision' "$BUNDLE")"
+test "$AUDIT_COUNT_BEFORE" = "$(jq -r '.audit_events | length' "$BUNDLE")"
+test "$(jq '[.components[] | select(.component_key == "mobile-app")] | length' "$BUNDLE")" = "1"
+```
+
+**Expected result**: The helper reports an idempotent replay or no-op. Revision,
+audit-event count, and component entry count stay unchanged.
 
 ### Step 4: Inspect An Incomplete Bundle
 
 **Maps to**: Acceptance Criterion 5
 
-1. Run the helper's inspect command with JSON output.
-2. Read the blocker summary for `web-app`.
+```bash
+"$HELPER" inspect \
+  --manifest "$BUNDLE" \
+  --json > "$SMOKE_TMP/inspect-partial.json"
+
+jq -e '
+  .status == "blocked" and
+  (.components[] | select(.component_key == "web-app") |
+    .evidence_state == "missing" and
+    (.blockers | index("routing_evidence_missing")) and
+    (.blockers | index("release_evidence_missing")) and
+    (.blockers | index("ci_evidence_missing")) and
+    (.blockers | index("deployment_evidence_missing")) and
+    (.blockers | index("cleanup_evidence_missing")) and
+    (.blockers | index("hub_tracker_reconciliation_missing")) and
+    (.blockers | index("child_release_state_missing")))
+' "$SMOKE_TMP/inspect-partial.json"
+```
 
 **Expected result**: Inspection reports that `web-app` is missing required
-component release evidence and names the missing finalization requirements,
-including release, CI, deployment, cleanup, hub tracker reconciliation, and
-child release-state evidence.
+component release evidence and names every missing finalization requirement,
+including routing evidence.
 
 ### Step 5: Reject Conflicting Evidence
 
 **Maps to**: Acceptance Criterion 6
 
-1. Copy the accepted `mobile-app` evidence and change one stable identity field,
-   version or tag, release correlation key, or contract revision.
-2. Run the component update command with the conflicting evidence.
-3. Compare the manifest before and after the command.
+```bash
+cp "$MOBILE_EVIDENCE" "$SMOKE_TMP/mobile-conflict.json"
+jq '.contract_revision = "sha256:conflict"' \
+  "$SMOKE_TMP/mobile-conflict.json" > "$SMOKE_TMP/mobile-conflict.tmp"
+mv "$SMOKE_TMP/mobile-conflict.tmp" "$SMOKE_TMP/mobile-conflict.json"
+
+MANIFEST_HASH_BEFORE="$(git hash-object "$BUNDLE")"
+REVISION="$(jq -r '.revision' "$BUNDLE")"
+
+if "$HELPER" update-component \
+  --manifest "$BUNDLE" \
+  --expected-revision "$REVISION" \
+  --component-key mobile-app \
+  --evidence-file "$SMOKE_TMP/mobile-conflict.json" \
+  --component-tag mobile-v1.4.0 \
+  --component-version 1.4.0 \
+  --source-pr 1411 \
+  --release-pr 1501 \
+  --child-item "#1356" \
+  --child-release-state merged \
+  --json
+then
+  echo "conflicting evidence was accepted" >&2
+  exit 1
+fi
+
+test "$MANIFEST_HASH_BEFORE" = "$(git hash-object "$BUNDLE")"
+```
 
 **Expected result**: The helper exits non-zero, reports a conflict, and leaves
 the accepted manifest state unchanged.
@@ -117,45 +235,148 @@ the accepted manifest state unchanged.
 
 **Maps to**: Acceptance Criterion 7
 
-1. Record an older manifest revision number.
-2. Advance the manifest with a valid update or removal.
-3. Attempt another update or finalization using the older expected revision.
+```bash
+STALE_REVISION="$(jq -r '.revision' "$BUNDLE")"
+
+"$HELPER" remove-component \
+  --manifest "$BUNDLE" \
+  --expected-revision "$STALE_REVISION" \
+  --component-key web-app \
+  --reason "Temporarily split web delivery from this bundle" \
+  --json
+
+MANIFEST_HASH_BEFORE="$(git hash-object "$BUNDLE")"
+
+if "$HELPER" finalize \
+  --manifest "$BUNDLE" \
+  --expected-revision "$STALE_REVISION" \
+  --json
+then
+  echo "stale finalization was accepted" >&2
+  exit 1
+fi
+
+test "$MANIFEST_HASH_BEFORE" = "$(git hash-object "$BUNDLE")"
+```
 
 **Expected result**: The helper exits non-zero, reports stale revision state,
 and leaves the current manifest unchanged.
 
-### Step 7: Remove A Component Before Finalization
+### Step 7: Verify Component Removal Audit
 
 **Maps to**: Acceptance Criterion 8
 
-1. Remove one declared component with an explicit removal reason.
-2. Inspect the manifest and historical revision data.
+```bash
+jq -e '
+  .revision == 3 and
+  ([.components[] | select(.component_key == "web-app")] | length) == 0 and
+  (.removed_components[] |
+    .component_key == "web-app" and
+    .reason == "Temporarily split web delivery from this bundle") and
+  (.audit_events[] | select(.event == "component_removed"))
+' "$BUNDLE"
+```
 
-**Expected result**: The manifest revision increments, the current component
-list no longer includes the removed component, the removal reason is recorded,
-the audit trail includes the removal event, and prior revision history remains
-available for audit.
+**Expected result**: The current component list excludes `web-app`, the removal
+reason is recorded, the audit trail includes the removal event, and prior
+revision history remains available for audit.
 
-### Step 8: Invalidate Readiness After Mutation
+### Step 8: Invalidate Readiness After Each Mutation Type
 
 **Maps to**: Acceptance Criterion 9
 
-1. Build a bundle that reaches `ready_to_finalize`.
-2. Add, update, or remove a component before finalization.
-3. Inspect the bundle status.
+Create or reset a complete bundle fixture that reaches `ready_to_finalize`, then
+run separate add, update, and removal cases:
 
-**Expected result**: The bundle leaves `ready_to_finalize` and returns to
-`open` or `blocked`; readiness must be recomputed for the current revision.
+```bash
+cp "$SMOKE_TMP/ready-bundle.json" "$SMOKE_TMP/ready-add.json"
+cp "$SMOKE_TMP/ready-bundle.json" "$SMOKE_TMP/ready-update.json"
+cp "$SMOKE_TMP/ready-bundle.json" "$SMOKE_TMP/ready-remove.json"
+```
+
+For the add case:
+
+```bash
+"$HELPER" add-component \
+  --manifest "$SMOKE_TMP/ready-add.json" \
+  --expected-revision "$(jq -r '.revision' "$SMOKE_TMP/ready-add.json")" \
+  --component-key api-service \
+  --json
+
+jq -e '
+  (.status == "open" or .status == "blocked") and
+  (.readiness.revision == .revision or .readiness == null)
+' "$SMOKE_TMP/ready-add.json"
+```
+
+For the update case:
+
+```bash
+"$HELPER" update-component \
+  --manifest "$SMOKE_TMP/ready-update.json" \
+  --expected-revision "$(jq -r '.revision' "$SMOKE_TMP/ready-update.json")" \
+  --component-key mobile-app \
+  --evidence-file "$MOBILE_EVIDENCE" \
+  --component-tag mobile-v1.4.1 \
+  --component-version 1.4.1 \
+  --source-pr 1411 \
+  --release-pr 1502 \
+  --child-item "#1356" \
+  --child-release-state merged \
+  --json
+
+jq -e '
+  (.status == "open" or .status == "blocked") and
+  (.readiness.revision == .revision or .readiness == null)
+' "$SMOKE_TMP/ready-update.json"
+```
+
+For the removal case:
+
+```bash
+"$HELPER" remove-component \
+  --manifest "$SMOKE_TMP/ready-remove.json" \
+  --expected-revision "$(jq -r '.revision' "$SMOKE_TMP/ready-remove.json")" \
+  --component-key web-app \
+  --reason "Exclude web from this finalized bundle" \
+  --json
+
+jq -e '
+  (.status == "open" or .status == "blocked") and
+  (.readiness.revision == .revision or .readiness == null)
+' "$SMOKE_TMP/ready-remove.json"
+```
+
+**Expected result**: Add, update, and removal each leave
+`ready_to_finalize`. Readiness is cleared or recomputed for the current
+revision; stale readiness from the prior revision is not retained.
 
 ### Step 9: Block Invalid Finalization
 
 **Maps to**: Acceptance Criteria 10, 11, and 12
 
-1. Attempt finalization with a component missing a version or tag.
-2. Attempt finalization with missing release, CI, deployment, cleanup, hub
-   tracker reconciliation, or child release-state evidence.
-3. Attempt finalization with failed, blocked, pending, conflicting, or stale
-   outcomes.
+```bash
+for fixture in \
+  "$SMOKE_TMP/missing-tag.json" \
+  "$SMOKE_TMP/missing-evidence.json" \
+  "$SMOKE_TMP/failed-outcome.json" \
+  "$SMOKE_TMP/blocked-outcome.json" \
+  "$SMOKE_TMP/pending-outcome.json" \
+  "$SMOKE_TMP/conflicting-outcome.json" \
+  "$SMOKE_TMP/stale-readiness.json"
+do
+  MANIFEST_HASH_BEFORE="$(git hash-object "$fixture")"
+  if "$HELPER" finalize \
+    --manifest "$fixture" \
+    --expected-revision "$(jq -r '.revision' "$fixture")" \
+    --json
+  then
+    echo "invalid finalization was accepted for $fixture" >&2
+    exit 1
+  fi
+  test "$MANIFEST_HASH_BEFORE" = "$(git hash-object "$fixture")"
+done
+```
 
 **Expected result**: Every invalid finalization attempt exits non-zero, reports
 the blocking component and requirement, and leaves the manifest unfinalized.
@@ -164,10 +385,47 @@ the blocking component and requirement, and leaves the manifest unfinalized.
 
 **Maps to**: Acceptance Criteria 13 and 14
 
-1. Attach complete evidence for every declared component.
-2. Run inspect or finalization readiness computation for the current revision.
-3. Run the finalization command.
-4. Inspect the final manifest.
+```bash
+REVISION="$(jq -r '.revision' "$BUNDLE")"
+
+"$HELPER" add-component \
+  --manifest "$BUNDLE" \
+  --expected-revision "$REVISION" \
+  --component-key web-app \
+  --json
+
+"$HELPER" update-component \
+  --manifest "$BUNDLE" \
+  --expected-revision "$(jq -r '.revision' "$BUNDLE")" \
+  --component-key web-app \
+  --evidence-file "$WEB_EVIDENCE" \
+  --component-tag web-v2.8.1 \
+  --component-version 2.8.1 \
+  --source-pr 1414 \
+  --release-pr 1503 \
+  --child-item "#1357" \
+  --child-release-state merged \
+  --json
+
+"$HELPER" inspect \
+  --manifest "$BUNDLE" \
+  --json > "$SMOKE_TMP/inspect-ready.json"
+
+jq -e '.status == "ready_to_finalize"' "$SMOKE_TMP/inspect-ready.json"
+
+"$HELPER" finalize \
+  --manifest "$BUNDLE" \
+  --expected-revision "$(jq -r '.revision' "$BUNDLE")" \
+  --json
+
+jq -e '
+  .status == "finalized" and
+  (.audit_events[] | select(.event == "bundle_finalized")) and
+  ([.components[] | select(.component_tag == null)] | length) == 0
+' "$BUNDLE"
+
+test -z "$(git branch --list 'release/mobile-and-web-july-delivery*')"
+```
 
 **Expected result**: The manifest status is `finalized`, the revision
 increments, the finalization audit event is present, every component has
@@ -178,11 +436,18 @@ suite version or shared release branch is created.
 
 **Maps to**: Acceptance Criterion 15
 
-1. Hash each source `component_release_evidence.v1` file before bundle create,
-   update, inspect, removal, and finalization commands.
-2. Hash the same evidence files again after all commands.
+Immediately before and after every create, update, inspect, removal, and
+finalization command above, compare the source evidence hashes:
 
-**Expected result**: Source component release evidence files are unchanged.
+```bash
+BEFORE_HASH="$(git hash-object "$MOBILE_EVIDENCE" "$WEB_EVIDENCE" 2>/dev/null || true)"
+# Run exactly one bundle command here.
+AFTER_HASH="$(git hash-object "$MOBILE_EVIDENCE" "$WEB_EVIDENCE" 2>/dev/null || true)"
+test "$BEFORE_HASH" = "$AFTER_HASH"
+```
+
+**Expected result**: Source component release evidence files are unchanged after
+each individual bundle command and after the full smoke sequence.
 
 ### Last Step: Validate And Shut Down
 
@@ -199,13 +464,15 @@ suite version or shared release branch is created.
       revision.
 - [ ] AC3: Completed component release evidence updates one matching component
       without losing unrelated entries.
-- [ ] AC4: Identical evidence replay does not duplicate component entries.
+- [ ] AC4: Identical evidence replay does not duplicate component entries,
+      change the revision, or add an audit event.
 - [ ] AC5: Inspection reports missing and stale finalization requirements.
 - [ ] AC6: Conflicting evidence stops without mutating accepted state.
 - [ ] AC7: Stale revision writes stop without mutating accepted state.
 - [ ] AC8: Component removal records a reason and preserves prior revisions.
-- [ ] AC9: Mutations after readiness invalidate readiness.
-- [ ] AC10: Missing component version or tag blocks finalization.
+- [ ] AC9: Add, update, and removal after readiness clear or recompute readiness
+      for the current revision.
+- [ ] AC10: Missing component tag blocks finalization.
 - [ ] AC11: Missing required evidence blocks finalization.
 - [ ] AC12: Failed, blocked, pending, missing, conflicting, or stale outcomes
       block finalization.
@@ -221,9 +488,9 @@ suite version or shared release branch is created.
 
 | Entity | Scenario | How to load |
 | --- | --- | --- |
-| Bundle metadata | Parent epic `#1352`, two declared components, finalization owner, and rollout notes | Pass as helper arguments or a helper-supported metadata JSON fixture. |
-| Complete component evidence | Completed release, passed CI, recorded deployment, complete cleanup, complete hub reconciliation, and released or merged child state | Use the implementation's fixture helper or create `component_release_evidence.v1` JSON in `$SMOKE_TMP`. |
-| Invalid component evidence | Missing version, conflicting stable identity, stale revision, failed outcome, blocked outcome, pending outcome, and malformed JSON | Mutate fixture copies in `$SMOKE_TMP`. |
+| Bundle metadata | Parent epic `#1352`, components `mobile-app` and `web-app`, child items `#1356` and `#1357`, finalization owner `@workflow-operator`, and rollout notes | Pass the explicit values from **Test Data** to the create command. |
+| Complete component evidence | Completed release, passed CI, recorded deployment, complete cleanup, complete hub reconciliation, released or merged child state, and component tag | Use the implementation's fixture helper or create `component_release_evidence.v1` JSON in `$SMOKE_TMP`. |
+| Invalid component evidence | Missing component tag, conflicting stable identity, stale revision, failed outcome, blocked outcome, pending outcome, and malformed JSON | Mutate fixture copies in `$SMOKE_TMP`. |
 
 ---
 

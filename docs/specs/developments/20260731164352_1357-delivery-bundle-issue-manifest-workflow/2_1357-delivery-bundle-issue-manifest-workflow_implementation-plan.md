@@ -75,18 +75,32 @@ semantics and fail closed on stale or conflicting structured evidence.
       components, removed component history, readiness data tied to the current
       revision, finalization data, and append-only audit events. Map to AC2,
       AC5, AC8, AC9, and AC13.
-- [ ] Implement atomic update semantics for every accepted mutation: validate
-      the expected current revision, detect idempotent replay, compute the new
-      state, increment the revision, append the audit event, write to a
-      temporary file, validate the staged JSON, and then replace the manifest.
-      Stale or conflicting writes must leave the prior manifest unchanged. Map
-      to AC3, AC4, AC6-AC9, and AC13.
+- [ ] Implement atomic update semantics for every accepted mutation. Hold an
+      inter-process exclusive lock from manifest read through replacement,
+      including new-manifest creation. Recheck the expected current revision
+      while the lock is held, detect idempotent replay from the locked current
+      state, compute the new state, increment the revision, append the audit
+      event, create a temporary file in the manifest directory using exclusive
+      creation, validate the staged JSON, and then replace the manifest. Retry
+      idempotent reapplication only after a fresh locked read. Stale or
+      conflicting writes must leave the prior manifest unchanged. Map to AC3,
+      AC4, AC6-AC9, and AC13.
 - [ ] Consume `component_release_evidence.v1` records without rewriting them.
       Preserve stable identity fields from the evidence:
       `selected_product_repo_key`, `canonical_repository_identity`,
       `release_correlation_key`, and `contract_revision`. Use those fields for
       deduplication and conflict detection instead of display names or branch
       names. Map to AC3, AC4, AC6, and AC15.
+- [ ] Normalize the component version/tag contract in the manifest schema and
+      helper interface. Component evidence attachment must provide a
+      `component_tag` for every release-backed component and may also provide
+      `component_version` when the product has a separate semantic version.
+      Finalization must require `component_tag` on every declared current
+      component and must preserve `component_version` as optional descriptive
+      metadata. Deduplication and conflict checks must include `component_tag`
+      and must reject attempts to replace an accepted tag for the same stable
+      component identity without an explicit fresh update path. Map to AC3,
+      AC6, AC10, and AC13.
 - [ ] Validate finalization outcomes exactly as the spec requires:
       `component_release_routed`, `completed`, acceptable CI, acceptable
       deployment, `complete` cleanup, acceptable hub tracker reconciliation, and
@@ -143,17 +157,17 @@ semantics and fail closed on stale or conflicting structured evidence.
    verify revision `1`, status `open`, metadata fields, declared components,
    and audit event. Maps to AC1 and AC2.
 2. Add complete component release evidence for one component and verify the
-   component entry, stable identity fields, version or tag, source and release
-   PR references, outcome fields, revision increment, and audit event. Maps to
-   AC3.
+   component entry, stable identity fields, required component tag, optional
+   component version, source and release PR references, outcome fields, revision
+   increment, and audit event. Maps to AC3.
 3. Reapply identical component evidence and verify the helper reports an
    idempotent no-op without duplicating the component entry. Maps to AC4.
 4. Inspect a partial bundle and verify missing routing, release PR, CI,
    deployment, cleanup, hub tracker reconciliation, and child release-state
    evidence are reported per component. Maps to AC5.
-5. Submit conflicting stable identity, version, release correlation key, or
-   contract revision evidence and verify the manifest file remains unchanged.
-   Maps to AC6.
+5. Submit conflicting stable identity, component tag, component version,
+   release correlation key, or contract revision evidence and verify the
+   manifest file remains unchanged. Maps to AC6.
 6. Submit an update or finalization request against a stale expected revision
    and verify the manifest file remains unchanged. Maps to AC7 and AC13.
 7. Remove a component before finalization and verify a new revision, removal
@@ -161,9 +175,9 @@ semantics and fail closed on stale or conflicting structured evidence.
 8. Move a bundle to `ready_to_finalize`, then add, update, or remove a
    component and verify readiness is invalidated for the current revision. Maps
    to AC9.
-9. Attempt finalization with missing version, missing evidence, failed or
-   blocked outcome, pending outcome, conflicting outcome, and stale readiness;
-   verify each case blocks finalization. Maps to AC10-AC12.
+9. Attempt finalization with a missing component tag, missing evidence, failed
+   or blocked outcome, pending outcome, conflicting outcome, and stale
+   readiness; verify each case blocks finalization. Maps to AC10-AC12.
 10. Finalize a complete bundle and verify status `finalized`, revision
     increment, finalization audit event, final component list, and absence of a
     shared suite version or shared release branch. Maps to AC13 and AC14.
@@ -187,8 +201,8 @@ with the existing shell workflow test harness pattern.
     key, canonical repository identity, release correlation key, and contract
     revision.
   - Identical evidence replay for an existing component.
-  - Conflicting component evidence for stable identity fields, version or tag,
-    release correlation key, or contract revision.
+  - Conflicting component evidence for stable identity fields, component tag,
+    component version, release correlation key, or contract revision.
   - Stale expected revision on component update, removal, inspection readiness,
     and finalization.
   - Failed, blocked, pending, missing, conflicting, and stale outcomes in
@@ -197,6 +211,8 @@ with the existing shell workflow test harness pattern.
   - Component removal, preserved historical revision, and re-addition requiring
     fresh evidence.
   - Atomic temporary-file validation failure before replacement.
+  - Missing lock acquisition, lost-update race, and check-then-create race for a
+    new manifest.
 - **Unit test mapping**:
   `scripts/development-workflow/tests/test-delivery-bundle-manifest.sh` should
   include one named assertion group per edge case above, plus positive coverage
@@ -207,11 +223,12 @@ with the existing shell workflow test harness pattern.
 ### Concurrent-event-source addendum
 
 - **Shared mutable state guards**: No async listener is introduced. Shared
-  manifest mutation is guarded by current-revision preconditions and atomic
-  temp-file replacement.
+  manifest mutation is guarded by an inter-process exclusive lock, a locked
+  current-revision recheck, exclusive temporary-file creation in the manifest
+  directory, staged JSON validation, and atomic replacement.
 - **Re-entrancy / in-flight tracking**: Not applicable as an event handler. A
-  second CLI invocation may race; it must fail or retry when the expected
-  revision no longer matches.
+  second CLI invocation may contend for the same manifest; after acquiring the
+  lock it must fail or retry when the expected revision no longer matches.
 - **Event deduplication**: Logical duplicate component evidence is deduplicated
   by stable identity fields and exact accepted evidence replay detection.
 - **Listener and resource cleanup**: Not applicable; no listeners, timers, or
@@ -230,8 +247,8 @@ with the existing shell workflow test harness pattern.
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
 | Bundle metadata fixture | Delivery title, purpose, parent epic `#1352`, declared components, known child items, finalization owner, and rollout notes | Created under the test temp directory by `test-delivery-bundle-manifest.sh` |
-| Complete component evidence fixtures | Two `component_release_evidence.v1` records with successful release, CI, deployment, cleanup, hub reconciliation, and child state data | Created under the test temp directory, reusing the #1356 fixture style where practical |
-| Negative component evidence fixtures | Missing version, stale revision, conflicting identity, failed outcome, pending outcome, blocked outcome, and malformed JSON | Created under the test temp directory by `test-delivery-bundle-manifest.sh` |
+| Complete component evidence fixtures | Two `component_release_evidence.v1` records with component tags, successful release, CI, deployment, cleanup, hub reconciliation, and child state data | Created under the test temp directory, reusing the #1356 fixture style where practical |
+| Negative component evidence fixtures | Missing component tag, stale revision, conflicting identity, failed outcome, pending outcome, blocked outcome, and malformed JSON | Created under the test temp directory by `test-delivery-bundle-manifest.sh` |
 
 ---
 
