@@ -62,12 +62,18 @@ repository mode, work-item role, selected product repository keys, and stage.
 | Gate input | Allowed outcome | Required next action | Mirror surfaces |
 | --- | --- | --- | --- |
 | `single_repo` mode | `Single-repository` | Continue current repository workflow unchanged | Protocol 91, `workflow-next-action.sh`, smoke runbook |
-| `workflow_hub` product-owned item with exactly one configured product repository key | `Product owned` | Continue product implementation routing with that key in handoffs | Run-item/run-items/run-epic handoffs, PR/reviewer routing, cleanup |
+| `workflow_hub` product-owned item with exactly one valid selected product repository key on the item | `Product owned` | Continue product implementation routing with that selected key in handoffs | Run-item/run-items/run-epic handoffs, PR/reviewer routing, cleanup |
 | `workflow_hub` product-owned item with no selected key | `Missing target` | Stop before product branch, PR, reviewer, CI, or cleanup mutation; hub may record stop evidence | Next-action output, orchestrator summaries, smoke runbook |
 | `workflow_hub` product-owned item whose target cannot be resolved from confirmed tracker context | `Ambiguous target` | Stop before mutation and request routing clarification | Next-action output, orchestrator summaries, smoke runbook |
 | `workflow_hub` product-owned item with more than one selected key | `Multiple targets` | Stop and split or narrow to one product repository child | Add-backlog guidance, run-item/run-epic handoffs, smoke runbook |
 | `workflow_hub` hub-only item with no product repository key | `Hub only` | Continue hub-owned workflow artifacts in the hub repository | Spec/plan/review/cleanup guidance |
 | `workflow_hub` hub-only item with a product repository key | `Ambiguous target` | Stop until the operator removes the key or reclassifies the item as product-owned | Add-backlog guidance, next-action output |
+
+Precedence rule: a product-owned item with no selected key is always
+`Missing target`, even when the hub config contains multiple product
+repositories. `Ambiguous target` is reserved for conflicting, unknown, or
+unresolved target evidence, including a hub-only item that also carries a
+product key.
 
 ---
 
@@ -89,7 +95,21 @@ repository mode, work-item role, selected product repository keys, and stage.
       mode, action/stage, configured product repository keys, optional selected
       key values, and an explicit hub-only marker. Outputs must include a stable
       code, display label, selected key when valid, artifact owner, stop reason,
-      and required human action. Map to AC1-AC8.
+      and required human action. The `--json` output contract is:
+      `outcome_code` string enum (`product_owned`, `hub_only`,
+      `missing_target`, `ambiguous_target`, `multiple_targets`,
+      `single_repo`); `display_label` string; `continue_allowed` boolean;
+      `selected_product_repo_key` string or `null`; `artifact_owner` string
+      enum (`selected_product_repository`, `hub_repository`,
+      `current_repository`, `none`); `stop_reason` string or `null`;
+      `required_human_action` string or `null`; `configured_product_repo_keys`
+      array of strings; `selected_product_repo_keys` array of strings;
+      `fingerprint` string; and `schema_version` string. The classifier exits
+      `0` when it emits this contract for any classified outcome, `2` for
+      malformed input or unreadable configuration, and nonzero for unexpected
+      runtime errors. Classifier and orchestration tests must assert the same
+      field names, nullability, enum values, and exit-status semantics. Map to
+      AC1-AC8.
 - [ ] Extend `scripts/development-workflow/workflow-config-resolver.py` or its
       tests only where needed to expose configured product repository keys in a
       reusable form. Do not duplicate key validation outside the resolver; the
@@ -100,14 +120,18 @@ repository mode, work-item role, selected product repository keys, and stage.
       print the routing outcome, selected product repository key, artifact owner,
       and stop evidence. Map to AC1-AC4 and AC7.
 - [ ] Update `scripts/development-workflow/discover-workflow-state.sh`,
-      `run-epic-scope-resolver.sh`, and relevant run-item/run-items handoff
-      code so summaries preserve the classifier result instead of re-inferring
-      repository ownership from branch names or the current checkout. Map to
-      AC1-AC7.
+      `run-item-scope-resolver.sh`, `run-epic-scope-resolver.sh`, and relevant
+      run-item/run-items handoff code so summaries preserve the classifier
+      result, fingerprint, and stop evidence instead of re-inferring repository
+      ownership from branch names or the current checkout. Map to AC1-AC7.
 - [ ] Update `scripts/development-workflow/post-merge-cleanup.sh` and
       reviewer/CI handoff glue only to consume the already-classified selected
       key. They must not implement a second product-repository-selection path.
       Map to AC6 and AC7.
+- [ ] Add a stale-decision guard to every mutating handoff. Either reclassify
+      immediately before mutation or carry the classifier `fingerprint` and
+      reject the handoff when the item/configuration fingerprint has changed.
+      Map to AC2-AC4 and AC7.
 
 ### Workflow Documentation
 
@@ -196,10 +220,10 @@ workflow metadata and configured product repository keys.
 
 - **Edge-case enumeration**:
   - Valid selected keys: one configured key such as `mobile-app`.
-  - Missing target: empty selected key for product-owned work.
-  - Ambiguous target: no selected key when multiple configured product
-    repositories exist, an unknown key, or conflicting tracker text that cannot
-    be normalized to one key.
+  - Missing target: empty selected key for product-owned work, including when
+    multiple product repositories are configured.
+  - Ambiguous target: unknown key, unresolved key, conflicting tracker text that
+    cannot be normalized to one key, or hub-only marker plus a product key.
   - Multiple targets: two or more configured keys on one item.
   - Hub-only: explicit hub-only marker with no product key.
   - Hub-only conflict: hub-only marker plus product key.
@@ -208,10 +232,13 @@ workflow metadata and configured product repository keys.
     titles that contain a product name but are not the selected key source.
 - **Unit test mapping**:
   - `scripts/development-workflow/tests/test-work-item-repository-routing.sh`:
-    one automated test for every edge case above.
+    one automated test for every edge case above plus one contract assertion for
+    every JSON field and exit-status class.
   - `scripts/development-workflow/tests/test-workflow-orchestration-product-repo-aware.sh`:
     one test each for product-owned continue, missing target stop, ambiguous
-    target stop, multiple target stop, and hub-only continue.
+    target stop, multiple target stop, hub-only continue, and preservation of
+    classifier result, fingerprint, and stop evidence through
+    `run-item-scope-resolver.sh`.
 - **Suppression semantics**: Not applicable. This feature does not introduce
   inline suppression directives.
 
@@ -225,7 +252,9 @@ workflow metadata and configured product repository keys.
 - **Listener and resource cleanup**: Not applicable; no long-lived listeners,
   timers, or handles are introduced.
 - **Race conditions at initialization**: Not applicable; commands read the
-  current tracker/config snapshot at invocation start.
+  current tracker/config snapshot at invocation start. Mutating handoffs must
+  still prevent stale decisions by reclassifying immediately before mutation or
+  validating the classifier `fingerprint`.
 - **Race conditions at teardown**: Not applicable; there is no teardown hook.
 - **Error propagation across async boundaries**: Not applicable; failures are
   synchronous command exit statuses and stop evidence.
@@ -246,27 +275,10 @@ workflow metadata and configured product repository keys.
 
 ## Documentation Updates
 
-- [ ] `docs/workflow/development-workflow/repository-modes.md` - define
-      one-target routing outcomes and display labels.
-- [ ] `docs/workflow/development-workflow/workflow-hub-setup.md` - document hub
-      epic plus repository-scoped child decomposition.
-- [ ] `docs/workflow/development-workflow/cross-repo-pr-flow.md` - require
-      routing evidence before product-owned mutation.
-- [ ] `docs/workflow/development-workflow/protocols/00-add-backlog-item-protocol.md`
-      - document tracker authoring for product-owned and hub-only children.
-- [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
-      - require routing classifier output in mutating batch handoffs.
-- [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
-      - require routing classifier output before item implementation mutation.
-- [ ] `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md` -
-      require routing classifier output before epic child implementation
-      mutation.
-- [ ] `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
-      - consume selected key rather than selecting product repositories.
-- [ ] `docs/workflow/development-workflow/protocols/04-smoke-test-protocol.md`
-      - consume selected key for product-owned smoke validation.
-- [ ] Agent and skill guidance listed in **Agent And Skill Guidance** - mirror
-      the classifier-result wording without duplicating selection logic.
+The canonical documentation inventory lives in
+[Workflow Documentation](#workflow-documentation) and
+[Agent And Skill Guidance](#agent-and-skill-guidance). Keep file additions and
+scope updates there so implementation has one source of truth.
 
 ---
 
@@ -310,6 +322,7 @@ Bash and Python helper patterns in `scripts/development-workflow/`.
    - `bash scripts/development-workflow/tests/test-workflow-agent-product-repo-guidance.sh`
    - `bash scripts/development-workflow/tests/test-workflow-hub-docs.sh`
    - `npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "CHANGELOG.md"`
+   - `find docs/specs/developments docs/testing/workflow -name "*.md" -print0 | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md`
 8. Update `CHANGELOG.md` under `[Unreleased]` with:
    `- **One product repository per implementation item** (#1354): enforce one-target workflow-hub routing before product implementation mutation.`
 9. Complete the smoke test runbook and record any manual findings before PR
