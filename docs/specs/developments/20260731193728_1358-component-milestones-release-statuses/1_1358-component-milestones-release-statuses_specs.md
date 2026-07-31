@@ -24,6 +24,11 @@ today. Multi-repository release reconciliation applies only when a workflow hub
 is coordinating component releases through selected product repositories and a
 delivery bundle records the final shipped composition.
 
+When workflow-hub mode is active, even a delivery that currently has exactly one
+selected product repository uses the workflow-hub component milestone and
+delivery bundle finalization rules. The existing plain `vX.Y.Z` milestone path is
+reserved for non-hub single-repository releases.
+
 ## Brief Objective List
 
 Derived from issue #1358:
@@ -193,8 +198,8 @@ confirms the full customer-facing composition.
 ### Use Case 4: Preserve single-repository release behavior
 
 **Actor**: Workflow operator running a normal single-repository release.
-**Preconditions**: The repository is not operating as a workflow hub for a
-multi-repository delivery.
+**Preconditions**: The repository is not operating in workflow-hub mode for the
+release being reconciled.
 
 **Steps**:
 
@@ -216,13 +221,17 @@ unchanged.
 **Actions available**:
 
 - Continue the normal single-repository release and cleanup flow.
-- Use multi-repository component reconciliation only when workflow-hub mode is
+- Use workflow-hub component reconciliation only when workflow-hub mode is
   active for a selected product repository.
 
 **Considerations**:
 
 - Namespaced component milestones are a workflow-hub behavior, not a replacement
   for simple single-repository version milestones.
+- A workflow-hub delivery with exactly one selected product repository still uses
+  a namespaced component milestone and delivery bundle finalization because the
+  hub owns customer-facing delivery composition separately from the product
+  repository release.
 
 ## Business Rules
 
@@ -232,12 +241,20 @@ unchanged.
   the component tag.
 - Milestone stamping must target only the component child whose verified release
   evidence matches the selected product repository and tag.
-- Cross-repository parent epics must not receive component milestones.
-- Delivery bundle issues must not receive component milestones.
+- In workflow-hub mode, cross-repository parent epics must not receive any
+  milestone, including component milestones or plain version milestones.
+- In workflow-hub mode, delivery bundle issues must not receive any milestone;
+  shipped composition is represented by the delivery manifest.
+- Component release evidence is complete only when it includes repository
+  identity, component tag, release correlation key, contract revision, release
+  result, cleanup outcome, tracker reconciliation outcome, and hub tracker
+  reference.
 - A component child can reach released state independently from sibling
   components.
-- A failed, blocked, pending, missing, stale, or conflicting component release
-  must not move the component child to released state.
+- A failed, blocked, pending, incomplete, invalid, stale, or conflicting
+  component release must not move the component child to released state.
+- A component with no release evidence record remains pending; a component with
+  an incomplete or invalid evidence record becomes blocked until corrected.
 - A parent epic must not move to released state until the delivery bundle
   finalization gate passes for every declared current component.
 - A parent epic can show partial shipment while remaining unreleased.
@@ -272,8 +289,12 @@ Parent epic release states:
 - Component child `not_started` -> `pending` when release reconciliation begins.
 - Component child `pending` -> `released` when matching component evidence and
   milestone reconciliation are verified.
-- Component child `pending` -> `blocked` when required evidence is missing,
-  conflicting, stale, or targets a different product repository.
+- Component child stays `pending` with outcome `component_release_pending` when
+  no component release evidence record exists yet; the parent remains
+  `not_released` or `partially_released` based on other child states.
+- Component child `pending` -> `blocked` when a component evidence record exists
+  but is incomplete, invalid, conflicting, stale, or targets a different product
+  repository.
 - Component child `pending` -> `failed` when a release attempt fails.
 - Component child `blocked` -> `pending` when the blocker is corrected and
   reconciliation is retried.
@@ -288,6 +309,13 @@ Parent epic release states:
   released and the delivery bundle is finalized in one reconciliation pass.
 - Parent epic `not_released` or `partially_released` -> `blocked` when bundle
   finalization evidence is missing, failed, conflicting, or stale.
+- Parent epic `blocked` -> `partially_released` when the blocker is corrected,
+  at least one component child is released, and at least one declared component
+  remains unreleased.
+- Parent epic `blocked` -> `released` when the blocker is corrected and bundle
+  finalization passes for every declared component.
+- Parent epic `blocked` -> `not_released` when the blocker is corrected and no
+  component child has completed release reconciliation.
 
 ## Component Milestone Reconciliation Gate
 
@@ -298,12 +326,12 @@ the reconciliation outcome shown to the operator.
 | --- | --- | --- | --- | --- | --- |
 | No workflow-hub mode is active | `single_repo_milestone` | Continue | Use existing version milestone behavior | Release summary | A standard repository release uses `v1.4.0`. |
 | Selected product repository is missing or ambiguous | `missing_product_selection` | Stop | Select exactly one product repository | Release summary and tracker comment | The operator starts hub reconciliation without a product key. |
-| Component release evidence is missing | `component_release_pending` | Stop | Complete or attach component release evidence | Component child and delivery bundle | The product release PR has not merged yet. |
+| No component release evidence record exists for a component-target reconciliation | `component_release_pending` | Stop | Complete or attach component release evidence | Component child and delivery bundle | The product release PR has not merged yet. |
 | Evidence product repository does not match the child | `component_target_mismatch` | Stop | Correct the child target or release evidence | Component child | A mobile child receives web release evidence. |
 | Evidence tag is missing or invalid | `component_tag_missing` | Stop | Provide the released component tag | Component child | Cleanup completed but no tag is recorded. |
-| Component release failed, blocked, pending, stale, or conflicting | `component_release_not_ready` | Stop | Retry or repair the component release | Component child and bundle readiness | Product CI failed after the release PR. |
-| Matching component child and verified release evidence are present | `component_released` | Continue | Stamp the namespaced component milestone and mark the child released | Component child and release summary | `mobile-app@mobile-v1.4.0` is applied to the mobile child only. |
-| All declared components are released and the bundle finalization gate passes | `parent_released` | Continue | Mark the parent epic released without adding a component milestone | Parent epic and delivery bundle | Mobile and web components are both finalized in the delivery bundle. |
+| Component evidence record is incomplete, invalid, stale, conflicting, failed, blocked, or still pending | `component_release_not_ready` | Stop | Retry or repair the component release evidence | Component child and bundle readiness | Product CI failed after the release PR. |
+| Bundle-finalization reconciliation confirms all declared components are released and the bundle finalization gate passes | `parent_released` | Continue | Mark the parent epic released without adding any milestone | Parent epic and delivery bundle | Mobile and web components are both finalized in the delivery bundle. |
+| Component-target reconciliation has complete evidence matching the selected child, product repository, tag, release correlation key, contract revision, cleanup outcome, tracker reconciliation outcome, and hub tracker reference | `component_released` | Continue | Stamp the namespaced component milestone and mark the child released | Component child and release summary | `mobile-app@mobile-v1.4.0` is applied to the mobile child only. |
 
 ## Operational Visibility
 
@@ -329,19 +357,28 @@ the reconciliation outcome shown to the operator.
   ambiguous.
 - [ ] Milestone reconciliation stops before tracker mutation when component
   evidence targets a different product repository than the child.
+- [ ] Milestone reconciliation requires complete component evidence, including
+  repository identity, release correlation key, contract revision, cleanup
+  outcome, hub tracker reference, and tracker reconciliation outcome before a
+  child can reach released state.
 - [ ] A component child can move to released state independently after its own
   release evidence and namespaced milestone are verified.
-- [ ] A failed, blocked, pending, stale, missing, or conflicting component
-  release does not move the component child to released state.
+- [ ] A failed, blocked, pending, stale, incomplete, invalid, or conflicting
+  component release does not move the component child to released state.
 - [ ] Cross-repository parent epics remain milestone-free during partial and
-  final release reconciliation.
-- [ ] Delivery bundle issues remain milestone-free, and their shipped
+  final release reconciliation, including plain version milestones.
+- [ ] Delivery bundle issues remain milestone-free, including plain version
+  milestones, and their shipped
   composition is represented by the delivery manifest.
 - [ ] The parent epic shows partial release state when at least one component is
   released and at least one declared component remains unreleased.
 - [ ] The parent epic reaches released state only after the completed delivery
   bundle gate passes.
-- [ ] Existing single-repository `vX.Y.Z` milestone behavior is unchanged.
+- [ ] A workflow-hub delivery with exactly one selected product repository uses
+  namespaced component milestones and delivery bundle finalization rather than
+  the non-hub `vX.Y.Z` milestone path.
+- [ ] Existing non-hub single-repository `vX.Y.Z` milestone behavior is
+  unchanged.
 - [ ] Reconciliation audit output identifies the targeted child, selected
   product repository, component tag, outcome, and required next action.
 
@@ -349,13 +386,13 @@ the reconciliation outcome shown to the operator.
 
 | Brief objective | Covered by |
 | --- | --- |
-| Introduce namespaced hub milestone titles in the form `<product-repo>@<tag>`. | Use Case 1; Business Rules; Acceptance Criteria 1 and 11 |
+| Introduce namespaced hub milestone titles in the form `<product-repo>@<tag>`. | Use Case 1; Business Rules; Acceptance Criterion 1 |
 | Stamp only the matching repository-scoped child after its component release is verified. | Use Case 1; Component Milestone Reconciliation Gate; Acceptance Criteria 1-5 |
-| Keep cross-repository epics milestone-free. | Use Cases 2 and 3; Business Rules; Acceptance Criterion 6 |
-| Keep delivery issues milestone-free; shipped composition lives in the delivery manifest. | Use Cases 2 and 3; Business Rules; Acceptance Criterion 7 |
-| Define component-child status transitions, including partial shipment, retries, and failures. | Statuses / Enum Values; Acceptance Criteria 4 and 5 |
-| Define parent-epic status transitions, including partial shipment and final bundle release. | Use Cases 2 and 3; Statuses / Enum Values; Acceptance Criteria 8 and 9 |
-| Preserve existing single-repository `vX.Y.Z` milestone behavior. | Use Case 4; Business Rules; Acceptance Criterion 10 |
+| Keep cross-repository epics milestone-free. | Use Cases 2 and 3; Business Rules; Acceptance Criterion 7 |
+| Keep delivery issues milestone-free; shipped composition lives in the delivery manifest. | Use Cases 2 and 3; Business Rules; Acceptance Criterion 8 |
+| Define component-child status transitions, including partial shipment, retries, and failures. | Statuses / Enum Values; Acceptance Criteria 4-6 |
+| Define parent-epic status transitions, including partial shipment and final bundle release. | Use Cases 2 and 3; Statuses / Enum Values; Acceptance Criteria 9 and 10 |
+| Preserve existing single-repository `vX.Y.Z` milestone behavior. | Use Case 4; Business Rules; Acceptance Criteria 11 and 12 |
 
 ## Out of Scope (MVP)
 
