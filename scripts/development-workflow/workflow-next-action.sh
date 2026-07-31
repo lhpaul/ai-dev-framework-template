@@ -121,8 +121,21 @@ implementation_item_is_hub_only() {
   local tracker_type=""
 
   issue_number="$(implementation_issue_number 2>/dev/null)" || return 1
-  tracker_type="$(get_tracker_type_for_issue "$issue_number" 2>/dev/null || true)"
+  tracker_type="$(get_tracker_type_for_issue "$issue_number")" || true
   [ "$tracker_type" = "Workflow" ]
+}
+
+_implementation_hub_only_cache=""
+
+implementation_item_is_hub_only_cached() {
+  if [ -z "$_implementation_hub_only_cache" ]; then
+    if implementation_item_is_hub_only; then
+      _implementation_hub_only_cache="true"
+    else
+      _implementation_hub_only_cache="false"
+    fi
+  fi
+  [ "$_implementation_hub_only_cache" = "true" ]
 }
 
 repository_context_for_action() {
@@ -151,7 +164,7 @@ repository_context_for_action() {
         if [ -n "$target_repo" ]; then
           routing_args+=(--selected-product-repo-key "$target_repo")
         fi
-        if implementation_item_is_hub_only; then
+        if implementation_item_is_hub_only_cached; then
           routing_args+=(--hub-only)
         fi
         if ! routing_json="$("${routing_args[@]}")"; then
@@ -209,7 +222,7 @@ github_repo_args_for_action() {
   local action_github_repo=""
 
   if [ "$workflow_mode" = "workflow_hub" ] && [ "$action_kind" = "implementation" ]; then
-    if implementation_item_is_hub_only; then
+    if implementation_item_is_hub_only_cached; then
       return 0
     fi
     context="$(workflow_repository_context "$target_repo" "$repo_root")"
@@ -225,12 +238,21 @@ if [ -n "$pr_number" ]; then
   if [ "$workflow_mode" = "workflow_hub" ] && [ -z "$target_repo" ]; then
     require_gh
     pr_probe_json=""
-    if pr_probe_json="$(gh pr view "$pr_number" --json headRefName 2>&1)"; then
+    if workflow_run_gh_capture_stderr pr view "$pr_number" --json headRefName; then
+      pr_probe_json="$__workflow_last_gh_stdout"
       branch_name="$(printf '%s\n' "$pr_probe_json" | jq -r '.headRefName // ""')"
     else
-      echo "Warning: could not probe PR #${pr_number} head branch: ${pr_probe_json}" >&2
+      echo "Warning: could not probe PR #${pr_number} head branch: ${__workflow_last_gh_stderr:-unknown gh failure}" >&2
     fi
-    if ! pr_action_context="$(repository_context_for_action implementation 2>&1)"; then
+    set +e
+    pr_action_context="$(repository_context_for_action implementation 2>&1)"
+    pr_action_status=$?
+    set -e
+    if [ "$pr_action_status" -ne 0 ]; then
+      if [ "$pr_action_status" -ne 2 ]; then
+        echo "ERROR: $pr_action_context" >&2
+        exit "$pr_action_status"
+      fi
       print_kv WORKFLOW_MODE "$workflow_mode"
       print_kv ACTION_REPOSITORY_KIND "repository_selection_required"
       print_kv ACTION_REPOSITORY ""
@@ -306,7 +328,15 @@ if [ -n "$branch_name" ]; then
     feature|refactor|fix|hotfix) action_kind="implementation" ;;
     *) action_kind="hub" ;;
   esac
-  if ! action_context_output="$(repository_context_for_action "$action_kind" 2>&1)"; then
+  set +e
+  action_context_output="$(repository_context_for_action "$action_kind" 2>&1)"
+  action_context_status=$?
+  set -e
+  if [ "$action_context_status" -ne 0 ]; then
+    if [ "$action_context_status" -ne 2 ]; then
+      echo "ERROR: $action_context_output" >&2
+      exit "$action_context_status"
+    fi
     print_kv WORKFLOW_MODE "$workflow_mode"
     print_kv ACTION_REPOSITORY_KIND "repository_resolution_failed"
     print_kv ACTION_REPOSITORY ""
@@ -543,7 +573,15 @@ fi
 # "$development_path"/2_*_implementation-plan.md directly.
 case "$next_action" in
   implement|resolve-development-pr)
-    if ! action_context_output="$(repository_context_for_action implementation 2>&1)"; then
+    set +e
+    action_context_output="$(repository_context_for_action implementation 2>&1)"
+    action_context_status=$?
+    set -e
+    if [ "$action_context_status" -ne 0 ]; then
+      if [ "$action_context_status" -ne 2 ]; then
+        echo "ERROR: $action_context_output" >&2
+        exit "$action_context_status"
+      fi
       printf '%s\n' "$action_context_output"
       print_kv TARGET "development:$development_path"
       [ -n "$spec_file" ] && print_kv SPEC_FILE "$spec_file"
