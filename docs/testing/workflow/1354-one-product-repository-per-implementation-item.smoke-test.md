@@ -17,8 +17,14 @@ Before running this smoke test:
       branch under test. This runbook validates the post-merge implementation
       state.
 - [ ] Run from the repository root.
-- [ ] Prepare workflow-hub fixture config with two configured product
-      repository keys, such as `mobile-app` and `admin-portal`.
+- [ ] Export the canonical workflow-hub fixture config and a run-specific
+      temporary directory:
+
+      ```bash
+      export ROUTING_CONFIG="scripts/development-workflow/tests/fixtures/1354-routing/config-workflow-hub.json"
+      export ROUTING_TMP="$(mktemp -d "${TMPDIR:-/tmp}/1354-routing.XXXXXX")"
+      ```
+
 - [ ] Confirm #1353 ownership and release contract behavior is present on the
       branch under test.
 
@@ -31,7 +37,9 @@ Before running this smoke test:
 | Workflow mode | `workflow_hub` fixture |
 | Product repository key A | `mobile-app` |
 | Product repository key B | `admin-portal` |
+| Workflow-hub config fixture | `scripts/development-workflow/tests/fixtures/1354-routing/config-workflow-hub.json` |
 | Product-owned fixture | `scripts/development-workflow/tests/fixtures/1354-routing/product-owned.json` |
+| Product-owned peer fixture | `scripts/development-workflow/tests/fixtures/1354-routing/product-owned-admin-portal.json` |
 | Missing-target fixture | `scripts/development-workflow/tests/fixtures/1354-routing/missing-target.json` |
 | Ambiguous fixture | `scripts/development-workflow/tests/fixtures/1354-routing/ambiguous-target.json` |
 | Multi-target fixture | `scripts/development-workflow/tests/fixtures/1354-routing/multiple-targets.json` |
@@ -50,8 +58,9 @@ Before running this smoke test:
 
    ```bash
    python3 scripts/development-workflow/work-item-repository-routing.py \
+     --config "$ROUTING_CONFIG" \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/product-owned.json \
-     --json | tee /tmp/1354-routing-product-owned.json
+     --json | tee "$ROUTING_TMP/product-owned.json"
    ```
 
 2. Confirm the command exits `0`.
@@ -63,8 +72,9 @@ Before running this smoke test:
      and .continue_allowed == true
      and .selected_product_repo_key == "mobile-app"
      and .artifact_owner == "selected_product_repository"
+     and (.configured_product_repo_keys | sort) == ["admin-portal", "mobile-app"]
      and .stop_reason == null
-   ' /tmp/1354-routing-product-owned.json
+   ' "$ROUTING_TMP/product-owned.json"
    ```
 
 **Expected result**: The output shows `Product owned`, selected key
@@ -79,8 +89,9 @@ owner `selected_product_repository`, and no stop reason.
 
    ```bash
    python3 scripts/development-workflow/work-item-repository-routing.py \
+     --config "$ROUTING_CONFIG" \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/missing-target.json \
-     --json | tee /tmp/1354-routing-missing-target.json
+     --json | tee "$ROUTING_TMP/missing-target.json"
    ```
 
 2. Confirm the command exits `0`.
@@ -92,8 +103,9 @@ owner `selected_product_repository`, and no stop reason.
      and .continue_allowed == false
      and .selected_product_repo_key == null
      and .artifact_owner == "none"
+     and (.configured_product_repo_keys | sort) == ["admin-portal", "mobile-app"]
      and .stop_reason != null
-   ' /tmp/1354-routing-missing-target.json
+   ' "$ROUTING_TMP/missing-target.json"
    ```
 
 4. Run the orchestration regression that exercises the same stop fixture:
@@ -115,8 +127,9 @@ asserts that no product branch, PR, reviewer, CI, or cleanup command is invoked.
 
    ```bash
    python3 scripts/development-workflow/work-item-repository-routing.py \
+     --config "$ROUTING_CONFIG" \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/ambiguous-target.json \
-     --json | tee /tmp/1354-routing-ambiguous-target.json
+     --json | tee "$ROUTING_TMP/ambiguous-target.json"
    ```
 
 2. Confirm the command exits `0`.
@@ -128,8 +141,9 @@ asserts that no product branch, PR, reviewer, CI, or cleanup command is invoked.
      and .continue_allowed == false
      and .selected_product_repo_key == null
      and .artifact_owner == "none"
+     and (.configured_product_repo_keys | sort) == ["admin-portal", "mobile-app"]
      and .required_human_action != null
-   ' /tmp/1354-routing-ambiguous-target.json
+   ' "$ROUTING_TMP/ambiguous-target.json"
    ```
 
 4. Run the orchestration regression that exercises the same stop fixture:
@@ -151,8 +165,9 @@ asserts that no product branch, PR, reviewer, CI, or cleanup command is invoked.
 
    ```bash
    python3 scripts/development-workflow/work-item-repository-routing.py \
+     --config "$ROUTING_CONFIG" \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/multiple-targets.json \
-     --json | tee /tmp/1354-routing-multiple-targets.json
+     --json | tee "$ROUTING_TMP/multiple-targets.json"
    ```
 
 2. Confirm the command exits `0`.
@@ -164,8 +179,9 @@ asserts that no product branch, PR, reviewer, CI, or cleanup command is invoked.
      and .continue_allowed == false
      and .selected_product_repo_key == null
      and .artifact_owner == "none"
+     and (.configured_product_repo_keys | sort) == ["admin-portal", "mobile-app"]
      and (.required_human_action | test("split|narrow"; "i"))
-   ' /tmp/1354-routing-multiple-targets.json
+   ' "$ROUTING_TMP/multiple-targets.json"
    ```
 
 **Expected result**: The output shows `Multiple targets` and instructs the
@@ -183,10 +199,26 @@ child to one selected product repository key. The JSON output includes
    bash scripts/development-workflow/tests/test-workflow-hub-docs.sh
    ```
 
-2. Inspect the fixture directory:
+2. Assert each product-owned child fixture routes to exactly one product
+   repository and none returns `multiple_targets`:
 
    ```bash
-   find scripts/development-workflow/tests/fixtures/1354-routing -maxdepth 1 -type f -name "*.json" -print
+   for fixture in \
+     scripts/development-workflow/tests/fixtures/1354-routing/product-owned.json \
+     scripts/development-workflow/tests/fixtures/1354-routing/product-owned-admin-portal.json
+   do
+     output="$ROUTING_TMP/child-$(basename "$fixture")"
+     python3 scripts/development-workflow/work-item-repository-routing.py \
+       --config "$ROUTING_CONFIG" \
+       --fixture "$fixture" \
+       --json | tee "$output"
+     jq -e '
+       .outcome_code == "product_owned"
+       and .outcome_code != "multiple_targets"
+       and (.selected_product_repo_keys | length) == 1
+       and (.configured_product_repo_keys | sort) == ["admin-portal", "mobile-app"]
+     ' "$output"
+   done
    ```
 
 **Expected result**: The request is not represented as one multi-target child,
@@ -200,8 +232,9 @@ and each product-owned child has exactly one selected product repository key.
 
    ```bash
    python3 scripts/development-workflow/work-item-repository-routing.py \
+     --config "$ROUTING_CONFIG" \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/hub-only.json \
-     --json | tee /tmp/1354-routing-hub-only.json
+     --json | tee "$ROUTING_TMP/hub-only.json"
    ```
 
 2. Confirm the command exits `0`.
@@ -213,7 +246,8 @@ and each product-owned child has exactly one selected product repository key.
      and .continue_allowed == true
      and .selected_product_repo_key == null
      and .artifact_owner == "hub_repository"
-   ' /tmp/1354-routing-hub-only.json
+     and (.configured_product_repo_keys | sort) == ["admin-portal", "mobile-app"]
+   ' "$ROUTING_TMP/hub-only.json"
    ```
 
 **Expected result**: The output shows `Hub only`, routes hub-owned artifacts to
@@ -228,8 +262,9 @@ the hub repository, does not require a product repository selector, and includes
 
    ```bash
    python3 scripts/development-workflow/work-item-repository-routing.py \
+     --config "$ROUTING_CONFIG" \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/single-repo.json \
-     --json | tee /tmp/1354-routing-single-repo.json
+     --json | tee "$ROUTING_TMP/single-repo.json"
    ```
 
 2. Confirm the command exits `0`.
@@ -241,7 +276,7 @@ the hub repository, does not require a product repository selector, and includes
      and .continue_allowed == true
      and .selected_product_repo_key == null
      and .artifact_owner == "current_repository"
-   ' /tmp/1354-routing-single-repo.json
+   ' "$ROUTING_TMP/single-repo.json"
    ```
 
 **Expected result**: The output shows single-repository behavior using the
@@ -254,17 +289,17 @@ current repository as artifact owner and includes `outcome_code=single_repo`.
 1. Run:
 
    ```bash
+   git rev-parse --verify origin/develop-multi-repo-releases >/dev/null
    changed_files="$(git diff --name-only origin/develop-multi-repo-releases...HEAD -- \
      scripts/development-workflow docs/workflow/development-workflow)"
+   test -n "$changed_files"
    match_count=0
-   if [ -n "$changed_files" ]; then
-     printf '%s\n' "$changed_files" > /tmp/1354-routing-changed-files.txt
-     while IFS= read -r file; do
-       if rg -n "#1356|#1357|#1358|#1359|release execution|delivery-bundle|milestone|adoption" "$file"; then
-         match_count=$((match_count + 1))
-       fi
-     done < /tmp/1354-routing-changed-files.txt
-   fi
+   printf '%s\n' "$changed_files" > "$ROUTING_TMP/changed-files.txt"
+   while IFS= read -r file; do
+     if rg -n "#1356|#1357|#1358|#1359|release execution|delivery-bundle|milestone|adoption" "$file"; then
+       match_count=$((match_count + 1))
+     fi
+   done < "$ROUTING_TMP/changed-files.txt"
    test "$match_count" -eq 0
    ```
 
@@ -281,7 +316,9 @@ adoption assurance to #1359.
 - Remove any temporary smoke output files created during the smoke run:
 
   ```bash
-  rm -f /tmp/1354-routing-*.json /tmp/1354-routing-changed-files.txt
+  test -n "$ROUTING_TMP"
+  rm -rf "$ROUTING_TMP"
+  test ! -e "$ROUTING_TMP"
   ```
 
 ---

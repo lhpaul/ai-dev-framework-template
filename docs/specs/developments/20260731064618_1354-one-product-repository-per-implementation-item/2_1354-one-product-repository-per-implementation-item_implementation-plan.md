@@ -95,7 +95,17 @@ product key.
       mode, action/stage, configured product repository keys, optional selected
       key values, and an explicit hub-only marker. Outputs must include a stable
       code, display label, selected key when valid, artifact owner, stop reason,
-      and required human action. The `--json` output contract is:
+      and required human action. The canonical configuration input is either
+      `--config <path>` for deterministic JSON fixtures or `--repo-root <path>`
+      for production resolution from the repo workflow config; explicit
+      `--config` wins over `--repo-root`, and `--repo-root` wins over the current
+      working directory. `--fixture <path>` supplies only item identity, stage,
+      selected keys, and hub-only markers; it must not override configured
+      product repositories. The JSON fixture schema is one object with
+      `repository_mode`, `stage`, `item_identifier`, `hub_only`, and
+      `selected_product_repo_keys` item fields plus configuration from either
+      the separate `--config` object or repo-root resolver output. The `--json`
+      output contract is:
       `outcome_code` string enum (`product_owned`, `hub_only`,
       `missing_target`, `ambiguous_target`, `multiple_targets`,
       `single_repo`); `display_label` string; `continue_allowed` boolean;
@@ -103,16 +113,25 @@ product key.
       enum (`selected_product_repository`, `hub_repository`,
       `current_repository`, `none`); `stop_reason` string or `null`;
       `required_human_action` string or `null`; `configured_product_repo_keys`
-      array of strings; `selected_product_repo_keys` array of strings;
-      `fingerprint` string; and `schema_version` string. The classifier exits
-      `0` when it emits this contract for any classified outcome, `2` for
-      malformed input or unreadable configuration, and nonzero for unexpected
-      runtime errors. Because stop outcomes also exit `0`, every mutating
-      consumer must parse `continue_allowed` and refuse branch, PR, reviewer,
-      CI, or cleanup mutation when it is `false`; no wrapper may treat exit
-      status alone as permission to continue. Classifier and orchestration tests
-      must assert the same field names, nullability, enum values, exit-status
-      semantics, and `continue_allowed` gating. Map to AC1-AC8.
+      array of strings sorted lexicographically; `selected_product_repo_keys`
+      array of strings sorted lexicographically; `fingerprint` string; and
+      `schema_version` string. The `fingerprint` is
+      `sha256(routing-fingerprint.v1 + "\n" + canonical_json)`, where
+      `canonical_json` is UTF-8 JSON with sorted object keys and no insignificant
+      whitespace over `schema_version`, `item_identifier`, `repository_mode`,
+      `stage`, sorted configured keys, sorted selected keys, and `hub_only`.
+      A mutating handoff that carries a fingerprint must reject the handoff when
+      the current classifier fingerprint differs; handoffs that reclassify
+      immediately before mutation treat the fingerprint as diagnostic evidence.
+      The classifier exits `0` when it emits this contract for any classified
+      outcome, `2` for malformed input or unreadable configuration, and nonzero
+      for unexpected runtime errors. Because stop outcomes also exit `0`, every
+      mutating consumer must parse `continue_allowed` and refuse branch, PR,
+      reviewer, CI, or cleanup mutation when it is `false`; no wrapper may treat
+      exit status alone as permission to continue. Classifier and orchestration
+      tests must assert the same field names, nullability, enum values,
+      exit-status semantics, fingerprint behavior, and `continue_allowed`
+      gating. Map to AC1-AC8.
 - [ ] Extend `scripts/development-workflow/workflow-config-resolver.py` or its
       tests only where needed to expose configured product repository keys in a
       reusable form. Do not duplicate key validation outside the resolver; the
@@ -216,6 +235,9 @@ workflow command tests, and smoke/manual review.
       for mirrored agent/skill wording.
 - [ ] Extend `scripts/development-workflow/tests/test-workflow-hub-docs.sh` for
       decomposition and hub-only/product-owned documentation coverage.
+- [ ] Run existing `scripts/development-workflow/tests/test-run-work-router.sh`
+      coverage to guard no-target, single-target, and multi-target routing after
+      shared classifier and next-action changes.
 
 ### Parser-Risk Addendum
 
@@ -269,11 +291,12 @@ workflow metadata and configured product repository keys.
 
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
-| Workflow-hub fixture config | Two product repositories, `mobile-app` and `admin-portal`, with default branches and GitHub slugs | Temporary fixtures inside `scripts/development-workflow/tests/test-work-item-repository-routing.sh` and `test-workflow-orchestration-product-repo-aware.sh` |
-| Product-owned item fixture | One child item with selected key `mobile-app` | Temporary issue JSON/comment fixture in routing tests |
-| Missing-target fixture | Product-owned child with no selected key | Temporary issue JSON/comment fixture in routing tests |
-| Multiple-target fixture | Product-owned child naming both `mobile-app` and `admin-portal` | Temporary issue JSON/comment fixture in routing tests |
-| Hub-only fixture | Hub-owned workflow item with no product key | Temporary issue JSON/comment fixture in routing tests |
+| Workflow-hub fixture config | Two product repositories, `mobile-app` and `admin-portal`, with default branches and GitHub slugs | Persistent fixture `scripts/development-workflow/tests/fixtures/1354-routing/config-workflow-hub.json` used by classifier tests, orchestration tests, and the smoke runbook |
+| Product-owned item fixture | One child item with selected key `mobile-app` | Persistent fixture `scripts/development-workflow/tests/fixtures/1354-routing/product-owned.json` |
+| Product-owned peer fixture | One child item with selected key `admin-portal` | Persistent fixture `scripts/development-workflow/tests/fixtures/1354-routing/product-owned-admin-portal.json` |
+| Missing-target fixture | Product-owned child with no selected key | Persistent fixture `scripts/development-workflow/tests/fixtures/1354-routing/missing-target.json` |
+| Multiple-target fixture | Product-owned child naming both `mobile-app` and `admin-portal` | Persistent fixture `scripts/development-workflow/tests/fixtures/1354-routing/multiple-targets.json` |
+| Hub-only fixture | Hub-owned workflow item with no product key | Persistent fixture `scripts/development-workflow/tests/fixtures/1354-routing/hub-only.json` |
 
 ---
 
@@ -325,6 +348,7 @@ Bash and Python helper patterns in `scripts/development-workflow/`.
    - `bash scripts/development-workflow/tests/test-workflow-hub-smoke-fixtures.sh`
    - `bash scripts/development-workflow/tests/test-workflow-agent-product-repo-guidance.sh`
    - `bash scripts/development-workflow/tests/test-workflow-hub-docs.sh`
+   - `bash scripts/development-workflow/tests/test-run-work-router.sh`
    - `npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "CHANGELOG.md"`
    - `find docs/specs/developments docs/testing/workflow -name "*.md" -print0 | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md`
 8. Update `CHANGELOG.md` under `[Unreleased]` with:
