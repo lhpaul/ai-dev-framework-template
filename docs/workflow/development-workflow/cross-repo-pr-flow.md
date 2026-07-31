@@ -63,8 +63,9 @@ scripts/development-workflow/workflow-next-action.sh \
 ```
 
 The output should name the workflow mode, action repository kind, action
-repository, and GitHub repository. Stop if product repository selection is
-missing or ambiguous.
+repository, and GitHub repository. Follow the canonical
+[implementation routing classifier](repository-modes.md#implementation-routing-classifier)
+contract for routing outcome, artifact owner, fingerprint, and stop evidence.
 
 ## Prepare The Product Checkout
 

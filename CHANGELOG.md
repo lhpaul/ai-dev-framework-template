@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Artifact ownership and product release contract** (#1353): documents and
   validates multi-repository release artifact ownership and product release
   configuration for workflow hubs.
+- **One product repository per implementation item** (#1354): enforce
+  one-target workflow-hub routing before product implementation mutation.
 
 ## [0.40.0] - 2026-07-30
 

@@ -35,8 +35,9 @@ advances exactly one non-epic item through Protocol 91.
    sub-parts into one end-of-run commit, and never commit incomplete, failing,
    or incoherent edits only to satisfy the requirement.
 5. Before implementation mutation in `workflow_hub`, state selected product
-   repository, artifact owner, and mutation target; stop when context is missing
-   or ambiguous.
+   repository, artifact owner, and mutation target. Follow the canonical
+   [implementation routing classifier](../../../docs/workflow/development-workflow/repository-modes.md#implementation-routing-classifier)
+   contract for routing outcome, fingerprint, and stop evidence.
 6. Before branch creation or PR creation for a tracker-backed item, run
    `run-nested-artifact-guard.sh --mode <pre-create|pre-pr> --issue <number>
    --expected-branch <branch> --approved-base <branch>

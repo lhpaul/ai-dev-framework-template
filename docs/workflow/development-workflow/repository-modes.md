@@ -106,10 +106,23 @@ artifact:
 Workflow orchestration scripts keep planning and tracker state in the hub while
 allowing implementation actions to target a selected product repository.
 
+### Implementation Routing Classifier
+
 - `discover-workflow-state.sh`, `workflow-next-action.sh`, and
   `workflow-batch-plan.sh` accept `--repo <name>` and report
   `WORKFLOW_MODE`, `ACTION_REPOSITORY_KIND`, and the selected repository
   identity for each implementation action.
+- `workflow-next-action.sh` runs the one-target repository classifier before
+  implementation mutation and emits `ROUTING_OUTCOME_CODE`,
+  `ROUTING_DISPLAY_LABEL`, `ROUTING_CONTINUE_ALLOWED`,
+  `ROUTING_ARTIFACT_OWNER`, `ROUTING_SELECTED_PRODUCT_REPO_KEY`,
+  `ROUTING_STOP_REASON`, `ROUTING_REQUIRED_HUMAN_ACTION`, and
+  `ROUTING_FINGERPRINT`. `ROUTING_DISPLAY_LABEL` maps from the classifier's
+  `display_label` field. Consumers must continue only when the script succeeds
+  and `ROUTING_CONTINUE_ALLOWED=true`. `missing_target`, `ambiguous_target`,
+  and `multiple_targets` are stop outcomes even though they are reported as
+  structured routing results. `hub_only` may continue with
+  `ROUTING_ARTIFACT_OWNER=hub_repository` and no selected product repository.
 - `pr-review-loop.sh` and `pr-ci-loop.sh` can target implementation PRs outside
   the hub by accepting `--repo <owner/repo>` or `--product-repo <name>`.
 - `post-merge-cleanup.sh --repo <name> <branch>` cleans implementation branches
