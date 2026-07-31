@@ -1,0 +1,63 @@
+name: Delivery bundle
+description: Track a hub-owned customer-facing delivery across component releases.
+title: "delivery-bundle: "
+labels: []
+body:
+  - type: input
+    id: delivery-title
+    attributes:
+      label: Delivery title
+      description: Customer-facing delivery name.
+      placeholder: Mobile and Web July delivery
+    validations:
+      required: true
+  - type: textarea
+    id: delivery-purpose
+    attributes:
+      label: Delivery purpose
+      description: What customer-facing outcome this bundle represents.
+    validations:
+      required: true
+  - type: input
+    id: parent-ref
+    attributes:
+      label: Parent epic or request
+      description: Hub epic, request, or delivery reference.
+      placeholder: "#1352"
+    validations:
+      required: true
+  - type: textarea
+    id: participating-components
+    attributes:
+      label: Participating product components
+      description: Product repository keys or component names expected in the bundle.
+      placeholder: |
+        mobile-app
+        web-app
+    validations:
+      required: true
+  - type: textarea
+    id: known-child-items
+    attributes:
+      label: Known child items
+      description: Source child issues or product work items, when known.
+      placeholder: |
+        #1356
+        #1357
+    validations:
+      required: false
+  - type: input
+    id: finalization-owner
+    attributes:
+      label: Finalization owner
+      description: Operator responsible for completing finalization.
+      placeholder: "@workflow-operator"
+    validations:
+      required: true
+  - type: textarea
+    id: rollout-notes
+    attributes:
+      label: Rollout notes
+      description: Release timing, rollout constraints, or known missing evidence.
+    validations:
+      required: false
