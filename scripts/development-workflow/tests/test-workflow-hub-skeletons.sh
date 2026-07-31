@@ -169,6 +169,18 @@ entries:
 YAML
 run_passes "single_entry_manifest_with_spaced_repo_path" validate_skeleton_manifest "$single_entry_manifest" "$fixture_root"
 
+missing_release_runtime_manifest="$TMP_ROOT/missing-release-runtime.yaml"
+cat > "$missing_release_runtime_manifest" <<'YAML'
+schema_version: 1
+skeleton_role: product_repo
+mode_scope: product_repo_injection
+enforce_release_runtime: true
+entries:
+  - path: AGENTS.md
+    mode_scope: product_repo_injection
+YAML
+run_fails_contains "product_repo_missing_release_runtime_fails" "missing required product release runtime entries" validate_skeleton_manifest "$missing_release_runtime_manifest" "$fixture_root"
+
 empty_manifest="$TMP_ROOT/empty.yaml"
 : > "$empty_manifest"
 run_fails_contains "empty_manifest_fails" "manifest is empty" validate_skeleton_manifest "$empty_manifest" "$fixture_root"

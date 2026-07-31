@@ -15,6 +15,14 @@ SKELETON_MANIFESTS = (
     "template/workflow-hub/skeleton-manifest.yaml",
     "template/product-repo-injection/skeleton-manifest.yaml",
 )
+PRODUCT_RELEASE_RUNTIME_PATHS = {
+    "scripts/development-workflow/workflow-config-resolver.py",
+    "scripts/development-workflow/validate-workflow-config.sh",
+    "scripts/development-workflow/workflow-lib.sh",
+    "scripts/development-workflow/pr-review-loop.sh",
+    "scripts/development-workflow/pr-ci-loop.sh",
+    "scripts/development-workflow/post-merge-cleanup.sh",
+}
 
 
 class ValidationError(Exception):
@@ -48,6 +56,7 @@ def validate_skeleton_manifest(manifest_path: Path, repo_root: Path, parser: Any
     if not isinstance(entries, list) or not entries:
         raise ValidationError(f"{manifest_path}: entries must be a non-empty list")
 
+    product_required_runtime: set[str] = set()
     for index, entry in enumerate(entries, start=1):
         if not isinstance(entry, dict):
             raise ValidationError(f"{manifest_path}: entry {index} must be a mapping")
@@ -64,6 +73,8 @@ def validate_skeleton_manifest(manifest_path: Path, repo_root: Path, parser: Any
 
         if role == "product_repo":
             required = entry.get("required_for_product_repo") is True
+            if path in PRODUCT_RELEASE_RUNTIME_PATHS and required:
+                product_required_runtime.add(path)
             forbidden = (
                 path.startswith("docs/specs/")
                 or "implementation-plan" in path
@@ -76,6 +87,13 @@ def validate_skeleton_manifest(manifest_path: Path, repo_root: Path, parser: Any
         elif entry.get("required_for_product_repo") is True:
             raise ValidationError(
                 f"{manifest_path}: required_for_product_repo is only valid for product_repo manifests"
+            )
+
+    if role == "product_repo" and data.get("enforce_release_runtime") is True:
+        missing_runtime = PRODUCT_RELEASE_RUNTIME_PATHS - product_required_runtime
+        if missing_runtime:
+            raise ValidationError(
+                f"{manifest_path}: missing required product release runtime entries: {', '.join(sorted(missing_runtime))}"
             )
 
 

@@ -33,6 +33,32 @@ choose a different mode and install later workflow-hub automation.
 | CI checks | Current repository | Hub for hub-doc/tool PRs; product repo for product code PRs | Product repo |
 | Reviewer-loop checks | Current repository | Hub for hub-doc/tool PRs; product repo for product code PRs | Product repo |
 
+## Release Artifact Ownership
+
+Release work follows the same repository-mode split, with one owner for every
+release artifact before mutation:
+
+| Release artifact | `single_repo` owner | `workflow_hub` owner | `product_repo` owner |
+| --- | --- | --- | --- |
+| Tracker work | Current repository tracker | Hub tracker | Hub tracker |
+| Specs and plans | Current repository | Hub repository | Hub repository |
+| Product code | Current repository | Selected product repository for product work; hub only for hub-owned workflow code | Product repository |
+| Changelog entries | Current repository | Product repository for product releases; hub for hub-only releases | Product repository |
+| Release branches | Current repository | Product repository for product releases; hub for hub-only releases | Product repository |
+| Tags | Current repository | Product repository for product releases; hub for hub-only releases | Product repository |
+| GitHub Releases | Current repository | Product repository for product releases; hub for hub-only releases | Product repository |
+| Deployment evidence | Current repository | Product repository records source evidence; hub may reference it | Product repository |
+| Delivery manifests | Current repository when a single-repo delivery manifest exists | Hub repository | Hub repository |
+| Product branch and PR cleanup evidence | Current repository | Product repository | Product repository |
+| Tracker reconciliation evidence | Current repository | Hub repository | Hub repository |
+
+The versioned product release contract records only portable, non-secret
+metadata. Local checkout paths, credentials, token values, secret names, secret
+values, and environment-specific account details stay in local-only config.
+Release branch patterns may use `{version}` and `{product_repo}` placeholders
+and must resolve to one valid portable branch name before a release artifact is
+created.
+
 In `single_repo` mode, all artifact ownership stays exactly as it works today:
 the tracker item, spec, plan, implementation branch, PR, CI, reviewer loop, smoke
 runbook, and release evidence are all handled in the same repository.
@@ -179,6 +205,12 @@ The sync-template workflow enforces this boundary through `sync-manifest.yaml`
   `product_repo_injection` entries as skipped.
 - `product_repo` selects `shared` and `product_repo_injection` entries, then
   reports `hub_only` entries as skipped.
+
+Product repository injection includes only the minimum release runtime helpers
+needed to validate product workflow config, run product PR reviewer/CI loops,
+and record product branch or PR cleanup evidence. It does not inject hub-owned
+workflow protocols, historical specs, implementation plans, or hub-only
+runbooks.
 
 Unknown repository roles, missing entry `mode_scope` values, and unknown
 `mode_scope` values fail closed before file changes are applied. Dry-run and

@@ -5,6 +5,16 @@
 
 ---
 
+## Release Evidence Ownership
+
+For workflow-hub product releases, graduation evidence must preserve the
+release ownership contract: delivery manifests and tracker reconciliation
+evidence remain hub-owned, while product changelog, release branch, tag,
+GitHub Release, deployment evidence, and product cleanup evidence remain owned
+by the selected product repository.
+
+---
+
 ## Prerequisites
 
 - All planned sub-items for the epic are discoverable through native GitHub sub-issues when available, or through the legacy `integration-branch:<slug>` label fallback.

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Artifact ownership and product release contract** (#1353): documents and
+  validates multi-repository release artifact ownership and product release
+  configuration for workflow hubs.
+
 ## [0.40.0] - 2026-07-30
 
 ### Added

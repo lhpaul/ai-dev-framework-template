@@ -5,6 +5,22 @@
 
 ---
 
+## Repository Ownership
+
+In `workflow_hub` or `product_repo` mode, validate the selected product release
+contract before creating or mutating product-owned release artifacts such as
+changelog entries, release branches, tags, GitHub Releases, deployment
+evidence, or product cleanup evidence:
+
+```bash
+scripts/development-workflow/validate-workflow-config.sh --repo <product-repo>
+```
+
+Single-repository releases keep the existing current-repository ownership model
+and do not require product release metadata.
+
+---
+
 ## Pre-flight Checks
 
 Before doing anything, verify:

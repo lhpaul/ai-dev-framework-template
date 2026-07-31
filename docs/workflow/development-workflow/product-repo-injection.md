@@ -76,6 +76,22 @@ Product repositories may receive shared docs, local integration wrappers, config
 schema comments, and injection-safe files declared with
 `product_repo_injection`.
 
+For product-owned release work, product repositories may also receive the
+minimum runtime helpers needed to validate non-secret release configuration,
+run product PR reviewer and CI loops, and record product branch or PR cleanup
+evidence:
+
+- `scripts/development-workflow/workflow-config-resolver.py`
+- `scripts/development-workflow/validate-workflow-config.sh`
+- `scripts/development-workflow/workflow-lib.sh`
+- `scripts/development-workflow/pr-review-loop.sh`
+- `scripts/development-workflow/pr-ci-loop.sh`
+- `scripts/development-workflow/post-merge-cleanup.sh`
+
+These files are product release runtime surfaces, not hub coordination state.
+Historical specs, implementation plans, workflow protocols, hub orchestration
+scripts, delivery coordination runbooks, and hub tracker state remain excluded.
+
 ## Apply Injection Safely
 
 Run location: product repository checkout.
