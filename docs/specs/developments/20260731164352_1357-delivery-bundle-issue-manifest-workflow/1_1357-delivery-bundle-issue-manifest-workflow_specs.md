@@ -70,10 +70,11 @@ create a durable bundle before any component evidence is attached:
 
 The delivery manifest is versioned independently from component releases. Each
 accepted bundle change creates a new manifest revision, including bundle
-creation, component add, component update, component removal, and finalization.
-An update must be based on the current manifest revision. Identical replay of
-already accepted evidence is a no-op, while stale writes must be rejected or
-retried without mutating accepted manifest state.
+creation, component add, component update, component removal, readiness changes,
+and finalization. Current-revision validation, idempotent replay detection,
+state mutation, revision increment, and audit-event append must happen as one
+atomic bundle commit. Stale writes must be rejected or retried without mutating
+accepted manifest state.
 
 Each component entry in the manifest must preserve the stable identity and
 outcome contract from component release evidence:
@@ -175,11 +176,13 @@ selected product repository, and a hub-owned delivery bundle is open.
    CI outcome, deployment evidence, cleanup outcome, hub tracker reconciliation
    outcome, and child-item release state.
 3. The workflow compares the incoming component evidence with the current
-   manifest revision and any existing manifest entry for the same component.
-4. The workflow accepts the update and creates the next manifest revision when
-   the incoming evidence is consistent and based on the current manifest
-   revision.
-5. The workflow treats identical replay as a no-op.
+   manifest revision and any existing manifest entry for the same component as
+   part of one atomic update attempt.
+4. The workflow accepts the update, creates the next manifest revision, and
+   appends the audit event in the same atomic bundle commit when the incoming
+   evidence is consistent and based on the current manifest revision.
+5. The workflow treats identical replay as a no-op within the same atomic update
+   attempt.
 6. The workflow reports a stop reason when the incoming evidence conflicts with
    existing bundle state or was based on a stale manifest revision.
 
@@ -238,8 +241,9 @@ delivery bundle.
 
 - Declared components.
 - Accepted component versions or tags.
-- Missing release, deployment, cleanup, or child-status evidence.
-- Conflicting evidence that blocks finalization.
+- Missing routing, release pull request, CI, deployment, cleanup, hub tracker
+  reconciliation, or child-status evidence.
+- Invalid, stale, or conflicting evidence that blocks finalization.
 - Next required action for each component.
 
 **Actions available**:
@@ -276,9 +280,10 @@ all required evidence for those components is available.
    and child-item release evidence.
 4. The workflow verifies the manifest does not contain conflicting component
    versions, stale evidence, or stale readiness computed for an older manifest
-   revision.
-5. The workflow finalizes the bundle and records the completed manifest as the
-   authoritative delivery record.
+   revision as part of the finalization attempt.
+5. The workflow moves the bundle from ready to finalize to finalized, increments
+   the manifest revision, and appends the finalization audit event in one atomic
+   bundle commit.
 
 **Postconditions**: The delivery bundle is finalized and represents the
 customer-facing composition of independently released product components.
@@ -323,7 +328,7 @@ customer-facing composition of independently released product components.
 - Stale component updates must stop or retry against the latest manifest
   revision without overwriting accepted component entries.
 - Every accepted bundle change must create a new manifest revision and audit
-  event.
+  event in the same atomic bundle commit as the accepted state change.
 - Component removal must be recorded as a new manifest revision with a removal
   reason; prior manifest revisions continue to show the component that was
   previously accepted.
@@ -365,7 +370,8 @@ workflow tracker statuses.
   rechecked.
 - `ready_to_finalize` -> `blocked` when an add, update, removal, or final
   readiness recheck finds missing, stale, or conflicting evidence.
-- `ready_to_finalize` -> `finalized` when the operator finalizes the bundle.
+- `ready_to_finalize` -> `finalized` when the operator finalizes the bundle
+  through an atomic finalization commit against the current manifest revision.
 - `finalized` has no automatic transition back to an editable state.
 
 Component evidence states shown inside a bundle:
@@ -375,6 +381,7 @@ Component evidence states shown inside a bundle:
 | `missing` | Missing | Required component evidence has not been supplied. |
 | `partial` | Partial | Some required component evidence is present, but finalization requirements are incomplete. |
 | `conflicting` | Conflicting | Supplied evidence disagrees with accepted manifest state. |
+| `stale` | Stale | Supplied evidence or readiness was computed from an older manifest revision and must be retried or refreshed. |
 | `verified` | Verified | Required component evidence is present and consistent. |
 
 ## Operational Visibility
@@ -402,8 +409,9 @@ Component evidence states shown inside a bundle:
   entries.
 - [ ] Re-applying identical component release evidence to an open bundle is
   safe and does not create duplicate component entries.
-- [ ] Bundle inspection reports missing release, deployment, cleanup, or
-  child-item release evidence for each incomplete declared component.
+- [ ] Bundle inspection reports missing routing, release pull request, CI,
+  deployment, cleanup, hub tracker reconciliation, child-item release evidence,
+  and invalid or stale outcomes for each incomplete declared component.
 - [ ] Bundle updates stop without mutating accepted manifest state when incoming
   component evidence conflicts with existing stable identity fields, version
   state, release correlation key, or release contract revision.
@@ -422,7 +430,9 @@ Component evidence states shown inside a bundle:
 - [ ] Finalization is blocked when any declared component has failed, blocked,
   pending, missing, conflicting, or stale outcomes.
 - [ ] Finalization succeeds only when every declared component has complete and
-  consistent evidence for the current manifest revision.
+  consistent evidence for the current manifest revision, and the ready to
+  finalize to finalized transition records the finalization state, revision
+  increment, and audit event atomically.
 - [ ] Finalization records a completed hub-owned delivery bundle without
   creating a shared suite version or shared release branch.
 - [ ] Existing independently owned component release evidence remains unchanged
