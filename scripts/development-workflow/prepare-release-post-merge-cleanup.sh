@@ -62,6 +62,7 @@ normalize_release_branch() {
   value="${value#refs/heads/}"
   case "$value" in
     release/v*) printf '%s\n' "$value" ;;
+    release/*/*) printf '%s\n' "$value" ;;
     release/*) printf 'release/v%s\n' "${value#release/}" ;;
     */*) printf '%s\n' "$value" ;;
     v*) printf 'release/%s\n' "$value" ;;
@@ -71,10 +72,6 @@ normalize_release_branch() {
 
 release_version_from_branch() {
   local value="$1"
-  if [[ "$value" == release/* ]]; then
-    printf '%s\n' "${value#release/}"
-    return 0
-  fi
   printf '%s\n' "${value##*/}"
 }
 

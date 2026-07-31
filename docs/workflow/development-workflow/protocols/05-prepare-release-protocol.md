@@ -39,9 +39,18 @@ Resolve the release branch by replacing `{version}` with the confirmed version
 and `{product_repo}` with `TARGET_REPO_NAME`. If validation did not emit these
 fields, or the resolved checkout is missing, stop before mutation.
 
+Bind the product checkout and release base before pre-flight:
+
+```bash
+cd "${TARGET_LOCAL_PATH:?}"
+RELEASE_BASE="${TARGET_RELEASE_BASE:?}"
+RELEASE_BRANCH_PATTERN="${TARGET_RELEASE_BRANCH_PATTERN:?}"
+PRODUCT_REPO_NAME="${TARGET_REPO_NAME:?}"
+```
+
 Single-repository releases keep the existing current-repository ownership model
 and may use `RELEASE_BASE=develop` and
-`RELEASE_BRANCH=release/v[X.Y.Z]`.
+`RELEASE_BRANCH_PATTERN=release/v{version}` with an empty `PRODUCT_REPO_NAME`.
 
 ---
 
@@ -71,6 +80,18 @@ If the version was not provided, inspect the `[Unreleased]` section of `CHANGELO
 - **MAJOR** (`X.0.0`): breaking changes
 
 Wait for human confirmation before proceeding.
+
+After confirmation, bind the release branch from the normalized pattern:
+
+```bash
+VERSION="X.Y.Z"
+PRODUCT_REPO_NAME="${PRODUCT_REPO_NAME:-}"
+RELEASE_BRANCH="${RELEASE_BRANCH_PATTERN//\{version\}/$VERSION}"
+RELEASE_BRANCH="${RELEASE_BRANCH//\{product_repo\}/$PRODUCT_REPO_NAME}"
+```
+
+If `RELEASE_BRANCH` is empty or differs from the validated pattern semantics,
+stop before branch creation.
 
 ---
 
