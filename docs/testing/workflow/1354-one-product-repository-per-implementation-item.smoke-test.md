@@ -21,6 +21,7 @@ Before running this smoke test:
       temporary directory:
 
       ```bash
+   set -euo pipefail
       export ROUTING_CONFIG="scripts/development-workflow/tests/fixtures/1354-routing/config-workflow-hub.json"
       export ROUTING_TMP="$(mktemp -d "${TMPDIR:-/tmp}/1354-routing.XXXXXX")"
       ```
@@ -57,6 +58,7 @@ Before running this smoke test:
 1. Run:
 
    ```bash
+   set -euo pipefail
    python3 scripts/development-workflow/work-item-repository-routing.py \
      --config "$ROUTING_CONFIG" \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/product-owned.json \
@@ -67,12 +69,14 @@ Before running this smoke test:
 3. Run:
 
    ```bash
+   set -euo pipefail
    jq -e '
      .outcome_code == "product_owned"
      and .continue_allowed == true
      and .selected_product_repo_key == "mobile-app"
      and .artifact_owner == "selected_product_repository"
      and (.configured_product_repo_keys | sort) == ["admin-portal", "mobile-app"]
+     and has("stop_reason")
      and .stop_reason == null
    ' "$ROUTING_TMP/product-owned.json"
    ```
@@ -88,6 +92,7 @@ owner `selected_product_repository`, and no stop reason.
 1. Run:
 
    ```bash
+   set -euo pipefail
    python3 scripts/development-workflow/work-item-repository-routing.py \
      --config "$ROUTING_CONFIG" \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/missing-target.json \
@@ -98,9 +103,11 @@ owner `selected_product_repository`, and no stop reason.
 3. Run:
 
    ```bash
+   set -euo pipefail
    jq -e '
      .outcome_code == "missing_target"
      and .continue_allowed == false
+     and has("selected_product_repo_key")
      and .selected_product_repo_key == null
      and .artifact_owner == "none"
      and (.configured_product_repo_keys | sort) == ["admin-portal", "mobile-app"]
@@ -111,6 +118,7 @@ owner `selected_product_repository`, and no stop reason.
 4. Run the orchestration regression that exercises the same stop fixture:
 
    ```bash
+   set -euo pipefail
    bash scripts/development-workflow/tests/test-workflow-orchestration-product-repo-aware.sh
    ```
 
@@ -126,6 +134,7 @@ asserts that no product branch, PR, reviewer, CI, or cleanup command is invoked.
 1. Run:
 
    ```bash
+   set -euo pipefail
    python3 scripts/development-workflow/work-item-repository-routing.py \
      --config "$ROUTING_CONFIG" \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/ambiguous-target.json \
@@ -136,9 +145,11 @@ asserts that no product branch, PR, reviewer, CI, or cleanup command is invoked.
 3. Run:
 
    ```bash
+   set -euo pipefail
    jq -e '
      .outcome_code == "ambiguous_target"
      and .continue_allowed == false
+     and has("selected_product_repo_key")
      and .selected_product_repo_key == null
      and .artifact_owner == "none"
      and (.configured_product_repo_keys | sort) == ["admin-portal", "mobile-app"]
@@ -149,6 +160,7 @@ asserts that no product branch, PR, reviewer, CI, or cleanup command is invoked.
 4. Run the orchestration regression that exercises the same stop fixture:
 
    ```bash
+   set -euo pipefail
    bash scripts/development-workflow/tests/test-workflow-orchestration-product-repo-aware.sh
    ```
 
@@ -164,6 +176,7 @@ asserts that no product branch, PR, reviewer, CI, or cleanup command is invoked.
 1. Run:
 
    ```bash
+   set -euo pipefail
    python3 scripts/development-workflow/work-item-repository-routing.py \
      --config "$ROUTING_CONFIG" \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/multiple-targets.json \
@@ -174,9 +187,11 @@ asserts that no product branch, PR, reviewer, CI, or cleanup command is invoked.
 3. Run:
 
    ```bash
+   set -euo pipefail
    jq -e '
      .outcome_code == "multiple_targets"
      and .continue_allowed == false
+     and has("selected_product_repo_key")
      and .selected_product_repo_key == null
      and .artifact_owner == "none"
      and (.configured_product_repo_keys | sort) == ["admin-portal", "mobile-app"]
@@ -196,6 +211,7 @@ child to one selected product repository key. The JSON output includes
 1. Run the docs regression test:
 
    ```bash
+   set -euo pipefail
    bash scripts/development-workflow/tests/test-workflow-hub-docs.sh
    ```
 
@@ -203,6 +219,7 @@ child to one selected product repository key. The JSON output includes
    repository and none returns `multiple_targets`:
 
    ```bash
+   set -euo pipefail
    for fixture in \
      scripts/development-workflow/tests/fixtures/1354-routing/product-owned.json \
      scripts/development-workflow/tests/fixtures/1354-routing/product-owned-admin-portal.json
@@ -231,6 +248,7 @@ and each product-owned child has exactly one selected product repository key.
 1. Run:
 
    ```bash
+   set -euo pipefail
    python3 scripts/development-workflow/work-item-repository-routing.py \
      --config "$ROUTING_CONFIG" \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/hub-only.json \
@@ -241,9 +259,11 @@ and each product-owned child has exactly one selected product repository key.
 3. Run:
 
    ```bash
+   set -euo pipefail
    jq -e '
      .outcome_code == "hub_only"
      and .continue_allowed == true
+     and has("selected_product_repo_key")
      and .selected_product_repo_key == null
      and .artifact_owner == "hub_repository"
      and (.configured_product_repo_keys | sort) == ["admin-portal", "mobile-app"]
@@ -261,6 +281,7 @@ the hub repository, does not require a product repository selector, and includes
 1. Run:
 
    ```bash
+   set -euo pipefail
    python3 scripts/development-workflow/work-item-repository-routing.py \
      --config "$ROUTING_CONFIG" \
      --fixture scripts/development-workflow/tests/fixtures/1354-routing/single-repo.json \
@@ -271,9 +292,11 @@ the hub repository, does not require a product repository selector, and includes
 3. Run:
 
    ```bash
+   set -euo pipefail
    jq -e '
      .outcome_code == "single_repo"
      and .continue_allowed == true
+     and has("selected_product_repo_key")
      and .selected_product_repo_key == null
      and .artifact_owner == "current_repository"
    ' "$ROUTING_TMP/single-repo.json"
@@ -289,6 +312,7 @@ current repository as artifact owner and includes `outcome_code=single_repo`.
 1. Run:
 
    ```bash
+   set -euo pipefail
    git rev-parse --verify origin/develop-multi-repo-releases >/dev/null
    changed_files="$(git diff --name-only origin/develop-multi-repo-releases...HEAD -- \
      scripts/development-workflow docs/workflow/development-workflow)"
@@ -296,8 +320,16 @@ current repository as artifact owner and includes `outcome_code=single_repo`.
    match_count=0
    printf '%s\n' "$changed_files" > "$ROUTING_TMP/changed-files.txt"
    while IFS= read -r file; do
-     if rg -n "#1356|#1357|#1358|#1359|release execution|delivery-bundle|milestone|adoption" "$file"; then
+     set +e
+     rg -n "#1356|#1357|#1358|#1359|release execution|delivery-bundle|milestone|adoption" "$file"
+     rg_status=$?
+     set -e
+     if [ "$rg_status" -eq 0 ]; then
        match_count=$((match_count + 1))
+     elif [ "$rg_status" -eq 1 ]; then
+       :
+     else
+       exit "$rg_status"
      fi
    done < "$ROUTING_TMP/changed-files.txt"
    test "$match_count" -eq 0
@@ -316,6 +348,7 @@ adoption assurance to #1359.
 - Remove any temporary smoke output files created during the smoke run:
 
   ```bash
+   set -euo pipefail
   test -n "$ROUTING_TMP"
   rm -rf "$ROUTING_TMP"
   test ! -e "$ROUTING_TMP"

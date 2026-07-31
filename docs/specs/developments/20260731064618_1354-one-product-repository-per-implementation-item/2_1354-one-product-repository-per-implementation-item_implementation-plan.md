@@ -128,10 +128,14 @@ product key.
       for unexpected runtime errors. Because stop outcomes also exit `0`, every
       mutating consumer must parse `continue_allowed` and refuse branch, PR,
       reviewer, CI, or cleanup mutation when it is `false`; no wrapper may treat
-      exit status alone as permission to continue. Classifier and orchestration
-      tests must assert the same field names, nullability, enum values,
-      exit-status semantics, fingerprint behavior, and `continue_allowed`
-      gating. Map to AC1-AC8.
+      exit status alone as permission to continue. Consumers may mutate only
+      after exit status `0`, valid JSON, successful schema validation, and
+      `continue_allowed` exactly equal to `true`; they must stop without
+      mutating on nonzero exits, parse errors, schema errors, missing fields,
+      invalid fields, `false`, or any other condition. Classifier and
+      orchestration tests must assert the same field names, nullability, enum
+      values, exit-status semantics, fingerprint behavior, fail-closed handling,
+      and `continue_allowed` gating. Map to AC1-AC8.
 - [ ] Extend `scripts/development-workflow/workflow-config-resolver.py` or its
       tests only where needed to expose configured product repository keys in a
       reusable form. Do not duplicate key validation outside the resolver; the
@@ -140,8 +144,9 @@ product key.
       implementation-stage decisions in `workflow_hub` call the shared
       classifier before branch, PR, reviewer, CI, or cleanup routing. It should
       print the routing outcome, selected product repository key, artifact owner,
-      and stop evidence, then gate mutation exclusively on `continue_allowed`.
-      Map to AC1-AC4 and AC7.
+      and stop evidence. Consumers may mutate only after exit status `0`, schema
+      validation, and `continue_allowed` exactly equal to `true`. Map to AC1-AC4
+      and AC7.
 - [ ] Update `scripts/development-workflow/discover-workflow-state.sh`,
       `run-item-scope-resolver.sh`, `run-epic-scope-resolver.sh`, and relevant
       run-item/run-items handoff code so summaries preserve the classifier
