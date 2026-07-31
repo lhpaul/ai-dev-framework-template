@@ -30,18 +30,11 @@ Related references:
 ## Release Artifact Owners
 
 Before a hub-managed release creates or mutates product release artifacts,
-validate the selected product repository contract and record the artifact owner:
-
-| Release artifact | Owner in workflow-hub product work |
-| --- | --- |
-| Changelog entry | Selected product repository |
-| Release branch | Selected product repository |
-| Tag | Selected product repository |
-| GitHub Release | Selected product repository |
-| Deployment evidence | Selected product repository records source evidence; hub may reference it |
-| Delivery manifest | Workflow hub |
-| Product branch or PR cleanup evidence | Selected product repository |
-| Tracker reconciliation evidence | Workflow hub |
+validate the selected product repository contract and record the artifact owner.
+Use [Repository modes](repository-modes.md#release-artifact-ownership) as the
+canonical ownership table for release branches, product cleanup evidence, and
+Tracker reconciliation evidence; this flow only adds the hub checkout execution
+step.
 
 Run from the hub checkout:
 

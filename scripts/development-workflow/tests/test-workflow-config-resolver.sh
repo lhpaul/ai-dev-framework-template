@@ -109,6 +109,9 @@ run_contains "single_repo_context_mode" "WORKFLOW_MODE=single_repo" "$single_rep
 run_contains "single_repo_context_github_repo" "TARGET_GITHUB_REPO=example/mobile-app.extra" "$single_repo_output"
 run_contains "single_repo_context_local_path" "TARGET_LOCAL_PATH=$single_repo_dir" "$single_repo_output"
 run_contains "single_repo_context_default_branch" "TARGET_DEFAULT_BRANCH=main" "$single_repo_output"
+run_contains "single_repo_release_default_tag_owner" "TARGET_RELEASE_TAG_OWNER=current_repo" "$single_repo_output"
+run_contains "single_repo_release_default_changelog_owner" "TARGET_RELEASE_CHANGELOG_OWNER=current_repo" "$single_repo_output"
+run_contains "single_repo_release_default_tracker_owner" "TARGET_RELEASE_TRACKER_RECONCILIATION_OWNER=current_repo" "$single_repo_output"
 validator_output="$(bash "$VALIDATOR" --repo-root "$single_repo_dir")"
 run_contains "validate_workflow_config_sh_repo_root_arg" "TARGET_REPO_NAME=single-repo" "$validator_output"
 
@@ -376,6 +379,41 @@ run_fails_contains \
   "workflow_hub_release_rejects_secret_key" \
   "contains local-only field(s): release.secret_name" \
   python3 "$RESOLVER" resolve --repo-root "$secret_release_dir" --repo mobile-app
+
+password_release_dir="$(fixture_dir password-release)"
+cat > "$password_release_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        password: hunter2
+YAML
+run_fails_contains \
+  "workflow_hub_release_rejects_password_key" \
+  "contains local-only field(s): release.password" \
+  python3 "$RESOLVER" resolve --repo-root "$password_release_dir" --repo mobile-app
+
+api_key_release_dir="$(fixture_dir api-key-release)"
+cat > "$api_key_release_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        external:
+          apiKey: placeholder
+YAML
+run_fails_contains \
+  "workflow_hub_release_rejects_api_key" \
+  "contains forbidden local or secret value(s): external.apiKey" \
+  python3 "$RESOLVER" resolve --repo-root "$api_key_release_dir" --repo mobile-app
 
 token_release_dir="$(fixture_dir token-release)"
 cat > "$token_release_dir/.ai-dev-workflow.yaml" <<'YAML'

@@ -10,10 +10,21 @@
 In `workflow_hub` or `product_repo` mode, validate the selected product release
 contract before creating or mutating product-owned release artifacts such as
 changelog entries, release branches, tags, GitHub Releases, deployment
-evidence, or product cleanup evidence:
+evidence, or product cleanup evidence.
+
+From the hub checkout in `workflow_hub` mode, pass the selected product
+repository name:
 
 ```bash
 scripts/development-workflow/validate-workflow-config.sh --repo <product-repo>
+```
+
+From a product checkout in `product_repo` mode, omit `--repo`; validation reads
+`product_repo.release` from the current repository config or applies the
+product-repository defaults:
+
+```bash
+scripts/development-workflow/validate-workflow-config.sh
 ```
 
 Single-repository releases keep the existing current-repository ownership model

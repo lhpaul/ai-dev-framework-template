@@ -36,6 +36,10 @@ LOCAL_ONLY_KEYS = {
     "checkout_root",
     "private_key_path",
     "private_key",
+    "api_key",
+    "access_key",
+    "password",
+    "passphrase",
     "secret_name",
     "secret_value",
     "secret",
@@ -388,7 +392,11 @@ def forbidden_release_value_paths(value: Any, prefix: str = "") -> set[str]:
     if isinstance(value, dict):
         for key, child in value.items():
             key_path = f"{prefix}.{key}" if prefix else str(key)
-            if key in LOCAL_ONLY_KEYS or re.search(r"(secret|token|credential)", str(key), re.I):
+            if key in LOCAL_ONLY_KEYS or re.search(
+                r"(secret|token|credential|password|passphrase|api[_-]?key|access[_-]?key)",
+                str(key),
+                re.I,
+            ):
                 found.add(key_path)
             found.update(forbidden_release_value_paths(child, key_path))
         return found
