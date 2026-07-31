@@ -413,6 +413,25 @@ workflow_pr_selected_repo_output="$(
 run_contains "workflow_pr_selected_repo_rechecks_branch_identity" "NEXT_ACTION=resolve-repository-selection" "$workflow_pr_selected_repo_output"
 run_contains "workflow_pr_selected_repo_hub_only_conflict" "ROUTING_OUTCOME_CODE=ambiguous_target" "$workflow_pr_selected_repo_output"
 
+provider_fail_bin="$TMP_ROOT/provider-fail-bin"
+mkdir -p "$provider_fail_bin"
+cat > "$provider_fail_bin/awk" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "-v" ] && [ "${2:-}" = "section=issue_tracker" ]; then
+  echo "simulated provider resolver failure" >&2
+  exit 2
+fi
+exec /usr/bin/awk "$@"
+SH
+chmod +x "$provider_fail_bin/awk"
+run_fails_contains \
+  "workflow_provider_resolution_failure_fails_closed" \
+  "ERROR: could not resolve issue tracker provider" \
+  env PATH="$provider_fail_bin:$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$typed_hub_dir" \
+    --repo mobile-app \
+    --development "$workflow_dev"
+
 discover_output="$(
   PATH="$stub_bin:$PATH" "$REPO_ROOT/scripts/development-workflow/discover-workflow-state.sh" \
     --repo-root "$hub_dir" \

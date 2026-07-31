@@ -121,7 +121,10 @@ repo_root_tracker_provider() {
   local raw_provider=""
 
   if [ -f "$config_file" ]; then
-    raw_provider="$(workflow_config_provider issue_tracker "$config_file")"
+    if ! raw_provider="$(workflow_config_provider issue_tracker "$config_file")"; then
+      echo "ERROR: could not resolve issue tracker provider for $config_file." >&2
+      return 2
+    fi
   fi
   workflow_normalize_issue_tracker_provider "$raw_provider"
 }
@@ -132,7 +135,9 @@ implementation_item_is_hub_only() {
   local tracker_type=""
 
   issue_number="$(implementation_issue_number 2>/dev/null)" || return 1
-  tracker_provider="$(repo_root_tracker_provider)"
+  if ! tracker_provider="$(repo_root_tracker_provider)"; then
+    return 2
+  fi
   if [ "$tracker_provider" != "github_projects" ]; then
     return 1
   fi
