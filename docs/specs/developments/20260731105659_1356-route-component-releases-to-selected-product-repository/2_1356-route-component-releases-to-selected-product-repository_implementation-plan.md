@@ -99,27 +99,46 @@ evidence, or tracker state.
       contract containing selected product key, canonical repository identity,
       local checkout path/source, release base, release branch pattern, artifact
       owners, routing outcome code, release correlation key, contract revision
-      or digest, and human action when blocked. Map to AC1-AC4 and AC8.
+      field named `contract_revision`, and human action when blocked. The same
+      `contract_revision` field name and string format must appear in shell
+      output, JSON output, evidence records, cleanup validation, smoke tests,
+      and fixtures. Classified stop outcomes must emit structured output with
+      `mutation_allowed=false`; malformed input and internal helper failures
+      must exit nonzero. Map to AC1-AC4 and AC8.
 - [ ] Extend `scripts/development-workflow/workflow-config-resolver.py` only as
       needed to expose contract revision or digest and any missing normalized
       release target fields. Keep local checkout fields sourced from local-only
       config and keep forbidden local/secret validation in the existing release
       contract path. Map to AC1-AC4.
 - [ ] Extend `scripts/development-workflow/prepare-release-post-merge-cleanup.sh`
-      with `--repo <name>`, `--repo-root <path>`, and an optional
-      `--evidence-file <path>` argument. In workflow-hub mode, it must resolve
-      the product release target before querying merged release PRs or deleting
-      release branches, run product branch/tag cleanup in the selected product
-      repository, then return to the hub for tracker release stamping and status
-      transitions. It must validate the persisted release correlation key and
-      contract revision before mutation when an evidence file is provided. Map
-      to AC5 and AC6.
+      with `--repo <name>`, `--repo-root <path>`, and `--evidence-file <path>`
+      arguments. In workflow-hub mode, component release cleanup must require a
+      persisted evidence file or an equivalent mandatory target-binding file
+      before deleting branches, tags, cleanup evidence, or tracker state. The
+      helper must resolve the current product release target first, reject any
+      caller-supplied `--repo-root` that differs from the resolved hub checkout,
+      validate canonical repository identity, release correlation key, and
+      `contract_revision` against the current resolver output, then run product
+      branch/tag cleanup in the selected product repository before returning to
+      the hub for tracker release stamping and status transitions. Map to AC5
+      and AC6.
 - [ ] Add `scripts/development-workflow/component-release-evidence.sh` as a
       focused helper for rendering and validating the component release evidence
       record. The helper should accept explicit fields from release preparation
-      and cleanup, validate required values and allowed outcome enums, and write
-      deterministic JSON that later #1357 delivery-bundle reconciliation can
-      consume. Map to AC8.
+      and cleanup, derive target identity from the canonical resolver output or
+      persisted target binding, validate required values, allowed outcome enums,
+      and cross-field relationships, then write deterministic JSON that later
+      #1357 delivery-bundle reconciliation can consume. It must reject
+      mismatched product repository key, canonical repository identity, artifact
+      owner, release correlation key, or `contract_revision` before writing
+      evidence. Map to AC8.
+- [ ] Add per-release cleanup concurrency control to the release cleanup path.
+      Use a product-repository remote lock or lease keyed by release correlation
+      key before deleting remote release branches, tags, cleanup evidence, or
+      updating hub tracker state. Duplicate cleanup invocations for the same
+      correlation key must either observe the existing completed evidence and
+      exit idempotently or fail before mutation with a clear lock/lease owner
+      message. Map to AC5 and AC6.
 - [ ] Keep `scripts/development-workflow/post-merge-cleanup.sh` product-owned
       implementation cleanup behavior intact. Add documentation or a guard only
       if needed to distinguish implementation branch cleanup from release branch
@@ -182,15 +201,19 @@ workflow command tests, and smoke/manual release runbook verification.
    or tracker mutation and produce the canonical routing outcome code. Maps to
    AC2 and AC3.
 4. Release cleanup with a matching evidence file validates repository identity,
-   release correlation key, and contract revision before product cleanup
+   release correlation key, and `contract_revision` before product cleanup
    mutation. Maps to AC5.
 5. Release cleanup with mismatched persisted evidence stops before mutation and
    leaves hub tracker state unchanged. Maps to AC5 and AC6.
 6. Component release evidence validation accepts complete `pending`,
    `completed`, `failed`, and `blocked` records, rejects invalid routing,
-   release, CI, deployment, and cleanup outcomes, and requires the hub tracker
-   reference. Maps to AC8.
-7. Prepare-release documentation preserves single-repository release and hotfix
+   release, CI, deployment, and cleanup outcomes, rejects repository-key,
+   artifact-owner, correlation, and `contract_revision` cross-field
+   mismatches, and requires the hub tracker reference. Maps to AC8.
+7. Duplicate cleanup invocations for the same release correlation key acquire
+   only one active lock/lease and keep completed reruns idempotent. Maps to AC5
+   and AC6.
+8. Prepare-release documentation preserves single-repository release and hotfix
    behavior while adding workflow-hub product release target resolution. Maps to
    AC7.
 
@@ -204,10 +227,11 @@ workflow command tests, and smoke/manual release runbook verification.
 - [ ] Add `scripts/development-workflow/tests/test-component-release-target.sh`
       for release target routing outcomes and fail-closed mutation boundaries.
 - [ ] Add `scripts/development-workflow/tests/test-component-release-evidence.sh`
-      for evidence record validation and deterministic JSON output.
+      for evidence record validation, cross-field relationship checks, and
+      deterministic JSON output.
 - [ ] Extend `scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh`
       for workflow-hub product release cleanup with matching and mismatched
-      evidence.
+      evidence plus duplicate/concurrent cleanup lock behavior.
 - [ ] Extend `scripts/development-workflow/tests/test-workflow-hub-product-repo-commands.sh`
       for product checkout resolution and local-only config errors.
 - [ ] Extend `scripts/development-workflow/tests/test-workflow-agent-product-repo-guidance.sh`
@@ -231,8 +255,9 @@ release branch/correlation parsing, and structured release target output.
   - Cleanup outcomes: `not_started`, `partial`, `complete`, `blocked`, empty
     value, and unknown value.
   - Correlation identity: matching repository/correlation/revision values,
-    mismatched repository identity, mismatched correlation key, mismatched
-    contract revision, and missing persisted evidence.
+    mismatched repository identity, mismatched artifact owner, mismatched
+    correlation key, mismatched `contract_revision`, and missing persisted
+    evidence.
   - Branch pattern carry-through: default `release/v{version}`, product pattern
     using `{product_repo}`, unknown placeholder, and unresolved placeholder.
 - **Unit test mapping**:
@@ -247,21 +272,36 @@ release branch/correlation parsing, and structured release target output.
 - **Suppression semantics**: Not applicable. This feature does not introduce
   inline suppression directives.
 
-### Concurrent-Event-Source Addendum
+### Cleanup Concurrency And Idempotency Addendum
 
-- **Shared mutable state guards**: Not applicable; helpers are synchronous
-  command-line tools with process-local state.
-- **Re-entrancy / in-flight tracking**: Not applicable; no long-running release
-  daemon or concurrent queue is introduced.
-- **Event deduplication**: Not applicable; no event source is introduced.
+This feature does not introduce event listeners, sockets, timers, or async
+queues, but release cleanup can still be invoked concurrently by two operators
+or CI jobs. The implementation must therefore add a per-release concurrency
+control for cleanup and tracker reconciliation.
+
+- **Shared mutable state guards**: Acquire a product-repository remote lock or
+  lease keyed by the release correlation key before deleting remote branches,
+  tags, cleanup evidence, or updating hub tracker state. The lock evidence must
+  name the product repository, correlation key, `contract_revision`, caller, and
+  expiry or completion state.
+- **Re-entrancy / in-flight tracking**: A second cleanup invocation for the same
+  correlation key must detect an active lock and stop before mutation unless it
+  observes completed evidence for the same repository identity and
+  `contract_revision`, in which case it exits idempotently.
+- **Event deduplication**: Duplicate cleanup attempts for the same release
+  correlation key are deduplicated by the lock/lease and persisted evidence.
 - **Listener and resource cleanup**: Not applicable; no listeners, timers, or
-  handles are introduced.
-- **Race conditions at initialization**: Not applicable; helpers read current
-  file and GitHub state at invocation start.
-- **Race conditions at teardown**: Not applicable; cleanup runs as a bounded
-  command and exits.
+  handles are introduced. Lock release or completion marking is part of the
+  bounded cleanup command.
+- **Race conditions at initialization**: The cleanup helper must acquire the
+  lock before any mutable product or hub tracker operation. Validation without a
+  lock is read-only.
+- **Race conditions at teardown**: Cleanup must mark completed evidence before
+  releasing the lock. If cleanup fails, the lock/lease remains visible with the
+  failure reason or expires according to the documented lease policy.
 - **Error propagation across async boundaries**: Not applicable; scripts are
-  synchronous Bash/Python commands.
+  synchronous Bash/Python commands, but lock acquisition and release failures
+  must return nonzero and stop later mutation.
 
 ---
 
@@ -272,7 +312,7 @@ release branch/correlation parsing, and structured release target output.
 | Workflow hub release config | Valid hub with two product repositories, one explicit release pattern, one default release pattern, and matching local-only checkout entries | Temporary fixtures in `test-component-release-target.sh` and `test-workflow-config-resolver.sh` |
 | Invalid release config | Missing selection, multiple selection, unknown product key, invalid artifact owner, forbidden local path in versioned contract | Temporary fixtures in `test-component-release-target.sh` |
 | Evidence records | Complete pending/completed/failed/blocked component release records plus invalid enum and missing-field variants | Temporary fixtures in `test-component-release-evidence.sh` |
-| Cleanup state | Matching and mismatched persisted repository identity, release correlation key, and contract revision | Temporary fixtures in `test-prepare-release-tracker-cleanup.sh` |
+| Cleanup state | Matching and mismatched persisted repository identity, release correlation key, `contract_revision`, and lock/lease records | Temporary fixtures in `test-prepare-release-tracker-cleanup.sh` |
 
 ---
 
@@ -303,7 +343,8 @@ release branch/correlation parsing, and structured release target output.
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| Release preparation and cleanup resolve different product targets | Med | High | Persist canonical repository identity, release correlation key, and contract revision during preparation; cleanup must validate all three before mutation. |
+| Release preparation and cleanup resolve different product targets | Med | High | Persist canonical repository identity, release correlation key, and `contract_revision` during preparation; cleanup must validate all three before mutation. |
+| Concurrent cleanup invocations mutate the same release artifacts | Med | High | Use a per-release remote lock/lease keyed by release correlation and make completed reruns idempotent. |
 | Product local checkout leaks into versioned release contract | Low | High | Reuse resolver forbidden-data checks and source local checkout only from local config. |
 | Evidence record becomes too loose for #1357 delivery bundles | Med | Med | Validate required fields and allowed outcome enums in `component-release-evidence.sh`; include smoke and unit tests for every outcome. |
 | Existing single-repository release flow regresses | Low | High | Keep `single_repo_release` as the first routing outcome and add tests that run without `--repo`. |
@@ -328,7 +369,8 @@ existing Bash/Python helper style in `scripts/development-workflow/`.
    - Verify with focused fixtures before touching release cleanup.
 2. Add component release evidence:
    - Add `component-release-evidence.sh`.
-   - Validate required fields and allowed enum values.
+   - Validate required fields, allowed enum values, and cross-field
+     relationships against resolver output or persisted binding.
    - Ensure output is deterministic JSON and includes the release correlation
      key and hub tracker reference.
 3. Update release cleanup:
@@ -336,6 +378,8 @@ existing Bash/Python helper style in `scripts/development-workflow/`.
      evidence-file options.
    - Resolve product target before querying/deleting release branches.
    - Validate persisted release target before mutation.
+   - Acquire the per-release lock/lease before product branch/tag cleanup or
+     hub tracker reconciliation.
    - Keep tracker release stamping hub-owned and after product cleanup
      confirmation.
 4. Update prepare-release protocol and command guidance:
@@ -349,7 +393,7 @@ existing Bash/Python helper style in `scripts/development-workflow/`.
    - Extend release cleanup, config resolver, product repo commands, docs, and
      agent guidance tests.
 7. Run verification:
-   - `bash -n scripts/development-workflow/component-release-target.sh scripts/development-workflow/component-release-evidence.sh scripts/development-workflow/prepare-release-post-merge-cleanup.sh`
+   - `for script in scripts/development-workflow/component-release-target.sh scripts/development-workflow/component-release-evidence.sh scripts/development-workflow/prepare-release-post-merge-cleanup.sh; do bash -n "$script"; done`
    - `bash scripts/development-workflow/tests/test-component-release-target.sh`
    - `bash scripts/development-workflow/tests/test-component-release-evidence.sh`
    - `bash scripts/development-workflow/tests/test-workflow-config-resolver.sh`

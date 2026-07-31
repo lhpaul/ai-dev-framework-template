@@ -12,13 +12,17 @@
 
 Before running this smoke test:
 
-- [ ] You are in the workflow hub checkout.
-- [ ] A workflow-hub fixture or test repository configuration has at least two
-      product repositories and local-only checkout entries for the selected
-      product repository.
-- [ ] The selected product repository checkout is clean.
 - [ ] The implementation branch for #1356 is checked out or merged into the
       test branch.
+- [ ] Steps 2 through 5 are run from the workflow hub checkout.
+- [ ] Step 1 has a single-repository fixture or temporary checkout available.
+- [ ] Steps 2 through 5 have a workflow-hub fixture or test repository
+      configuration with at least two product repositories and local-only
+      checkout entries for the selected product repository.
+- [ ] The selected product repository checkout is clean.
+- [ ] Hub tracker mutation uses a mocked tracker or disposable fixture issue.
+      The smoke test must reject live work-item references unless the operator
+      passes an explicit destructive-test option supported by the implementation.
 
 ---
 
@@ -31,7 +35,7 @@ Before running this smoke test:
 | Alternate product repository | A second configured product repository key |
 | Release version | Test version such as `9.9.9-test` |
 | Release correlation key | Stable value for the test release attempt |
-| Hub tracker reference | GitHub issue #1356 or a fixture tracker URL |
+| Hub tracker reference | `test:*`, `mock:*`, or `fixture:*` tracker reference only |
 
 ---
 
@@ -47,6 +51,19 @@ Before running this smoke test:
 3. Confirm the routing outcome is `single_repo_release`.
 4. Confirm no product repository selector is required.
 
+```bash
+SINGLE_REPO_FIXTURE="/tmp/1356-single-repo"
+TARGET_JSON="/tmp/1356-single-repo-target.json"
+
+scripts/development-workflow/component-release-target.sh \
+  --repo-root "$SINGLE_REPO_FIXTURE" \
+  --json > "$TARGET_JSON"
+
+jq -e '.routing_outcome == "single_repo_release"' "$TARGET_JSON"
+jq -e '.selected_product_repo_key == null' "$TARGET_JSON"
+jq -e '.mutation_allowed == true' "$TARGET_JSON"
+```
+
 **Expected result**: The release path remains current-repository owned and does
 not require workflow-hub product selection.
 
@@ -61,7 +78,30 @@ not require workflow-hub product selection.
 4. Confirm the output names the selected product repository, canonical
    repository identity, local checkout source, release base, release branch
    pattern, product artifact owners, hub tracker owner, release correlation key,
-   and contract revision or digest.
+   and `contract_revision`.
+
+```bash
+HUB_FIXTURE="/tmp/1356-workflow-hub"
+PRODUCT_REPO_KEY="mobile-app"
+TARGET_JSON="/tmp/1356-component-target.json"
+
+scripts/development-workflow/component-release-target.sh \
+  --repo "$PRODUCT_REPO_KEY" \
+  --repo-root "$HUB_FIXTURE" \
+  --require-local \
+  --json > "$TARGET_JSON"
+
+jq -e '.routing_outcome == "component_release_routed"' "$TARGET_JSON"
+jq -e '.selected_product_repo_key == env.PRODUCT_REPO_KEY' "$TARGET_JSON"
+jq -e '.canonical_repository_identity | length > 0' "$TARGET_JSON"
+jq -e '.local_checkout.path | length > 0' "$TARGET_JSON"
+jq -e '.release_base | length > 0' "$TARGET_JSON"
+jq -e '.release_branch_pattern | length > 0' "$TARGET_JSON"
+jq -e '.artifact_owners.release == "product_repository"' "$TARGET_JSON"
+jq -e '.artifact_owners.tracker == "hub_repository"' "$TARGET_JSON"
+jq -e '.release_correlation_key | length > 0' "$TARGET_JSON"
+jq -e '.contract_revision | length > 0' "$TARGET_JSON"
+```
 
 **Expected result**: Product release artifacts are assigned only to the selected
 product repository, while tracker reconciliation remains hub-owned.
@@ -78,6 +118,51 @@ product repository, while tracker reconciliation remains hub-owned.
 5. Repeat with an invalid release artifact owner.
 6. Repeat with a selected product whose local checkout is required but
    unavailable.
+
+```bash
+HUB_FIXTURE="/tmp/1356-workflow-hub"
+
+for fixture in \
+  missing-product-selection \
+  multiple-product-targets \
+  unknown-product-repository \
+  ambiguous-product-selection \
+  invalid-release-contract \
+  unavailable-product-repository-checkout
+do
+  TARGET_JSON="/tmp/1356-${fixture}.json"
+
+  scripts/development-workflow/component-release-target.sh \
+    --repo-root "$HUB_FIXTURE/fixtures/$fixture" \
+    --require-local \
+    --json > "$TARGET_JSON"
+
+  case "$fixture" in
+    missing-product-selection)
+      jq -e '.routing_outcome == "missing_product_selection"' "$TARGET_JSON"
+      ;;
+    multiple-product-targets)
+      jq -e '.routing_outcome == "multiple_product_targets"' "$TARGET_JSON"
+      ;;
+    unknown-product-repository)
+      jq -e '.routing_outcome == "unknown_product_repository"' "$TARGET_JSON"
+      ;;
+    ambiguous-product-selection)
+      jq -e '.routing_outcome == "ambiguous_product_selection"' "$TARGET_JSON"
+      ;;
+    invalid-release-contract)
+      jq -e '.routing_outcome == "invalid_release_contract"' "$TARGET_JSON"
+      ;;
+    unavailable-product-repository-checkout)
+      jq -e \
+        '.routing_outcome == "unavailable_product_repository_checkout"' \
+        "$TARGET_JSON"
+      ;;
+  esac
+
+  jq -e '.mutation_allowed == false' "$TARGET_JSON"
+done
+```
 
 **Expected result**: Each run stops before mutation and reports exactly one
 canonical routing outcome: `missing_product_selection`,
@@ -97,6 +182,46 @@ canonical routing outcome: `missing_product_selection`,
    tracker reference.
 4. Try an invalid outcome value and a missing required field.
 
+```bash
+TARGET_JSON="/tmp/1356-component-target.json"
+EVIDENCE_JSON="/tmp/1356-component-evidence.json"
+
+scripts/development-workflow/component-release-evidence.sh \
+  --target-file "$TARGET_JSON" \
+  --release-outcome pending \
+  --ci-outcome pending \
+  --deployment-outcome not_applicable \
+  --cleanup-outcome not_started \
+  --hub-tracker-ref "fixture:1356-smoke" \
+  --json > "$EVIDENCE_JSON"
+
+TARGET_REPOSITORY="$(jq -r '.canonical_repository_identity' "$TARGET_JSON")"
+TARGET_CORRELATION="$(jq -r '.release_correlation_key' "$TARGET_JSON")"
+TARGET_REVISION="$(jq -r '.contract_revision' "$TARGET_JSON")"
+
+jq -e --arg value "$TARGET_REPOSITORY" \
+  '.canonical_repository_identity == $value' "$EVIDENCE_JSON"
+jq -e --arg value "$TARGET_CORRELATION" \
+  '.release_correlation_key == $value' "$EVIDENCE_JSON"
+jq -e --arg value "$TARGET_REVISION" \
+  '.contract_revision == $value' "$EVIDENCE_JSON"
+jq -e '.routing_outcome == "component_release_routed"' "$EVIDENCE_JSON"
+jq -e '.hub_tracker_ref == "fixture:1356-smoke"' "$EVIDENCE_JSON"
+
+if scripts/development-workflow/component-release-evidence.sh \
+  --target-file "$TARGET_JSON" \
+  --release-outcome invalid \
+  --ci-outcome pending \
+  --deployment-outcome not_applicable \
+  --cleanup-outcome not_started \
+  --hub-tracker-ref "fixture:1356-smoke" \
+  --json > /tmp/1356-invalid-evidence.json
+then
+  echo "invalid evidence was accepted" >&2
+  exit 1
+fi
+```
+
 **Expected result**: Valid evidence records are accepted and deterministic;
 invalid or incomplete records are rejected with a clear error.
 
@@ -114,6 +239,52 @@ invalid or incomplete records are rejected with a clear error.
    evidence is confirmed.
 5. Repeat with evidence whose repository identity, release correlation key, or
    contract revision differs from the current target.
+
+```bash
+HUB_FIXTURE="/tmp/1356-workflow-hub"
+PRODUCT_REPO_KEY="mobile-app"
+TARGET_JSON="/tmp/1356-component-target.json"
+EVIDENCE_JSON="/tmp/1356-component-evidence.json"
+TEST_TRACKER_REF="fixture:1356-smoke"
+TEST_TRACKER_ISSUE="fixture-1356-smoke"
+
+case "$TEST_TRACKER_REF" in
+  test:*|mock:*|fixture:*) ;;
+  *)
+    echo "refusing live tracker reference: $TEST_TRACKER_REF" >&2
+    exit 1
+    ;;
+esac
+
+scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+  --repo "$PRODUCT_REPO_KEY" \
+  --repo-root "$HUB_FIXTURE" \
+  --evidence-file "$EVIDENCE_JSON" \
+  --issues "$TEST_TRACKER_ISSUE" \
+  --best-effort
+
+scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+  --repo "$PRODUCT_REPO_KEY" \
+  --repo-root "$HUB_FIXTURE" \
+  --evidence-file "$EVIDENCE_JSON" \
+  --issues "$TEST_TRACKER_ISSUE" \
+  --best-effort
+
+jq -e '.cleanup_outcome == "complete"' "$EVIDENCE_JSON"
+jq -e '.tracker_mutation.repository_owner == "hub_repository"' "$EVIDENCE_JSON"
+jq -e '.product_cleanup.repository_key == env.PRODUCT_REPO_KEY' "$EVIDENCE_JSON"
+
+if scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
+  --repo "$PRODUCT_REPO_KEY" \
+  --repo-root "$HUB_FIXTURE" \
+  --evidence-file "/tmp/1356-mismatched-evidence.json" \
+  --issues "$TEST_TRACKER_ISSUE" \
+  --best-effort
+then
+  echo "mismatched evidence cleanup was accepted" >&2
+  exit 1
+fi
+```
 
 **Expected result**: Matching evidence allows safe rerunnable cleanup;
 mismatched evidence stops before product or hub tracker mutation.
@@ -140,6 +311,8 @@ mismatched evidence stops before product or hub tracker mutation.
       contract revision before mutation.
 - [ ] Cleanup reruns report already-complete steps and complete only missing
       selected-product cleanup.
+- [ ] Cleanup uses only a disposable fixture issue or mocked tracker by default,
+      never live issue #1356.
 - [ ] Single-repository release and hotfix behavior remains selector-free.
 - [ ] Component release evidence includes routing, release, CI, deployment,
       cleanup, and hub tracker reconciliation information for later bundle work.
