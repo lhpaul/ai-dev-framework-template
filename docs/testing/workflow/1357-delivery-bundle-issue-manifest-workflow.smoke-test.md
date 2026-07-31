@@ -219,12 +219,13 @@ if "$HELPER" update-component \
   --release-pr 1501 \
   --child-item "#1356" \
   --child-release-state merged \
-  --json
+  --json 2> "$SMOKE_TMP/conflict.err"
 then
   echo "conflicting evidence was accepted" >&2
   exit 1
 fi
 
+rg -q 'ERROR_CODE=conflicting_component_evidence' "$SMOKE_TMP/conflict.err"
 test "$MANIFEST_HASH_BEFORE" = "$(git hash-object "$BUNDLE")"
 ```
 
@@ -250,12 +251,13 @@ MANIFEST_HASH_BEFORE="$(git hash-object "$BUNDLE")"
 if "$HELPER" finalize \
   --manifest "$BUNDLE" \
   --expected-revision "$STALE_REVISION" \
-  --json
+  --json 2> "$SMOKE_TMP/stale.err"
 then
   echo "stale finalization was accepted" >&2
   exit 1
 fi
 
+rg -q 'ERROR_CODE=stale_manifest_revision' "$SMOKE_TMP/stale.err"
 test "$MANIFEST_HASH_BEFORE" = "$(git hash-object "$BUNDLE")"
 ```
 
@@ -285,10 +287,55 @@ revision history remains available for audit.
 
 **Maps to**: Acceptance Criterion 9
 
-Create or reset a complete bundle fixture that reaches `ready_to_finalize`, then
-run separate add, update, and removal cases:
+Create a complete bundle fixture that reaches `ready_to_finalize`, then run
+separate add, update, and removal cases:
 
 ```bash
+"$HELPER" create \
+  --manifest "$SMOKE_TMP/ready-bundle.json" \
+  --title "Mobile and Web July delivery" \
+  --purpose "Coordinated customer-facing July workflow-hub delivery" \
+  --parent-ref "#1352" \
+  --component mobile-app \
+  --component web-app \
+  --child-item "#1356" \
+  --child-item "#1357" \
+  --finalization-owner "@workflow-operator" \
+  --rollout-notes "Roll out mobile and web components independently; no shared suite branch." \
+  --json
+
+"$HELPER" update-component \
+  --manifest "$SMOKE_TMP/ready-bundle.json" \
+  --expected-revision "$(jq -r '.revision' "$SMOKE_TMP/ready-bundle.json")" \
+  --component-key mobile-app \
+  --evidence-file "$MOBILE_EVIDENCE" \
+  --component-tag mobile-v1.4.0 \
+  --component-version 1.4.0 \
+  --source-pr 1411 \
+  --release-pr 1501 \
+  --child-item "#1356" \
+  --child-release-state merged \
+  --json
+
+"$HELPER" update-component \
+  --manifest "$SMOKE_TMP/ready-bundle.json" \
+  --expected-revision "$(jq -r '.revision' "$SMOKE_TMP/ready-bundle.json")" \
+  --component-key web-app \
+  --evidence-file "$WEB_EVIDENCE" \
+  --component-tag web-v2.8.1 \
+  --component-version 2.8.1 \
+  --source-pr 1414 \
+  --release-pr 1503 \
+  --child-item "#1357" \
+  --child-release-state merged \
+  --json
+
+"$HELPER" inspect \
+  --manifest "$SMOKE_TMP/ready-bundle.json" \
+  --json > "$SMOKE_TMP/ready-inspect.json"
+
+jq -e '.status == "ready_to_finalize"' "$SMOKE_TMP/ready-inspect.json"
+
 cp "$SMOKE_TMP/ready-bundle.json" "$SMOKE_TMP/ready-add.json"
 cp "$SMOKE_TMP/ready-bundle.json" "$SMOKE_TMP/ready-update.json"
 cp "$SMOKE_TMP/ready-bundle.json" "$SMOKE_TMP/ready-remove.json"
@@ -356,25 +403,44 @@ revision; stale readiness from the prior revision is not retained.
 **Maps to**: Acceptance Criteria 10, 11, and 12
 
 ```bash
+jq '(.components[] | select(.component_key == "mobile-app")).component_tag = null' \
+  "$SMOKE_TMP/ready-bundle.json" > "$SMOKE_TMP/missing-tag.json"
+jq '(.components[] | select(.component_key == "web-app")).evidence_state = "missing"' \
+  "$SMOKE_TMP/ready-bundle.json" > "$SMOKE_TMP/missing-evidence.json"
+jq '(.components[] | select(.component_key == "mobile-app")).release_outcome = "failed"' \
+  "$SMOKE_TMP/ready-bundle.json" > "$SMOKE_TMP/failed-outcome.json"
+jq '(.components[] | select(.component_key == "mobile-app")).release_outcome = "blocked"' \
+  "$SMOKE_TMP/ready-bundle.json" > "$SMOKE_TMP/blocked-outcome.json"
+jq '(.components[] | select(.component_key == "mobile-app")).ci_outcome = "pending"' \
+  "$SMOKE_TMP/ready-bundle.json" > "$SMOKE_TMP/pending-outcome.json"
+jq '(.components[] | select(.component_key == "mobile-app")).evidence_state = "conflicting"' \
+  "$SMOKE_TMP/ready-bundle.json" > "$SMOKE_TMP/conflicting-outcome.json"
+jq '.readiness.revision = (.revision - 1)' \
+  "$SMOKE_TMP/ready-bundle.json" > "$SMOKE_TMP/stale-readiness.json"
+
 for fixture in \
-  "$SMOKE_TMP/missing-tag.json" \
-  "$SMOKE_TMP/missing-evidence.json" \
-  "$SMOKE_TMP/failed-outcome.json" \
-  "$SMOKE_TMP/blocked-outcome.json" \
-  "$SMOKE_TMP/pending-outcome.json" \
-  "$SMOKE_TMP/conflicting-outcome.json" \
-  "$SMOKE_TMP/stale-readiness.json"
+  "$SMOKE_TMP/missing-tag.json|missing_component_tag" \
+  "$SMOKE_TMP/missing-evidence.json|missing_component_evidence" \
+  "$SMOKE_TMP/failed-outcome.json|blocked_component_outcome" \
+  "$SMOKE_TMP/blocked-outcome.json|blocked_component_outcome" \
+  "$SMOKE_TMP/pending-outcome.json|pending_component_outcome" \
+  "$SMOKE_TMP/conflicting-outcome.json|conflicting_component_evidence" \
+  "$SMOKE_TMP/stale-readiness.json|stale_readiness"
 do
-  MANIFEST_HASH_BEFORE="$(git hash-object "$fixture")"
+  fixture_path="${fixture%%|*}"
+  expected_error="${fixture##*|}"
+  stderr_path="$fixture_path.err"
+  MANIFEST_HASH_BEFORE="$(git hash-object "$fixture_path")"
   if "$HELPER" finalize \
-    --manifest "$fixture" \
-    --expected-revision "$(jq -r '.revision' "$fixture")" \
-    --json
+    --manifest "$fixture_path" \
+    --expected-revision "$(jq -r '.revision' "$fixture_path")" \
+    --json 2> "$stderr_path"
   then
-    echo "invalid finalization was accepted for $fixture" >&2
+    echo "invalid finalization was accepted for $fixture_path" >&2
     exit 1
   fi
-  test "$MANIFEST_HASH_BEFORE" = "$(git hash-object "$fixture")"
+  rg -q "ERROR_CODE=$expected_error" "$stderr_path"
+  test "$MANIFEST_HASH_BEFORE" = "$(git hash-object "$fixture_path")"
 done
 ```
 
@@ -413,18 +479,46 @@ REVISION="$(jq -r '.revision' "$BUNDLE")"
 
 jq -e '.status == "ready_to_finalize"' "$SMOKE_TMP/inspect-ready.json"
 
+REVISION_BEFORE_FINALIZE="$(jq -r '.revision' "$BUNDLE")"
+SHARED_REFS_BEFORE="$(
+  git for-each-ref --format='%(refname)' refs/heads refs/remotes refs/tags |
+    rg 'mobile-and-web-july-delivery|shared-suite|delivery-bundle' || true
+)"
+
 "$HELPER" finalize \
   --manifest "$BUNDLE" \
-  --expected-revision "$(jq -r '.revision' "$BUNDLE")" \
+  --expected-revision "$REVISION_BEFORE_FINALIZE" \
   --json
+
+SHARED_REFS_AFTER="$(
+  git for-each-ref --format='%(refname)' refs/heads refs/remotes refs/tags |
+    rg 'mobile-and-web-july-delivery|shared-suite|delivery-bundle' || true
+)"
 
 jq -e '
   .status == "finalized" and
+  .revision == ($revision_before | tonumber) + 1 and
+  (.shared_suite_version? == null) and
+  (.shared_release_branch? == null) and
   (.audit_events[] | select(.event == "bundle_finalized")) and
-  ([.components[] | select(.component_tag == null)] | length) == 0
-' "$BUNDLE"
+  ([.components[] |
+    select(
+      .component_tag == null or
+      .routing_outcome != "component_release_routed" or
+      .release_outcome != "completed" or
+      (.ci_outcome != "passed" and .ci_outcome != "not_applicable") or
+      (.deployment_outcome != "recorded" and .deployment_outcome != "not_applicable") or
+      .cleanup_outcome != "complete" or
+      (.hub_tracker_reconciliation_outcome != "complete" and
+       .hub_tracker_reconciliation_outcome != "deferred") or
+      (.child_release_state != "released" and .child_release_state != "merged")
+    )] | length) == 0
+' --arg revision_before "$REVISION_BEFORE_FINALIZE" "$BUNDLE"
 
-test -z "$(git branch --list 'release/mobile-and-web-july-delivery*')"
+test "$SHARED_REFS_BEFORE" = "$SHARED_REFS_AFTER"
+test -z "$(
+  jq -r '.shared_suite_version? // empty, .shared_release_branch? // empty' "$BUNDLE"
+)"
 ```
 
 **Expected result**: The manifest status is `finalized`, the revision
