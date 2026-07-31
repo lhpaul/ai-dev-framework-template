@@ -79,6 +79,17 @@ updating hub tracker state. Duplicate cleanup attempts use a per-release lease
 keyed by `release_correlation_key`; a completed evidence record is the
 idempotent rerun signal.
 
+`scripts/development-workflow/delivery-bundle-manifest.sh` manages hub-owned
+`delivery_bundle_manifest.v1` records for coordinated customer-facing
+deliveries. Every command targets both a hub evidence file (`--manifest`) and an
+immutable logical delivery identity (`--bundle-key`). The helper reads
+`component_release_evidence.v1` records from selected product repositories,
+records component tags and release outcomes in the hub manifest, preserves
+source evidence files unchanged, and finalizes only when every declared current
+component has complete, consistent evidence. It does not create a shared suite
+version, shared release branch, product tag, GitHub Release, or product
+deployment artifact.
+
 In `single_repo` mode, all artifact ownership stays exactly as it works today:
 the tracker item, spec, plan, implementation branch, PR, CI, reviewer loop, smoke
 runbook, and release evidence are all handled in the same repository.

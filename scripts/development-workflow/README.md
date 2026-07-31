@@ -134,6 +134,64 @@ Usage:
   --output /tmp/component-release-evidence.json
 ```
 
+### `delivery-bundle-manifest.sh`
+
+Creates and updates hub-owned delivery bundle manifests that compose
+independently released product components into one customer-facing delivery.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/delivery-bundle-manifest.sh create \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --title "Mobile and Web July delivery" \
+  --purpose "Coordinated customer-facing delivery" \
+  --parent-ref "#1352" \
+  --component mobile-app \
+  --component web-app \
+  --child-item "#1356" \
+  --finalization-owner "@workflow-operator" \
+  --json
+
+./scripts/development-workflow/delivery-bundle-manifest.sh update-component \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --expected-revision 1 \
+  --component-key mobile-app \
+  --evidence-file /tmp/component-release-evidence.json \
+  --component-tag mobile-v1.4.0 \
+  --component-version 1.4.0 \
+  --source-pr 1411 \
+  --release-pr 1501 \
+  --child-item "#1356" \
+  --child-release-state merged \
+  --json
+
+./scripts/development-workflow/delivery-bundle-manifest.sh inspect \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --json
+```
+
+What it does:
+
+- Emits and validates `delivery_bundle_manifest.v1`.
+- Requires both `--manifest` and immutable `--bundle-key` so a temporary file
+  path is never the only delivery identity.
+- Preserves component release evidence and records stable identity fields,
+  component tags, PR references, release outcomes, cleanup outcomes, hub
+  tracker reconciliation, child release state, readiness, and audit events in
+  the hub manifest.
+- Uses a manifest lock, expected-revision checks, staged JSON validation, and
+  atomic replacement for accepted mutations.
+- Fails closed with stable `ERROR_CODE=<code>` stderr for stale revisions,
+  conflicting evidence, malformed JSON, missing component tags, incomplete
+  evidence, and blocked finalization outcomes.
+- Finalizes only when every declared current component is complete and never
+  creates a shared suite version or shared release branch.
+
 ### `check-workflow-branch.sh`
 
 Checks whether a specific workflow branch already exists locally, remotely, or in an active worktree.

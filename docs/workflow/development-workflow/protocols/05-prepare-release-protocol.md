@@ -142,6 +142,32 @@ scripts/development-workflow/component-release-evidence.sh \
   --output /path/to/component-release-evidence.json
 ```
 
+When the component release belongs to an open hub-owned delivery bundle, attach
+that evidence to the bundle after the product release evidence file exists. The
+delivery bundle remains hub-owned; this handoff must not change the product
+release artifact owner or create a shared suite branch:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+scripts/development-workflow/delivery-bundle-manifest.sh update-component \
+  --manifest "$DELIVERY_BUNDLE_MANIFEST" \
+  --bundle-key "$DELIVERY_BUNDLE_KEY" \
+  --expected-revision "$DELIVERY_BUNDLE_REVISION" \
+  --component-key "$TARGET_REPO_KEY" \
+  --evidence-file /path/to/component-release-evidence.json \
+  --component-tag "$COMPONENT_TAG" \
+  --component-version "$VERSION" \
+  --source-pr "$SOURCE_PR_NUMBER" \
+  --release-pr "$RELEASE_PR_NUMBER" \
+  --child-item "<tracker-item-or-child>" \
+  --child-release-state merged \
+  --json
+```
+
+If any delivery bundle field is unknown, leave the component release evidence in
+place and let the hub operator attach it later. Do not infer a bundle key from a
+temporary file path or product branch name.
+
 ---
 
 ## Step 2: Create the Release Branch
