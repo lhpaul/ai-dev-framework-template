@@ -104,6 +104,12 @@ assertions must use the versioned release target keys above. Unsupported
 repository modes map to `unsupported_repository_mode` with
 `mutation_allowed=false`.
 
+Valid classified stop outcomes are successful classifications, not helper
+failures. `component-release-target.sh` must therefore exit `0` for valid
+fail-closed routing outcomes with `mutation_allowed=false`. It must exit
+nonzero for malformed input, unreadable config, invalid CLI usage, failed
+resolver calls, and internal helper failures.
+
 Allowed artifact owner values are `current_repository`, `product_repository`,
 `hub_repository`, and `not_applicable`. For `single_repo_release`, all five
 `artifact_owners.*` fields map to `current_repository`. For
@@ -163,13 +169,14 @@ blocked or unsupported target.
 - [ ] Add `scripts/development-workflow/component-release-evidence.sh` as a
       focused helper for rendering and validating the component release evidence
       record. The helper should accept explicit fields from release preparation
-      and cleanup, derive target identity from the canonical resolver output or
-      persisted target binding, validate required values, allowed outcome enums,
-      and cross-field relationships, then write deterministic JSON that later
-      #1357 delivery-bundle reconciliation can consume. It must reject
-      mismatched product repository key, canonical repository identity, artifact
-      owner, release correlation key, or `contract_revision` before writing
-      evidence. Map to AC8.
+      and cleanup, plus a required `--binding-file <path>` containing canonical
+      resolver output or a persisted target binding. It must validate required
+      values, allowed outcome enums, and cross-field relationships against that
+      independent binding, then write deterministic JSON that later #1357
+      delivery-bundle reconciliation can consume. It must reject mismatched
+      product repository key, canonical repository identity, artifact owner,
+      release correlation key, or `contract_revision` before writing evidence.
+      Map to AC8.
 - [ ] Add per-release cleanup concurrency control to the release cleanup path.
       Use a product-repository remote lock or lease keyed by release correlation
       key before deleting remote release branches, tags, cleanup evidence, or

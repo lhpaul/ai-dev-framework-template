@@ -67,6 +67,56 @@ cleanup_smoke_tmp() {
 }
 trap cleanup_smoke_tmp EXIT
 
+real_path() {
+  python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"
+}
+
+require_owned_path() {
+  candidate="$1"
+  test -e "$candidate"
+  resolved_candidate="$(real_path "$candidate")"
+  resolved_root="$(real_path "$SMOKE_TMP")"
+  case "$resolved_candidate" in
+    "$resolved_root"/*) ;;
+    *)
+      echo "fixture path escapes SMOKE_TMP: $candidate" >&2
+      exit 1
+      ;;
+  esac
+}
+
+require_clean_git() {
+  repo_path="$1"
+  status_file="$2"
+  git -C "$repo_path" status --porcelain > "$status_file"
+  test ! -s "$status_file"
+}
+
+expect_no_remote_ref() {
+  repo_path="$1"
+  ref_kind="$2"
+  ref_name="$3"
+  output_file="$4"
+
+  set +e
+  git -C "$repo_path" ls-remote --exit-code "$ref_kind" origin "$ref_name" \
+    > "$output_file"
+  status=$?
+  set -e
+
+  case "$status" in
+    2) ;;
+    0)
+      echo "remote ref still exists: $ref_kind $ref_name" >&2
+      exit 1
+      ;;
+    *)
+      echo "remote ref check failed with status $status: $ref_kind $ref_name" >&2
+      exit "$status"
+      ;;
+  esac
+}
+
 FIXTURE_JSON="$SMOKE_TMP/fixtures.json"
 
 bash scripts/development-workflow/tests/setup-component-release-fixture.sh \
@@ -100,6 +150,8 @@ jq -e '.evidence_mismatch_fixtures | keys | length >= 5' "$FIXTURE_JSON"
 jq -e '.cleanup.seeded_branch == true' "$FIXTURE_JSON"
 jq -e '.cleanup.seeded_tag == true' "$FIXTURE_JSON"
 jq -e '.cleanup.seeded_lock == true' "$FIXTURE_JSON"
+jq -e '.invalid_fixtures.malformed | length > 0' "$FIXTURE_JSON"
+jq -e '.cleanup.mismatched_evidence_file | length > 0' "$FIXTURE_JSON"
 
 case "$TEST_TRACKER_ISSUE" in
   test:*|mock:*|fixture:*) ;;
@@ -113,7 +165,12 @@ test -d "$SINGLE_REPO_FIXTURE/.git"
 test -d "$HUB_FIXTURE/.git"
 test -d "$PRODUCT_REPO_PATH/.git"
 test -f "$TRACKER_STATE_FILE"
-test -z "$(git -C "$PRODUCT_REPO_PATH" status --porcelain)"
+require_owned_path "$SINGLE_REPO_FIXTURE"
+require_owned_path "$HUB_FIXTURE"
+require_owned_path "$PRODUCT_REPO_PATH"
+require_owned_path "$TRACKER_STATE_FILE"
+require_owned_path "$(jq -r '.cleanup.mismatched_evidence_file' "$FIXTURE_JSON")"
+require_clean_git "$PRODUCT_REPO_PATH" "$SMOKE_TMP/product-status.txt"
 ```
 
 ---
@@ -176,6 +233,7 @@ set -euo pipefail
 : "${SMOKE_TMP:?run fixture setup first}"
 
 TARGET_JSON="$SMOKE_TMP/component-target.json"
+TARGET_BINDING_JSON="$SMOKE_TMP/component-target-binding.json"
 HUB_STATUS_BEFORE="$SMOKE_TMP/hub-status-before.txt"
 HUB_STATUS_AFTER="$SMOKE_TMP/hub-status-after.txt"
 
@@ -190,6 +248,8 @@ scripts/development-workflow/component-release-target.sh \
 
 git -C "$HUB_FIXTURE" status --porcelain > "$HUB_STATUS_AFTER"
 PRODUCT_REPO_PATH="$(jq -r '.local_checkout.path' "$TARGET_JSON")"
+require_owned_path "$PRODUCT_REPO_PATH"
+cp "$TARGET_JSON" "$TARGET_BINDING_JSON"
 
 jq -e '.routing_outcome == "component_release_routed"' "$TARGET_JSON"
 jq --arg expected "$PRODUCT_REPO_KEY" \
@@ -206,7 +266,7 @@ jq -e '.artifact_owners.tracker == "hub_repository"' "$TARGET_JSON"
 jq -e '.release_correlation_key | length > 0' "$TARGET_JSON"
 jq -e '.contract_revision | length > 0' "$TARGET_JSON"
 test -d "$PRODUCT_REPO_PATH/.git"
-test -z "$(git -C "$PRODUCT_REPO_PATH" status --porcelain)"
+require_clean_git "$PRODUCT_REPO_PATH" "$SMOKE_TMP/product-status-after-target.txt"
 cmp "$HUB_STATUS_BEFORE" "$HUB_STATUS_AFTER"
 ```
 
@@ -235,11 +295,16 @@ do
   FIXTURE_ROOT="$(jq -r --arg key "$fixture" \
     '.invalid_fixtures[$key]' "$FIXTURE_JSON")"
   TARGET_JSON="$SMOKE_TMP/${fixture}.json"
+  require_owned_path "$FIXTURE_ROOT"
 
-  scripts/development-workflow/component-release-target.sh \
+  if ! scripts/development-workflow/component-release-target.sh \
     --repo-root "$FIXTURE_ROOT" \
     --require-local \
     --json > "$TARGET_JSON"
+  then
+    echo "classified stop outcome returned nonzero: $fixture" >&2
+    exit 1
+  fi
 
   jq --arg expected "$expected" \
     -e '.routing_outcome == $expected' "$TARGET_JSON"
@@ -253,8 +318,11 @@ invalid_release_contract invalid_release_contract
 unavailable_product_repository_checkout unavailable_product_repository_checkout
 CASES
 
+MALFORMED_FIXTURE_ROOT="$(jq -r '.invalid_fixtures.malformed' "$FIXTURE_JSON")"
+require_owned_path "$MALFORMED_FIXTURE_ROOT"
+
 if scripts/development-workflow/component-release-target.sh \
-  --repo-root "$(jq -r '.invalid_fixtures.malformed' "$FIXTURE_JSON")" \
+  --repo-root "$MALFORMED_FIXTURE_ROOT" \
   --json > "$SMOKE_TMP/malformed-target.json"
 then
   echo "malformed target input was accepted" >&2
@@ -285,11 +353,13 @@ set -euo pipefail
 : "${SMOKE_TMP:?run fixture setup first}"
 
 TARGET_JSON="$SMOKE_TMP/component-target.json"
+TARGET_BINDING_JSON="$SMOKE_TMP/component-target-binding.json"
 EVIDENCE_JSON="$SMOKE_TMP/component-evidence.json"
 EVIDENCE_DUPLICATE_JSON="$SMOKE_TMP/component-evidence-duplicate.json"
 
 scripts/development-workflow/component-release-evidence.sh \
   --target-file "$TARGET_JSON" \
+  --binding-file "$TARGET_BINDING_JSON" \
   --release-outcome pending \
   --ci-outcome pending \
   --deployment-outcome not_applicable \
@@ -313,6 +383,7 @@ jq --arg expected "$TEST_TRACKER_ISSUE" \
 
 scripts/development-workflow/component-release-evidence.sh \
   --target-file "$TARGET_JSON" \
+  --binding-file "$TARGET_BINDING_JSON" \
   --release-outcome pending \
   --ci-outcome pending \
   --deployment-outcome not_applicable \
@@ -326,6 +397,7 @@ for release_outcome in completed failed blocked
 do
   scripts/development-workflow/component-release-evidence.sh \
     --target-file "$TARGET_JSON" \
+    --binding-file "$TARGET_BINDING_JSON" \
     --release-outcome "$release_outcome" \
     --ci-outcome passed \
     --deployment-outcome recorded \
@@ -342,9 +414,11 @@ do
   MISMATCH_TARGET="$(jq -r --arg key "$mismatch" \
     '.evidence_mismatch_fixtures[$key]' "$FIXTURE_JSON")"
   MISMATCH_OUTPUT="$SMOKE_TMP/${mismatch}-accepted-evidence.json"
+  require_owned_path "$MISMATCH_TARGET"
 
   if scripts/development-workflow/component-release-evidence.sh \
     --target-file "$MISMATCH_TARGET" \
+    --binding-file "$TARGET_BINDING_JSON" \
     --release-outcome pending \
     --ci-outcome pending \
     --deployment-outcome not_applicable \
@@ -367,6 +441,7 @@ MISMATCHES
 
 if scripts/development-workflow/component-release-evidence.sh \
   --target-file "$TARGET_JSON" \
+  --binding-file "$TARGET_BINDING_JSON" \
   --release-outcome invalid \
   --ci-outcome pending \
   --deployment-outcome not_applicable \
@@ -410,6 +485,9 @@ PRODUCT_STATE_AFTER_REJECT="$SMOKE_TMP/product-state-after-reject.txt"
 TRACKER_STATE_BEFORE_REJECT="$SMOKE_TMP/tracker-before-reject.json"
 TRACKER_STATE_AFTER_REJECT="$SMOKE_TMP/tracker-after-reject.json"
 PRODUCT_REPO_PATH="$(jq -r '.local_checkout.path' "$TARGET_JSON")"
+require_owned_path "$PRODUCT_REPO_PATH"
+MISMATCHED_EVIDENCE_FILE="$(jq -r '.cleanup.mismatched_evidence_file' "$FIXTURE_JSON")"
+require_owned_path "$MISMATCHED_EVIDENCE_FILE"
 RELEASE_BRANCH_PATTERN="$(jq -r '.release_branch_pattern' "$TARGET_JSON")"
 RELEASE_BRANCH="${RELEASE_BRANCH_PATTERN//\{version\}/$RELEASE_VERSION}"
 RELEASE_BRANCH="${RELEASE_BRANCH//\{product_repo\}/$PRODUCT_REPO_KEY}"
@@ -457,11 +535,11 @@ jq -e '.product_cleanup.remote_tag_deleted == true' "$CLEANUP_JSON"
 jq -e '.cleanup_evidence.status == "complete"' "$CLEANUP_JSON"
 jq -e '.tracker_mutation.after_product_cleanup == true' "$CLEANUP_JSON"
 jq -e '.product_cleanup.already_complete == true' "$CLEANUP_RERUN_JSON"
-test -z "$(git -C "$PRODUCT_REPO_PATH" status --porcelain)"
-! git -C "$PRODUCT_REPO_PATH" ls-remote --exit-code --heads origin \
-  "$RELEASE_BRANCH"
-! git -C "$PRODUCT_REPO_PATH" ls-remote --exit-code --tags origin \
-  "refs/tags/$RELEASE_TAG"
+require_clean_git "$PRODUCT_REPO_PATH" "$SMOKE_TMP/product-status-after-cleanup.txt"
+expect_no_remote_ref "$PRODUCT_REPO_PATH" --heads "$RELEASE_BRANCH" \
+  "$SMOKE_TMP/post-cleanup-branch.txt"
+expect_no_remote_ref "$PRODUCT_REPO_PATH" --tags "refs/tags/$RELEASE_TAG" \
+  "$SMOKE_TMP/post-cleanup-tag.txt"
 
 git -C "$PRODUCT_REPO_PATH" ls-remote --heads --tags origin \
   > "$PRODUCT_STATE_BEFORE"
@@ -470,7 +548,7 @@ cp "$TRACKER_STATE_FILE" "$TRACKER_STATE_BEFORE_REJECT"
 if scripts/development-workflow/prepare-release-post-merge-cleanup.sh \
   --repo "$PRODUCT_REPO_KEY" \
   --repo-root "$HUB_FIXTURE" \
-  --evidence-file "$(jq -r '.cleanup.mismatched_evidence_file' "$FIXTURE_JSON")" \
+  --evidence-file "$MISMATCHED_EVIDENCE_FILE" \
   --issues "$TEST_TRACKER_ISSUE" \
   --json > "$SMOKE_TMP/mismatched-cleanup.json"
 then
@@ -500,7 +578,7 @@ set -euo pipefail
 for repo in "$SINGLE_REPO_FIXTURE" "$HUB_FIXTURE" "$PRODUCT_REPO_PATH"
 do
   if [ -n "${repo:-}" ] && [ -d "$repo/.git" ]; then
-    test -z "$(git -C "$repo" status --porcelain)"
+    require_clean_git "$repo" "$SMOKE_TMP/$(basename "$repo")-final-status.txt"
   fi
 done
 
