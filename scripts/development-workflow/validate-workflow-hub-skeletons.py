@@ -15,6 +15,14 @@ SKELETON_MANIFESTS = (
     "template/workflow-hub/skeleton-manifest.yaml",
     "template/product-repo-injection/skeleton-manifest.yaml",
 )
+PRODUCT_RELEASE_RUNTIME_PATHS = {
+    "scripts/development-workflow/workflow-config-resolver.py",
+    "scripts/development-workflow/validate-workflow-config.sh",
+    "scripts/development-workflow/workflow-lib.sh",
+    "scripts/development-workflow/pr-review-loop.sh",
+    "scripts/development-workflow/pr-ci-loop.sh",
+    "scripts/development-workflow/post-merge-cleanup.sh",
+}
 
 
 class ValidationError(Exception):
@@ -48,6 +56,7 @@ def validate_skeleton_manifest(manifest_path: Path, repo_root: Path, parser: Any
     if not isinstance(entries, list) or not entries:
         raise ValidationError(f"{manifest_path}: entries must be a non-empty list")
 
+    product_required_paths: set[str] = set()
     for index, entry in enumerate(entries, start=1):
         if not isinstance(entry, dict):
             raise ValidationError(f"{manifest_path}: entry {index} must be a mapping")
@@ -64,6 +73,8 @@ def validate_skeleton_manifest(manifest_path: Path, repo_root: Path, parser: Any
 
         if role == "product_repo":
             required = entry.get("required_for_product_repo") is True
+            if required:
+                product_required_paths.add(path)
             forbidden = (
                 path.startswith("docs/specs/")
                 or "implementation-plan" in path
@@ -78,6 +89,18 @@ def validate_skeleton_manifest(manifest_path: Path, repo_root: Path, parser: Any
                 f"{manifest_path}: required_for_product_repo is only valid for product_repo manifests"
             )
 
+    if role == "product_repo" and data.get("enforce_release_runtime") is True:
+        missing_runtime = PRODUCT_RELEASE_RUNTIME_PATHS - product_required_paths
+        extra_runtime = product_required_paths - PRODUCT_RELEASE_RUNTIME_PATHS
+        if missing_runtime:
+            raise ValidationError(
+                f"{manifest_path}: missing required product release runtime entries: {', '.join(sorted(missing_runtime))}"
+            )
+        if extra_runtime:
+            raise ValidationError(
+                f"{manifest_path}: unexpected required_for_product_repo entries: {', '.join(sorted(extra_runtime))}"
+            )
+
 
 def validate_sync_manifest(sync_manifest: Path) -> None:
     lines = sync_manifest.read_text(encoding="utf-8").splitlines()
@@ -88,8 +111,10 @@ def validate_sync_manifest(sync_manifest: Path) -> None:
     category_keys: set[str] = set()
     paths: set[str] = set()
     mode_scope_values: set[str] = set()
+    product_repo_injection_paths: set[str] = set()
     in_mode_scopes = False
     in_categories = False
+    current_path = ""
 
     for raw in lines:
         stripped = raw.strip()
@@ -111,15 +136,20 @@ def validate_sync_manifest(sync_manifest: Path) -> None:
             continue
 
         if stripped.startswith("- path: "):
-            paths.add(stripped.removeprefix("- path: ").strip().strip("'\""))
+            current_path = stripped.removeprefix("- path: ").strip().strip("'\"")
+            paths.add(current_path)
             continue
 
         if stripped.startswith("path: "):
-            paths.add(stripped.removeprefix("path: ").strip().strip("'\""))
+            current_path = stripped.removeprefix("path: ").strip().strip("'\"")
+            paths.add(current_path)
             continue
 
         if stripped.startswith("mode_scope: "):
-            mode_scope_values.add(stripped.removeprefix("mode_scope: ").strip().strip("'\""))
+            mode_scope = stripped.removeprefix("mode_scope: ").strip().strip("'\"")
+            mode_scope_values.add(mode_scope)
+            if mode_scope == "product_repo_injection" and current_path:
+                product_repo_injection_paths.add(current_path)
 
     missing_scopes = ALLOWED_SCOPES - mode_scope_keys
     if missing_scopes:
@@ -145,6 +175,21 @@ def validate_sync_manifest(sync_manifest: Path) -> None:
     if missing_paths:
         raise ValidationError(
             f"{sync_manifest}: missing skeleton paths: {', '.join(sorted(missing_paths))}"
+        )
+
+    product_runtime_paths = {
+        path for path in product_repo_injection_paths if path.startswith("scripts/development-workflow/")
+    }
+    missing_runtime = PRODUCT_RELEASE_RUNTIME_PATHS - product_runtime_paths
+    extra_runtime = product_runtime_paths - PRODUCT_RELEASE_RUNTIME_PATHS
+    if missing_runtime or extra_runtime:
+        details = []
+        if missing_runtime:
+            details.append(f"missing: {', '.join(sorted(missing_runtime))}")
+        if extra_runtime:
+            details.append(f"unexpected: {', '.join(sorted(extra_runtime))}")
+        raise ValidationError(
+            f"{sync_manifest}: product_repo_injection runtime paths do not match required release runtime set ({'; '.join(details)})"
         )
 
 

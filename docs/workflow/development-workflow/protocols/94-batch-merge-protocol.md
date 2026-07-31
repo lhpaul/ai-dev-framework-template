@@ -9,6 +9,16 @@
 
 ---
 
+## Release Evidence Ownership
+
+When a batch includes workflow-hub product release work, use the release
+artifact ownership contract before handoff: product changelog entries, release
+branches, tags, GitHub Releases, deployment evidence, and product cleanup
+evidence are product-repository-owned; delivery manifests and tracker
+reconciliation evidence are hub-owned.
+
+---
+
 ## When to use this protocol
 
 - A human invokes `/batch-merge` directly (Use Case 1 — human-invoked).

@@ -21,15 +21,32 @@ from typing import Any
 
 VALID_MODES = {"single_repo", "workflow_hub", "product_repo"}
 VALID_CI_POLICIES = {"required", "none"}
+VALID_RELEASE_OWNER_VALUES = {"current_repo", "product_repo", "hub", "hub_reference", "not_applicable"}
+RELEASE_OWNER_FIELDS = (
+    "changelog_owner",
+    "tag_owner",
+    "github_release_owner",
+    "deployment_evidence_owner",
+    "cleanup_evidence_owner",
+    "tracker_reconciliation_owner",
+)
 LOCAL_ONLY_KEYS = {
     "local_path",
     "checkout_path",
     "checkout_root",
     "private_key_path",
     "private_key",
+    "api_key",
+    "access_key",
+    "password",
+    "passphrase",
+    "secret_name",
+    "secret_value",
     "secret",
     "secrets",
     "secret_ref",
+    "token",
+    "tokens",
     "tool_overrides",
     "local_overrides",
 }
@@ -310,6 +327,146 @@ def normalize_ci_policy(raw: Any, shared_path: Path, field_path: str) -> str:
     return value
 
 
+def validate_branch_name(value: str, shared_path: Path, field_path: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ConfigError(f"{shared_path}: {field_path} must be a non-empty branch name")
+    forbidden_tokens = ["..", "@{", "//", "?", "^", "~", ":", "\\", "#"]
+    if (
+        value.startswith("/")
+        or value.endswith("/")
+        or re.search(r"\s", value)
+        or any(token in value for token in forbidden_tokens)
+    ):
+        raise ConfigError(f"{shared_path}: {field_path} is not a portable branch name")
+    for segment in value.split("/"):
+        if not segment or not re.match(r"^[A-Za-z0-9._-]+$", segment):
+            raise ConfigError(f"{shared_path}: {field_path} is not a portable branch name")
+    return value
+
+
+def validate_release_branch_pattern(
+    raw: Any,
+    shared_path: Path,
+    field_path: str,
+    product_repo_name: str,
+) -> str:
+    if raw is None or raw == "":
+        return "release/v{version}"
+    if not isinstance(raw, str):
+        raise ConfigError(f"{shared_path}: {field_path} must be a string")
+    placeholders = set(re.findall(r"\{[^{}]+\}", raw))
+    unknown = sorted(placeholders - {"{version}", "{product_repo}"})
+    if unknown:
+        raise ConfigError(
+            f"{shared_path}: {field_path} contains unknown placeholder(s): {', '.join(unknown)}"
+        )
+    if "{version}" not in raw:
+        raise ConfigError(f"{shared_path}: {field_path} must include the {{version}} placeholder")
+    resolved = raw.replace("{version}", "1.2.3").replace("{product_repo}", product_repo_name)
+    if "{" in resolved or "}" in resolved:
+        raise ConfigError(f"{shared_path}: {field_path} contains unresolved placeholder text")
+    validate_branch_name(resolved, shared_path, field_path)
+    return raw
+
+
+def normalize_release_owner(
+    raw: Any,
+    default: str,
+    shared_path: Path,
+    field_path: str,
+) -> tuple[str, str]:
+    if raw is None or raw == "":
+        return default, "default"
+    if not isinstance(raw, str):
+        raise ConfigError(f"{shared_path}: {field_path} must be a string")
+    value = raw.strip()
+    if value not in VALID_RELEASE_OWNER_VALUES:
+        raise ConfigError(
+            f"{shared_path}: {field_path} must be one of {', '.join(sorted(VALID_RELEASE_OWNER_VALUES))}"
+        )
+    return value, "explicit"
+
+
+def forbidden_release_value_paths(value: Any, prefix: str = "") -> set[str]:
+    found: set[str] = set()
+    if isinstance(value, dict):
+        for key, child in value.items():
+            key_path = f"{prefix}.{key}" if prefix else str(key)
+            if key in LOCAL_ONLY_KEYS or re.search(
+                r"(secret|token|credential|password|passphrase|api[_-]?key|access[_-]?key)",
+                str(key),
+                re.I,
+            ):
+                found.add(key_path)
+            found.update(forbidden_release_value_paths(child, key_path))
+        return found
+    if isinstance(value, list):
+        for index, child in enumerate(value, start=1):
+            item_path = f"{prefix}[{index}]" if prefix else f"[{index}]"
+            found.update(forbidden_release_value_paths(child, item_path))
+        return found
+    if isinstance(value, str):
+        text = value.strip()
+        if re.search(r"(gh[pousr]_|github_pat_|BEGIN .*PRIVATE KEY|Bearer\s+|op://)", text, re.I):
+            found.add(prefix)
+        elif re.match(r"^(?:/Users/|/home/|/var/|/tmp/|~/|\./|\.\./|[A-Za-z]:\\)", text):
+            found.add(prefix)
+    return found
+
+
+def default_release_owner(mode: str, field: str) -> str:
+    if mode == "single_repo":
+        return "current_repo"
+    if field == "tracker_reconciliation_owner":
+        return "hub"
+    return "product_repo"
+
+
+def normalize_release_contract(
+    raw: Any,
+    shared_path: Path,
+    field_path: str,
+    mode: str,
+    product_repo_name: str,
+    default_branch: str,
+) -> dict[str, str]:
+    release = as_mapping(raw, shared_path, field_path)
+    forbidden_values = sorted(forbidden_release_value_paths(release))
+    if forbidden_values:
+        raise ConfigError(
+            f"{shared_path}: {field_path} contains forbidden local or secret value(s): {', '.join(forbidden_values)}"
+        )
+
+    base_source = "explicit" if release.get("base") not in {None, ""} else "default"
+    base = str(release.get("base") or default_branch)
+    validate_branch_name(base, shared_path, f"{field_path}.base")
+
+    pattern_source = "explicit" if release.get("branch_pattern") not in {None, ""} else "default"
+    branch_pattern = validate_release_branch_pattern(
+        release.get("branch_pattern"),
+        shared_path,
+        f"{field_path}.branch_pattern",
+        product_repo_name,
+    )
+
+    normalized = {
+        "base": base,
+        "base_source": base_source,
+        "branch_pattern": branch_pattern,
+        "branch_pattern_source": pattern_source,
+    }
+    for field in RELEASE_OWNER_FIELDS:
+        value, source = normalize_release_owner(
+            release.get(field),
+            default_release_owner(mode, field),
+            shared_path,
+            f"{field_path}.{field}",
+        )
+        normalized[field] = value
+        normalized[f"{field}_source"] = source
+    return normalized
+
+
 def product_repos(shared: dict[str, Any], shared_path: Path) -> list[dict[str, Any]]:
     workflow_hub = as_mapping(shared.get("workflow_hub"), shared_path, "workflow_hub")
     repos = as_list(workflow_hub.get("product_repos"), shared_path, "workflow_hub.product_repos")
@@ -339,10 +496,23 @@ def product_repos(shared: dict[str, Any], shared_path: Path) -> list[dict[str, A
             )
         repo = dict(raw)
         repo["default_branch"] = repo.get("default_branch") or "main"
+        validate_branch_name(
+            str(repo["default_branch"]),
+            shared_path,
+            f"workflow_hub.product_repos[{index}].default_branch",
+        )
         repo["ci_policy"] = normalize_ci_policy(
             repo.get("ci_policy"),
             shared_path,
             f"workflow_hub.product_repos[{index}].ci_policy",
+        )
+        repo["release_contract"] = normalize_release_contract(
+            repo.get("release"),
+            shared_path,
+            f"workflow_hub.product_repos[{index}].release",
+            "workflow_hub",
+            str(repo["name"]),
+            str(repo["default_branch"]),
         )
         normalized.append(repo)
     return normalized
@@ -526,6 +696,20 @@ def flatten_tracker_hints(repo: dict[str, Any]) -> str:
     return ",".join(parts)
 
 
+def release_contract_context(prefix: str, release_contract: dict[str, str]) -> dict[str, str]:
+    context = {
+        f"{prefix}_RELEASE_BASE": release_contract.get("base", ""),
+        f"{prefix}_RELEASE_BASE_SOURCE": release_contract.get("base_source", ""),
+        f"{prefix}_RELEASE_BRANCH_PATTERN": release_contract.get("branch_pattern", ""),
+        f"{prefix}_RELEASE_BRANCH_PATTERN_SOURCE": release_contract.get("branch_pattern_source", ""),
+    }
+    for field in RELEASE_OWNER_FIELDS:
+        key = f"{prefix}_RELEASE_{field.upper()}"
+        context[key] = release_contract.get(field, "")
+        context[f"{key}_SOURCE"] = release_contract.get(f"{field}_source", "")
+    return context
+
+
 def github_repo_from_url(value: str) -> str:
     match = re.match(
         r"^(?:git@github\.com:|https://github\.com/|ssh://git@github\.com/)([^/\s]+/[^/\s]+?)(?:\.git)?/?$",
@@ -651,11 +835,22 @@ def resolve_context(args: argparse.Namespace) -> dict[str, str]:
     }
 
     if mode == "single_repo":
+        default_branch = str(shared.get("default_branch") or "main")
+        validate_branch_name(default_branch, shared_path, "default_branch")
+        release_contract = normalize_release_contract(
+            shared.get("release"),
+            shared_path,
+            "release",
+            "single_repo",
+            repo_root.name,
+            default_branch,
+        )
         context["TARGET_REPO_NAME"] = repo_root.name
         context["TARGET_GITHUB_REPO"] = parse_remote_slug(repo_root)
-        context["TARGET_DEFAULT_BRANCH"] = str(shared.get("default_branch") or "main")
+        context["TARGET_DEFAULT_BRANCH"] = default_branch
         context["TARGET_LOCAL_PATH"] = str(repo_root)
         context["TARGET_LOCAL_PATH_SOURCE"] = "current_repo"
+        context.update(release_contract_context("TARGET", release_contract))
         return context
 
     if mode == "workflow_hub":
@@ -678,15 +873,26 @@ def resolve_context(args: argparse.Namespace) -> dict[str, str]:
                 "TARGET_TRACKER_HINTS": flatten_tracker_hints(repo),
             }
         )
+        context.update(release_contract_context("TARGET", repo["release_contract"]))
         return context
 
     product_repo = as_mapping(shared.get("product_repo"), shared_path, "product_repo")
     hub = as_mapping(product_repo.get("workflow_hub"), shared_path, "product_repo.workflow_hub")
+    default_branch = str(product_repo.get("default_branch") or "main")
+    validate_branch_name(default_branch, shared_path, "product_repo.default_branch")
+    release_contract = normalize_release_contract(
+        product_repo.get("release"),
+        shared_path,
+        "product_repo.release",
+        "product_repo",
+        repo_root.name,
+        default_branch,
+    )
     context.update(
         {
             "TARGET_REPO_NAME": repo_root.name,
             "TARGET_GITHUB_REPO": parse_remote_slug(repo_root),
-            "TARGET_DEFAULT_BRANCH": str(product_repo.get("default_branch") or "main"),
+            "TARGET_DEFAULT_BRANCH": default_branch,
             "TARGET_CI_POLICY": normalize_ci_policy(
                 product_repo.get("ci_policy"),
                 shared_path,
@@ -698,6 +904,7 @@ def resolve_context(args: argparse.Namespace) -> dict[str, str]:
             "WORKFLOW_HUB_GIT_URL": str(hub.get("git_url") or ""),
         }
     )
+    context.update(release_contract_context("TARGET", release_contract))
     if not context["WORKFLOW_HUB_GITHUB_REPO"] and not context["WORKFLOW_HUB_GIT_URL"]:
         raise ConfigError(
             f"{shared_path}: product_repo.workflow_hub must define github_repo or git_url in product_repo mode"

@@ -27,6 +27,26 @@ Related references:
 | Product reviewer loop | Selected product repository |
 | Merge cleanup tracker update | Workflow hub |
 
+## Release Artifact Owners
+
+Before a hub-managed release creates or mutates product release artifacts,
+validate the selected product repository contract and record the artifact owner.
+Use [Repository modes](repository-modes.md#release-artifact-ownership) as the
+canonical ownership table for release branches, product cleanup evidence, and
+Tracker reconciliation evidence; this flow only adds the hub checkout execution
+step.
+
+Run from the hub checkout:
+
+```bash
+scripts/development-workflow/validate-workflow-config.sh --repo faind-mobile-app
+```
+
+Stop before release mutation when product selection is missing or ambiguous, a
+release branch value is invalid, or versioned release config contains local
+paths, credentials, token values, secret names, secret values, or
+environment-specific account details.
+
 Hub-only workflow improvements, such as updates to orchestration scripts or
 workflow docs, still open implementation PRs in the hub repository.
 

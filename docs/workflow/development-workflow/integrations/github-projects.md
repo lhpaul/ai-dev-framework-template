@@ -152,6 +152,11 @@ When `gh` is available, the script detects merged PRs via `gh pr list --state me
 
 GitHub Projects status updates can be performed entirely via `gh` CLI and Bash — no MCP server is required. This means subagent Work Item Runners dispatched from parallel batch runs can update tracker status directly at Step 8b without deferring to the orchestrator.
 
+For workflow-hub product releases, tracker reconciliation evidence is
+hub-owned. Product repositories may own product branch, PR, deployment, tag, and
+GitHub Release evidence, but the project Status transition and durable tracker
+reconciliation note stay with the hub tracker item.
+
 ### Board membership check (ensure_on_project_board)
 
 Before updating tracker status, each stage agent (spec-writer, plan-writer, developer) must ensure the issue is registered on the project board. The `ensure_on_project_board` function in `scripts/development-workflow/workflow-lib.sh` handles this idempotently:

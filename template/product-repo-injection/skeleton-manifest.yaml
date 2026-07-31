@@ -1,6 +1,7 @@
 schema_version: 1
 skeleton_role: product_repo
 mode_scope: product_repo_injection
+enforce_release_runtime: true
 description: Minimal files for a product repository that receives routed implementation work from a workflow hub.
 
 entries:
@@ -27,23 +28,33 @@ entries:
   - group: workflow configuration resolver
     path: scripts/development-workflow/workflow-config-resolver.py
     mode_scope: product_repo_injection
+    required_for_product_repo: true
     note: resolves product repository mode and hub references
   - group: workflow configuration validator
     path: scripts/development-workflow/validate-workflow-config.sh
     mode_scope: product_repo_injection
+    required_for_product_repo: true
     note: validates product repository workflow configuration
   - group: shared workflow shell helpers
     path: scripts/development-workflow/workflow-lib.sh
     mode_scope: product_repo_injection
+    required_for_product_repo: true
     note: shell helpers used by product-repo validation and PR readiness scripts
   - group: PR reviewer loop
     path: scripts/development-workflow/pr-review-loop.sh
     mode_scope: product_repo_injection
+    required_for_product_repo: true
     note: runs configured product repository PR reviewers
   - group: PR CI loop
     path: scripts/development-workflow/pr-ci-loop.sh
     mode_scope: product_repo_injection
+    required_for_product_repo: true
     note: waits for product repository PR checks to settle
+  - group: product cleanup helper
+    path: scripts/development-workflow/post-merge-cleanup.sh
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: verifies product branch and PR cleanup evidence after product-owned release work
   - group: general best practices
     path: docs/best-practices/1-general.md
     mode_scope: product_repo_injection

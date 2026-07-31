@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Post-merge cleanup for a release branch:
-# - verifies release PRs to main and develop are both merged
+# - verifies release PRs to main and the configured backport base are both merged
 # - deletes remote release branch (if present)
 # - deletes local release branch (switching away first if needed)
 # - stamps scoped issue numbers with the release version
@@ -9,7 +9,7 @@
 #   fail-closed tracker handoff when shell automation cannot complete them
 #
 # Usage:
-#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort]
+#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort]
 #
 # Examples:
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh 1.2.3
@@ -17,6 +17,7 @@
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh release/v1.2.3 --issues 232,240
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh v1.2.3 --from-changelog
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh release/v1.2.3 --issues 232,240 --best-effort
+#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh mobile-app/release/v1.2.3 --backport-base release
 #
 # Exit codes for tracker cleanup (unless --best-effort is passed):
 #   0  At least one issue was updated (or already in Released status) and no hard failures
@@ -34,7 +35,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./workflow-lib.sh
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
 . "$SCRIPT_DIR/workflow-lib.sh"
 
 cd_workflow_repo_root
@@ -47,12 +48,13 @@ TRACKER_PROVIDER="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_
 MERGED_LABEL="${GITHUB_PROJECT_STATUS_MERGED:-Merged}"
 RELEASED_LABEL="${GITHUB_PROJECT_STATUS_RELEASED:-Released}"
 RELEASE_INPUT=""
+BACKPORT_BASE="${RELEASE_BACKPORT_BASE:-develop}"
 BEST_EFFORT=false
 FROM_CHANGELOG=false
 declare -a ISSUE_NUMBERS=()
 
 usage() {
-  echo "Usage: $0 <version|release-branch> [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort]" >&2
+  echo "Usage: $0 <version|release-branch> [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort]" >&2
 }
 
 normalize_release_branch() {
@@ -60,10 +62,30 @@ normalize_release_branch() {
   value="${value#refs/heads/}"
   case "$value" in
     release/v*) printf '%s\n' "$value" ;;
+    release/*/*) printf '%s\n' "$value" ;;
     release/*) printf 'release/v%s\n' "${value#release/}" ;;
+    */*) printf '%s\n' "$value" ;;
     v*) printf 'release/%s\n' "$value" ;;
     *) printf 'release/v%s\n' "$value" ;;
   esac
+}
+
+release_version_from_branch() {
+  local value="$1"
+  printf '%s\n' "${value##*/}"
+}
+
+validate_portable_branch_name() {
+  local label="$1"
+  local value="$2"
+  if [ -z "$value" ]; then
+    echo "Invalid ${label} branch name: value is empty" >&2
+    exit 2
+  fi
+  if ! git check-ref-format --branch "$value" >/dev/null 2>&1; then
+    echo "Invalid ${label} branch name: $value" >&2
+    exit 2
+  fi
 }
 
 # Returns 0 (true) if the token is a valid issue identifier for the current
@@ -693,6 +715,14 @@ while [ $# -gt 0 ]; do
       parse_issue_csv "$2"
       shift 2
       ;;
+    --backport-base)
+      if [ $# -lt 2 ]; then
+        usage
+        exit 2
+      fi
+      BACKPORT_BASE="$2"
+      shift 2
+      ;;
     --from-changelog)
       FROM_CHANGELOG=true
       shift
@@ -728,9 +758,12 @@ if [ -z "$RELEASE_INPUT" ]; then
 fi
 
 RELEASE_BRANCH="$(normalize_release_branch "$RELEASE_INPUT")"
-RELEASE_VERSION="${RELEASE_BRANCH#release/}"
+RELEASE_VERSION="$(release_version_from_branch "$RELEASE_BRANCH")"
+validate_portable_branch_name "release" "$RELEASE_BRANCH"
+validate_portable_branch_name "backport base" "$BACKPORT_BASE"
 echo "Release branch: $RELEASE_BRANCH"
 echo "Release version: $RELEASE_VERSION"
+echo "Backport base: $BACKPORT_BASE"
 
 if [ "$FROM_CHANGELOG" = "true" ]; then
   if ! append_issues_from_changelog "$RELEASE_VERSION"; then
@@ -750,23 +783,23 @@ fi
 
 echo "Verifying merged PRs for release branch..."
 MAIN_PR=$(gh pr list --state merged --head "$RELEASE_BRANCH" --base main --json number --jq '.[0].number // empty')
-DEVELOP_PR=$(gh pr list --state merged --head "$RELEASE_BRANCH" --base develop --json number --jq '.[0].number // empty')
+DEVELOP_PR=$(gh pr list --state merged --head "$RELEASE_BRANCH" --base "$BACKPORT_BASE" --json number --jq '.[0].number // empty')
 OPEN_MAIN_PR=$(gh pr list --state open --head "$RELEASE_BRANCH" --base main --json number --jq '.[0].number // empty')
-OPEN_DEVELOP_PR=$(gh pr list --state open --head "$RELEASE_BRANCH" --base develop --json number --jq '.[0].number // empty')
+OPEN_DEVELOP_PR=$(gh pr list --state open --head "$RELEASE_BRANCH" --base "$BACKPORT_BASE" --json number --jq '.[0].number // empty')
 
 if [ -n "$OPEN_MAIN_PR" ] || [ -n "$OPEN_DEVELOP_PR" ]; then
-  echo "Release PRs are still open (main: ${OPEN_MAIN_PR:-none}, develop: ${OPEN_DEVELOP_PR:-none})."
+  echo "Release PRs are still open (main: ${OPEN_MAIN_PR:-none}, ${BACKPORT_BASE}: ${OPEN_DEVELOP_PR:-none})."
   echo "Do not run post-merge cleanup until both PRs are merged." >&2
   exit 1
 fi
 
 if [ -z "$MAIN_PR" ] || [ -z "$DEVELOP_PR" ]; then
   echo "Both merged PRs are required before cleanup." >&2
-  echo "Detected merged PRs - main: ${MAIN_PR:-none}, develop: ${DEVELOP_PR:-none}" >&2
+  echo "Detected merged PRs - main: ${MAIN_PR:-none}, ${BACKPORT_BASE}: ${DEVELOP_PR:-none}" >&2
   exit 1
 fi
 
-echo "Merged PRs verified (main #$MAIN_PR, develop #$DEVELOP_PR)."
+echo "Merged PRs verified (main #$MAIN_PR, ${BACKPORT_BASE} #$DEVELOP_PR)."
 
 echo "Fetching origin refs..."
 git fetch origin --prune
@@ -781,8 +814,8 @@ fi
 if git show-ref --quiet "refs/heads/$RELEASE_BRANCH"; then
   CURRENT_BRANCH="$(git branch --show-current)"
   if [ "$CURRENT_BRANCH" = "$RELEASE_BRANCH" ]; then
-    echo "Local branch '$RELEASE_BRANCH' is currently checked out; switching to develop first..."
-    git switch develop
+    echo "Local branch '$RELEASE_BRANCH' is currently checked out; switching to '$BACKPORT_BASE' first..."
+    git switch "$BACKPORT_BASE"
   fi
 
   echo "Deleting local branch '$RELEASE_BRANCH'..."

@@ -21,6 +21,8 @@ Product repository injection should stay small. Candidate files are limited to:
   references.
 - The smallest workflow helper scripts required for product-repo validation,
   reviewer-loop execution, CI polling, or repository-context resolution.
+- Product release runtime helpers required to validate non-secret release
+  contracts and record product branch or PR cleanup evidence.
 
 The manifest references canonical source paths. It does not copy the full
 framework into this directory.
@@ -36,6 +38,7 @@ required for product repository participation. Excluded categories include:
 - Hub-only workflow smoke runbooks.
 - Cross-product coordination notes that are not required to run product code
   validation.
+- Hub-owned delivery manifests and tracker reconciliation records.
 
 ## Setup Mode
 

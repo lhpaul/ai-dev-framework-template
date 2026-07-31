@@ -39,6 +39,15 @@ workflow_hub:
       github_repo: example/faind-mobile-app
       default_branch: main
       ci_policy: required
+      release:
+        base: main
+        branch_pattern: release/v{version}
+        changelog_owner: product_repo
+        tag_owner: product_repo
+        github_release_owner: product_repo
+        deployment_evidence_owner: product_repo
+        cleanup_evidence_owner: product_repo
+        tracker_reconciliation_owner: hub
       github_app:
         app_id: "12345"
         installation_id: "999999"
@@ -52,6 +61,25 @@ workflow_hub:
 
 Keep this file free of local paths, private key paths, token values, and secret
 material.
+
+The `release` block is the product release contract. It may contain only
+non-secret, portable release metadata. `base` defaults to the product
+repository's `default_branch`, `branch_pattern` defaults to
+`release/v{version}`, and product-owned release artifacts default to
+`product_repo` while tracker reconciliation defaults to `hub`.
+
+Before creating product-owned changelog entries, release branches, tags, GitHub
+Releases, deployment evidence, or cleanup evidence, run:
+
+```bash
+scripts/development-workflow/validate-workflow-config.sh --repo faind-mobile-app
+```
+
+Validation stops when the selected product repository is missing or ambiguous,
+when `github_repo` / `git_url` is missing, when release branch values are not
+portable, or when the versioned release contract contains local checkout paths,
+credentials, token values, secret names, secret values, or environment-specific
+account details.
 
 ## Local Hub Config
 

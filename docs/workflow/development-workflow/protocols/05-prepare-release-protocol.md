@@ -1,21 +1,70 @@
 # Protocol: Prepare Release
 
 **Stage**: Release
-**Triggered by**: Human (when develop is ready to ship)
+**Triggered by**: Human (when the configured release source is ready to ship)
+
+---
+
+## Repository Ownership
+
+In `workflow_hub` or `product_repo` mode, validate the selected product release
+contract before creating or mutating product-owned release artifacts such as
+changelog entries, release branches, tags, GitHub Releases, deployment
+evidence, or product cleanup evidence.
+
+From the hub checkout in `workflow_hub` mode, pass the selected product
+repository name and record the normalized release fields from the output:
+
+```bash
+scripts/development-workflow/validate-workflow-config.sh --repo <product-repo>
+```
+
+From a product checkout in `product_repo` mode, omit `--repo`; validation reads
+`product_repo.release` from the current repository config or applies the
+product-repository defaults:
+
+```bash
+scripts/development-workflow/validate-workflow-config.sh
+```
+
+For product-owned releases, switch to the resolved product checkout before any
+mutation. Use these resolved values for the rest of the protocol:
+
+- `TARGET_LOCAL_PATH`: product checkout to mutate.
+- `TARGET_RELEASE_BASE`: source/backport base branch.
+- `TARGET_RELEASE_BRANCH_PATTERN`: release branch pattern.
+- `TARGET_REPO_NAME`: product repository placeholder value.
+
+Resolve the release branch by replacing `{version}` with the confirmed version
+and `{product_repo}` with `TARGET_REPO_NAME`. If validation did not emit these
+fields, or the resolved checkout is missing, stop before mutation.
+
+Bind the product checkout and release base before pre-flight:
+
+```bash
+cd "${TARGET_LOCAL_PATH:?}"
+RELEASE_BASE="${TARGET_RELEASE_BASE:?}"
+RELEASE_BRANCH_PATTERN="${TARGET_RELEASE_BRANCH_PATTERN:?}"
+PRODUCT_REPO_NAME="${TARGET_REPO_NAME:?}"
+```
+
+Single-repository releases keep the existing current-repository ownership model
+and may use `RELEASE_BASE=develop` and
+`RELEASE_BRANCH_PATTERN=release/v{version}` with an empty `PRODUCT_REPO_NAME`.
 
 ---
 
 ## Pre-flight Checks
 
-Before doing anything, verify:
+Before doing anything, verify the artifact-owning checkout:
 
 1. Working directory is clean (`git status` returns no uncommitted changes). If not, stop and report.
-2. Currently on `develop`. If not, stop and report.
-3. Fetch and pull latest from remote so the release branch is created from up-to-date state:
+2. Fetch and pull the resolved release base so the release branch is created from up-to-date state:
 
    ```bash
    git fetch origin
-   git pull origin develop
+   git switch "$RELEASE_BASE"
+   git pull --ff-only origin "$RELEASE_BASE"
    ```
 
    If the pull fails (e.g., diverged history), stop and report to the human.
@@ -32,12 +81,24 @@ If the version was not provided, inspect the `[Unreleased]` section of `CHANGELO
 
 Wait for human confirmation before proceeding.
 
+After confirmation, bind the release branch from the normalized pattern:
+
+```bash
+VERSION="X.Y.Z"
+PRODUCT_REPO_NAME="${PRODUCT_REPO_NAME:-}"
+RELEASE_BRANCH="${RELEASE_BRANCH_PATTERN//\{version\}/$VERSION}"
+RELEASE_BRANCH="${RELEASE_BRANCH//\{product_repo\}/$PRODUCT_REPO_NAME}"
+```
+
+If `RELEASE_BRANCH` is empty or differs from the validated pattern semantics,
+stop before branch creation.
+
 ---
 
 ## Step 2: Create the Release Branch
 
 ```bash
-git checkout -b release/v[X.Y.Z]
+git checkout -b "$RELEASE_BRANCH"
 ```
 
 ---
@@ -82,7 +143,7 @@ chore(release): v[X.Y.Z]
 ## Step 6: Push and Open Two PRs
 
 ```bash
-git push -u origin release/v[X.Y.Z]
+git push -u origin "$RELEASE_BRANCH"
 ```
 
 Open **two** PRs from the release branch using `gh pr create`:
@@ -90,18 +151,18 @@ Open **two** PRs from the release branch using `gh pr create`:
 | PR                 | Target    | Purpose                                                      |
 | ------------------ | --------- | ------------------------------------------------------------ |
 | Production release | `main`    | Ships to production                                          |
-| Backport           | `develop` | Keeps develop in sync — **mandatory**, prevents branch drift |
+| Backport           | `RELEASE_BASE` | Keeps the source branch in sync — **mandatory**, prevents branch drift |
 
 Use title `chore(release): v[X.Y.Z]` for both. Include the CHANGELOG entries for this version in the PR body.
 
 Example:
 
 ```bash
-# 1) Production release PR (release/* -> main)
+# 1) Production release PR (configured release branch -> main)
 gh pr create --base main --title "chore(release): v[X.Y.Z]" --body-file /tmp/release-notes.md
 
-# 2) Backport PR (release/* -> develop)
-gh pr create --base develop --title "chore(release): v[X.Y.Z]" --body-file /tmp/release-notes.md
+# 2) Backport PR (configured release branch -> release base)
+gh pr create --base "$RELEASE_BASE" --title "chore(release): v[X.Y.Z]" --body-file /tmp/release-notes.md
 ```
 
 Opening PRs is **not** a terminal condition. Continue with Step 7 for the production PR before telling the human the release is ready to merge.
@@ -110,18 +171,18 @@ Opening PRs is **not** a terminal condition. Continue with Step 7 for the produc
 
 ## Step 7: Drive Production PR Readiness (`main` Target Only)
 
-Apply only to the **release PR that targets `main`**. Do **not** apply the regression-label requirement to the backport PR to `develop` (that PR may still run other CI; this step scopes expensive label-gated e2e/regression to production).
+Apply only to the **release PR that targets `main`**. Do **not** apply the regression-label requirement to the backport PR to `RELEASE_BASE` (that PR may still run other CI; this step scopes expensive label-gated e2e/regression to production).
 
-**No external reviewer tools for release PRs.** External automated reviewers (Haystack, CodeRabbit, PR-Agent, Claude Code Action, etc.) are not required for release PRs and must not be waited on. Every change in a release PR was already reviewed when its feature/fix PR merged into `develop`. Running `pr-review-loop.sh` on a release PR automatically exits with `RESULT=skipped` (release PR guard fires) — treat that as a clean non-blocking result and proceed directly to release artifact validation and CI.
+**No external reviewer tools for release PRs.** External automated reviewers (Haystack, CodeRabbit, PR-Agent, Claude Code Action, etc.) are not required for release PRs and must not be waited on. Every change in a release PR was already reviewed when its feature/fix PR merged into the resolved release base. Running `pr-review-loop.sh` on a release PR automatically exits with `RESULT=skipped` (release PR guard fires) — treat that as a clean non-blocking result and proceed directly to release artifact validation and CI.
 
 Note: release PRs use a simplified readiness flow (the CI loop step applies `ready-for-human-review` directly after CI is green) and do not run Protocol 91's Step 8a/8b label checklist.
 
 ### 7.1 Resolve the production PR number
 
-Identify the open PR from `release/v[X.Y.Z]` to `main`, for example:
+Identify the open PR from the resolved release branch to `main`, for example:
 
 ```bash
-gh pr list --head "release/v[X.Y.Z]" --base main --state open --json number --jq '.[0].number'
+gh pr list --head "$RELEASE_BRANCH" --base main --state open --json number --jq '.[0].number'
 ```
 
 If multiple or zero matches, stop and resolve with the human.
@@ -183,7 +244,7 @@ Run `pr-ci-loop.sh` and wait until required checks settle (including the e2e/reg
 | `red`     | Apply `needs-fixes`, fix, push, then return to the artifact validation step (§7.2) and repeat through the CI loop step (§7.4).                                                        |
 | `timeout` | Escalate to a human; do not apply `ready-for-human-review`.                                                                                                       |
 
-### 7.5 Backport PR (`develop` target)
+### 7.5 Backport PR (`RELEASE_BASE` target)
 
 Do **not** require `ready-for-regression` on the backport PR as part of this protocol. It may proceed on its own CI; merge order remains: **merge `main` first**, then backport.
 
@@ -194,10 +255,10 @@ Do **not** require `ready-for-regression` on the backport PR as part of this pro
 When the production PR is ready (or clearly escalated):
 
 1. **Merge the `main` PR first** — the tag `v[X.Y.Z]` is created automatically by CI on merge (`.github/workflows/auto-tag-release.yml`)
-2. Then merge the `develop` backport PR
+2. Then merge the `RELEASE_BASE` backport PR
 3. Run Step 9 post-merge cleanup only after both PRs are merged
 
-> **Use regular merge commits — not squash or rebase.** Squash-merging release PRs breaks the gitflow history chain: `main` won't share commit ancestors with `develop`, causing future comparisons to show accumulated historical divergence instead of just new changes. Regular merge commits preserve the relationship so `git log main..develop` accurately reflects pending work.
+> **Use regular merge commits — not squash or rebase.** Squash-merging release PRs breaks the gitflow history chain: `main` won't share commit ancestors with the release base, causing future comparisons to show accumulated historical divergence instead of just new changes. Regular merge commits preserve the relationship so `git log main.."$RELEASE_BASE"` accurately reflects pending work.
 
 If Step 7 escalated or CI timed out, report status and blockers before merge.
 
@@ -205,14 +266,14 @@ If Step 7 escalated or CI timed out, report status and blockers before merge.
 
 ## Step 9: Post-Merge Cleanup (Branch + Tracker)
 
-Run this step only after both release PRs from `release/v[X.Y.Z]` are merged.
+Run this step only after both release PRs from `RELEASE_BRANCH` are merged.
 
 ### 9.1 Verify merged state before deletion
 
 Confirm the release branch has:
 
 - One merged PR to `main`
-- One merged PR to `develop`
+- One merged PR to `RELEASE_BASE`
 - No remaining open PRs to either base
 
 If either merged PR is missing, or one PR is still open, stop. Do **not** delete the release branch and do **not** run release stamping or tracker release transitions.
@@ -228,14 +289,14 @@ scope from the whole project board.
 Use the helper script:
 
 ```bash
-./scripts/development-workflow/prepare-release-post-merge-cleanup.sh v[X.Y.Z] --from-changelog
+./scripts/development-workflow/prepare-release-post-merge-cleanup.sh "$RELEASE_BRANCH" --backport-base "$RELEASE_BASE" --from-changelog
 ```
 
 The script performs all required checks and actions in order:
 
-1. Verifies both merged PRs exist (`main` and `develop`) and no open PR remains.
-2. Deletes remote branch `release/v[X.Y.Z]` (or logs that it is already absent).
-3. Deletes local branch `release/v[X.Y.Z]` when safe.
+1. Verifies both merged PRs exist (`main` and `RELEASE_BASE`) and no open PR remains.
+2. Deletes remote branch `RELEASE_BRANCH` (or logs that it is already absent).
+3. Deletes local branch `RELEASE_BRANCH` when safe.
 4. Records the production release version on each explicit in-scope tracker item.
 5. Transitions explicit in-scope tracker items from merged-to-integration to released-to-production.
 
@@ -247,15 +308,15 @@ scope.
 
 ```bash
 # verify merged PRs first (examples)
-gh pr list --head "release/v[X.Y.Z]" --base main --state merged --json number
-gh pr list --head "release/v[X.Y.Z]" --base develop --state merged --json number
+gh pr list --head "$RELEASE_BRANCH" --base main --state merged --json number
+gh pr list --head "$RELEASE_BRANCH" --base "$RELEASE_BASE" --state merged --json number
 
 # delete remote branch (only after both merges)
-git push origin --delete "release/v[X.Y.Z]"
+git push origin --delete "$RELEASE_BRANCH"
 
 # delete local branch (switch away first if currently checked out)
-git switch develop
-git branch -D "release/v[X.Y.Z]"
+git switch "$RELEASE_BASE"
+git branch -D "$RELEASE_BRANCH"
 ```
 
 If local deletion fails because the branch is checked out in another worktree, switch away in that worktree and retry.
@@ -295,6 +356,6 @@ manually complete the `Merged` -> `Released` status transition.
 
 ## Notes
 
-- If `develop` is branch-protected (requires PR to merge), the backport PR is the correct mechanism — do not attempt to push directly.
+- If `RELEASE_BASE` is branch-protected (requires PR to merge), the backport PR is the correct mechanism — do not attempt to push directly.
 - If no CI workflow exists for auto-tagging, instruct the human to run after the `main` merge: `git tag v[X.Y.Z] && git push origin v[X.Y.Z]`
 - Reference-style links follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Removing them makes version headers plain text instead of comparison links on GitHub.

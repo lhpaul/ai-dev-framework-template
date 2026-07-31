@@ -17,6 +17,8 @@ including:
 - Repository workflow configuration files and examples.
 - Hub-owned runbooks, smoke tests, and validation harnesses for workflow
   behavior.
+- Delivery manifests and tracker reconciliation evidence for hub-managed
+  product releases.
 
 The hub skeleton intentionally references canonical source paths instead of
 copying the full framework tree into this directory. See
@@ -27,9 +29,11 @@ copying the full framework tree into this directory. See
 Product repositories that participate in a workflow hub should use
 `template/product-repo-injection/` instead of this skeleton. Product repositories
 own product code, product CI, product reviewer-loop execution, and product smoke
-runbooks. They should not receive hub-owned tracker state, historical specs,
-implementation plans, or cross-product coordination artifacts unless a later
-workflow explicitly documents why a specific artifact is required.
+runbooks, plus product release runtime helpers for product-owned release
+artifacts. They should not receive hub-owned tracker state, historical specs,
+implementation plans, delivery manifests, tracker reconciliation records, or
+cross-product coordination artifacts unless a later workflow explicitly
+documents why a specific artifact is required.
 
 ## Setup Mode
 
