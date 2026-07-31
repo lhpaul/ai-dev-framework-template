@@ -202,6 +202,22 @@ repository_context_for_action() {
         if ! routing_json="$("${routing_args[@]}")"; then
           return 1
         fi
+        if ! printf '%s\n' "$routing_json" | jq -e '
+          .schema_version == "work_item_repository_routing.v1"
+          and (.outcome_code | type == "string" and length > 0)
+          and (.display_label | type == "string" and length > 0)
+          and (.continue_allowed | type == "boolean")
+          and (.artifact_owner | type == "string" and length > 0)
+          and (.selected_product_repo_key == null or (.selected_product_repo_key | type == "string"))
+          and (.stop_reason == null or (.stop_reason | type == "string"))
+          and (.required_human_action == null or (.required_human_action | type == "string"))
+          and (.configured_product_repo_keys | type == "array")
+          and (.selected_product_repo_keys | type == "array")
+          and (.fingerprint | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+        ' >/dev/null 2>&1; then
+          print_kv ROUTING_INTERNAL_ERROR "invalid_classifier_response"
+          return 1
+        fi
         routing_outcome="$(printf '%s\n' "$routing_json" | jq -r '.outcome_code')"
         print_kv ROUTING_OUTCOME_CODE "$routing_outcome"
         print_kv ROUTING_DISPLAY_LABEL "$(printf '%s\n' "$routing_json" | jq -r '.display_label')"

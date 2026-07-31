@@ -74,6 +74,21 @@ else
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
+product_repo_output="$(python3 "$CLASSIFIER" --fixture "$FIXTURE_DIR/product-repo.json" --json)"
+if jq -e '
+  .outcome_code == "single_repo"
+  and .continue_allowed == true
+  and .artifact_owner == "current_repository"
+  and .selected_product_repo_key == null
+' >/dev/null <<< "$product_repo_output"; then
+  echo "PASS: product_repo_contract"
+  PASS_COUNT=$((PASS_COUNT + 1))
+else
+  echo "FAIL: product_repo_contract"
+  printf '%s\n' "$product_repo_output"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+
 error_file="$(mktemp)"
 set +e
 python3 "$CLASSIFIER" --config "$FIXTURE_DIR/missing-config.json" --fixture "$FIXTURE_DIR/product-owned.json" --json >"$error_file" 2>&1

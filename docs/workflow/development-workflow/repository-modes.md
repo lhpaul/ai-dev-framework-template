@@ -114,12 +114,14 @@ allowing implementation actions to target a selected product repository.
   identity for each implementation action.
 - `workflow-next-action.sh` runs the one-target repository classifier before
   implementation mutation and emits `ROUTING_OUTCOME_CODE`,
-  `ROUTING_CONTINUE_ALLOWED`, `ROUTING_ARTIFACT_OWNER`,
-  `ROUTING_SELECTED_PRODUCT_REPO_KEY`, `ROUTING_STOP_REASON`,
-  `ROUTING_REQUIRED_HUMAN_ACTION`, and `ROUTING_FINGERPRINT`. Consumers must
-  continue only when the script succeeds and `ROUTING_CONTINUE_ALLOWED=true`.
-  `missing_target`, `ambiguous_target`, and `multiple_targets` are stop
-  outcomes even though they are reported as structured routing results.
+  `ROUTING_DISPLAY_LABEL`, `ROUTING_CONTINUE_ALLOWED`,
+  `ROUTING_ARTIFACT_OWNER`, `ROUTING_SELECTED_PRODUCT_REPO_KEY`,
+  `ROUTING_STOP_REASON`, `ROUTING_REQUIRED_HUMAN_ACTION`, and
+  `ROUTING_FINGERPRINT`. `ROUTING_DISPLAY_LABEL` maps from the classifier's
+  `display_label` field. Consumers must continue only when the script succeeds
+  and `ROUTING_CONTINUE_ALLOWED=true`. `missing_target`, `ambiguous_target`,
+  and `multiple_targets` are stop outcomes even though they are reported as
+  structured routing results.
 - `pr-review-loop.sh` and `pr-ci-loop.sh` can target implementation PRs outside
   the hub by accepting `--repo <owner/repo>` or `--product-repo <name>`.
 - `post-merge-cleanup.sh --repo <name> <branch>` cleans implementation branches

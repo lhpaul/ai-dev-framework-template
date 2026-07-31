@@ -135,6 +135,9 @@ def classify(
         artifact_owner = "none"
         stop_reason = f"repository mode '{repository_mode}' is not supported"
         required_human_action = "fix repository mode configuration before routing implementation work"
+    elif repository_mode == "product_repo":
+        outcome = "single_repo"
+        artifact_owner = "current_repository"
     elif repository_mode == "workflow_hub":
         if hub_only and selected:
             outcome = "ambiguous_target"

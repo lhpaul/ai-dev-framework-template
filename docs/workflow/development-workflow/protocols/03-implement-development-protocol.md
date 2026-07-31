@@ -608,10 +608,13 @@ before mutation.
 
 For workflow-hub implementation actions, prefer `workflow-next-action.sh` and
 consume its structured routing result. If using
-`work-item-repository-routing.py` directly, map the JSON keys to the same
-`ROUTING_*` evidence names before handoff. Continue only when the command exits
-successfully and `ROUTING_CONTINUE_ALLOWED=true`. Record
-`ROUTING_OUTCOME_CODE`, `ROUTING_ARTIFACT_OWNER`,
+`work-item-repository-routing.py` directly, map `outcome_code`,
+`display_label`, `continue_allowed`, `artifact_owner`,
+`selected_product_repo_key`, `stop_reason`, `required_human_action`, and
+`fingerprint` to the corresponding `ROUTING_*` evidence names before handoff.
+Continue only when the command exits successfully and
+`ROUTING_CONTINUE_ALLOWED=true`. Record `ROUTING_OUTCOME_CODE`,
+`ROUTING_DISPLAY_LABEL`, `ROUTING_ARTIFACT_OWNER`,
 `ROUTING_SELECTED_PRODUCT_REPO_KEY`, and `ROUTING_FINGERPRINT` in the
 implementation-start notes. If `ROUTING_STOP_REASON` or
 `ROUTING_REQUIRED_HUMAN_ACTION` is non-empty, stop before mutation and report
