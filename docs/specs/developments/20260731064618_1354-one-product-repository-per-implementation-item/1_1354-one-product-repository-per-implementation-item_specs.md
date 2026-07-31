@@ -102,12 +102,13 @@ classified as product-owned hub work.
 
 **Steps**:
 
-1. The runner reads the item's selected product repository context.
+1. The runner reads the item's selected product repository key from the #1353
+   contract.
 2. The runner verifies that the selection names exactly one configured product
-   repository.
-3. The runner verifies that the selected repository context is available before
-   branch creation or PR mutation.
-4. The runner includes the selected repository context in every downstream
+   repository key.
+3. The runner verifies that the selected repository key is known, resolved, and
+   available before branch creation or PR mutation.
+4. The runner includes the same selected repository key in every downstream
    handoff.
 5. Review, CI, and cleanup evidence are collected from the selected repository
    while tracker reconciliation remains hub-owned.
@@ -131,9 +132,9 @@ product repository for product-owned work.
 
 **Considerations**:
 
-- Repository context must travel through spec, plan, implementation, review,
-  CI, cleanup, and later release handoffs without being re-inferred from branch
-  names alone.
+- The selected product repository key must travel through spec, plan,
+  implementation, review, CI, cleanup, and later release handoffs without being
+  re-inferred from branch names alone.
 - Product implementation work must not default to the hub checkout merely
   because the hub owns the tracker item.
 
@@ -169,11 +170,11 @@ before this feature.
 
 ## Routing Model
 
-| Work shape | Required tracker structure | Required repository target | Routing result |
+| Work shape | Required tracker structure | Product repository selector | Artifact destination and routing result |
 | --- | --- | --- | --- |
-| Single product repository change from a hub | Hub child item under the hub epic | Exactly one selected product repository | Product-owned child can advance |
-| Multiple product repositories from one request | Hub epic with one child per product repository | Exactly one selected product repository per product child | Each child advances independently |
-| Hub-only coordination work | Hub-owned child item or hub-only epic task | Hub repository | Hub-owned child can advance |
+| Single product repository change from a hub | Hub child item under the hub epic | Exactly one selected product repository key | Product-owned child routes product artifacts to that repository and can advance |
+| Multiple product repositories from one request | Hub epic with one child per product repository | Exactly one selected product repository key per product child | Each child routes product artifacts to its selected repository and advances independently |
+| Hub-only coordination work | Hub-owned child item or hub-only epic task | No product repository key | Hub-owned artifacts route to the hub repository and the hub-owned child can advance |
 | Ambiguous product request | Hub issue or child needing clarification | None until clarified | Stop before mutation |
 | Multi-target child item | One child naming more than one product repository | Invalid | Stop and split into repository-scoped children |
 | Single-repository work | Existing issue structure | Current repository | Existing behavior continues |
@@ -181,37 +182,40 @@ before this feature.
 ## Business Rules
 
 - A product-owned implementation child in `workflow_hub` mode has exactly one
-  selected product repository.
-- A product-owned implementation child with zero selected repositories is
+  selected product repository key from the #1353 contract.
+- A product-owned implementation child with zero selected repository keys is
   unroutable and must stop before mutation.
+- A product-owned implementation child with an unknown or unresolved selected
+  repository key is unroutable and must stop before mutation.
 - A product-owned implementation child with more than one selected product
-  repository is invalid and must be split or narrowed before mutation.
+  repository key is invalid and must be split or narrowed before mutation.
 - Hub-only coordination work must be explicitly distinguishable from
-  product-owned implementation work.
-- The selected product repository context must remain visible through spec,
+  product-owned implementation work and must have no product repository key.
+- The selected product repository key must remain visible through spec,
   plan, implementation, review, CI, cleanup, and release handoffs.
-- Spec and plan artifacts remain hub-owned unless a later workflow contract
-  explicitly says otherwise.
-- Product code branches, product PRs, product CI, product reviewer-loop checks,
-  and product cleanup evidence are owned by the selected product repository.
-- Tracker reconciliation remains hub-owned for hub-managed product work.
+- Canonical ownership for specs, plans, product branches, product PRs, product
+  CI, product cleanup evidence, releases, and tracker reconciliation remains in
+  [the cross-repository PR flow](../../../workflow/development-workflow/cross-repo-pr-flow.md)
+  and the upstream #1353 release contract.
 - Single-repository workflows do not require product repository selection and
   keep current behavior.
 
 ## Statuses / Enum Values
 
 No new tracker statuses are introduced. Existing workflow statuses keep their
-current display labels and meanings.
+current display labels and meanings. The values below are derived routing
+outcomes, not tracker states.
 
-The routing outcome must be operator-visible before mutation:
+The routing outcome must be operator-visible before mutation and maps to the
+existing workflow status already owned by the active stage:
 
-| Routing outcome | Display label | Description |
-| --- | --- | --- |
-| Product owned | Product owned | The child item names exactly one product repository and may route product artifacts there. |
-| Hub only | Hub only | The item intentionally mutates hub-owned workflow or coordination artifacts. |
-| Missing target | Missing target | The item appears product-owned but has no selected product repository. |
-| Ambiguous target | Ambiguous target | The item's target repository cannot be determined from confirmed tracker context. |
-| Multiple targets | Multiple targets | The item names more than one product repository and must be split or narrowed. |
+| Routing outcome | Display label | Existing status behavior | Description |
+| --- | --- | --- | --- |
+| Product owned | Product owned | Continue in the active stage status | The child item names exactly one product repository key and may route product artifacts there. |
+| Hub only | Hub only | Continue in the active stage status | The item intentionally mutates hub-owned workflow or coordination artifacts and has no product repository key. |
+| Missing target | Missing target | Stay in the current status until clarified | The item appears product-owned but has no selected product repository key. |
+| Ambiguous target | Ambiguous target | Stay in the current status until clarified | The item's target repository cannot be determined from confirmed tracker context. |
+| Multiple targets | Multiple targets | Stay in the current status until split or narrowed | The item names more than one product repository key and must be split or narrowed. |
 
 ## Operational Visibility
 
@@ -230,11 +234,16 @@ The routing outcome must be operator-visible before mutation:
       product repository can advance, and its stage handoffs show that product
       repository as the mutation target.
 - [ ] A hub-managed product implementation item with no selected product
-      repository stops before branch creation, PR mutation, tracker mutation, or
-      cleanup and reports "Missing target" or equivalent stop evidence.
+      repository key stops before product branch, PR, and cleanup mutation; the
+      hub may record stop evidence and reports "Missing target" or equivalent
+      evidence.
+- [ ] A hub-managed product implementation item whose repository context is
+      ambiguous stops before product branch, PR, and cleanup mutation; the hub
+      may record stop evidence and reports "Ambiguous target" or equivalent
+      evidence.
 - [ ] A hub-managed product implementation item with multiple selected product
-      repositories stops before mutation and reports that the item must be split
-      or narrowed to one product repository.
+      repository keys stops before mutation and reports that the item must be
+      split or narrowed to one product repository.
 - [ ] A cross-repository request can be represented as one hub epic with
       repository-scoped product children, and each child has only one product
       target.
@@ -253,14 +262,14 @@ The routing outcome must be operator-visible before mutation:
 
 | Brief objective | Covered by |
 | --- | --- |
-| Require exactly one target product repository for every product implementation item. | Business Rules; Use Case 2; AC1, AC2, AC3 |
-| Reject missing, ambiguous, and multi-target implementation routing before mutation. | Routing Model; Operational Visibility; AC2, AC3 |
-| Define and enforce the hub epic plus repository-scoped child-item pattern, including optional hub-only coordination work. | Use Case 1; Routing Model; AC4, AC5 |
-| Propagate selected-repository context consistently through spec, plan, implementation, review, cleanup, and release handoffs. | Use Case 2; Operational Visibility; AC6 |
-| Ensure a cross-repository request is decomposed into an epic and single-repository children. | Use Case 1; Routing Model; AC4 |
-| Ensure no product implementation action can rely on an implicit or multiple repository target. | Business Rules; Routing Model; AC2, AC3 |
-| Ensure hub-only work remains distinguishable and routable. | Use Case 1; Routing Model; AC5 |
-| Preserve current behavior for single-repository workflows. | Use Case 3; Business Rules; AC7 |
+| Require exactly one target product repository for every product implementation item. | Business Rules; Use Case 2; AC1, AC2, AC3, AC4 |
+| Reject missing, ambiguous, and multi-target implementation routing before mutation. | Routing Model; Operational Visibility; AC2, AC3, AC4 |
+| Define and enforce the hub epic plus repository-scoped child-item pattern, including optional hub-only coordination work. | Use Case 1; Routing Model; AC5, AC6 |
+| Propagate selected-repository context consistently through spec, plan, implementation, review, cleanup, and release handoffs. | Use Case 2; Operational Visibility; AC7 |
+| Ensure a cross-repository request is decomposed into an epic and single-repository children. | Use Case 1; Routing Model; AC5 |
+| Ensure no product implementation action can rely on an implicit or multiple repository target. | Business Rules; Routing Model; AC2, AC3, AC4 |
+| Ensure hub-only work remains distinguishable and routable. | Use Case 1; Routing Model; AC6 |
+| Preserve current behavior for single-repository workflows. | Use Case 3; Business Rules; AC8 |
 
 ## Out of Scope (MVP)
 
