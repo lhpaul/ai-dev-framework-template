@@ -22,3 +22,8 @@ This is the Codex command-style alias for Claude Code `/prepare-release`.
    release done. For workflow-hub component releases, include `--repo`,
    `--repo-root`, and `--evidence-file` so cleanup validates the persisted
    binding before touching product-owned release branches.
+7. For workflow-hub component releases, run
+   `component-milestone-reconciliation.sh` after component release evidence and
+   cleanup are complete: apply namespaced component milestones only to matching
+   component child issues, and use delivery-bundle parent inspection/apply
+   paths for parent release status without stamping parent or delivery issues.

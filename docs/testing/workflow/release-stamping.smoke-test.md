@@ -6,6 +6,12 @@ Verify that the release post-merge cleanup flow records a production release
 version on shipped issues through the configured tracker provider, with GitHub
 Milestones as the GitHub Issues / GitHub Projects release primitive.
 
+This runbook covers the non-hub `single_repo` release milestone path. In
+`workflow_hub` mode, component releases use
+`component-milestone-reconciliation.sh` and namespaced
+`<product-repo>@<component-tag>` milestones for component child issues, while
+parent epics and delivery bundle issues remain milestone-free.
+
 ## Preconditions
 
 - `gh` is authenticated for a test repository that uses GitHub Issues.

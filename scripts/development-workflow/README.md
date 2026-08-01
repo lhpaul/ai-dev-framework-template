@@ -226,6 +226,59 @@ What it does:
 - Finalizes only when every declared current component is complete and never
   creates a shared suite version or shared release branch.
 
+### `component-milestone-reconciliation.sh`
+
+Reconciles hub-owned component release status after component evidence and,
+when present, delivery bundle evidence are available.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/component-milestone-reconciliation.sh inspect-component \
+  --issue 1358 \
+  --target-kind component_child \
+  --product-repo mobile-app \
+  --component-tag mobile-v1.4.0 \
+  --evidence-file /tmp/component-release-evidence.json \
+  --json
+
+./scripts/development-workflow/component-milestone-reconciliation.sh apply-component \
+  --issue 1358 \
+  --target-kind component_child \
+  --product-repo mobile-app \
+  --component-tag mobile-v1.4.0 \
+  --evidence-file /tmp/component-release-evidence.json \
+  --json
+
+./scripts/development-workflow/component-milestone-reconciliation.sh inspect-parent \
+  --parent-issue 1352 \
+  --delivery-manifest /tmp/delivery-bundle.json \
+  --require-finalized \
+  --json
+
+./scripts/development-workflow/component-milestone-reconciliation.sh apply-parent \
+  --parent-issue 1352 \
+  --delivery-manifest /tmp/delivery-bundle.json \
+  --require-finalized \
+  --json
+```
+
+What it does:
+
+- Emits `component_milestone_reconciliation.v1`.
+- In `workflow_hub` mode, creates or reuses a namespaced component milestone
+  titled `<product-repo>@<component-tag>` and assigns it only to the matching
+  component child issue after complete matching `component_release_evidence.v1`.
+- Rejects `parent_epic` and `delivery_bundle` milestone writes before any
+  GitHub mutation.
+- Reports parent release states from `delivery_bundle_manifest.v1` as
+  `not_released`, `partially_released`, `blocked`, or `released`.
+- Persists parent `release_status` and an audit event in the delivery bundle
+  manifest only when finalized bundle evidence allows `parent_released`.
+- Preserves non-hub compatibility with the existing plain `vX.Y.Z` milestone
+  path via `--mode single_repo --version <version>`.
+
 ### `check-workflow-branch.sh`
 
 Checks whether a specific workflow branch already exists locally, remotely, or in an active worktree.
