@@ -200,9 +200,9 @@ scripts/development-workflow/component-milestone-reconciliation.sh inspect-paren
 
 If the helper reports `component_release_pending`,
 `component_release_not_ready`, `component_target_mismatch`,
-`component_tag_missing`, `parent_blocked`, or `parent_partially_released`, stop
-before tracker milestone or release-status mutation and report the emitted
-`required_next_action`.
+`component_tag_missing`, `parent_blocked`, `parent_partially_released`, or
+`parent_not_released`, stop before tracker milestone or release-status mutation
+and report the emitted `required_next_action`.
 
 ---
 
