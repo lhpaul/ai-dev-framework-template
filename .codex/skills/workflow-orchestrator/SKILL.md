@@ -47,14 +47,19 @@ Recommended model tier: `economy`
    if a destructive PR branch update would be required, stop before mutation and
    route the exact operation through
    `scripts/development-workflow/workflow-branch-push-guard.sh`.
-15. When supervising sweep, batch, helper-extraction, numeric-target, or
+15. For Protocol 94 batch merges, keep the explicit in-scope PR list frozen and
+   run `batch-merge.sh recheck-remaining --prs <list> --after-merged-pr <pr>
+   --base <base>` after each successful sibling merge before selecting the next
+   PR. Apply Protocol 94 Step 4.2 as the source of truth for post-recheck
+   admission semantics.
+16. When supervising sweep, batch, helper-extraction, numeric-target, or
    pattern-completeness items, require residual gate evidence before accepting
    `ready-for-human-review` as terminal.
-16. When supervising `spec/*` or `implementation-plan/*` PRs, require Protocol
+17. When supervising `spec/*` or `implementation-plan/*` PRs, require Protocol
     91 Step 8a's documentation-stage alignment checker before accepting
     readiness. A mismatch keeps the item under supervision until corrected or
     escalated.
-17. Before accepting any item as terminal in a batch summary, require the
+18. Before accepting any item as terminal in a batch summary, require the
     Work Item Runner's `## Ground-Truth Completion Verification` section from
     `scripts/development-workflow/item-completion-self-check.sh` or run the
     helper directly from current artifact state. When Step 7 was configured, pass
