@@ -69,6 +69,9 @@ target matching, bundle finalization readiness, and target issue kind.
 | Evidence product repository does not match the target child | `component_target_mismatch` | Stop | Correct the child target or evidence before mutation | New helper, tests |
 | Evidence tag is missing or invalid | `component_tag_missing` | Stop | Provide the released component tag before milestone creation | New helper, tests |
 | Evidence record exists but is incomplete, invalid, stale, conflicting, failed, blocked, or pending | `component_release_not_ready` | Stop | Repair or retry component release evidence; mark child blocked only when an invalid record exists | New helper, tests |
+| Bundle-state reconciliation finds no released current component and the bundle is not finalized | `parent_not_released` | Continue | Report parent state without adding milestones or changing lifecycle Status | New helper, delivery bundle manifest |
+| Bundle-state reconciliation finds at least one released component and at least one unreleased current component | `parent_partially_released` | Continue | Record partial parent release state without adding milestones or finalizing the parent | New helper, delivery bundle manifest |
+| Bundle-state reconciliation finds missing, stale, failed, blocked, or conflicting bundle evidence | `parent_blocked` | Stop | Record blocked parent release state and required correction without adding milestones | New helper, delivery bundle manifest |
 | Bundle-finalization reconciliation confirms every declared component is released and finalization passes | `parent_released` | Continue | Mark parent released without adding any milestone to parent or bundle issue | New helper, delivery bundle manifest |
 | Component-target reconciliation has complete matching evidence | `component_released` | Continue | Create or reuse `<product-repo>@<tag>` milestone and assign it only to the component child | New helper, GitHub Projects tests |
 
@@ -126,6 +129,12 @@ but must never stamp another component milestone.
       This path must not modify historical component release evidence or create
       shared suite versions, branches, tags, or GitHub Releases. Map to AC9 and
       AC10.
+- [ ] Define the parent release-state persistence contract. The helper should
+      emit the canonical state in JSON for every run and, when apply mode is
+      requested, write or update a `release_status` object plus audit event in
+      the hub-owned delivery bundle manifest using the same locked atomic-write
+      pattern as `delivery-bundle-manifest.sh`. It must not overload the GitHub
+      Project workflow Status field. Map to AC9, AC10, and AC13.
 - [ ] Add idempotency guards: reapplying the same complete component evidence to
       an already-stamped child should report `component_released` without
       creating a duplicate milestone or changing parent/bundle milestones.
@@ -193,10 +202,11 @@ integration tests, smoke/manual workflow runbook verification.
    delivery bundle finalization, not the non-hub `vX.Y.Z` path. Maps to AC11.
 6. Partial bundle state reports `partially_released` when at least one component
    is released and another current component remains unreleased. Maps to AC9.
-7. Completed bundle finalization reports `parent_released` without creating
+7. Blocked bundle evidence reports `parent_blocked`; corrected evidence can
+   recover to `parent_not_released`, `parent_partially_released`, or
+   `parent_released`. Maps to AC9 and AC10.
+8. Completed bundle finalization reports `parent_released` without creating
    another component milestone. Maps to AC10.
-8. Parent `blocked` recovers to `not_released`, `partially_released`, or
-   `released` after corrected bundle evidence. Maps to AC9 and AC10.
 
 **Smoke test runbook**:
 `docs/testing/workflow/1358-component-milestones-release-statuses.smoke-test.md`
@@ -243,6 +253,9 @@ GitHub API output parsing.
     milestone writes.
   - Bundle parent state: no released components, one released plus one pending,
     all released but unfinalized, finalized, blocked, and blocked recovery.
+  - Release-state persistence: JSON-only inspect, apply-mode manifest
+    `release_status` write, existing status update, and atomic preservation on
+    failed writes.
   - Idempotency: existing namespaced milestone reused, already-stamped child
     reprocessed, and finalized parent reprocessed.
 - **Unit test mapping**:
@@ -324,7 +337,8 @@ existing Bash wrapper plus embedded Python style in
    - partial shipment,
    - final bundle release,
    - blocked state,
-   - recovery from blocked after corrected evidence.
+   - recovery from blocked after corrected evidence,
+   - JSON output and apply-mode manifest `release_status` persistence.
 5. Add `test-component-milestone-reconciliation.sh` with fixture writers,
    mocked `gh` API calls, and every parser-risk edge case above.
 6. Update repository-mode, prepare-release, cross-repo flow, helper README,
