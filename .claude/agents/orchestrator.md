@@ -94,9 +94,8 @@ That document is the single source of truth for this supporting role. Key respon
 - For Protocol 94 batch merges, keep the explicit in-scope PR list frozen and
   run `batch-merge.sh recheck-remaining --prs <list> --after-merged-pr <pr>
   --base <base>` after each successful sibling merge before selecting the next
-  PR. Require helper exit `0`, fresh records for every remaining unmerged PR,
-  and `classification=clean`; hold `merge_blocked`, `helper_failed`, and
-  missing records, while keeping out-of-scope observations read-only.
+  PR. Apply Protocol 94 Step 4.2 as the source of truth for post-recheck
+  admission semantics.
 - A delegated gate result of `exceptional_bypass_authorized` is not normal batch
   merge permission. Split that PR out of the Protocol 94 list and require a
   separate named PR/SHA/fingerprint authorization plus pre-attempt

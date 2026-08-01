@@ -106,11 +106,9 @@ Key responsibilities:
   Protocol 94 batch merge using only the explicit in-scope PR list: run
   `batch-merge.sh discover --prs <comma-separated-in-scope-prs>` and continue
   through merge, cleanup, post-sibling-merge `recheck-remaining` calls, and
-  tracker reconciliation while keeping that explicit PR list frozen. Require
-  helper exit `0`, fresh records for every remaining unmerged PR, and
-  `classification=clean` before selecting a PR for merge or readiness; report
-  held, helper-failed, or missing-record PRs as `merge_blocked`. Never use
-  Protocol 94 auto-discovery from `/run-items`. If any stage does not allow merge, finish at the
+  tracker reconciliation while keeping that explicit PR list frozen. Apply
+  Protocol 94 Step 4.2 as the source of truth for post-recheck admission
+  semantics. Never use Protocol 94 auto-discovery from `/run-items`. If any stage does not allow merge, finish at the
   `ready-for-human-review` handoff, report the exact
   `stages.<stage>.may_merge_pr: false` guardrail for each affected PR, and tell
   the human to invoke `/batch-merge` or adjust guardrails to permit delegated

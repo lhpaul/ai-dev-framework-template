@@ -210,6 +210,11 @@ rm -f "$MOCK_GH_STATE_DIR"/*.count
 base_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
 run_test "base_mismatch_blocks" "base_ref_mismatch" "$(json_field "$base_output" 102 reason)"
 
+export MOCK_SCENARIO=
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+no_deadline_output="$(BATCH_MERGE_RECHECK_DEADLINE_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
+run_test "zero_deadline_does_not_timeout_clean_pr" "clean" "$(json_field "$no_deadline_output" 102 classification)"
+
 export MOCK_SCENARIO=previous_merged
 rm -f "$MOCK_GH_STATE_DIR"/*.count
 previous_merged_output="$("$HELPER" recheck-remaining --prs 101,102,103 --after-merged-pr 101 --base develop)"
@@ -251,6 +256,20 @@ observation_nested_status=$?
 set -e
 run_test "observation_nested_object_status" "2" "$observation_nested_status"
 run_test "observation_nested_object_reason" "malformed_response" "$(json_field "$observation_nested_output" null reason)"
+
+set +e
+bad_deadline_output="$(BATCH_MERGE_RECHECK_DEADLINE_SECONDS=abc "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
+bad_deadline_status=$?
+set -e
+run_test "invalid_deadline_status" "2" "$bad_deadline_status"
+run_test "invalid_deadline_parseable" "helper_failed" "$(json_field "$bad_deadline_output" null classification)"
+
+set +e
+bad_after_with_missing_base_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr abc --base "")"
+bad_after_with_missing_base_status=$?
+set -e
+run_test "invalid_after_missing_base_status" "2" "$bad_after_with_missing_base_status"
+run_test "invalid_after_missing_base_parseable" "helper_failed" "$(json_field "$bad_after_with_missing_base_output" null classification)"
 
 set +e
 bad_config_output="$(BATCH_MERGE_RECHECK_ATTEMPTS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"

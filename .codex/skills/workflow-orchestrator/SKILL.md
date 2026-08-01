@@ -46,9 +46,8 @@ Recommended model tier: `economy`
 15. For Protocol 94 batch merges, keep the explicit in-scope PR list frozen and
    run `batch-merge.sh recheck-remaining --prs <list> --after-merged-pr <pr>
    --base <base>` after each successful sibling merge before selecting the next
-   PR. Require helper exit `0`, fresh records for every remaining unmerged PR,
-   and `classification=clean`; hold `merge_blocked`, `helper_failed`, and
-   missing records, while keeping out-of-scope observations read-only.
+   PR. Apply Protocol 94 Step 4.2 as the source of truth for post-recheck
+   admission semantics.
 16. When supervising sweep, batch, helper-extraction, numeric-target, or
    pattern-completeness items, require residual gate evidence before accepting
    `ready-for-human-review` as terminal.

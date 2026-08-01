@@ -154,7 +154,9 @@ emit_recheck_record() {
     --arg outcome "${13}" \
     --arg reason "${14}" '
       def maybe_number:
-        if . == "" or . == "null" then null else tonumber end;
+        if . == "" or . == "null" then null
+        elif test("^[0-9]+$") then tonumber
+        else null end;
       def maybe_string:
         if . == "" or . == "null" then null else . end;
       {
@@ -628,7 +630,7 @@ cmd_recheck_remaining() {
         bound_exhausted="retry_deadline_exhausted"
         break
       fi
-      [ "$deadline_seconds" -eq 0 ] && remaining=1
+      [ "$deadline_seconds" -eq 0 ] && remaining=30
 
       attempt=$((attempt + 1))
       json=""
