@@ -65,6 +65,12 @@ case "$*" in
       dirty_out_of_scope|retry)
         printf '[{"number":104,"headRefName":"feature/out-of-scope-104","baseRefName":"develop","mergeStateStatus":"CLEAN","statusCheckRollup":%s}]\n' "$check_success"
         ;;
+      observation_object)
+        printf '{}\n'
+        ;;
+      observation_nested_object)
+        printf '{"items":[]}\n'
+        ;;
       *)
         printf '[]\n'
         ;;
@@ -95,6 +101,9 @@ case "$*" in
       dirty_pending)
         emit_pr 102 OPEN false develop feature/mock-pr-102 DIRTY "$check_pending"
         ;;
+      previous_merged)
+        emit_pr 102 MERGED false develop feature/mock-pr-102 CLEAN "$check_success"
+        ;;
       *)
         emit_pr 102 OPEN false develop feature/mock-pr-102 CLEAN "$check_success"
         ;;
@@ -107,6 +116,12 @@ case "$*" in
         ;;
       retry)
         emit_pr 103 OPEN false develop feature/mock-pr-103 UNKNOWN "$check_success"
+        ;;
+      deadline_after_retry)
+        emit_pr 103 OPEN false develop feature/mock-pr-103 CLEAN "$check_pending"
+        ;;
+      previous_merged)
+        emit_pr 103 OPEN false develop feature/mock-pr-103 CLEAN "$check_success"
         ;;
       *)
         emit_pr 103 OPEN false develop feature/mock-pr-103 BLOCKED "$check_success"
@@ -184,10 +199,22 @@ rm -f "$MOCK_GH_STATE_DIR"/*.count
 deadline_output="$(BATCH_MERGE_RECHECK_ATTEMPTS=99 BATCH_MERGE_RECHECK_SLEEP_SECONDS=1 BATCH_MERGE_RECHECK_DEADLINE_SECONDS=1 "$HELPER" recheck-remaining --prs 101,103 --after-merged-pr 101 --base develop)"
 run_test "deadline_exhaustion_reason" "retry_deadline_exhausted" "$(json_field "$deadline_output" 103 reason)"
 
+export MOCK_SCENARIO=deadline_after_retry
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+deadline_after_retry_output="$(BATCH_MERGE_RECHECK_ATTEMPTS=99 BATCH_MERGE_RECHECK_SLEEP_SECONDS=1 BATCH_MERGE_RECHECK_DEADLINE_SECONDS=2 "$HELPER" recheck-remaining --prs 101,103 --after-merged-pr 101 --base develop)"
+run_test "deadline_after_retry_emits_record" "merge_blocked" "$(json_field "$deadline_after_retry_output" 103 classification)"
+run_test "deadline_after_retry_reason" "retry_deadline_exhausted" "$(json_field "$deadline_after_retry_output" 103 reason)"
+
 export MOCK_SCENARIO=base_mismatch
 rm -f "$MOCK_GH_STATE_DIR"/*.count
 base_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
 run_test "base_mismatch_blocks" "base_ref_mismatch" "$(json_field "$base_output" 102 reason)"
+
+export MOCK_SCENARIO=previous_merged
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+previous_merged_output="$("$HELPER" recheck-remaining --prs 101,102,103 --after-merged-pr 101 --base develop)"
+run_test "previously_merged_sibling_omitted" "0" "$(printf '%s\n' "$previous_merged_output" | jq -s '[.[] | select(.pr == 102)] | length')"
+run_test "later_pr_still_checked_after_prior_merge" "clean" "$(json_field "$previous_merged_output" 103 classification)"
 
 export MOCK_SCENARIO=failing
 rm -f "$MOCK_GH_STATE_DIR"/*.count
@@ -208,6 +235,22 @@ set -e
 run_test "malformed_response_status" "2" "$malformed_status"
 run_test "malformed_response_classification" "helper_failed" "$(json_field "$malformed_output" 102 classification)"
 run_test "malformed_response_reason" "missing_required_field" "$(json_field "$malformed_output" 102 reason)"
+
+export MOCK_SCENARIO=observation_object
+set +e
+observation_object_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
+observation_object_status=$?
+set -e
+run_test "observation_object_status" "2" "$observation_object_status"
+run_test "observation_object_reason" "malformed_response" "$(json_field "$observation_object_output" null reason)"
+
+export MOCK_SCENARIO=observation_nested_object
+set +e
+observation_nested_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
+observation_nested_status=$?
+set -e
+run_test "observation_nested_object_status" "2" "$observation_nested_status"
+run_test "observation_nested_object_reason" "malformed_response" "$(json_field "$observation_nested_output" null reason)"
 
 set +e
 bad_config_output="$(BATCH_MERGE_RECHECK_ATTEMPTS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"

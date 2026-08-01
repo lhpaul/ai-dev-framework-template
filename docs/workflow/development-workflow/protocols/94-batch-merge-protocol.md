@@ -324,6 +324,16 @@ After a clean or resolved merge, in order:
      --base "$BASE_BRANCH"
    ```
 
+   Treat the recheck output as an admission gate before attempting another
+   merge or reporting readiness:
+   - The helper must exit `0`.
+   - The output must include one fresh `remaining_pr` record for every
+     remaining unmerged PR in the frozen approved list.
+   - Only PRs with `classification=clean` and `outcome=continue` may remain in
+     the merge candidate set.
+   - Any missing record is `merge_blocked` for that PR with reason
+     `missing_recheck_record`.
+
    Parse each JSONL record before attempting another merge:
    - `classification=clean` and `outcome=continue` means the PR may remain in
      the candidate set, subject to the existing order and guardrails.
@@ -338,9 +348,9 @@ After a clean or resolved merge, in order:
      for the current sequence; stop before any further merge attempt and report
      the helper reason.
 
-   The helper preserves the frozen `--prs` order. Continue only with remaining
-   in-scope PRs that independently recheck clean after the latest sibling
-   merge.
+   The helper preserves the frozen `--prs` order and omits PRs already merged
+   earlier in the same batch. Continue only with remaining in-scope PRs that
+   independently recheck clean after the latest sibling merge.
 
 6. Report the per-PR outcome immediately (see outcome codes in Step 5).
 

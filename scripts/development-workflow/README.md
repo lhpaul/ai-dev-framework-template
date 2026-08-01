@@ -78,6 +78,7 @@ merged into the target base.
 
 Usage:
 
+<!-- workflow-shell-contract: bash -->
 ```bash
 ./scripts/development-workflow/batch-merge.sh recheck-remaining \
   --prs 101,102,103 \
@@ -85,31 +86,9 @@ Usage:
   --base develop
 ```
 
-What it does:
-
-- Parses only the comma-separated `--prs` list as the mutation scope.
-- Skips the just-merged PR and rechecks every remaining in-scope PR in original
-  order.
-- Emits one compact JSON object per line with fields for PR number, original
-  order, invalidating sibling PR, refreshed base/head refs, merge state, checks
-  state, classification, retryability, attempts, deadline, outcome, and reason.
-- Reports open PRs targeting the base but absent from `--prs` as
-  `out_of_scope_observation` records only; it never labels, merges, retries, or
-  adds those PRs to the batch.
-
-Retry configuration:
-
-- `BATCH_MERGE_RECHECK_ATTEMPTS` defaults to `3`.
-- `BATCH_MERGE_RECHECK_SLEEP_SECONDS` defaults to `10`.
-- `BATCH_MERGE_RECHECK_DEADLINE_SECONDS` defaults to `60`.
-
-Exit behavior:
-
-- Exit `0` means all records were fetched and classified, including
-  `merge_blocked` records.
-- Exit `2` means invalid input, invalid retry config, GitHub/API failure,
-  malformed response, or another helper failure. The helper emits a
-  `helper_failed` JSON record when stdout is still available.
+Protocol 94 is the source of truth for frozen scope, record schema, retry
+semantics, observation handling, and exit behavior:
+[`94-batch-merge-protocol.md`](../../docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md).
 
 ### `discover-workflow-state.sh`
 

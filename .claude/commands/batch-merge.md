@@ -21,6 +21,6 @@ Key rules:
 - For each PR, run `./scripts/development-workflow/batch-merge.sh merge --pr <number>`.
 - Auto-resolve CHANGELOG conflicts and documentation file conflicts where changes are non-overlapping (different line ranges); pause and escalate all other conflicts.
 - After each successful merge: push the target base branch, verify GitHub shows the PR as `MERGED`, delete the remote branch, run `./scripts/development-workflow/post-merge-cleanup.sh --base <target-base> <branch>`, then run `./scripts/development-workflow/batch-merge.sh recheck-remaining --prs <comma-separated-approved-pr-list> --after-merged-pr <number> --base <target-base>` before selecting another PR.
-- Treat refreshed `merge_blocked` records as held PRs, and treat `out_of_scope_observation` records as read-only.
+- Treat the recheck as an admission gate: require exit `0`, fresh records for every remaining unmerged PR in the frozen list, and `classification=clean` before selecting a PR for merge or readiness. Hold `merge_blocked`, `helper_failed`, and missing records; keep `out_of_scope_observation` read-only.
 - Never leave the target base branch in a conflicted state.
 - Always print the final summary table (Step 5) regardless of outcome.

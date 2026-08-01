@@ -113,9 +113,11 @@ proposal step.
    through merge, cleanup, post-sibling-merge `recheck-remaining` calls, and
    tracker reconciliation. Keep the explicit PR list frozen for every
    `batch-merge.sh recheck-remaining --prs <comma-separated-in-scope-prs>`
-   invocation; report refreshed held PRs as `merge_blocked` and read-only
-   observations as `out_of_scope`. Never use Protocol 94 auto-discovery from
-   `/run-items`. If any stage does not allow merge, finish at the
+   invocation; require helper exit `0`, fresh records for every remaining
+   unmerged PR, and `classification=clean` before selecting a PR for merge or
+   readiness; report refreshed held, helper-failed, or missing-record PRs as
+   `merge_blocked` and read-only observations as `out_of_scope`. Never use
+   Protocol 94 auto-discovery from `/run-items`. If any stage does not allow merge, finish at the
    `ready-for-human-review` handoff, report the exact
    `stages.<stage>.may_merge_pr: false` guardrail for each affected PR, and tell
    the human to invoke `$batch-merge` or adjust guardrails to permit delegated

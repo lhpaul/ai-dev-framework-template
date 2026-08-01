@@ -113,13 +113,9 @@ run_with_timeout() {
   local seconds="$1"
   shift
 
-  local output_file exit_file pid start now
+  local output_file pid start now status
   output_file="$(mktemp)"
-  exit_file="$(mktemp)"
-  (
-    "$@" >"$output_file" 2>/dev/null
-    printf '%s\n' "$?" >"$exit_file"
-  ) &
+  "$@" >"$output_file" 2>/dev/null &
   pid=$!
   start="$(date +%s)"
 
@@ -128,19 +124,16 @@ run_with_timeout() {
     if [ $((now - start)) -ge "$seconds" ]; then
       kill "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
-      rm -f "$output_file" "$exit_file"
+      rm -f "$output_file"
       return 124
     fi
     sleep 1
   done
 
-  wait "$pid" 2>/dev/null || true
+  status=0
+  wait "$pid" || status=$?
   cat "$output_file"
-  local status=1
-  if [ -s "$exit_file" ]; then
-    status="$(cat "$exit_file")"
-  fi
-  rm -f "$output_file" "$exit_file"
+  rm -f "$output_file"
   return "$status"
 }
 
@@ -620,10 +613,11 @@ cmd_recheck_remaining() {
   while IFS="$(printf '\t')" read -r original_index pr_num; do
     [ "$pr_num" = "$after_merged_pr" ] && continue
 
-    local start_ts attempt json fetch_status classification_line bound_exhausted
+    local start_ts attempt json fetch_status classification_line bound_exhausted emitted
     start_ts="$(date +%s)"
     attempt=0
     classification_line=""
+    emitted=""
 
     while [ "$attempt" -lt "$attempts_limit" ]; do
       local now elapsed remaining
@@ -648,6 +642,10 @@ cmd_recheck_remaining() {
         emit_recheck_record "error" "$pr_num" "$original_index" "$after_merged_pr" "null" "null" "null" "null" "helper_failed" "false" "$attempt" "$deadline_seconds" "error" "github_query_failed"
         exit 2
       fi
+      if [ "$(printf '%s\n' "$json" | jq -r '.state // ""' 2>/dev/null || true)" = "MERGED" ]; then
+        emitted="true"
+        break
+      fi
 
       if [ "$attempt" -ge "$attempts_limit" ]; then
         bound_exhausted="retry_attempts_exhausted"
@@ -664,6 +662,7 @@ cmd_recheck_remaining() {
       head_ref="$(printf '%s\n' "$json" | jq -r '.headRefName // ""' 2>/dev/null)" || head_ref=""
       if [ "$classification" != "retryable" ]; then
         emit_recheck_record "remaining_pr" "$pr_num" "$original_index" "$after_merged_pr" "$base_ref" "$head_ref" "$merge_state" "$checks_state" "$classification" "$retryable" "$attempt" "$deadline_seconds" "$outcome" "$reason"
+        emitted="true"
         if [ "$classification" = "helper_failed" ]; then
           exit 2
         fi
@@ -672,6 +671,7 @@ cmd_recheck_remaining() {
 
       if [ "$attempt" -ge "$attempts_limit" ]; then
         emit_recheck_record "remaining_pr" "$pr_num" "$original_index" "$after_merged_pr" "$base_ref" "$head_ref" "$merge_state" "$checks_state" "merge_blocked" "false" "$attempt" "$deadline_seconds" "hold" "retry_attempts_exhausted"
+        emitted="true"
         break
       fi
 
@@ -680,6 +680,7 @@ cmd_recheck_remaining() {
       remaining=$((deadline_seconds - elapsed))
       if [ "$deadline_seconds" -gt 0 ] && [ "$remaining" -le 0 ]; then
         emit_recheck_record "remaining_pr" "$pr_num" "$original_index" "$after_merged_pr" "$base_ref" "$head_ref" "$merge_state" "$checks_state" "merge_blocked" "false" "$attempt" "$deadline_seconds" "hold" "retry_deadline_exhausted"
+        emitted="true"
         break
       fi
       if [ "$sleep_seconds" -gt 0 ]; then
@@ -691,8 +692,8 @@ cmd_recheck_remaining() {
       fi
     done
 
-    if [ -z "$classification_line" ] && [ "${bound_exhausted:-}" = "retry_deadline_exhausted" ]; then
-      emit_recheck_record "remaining_pr" "$pr_num" "$original_index" "$after_merged_pr" "null" "null" "UNKNOWN" "unknown" "merge_blocked" "false" "$attempt" "$deadline_seconds" "hold" "retry_deadline_exhausted"
+    if [ -z "$emitted" ]; then
+      emit_recheck_record "remaining_pr" "$pr_num" "$original_index" "$after_merged_pr" "null" "null" "UNKNOWN" "unknown" "merge_blocked" "false" "$attempt" "$deadline_seconds" "hold" "${bound_exhausted:-retry_deadline_exhausted}"
     fi
   done < "$pr_file"
 
@@ -702,6 +703,10 @@ cmd_recheck_remaining() {
     exit 2
   }
   if [ -z "$observation_json" ]; then
+    emit_recheck_error "$after_merged_pr" "$deadline_seconds" "malformed_response"
+    exit 2
+  fi
+  if ! printf '%s\n' "$observation_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
     emit_recheck_error "$after_merged_pr" "$deadline_seconds" "malformed_response"
     exit 2
   fi
