@@ -29,15 +29,20 @@ Before running this smoke test:
 | Item | Value |
 | --- | --- |
 | Parent epic | `#1352` |
-| Component child | `#1358` or a disposable test child issue |
-| Delivery bundle issue | Disposable delivery bundle issue or fixture ref |
+| Parent issue number | `$PARENT_ISSUE` |
+| Component child issue number | `$COMPONENT_ISSUE` |
+| Delivery bundle issue number | `$DELIVERY_BUNDLE_ISSUE` |
 | Product repository key | `mobile-app` |
 | Component tag | `mobile-v1.4.0` |
 | Namespaced milestone | `mobile-app@mobile-v1.4.0` |
-| Non-hub release milestone | `v999.999.999-smoke` |
+| Non-hub release milestone | `v999.999.999` |
 | Evidence path | `$SMOKE_TMP/mobile-evidence.json` |
-| Delivery bundle path | `$SMOKE_TMP/delivery-bundle.json` |
+| Partial delivery bundle path | `$PARTIAL_BUNDLE` |
+| Finalized delivery bundle path | `$FINALIZED_BUNDLE` |
+| Blocked delivery bundle path | `$BLOCKED_BUNDLE` |
+| Mocked GitHub call log | `$GH_CALL_LOG` |
 | Helper | `scripts/development-workflow/component-milestone-reconciliation.sh` |
+| Fixture helper | `scripts/development-workflow/tests/setup-component-milestone-fixture.sh` |
 
 Create a temp directory and common shell variables before running the steps:
 
@@ -56,17 +61,48 @@ cleanup_smoke_tmp() {
 trap cleanup_smoke_tmp EXIT
 
 HELPER="scripts/development-workflow/component-milestone-reconciliation.sh"
-EVIDENCE="$SMOKE_TMP/mobile-evidence.json"
-BUNDLE="$SMOKE_TMP/delivery-bundle.json"
+FIXTURE_HELPER="scripts/development-workflow/tests/setup-component-milestone-fixture.sh"
 PRODUCT_REPO="mobile-app"
 COMPONENT_TAG="mobile-v1.4.0"
 MILESTONE_TITLE="${PRODUCT_REPO}@${COMPONENT_TAG}"
+SINGLE_REPO_VERSION="v999.999.999"
+
+fixture_json="$SMOKE_TMP/fixtures.json"
+bash "$FIXTURE_HELPER" --output-dir "$SMOKE_TMP" --json > "$fixture_json"
+
+export PATH="$(jq -r '.mock_gh.bin_dir' "$fixture_json"):$PATH"
+GH_CALL_LOG="$(jq -r '.mock_gh.call_log' "$fixture_json")"
+PARENT_ISSUE="$(jq -r '.issues.parent' "$fixture_json")"
+COMPONENT_ISSUE="$(jq -r '.issues.component_child' "$fixture_json")"
+DELIVERY_BUNDLE_ISSUE="$(jq -r '.issues.delivery_bundle' "$fixture_json")"
+EVIDENCE="$(jq -r '.evidence.complete' "$fixture_json")"
+MISMATCHED_EVIDENCE="$(jq -r '.evidence.mismatched_product' "$fixture_json")"
+MISSING_EVIDENCE_PATH="$(jq -r '.evidence.missing_path' "$fixture_json")"
+PARTIAL_BUNDLE="$(jq -r '.bundles.partial' "$fixture_json")"
+FINALIZED_BUNDLE="$(jq -r '.bundles.finalized' "$fixture_json")"
+BLOCKED_BUNDLE="$(jq -r '.bundles.blocked' "$fixture_json")"
+STATUS_WRITE_FAILURE_BUNDLE="$(jq -r '.bundles.status_write_failure' "$fixture_json")"
+STATUS_WRITE_FAILURE_TARGET="$(jq -r '.status_write_failure_target' "$fixture_json")"
+
+gh_log_hash() {
+  git hash-object "$GH_CALL_LOG" 2>/dev/null || printf '%s\n' empty
+}
+
+count_gh_calls() {
+  local pattern="$1"
+  local count
+  count="$(rg -c -- "$pattern" "$GH_CALL_LOG" 2>/dev/null || true)"
+  if [ -z "$count" ]; then
+    printf '%s\n' 0
+  else
+    printf '%s\n' "$count"
+  fi
+}
 ```
 
-The implementation may provide a fixture helper. If it does, use that helper to
-write `$EVIDENCE` and `$BUNDLE`. If no helper exists, create minimal
-`component_release_evidence.v1` and `delivery_bundle_manifest.v1` files matching
-the final helper's required fields.
+The fixture helper is mandatory. It must create every file path emitted in
+`fixtures.json`, install a mocked `gh` command directory, and initialize
+`$GH_CALL_LOG` before any apply-mode step runs.
 
 ---
 
@@ -78,7 +114,7 @@ the final helper's required fields.
 
 ```bash
 "$HELPER" inspect-component \
-  --issue 1358 \
+  --issue "$COMPONENT_ISSUE" \
   --target-kind component_child \
   --product-repo "$PRODUCT_REPO" \
   --component-tag "$COMPONENT_TAG" \
@@ -88,11 +124,22 @@ the final helper's required fields.
 jq -e \
   --arg milestone "$MILESTONE_TITLE" '
     .schema_version == "component_milestone_reconciliation.v1" and
+    (.reconciliation_outcome | IN(
+      "component_released",
+      "component_release_pending",
+      "component_release_not_ready",
+      "component_target_mismatch",
+      "component_tag_missing"
+    )) and
     .reconciliation_outcome == "component_released" and
+    (.child_release_state | IN("not_started", "pending", "released", "blocked", "failed")) and
     .child_release_state == "released" and
-    .parent_release_state != "released" and
+    (.parent_release_state | IN("not_released", "partially_released", "blocked")) and
     .milestone_title == $milestone and
-    .mutation_allowed == true
+    .mutation_allowed == true and
+    (.required_next_action | type == "string" and length > 0) and
+    (.blockers | type == "array") and
+    (.milestone_assignment | type == "object")
   ' "$SMOKE_TMP/component-ready.json"
 ```
 
@@ -108,7 +155,7 @@ Run this step only with a mocked `gh` executable or disposable test issue.
 
 ```bash
 "$HELPER" apply-component \
-  --issue 1358 \
+  --issue "$COMPONENT_ISSUE" \
   --target-kind component_child \
   --product-repo "$PRODUCT_REPO" \
   --component-tag "$COMPONENT_TAG" \
@@ -116,13 +163,19 @@ Run this step only with a mocked `gh` executable or disposable test issue.
   --json > "$SMOKE_TMP/component-apply.json"
 
 jq -e \
-  --arg milestone "$MILESTONE_TITLE" '
+  --arg milestone "$MILESTONE_TITLE" \
+  --argjson component_issue "$COMPONENT_ISSUE" '
     .reconciliation_outcome == "component_released" and
     .milestone_title == $milestone and
-    .milestone_assignment.target_issue == 1358 and
+    .milestone_assignment.target_issue == $component_issue and
     .milestone_assignment.parent_epic_stamped == false and
     .milestone_assignment.delivery_bundle_stamped == false
   ' "$SMOKE_TMP/component-apply.json"
+
+test "$(count_gh_calls "issues/${COMPONENT_ISSUE}.*milestone")" = "1"
+test "$(count_gh_calls "issues/${PARENT_ISSUE}.*milestone")" = "0"
+test "$(count_gh_calls "issues/${DELIVERY_BUNDLE_ISSUE}.*milestone")" = "0"
+log_hash_after_apply="$(gh_log_hash)"
 ```
 
 **Expected result**: The helper creates or reuses the namespaced milestone and
@@ -135,7 +188,7 @@ remain milestone-free.
 
 ```bash
 "$HELPER" apply-component \
-  --issue 1358 \
+  --issue "$COMPONENT_ISSUE" \
   --target-kind component_child \
   --product-repo "$PRODUCT_REPO" \
   --component-tag "$COMPONENT_TAG" \
@@ -146,6 +199,9 @@ jq -e '
   .reconciliation_outcome == "component_released" and
   (.idempotent == true or .milestone_assignment.action == "reused")
 ' "$SMOKE_TMP/component-reapply.json"
+
+log_hash_after_reapply="$(gh_log_hash)"
+test "$log_hash_after_apply" = "$log_hash_after_reapply"
 ```
 
 **Expected result**: Reapplying the same complete evidence is idempotent and
@@ -156,12 +212,13 @@ does not create duplicate milestones or duplicate assignments.
 **Maps to**: Acceptance Criteria 2, 3, 4, and 6
 
 ```bash
-missing_output="$SMOKE_TMP/missing-evidence.json"
+missing_output="$SMOKE_TMP/missing-evidence-result.json"
 "$HELPER" inspect-component \
-  --issue 1358 \
+  --issue "$COMPONENT_ISSUE" \
   --target-kind component_child \
   --product-repo "$PRODUCT_REPO" \
   --component-tag "$COMPONENT_TAG" \
+  --evidence-file "$MISSING_EVIDENCE_PATH" \
   --json > "$missing_output"
 
 jq -e '
@@ -170,25 +227,25 @@ jq -e '
   .mutation_allowed == false
 ' "$missing_output"
 
-cp "$EVIDENCE" "$SMOKE_TMP/mismatched-evidence.json"
-jq '.selected_product_repo_key = "web-app"' \
-  "$SMOKE_TMP/mismatched-evidence.json" > "$SMOKE_TMP/mismatched.tmp"
-mv "$SMOKE_TMP/mismatched.tmp" "$SMOKE_TMP/mismatched-evidence.json"
-
-if "$HELPER" apply-component \
-  --issue 1358 \
+set +e
+"$HELPER" apply-component \
+  --issue "$COMPONENT_ISSUE" \
   --target-kind component_child \
   --product-repo "$PRODUCT_REPO" \
   --component-tag "$COMPONENT_TAG" \
-  --evidence-file "$SMOKE_TMP/mismatched-evidence.json" \
-  --json 2> "$SMOKE_TMP/mismatch.err"
-then
-  echo "mismatched evidence was accepted" >&2
+  --evidence-file "$MISMATCHED_EVIDENCE" \
+  --json > "$SMOKE_TMP/mismatch.json" 2> "$SMOKE_TMP/mismatch.err"
+mismatch_status=$?
+set -e
+if [ "$mismatch_status" -eq 0 ]; then
+  echo "ERROR_CODE=mismatched_evidence_accepted message='mismatched evidence was accepted'" >&2
   exit 1
 fi
 
-rg -q 'component_target_mismatch\|component_release_not_ready' \
-  "$SMOKE_TMP/mismatch.err"
+jq -e '
+  .reconciliation_outcome == "component_target_mismatch" and
+  .mutation_allowed == false
+' "$SMOKE_TMP/mismatch.json"
 ```
 
 **Expected result**: No evidence record stays pending. Mismatched or invalid
@@ -199,20 +256,26 @@ evidence blocks before milestone or tracker mutation.
 **Maps to**: Acceptance Criteria 7 and 8
 
 ```bash
+log_hash_before_rejections="$(gh_log_hash)"
 for target_kind in parent_epic delivery_bundle; do
+  case "$target_kind" in
+    parent_epic) target_issue="$PARENT_ISSUE" ;;
+    delivery_bundle) target_issue="$DELIVERY_BUNDLE_ISSUE" ;;
+  esac
   if "$HELPER" apply-component \
-    --issue 1352 \
+    --issue "$target_issue" \
     --target-kind "$target_kind" \
     --product-repo "$PRODUCT_REPO" \
     --component-tag "$COMPONENT_TAG" \
     --evidence-file "$EVIDENCE" \
     --json 2> "$SMOKE_TMP/${target_kind}.err"
   then
-    echo "$target_kind accepted a component milestone" >&2
+    echo "ERROR_CODE=milestone_target_accepted message='$target_kind accepted a component milestone'" >&2
     exit 1
   fi
   rg -q 'milestone_target_not_allowed' "$SMOKE_TMP/${target_kind}.err"
 done
+test "$log_hash_before_rejections" = "$(gh_log_hash)"
 ```
 
 **Expected result**: Parent epics and delivery bundle issues reject all
@@ -224,8 +287,8 @@ workflow-hub milestone writes.
 
 ```bash
 "$HELPER" inspect-parent \
-  --parent-issue 1352 \
-  --delivery-manifest "$BUNDLE" \
+  --parent-issue "$PARENT_ISSUE" \
+  --delivery-manifest "$PARTIAL_BUNDLE" \
   --json > "$SMOKE_TMP/parent-partial.json"
 
 jq -e '
@@ -245,8 +308,8 @@ parent.
 
 ```bash
 "$HELPER" inspect-parent \
-  --parent-issue 1352 \
-  --delivery-manifest "$BUNDLE" \
+  --parent-issue "$PARENT_ISSUE" \
+  --delivery-manifest "$FINALIZED_BUNDLE" \
   --require-finalized \
   --json > "$SMOKE_TMP/parent-final.json"
 
@@ -256,6 +319,41 @@ jq -e '
   .milestone_assignment.parent_epic_stamped == false and
   .milestone_assignment.delivery_bundle_stamped == false
 ' "$SMOKE_TMP/parent-final.json"
+
+log_hash_before_parent_apply="$(gh_log_hash)"
+"$HELPER" apply-parent \
+  --parent-issue "$PARENT_ISSUE" \
+  --delivery-manifest "$FINALIZED_BUNDLE" \
+  --require-finalized \
+  --json > "$SMOKE_TMP/parent-apply.json"
+
+jq -e \
+  --argjson parent_issue "$PARENT_ISSUE" '
+  .release_status.parent_issue == $parent_issue and
+  .release_status.state == "released" and
+  .reconciliation_outcome == "parent_released"
+' "$SMOKE_TMP/parent-apply.json"
+jq -e '
+  .release_status.state == "released" and
+  ([.audit_events[] | select(.event == "parent_release_status_updated")] | length) >= 1
+' "$FINALIZED_BUNDLE"
+test "$log_hash_before_parent_apply" = "$(gh_log_hash)"
+
+failed_hash_before="$(git hash-object "$STATUS_WRITE_FAILURE_BUNDLE")"
+set +e
+"$HELPER" apply-parent \
+  --parent-issue "$PARENT_ISSUE" \
+  --delivery-manifest "$STATUS_WRITE_FAILURE_BUNDLE" \
+  --status-output "$STATUS_WRITE_FAILURE_TARGET" \
+  --require-finalized \
+  --json > "$SMOKE_TMP/parent-write-failure.json" 2> "$SMOKE_TMP/parent-write-failure.err"
+failed_status=$?
+set -e
+if [ "$failed_status" -eq 0 ]; then
+  echo "ERROR_CODE=parent_status_write_failure_not_exercised message='apply-parent unexpectedly succeeded'" >&2
+  exit 1
+fi
+test "$failed_hash_before" = "$(git hash-object "$STATUS_WRITE_FAILURE_BUNDLE")"
 ```
 
 **Expected result**: A finalized bundle moves parent release state to released
@@ -268,16 +366,34 @@ without creating a component, parent, delivery, or shared suite milestone.
 ```bash
 "$HELPER" inspect-component \
   --mode single_repo \
-  --issue 1358 \
+  --issue "$COMPONENT_ISSUE" \
   --target-kind component_child \
-  --version v999.999.999-smoke \
+  --version "$SINGLE_REPO_VERSION" \
   --json > "$SMOKE_TMP/single-repo.json"
 
-jq -e '
+jq -e \
+  --arg version "$SINGLE_REPO_VERSION" '
   .reconciliation_outcome == "single_repo_milestone" and
-  .milestone_title == "v999.999.999-smoke" and
+  .milestone_title == $version and
   .requires_delivery_bundle == false
 ' "$SMOKE_TMP/single-repo.json"
+
+single_repo_hash_before="$(gh_log_hash)"
+"$HELPER" apply-component \
+  --mode single_repo \
+  --issue "$COMPONENT_ISSUE" \
+  --target-kind component_child \
+  --version "$SINGLE_REPO_VERSION" \
+  --json > "$SMOKE_TMP/single-repo-apply.json"
+
+jq -e \
+  --arg version "$SINGLE_REPO_VERSION" '
+  .reconciliation_outcome == "single_repo_milestone" and
+  .milestone_title == $version and
+  .requires_delivery_bundle == false
+' "$SMOKE_TMP/single-repo-apply.json"
+test "$single_repo_hash_before" != "$(gh_log_hash)"
+rg -q "v999.999.999|issues/${COMPONENT_ISSUE}.*milestone" "$GH_CALL_LOG"
 ```
 
 **Expected result**: Non-hub mode keeps existing plain release milestone
@@ -320,9 +436,9 @@ bundle finalization.
 
 | Entity | Scenario | How to load |
 | --- | --- | --- |
-| Component evidence | Complete, missing, mismatched, pending, failed, blocked, stale, and conflicting | Fixture writer from `test-component-milestone-reconciliation.sh` or temporary JSON files in `$SMOKE_TMP` |
-| Delivery bundle | Partial, blocked, finalized, and corrected-after-blocked parent states | Fixture writer from `test-component-milestone-reconciliation.sh` or `delivery-bundle-manifest.sh` test fixtures |
-| GitHub API | Existing milestone, missing milestone, issue assignment, and duplicate reapply | Mock `gh` executable in `$SMOKE_TMP/bin` or disposable test repository |
+| Component evidence | Complete, missing, mismatched, pending, failed, blocked, stale, and conflicting | `bash scripts/development-workflow/tests/setup-component-milestone-fixture.sh --output-dir "$SMOKE_TMP" --json` |
+| Delivery bundle | Partial, blocked, finalized, corrected-after-blocked, and write-failure parent states | `bash scripts/development-workflow/tests/setup-component-milestone-fixture.sh --output-dir "$SMOKE_TMP" --json` |
+| GitHub API | Existing milestone, missing milestone, issue assignment, duplicate reapply, and call log | Mock `gh` executable emitted by `setup-component-milestone-fixture.sh` |
 
 ---
 

@@ -218,6 +218,11 @@ integration tests, smoke/manual workflow runbook verification.
       for component outcome classification, milestone title generation,
       parent/bundle no-milestone guards, single-product workflow-hub behavior,
       parent state transitions, and idempotent reapplication.
+- [ ] Add
+      `scripts/development-workflow/tests/setup-component-milestone-fixture.sh`
+      for the smoke runbook. It must create deterministic complete, partial,
+      finalized, blocked, invalid, and failed-write fixtures plus a mocked `gh`
+      command log.
 - [ ] Extend `scripts/development-workflow/tests/test-delivery-bundle-manifest.sh`
       only if the implementation adds release-state fields or helper output to
       `delivery-bundle-manifest.sh`.
@@ -272,30 +277,20 @@ GitHub API output parsing.
 
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
-| Complete component evidence | `component_release_evidence.v1` with selected product key, canonical repository identity, release correlation key, contract revision, completed release, passing CI, recorded deployment, complete cleanup, hub tracker reference, complete hub tracker reconciliation, and released child state | Created under the test temp directory by `test-component-milestone-reconciliation.sh` |
-| Negative component evidence | Missing, malformed, mismatched, pending, failed, blocked, stale, conflicting, and invalid outcome variants | Created under the test temp directory by `test-component-milestone-reconciliation.sh` |
-| Delivery bundle manifests | Partial, blocked, ready, finalized, and corrected-after-blocked bundle states | Created under the test temp directory, reusing the #1357 fixture style |
-| GitHub API fixtures | Mock milestone list/create responses and issue milestone assignment responses | Mock `gh` executable in the test temp directory |
+| Complete component evidence | `component_release_evidence.v1` with selected product key, canonical repository identity, release correlation key, contract revision, completed release, passing CI, recorded deployment, complete cleanup, hub tracker reference, complete hub tracker reconciliation, and released child state | Created under the test temp directory by `setup-component-milestone-fixture.sh` and reused by `test-component-milestone-reconciliation.sh` |
+| Negative component evidence | Missing, malformed, mismatched, pending, failed, blocked, stale, conflicting, and invalid outcome variants | Created under the test temp directory by `setup-component-milestone-fixture.sh` |
+| Delivery bundle manifests | Partial, blocked, ready, finalized, corrected-after-blocked, and write-failure bundle states | Created under the test temp directory by `setup-component-milestone-fixture.sh`, reusing the #1357 fixture style |
+| GitHub API fixtures | Mock milestone list/create responses, issue milestone assignment responses, and a stable call log path | Mock `gh` executable from `setup-component-milestone-fixture.sh` |
 
 ---
 
 ## Documentation Updates
 
-- [ ] `docs/workflow/development-workflow/repository-modes.md` - component
-      milestone namespacing, parent release states, single-product
-      workflow-hub behavior, and non-hub compatibility.
-- [ ] `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md`
-      - component milestone/status reconciliation handoff after evidence and
-      cleanup.
-- [ ] `docs/workflow/development-workflow/cross-repo-pr-flow.md` - component
-      milestone handoff and final bundle release boundary.
-- [ ] `scripts/development-workflow/README.md` - new helper usage and outputs.
-- [ ] `docs/testing/workflow/release-stamping.smoke-test.md` - distinction
-      between non-hub `vX.Y.Z` stamping and workflow-hub namespaced component
-      milestones.
-- [ ] `.agents/skills/prepare-release/SKILL.md` - post-release handoff to
-      milestone reconciliation in workflow-hub mode.
-- [ ] `CHANGELOG.md` - implementation entry under `[Unreleased]`.
+The authoritative documentation checklist is in the **Workflow Documentation**
+and **Agent And Skill Guidance** sections above. Do not duplicate those entries
+during implementation; complete those layer items and keep the implementation
+PR diff aligned with them. The CHANGELOG entry belongs only to Implementation
+Order step 8.
 
 ---
 
@@ -339,7 +334,8 @@ existing Bash wrapper plus embedded Python style in
    - blocked state,
    - recovery from blocked after corrected evidence,
    - JSON output and apply-mode manifest `release_status` persistence.
-5. Add `test-component-milestone-reconciliation.sh` with fixture writers,
+5. Add `setup-component-milestone-fixture.sh` and
+   `test-component-milestone-reconciliation.sh` with deterministic fixtures,
    mocked `gh` API calls, and every parser-risk edge case above.
 6. Update repository-mode, prepare-release, cross-repo flow, helper README,
    release-stamping smoke, and prepare-release skill guidance.
@@ -353,9 +349,11 @@ existing Bash wrapper plus embedded Python style in
    set -euo pipefail
 
    bash -n scripts/development-workflow/component-milestone-reconciliation.sh
+   bash -n scripts/development-workflow/tests/setup-component-milestone-fixture.sh
    bash -n scripts/development-workflow/tests/test-component-milestone-reconciliation.sh
    shellcheck \
      scripts/development-workflow/component-milestone-reconciliation.sh \
+     scripts/development-workflow/tests/setup-component-milestone-fixture.sh \
      scripts/development-workflow/tests/test-component-milestone-reconciliation.sh
    bash scripts/development-workflow/tests/test-component-milestone-reconciliation.sh
    bash scripts/development-workflow/tests/test-delivery-bundle-manifest.sh
