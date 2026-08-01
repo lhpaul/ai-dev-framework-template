@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Cursor model quota guidance** (#1407): Clarify Cursor Task/subagent model
   quota behavior and the decision path for one-off subagent model overrides.
+- **Recheck batch mergeability after sibling merges** (#1424): Refresh
+  remaining PR mergeability after each batch merge and hold stale or non-clean
+  PRs.
 
 ### Fixed
 

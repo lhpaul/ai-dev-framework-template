@@ -13,11 +13,14 @@ on:
       - 'scripts/development-workflow/workflow-next-action.sh'
       - 'scripts/development-workflow/hub-*.sh'
       - 'scripts/development-workflow/open-product-pr.sh'
+      - 'scripts/development-workflow/batch-merge.sh'
       - 'scripts/development-workflow/validate-workflow-hub-skeletons.py'
       - 'scripts/development-workflow/tests/test-pr-review-loop.sh'
+      - 'scripts/development-workflow/tests/test-batch-merge-recheck-remaining.sh'
       - 'scripts/development-workflow/tests/test-haystack-commit-msg-hook.sh'
       - 'scripts/development-workflow/tests/test-workflow-hub-smoke-fixtures.sh'
       - 'scripts/development-workflow/tests/fixtures/workflow-hub-smoke/**'
+      - '.github/workflows/e2e-regression.yml'
       - 'sync-manifest.yaml'
       - 'hooks/commit-msg'
       - '.github/workflows/test-pr-review-loop.yml'
@@ -38,6 +41,9 @@ jobs:
 
       - name: Run pr-review-loop test harness
         run: bash scripts/development-workflow/tests/test-pr-review-loop.sh
+
+      - name: Run batch merge recheck test harness
+        run: bash scripts/development-workflow/tests/test-batch-merge-recheck-remaining.sh
 
       - name: Run Haystack commit-msg hook test harness
         run: bash scripts/development-workflow/tests/test-haystack-commit-msg-hook.sh
