@@ -222,13 +222,14 @@ The contract must include these product-level assertions:
 
 - Covered release scenarios.
 - Fixture or harness inputs.
-- Pass, fail, blocked, and skipped outcomes.
+- Pass, fail, blocked, skipped, and retryable outcomes.
 - Evidence summaries for hub and product operations.
 - Recovery guidance for failed or partial runs.
 
 **Actions available**:
 
-- Accept the assurance result when every required scenario passes.
+- Accept the assurance result when every required scenario passes or has an
+  approved skipped rationale.
 - Re-run the harness after correcting configuration or evidence.
 - Stop and document a blocker when an unverified path remains.
 
@@ -316,7 +317,7 @@ historical release records remain stable.
 | --- | --- | --- |
 | `not_started` | Not started | Adoption has not been attempted for the repository or release path. |
 | `configured` | Configured | Required ownership and product repository configuration exists. |
-| `validated` | Validated | Configuration validation and required assurance checks passed. |
+| `validated` | Validated | Configuration validation passed, and every required assurance scenario passed or has an approved skipped rationale. |
 | `blocked` | Blocked | Adoption or assurance found a missing, ambiguous, or unsafe condition. |
 | `deferred` | Deferred | Adoption is intentionally postponed with a recorded reason. |
 
@@ -324,8 +325,8 @@ historical release records remain stable.
 
 - `not_started` -> `configured` when required ownership and product repository
   configuration is recorded.
-- `configured` -> `validated` when validation and required assurance checks
-  pass.
+- `configured` -> `validated` when validation passes and every required
+  assurance scenario passes or has an approved skipped rationale.
 - `configured` -> `blocked` when validation finds a missing or unsafe
   condition.
 - `validated` -> `configured` when a material configuration, fixture,
@@ -360,8 +361,8 @@ rerun reaches `pass` or approved `skipped` with rationale.
 ## Operational Visibility
 
 - **Logs**: Adoption and assurance runs must report configuration scope,
-  covered scenarios, skipped scenarios, pass/fail outcomes, and required next
-  actions without printing secrets or private local paths.
+  covered scenarios, skipped scenarios, pass/fail/blocked/retryable outcomes,
+  and required next actions without printing secrets or private local paths.
 - **Notifications**: No automatic notifications are required. Human-facing PR
   descriptions, runbooks, and tracker comments are sufficient for this feature.
 - **Audit trail**: Release-runbook and self-review evidence must record the
