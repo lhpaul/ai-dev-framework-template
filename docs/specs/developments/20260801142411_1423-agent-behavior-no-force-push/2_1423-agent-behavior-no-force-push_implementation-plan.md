@@ -37,6 +37,7 @@ creating a parallel policy model.
 | Same-surface open PRs | `gh pr list --base develop --state open --json number,title,headRefName,files --jq '.[] | {number,title,headRefName,files:[.files[].path]}'` | No open PRs targeting `develop`; no same-surface operational conflict. |
 | Published branch update policy | `rg -n "Published branch updates|force-push|force-with-lease" docs/best-practices/2-version-control.md AGENTS.md` | Policy already forbids published-history rewrites without explicit human approval. |
 | Branch-update surface search | `rg --pcre2 -n "git push( --set-upstream|-u)? origin(?! --delete)|git push .*--force|force-with-lease|commit --amend|git commit --amend" scripts/development-workflow docs/workflow/development-workflow/protocols .agents/skills .codex/skills .claude/agents .cursor/agents .claude/commands .cursor/commands` | 10 matches across `batch-merge.sh`, Protocols 05/05b/06/90/94, `.codex/skills/batch-merge/SKILL.md`, and `test-workflow-hub-docs.sh`. |
+| Agent and skill guidance surface search | `rg -l "commit and push|push|branch update|review-fix|BATCH_CONTEXT|workflow branch|implementation-plan|spec/" .claude/agents .cursor/agents .codex/skills .agents/skills \| wc -l` | 46 files mention branch, push, stage, or review-fix behavior; implementation must rerun this search and classify every hit as updated or out of scope. |
 | Existing branch reuse guard | `sed -n '1,220p' scripts/development-workflow/validate-branch-reuse.sh` | Existing guard blocks unsafe branch reuse/rewrite recovery text but does not guard push execution. |
 | Existing risk classifier blockers | `rg -n "force_push_required|destructive_action_required" scripts/development-workflow/tests/test-run-epic-risk-classifier.sh scripts/development-workflow/run-epic-risk-classifier.sh` | Existing risk classifier already emits hard blockers that must remain independent from any push exception. |
 
@@ -113,19 +114,43 @@ creating a parallel policy model.
 
 ### Agent and Skill Guidance
 
-- [ ] Update `.claude/agents/developer.md` and `.cursor/agents/developer.md` to
-  require the guard before destructive branch updates and to prefer follow-up
-  commits on published PR branches.
-- [ ] Update `.codex/skills/workflow-implementer/SKILL.md` and
-  `.agents/skills/workflow-implementer/SKILL.md` with the same rule for Codex
-  runs.
-- [ ] Update `.codex/skills/batch-merge/SKILL.md` and
-  `.agents/skills/run-items/SKILL.md` where batch conflict recovery or delegated
-  merge supervision could otherwise imply destructive branch-history recovery.
-- [ ] Check `.claude/commands/`, `.cursor/commands/`, `.codex/skills/`, and
-  `.agents/skills/` for other direct force-push guidance before submitting; the
-  implementation PR must either update each hit or record why it is out of
-  scope.
+- [ ] Update stage agents that can create, update, or fix workflow PR branches:
+  `.claude/agents/product-manager.md`, `.cursor/agents/product-manager.md`,
+  `.claude/agents/tech-lead.md`, `.cursor/agents/tech-lead.md`,
+  `.claude/agents/developer.md`, `.cursor/agents/developer.md`,
+  `.claude/agents/code-reviewer.md`, `.cursor/agents/code-reviewer.md`,
+  `.claude/agents/spec-reviewer.md`, `.cursor/agents/spec-reviewer.md`,
+  `.claude/agents/implementation-plan-reviewer.md`, and
+  `.cursor/agents/implementation-plan-reviewer.md`.
+- [ ] Update orchestration and review-loop agents that supervise pushed PR
+  branches: `.claude/agents/item-orchestrator.md`,
+  `.cursor/agents/item-orchestrator.md`, `.claude/agents/orchestrator.md`,
+  `.cursor/agents/orchestrator.md`,
+  `.claude/agents/automated-reviewer-loop.md`, and
+  `.cursor/agents/automated-reviewer-loop.md`.
+- [ ] Update Codex skills for stage execution and review-fix loops:
+  `.codex/skills/workflow-spec-writer/SKILL.md`,
+  `.codex/skills/workflow-plan-writer/SKILL.md`,
+  `.codex/skills/workflow-implementer/SKILL.md`,
+  `.codex/skills/workflow-spec-reviewer/SKILL.md`,
+  `.codex/skills/workflow-plan-reviewer/SKILL.md`,
+  `.codex/skills/workflow-code-reviewer/SKILL.md`,
+  `.agents/skills/workflow-spec-writer/SKILL.md`,
+  `.agents/skills/workflow-plan-writer/SKILL.md`,
+  `.agents/skills/workflow-implementer/SKILL.md`,
+  `.agents/skills/workflow-spec-reviewer/SKILL.md`,
+  `.agents/skills/workflow-plan-reviewer/SKILL.md`, and
+  `.agents/skills/workflow-code-reviewer/SKILL.md`.
+- [ ] Update Codex orchestration and batch skills:
+  `.codex/skills/workflow-item-orchestrator/SKILL.md`,
+  `.codex/skills/workflow-orchestrator/SKILL.md`,
+  `.agents/skills/run-item/SKILL.md`, `.agents/skills/run-items/SKILL.md`,
+  `.codex/skills/batch-merge/SKILL.md`, and any matching
+  `agents/openai.yaml` prompt files whose branch-update wording would otherwise
+  contradict the guard.
+- [ ] Rerun the guidance surface search from the Verification Log before
+  submitting; every hit must be updated or explicitly documented as out of
+  scope in the implementation PR's self-review log.
 
 ### Tests and Validation
 
@@ -198,8 +223,9 @@ guards per the shell quality checklist.
 - [ ] `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` - document guarded recovery after batch conflicts.
 - [ ] `docs/best-practices/2-version-control.md` - link the published-branch rule to the executable guard if the implementation adds one.
 - [ ] `scripts/development-workflow/README.md` - document the helper interface and output contract.
-- [ ] `.claude/agents/developer.md` and `.cursor/agents/developer.md` - mirror implementer guidance.
-- [ ] `.codex/skills/workflow-implementer/SKILL.md`, `.agents/skills/workflow-implementer/SKILL.md`, `.codex/skills/batch-merge/SKILL.md`, and `.agents/skills/run-items/SKILL.md` - mirror Codex and command-skill guidance.
+- [ ] `.claude/agents/product-manager.md`, `.cursor/agents/product-manager.md`, `.claude/agents/tech-lead.md`, `.cursor/agents/tech-lead.md`, `.claude/agents/developer.md`, `.cursor/agents/developer.md`, `.claude/agents/code-reviewer.md`, `.cursor/agents/code-reviewer.md`, `.claude/agents/spec-reviewer.md`, `.cursor/agents/spec-reviewer.md`, `.claude/agents/implementation-plan-reviewer.md`, and `.cursor/agents/implementation-plan-reviewer.md` - mirror stage and review-fix branch-update guidance.
+- [ ] `.claude/agents/item-orchestrator.md`, `.cursor/agents/item-orchestrator.md`, `.claude/agents/orchestrator.md`, `.cursor/agents/orchestrator.md`, `.claude/agents/automated-reviewer-loop.md`, and `.cursor/agents/automated-reviewer-loop.md` - mirror orchestration and reviewer-loop supervision guidance.
+- [ ] `.codex/skills/workflow-spec-writer/SKILL.md`, `.codex/skills/workflow-plan-writer/SKILL.md`, `.codex/skills/workflow-implementer/SKILL.md`, `.codex/skills/workflow-spec-reviewer/SKILL.md`, `.codex/skills/workflow-plan-reviewer/SKILL.md`, `.codex/skills/workflow-code-reviewer/SKILL.md`, `.agents/skills/workflow-spec-writer/SKILL.md`, `.agents/skills/workflow-plan-writer/SKILL.md`, `.agents/skills/workflow-implementer/SKILL.md`, `.agents/skills/workflow-spec-reviewer/SKILL.md`, `.agents/skills/workflow-plan-reviewer/SKILL.md`, `.agents/skills/workflow-code-reviewer/SKILL.md`, `.codex/skills/workflow-item-orchestrator/SKILL.md`, `.codex/skills/workflow-orchestrator/SKILL.md`, `.agents/skills/run-item/SKILL.md`, `.agents/skills/run-items/SKILL.md`, and `.codex/skills/batch-merge/SKILL.md` - mirror Codex and command-skill branch-update guidance.
 - [ ] `REVIEW.md` - add review expectations only if the implementation introduces reviewer-visible checklist behavior beyond the existing guardrails section.
 
 ---
