@@ -75,9 +75,12 @@ without rewriting history.
 1. Create a local branch that has not been pushed.
 2. Amend the local commit.
 3. Run the guarded first-publish path.
+4. Confirm the guard used a fresh remote-ref existence check rather than local
+   upstream metadata to classify the branch as unpublished.
 
 **Expected result**: The first publish is allowed because no published PR branch
-history is rewritten.
+history is rewritten and the remote branch ref did not exist immediately before
+the publish.
 
 ### Step 5: Verify exact authorized exception
 
@@ -108,7 +111,8 @@ the push authorization.
 - [ ] Unauthorized destructive PR branch updates stop before remote mutation.
 - [ ] Stop output names the branch, action, and missing exact authorization.
 - [ ] Safe follow-up commits can update an already-pushed PR branch.
-- [ ] Local-only amend before first publication remains allowed.
+- [ ] Local-only amend before first publication remains allowed only when a
+      fresh remote-ref existence check proves the branch is unpublished.
 - [ ] Exact destructive authorization is scoped and single-use or expiring.
 - [ ] Stale-tip and mismatched-scope authorizations block.
 - [ ] `force_push_required` and `destructive_action_required` remain separate

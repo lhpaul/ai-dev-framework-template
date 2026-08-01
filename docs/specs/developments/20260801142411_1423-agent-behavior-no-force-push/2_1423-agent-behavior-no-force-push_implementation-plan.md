@@ -76,7 +76,10 @@ creating a parallel policy model.
     remote tip for destructive updates, and optional authorization file.
   - Classify push modes as `normal`, `force`, or `force-with-lease`.
   - Allow normal pushes and unpublished local-only amend follow-ups without
-    authorization.
+    authorization only when `git ls-remote --exit-code <remote> <full-ref>`
+    confirms the remote ref does not exist immediately before first publish.
+    Local tracking metadata or absence of an upstream branch is not sufficient
+    proof that a branch is unpublished.
   - Block destructive updates unless a matching authorization record is present.
   - For authorized destructive updates, verify the current remote tip still
     equals the authorized expected tip immediately before the update and fail
@@ -179,6 +182,8 @@ creating a parallel policy model.
 2. A safe follow-up commit push on an existing PR branch proceeds through the
    non-destructive path. Maps to AC3.
 3. A local amend before first publication remains allowed. Maps to AC4.
+   First-publication detection must be based on a fresh remote-ref existence
+   check, not local tracking state.
 4. A single-use authorization matching operator, repo or PR, full ref, action,
    and expected remote tip permits exactly one conditional destructive update.
    Maps to AC5.
@@ -237,7 +242,7 @@ guards per the shell quality checklist.
 | A workflow path still uses raw destructive push guidance | Med | High | Implementation must rerun the branch-update surface search and document each remaining hit as updated or out of scope. |
 | Authorization format becomes a broad bypass | Low | High | Bind authorization to repo/PR, full branch ref, exact action, expected remote tip, operator, and single-use/expiry. |
 | Remote tip changes after validation | Med | High | Re-read the remote tip immediately before the update and fail closed when it differs. |
-| Guard conflicts with legitimate local amend before first push | Low | Med | Explicitly distinguish unpublished local history from published remote branch rewrites in tests. |
+| Guard conflicts with legitimate local amend before first push | Low | Med | Explicitly distinguish unpublished local history from published remote branch rewrites by checking fresh remote-ref existence in tests. |
 | Risk classifier semantics are weakened accidentally | Low | High | Keep risk classifier blockers separate and add regression coverage for unchanged blocker behavior. |
 
 ---
@@ -254,6 +259,9 @@ the shell helper and tests directly.
 1. Create `scripts/development-workflow/workflow-branch-push-guard.sh` with Bash
    3.2-compatible argument parsing, ref validation, remote-tip lookup, safe
    update classification, authorization matching, and stable key/value output.
+   The unpublished-branch allowance must use a fresh remote-ref existence check
+   such as `git ls-remote --exit-code <remote> <full-ref>` and must not trust
+   stale local upstream metadata.
 2. Add `scripts/development-workflow/tests/test-workflow-branch-push-guard.sh`
    covering unauthorized destructive pushes, safe follow-up pushes, local-only
    amend allowance, authorized single-use destructive update, stale-tip failure,
