@@ -145,7 +145,7 @@ Usage:
 ```bash
 ./scripts/development-workflow/tests/setup-multi-repo-release-assurance-fixture.sh \
   --output-dir /tmp/multi-repo-release-assurance \
-  --json > /tmp/multi-repo-release-assurance-fixtures.json
+  --json > /tmp/multi-repo-release-assurance-fixtures.json &&
 
 ./scripts/development-workflow/multi-repo-release-assurance.sh \
   --fixture-dir /tmp/multi-repo-release-assurance/valid \

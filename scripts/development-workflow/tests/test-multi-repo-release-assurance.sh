@@ -83,7 +83,7 @@ run_contains "blocked_owner_action" "fix product release contract owner" "$(cat 
 
 "$HELPER" --fixture-dir "$RETRYABLE_FIXTURE" --json > "$TMP_ROOT/retryable.json"
 run_test "retryable_adoption_status" "blocked" "$(jq -r '.adoption_status' "$TMP_ROOT/retryable.json")"
-run_test "retryable_outcome" "retryable" "$(jq -r '.scenario_results[0].outcome' "$TMP_ROOT/retryable.json")"
+run_test "retryable_outcome" "retryable" "$(jq -r '.scenario_results[] | select(.name == "reruns") | .outcome' "$TMP_ROOT/retryable.json")"
 run_contains "retryable_action" "current run id" "$(cat "$TMP_ROOT/retryable.json")"
 
 "$HELPER" --fixture-dir "$HISTORY_MUTATION_FIXTURE" --json > "$TMP_ROOT/history-mutation.json"
@@ -93,12 +93,13 @@ run_contains "history_mutation_action" "restore historical baseline" "$(cat "$TM
 
 "$HELPER" --fixture-dir "$REPEATED_SIDE_EFFECT_FIXTURE" --json > "$TMP_ROOT/repeated-side-effect.json"
 run_test "repeated_side_effect_blocks" "blocked" "$(jq -r '.adoption_status' "$TMP_ROOT/repeated-side-effect.json")"
-run_test "repeated_side_effect_forces_fail" "fail" "$(jq -r '.scenario_results[0].outcome' "$TMP_ROOT/repeated-side-effect.json")"
+run_test "repeated_side_effect_forces_fail" "fail" "$(jq -r '.scenario_results[] | select(.name == "reruns") | .outcome' "$TMP_ROOT/repeated-side-effect.json")"
 run_contains "repeated_side_effect_action" "idempotency" "$(cat "$TMP_ROOT/repeated-side-effect.json")"
 
 "$HELPER" --fixture-dir "$MISSING_EVIDENCE_FIXTURE" --json > "$TMP_ROOT/missing-evidence.json"
 run_test "missing_evidence_blocks" "blocked" "$(jq -r '.adoption_status' "$TMP_ROOT/missing-evidence.json")"
 run_test "missing_evidence_forces_fail" "fail" "$(jq -r '.scenario_results[] | select(.name == "component_routing") | .outcome' "$TMP_ROOT/missing-evidence.json")"
+run_test "missing_evidence_requires_supersedes" "true" "$(jq -r '.scenario_results[] | select(.name == "reruns") | (.missing_evidence | index("supersedes") != null)' "$TMP_ROOT/missing-evidence.json")"
 run_contains "missing_evidence_action" "provide required evidence before adoption" "$(cat "$TMP_ROOT/missing-evidence.json")"
 
 "$HELPER" --fixture-dir "$VALID_FIXTURE" > "$TMP_ROOT/valid.env"

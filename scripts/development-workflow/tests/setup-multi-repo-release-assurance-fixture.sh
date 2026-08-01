@@ -102,37 +102,48 @@ write_manifest() {
       }' > "$root/assurance.json"
       ;;
     blocked)
-      jq -nS '{
-        scenarios:[
-          {name:"component_routing", owner:"hub", outcome:"pass"},
-          {name:"configuration_validation", owner:"product", outcome:"blocked", required_next_action:"fix product release contract owner"}
-        ]
-      }' > "$root/assurance.json"
+      write_manifest "$root" valid
+      tmp="$root/assurance.json.tmp"
+      jq '
+        (.scenarios[] | select(.name == "configuration_validation")) |=
+          (. + {owner:"product", outcome:"blocked", required_next_action:"fix product release contract owner"})
+      ' "$root/assurance.json" > "$tmp"
+      mv "$tmp" "$root/assurance.json"
       ;;
     retryable)
-      jq -nS '{
-        scenarios:[
-          {name:"reruns", owner:"product", outcome:"retryable", stale_attempt:true, run_id:"run-1", step_id:"handoff", required_next_action:"rerun corrected handoff with current run id"}
-        ]
-      }' > "$root/assurance.json"
+      write_manifest "$root" valid
+      tmp="$root/assurance.json.tmp"
+      jq '
+        (.scenarios[] | select(.name == "reruns")) |=
+          (. + {outcome:"retryable", stale_attempt:true, run_id:"run-1", step_id:"handoff", required_next_action:"rerun corrected handoff with current run id"})
+      ' "$root/assurance.json" > "$tmp"
+      mv "$tmp" "$root/assurance.json"
       ;;
     repeated-side-effect)
-      jq -nS '{
-        scenarios:[
-          {name:"reruns", owner:"product", outcome:"pass", run_id:"run-2", step_id:"cleanup", side_effect_repeated:true}
-        ]
-      }' > "$root/assurance.json"
+      write_manifest "$root" valid
+      tmp="$root/assurance.json.tmp"
+      jq '
+        (.scenarios[] | select(.name == "reruns")) |=
+          (. + {side_effect_repeated:true})
+      ' "$root/assurance.json" > "$tmp"
+      mv "$tmp" "$root/assurance.json"
       ;;
     missing-evidence)
-      jq -nS '{
-        scenarios:[
-          {name:"component_routing", owner:"hub", outcome:"pass"},
-          {name:"configuration_validation", owner:"hub", outcome:"pass"},
-          {name:"namespaced_component_milestones", owner:"hub", outcome:"pass"},
-          {name:"bundle_finalization", owner:"hub", outcome:"pass"},
-          {name:"reruns", owner:"product", outcome:"pass", run_id:"run-2"}
-        ]
-      }' > "$root/assurance.json"
+      write_manifest "$root" valid
+      tmp="$root/assurance.json.tmp"
+      jq '
+        (.scenarios[] | select(.name == "component_routing")) |=
+          (del(.selected_product_repo_key, .canonical_repository_identity, .release_contract)) |
+        (.scenarios[] | select(.name == "configuration_validation")) |=
+          (del(.hub_config, .product_config)) |
+        (.scenarios[] | select(.name == "namespaced_component_milestones")) |=
+          (del(.component_evidence, .milestone_reconciliation)) |
+        (.scenarios[] | select(.name == "bundle_finalization")) |=
+          (del(.delivery_bundle_manifest, .component_evidence)) |
+        (.scenarios[] | select(.name == "reruns")) |=
+          (del(.step_id, .supersedes, .idempotency_guard))
+      ' "$root/assurance.json" > "$tmp"
+      mv "$tmp" "$root/assurance.json"
       ;;
     *)
       echo "Unknown manifest mode: $mode" >&2

@@ -19,12 +19,22 @@ from typing import Any, NoReturn
 
 SCHEMA = "multi_repo_release_assurance.v1"
 VALID_OUTCOMES = {"pass", "fail", "blocked", "skipped", "retryable"}
+CANONICAL_SCENARIOS = [
+    "component_routing",
+    "configuration_validation",
+    "namespaced_component_milestones",
+    "bundle_finalization",
+    "partial_failures",
+    "reruns",
+    "migration_no_rewrite",
+    "single_repo_compatibility",
+]
 REQUIRED_EVIDENCE = {
     "component_routing": ["selected_product_repo_key", "canonical_repository_identity", "release_contract"],
     "configuration_validation": ["hub_config", "product_config"],
     "namespaced_component_milestones": ["component_evidence", "milestone_reconciliation"],
     "bundle_finalization": ["delivery_bundle_manifest", "component_evidence"],
-    "reruns": ["run_id", "step_id", "idempotency_guard"],
+    "reruns": ["run_id", "step_id", "supersedes", "idempotency_guard"],
 }
 
 
@@ -144,6 +154,30 @@ def normalize_scenario(raw: Any) -> dict[str, Any]:
     }
 
 
+def validate_scenario_set(raw_scenarios: Any) -> list[Any]:
+    if not isinstance(raw_scenarios, list) or not raw_scenarios:
+        fail("missing_scenarios", "assurance fixture must include scenarios")
+    names: list[str] = []
+    for item in raw_scenarios:
+        if not isinstance(item, dict):
+            fail("invalid_scenario", "scenario entries must be JSON objects")
+        names.append(str(item.get("name") or ""))
+    canonical = set(CANONICAL_SCENARIOS)
+    unknown = sorted(name for name in names if name not in canonical)
+    duplicate = sorted({name for name in names if names.count(name) > 1})
+    missing = sorted(canonical.difference(names))
+    if unknown or duplicate or missing:
+        parts = []
+        if unknown:
+            parts.append("unknown: " + ", ".join(unknown))
+        if duplicate:
+            parts.append("duplicate: " + ", ".join(duplicate))
+        if missing:
+            parts.append("missing: " + ", ".join(missing))
+        fail("invalid_scenario_set", "; ".join(parts))
+    return raw_scenarios
+
+
 def adoption_status(scenarios: list[dict[str, Any]], historical: list[dict[str, Any]]) -> str:
     if any(not item["unchanged"] for item in historical):
         return "blocked"
@@ -167,9 +201,7 @@ def main(argv: list[str]) -> int:
 
     fixture_dir = os.path.abspath(args.fixture_dir)
     manifest = load_json(os.path.join(fixture_dir, "assurance.json"), "assurance")
-    scenarios = [normalize_scenario(item) for item in manifest.get("scenarios", [])]
-    if not scenarios:
-        fail("missing_scenarios", "assurance fixture must include scenarios")
+    scenarios = [normalize_scenario(item) for item in validate_scenario_set(manifest.get("scenarios", []))]
 
     historical = [
         compare_baseline(os.path.join(fixture_dir, "historical", "hub-before"), os.path.join(fixture_dir, "historical", "hub-after"), "hub"),
