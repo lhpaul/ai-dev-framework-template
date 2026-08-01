@@ -78,9 +78,13 @@ has already landed.
   - Parse only the frozen explicit PR list supplied by the caller.
   - Fetch authoritative live state for each remaining PR: `state`, `isDraft`,
     labels, base ref, `mergeStateStatus`, and required status rollup.
+  - Run a separate read-only observation query for open PRs targeting
+    `TARGET_BASE` that are absent from the frozen `--prs` list; emit those
+    observations under the `out_of_scope_observation` classification only, and
+    never add them to the mutation, retry, merge, or label set.
   - Validate base ref equals the selected `TARGET_BASE`.
   - Classify clean, retryable pending/unknown, terminal non-clean, and
-    out-of-scope observations into stable key/value or JSON output.
+    out-of-scope observations into the canonical JSONL output schema below.
   - Include the invalidating sibling PR number in every non-clean or retryable
     remaining-PR record.
   - Preserve original order; do not sort by refreshed status.
@@ -91,8 +95,52 @@ has already landed.
   `merge --pr` call.
 - [ ] Add a bounded retry helper for pending and temporarily unknown states.
   Keep defaults short enough for operator feedback and configurable through
-  environment variables if needed.
+  environment variables if needed. Defaults: 3 attempts, 10 seconds between
+  attempts, and a 60 second wall-clock deadline per remaining PR.
 - [ ] Keep existing CHANGELOG deduplication and MERGED-state checks intact.
+
+### Recheck Output Contract
+
+`batch-merge.sh recheck-remaining` must write one compact JSON object per line
+to stdout. Records are emitted in this order: remaining in-scope PRs in the
+same order they appeared in the frozen `--prs` list, followed by any
+`out_of_scope_observation` records ordered by PR number ascending.
+
+Required fields for every record:
+
+| Field | Values |
+| --- | --- |
+| `record_type` | `remaining_pr` or `out_of_scope_observation` |
+| `pr` | Pull request number |
+| `original_index` | Zero-based index in frozen `--prs`; `null` for out-of-scope observations |
+| `invalidating_sibling_pr` | The just-merged sibling PR number |
+| `base_ref` | Refreshed PR base |
+| `head_ref` | Refreshed PR head |
+| `merge_state` | Raw GitHub `mergeStateStatus`, upper-case |
+| `checks_state` | `success`, `pending`, `failure`, `unknown`, or `not_required` |
+| `classification` | `clean`, `retryable`, `merge_blocked`, `out_of_scope_observation`, or `helper_failed` |
+| `retryable` | Boolean |
+| `attempts` | Number of refresh attempts used |
+| `deadline_seconds` | Effective per-PR retry deadline |
+| `outcome` | `continue`, `hold`, `observe`, or `error` |
+| `reason` | Stable snake_case reason |
+
+Allowed in-scope `merge_state` classifications:
+
+| Refreshed state | Checks state | Classification | Outcome |
+| --- | --- | --- | --- |
+| `CLEAN` | `success` or `not_required` | `clean` | `continue` |
+| `UNKNOWN` or empty | `pending` or `unknown` before deadline | `retryable` | `hold` until retry resolves |
+| `UNKNOWN` or empty | `pending` or `unknown` at deadline | `merge_blocked` | `hold` |
+| `DIRTY`, `BLOCKED`, `BEHIND`, `UNSTABLE`, or `HAS_HOOKS` | Any | `merge_blocked` | `hold` |
+| Any | `failure` | `merge_blocked` | `hold` |
+
+The subcommand exits `0` when all records were fetched and classified, including
+when one or more in-scope PRs are `merge_blocked`. It exits non-zero only for
+invalid input, authentication failures, malformed GitHub responses, missing
+required fields after guarded parsing, or other helper failures. Non-zero helper
+failures must emit a final `helper_failed` JSON record before exit when stdout
+is still available.
 
 ### Protocols and Workflow Documentation
 
@@ -188,12 +236,10 @@ checklist.
 
 ## Documentation Updates
 
-- [ ] `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` - add the post-sibling-merge recheck step, retry semantics, and `merge_blocked` summary.
-- [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` - require delegated `/run-items` merge supervision to pass the frozen PR list and consume refreshed outcomes.
-- [ ] `scripts/development-workflow/README.md` - document the recheck subcommand and output contract.
-- [ ] `.agents/skills/batch-merge/SKILL.md`, `.codex/skills/batch-merge/SKILL.md`, `.claude/commands/batch-merge.md`, and `.cursor/commands/batch-merge.md` - mirror batch-merge command behavior.
-- [ ] `.agents/skills/run-items/SKILL.md`, `.agents/skills/run-items/agents/openai.yaml`, `.agents/skills/run-item/SKILL.md`, `.agents/skills/run-epic/SKILL.md`, `.codex/skills/workflow-orchestrator/SKILL.md`, `.codex/skills/workflow-orchestrator/agents/openai.yaml`, `.codex/skills/workflow-item-orchestrator/SKILL.md`, `.codex/skills/workflow-item-orchestrator/agents/openai.yaml`, `.claude/agents/orchestrator.md`, `.cursor/agents/orchestrator.md`, `.claude/agents/item-orchestrator.md`, `.cursor/agents/item-orchestrator.md`, `.claude/commands/run-items.md`, `.cursor/commands/run-items.md`, `.claude/commands/run-item.md`, `.cursor/commands/run-item.md`, `.claude/commands/run-epic.md`, and `.cursor/commands/run-epic.md` - mirror delegated orchestration behavior.
-- [ ] `REVIEW.md` - update only if implementation adds reviewer-visible checks for stale mergeability evidence.
+Use the authoritative documentation checklist in "Protocols and Workflow
+Documentation" above. The implementation PR self-review must state whether
+`REVIEW.md` changed; update it only if the implementation adds
+reviewer-visible checks for stale mergeability evidence.
 
 ---
 
@@ -224,7 +270,9 @@ the shell helper changes and tests directly.
    required check state, classification, retryability, and outcome.
 2. Add `scripts/development-workflow/tests/test-batch-merge-recheck-remaining.sh`
    with mocked `gh` responses for clean, pending, unknown, dirty, blocked,
-   behind, failing, and out-of-scope cases.
+   behind, failing, timeout, and out-of-scope cases. The test must assert the
+   exact JSONL field names, classification values, order, retry attempt count,
+   and non-zero helper-failure behavior defined above.
 3. Update Protocol 94 so the sequential loop rechecks all remaining in-scope
    PRs after every successful merge and before each next merge attempt.
 4. Update Protocol 90 and Codex/command skill guidance so delegated `/run-items`
@@ -241,6 +289,6 @@ the shell helper changes and tests directly.
    - `shellcheck --severity=warning scripts/development-workflow/batch-merge.sh scripts/development-workflow/tests/test-batch-merge-recheck-remaining.sh`
    - `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop`
    - `npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "CHANGELOG.md"`
-   - `find docs/specs/developments docs/testing/workflow -name "*.md" -print0 | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md`
+   - `bash -c 'set -euo pipefail; tmp="$(mktemp)"; trap "rm -f \"$tmp\"" EXIT; find docs/specs/developments docs/testing/workflow -name "*.md" -print0 > "$tmp"; test -s "$tmp"; xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md < "$tmp"'`
 9. Complete the Protocol 03 Pre-Submission Self-Review Pass, including the
    complex decision-gate matrix above, before opening the implementation PR.

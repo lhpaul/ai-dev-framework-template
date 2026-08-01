@@ -25,7 +25,14 @@ Before running this smoke test:
 | Frozen PR list | Two or more mocked PR numbers supplied through `--prs` |
 | Invalidating sibling PR | First PR in the frozen list, marked merged before recheck |
 | Remaining PR states | Clean, pending, unknown, dirty, blocked, behind, failing |
-| Feature command | `scripts/development-workflow/batch-merge.sh recheck-remaining` |
+| Feature command | See command block below |
+
+```bash
+scripts/development-workflow/batch-merge.sh recheck-remaining \
+  --prs 101,102,103 \
+  --after-merged-pr 101 \
+  --base develop
+```
 
 ---
 
@@ -35,10 +42,16 @@ Before running this smoke test:
 
 **Maps to**: AC1, AC2, AC3, AC4, AC5, AC6, AC7, AC8, AC9, AC10
 
-1. Run `bash scripts/development-workflow/tests/test-batch-merge-recheck-remaining.sh`.
+1. Run the regression:
+
+   ```bash
+   bash scripts/development-workflow/tests/test-batch-merge-recheck-remaining.sh
+   ```
+
 2. Confirm the output includes passing cases for clean continuation, pending
-   retry, unknown retry, dirty blocking, failing blocking, order preservation,
-   and out-of-scope observation.
+   retry, unknown retry, dirty blocking, blocked blocking, behind blocking,
+   failing blocking, timeout blocking, order preservation, and out-of-scope
+   observation.
 
 **Expected result**: The regression exits zero and every refreshed-state
 scenario passes.
@@ -47,10 +60,28 @@ scenario passes.
 
 **Maps to**: AC1, AC2, AC3, AC5, AC10
 
-1. Discover a frozen two-PR list where both PRs initially report clean.
-2. Simulate merging PR A into the target base.
-3. Recheck PR B after PR A's merge, returning `DIRTY`.
-4. Inspect the batch summary entry for PR B.
+1. Load the fixture where PRs `101` and `102` initially report clean.
+2. Mark PR `101` merged in the mocked GitHub state.
+3. Set PR `102` to refreshed `mergeStateStatus: DIRTY`.
+4. Run the feature command:
+
+   ```bash
+   scripts/development-workflow/batch-merge.sh recheck-remaining \
+     --prs 101,102 \
+     --after-merged-pr 101 \
+     --base develop
+   ```
+
+5. Assert PR `102` emits:
+
+   ```json
+   {
+     "classification": "merge_blocked",
+     "outcome": "hold",
+     "invalidating_sibling_pr": 101,
+     "merge_state": "DIRTY"
+   }
+   ```
 
 **Expected result**: PR B is not merged using the original clean result. Its
 outcome is `merge_blocked` and the summary names PR A as the invalidating
@@ -60,10 +91,15 @@ sibling merge.
 
 **Maps to**: AC4
 
-1. Recheck a remaining PR whose required checks are pending.
-2. Confirm the runner keeps it under bounded supervision.
-3. Repeat with a temporarily unknown mergeability state.
-4. Let one scenario become clean and another reach timeout or terminal failure.
+1. Configure the fixture with `BATCH_MERGE_RECHECK_ATTEMPTS=3` and
+   `BATCH_MERGE_RECHECK_SLEEP_SECONDS=0`.
+2. Recheck PR `102` with required checks returning `pending`, then `pending`,
+   then `success`.
+3. Recheck PR `103` with `mergeStateStatus: UNKNOWN` for all three attempts.
+4. Assert PR `102` emits `attempts: 3`, `classification: clean`, and
+   `outcome: continue`.
+5. Assert PR `103` emits `attempts: 3`, `classification: merge_blocked`,
+   `retryable: false`, and `reason: retry_deadline_exhausted`.
 
 **Expected result**: Retryable states are not treated as immediately clean or
 terminal. Clean after retry can continue; exhausted or failing states become
@@ -73,10 +109,21 @@ terminal. Clean after retry can continue; exhausted or failing states become
 
 **Maps to**: AC6, AC7
 
-1. Use a frozen list with three PRs.
-2. Simulate PR A merged, PR B dirty, and PR C refreshed clean.
-3. Continue the batch only if existing merge-order guardrails allow it.
-4. Inspect the final order and summary.
+1. Use frozen list `101,102,103`.
+2. Simulate PR `101` merged, PR `102` dirty, and PR `103` refreshed clean.
+3. Run the feature command:
+
+   ```bash
+   scripts/development-workflow/batch-merge.sh recheck-remaining \
+     --prs 101,102,103 \
+     --after-merged-pr 101 \
+     --base develop
+   ```
+
+4. Assert the JSONL records for `102` and `103` have `original_index` values
+   `1` and `2` respectively, in that order.
+5. Continue the batch only if existing merge-order guardrails allow merging the
+   independently refreshed-clean PR `103`.
 
 **Expected result**: PR B remains in its original position with
 `merge_blocked`; PR C is not moved ahead of PR B in the recorded order and is
@@ -86,10 +133,22 @@ merged only after independent refreshed-clean evidence.
 
 **Maps to**: AC8
 
-1. Make the mocked GitHub state include an additional open PR outside the
-   supplied `--prs` list.
-2. Run the remaining-PR recheck.
-3. Inspect helper output and side effects.
+1. Make the mocked GitHub state include PR `104` targeting `develop`, absent
+   from the supplied `--prs` list.
+2. Run the feature command with frozen list `101,102,103`.
+3. Assert PR `104` appears only as:
+
+   ```json
+   {
+     "record_type": "out_of_scope_observation",
+     "classification": "out_of_scope_observation",
+     "outcome": "observe",
+     "original_index": null
+   }
+   ```
+
+4. Inspect the mocked `gh` call log and assert PR `104` was not labeled,
+   merged, retried for mutation, or appended to the frozen list.
 
 **Expected result**: The out-of-scope PR is observation-only or absent from the
 mutation set. It is not labeled, merged, rechecked for mutation, or added to the
@@ -108,6 +167,9 @@ batch.
 - [ ] Prior clean evidence is treated as stale after the target base changes.
 - [ ] Non-clean refreshed states do not merge under stale evidence.
 - [ ] Pending and unknown states follow bounded retry semantics.
+- [ ] The retry path asserts default or configured attempt and deadline bounds.
+- [ ] Dirty, blocked, behind, failing, timeout, pending, unknown, and clean
+      cases are all covered by the fixture.
 - [ ] Blocked summaries name the invalidating sibling merge and refreshed state.
 - [ ] Refreshed-clean PRs can continue under the original delegated policy.
 - [ ] Original PR order is preserved when an entry becomes blocked.
