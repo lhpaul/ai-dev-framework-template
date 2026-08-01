@@ -14,8 +14,12 @@ Before running this smoke test:
 - [ ] You are in a disposable clone or temporary Git fixture, not a repository
       with human work in progress.
 - [ ] `gh`, `git`, `jq`, and Bash are available.
-- [ ] The implementation PR's branch is checked out.
-- [ ] The test helper can create temporary local and remote branches.
+- [ ] The corresponding implementation has landed on the branch being
+      validated, including `workflow-branch-push-guard.sh` and its regression
+      tests. This runbook validates post-merge behavior, not an unmerged plan
+      branch.
+- [ ] The test helper can create temporary local and remote branches in the
+      disposable fixture.
 
 ---
 
