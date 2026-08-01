@@ -25,7 +25,7 @@ Before running this smoke test:
 | --- | --- |
 | Test PR branch | Temporary branch created by the test fixture |
 | Remote tip | Captured before each guarded push attempt |
-| Authorization fixture | Temporary JSON or key/value file with matching and mismatched records |
+| Authorization fixture | Temporary canonical JSON file with matching and mismatched records |
 | Feature command | `scripts/development-workflow/workflow-branch-push-guard.sh` |
 
 ---
@@ -49,24 +49,28 @@ passes.
 **Maps to**: AC1, AC2
 
 1. In the disposable fixture, create and push a PR-like branch.
-2. Attempt a guarded `force-with-lease` update without an authorization record.
+2. Attempt a guarded destructive update without an authorization record:
+   `scripts/development-workflow/workflow-branch-push-guard.sh --repo-root "$PWD" --remote origin --repo lhpaul/ai-dev-framework-template --branch-ref refs/heads/<branch> --mode force-with-lease --pr <number> --expected-remote-tip <sha> -- git push --force-with-lease=refs/heads/<branch>:<sha> origin HEAD:refs/heads/<branch>`.
 3. Read the guard output.
 4. Re-read the remote branch tip.
 
 **Expected result**: The guard reports a blocked result naming the branch, the
-prohibited action, and that general workflow confirmation is insufficient. The
-remote tip is unchanged.
+prohibited action, and that general workflow confirmation is insufficient. It
+exits `1` with `PUSH_GUARD_REASON=missing_authorization`, and the remote tip is
+unchanged.
 
 ### Step 3: Verify safe follow-up commit path
 
 **Maps to**: AC3
 
 1. Add a normal follow-up commit to the pushed test branch.
-2. Run the guarded normal push path.
+2. Run the guarded normal push path:
+   `scripts/development-workflow/workflow-branch-push-guard.sh --repo-root "$PWD" --remote origin --repo lhpaul/ai-dev-framework-template --branch-ref refs/heads/<branch> --mode normal --pr <number> -- git push origin HEAD:refs/heads/<branch>`.
 3. Re-read the remote branch tip.
 
 **Expected result**: The guard allows the push and the remote branch advances
-without rewriting history.
+without rewriting history. It exits `0` with
+`PUSH_GUARD_REASON=normal_push_allowed`.
 
 ### Step 4: Verify local-only amend remains allowed
 
@@ -74,30 +78,61 @@ without rewriting history.
 
 1. Create a local branch that has not been pushed.
 2. Amend the local commit.
-3. Run the guarded first-publish path.
+3. Run the guarded first-publish path with `--mode normal`.
 4. Confirm the guard used a fresh remote-ref existence check rather than local
    upstream metadata to classify the branch as unpublished.
 
 **Expected result**: The first publish is allowed because no published PR branch
 history is rewritten and the remote branch ref did not exist immediately before
-the publish.
+the publish. The guard exits `0` with
+`PUSH_GUARD_REASON=unpublished_ref_allowed`.
 
 ### Step 5: Verify exact authorized exception
 
 **Maps to**: AC5, AC6, AC7, AC8
 
-1. Create an authorization record naming the authenticated operator, repository
-   or PR, full branch ref, destructive action, expected remote tip, and
-   single-use or expiry.
-2. Run the guarded destructive update with the matching record.
-3. Attempt to reuse the same record.
-4. Repeat with records that use the wrong repository, same-named branch in a
-   different repository, wrong action, stale tip, and expired authorization.
+1. Create a canonical JSON authorization record with these required fields:
+   `schema_version`, `authorization_id`, `canonical_repo`, `pr_number`,
+   `branch_ref`, `action`, `expected_remote_tip`, `operator_login`,
+   `authorized_by`, `source_kind`, `source_id`, `source_url`,
+   `source_fingerprint_sha256`, `issued_at`, `expires_at`, and
+   `single_use: true`.
+2. Ensure the trusted source behind `source_url` is authored by the
+   authenticated human operator and that its fingerprint matches the JSON
+   record.
+3. Run the guarded destructive update with:
+   `scripts/development-workflow/workflow-branch-push-guard.sh --repo-root "$PWD" --remote origin --repo lhpaul/ai-dev-framework-template --branch-ref refs/heads/<branch> --mode force-with-lease --pr <number> --expected-remote-tip <sha> --authorization-json <auth.json> -- git push --force-with-lease=refs/heads/<branch>:<sha> origin HEAD:refs/heads/<branch>`.
+4. Attempt to reuse the same record.
+5. Repeat with records that use PR-only scope, the wrong repository, a
+   same-named branch in a different repository, wrong action, stale tip,
+   expired authorization, tampered source fingerprint, and unauthorized writer.
+6. Run two concurrent guarded attempts with the same valid record.
+7. Simulate a conditional ref-update failure after the local claim and verify
+   the claim rolls back without counting as successful consumption.
 
 **Expected result**: The exact matching update succeeds once through a
-conditional remote-tip check. Every mismatched, stale, expired, or replayed
-record is blocked. Existing risk-classifier hard blockers are not cleared by
-the push authorization.
+server-side conditional ref update with the full expected tip. Concurrent
+same-record attempts allow exactly one success. PR-only, mismatched, stale,
+expired, tampered, unauthorized-writer, or replayed records are blocked.
+Conditional update failure rolls back the claim and requires fresh authorization
+for the new remote tip. Existing risk-classifier hard blockers are not cleared
+by the push authorization.
+
+### Step 6: Verify guidance inventory classification
+
+**Maps to**: AC9, AC10
+
+1. Run the implementation PR's push-inventory command across workflow scripts,
+   protocols, `.agents/skills`, `.codex/skills`, `.claude/agents`,
+   `.cursor/agents`, `.claude/commands`, and `.cursor/commands`.
+2. Confirm every matched push or branch-update guidance entry is classified by
+   force behavior, remote, wrapper, multiline form, and test scope.
+3. Confirm each non-test spec, plan, implementation, review-fix, and
+   batch-supervision surface either references the shared guard or is explicitly
+   listed as out of scope in the implementation PR self-review log.
+
+**Expected result**: The self-review log contains an executable inventory and
+out-of-scope classification; there is no unclassified branch-update guidance.
 
 ### Last Step: Validate & Shut Down
 
@@ -113,12 +148,16 @@ the push authorization.
 - [ ] Safe follow-up commits can update an already-pushed PR branch.
 - [ ] Local-only amend before first publication remains allowed only when a
       fresh remote-ref existence check proves the branch is unpublished.
-- [ ] Exact destructive authorization is scoped and single-use or expiring.
-- [ ] Stale-tip and mismatched-scope authorizations block.
+- [ ] Exact destructive authorization is scoped to canonical repo, full branch
+      ref, repository-scoped PR number, action, expected tip, authenticated
+      operator, trusted source, and single-use claim.
+- [ ] PR-only, stale-tip, mismatched-scope, tampered, unauthorized-writer,
+      concurrent replay, and consumed-record authorizations block.
 - [ ] `force_push_required` and `destructive_action_required` remain separate
       hard blocker classifications.
-- [ ] Spec, plan, implementation, review-fix, and batch-supervision guidance all
-      point to the shared guard.
+- [ ] The implementation PR includes an executable inventory proving spec, plan,
+      implementation, review-fix, and batch-supervision guidance points to the
+      shared guard or is explicitly out of scope.
 
 ---
 
@@ -127,7 +166,7 @@ the push authorization.
 | Entity | Scenario | How to load |
 | --- | --- | --- |
 | Temporary Git fixture | Published branch, unpublished branch, remote-tip changes | Created by `test-workflow-branch-push-guard.sh` |
-| Authorization records | Matching, mismatched, stale, expired, replayed | Created by `test-workflow-branch-push-guard.sh` |
+| Authorization records | Matching, PR-only, mismatched, stale, expired, tampered, unauthorized-writer, concurrent, replayed | Created by `test-workflow-branch-push-guard.sh` |
 
 ---
 
