@@ -85,11 +85,15 @@ without rewriting history. It exits `0` with
 3. Run the guarded first-publish path with `--mode normal`.
 4. Confirm the guard used a fresh remote-ref existence check rather than local
    upstream metadata to classify the branch as unpublished.
+5. Repeat with an authentication failure, malformed remote, and remote pointing
+   to a different repository.
 
 **Expected result**: The first publish is allowed because no published PR branch
 history is rewritten and the remote branch ref did not exist immediately before
 the publish. The guard exits `0` with
-`PUSH_GUARD_REASON=unpublished_ref_allowed`.
+`PUSH_GUARD_REASON=unpublished_ref_allowed` only for Git's explicit no-match
+status. Authentication, transport, malformed-remote, and repository mismatch
+cases fail closed instead of proving the branch is unpublished.
 
 ### Step 5: Verify exact authorized exception
 
@@ -110,17 +114,20 @@ the publish. The guard exits `0` with
 5. Repeat with records that use PR-only scope, the wrong repository, a
    same-named branch in a different repository, wrong action, stale tip,
    expired authorization, tampered source fingerprint, and unauthorized writer.
-6. Run two concurrent guarded attempts with the same valid record.
+6. Run two concurrent guarded attempts with the same valid record from separate
+   workspaces or processes.
 7. Simulate a conditional ref-update failure after the local claim and verify
    the claim rolls back without counting as successful consumption.
 
 **Expected result**: The exact matching update succeeds once through a
 server-side conditional ref update with the full expected tip. Concurrent
-same-record attempts allow exactly one success. PR-only, mismatched, stale,
-expired, tampered, unauthorized-writer, or replayed records are blocked.
-Conditional update failure rolls back the claim and requires fresh authorization
-for the new remote tip. Existing risk-classifier hard blockers are not cleared
-by the push authorization.
+same-record attempts from separate workspaces allow exactly one claimant to
+proceed through the shared GitHub claim marker. PR-only, mismatched, stale,
+expired, tampered, unauthorized-writer, remote URL mismatch, remote lookup
+failure, or replayed records are blocked. Conditional update failure posts a
+claim rollback marker and requires fresh authorization for the new remote tip.
+Existing risk-classifier hard blockers are not cleared by the push
+authorization.
 
 ### Step 6: Verify guidance inventory classification
 
@@ -156,7 +163,12 @@ out-of-scope classification; there is no unclassified branch-update guidance.
       ref, repository-scoped PR number, action, expected tip, authenticated
       operator, trusted source, and single-use claim.
 - [ ] PR-only, stale-tip, mismatched-scope, tampered, unauthorized-writer,
-      concurrent replay, and consumed-record authorizations block.
+      remote URL mismatch, remote lookup failure, and consumed-record
+      authorizations block.
+- [ ] Concurrent same-record attempts from separate workspaces allow exactly one
+      success; replay after consumption blocks.
+- [ ] Conditional ref-update failure records claim rollback rather than counting
+      as successful authorization consumption.
 - [ ] `force_push_required` and `destructive_action_required` remain separate
       hard blocker classifications.
 - [ ] The implementation PR includes an executable inventory proving spec, plan,
@@ -170,7 +182,7 @@ out-of-scope classification; there is no unclassified branch-update guidance.
 | Entity | Scenario | How to load |
 | --- | --- | --- |
 | Temporary Git fixture | Published branch, unpublished branch, remote-tip changes | Created by `test-workflow-branch-push-guard.sh` |
-| Authorization records | Matching, PR-only, mismatched, stale, expired, tampered, unauthorized-writer, concurrent, replayed | Created by `test-workflow-branch-push-guard.sh` |
+| Authorization records | Matching, PR-only, mismatched, stale, expired, tampered, unauthorized-writer, remote-mismatch, lookup-failure, concurrent, replayed | Created by `test-workflow-branch-push-guard.sh` |
 
 ---
 

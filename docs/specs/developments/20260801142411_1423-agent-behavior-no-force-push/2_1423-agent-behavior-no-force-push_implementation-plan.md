@@ -80,12 +80,19 @@ creating a parallel policy model.
     root, canonical repository, full branch ref, remote, push mode, PR number,
     expected remote tip for destructive updates, and optional authorization
     JSON.
+  - Resolve and normalize the named remote URL before remote-tip lookup,
+    authorization validation, or push execution. The normalized remote
+    repository must match `--repo`; a fork, different owner/repo, malformed URL,
+    or unresolvable remote is a helper failure and must not be treated as an
+    unpublished branch or valid authorization target.
   - Classify push modes as `normal`, `force`, or `force-with-lease`.
   - Allow normal pushes and unpublished local-only amend follow-ups without
     authorization only when `git ls-remote --exit-code <remote> <full-ref>`
-    confirms the remote ref does not exist immediately before first publish.
-    Local tracking metadata or absence of an upstream branch is not sufficient
-    proof that a branch is unpublished.
+    returns Git's explicit no-match status for the full branch ref immediately
+    before first publish. Local tracking metadata or absence of an upstream
+    branch is not sufficient proof that a branch is unpublished. Authentication,
+    transport, malformed-remote, server, and every other lookup error must exit
+    as helper failure, not as `unpublished_ref_allowed`.
   - Block destructive updates unless a matching trusted authorization record is
     present. A PR-only match is never sufficient; the record must match the
     canonical repository and full branch ref, with PR number as an additional
@@ -102,10 +109,17 @@ creating a parallel policy model.
     an equivalent parent-run approval source whose writer identity and source
     fingerprint are recorded in the run summary. Agent-authored or tampered
     records must block.
-  - For authorized destructive updates, atomically claim the single-use
-    authorization with a lock or equivalent one-time token before attempting the
-    update. Concurrent attempts with the same record must allow exactly one
-    claimant to proceed.
+  - For authorized destructive updates, claim the single-use authorization
+    before attempting the update through a shared authoritative claim service.
+    The MVP claim service is a GitHub issue or PR comment marker containing
+    `authorization_id`, `canonical_repo`, `branch_ref`, expected tip, run id,
+    and claim state. After creating the marker, the helper must re-query all
+    claim markers for that authorization and proceed only if its server-created
+    marker is the earliest non-rolled-back claim for the same authorization.
+    This coordinates separate processes and workspaces; local lock files alone
+    are insufficient. If the conditional ref update fails without mutation, post
+    a rollback marker for that claim so a later run can request fresh
+    authorization rather than treating the failed claim as a successful use.
   - Execute destructive updates as a server-side conditional ref update using
     the full expected tip, such as `git push --force-with-lease=<full-ref>:<expected-tip>`
     for the matching full ref. Do not perform a separate tip read followed by an
@@ -294,15 +308,18 @@ the shell helper and tests directly.
    update classification, canonical JSON authorization validation,
    trusted-source verification, atomic single-use claiming, server-side
    conditional update execution, and stable key/value output.
+   The helper must bind the named remote URL to `--repo` before authorization
+   processing and must fail closed on remote lookup errors.
    The unpublished-branch allowance must use a fresh remote-ref existence check
-   such as `git ls-remote --exit-code <remote> <full-ref>` and must not trust
-   stale local upstream metadata.
+   such as `git ls-remote --exit-code <remote> <full-ref>`, accepting only the
+   explicit no-match status as unpublished proof, and must not trust stale local
+   upstream metadata.
 2. Add `scripts/development-workflow/tests/test-workflow-branch-push-guard.sh`
    covering unauthorized destructive pushes, safe follow-up pushes, local-only
    amend allowance, authorized single-use destructive update, stale-tip failure,
    scope mismatches, PR-only authorization, tampered records, unauthorized
-   writers, atomic concurrent claims, conditional-update rollback, expiry, and
-   replay.
+   writers, cross-workspace atomic concurrent claims, remote URL mismatch,
+   remote lookup failure, conditional-update rollback, expiry, and replay.
 3. Update implementation, orchestration, and batch protocols to require the
    helper before destructive PR branch updates and to keep general workflow
    approval/delegated merge authority separate from force-push authorization.
