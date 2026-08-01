@@ -24,7 +24,7 @@ Before running this smoke test:
 | --- | --- |
 | Frozen PR list | Two or more mocked PR numbers supplied through `--prs` |
 | Invalidating sibling PR | First PR in the frozen list, marked merged before recheck |
-| Remaining PR states | Clean, pending, unknown, dirty, blocked, behind, failing |
+| Remaining PR states | Clean, pending, unknown, dirty, blocked, behind, failing, timeout |
 | Feature command | See command block below |
 
 ```bash
@@ -63,7 +63,15 @@ scenario passes.
 1. Load the fixture where PRs `101` and `102` initially report clean.
 2. Mark PR `101` merged in the mocked GitHub state.
 3. Set PR `102` to refreshed `mergeStateStatus: DIRTY`.
-4. Run the feature command:
+4. Run the caller path that will consume the recheck result:
+
+   ```bash
+   scripts/development-workflow/batch-merge.sh merge \
+     --pr 101 \
+     --base develop
+   ```
+
+5. Run the feature command:
 
    ```bash
    scripts/development-workflow/batch-merge.sh recheck-remaining \
@@ -72,16 +80,29 @@ scenario passes.
      --base develop
    ```
 
-5. Assert PR `102` emits:
+6. Assert PR `102` emits every required JSONL field with these values:
 
    ```json
    {
-     "classification": "merge_blocked",
-     "outcome": "hold",
+     "record_type": "remaining_pr",
+     "pr": 102,
+     "original_index": 1,
      "invalidating_sibling_pr": 101,
-     "merge_state": "DIRTY"
+     "base_ref": "develop",
+     "head_ref": "feature/mock-pr-102",
+     "merge_state": "DIRTY",
+     "checks_state": "success",
+     "classification": "merge_blocked",
+     "retryable": false,
+     "attempts": 1,
+     "deadline_seconds": 60,
+     "outcome": "hold",
+     "reason": "merge_state_non_clean"
    }
    ```
+
+7. Assert the caller summary for PR `102` is `merge_blocked`, does not invoke
+   `batch-merge.sh merge --pr 102`, and includes `invalidating_sibling_pr: 101`.
 
 **Expected result**: PR B is not merged using the original clean result. Its
 outcome is `merge_blocked` and the summary names PR A as the invalidating
@@ -99,7 +120,12 @@ sibling merge.
 4. Assert PR `102` emits `attempts: 3`, `classification: clean`, and
    `outcome: continue`.
 5. Assert PR `103` emits `attempts: 3`, `classification: merge_blocked`,
-   `retryable: false`, and `reason: retry_deadline_exhausted`.
+   `retryable: false`, `deadline_seconds: 60`, and
+   `reason: retry_attempts_exhausted`.
+6. Repeat with `BATCH_MERGE_RECHECK_ATTEMPTS=99`,
+   `BATCH_MERGE_RECHECK_SLEEP_SECONDS=1`, and
+   `BATCH_MERGE_RECHECK_DEADLINE_SECONDS=1`; assert timeout emits
+   `reason: retry_deadline_exhausted`.
 
 **Expected result**: Retryable states are not treated as immediately clean or
 terminal. Clean after retry can continue; exhausted or failing states become
@@ -136,23 +162,33 @@ merged only after independent refreshed-clean evidence.
 1. Make the mocked GitHub state include PR `104` targeting `develop`, absent
    from the supplied `--prs` list.
 2. Run the feature command with frozen list `101,102,103`.
-3. Assert PR `104` appears only as:
+3. Assert exactly one PR `104` record appears, and only as:
 
    ```json
    {
      "record_type": "out_of_scope_observation",
+     "pr": 104,
+     "original_index": null,
+     "invalidating_sibling_pr": 101,
+     "base_ref": "develop",
+     "head_ref": "feature/out-of-scope-104",
+     "merge_state": "CLEAN",
+     "checks_state": "success",
      "classification": "out_of_scope_observation",
+     "retryable": false,
+     "attempts": 1,
+     "deadline_seconds": 60,
      "outcome": "observe",
-     "original_index": null
+     "reason": "not_in_frozen_pr_list"
    }
    ```
 
-4. Inspect the mocked `gh` call log and assert PR `104` was not labeled,
-   merged, retried for mutation, or appended to the frozen list.
+4. Inspect the mocked `gh` call log separately and assert PR `104` was not
+   labeled, merged, retried for mutation, or appended to the frozen list.
 
-**Expected result**: The out-of-scope PR is observation-only or absent from the
-mutation set. It is not labeled, merged, rechecked for mutation, or added to the
-batch.
+**Expected result**: The out-of-scope PR is reported exactly once as
+observation-only. It is not labeled, merged, rechecked for mutation, or added to
+the batch.
 
 ### Last Step: Validate & Shut Down
 
@@ -168,12 +204,16 @@ batch.
 - [ ] Non-clean refreshed states do not merge under stale evidence.
 - [ ] Pending and unknown states follow bounded retry semantics.
 - [ ] The retry path asserts default or configured attempt and deadline bounds.
+- [ ] Attempt exhaustion and wall-clock deadline exhaustion emit distinct
+      `reason` values.
 - [ ] Dirty, blocked, behind, failing, timeout, pending, unknown, and clean
       cases are all covered by the fixture.
+- [ ] Every emitted JSONL record includes every canonical schema field.
 - [ ] Blocked summaries name the invalidating sibling merge and refreshed state.
 - [ ] Refreshed-clean PRs can continue under the original delegated policy.
 - [ ] Original PR order is preserved when an entry becomes blocked.
-- [ ] Out-of-scope PRs are observation-only.
+- [ ] Out-of-scope PRs are observation-only and emitted exactly once.
+- [ ] The mocked call log proves no mutation targeted out-of-scope PRs.
 - [ ] Final batch summary uses latest post-sibling-merge evidence.
 
 ---

@@ -59,11 +59,11 @@ has already landed.
 | Gate input | Allowed outcome | Required next action | Mirror surfaces |
 | --- | --- | --- | --- |
 | Sibling PR merged successfully and remaining PR rechecks clean with required checks passing | `continue` | Record refreshed clean state and attempt the next PR in original order | `batch-merge.sh`, Protocol 94, Protocol 90, run-items skill |
-| Remaining PR has pending checks still legitimately in progress | `retryable_supervision` | Poll within bounded timeout; merge only after clean; otherwise hold as `merge_blocked` | `batch-merge.sh`, Protocol 94 |
-| Remaining PR state is temporarily unknown | `retryable_supervision` | Re-query within bounded timeout; terminal timeout becomes `merge_blocked` | `batch-merge.sh`, Protocol 94 |
-| Remaining PR becomes dirty, conflicted, blocked, behind, failing, or exhausted pending | `merge_blocked` | Do not merge; record invalidating sibling merge and refreshed state; skip without reordering | `batch-merge.sh`, Protocol 94, Protocol 90 |
-| Out-of-scope PR is visible during recheck | `out_of_scope` observation | Do not mutate, label, merge, or add to the recheck set | Protocol 90, run-items skill, summary output |
-| Base push or MERGED-state verification fails after sibling merge | `failed` or `merge_blocked` depending on PR state | Stop processing affected PR until base/GitHub state is authoritative | `batch-merge.sh`, Protocol 94 |
+| Remaining PR has pending checks still legitimately in progress | `hold` | Classify as `retryable`; poll within bounded timeout; merge only after clean; otherwise hold as `merge_blocked` | `batch-merge.sh`, Protocol 94 |
+| Remaining PR state is temporarily unknown | `hold` | Classify as `retryable`; re-query within bounded timeout; exhausted attempts or deadline becomes `merge_blocked` | `batch-merge.sh`, Protocol 94 |
+| Remaining PR becomes dirty, conflicted, blocked, behind, failing, or exhausted pending | `hold` | Classify as `merge_blocked`; do not merge; record invalidating sibling merge and refreshed state; skip without reordering | `batch-merge.sh`, Protocol 94, Protocol 90 |
+| Out-of-scope PR is visible during recheck | `observe` | Classify as `out_of_scope_observation`; do not mutate, label, merge, or add to the recheck set | Protocol 90, run-items skill, summary output |
+| Base push or MERGED-state verification fails after sibling merge | `error` or `hold` depending on PR state | Classify helper failures as `helper_failed`; stop processing affected PR until base/GitHub state is authoritative | `batch-merge.sh`, Protocol 94 |
 
 ---
 
@@ -71,9 +71,12 @@ has already landed.
 
 ### Workflow Scripts
 
-- [ ] Extend `scripts/development-workflow/batch-merge.sh` with a
-  Bash 3.2-compatible recheck subcommand, for example:
-  `batch-merge.sh [--base <branch>] recheck-remaining --prs <ordered-list> --after-merged-pr <number>`.
+- [ ] Extend `scripts/development-workflow/batch-merge.sh` with this exact
+  Bash 3.2-compatible recheck CLI contract:
+  `batch-merge.sh recheck-remaining --prs <comma-separated-pr-list> --after-merged-pr <number> --base <branch>`.
+  `--prs` accepts decimal PR numbers separated by commas with no spaces; the
+  implementation must reject duplicate, empty, nonnumeric, or space-delimited
+  entries.
 - [ ] The recheck subcommand must:
   - Parse only the frozen explicit PR list supplied by the caller.
   - Fetch authoritative live state for each remaining PR: `state`, `isDraft`,
@@ -96,7 +99,10 @@ has already landed.
 - [ ] Add a bounded retry helper for pending and temporarily unknown states.
   Keep defaults short enough for operator feedback and configurable through
   environment variables if needed. Defaults: 3 attempts, 10 seconds between
-  attempts, and a 60 second wall-clock deadline per remaining PR.
+  attempts, and a 60-second wall-clock deadline per remaining PR. Retry stops at
+  whichever bound is reached first; if both are reached on the same refresh,
+  `reason` must be `retry_attempts_exhausted`, `retryable` must be `false`, and
+  the record must be classified as `merge_blocked`.
 - [ ] Keep existing CHANGELOG deduplication and MERGED-state checks intact.
 
 ### Recheck Output Contract
@@ -110,14 +116,14 @@ Required fields for every record:
 
 | Field | Values |
 | --- | --- |
-| `record_type` | `remaining_pr` or `out_of_scope_observation` |
-| `pr` | Pull request number |
-| `original_index` | Zero-based index in frozen `--prs`; `null` for out-of-scope observations |
-| `invalidating_sibling_pr` | The just-merged sibling PR number |
-| `base_ref` | Refreshed PR base |
-| `head_ref` | Refreshed PR head |
-| `merge_state` | Raw GitHub `mergeStateStatus`, upper-case |
-| `checks_state` | `success`, `pending`, `failure`, `unknown`, or `not_required` |
+| `record_type` | `remaining_pr`, `out_of_scope_observation`, or `error` |
+| `pr` | Pull request number; `null` only for helper-wide `error` records |
+| `original_index` | Zero-based index in frozen `--prs`; `null` for out-of-scope observations and helper-wide errors |
+| `invalidating_sibling_pr` | The just-merged sibling PR number; never `null` after input validation succeeds |
+| `base_ref` | Refreshed PR base; `null` only when unavailable because of `helper_failed` |
+| `head_ref` | Refreshed PR head; `null` only when unavailable because of `helper_failed` |
+| `merge_state` | Raw GitHub `mergeStateStatus`, upper-case; `null` only when unavailable because of `helper_failed` |
+| `checks_state` | `success`, `pending`, `failure`, `unknown`, or `not_required`; `null` only when unavailable because of `helper_failed` |
 | `classification` | `clean`, `retryable`, `merge_blocked`, `out_of_scope_observation`, or `helper_failed` |
 | `retryable` | Boolean |
 | `attempts` | Number of refresh attempts used |
@@ -125,22 +131,38 @@ Required fields for every record:
 | `outcome` | `continue`, `hold`, `observe`, or `error` |
 | `reason` | Stable snake_case reason |
 
-Allowed in-scope `merge_state` classifications:
+Classification precedence for in-scope `remaining_pr` records:
 
-| Refreshed state | Checks state | Classification | Outcome |
-| --- | --- | --- | --- |
-| `CLEAN` | `success` or `not_required` | `clean` | `continue` |
-| `UNKNOWN` or empty | `pending` or `unknown` before deadline | `retryable` | `hold` until retry resolves |
-| `UNKNOWN` or empty | `pending` or `unknown` at deadline | `merge_blocked` | `hold` |
-| `DIRTY`, `BLOCKED`, `BEHIND`, `UNSTABLE`, or `HAS_HOOKS` | Any | `merge_blocked` | `hold` |
-| Any | `failure` | `merge_blocked` | `hold` |
+| Precedence | Refreshed condition | Classification | Outcome | Reason |
+| --- | --- | --- | --- | --- |
+| 1 | GitHub fetch, authentication, JSON parsing, or required-field guard fails | `helper_failed` | `error` | `github_query_failed`, `auth_failed`, `malformed_response`, or `missing_required_field` |
+| 2 | `state` is `CLOSED` or `MERGED` | `merge_blocked` | `hold` | `pr_not_open` |
+| 3 | `isDraft` is true | `merge_blocked` | `hold` | `draft_pr` |
+| 4 | Required merge label is absent, or a blocking label such as `needs-fixes` or `do-not-merge` is present | `merge_blocked` | `hold` | `label_gate_failed` |
+| 5 | `base_ref` differs from selected `TARGET_BASE` | `merge_blocked` | `hold` | `base_ref_mismatch` |
+| 6 | Required checks are `failure` | `merge_blocked` | `hold` | `checks_failed` |
+| 7 | Required checks are `pending` or `unknown`, before retry bound | `retryable` | `hold` | `checks_not_settled` |
+| 8 | Required checks are `pending` or `unknown`, after retry bound | `merge_blocked` | `hold` | `retry_attempts_exhausted` or `retry_deadline_exhausted` |
+| 9 | `merge_state` is `DIRTY`, `BLOCKED`, `BEHIND`, `UNSTABLE`, or `HAS_HOOKS` | `merge_blocked` | `hold` | `merge_state_non_clean` |
+| 10 | `merge_state` is `UNKNOWN` or empty, before retry bound | `retryable` | `hold` | `merge_state_unknown` |
+| 11 | `merge_state` is `UNKNOWN` or empty, after retry bound | `merge_blocked` | `hold` | `retry_attempts_exhausted` or `retry_deadline_exhausted` |
+| 12 | `merge_state` is `CLEAN` and checks are `success` or `not_required` | `clean` | `continue` | `refreshed_clean` |
+| 13 | Any remaining combination | `helper_failed` | `error` | `unclassified_state` |
+
+`out_of_scope_observation` records bypass in-scope eligibility and mutation
+rules. They must still include the selected `TARGET_BASE`, the
+`invalidating_sibling_pr`, the observed PR number, and the observed head/base
+refs when available.
 
 The subcommand exits `0` when all records were fetched and classified, including
 when one or more in-scope PRs are `merge_blocked`. It exits non-zero only for
 invalid input, authentication failures, malformed GitHub responses, missing
 required fields after guarded parsing, or other helper failures. Non-zero helper
 failures must emit a final `helper_failed` JSON record before exit when stdout
-is still available.
+is still available. That record must use `record_type: "error"`,
+`classification: "helper_failed"`, `outcome: "error"`, `retryable: false`,
+`attempts: 0` unless a per-PR retry was already in progress, and nullable state
+fields exactly as defined in the schema table.
 
 ### Protocols and Workflow Documentation
 
