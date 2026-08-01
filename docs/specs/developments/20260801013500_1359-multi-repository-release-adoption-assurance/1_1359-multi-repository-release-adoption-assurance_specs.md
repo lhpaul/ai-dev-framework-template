@@ -181,6 +181,40 @@ changed, and the maintainer needs confidence before using it on live releases.
 **Postconditions**: The team has repeatable evidence that the release model is
 safe to operate for the covered scenarios.
 
+**Authoritative assurance contract**: The implementation plan must name one
+authoritative assurance contract section for the harness. That section is the
+single source of truth for harness entry point, scenario inventory, fixture
+ownership, produced evidence, and pass/fail assertions. The product
+requirements for that contract are:
+
+- **Inputs owned by the hub**: workflow-hub configuration, hub tracker fixture,
+  delivery bundle fixture, component milestone fixture, and historical
+  no-rewrite baseline.
+- **Inputs owned by product repositories**: product repository release contract
+  fixture, selected-product release evidence fixture, product release cleanup
+  evidence fixture, and product-side failure or retry fixture.
+- **Shared read-only inputs**: the previously accepted ownership, routing,
+  bundle, milestone, and `single_repo` compatibility rules from #1353, #1354,
+  #1356, #1357, and #1358.
+- **Outputs owned by the hub**: adoption status, delivery bundle result,
+  component milestone reconciliation result, parent release-state result,
+  migration boundary note, and assurance summary.
+- **Outputs owned by product repositories**: product release evidence result,
+  cleanup result, selected-product handoff result, and product-side
+  self-review evidence.
+
+The contract must include these product-level assertions:
+
+| Scenario | Required assertion |
+| --- | --- |
+| Component routing | A selected product release is accepted only for the matching product repository and stops when selection is missing, ambiguous, or mismatched. |
+| Configuration validation | Hub and product configuration defects stop adoption before any release mutation and report the owner responsible for correction. |
+| Namespaced component milestones | A verified component release produces the expected component milestone outcome without stamping parent epics or delivery issues. |
+| Bundle finalization | A delivery bundle finalizes only when every declared component has complete accepted evidence. |
+| Partial failures | Failed, blocked, stale, missing, or conflicting evidence produces a blocked or retryable outcome without losing accepted evidence. |
+| Reruns | Re-running accepted evidence is idempotent, and re-running corrected evidence supersedes the prior failed or blocked attempt. |
+| `single_repo` compatibility | The non-hub single-repository invariant from [#1358](../20260731193728_1358-component-milestones-release-statuses/1_1358-component-milestones-release-statuses_specs.md) remains true without redefining that runtime contract here. |
+
 **Information shown**:
 
 - Covered release scenarios.
@@ -289,9 +323,14 @@ historical release records remain stable.
   pass.
 - `configured` -> `blocked` when validation finds a missing or unsafe
   condition.
+- `validated` -> `configured` when a material configuration, fixture,
+  assurance, or ownership-contract change requires revalidation.
 - `blocked` -> `configured` when the blocking condition is corrected.
 - `not_started` -> `deferred` when the team records that adoption is postponed.
 - `deferred` -> `configured` when the team resumes adoption.
+
+After `validated` returns to `configured`, the next assurance run supersedes the
+previous validation result and must end in either `validated` or `blocked`.
 
 ## Operational Visibility
 
