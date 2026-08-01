@@ -327,8 +327,7 @@ log_hash_before_parent_apply="$(gh_log_hash)"
   --require-finalized \
   --json > "$SMOKE_TMP/parent-apply.json"
 
-jq -e \
-  --argjson parent_issue "$PARENT_ISSUE" '
+jq -e --argjson parent_issue "$PARENT_ISSUE" '
   .release_status.parent_issue == $parent_issue and
   .release_status.state == "released" and
   .reconciliation_outcome == "parent_released"
