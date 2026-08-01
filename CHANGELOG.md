@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Add component milestone release statuses** (#1358): add workflow-hub
   component milestone and parent release-state reconciliation for
   multi-repository releases.
+- **Add multi-repository release adoption assurance** (#1359): add
+  workflow-hub adoption guidance and deterministic assurance coverage for
+  multi-repository releases.
 
 ## [0.40.0] - 2026-07-30
 

@@ -134,6 +134,43 @@ Usage:
   --output /tmp/component-release-evidence.json
 ```
 
+### `multi-repo-release-assurance.sh`
+
+Validates deterministic workflow-hub adoption fixtures before a
+multi-repository release is treated as adopted.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/tests/setup-multi-repo-release-assurance-fixture.sh \
+  --output-dir /tmp/multi-repo-release-assurance \
+  --json > /tmp/multi-repo-release-assurance-fixtures.json
+
+./scripts/development-workflow/multi-repo-release-assurance.sh \
+  --fixture-dir /tmp/multi-repo-release-assurance/valid \
+  --json
+```
+
+What it does:
+
+- Emits `multi_repo_release_assurance.v1`.
+- Aggregates scenario outcomes into `adoption_status`.
+- Accepts only `pass`, `fail`, `blocked`, `skipped`, and `retryable` outcomes.
+- Treats adoption as `validated` only when every required scenario passes or
+  has an approved skipped rationale.
+- Blocks unapproved skips, failures, blocked scenarios, unresolved retryable
+  runs, repeated side effects, and historical baseline mutations.
+- Compares hub-owned and product-owned historical no-rewrite baselines.
+- Emits `owner_actions[]` and `required_next_action` for release runbook
+  evidence.
+
+Run focused coverage with:
+
+```bash
+bash scripts/development-workflow/tests/test-multi-repo-release-assurance.sh
+```
+
 ### `delivery-bundle-manifest.sh`
 
 Creates and updates hub-owned delivery bundle manifests that compose

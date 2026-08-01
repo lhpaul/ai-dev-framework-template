@@ -30,3 +30,7 @@ This is the Codex command-style alias for Claude Code `/prepare-release`.
    `merged`. Apply namespaced component milestones only to matching component
    child issues, and use delivery-bundle parent inspection/apply paths for
    parent release status without stamping parent or delivery issues.
+8. For first-time or changed workflow-hub multi-repository adoption, collect
+   self-review evidence with the multi-repository release adoption guide before
+   release mutation. Continue only when adoption assurance is validated, or stop
+   with the emitted owner action.
