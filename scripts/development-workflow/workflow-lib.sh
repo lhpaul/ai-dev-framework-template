@@ -449,6 +449,17 @@ is_bugbot_disabled_message() {
   return 1
 }
 
+is_bugbot_explicit_skip_message() {
+  local body="$1"
+
+  case "$body" in
+    *"Skipping Bugbot:"*|*"Bugbot skipped"*|*"Bugbot was skipped"*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 is_bugbot_usage_limit_message() {
   local body="$1"
 

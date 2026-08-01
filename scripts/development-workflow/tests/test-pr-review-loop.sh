@@ -2812,6 +2812,22 @@ else
 fi
 run_test "bugbot_clean_phrase_not_usage_limit" "active" "$actual"
 
+bugbot_explicit_skip_body="Skipping Bugbot: your auto mode classified this PR to skip. Visit the Bugbot dashboard to update your settings."
+if is_bugbot_explicit_skip_message "$bugbot_explicit_skip_body"; then
+  actual="explicit_skip"
+else
+  actual="active"
+fi
+run_test "bugbot_explicit_skip_message_detected" "explicit_skip" "$actual"
+
+if is_bugbot_explicit_skip_message "Cursor Bugbot found no issues in this pull request."; then
+  actual="explicit_skip"
+else
+  actual="active"
+fi
+run_test "bugbot_clean_phrase_not_explicit_skip" "active" "$actual"
+unset bugbot_explicit_skip_body actual
+
 # ---------------------------------------------------------------------------
 # Test 16.1: clean path — check run conclusion=success, no blocking comments
 # ---------------------------------------------------------------------------
@@ -3100,6 +3116,58 @@ run_test "bugbot_unavailable_reason" "REASON=unavailable" \
 run_test "bugbot_unavailable_exit_code" "2" "$actual_exit"
 rm -rf "$_bugbot_mock_dir_164"
 unset _bugbot_mock_dir_164 actual_output actual_exit
+
+# ---------------------------------------------------------------------------
+# Test 16.4b: explicit Bugbot skip issue comment is warning-only
+#
+# Cursor can post an issue comment saying Bugbot skipped the PR before a check
+# run appears. That is an explicit platform decision, not an unavailable
+# reviewer; the loop must surface it as RESULT=skipped and avoid trigger POST.
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_164b="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_164b/gh" <<'BUGBOT_GH_164B'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc164bsha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","body":"Skipping Bugbot: your auto mode classified this PR to skip. Visit the Bugbot dashboard to update your settings."}]\n'
+    exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[]}\n'; exit 0 ;;
+  *"--method POST"*)
+    printf 'ERROR: trigger POST reached unexpectedly\n' >&2; exit 1 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_164B
+chmod +x "$_bugbot_mock_dir_164b/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_164b:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_explicit_skip_result" "RESULT=skipped" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_explicit_skip_reason" "REASON=explicit-skip" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_explicit_skip_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "bugbot_explicit_skip_exit_code" "0" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_164b"
+unset _bugbot_mock_dir_164b actual_output actual_exit
 
 # ---------------------------------------------------------------------------
 # Test 16.5: escalate (head-sha-unavailable) — pulls API returns empty SHA
