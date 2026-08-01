@@ -1900,7 +1900,7 @@ run_bugbot_review() {
             return 1
           fi
 
-          if [ "$clean_explicit_skip_seen" -eq 1 ]; then
+          if [ "$clean_explicit_skip_seen" -eq 1 ] && [ "$blocking_count" -eq 0 ]; then
             rm -f "$blocking_lines_file"
             bugbot_return_explicit_skip "$pr_number" "$branch_name"
             return 0
