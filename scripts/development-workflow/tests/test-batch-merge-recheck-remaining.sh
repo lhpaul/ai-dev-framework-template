@@ -71,6 +71,16 @@ case "$*" in
       observation_nested_object)
         printf '{"items":[]}\n'
         ;;
+      observation_bad_item)
+        printf '[{}]\n'
+        ;;
+      observation_string_number)
+        printf '[{"number":"104","headRefName":"feature/out-of-scope-104","baseRefName":"develop","mergeStateStatus":"CLEAN","statusCheckRollup":%s}]\n' "$check_success"
+        ;;
+      observation_timeout)
+        sleep 2
+        printf '[]\n'
+        ;;
       *)
         printf '[]\n'
         ;;
@@ -195,6 +205,7 @@ run_test "pending_attempt_count" "3" "$(json_field "$retry_output" 102 attempts)
 run_test "unknown_attempts_exhausted" "retry_attempts_exhausted" "$(json_field "$retry_output" 103 reason)"
 run_test "unknown_blocks" "merge_blocked" "$(json_field "$retry_output" 103 classification)"
 
+export MOCK_SCENARIO=retry
 rm -f "$MOCK_GH_STATE_DIR"/*.count
 deadline_output="$(BATCH_MERGE_RECHECK_ATTEMPTS=99 BATCH_MERGE_RECHECK_SLEEP_SECONDS=1 BATCH_MERGE_RECHECK_DEADLINE_SECONDS=1 "$HELPER" recheck-remaining --prs 101,103 --after-merged-pr 101 --base develop)"
 run_test "deadline_exhaustion_reason" "retry_deadline_exhausted" "$(json_field "$deadline_output" 103 reason)"
@@ -218,7 +229,8 @@ run_test "zero_deadline_does_not_timeout_clean_pr" "clean" "$(json_field "$no_de
 export MOCK_SCENARIO=previous_merged
 rm -f "$MOCK_GH_STATE_DIR"/*.count
 previous_merged_output="$("$HELPER" recheck-remaining --prs 101,102,103 --after-merged-pr 101 --base develop)"
-run_test "previously_merged_sibling_omitted" "0" "$(printf '%s\n' "$previous_merged_output" | jq -s '[.[] | select(.pr == 102)] | length')"
+run_test "previously_merged_sibling_terminal_record" "already_merged" "$(json_field "$previous_merged_output" 102 reason)"
+run_test "previously_merged_sibling_blocks_remerge" "merge_blocked" "$(json_field "$previous_merged_output" 102 classification)"
 run_test "later_pr_still_checked_after_prior_merge" "clean" "$(json_field "$previous_merged_output" 103 classification)"
 
 export MOCK_SCENARIO=failing
@@ -257,12 +269,45 @@ set -e
 run_test "observation_nested_object_status" "2" "$observation_nested_status"
 run_test "observation_nested_object_reason" "malformed_response" "$(json_field "$observation_nested_output" null reason)"
 
+export MOCK_SCENARIO=observation_bad_item
+set +e
+observation_bad_item_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
+observation_bad_item_status=$?
+set -e
+run_test "observation_bad_item_status" "2" "$observation_bad_item_status"
+run_test "observation_bad_item_reason" "malformed_response" "$(json_field "$observation_bad_item_output" null reason)"
+
+export MOCK_SCENARIO=observation_string_number
+set +e
+observation_string_number_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
+observation_string_number_status=$?
+set -e
+run_test "observation_string_number_status" "2" "$observation_string_number_status"
+run_test "observation_string_number_reason" "malformed_response" "$(json_field "$observation_string_number_output" null reason)"
+
+export MOCK_SCENARIO=observation_timeout
+set +e
+observation_timeout_output="$(BATCH_MERGE_RECHECK_DEADLINE_SECONDS=1 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
+observation_timeout_status=$?
+set -e
+run_test "observation_timeout_status" "2" "$observation_timeout_status"
+run_test "observation_timeout_reason" "github_query_failed" "$(json_field "$observation_timeout_output" null reason)"
+
+set +e
+bad_pr_list_output="$("$HELPER" recheck-remaining --prs 101,102, --after-merged-pr 101 --base develop)"
+bad_pr_list_status=$?
+set -e
+run_test "trailing_comma_pr_list_status" "2" "$bad_pr_list_status"
+run_test "trailing_comma_pr_list_reason" "invalid_pr_list" "$(json_field "$bad_pr_list_output" null reason)"
+
 set +e
 bad_deadline_output="$(BATCH_MERGE_RECHECK_DEADLINE_SECONDS=abc "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
 bad_deadline_status=$?
 set -e
 run_test "invalid_deadline_status" "2" "$bad_deadline_status"
 run_test "invalid_deadline_parseable" "helper_failed" "$(json_field "$bad_deadline_output" null classification)"
+run_test "invalid_deadline_reason" "invalid_retry_config" "$(json_field "$bad_deadline_output" null reason)"
+run_test "invalid_deadline_null_deadline" "null" "$(json_field "$bad_deadline_output" null deadline_seconds)"
 
 set +e
 bad_after_with_missing_base_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr abc --base "")"
@@ -270,6 +315,7 @@ bad_after_with_missing_base_status=$?
 set -e
 run_test "invalid_after_missing_base_status" "2" "$bad_after_with_missing_base_status"
 run_test "invalid_after_missing_base_parseable" "helper_failed" "$(json_field "$bad_after_with_missing_base_output" null classification)"
+run_test "invalid_after_missing_base_reason" "missing_base" "$(json_field "$bad_after_with_missing_base_output" null reason)"
 
 set +e
 bad_config_output="$(BATCH_MERGE_RECHECK_ATTEMPTS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
@@ -277,6 +323,15 @@ bad_config_status=$?
 set -e
 run_test "invalid_config_status" "2" "$bad_config_status"
 run_test "invalid_config_error_record" "helper_failed" "$(json_field "$bad_config_output" null classification)"
+
+run_test "placeholder_e2e_workflow_name_synced" "1" "$(
+  if grep -q 'name: E2E regression (placeholder)' "$REPO_ROOT/.github/workflows/e2e-regression.yml" &&
+     grep -q 'E2E regression \\\\(placeholder\\\\)' "$HELPER"; then
+    printf '1\n'
+  else
+    printf '0\n'
+  fi
+)"
 
 run_test "no_mutation_calls" "0" "$(grep -Ec 'pr edit|pr merge|pr comment' "$CALL_LOG" || true)"
 

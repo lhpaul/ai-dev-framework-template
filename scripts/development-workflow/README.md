@@ -80,7 +80,7 @@ Usage:
 
 <!-- workflow-shell-contract: bash -->
 ```bash
-./scripts/development-workflow/batch-merge.sh recheck-remaining \
+bash ./scripts/development-workflow/batch-merge.sh recheck-remaining \
   --prs 101,102,103 \
   --after-merged-pr 101 \
   --base develop

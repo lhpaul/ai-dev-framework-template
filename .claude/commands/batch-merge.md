@@ -20,6 +20,6 @@ Key rules:
 - Print the merge plan (Step 3 of the protocol) for visibility, then proceed immediately without waiting for user confirmation.
 - For each PR, run `./scripts/development-workflow/batch-merge.sh merge --pr <number>`.
 - Auto-resolve CHANGELOG conflicts and documentation file conflicts where changes are non-overlapping (different line ranges); pause and escalate all other conflicts.
-- After each successful merge: push the target base branch, verify GitHub shows the PR as `MERGED`, delete the remote branch, run `./scripts/development-workflow/post-merge-cleanup.sh --base <target-base> <branch>`, then run `./scripts/development-workflow/batch-merge.sh recheck-remaining --prs <comma-separated-approved-pr-list> --after-merged-pr <number> --base <target-base>` before selecting another PR. Apply Protocol 94 Step 4.2 as the source of truth for post-recheck admission semantics.
+- After each successful merge: verify GitHub shows the PR as `MERGED` (the merge helper already pushed the target base branch and called `gh pr merge`), delete the remote branch, run `./scripts/development-workflow/post-merge-cleanup.sh --base <target-base> <branch>`, then run `./scripts/development-workflow/batch-merge.sh recheck-remaining --prs <comma-separated-approved-pr-list> --after-merged-pr <number> --base <target-base>` before selecting another PR. Apply Protocol 94 Step 4.2 as the source of truth for post-recheck admission semantics.
 - Never leave the target base branch in a conflicted state.
 - Always print the final summary table (Step 5) regardless of outcome.

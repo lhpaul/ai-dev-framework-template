@@ -579,6 +579,12 @@ cmd_recheck_remaining() {
     emit_recheck_error "$after_merged_pr" "$deadline_seconds" "invalid_pr_list"
     exit 2
   fi
+  case "$explicit_prs" in
+    ,*|*,|*,,*)
+      emit_recheck_error "$after_merged_pr" "$deadline_seconds" "invalid_pr_list"
+      exit 2
+      ;;
+  esac
 
   require_gh
 
@@ -645,6 +651,12 @@ cmd_recheck_remaining() {
         exit 2
       fi
       if [ "$(printf '%s\n' "$json" | jq -r '.state // ""' 2>/dev/null || true)" = "MERGED" ]; then
+        local merged_base_ref merged_head_ref merged_merge_state merged_checks_state
+        merged_base_ref="$(printf '%s\n' "$json" | jq -r '.baseRefName // "null"' 2>/dev/null)" || merged_base_ref="null"
+        merged_head_ref="$(printf '%s\n' "$json" | jq -r '.headRefName // "null"' 2>/dev/null)" || merged_head_ref="null"
+        merged_merge_state="$(printf '%s\n' "$json" | jq -r '.mergeStateStatus // "UNKNOWN"' 2>/dev/null)" || merged_merge_state="UNKNOWN"
+        merged_checks_state="$(normalize_checks_state "$json")" || merged_checks_state="unknown"
+        emit_recheck_record "remaining_pr" "$pr_num" "$original_index" "$after_merged_pr" "$merged_base_ref" "$merged_head_ref" "$merged_merge_state" "$merged_checks_state" "merge_blocked" "false" "$attempt" "$deadline_seconds" "hold" "already_merged"
         emitted="true"
         break
       fi
@@ -699,11 +711,15 @@ cmd_recheck_remaining() {
     fi
   done < "$pr_file"
 
-  local observation_json
-  observation_json="$(gh pr list --base "$TARGET_BASE" --state open --json number,headRefName,baseRefName,mergeStateStatus,statusCheckRollup 2>/dev/null)" || {
+  local observation_json observation_status observation_timeout
+  observation_timeout="$deadline_seconds"
+  [ "$observation_timeout" -eq 0 ] && observation_timeout=30
+  observation_status=0
+  observation_json="$(run_with_timeout "$observation_timeout" gh pr list --base "$TARGET_BASE" --state open --json number,headRefName,baseRefName,mergeStateStatus,statusCheckRollup 2>/dev/null)" || observation_status=$?
+  if [ "$observation_status" -ne 0 ]; then
     emit_recheck_error "$after_merged_pr" "$deadline_seconds" "github_query_failed"
     exit 2
-  }
+  fi
   if [ -z "$observation_json" ]; then
     emit_recheck_error "$after_merged_pr" "$deadline_seconds" "malformed_response"
     exit 2
@@ -719,9 +735,17 @@ cmd_recheck_remaining() {
     exit 2
   }
 
-  printf '%s\n' "$observation_lines" | while IFS= read -r item; do
+  local observation_lines_file
+  observation_lines_file="$(mktemp)"
+  printf '%s\n' "$observation_lines" > "$observation_lines_file"
+  while IFS= read -r item; do
     [ -z "$item" ] && continue
     local observed_pr observed_base observed_head observed_merge observed_checks
+    if ! printf '%s\n' "$item" | jq -e 'type == "object" and (.number | type == "number")' >/dev/null 2>&1; then
+      rm -f "$observation_lines_file"
+      emit_recheck_error "$after_merged_pr" "$deadline_seconds" "malformed_response"
+      exit 2
+    fi
     observed_pr="$(printf '%s\n' "$item" | jq -r '.number // ""')"
     [ -z "$observed_pr" ] && continue
     grep -qx "$observed_pr" "$seen_file" && continue
@@ -730,7 +754,8 @@ cmd_recheck_remaining() {
     observed_merge="$(printf '%s\n' "$item" | jq -r '.mergeStateStatus // "null"')"
     observed_checks="$(normalize_checks_state "$item")" || observed_checks="unknown"
     emit_recheck_record "out_of_scope_observation" "$observed_pr" "null" "$after_merged_pr" "$observed_base" "$observed_head" "$observed_merge" "$observed_checks" "out_of_scope_observation" "false" "1" "$deadline_seconds" "observe" "not_in_frozen_scope"
-  done
+  done < "$observation_lines_file"
+  rm -f "$observation_lines_file"
 }
 
 # ---------------------------------------------------------------------------

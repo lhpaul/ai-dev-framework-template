@@ -317,8 +317,9 @@ After a clean or resolved merge, in order:
    When the approved batch has any unmerged in-scope PRs after this merge,
    prior mergeability evidence for those PRs is stale. Run:
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
-   ./scripts/development-workflow/batch-merge.sh recheck-remaining \
+   bash ./scripts/development-workflow/batch-merge.sh recheck-remaining \
      --prs <comma-separated-approved-pr-list> \
      --after-merged-pr <number> \
      --base "$BASE_BRANCH"
@@ -331,14 +332,16 @@ After a clean or resolved merge, in order:
      remaining unmerged PR in the frozen approved list.
    - Only PRs with `classification=clean` and `outcome=continue` may remain in
      the merge candidate set.
-   - Any missing record is `merge_blocked` for that PR with reason
-     `missing_recheck_record`.
+   - Any missing record means the PR was not rechecked. Record/report
+     `merge_blocked` for that PR with reason `missing_recheck_record`, stop
+     before the next merge attempt, and report the coverage gap.
 
    Parse each JSONL record before attempting another merge:
    - `classification=clean` and `outcome=continue` means the PR may remain in
      the candidate set, subject to the existing order and guardrails.
-   - `classification=retryable` means the helper is still supervising pending
-     or unknown state; do not merge until the helper emits a terminal record.
+   - The helper supervises pending or unknown state internally and emits only
+     terminal records; retryable state is not an externally consumable
+     admission result.
    - `classification=merge_blocked` means record the PR outcome as
      `merge_blocked`, including `invalidating_sibling_pr`, `merge_state`,
      `checks_state`, and `reason`, then skip that PR without reordering.
@@ -348,9 +351,10 @@ After a clean or resolved merge, in order:
      for the current sequence; stop before any further merge attempt and report
      the helper reason.
 
-   The helper preserves the frozen `--prs` order and omits PRs already merged
-   earlier in the same batch. Continue only with remaining in-scope PRs that
-   independently recheck clean after the latest sibling merge.
+   The helper preserves the frozen `--prs` order and emits terminal records for
+   every sibling PR it rechecks, including PRs that are already merged. Continue
+   only with remaining in-scope PRs that independently recheck clean after the
+   latest sibling merge.
 
 6. Report the per-PR outcome immediately (see outcome codes in Step 5).
 
