@@ -46,7 +46,9 @@ Recommended model tier: `economy`
    Delegated batch merge authority never authorizes force-pushing a PR branch;
    if a destructive PR branch update would be required, stop before mutation and
    route the exact operation through
-   `scripts/development-workflow/workflow-branch-push-guard.sh`.
+   `scripts/development-workflow/workflow-branch-push-guard.sh`. In
+   `workflow_hub`, resolve the helper from `WORKFLOW_TOOL_ROOT` and pass the
+   pushed checkout as `--repo-root "$ARTIFACT_REPO_ROOT"`.
 15. For Protocol 94 batch merges, keep the explicit in-scope PR list frozen and
    run `batch-merge.sh recheck-remaining --prs <list> --after-merged-pr <pr>
    --base <base>` after each successful sibling merge before selecting the next

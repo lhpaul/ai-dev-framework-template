@@ -19,7 +19,9 @@ Recommended model tier: `balanced`
 7. Never force-push, force-with-lease, or otherwise rewrite a published
    workflow PR branch directly. Use follow-up commits; if a destructive branch
    update is unavoidable, stop before mutation and route the exact push through
-   `scripts/development-workflow/workflow-branch-push-guard.sh`.
+   `scripts/development-workflow/workflow-branch-push-guard.sh`. In
+   `workflow_hub`, resolve the helper from `WORKFLOW_TOOL_ROOT` and pass the
+   pushed checkout as `--repo-root "$ARTIFACT_REPO_ROOT"`.
 8. Continue through code review, PR creation, automated review, and CI readiness before returning unless the protocol surfaces a real human decision.
 9. For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
    work, produce and verify residual evidence with

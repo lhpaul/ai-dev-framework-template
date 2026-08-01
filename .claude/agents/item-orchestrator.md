@@ -51,7 +51,9 @@ human action, and never delete, reset, rebase, check out, or force-push the
 branch automatically. Tracking divergence is diagnostic only.
 If a published workflow PR branch update would require a destructive push, stop
 before mutation and route the exact operation through
-`scripts/development-workflow/workflow-branch-push-guard.sh`.
+`scripts/development-workflow/workflow-branch-push-guard.sh`. In
+`workflow_hub`, resolve the helper from `WORKFLOW_TOOL_ROOT` and pass the pushed
+checkout as `--repo-root "$ARTIFACT_REPO_ROOT"`.
 
 **Checkpoint-resume gate**: When resuming after a human-checkpoint pause from a
 prior worktree-isolated run, run Protocol 91's `checkpoint-resume-gate.sh`

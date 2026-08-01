@@ -119,7 +119,9 @@ proposal step.
    batch merge authority never authorizes force-pushing a PR branch; if a
    destructive PR branch update would be required, stop before mutation and
    route the exact operation through
-   `scripts/development-workflow/workflow-branch-push-guard.sh`. Never use
+   `scripts/development-workflow/workflow-branch-push-guard.sh`. In
+   `workflow_hub`, resolve the helper from `WORKFLOW_TOOL_ROOT` and pass the
+   pushed checkout as `--repo-root "$ARTIFACT_REPO_ROOT"`. Never use
    Protocol 94 auto-discovery from `/run-items`. If any stage does not allow merge, finish at the
    `ready-for-human-review` handoff, report the exact
    `stages.<stage>.may_merge_pr: false` guardrail for each affected PR, and tell

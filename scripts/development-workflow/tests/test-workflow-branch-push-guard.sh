@@ -47,13 +47,10 @@ case "$*" in
       fail) exit 128 ;;
     esac
     ;;
-  push\ origin\ feature/test)
+  push\ origin\ HEAD:refs/heads/feature/test)
     exit 0
     ;;
-  push\ origin\ refs/heads/feature/test:refs/heads/feature/test)
-    exit 0
-    ;;
-  push\ --force-with-lease=refs/heads/feature/test:abc123\ origin\ refs/heads/feature/test:refs/heads/feature/test)
+  push\ --force-with-lease=refs/heads/feature/test:abc123\ origin\ HEAD:refs/heads/feature/test)
     case "${MOCK_PUSH_MODE:-ok}" in
       ok) exit 0 ;;
       fail) exit 1 ;;
@@ -86,10 +83,17 @@ PY
 )"
     printf '{"user":{"login":"%s"},"body":%s}\n' "${MOCK_COMMENT_AUTHOR:-lhpaul}" "$body"
     ;;
-  pr\ comment\ 1423\ --body*)
-    printf '%s\n' "$*" | sed 's/^pr comment 1423 --body //' > "$WORKFLOW_PUSH_GUARD_CLAIM_BODY"
-    printf 'https://github.com/lhpaul/ai-dev-framework-template/pull/1423#issuecomment-1\n'
-    ;;
+	  pr\ comment\ 1423\ --body*)
+	    printf '%s\n' "$*" | sed 's/^pr comment 1423 --body //' > "$WORKFLOW_PUSH_GUARD_CLAIM_BODY"
+	    printf 'https://github.com/lhpaul/ai-dev-framework-template/pull/1423#issuecomment-1\n'
+	    ;;
+	  api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/git/refs\ -f\ ref=refs/tags/workflow-force-push-locks/*\ -f\ sha=abc123)
+	    if [ "${MOCK_EXISTING_CLAIM:-none}" = "other" ]; then
+	      printf '{"message":"Reference already exists"}\n' >&2
+	      exit 1
+	    fi
+	    printf '{"ref":"refs/tags/workflow-force-push-locks/mock"}\n'
+	    ;;
   api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/issues/1423/comments?per_page=100)
     if [ "${MOCK_EXISTING_CLAIM:-none}" = "other" ]; then
       python3 - <<'PY'
@@ -191,26 +195,36 @@ export MOCK_REMOTE_REF=published MOCK_REMOTE_MODE=github
 normal_output="$(run_guard normal -- origin feature/test)"
 run_test "normal_published_allowed" "allowed" "$(guard_field "$normal_output" PUSH_GUARD_RESULT)"
 run_test "normal_published_reason" "normal_push_allowed" "$(guard_field "$normal_output" PUSH_GUARD_REASON)"
+run_test "normal_published_push_executed" "1" "$(grep -c 'git -C .*/repo push origin HEAD:refs/heads/feature/test' "$CALL_LOG" || true)"
 
 export MOCK_REMOTE_REF=unpublished
 unpublished_output="$(run_guard normal -- origin feature/test)"
 run_test "normal_unpublished_allowed" "allowed" "$(guard_field "$unpublished_output" PUSH_GUARD_RESULT)"
 run_test "normal_unpublished_reason" "unpublished_ref_allowed" "$(guard_field "$unpublished_output" PUSH_GUARD_REASON)"
+run_test "normal_unpublished_push_executed" "2" "$(grep -c 'git -C .*/repo push origin HEAD:refs/heads/feature/test' "$CALL_LOG" || true)"
 
 export MOCK_REMOTE_REF=published
 set +e
-missing_auth_output="$(run_guard force-with-lease --expected-remote-tip abc123 -- origin refs/heads/feature/test:refs/heads/feature/test)"
+missing_auth_output="$(run_guard force-with-lease --expected-remote-tip abc123 -- --force-with-lease=refs/heads/feature/test:abc123 origin refs/heads/feature/test:refs/heads/feature/test)"
 missing_auth_status=$?
 set -e
 run_test "missing_auth_status" "1" "$missing_auth_status"
 run_test "missing_auth_blocks" "missing_authorization" "$(guard_field "$missing_auth_output" PUSH_GUARD_REASON)"
 run_test "missing_auth_no_push" "0" "$(grep -c 'push --force-with-lease' "$CALL_LOG" || true)"
 
+set +e
+normal_force_output="$(run_guard normal -- --force origin refs/heads/feature/test:refs/heads/feature/test)"
+normal_force_status=$?
+set -e
+run_test "normal_mode_rejects_force_args_status" "2" "$normal_force_status"
+run_test "normal_mode_rejects_force_args_reason" "push_args_force_flag_with_normal_mode" "$(guard_field "$normal_force_output" PUSH_GUARD_REASON)"
+
 write_auth
 authorized_output="$(run_guard force-with-lease --expected-remote-tip abc123 --authorization-json "$AUTH_FILE" -- --force-with-lease=refs/heads/feature/test:abc123 origin refs/heads/feature/test:refs/heads/feature/test)"
 run_test "authorized_allowed" "allowed" "$(guard_field "$authorized_output" PUSH_GUARD_RESULT)"
 run_test "authorized_reason" "authorized_once" "$(guard_field "$authorized_output" PUSH_GUARD_REASON)"
 run_test "authorized_consumed" "true" "$(guard_field "$authorized_output" AUTHORIZATION_CONSUMED)"
+run_test "authorized_push_executed" "1" "$(grep -c 'git -C .*/repo push --force-with-lease=refs/heads/feature/test:abc123 origin HEAD:refs/heads/feature/test' "$CALL_LOG" || true)"
 
 write_auth force-with-lease other/repo
 set +e
@@ -258,6 +272,8 @@ set -e
 unset MOCK_PUSH_MODE
 run_test "conditional_failure_status" "1" "$push_fail_status"
 run_test "conditional_failure_blocks" "conditional_update_failed" "$(guard_field "$push_fail_output" PUSH_GUARD_REASON)"
+run_test "conditional_failure_unconsumed" "false" "$(guard_field "$push_fail_output" AUTHORIZATION_CONSUMED)"
+run_test "conditional_failure_rolled_back_marker" "1" "$(grep -c 'state=rolled_back' "$CLAIM_BODY" || true)"
 
 export MOCK_REMOTE_REF=fail
 set +e
@@ -274,14 +290,6 @@ remote_mismatch_status=$?
 set -e
 run_test "remote_mismatch_status" "2" "$remote_mismatch_status"
 run_test "remote_mismatch_reason" "remote_repo_mismatch" "$(guard_field "$remote_mismatch_output" PUSH_GUARD_REASON)"
-
-run_test "no_force_push_before_missing_auth_block" "1" "$(
-  awk '
-    /PUSH_GUARD_REASON=missing_authorization/ {blocked=1}
-    /git push --force-with-lease/ && !blocked {early=1}
-    END {print early ? 0 : 1}
-  ' "$CALL_LOG"
-)"
 
 echo ""
 echo "=== Summary ==="

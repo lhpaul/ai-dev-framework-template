@@ -11,7 +11,7 @@ Usage:
     --repo <owner/repo> --branch-ref refs/heads/<branch> \
     --mode normal|force|force-with-lease --pr <number> \
     [--expected-remote-tip <sha>] [--authorization-json <file>] \
-    -- <git-push-args>
+    [-- <legacy-git-push-args>]
 
 Exit codes:
   0  guarded push succeeded
@@ -134,9 +134,46 @@ esac
 case "$pr_number" in
   ''|*[!0-9]*) die "invalid_pr_number" ;;
 esac
-[ "${#push_args[@]}" -gt 0 ] || die "missing_push_args"
-
 remote_url="$(git -C "$repo_root" remote get-url "$remote" 2>/dev/null)" || die "remote_url_unavailable"
+branch_name="${branch_ref#refs/heads/}"
+push_refspec="HEAD:${branch_ref}"
+
+push_args_has_force=false
+for push_arg in "${push_args[@]}"; do
+  case "$push_arg" in
+    --force|-f|--force-with-lease|--force-with-lease=*|+*:*)
+      push_args_has_force=true
+      ;;
+  esac
+  case "$push_arg" in
+    *:refs/heads/*)
+      push_arg_dst="${push_arg##*:}"
+      [ "$push_arg_dst" = "$branch_ref" ] || die "push_args_branch_mismatch"
+      ;;
+  esac
+done
+
+if [ "$mode" = "normal" ] && [ "$push_args_has_force" = "true" ]; then
+  die "push_args_force_flag_with_normal_mode"
+fi
+if [ "$mode" != "normal" ] && [ "${#push_args[@]}" -gt 0 ] && [ "$push_args_has_force" != "true" ]; then
+  die "push_args_missing_force_flag_for_destructive_mode"
+fi
+for push_arg in "${push_args[@]}"; do
+  case "$push_arg" in
+    "$remote"|"$branch_name"|"$branch_ref"|"$push_refspec"|"$branch_ref:$branch_ref"|--force|-f|--force-with-lease|--force-with-lease=*)
+      ;;
+    +*)
+      die "push_args_unsupported_refspec"
+      ;;
+    *)
+      case "$push_arg" in
+        --force-with-lease="$branch_ref":*) ;;
+        *) die "push_args_unrecognized" ;;
+      esac
+      ;;
+  esac
+done
 
 github_repo_from_url() {
   local url="$1"
@@ -195,7 +232,7 @@ if [ "$mode" = "normal" ]; then
   else
     push_reason="normal_push_allowed"
   fi
-  git -C "$repo_root" push "${push_args[@]}" || die "push_failed"
+  git -C "$repo_root" push "$remote" "$push_refspec" || die "push_failed"
   allowed "$push_reason" "false"
   exit 0
 fi
@@ -275,6 +312,16 @@ case "$auth_source_kind" in
 esac
 
 claim_run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+lock_ref="refs/tags/workflow-force-push-locks/$(printf '%s' "$authorization_id" | openssl dgst -sha256 -r | awk '{print $1}')"
+set +e
+lock_output="$(gh api -X POST "repos/${canonical_repo}/git/refs" -f "ref=${lock_ref}" -f "sha=${expected_remote_tip}" 2>&1)"
+lock_status=$?
+set -e
+if [ "$lock_status" -ne 0 ]; then
+  printf '%s\n' "$lock_output" | grep -Eiq 'Reference already exists|already_exists|already exists' && block "authorization_already_claimed"
+  block "authorization_already_claimed"
+fi
+
 claim_body="workflow-force-push-authorization-claim
 authorization_id=${authorization_id}
 canonical_repo=${canonical_repo}
@@ -284,17 +331,15 @@ run_id=${claim_run_id}
 state=claimed"
 gh pr comment "$pr_number" --body "$claim_body" >/dev/null || die "claim_marker_failed"
 
-comments_json="$(gh api --paginate --slurp "repos/${canonical_repo}/issues/${pr_number}/comments?per_page=100" 2>/dev/null)" || die "claim_marker_read_failed"
-winner_run_id="$(printf '%s\n' "$comments_json" | jq -r --arg auth "$authorization_id" '
-  [ .[][]? | select((.body // "") | contains("workflow-force-push-authorization-claim") and contains("authorization_id=" + $auth) and contains("state=claimed")) ] |
-  sort_by(.created_at, .id) |
-  .[0].body // "" |
-  (try capture("run_id=(?<run_id>[^\\n]+)").run_id catch empty)
-' 2>/dev/null)" || die "claim_marker_parse_failed"
-[ "$winner_run_id" = "$claim_run_id" ] || block "authorization_already_claimed"
-
 set +e
-git -C "$repo_root" push "${push_args[@]}"
+case "$mode" in
+  force)
+    git -C "$repo_root" push --force "$remote" "$push_refspec"
+    ;;
+  force-with-lease)
+    git -C "$repo_root" push "--force-with-lease=${branch_ref}:${expected_remote_tip}" "$remote" "$push_refspec"
+    ;;
+esac
 push_status=$?
 set -e
 if [ "$push_status" -ne 0 ]; then
