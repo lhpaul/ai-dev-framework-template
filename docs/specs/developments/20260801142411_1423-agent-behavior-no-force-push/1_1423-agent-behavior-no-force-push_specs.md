@@ -126,8 +126,14 @@ safe non-destructive alternative is not appropriate.
 3. The runner validates that the authorization matches the current repository,
    PR or branch ref, destructive action, and remote tip.
 4. The runner records the authorization evidence in the run summary.
-5. The runner performs only the authorized branch update, consumes or expires
-   the authorization, and resumes the normal readiness flow.
+5. The runner performs only the authorized branch update through a conditional
+   compare-and-update operation that fails without changing history if the
+   remote tip no longer matches.
+6. If the conditional update fails because the remote tip changed, the runner
+   leaves the authorization unconsumed as a successful use, stops, and requires
+   fresh authorization before retrying.
+7. If the conditional update succeeds, the runner consumes or expires the
+   authorization and resumes the normal readiness flow.
 
 **Postconditions**: Any destructive branch update is traceable to a specific,
 non-replayable human authorization.
@@ -152,6 +158,9 @@ non-replayable human authorization.
   or unrelated destructive operations.
 - Authorization is single-use or expires before a later branch update, so it
   cannot be replayed after the target changes.
+- A destructive remote update must be conditional on the validated expected
+  remote tip and must fail without changing history if another actor advanced
+  the branch after authorization was validated.
 
 ## Business Rules
 
@@ -167,11 +176,18 @@ non-replayable human authorization.
   execution or expiry.
 - The runner must reject authorization that does not match the current target,
   and must consume or invalidate matching authorization after use.
+- A failed conditional update caused by a changed remote tip must not count as a
+  successful authorization use; the runner must stop and require fresh
+  authorization for the new tip.
 - A blocked force-push attempt must stop before mutating the remote branch and
   must present a safe alternative or request explicit authorization.
 - Any approved exception must be recorded in the run output with the branch,
   action, expected remote tip, authorization source, and consumption or expiry
   outcome.
+- Existing `force_push_required` and `destructive_action_required` risk
+  classifier findings remain hard blockers. Exact authorization permits only
+  the matching branch update and does not clear those blocker classifications or
+  any unrelated blocker for the PR or batch.
 - The guard must apply to workflow branch update paths used by spec, plan,
   implementation, review-fix, and batch supervision flows.
 
@@ -204,6 +220,12 @@ non-replayable human authorization.
 - [ ] Authorization for one destructive branch update does not carry over to a
       different repository, same-named branch, later remote tip, later push,
       merge action, or unrelated recovery.
+- [ ] An authorized destructive branch update fails without rewriting history
+      when the remote tip no longer matches the authorized expected tip, and the
+      runner requires fresh authorization before retrying.
+- [ ] `force_push_required` and `destructive_action_required` remain hard
+      blocker classifications; exact authorization permits only the matching
+      branch update and does not clear unrelated risk blockers.
 - [ ] The guard applies consistently across spec, plan, implementation,
       review-fix, and batch-supervision branch update flows.
 - [ ] Regression coverage verifies unauthorized force-push blocking, safe
@@ -213,23 +235,28 @@ non-replayable human authorization.
 
 ## Regression Coverage Matrix
 
-| Guarded workflow path | Unauthorized force push blocks | Safe follow-up commit proceeds | Local-only amend remains allowed | Single-use authorized exception proceeds |
-| --- | --- | --- | --- | --- |
-| Spec branch update | Required | Required | Required | Required |
-| Plan branch update | Required | Required | Required | Required |
-| Implementation branch update | Required | Required | Required | Required |
-| Review-fix branch update | Required | Required | Required | Required |
-| Batch-supervision branch update | Required | Required | Required | Required |
+| Guarded workflow path | Unauthorized force push blocks | Safe follow-up commit proceeds | Local-only amend remains allowed | Single-use authorized exception proceeds | Invalid authorization scope blocks |
+| --- | --- | --- | --- | --- | --- |
+| Spec branch update | Required | Required | Required | Required | Required |
+| Plan branch update | Required | Required | Required | Required | Required |
+| Implementation branch update | Required | Required | Required | Required | Required |
+| Review-fix branch update | Required | Required | Required | Required | Required |
+| Batch-supervision branch update | Required | Required | Required | Required | Required |
+
+Invalid authorization-scope coverage must include wrong repository or PR,
+same-named branch in another repository, stale remote tip, wrong destructive
+action, later push, replay after use or expiry, and authorization that would
+clear unrelated risk blockers.
 
 ## Coverage Matrix
 
 | Brief objective | Coverage |
 | --- | --- |
-| 1. Prevent unauthorized force pushes | Use Cases 2-3, Business Rules, AC1-AC2, AC5-AC6 |
-| 2. Make policy execution-time | Business Rules, Operational Visibility, AC1, AC7 |
+| 1. Prevent unauthorized force pushes | Use Cases 2-3, Business Rules, AC1-AC2, AC5-AC8 |
+| 2. Make policy execution-time | Business Rules, Operational Visibility, AC1, AC9 |
 | 3. Preserve reviewer context and history | Use Case 1, Business Rules, AC3-AC4 |
 | 4. Provide actionable stop guidance | Use Case 2, Operational Visibility, AC2 |
-| 5. Add regression coverage | Acceptance Criteria AC8 |
+| 5. Add regression coverage | Acceptance Criteria AC10 and the Regression Coverage Matrix |
 
 ## Out of Scope (MVP)
 
