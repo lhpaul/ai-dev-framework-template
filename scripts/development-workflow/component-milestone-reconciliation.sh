@@ -552,16 +552,14 @@ def cmd_apply_parent(args: argparse.Namespace) -> None:
         "reconciliation_outcome": "parent_released",
         "updated_at": now(),
     }
-    if args.status_output:
-        atomic_json_write(args.status_output, {"release_status": release_status})
     current_status = manifest.get("release_status")
     if isinstance(current_status, dict) and current_status.get("parent_issue") == int(args.parent_issue) and current_status.get("state") == "released":
         result["idempotent"] = True
         release_status = copy.deepcopy(current_status)
-        release_status["action"] = "unchanged"
+        release_status_action = "unchanged"
     else:
         new_manifest = copy.deepcopy(manifest)
-        release_status["action"] = "updated"
+        release_status_action = "updated"
         new_manifest["release_status"] = release_status
         new_manifest.setdefault("audit_events", []).append(
             {
@@ -572,8 +570,19 @@ def cmd_apply_parent(args: argparse.Namespace) -> None:
                 "state": "released",
             }
         )
+        if args.status_output:
+            atomic_json_write(
+                args.status_output,
+                {"release_status": release_status, "release_status_action": release_status_action},
+            )
         atomic_json_write(args.delivery_manifest, new_manifest)
+    if args.status_output and release_status_action == "unchanged":
+        atomic_json_write(
+            args.status_output,
+            {"release_status": release_status, "release_status_action": release_status_action},
+        )
     result["release_status"] = release_status
+    result["release_status_action"] = release_status_action
     output(result, args.json)
 
 
