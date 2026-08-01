@@ -116,14 +116,16 @@ EVIDENCE="$(jq -r '.evidence.complete' "$fixture_json")"
 MISMATCHED_EVIDENCE="$(jq -r '.evidence.mismatched_product' "$fixture_json")"
 PARTIAL_BUNDLE="$(jq -r '.bundles.partial' "$fixture_json")"
 FINALIZED_BUNDLE="$(jq -r '.bundles.finalized' "$fixture_json")"
+FINALIZED_INCOMPLETE_BUNDLE="$(jq -r '.bundles.finalized_incomplete' "$fixture_json")"
 BLOCKED_BUNDLE="$(jq -r '.bundles.blocked' "$fixture_json")"
 CORRECTED_BUNDLE="$(jq -r '.bundles.corrected' "$fixture_json")"
 STATUS_WRITE_FAILURE_BUNDLE="$(jq -r '.bundles.status_write_failure' "$fixture_json")"
 STATUS_WRITE_FAILURE_TARGET="$(jq -r '.status_write_failure_target' "$fixture_json")"
-PRODUCT_REPO="mobile-app"
-COMPONENT_TAG="mobile-v1.4.0"
+PRODUCT_REPO="$(jq -r '.product_repo' "$fixture_json")"
+COMPONENT_TAG="$(jq -r '.component_tag' "$fixture_json")"
 MILESTONE_TITLE="${PRODUCT_REPO}@${COMPONENT_TAG}"
 SINGLE_REPO_VERSION="v999.999.999"
+SINGLE_REPO_ISSUE=3579
 
 component_ready="$TMP_ROOT/component-ready.json"
 "$HELPER" inspect-component \
@@ -181,7 +183,7 @@ run_test "mismatch_rejected" "1" "$((mismatch_status == 0 ? 0 : 1))"
 run_test "mismatch_outcome" "component_target_mismatch" "$(jq -r '.reconciliation_outcome' "$TMP_ROOT/mismatch.json")"
 run_test "mismatch_no_mutation" "$hash_after_apply" "$(gh_log_hash)"
 
-jq -c '.evidence_cases[]' "$fixture_json" | while IFS= read -r evidence_case; do
+while IFS= read -r evidence_case; do
   case_name="$(jq -r '.name' <<< "$evidence_case")"
   expected_outcome="$(jq -r '.expected_outcome' <<< "$evidence_case")"
   product_repo="$(jq -r '.product_repo // empty' <<< "$evidence_case")"
@@ -208,7 +210,46 @@ jq -c '.evidence_cases[]' "$fixture_json" | while IFS= read -r evidence_case; do
   fi
   run_test "evidence_case_${case_name}_outcome" "$expected_outcome" "$(jq -r '.reconciliation_outcome' "$output_file")"
   run_test "evidence_case_${case_name}_no_mutation" "$before_case_hash" "$(gh_log_hash)"
-done
+done < <(jq -c '.evidence_cases[]' "$fixture_json")
+
+run_fails_contains \
+  "invalid_product_repo_rejected" \
+  "invalid_product_repository" \
+  "$HELPER" apply-component \
+    --issue "$COMPONENT_ISSUE" \
+    --target-kind component_child \
+    --product-repo "mobile app" \
+    --component-tag "$COMPONENT_TAG" \
+    --evidence-file "$EVIDENCE" \
+    --json
+run_fails_contains \
+  "invalid_component_tag_rejected" \
+  "invalid_component_tag" \
+  "$HELPER" apply-component \
+    --issue "$COMPONENT_ISSUE" \
+    --target-kind component_child \
+    --product-repo "$PRODUCT_REPO" \
+    --component-tag "mobile/v1.4.0" \
+    --evidence-file "$EVIDENCE" \
+    --json
+run_test "invalid_inputs_no_mutation" "$hash_after_apply" "$(gh_log_hash)"
+
+CONFLICT_ISSUE=2468
+jq --arg issue "$CONFLICT_ISSUE" '.issues[$issue].milestone = {number:123}' \
+  "$COMPONENT_MILESTONE_MOCK_STATE" > "$TMP_ROOT/mock-state-conflict.json"
+mv "$TMP_ROOT/mock-state-conflict.json" "$COMPONENT_MILESTONE_MOCK_STATE"
+conflict_hash_before="$(gh_log_hash)"
+run_fails_contains \
+  "milestone_conflict_rejected" \
+  "milestone_conflict" \
+  "$HELPER" apply-component \
+    --issue "$CONFLICT_ISSUE" \
+    --target-kind component_child \
+    --product-repo "$PRODUCT_REPO" \
+    --component-tag "$COMPONENT_TAG" \
+    --evidence-file "$EVIDENCE" \
+    --json
+run_test "milestone_conflict_no_patch" "$conflict_hash_before" "$(gh_log_hash)"
 
 for target_kind in parent_epic delivery_bundle; do
   case "$target_kind" in
@@ -235,6 +276,10 @@ run_test "parent_blocked_state" "blocked" "$(jq -r '.parent_release_state' "$TMP
 "$HELPER" inspect-parent --parent-issue "$PARENT_ISSUE" --delivery-manifest "$PARTIAL_BUNDLE" --json > "$TMP_ROOT/parent-partial.json"
 run_test "parent_partial_outcome" "parent_partially_released" "$(jq -r '.reconciliation_outcome' "$TMP_ROOT/parent-partial.json")"
 run_test "parent_partial_state" "partially_released" "$(jq -r '.parent_release_state' "$TMP_ROOT/parent-partial.json")"
+
+"$HELPER" inspect-parent --parent-issue "$PARENT_ISSUE" --delivery-manifest "$FINALIZED_INCOMPLETE_BUNDLE" --require-finalized --json > "$TMP_ROOT/parent-finalized-incomplete.json"
+run_test "parent_finalized_incomplete_outcome" "parent_blocked" "$(jq -r '.reconciliation_outcome' "$TMP_ROOT/parent-finalized-incomplete.json")"
+run_contains "parent_finalized_incomplete_blocker" "finalized_bundle_has_unreleased_components" "$(cat "$TMP_ROOT/parent-finalized-incomplete.json")"
 
 "$HELPER" inspect-parent --parent-issue "$PARENT_ISSUE" --delivery-manifest "$CORRECTED_BUNDLE" --require-finalized --json > "$TMP_ROOT/parent-corrected.json"
 run_test "parent_corrected_outcome" "parent_released" "$(jq -r '.reconciliation_outcome' "$TMP_ROOT/parent-corrected.json")"
@@ -263,10 +308,11 @@ set -e
 run_test "parent_status_write_failure_exercised" "1" "$((failure_status == 0 ? 0 : 1))"
 run_test "parent_status_failure_preserves_manifest" "$failure_hash_before" "$(git hash-object "$STATUS_WRITE_FAILURE_BUNDLE")"
 run_test "parent_status_failure_no_target" "0" "$([ -e "$STATUS_WRITE_FAILURE_TARGET" ] && echo 1 || echo 0)"
+run_contains "parent_status_failure_reason" "ERROR_CODE=status_write_failed" "$(cat "$TMP_ROOT/parent-write-failure.err")"
 
 "$HELPER" inspect-component \
   --mode single_repo \
-  --issue "$COMPONENT_ISSUE" \
+  --issue "$SINGLE_REPO_ISSUE" \
   --target-kind component_child \
   --version "$SINGLE_REPO_VERSION" \
   --json > "$TMP_ROOT/single-repo.json"
@@ -275,9 +321,22 @@ run_test "single_repo_milestone" "$SINGLE_REPO_VERSION" "$(jq -r '.milestone_tit
 run_test "single_repo_no_bundle" "false" "$(jq -r '.requires_delivery_bundle' "$TMP_ROOT/single-repo.json")"
 
 single_hash_before="$(gh_log_hash)"
+set +e
 "$HELPER" apply-component \
   --mode single_repo \
-  --issue "$COMPONENT_ISSUE" \
+  --issue "$SINGLE_REPO_ISSUE" \
+  --target-kind component_child \
+  --version "not-a-version" \
+  --json > "$TMP_ROOT/single-repo-invalid.json" 2> "$TMP_ROOT/single-repo-invalid.err"
+single_invalid_status=$?
+set -e
+run_test "single_repo_invalid_version_rejected" "1" "$((single_invalid_status == 0 ? 0 : 1))"
+run_test "single_repo_invalid_version_outcome" "component_release_not_ready" "$(jq -r '.reconciliation_outcome' "$TMP_ROOT/single-repo-invalid.json")"
+run_test "single_repo_invalid_version_no_mutation" "$single_hash_before" "$(gh_log_hash)"
+
+"$HELPER" apply-component \
+  --mode single_repo \
+  --issue "$SINGLE_REPO_ISSUE" \
   --target-kind component_child \
   --version "$SINGLE_REPO_VERSION" \
   --json > "$TMP_ROOT/single-repo-apply.json"

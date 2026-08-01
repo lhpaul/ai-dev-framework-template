@@ -47,8 +47,10 @@ DELIVERY_BUNDLE_ISSUE=1357
 
 complete_evidence="$OUTPUT_DIR/mobile-evidence.json"
 mismatched_evidence="$OUTPUT_DIR/mismatched-product.json"
+tag_mismatch_evidence="$OUTPUT_DIR/tag-mismatch.json"
 wrong_schema_evidence="$OUTPUT_DIR/wrong-schema.json"
 incomplete_evidence="$OUTPUT_DIR/incomplete.json"
+missing_state_evidence="$OUTPUT_DIR/missing-state.json"
 pending_evidence="$OUTPUT_DIR/pending.json"
 failed_evidence="$OUTPUT_DIR/failed.json"
 blocked_evidence="$OUTPUT_DIR/blocked.json"
@@ -103,8 +105,10 @@ write_evidence() {
 
 write_evidence "$complete_evidence" "$PRODUCT_REPO"
 write_evidence "$mismatched_evidence" "web-app"
+jq --arg tag "mobile-v1.3.0" '.component_tag = $tag' "$complete_evidence" > "$tag_mismatch_evidence"
 jq -nS '{schema_version:"wrong.v1"}' > "$wrong_schema_evidence"
 jq 'del(.canonical_repository_identity, .target_binding.canonical_repository_identity)' "$complete_evidence" > "$incomplete_evidence"
+jq 'del(.evidence_state, .child_release_state)' "$complete_evidence" > "$missing_state_evidence"
 write_evidence "$pending_evidence" "$PRODUCT_REPO" pending pending pending partial pending pending
 write_evidence "$failed_evidence" "$PRODUCT_REPO" failed failed failed blocked blocked failed
 write_evidence "$blocked_evidence" "$PRODUCT_REPO" blocked passed recorded blocked complete blocked
@@ -169,7 +173,10 @@ write_bundle() {
         revision:5,
         ready:($status == "finalized"),
         status:$status,
-        blockers:(if $mobile_state == "blocked" or $web_state == "blocked" then [{component_key:"mobile-app", blocker:"conflicting_component_evidence"}] else [] end)
+        blockers:([
+          if $mobile_state == "blocked" then {component_key:"mobile-app", blocker:"conflicting_component_evidence"} else empty end,
+          if $web_state == "blocked" then {component_key:"web-app", blocker:"conflicting_component_evidence"} else empty end
+        ])
       },
       audit_events:[{event:"fixture_created", revision:5, created_at:"2026-08-01T00:00:00Z"}]
     }' > "$path"
@@ -179,6 +186,7 @@ partial_bundle="$OUTPUT_DIR/partial-bundle.json"
 blocked_bundle="$OUTPUT_DIR/blocked-bundle.json"
 corrected_bundle="$OUTPUT_DIR/corrected-bundle.json"
 finalized_bundle="$OUTPUT_DIR/finalized-bundle.json"
+finalized_incomplete_bundle="$OUTPUT_DIR/finalized-incomplete-bundle.json"
 status_write_failure_bundle="$OUTPUT_DIR/status-write-failure-bundle.json"
 status_write_failure_parent="$OUTPUT_DIR/status-output-parent-is-file"
 status_write_failure_target="$status_write_failure_parent/status.json"
@@ -187,6 +195,7 @@ write_bundle "$partial_bundle" open released pending
 write_bundle "$blocked_bundle" open released blocked
 write_bundle "$corrected_bundle" finalized released released
 write_bundle "$finalized_bundle" finalized released released
+write_bundle "$finalized_incomplete_bundle" finalized released pending
 cp "$finalized_bundle" "$status_write_failure_bundle"
 printf 'not a directory\n' > "$status_write_failure_parent"
 
@@ -235,9 +244,10 @@ if [ "${1:-}" = "-X" ] && [ "${2:-}" = "POST" ] && [[ "${3:-}" == repos/*/milest
   jq --arg title "$title" \
     '.next_milestone as $n | .next_milestone = ($n + 1) | .milestones += [{number:$n,title:$title}] | {state:., created:{number:$n,title:$title}}' \
     "$STATE_FILE" > "$STATE_FILE.tmp"
-  jq ".state" "$STATE_FILE.tmp" > "$STATE_FILE"
+  jq ".state" "$STATE_FILE.tmp" > "$STATE_FILE.next"
+  mv "$STATE_FILE.next" "$STATE_FILE"
   jq -c ".created" "$STATE_FILE.tmp"
-  rm -f "$STATE_FILE.tmp"
+  rm -f "$STATE_FILE.tmp" "$STATE_FILE.next"
   printf "%s\n" "$joined" >> "$CALL_LOG"
   exit 0
 fi
@@ -285,22 +295,28 @@ fixture_json="$(jq -nS \
   --arg finalized "$finalized_bundle" \
   --arg blocked "$blocked_bundle" \
   --arg corrected "$corrected_bundle" \
+  --arg finalized_incomplete "$finalized_incomplete_bundle" \
   --arg status_failure "$status_write_failure_bundle" \
   --arg status_target "$status_write_failure_target" \
   --arg wrong_schema "$wrong_schema_evidence" \
   --arg incomplete "$incomplete_evidence" \
+  --arg missing_state "$missing_state_evidence" \
+  --arg tag_mismatch "$tag_mismatch_evidence" \
   --arg pending "$pending_evidence" \
   --arg failed "$failed_evidence" \
   --arg blocked_evidence "$blocked_evidence" \
   --arg stale "$stale_evidence" \
   --arg conflicting "$conflicting_evidence" \
   '{
+    product_repo:"mobile-app",
+    component_tag:"mobile-v1.4.0",
     mock_gh:{bin_dir:$gh_bin, call_log:$gh_log, state:$gh_state},
     issues:{parent:$parent, component_child:$component, delivery_bundle:$bundle},
     evidence:{complete:$complete, mismatched_product:$mismatched, missing_path:$missing},
     bundles:{
       partial:$partial,
       finalized:$finalized,
+      finalized_incomplete:$finalized_incomplete,
       blocked:$blocked,
       corrected:$corrected,
       status_write_failure:$status_failure
@@ -312,11 +328,13 @@ fixture_json="$(jq -nS \
       {name:"missing-file", expected_outcome:"component_release_pending", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$missing},
       {name:"wrong-schema", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$wrong_schema},
       {name:"incomplete", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$incomplete},
+      {name:"missing-state", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$missing_state},
       {name:"pending", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$pending},
       {name:"failed", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$failed},
       {name:"blocked", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$blocked_evidence},
       {name:"stale", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$stale},
       {name:"conflicting", expected_outcome:"component_release_not_ready", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$conflicting},
+      {name:"tag-mismatch", expected_outcome:"component_target_mismatch", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$tag_mismatch},
       {name:"mismatched", expected_outcome:"component_target_mismatch", product_repo:"mobile-app", component_tag:"mobile-v1.4.0", evidence_file:$mismatched}
     ]
   }')"

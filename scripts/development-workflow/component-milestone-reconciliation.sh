@@ -16,12 +16,10 @@ import datetime as dt
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 SCHEMA = "component_milestone_reconciliation.v1"
 EVIDENCE_SCHEMA = "component_release_evidence.v1"
@@ -30,14 +28,19 @@ VALID_TARGET_KINDS = {"component_child", "parent_epic", "delivery_bundle"}
 VALID_MODES = {"workflow_hub", "single_repo"}
 KEY_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 TAG_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+VERSION_RE = re.compile(r"^v\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?$")
 
 
 class Parser(argparse.ArgumentParser):
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> NoReturn:
         fail("invalid_arguments", message, 2)
 
 
-def fail(code: str, message: str, exit_code: int = 1, payload: dict[str, Any] | None = None) -> None:
+class GhCommandError(RuntimeError):
+    pass
+
+
+def fail(code: str, message: str, exit_code: int = 1, payload: dict[str, Any] | None = None) -> NoReturn:
     if payload is not None:
         print(json.dumps(payload, indent=2, sort_keys=True))
     safe = str(message).replace("'", "'\\''")
@@ -153,6 +156,13 @@ def non_hub_result(args: argparse.Namespace) -> dict[str, Any]:
             blockers=["missing_version"],
         )
         return result
+    if not VERSION_RE.match(args.version):
+        result.update(
+            reconciliation_outcome="component_release_not_ready",
+            required_next_action="provide a semantic release tag like v1.2.3 before milestone stamping",
+            blockers=["invalid_version"],
+        )
+        return result
     result.update(
         reconciliation_outcome="single_repo_milestone",
         child_release_state="released",
@@ -170,7 +180,7 @@ def evidence_state(evidence: dict[str, Any]) -> str:
     raw = evidence.get("evidence_state")
     if isinstance(raw, str) and raw:
         return raw
-    return "verified"
+    return ""
 
 
 def classify_component(args: argparse.Namespace) -> dict[str, Any]:
@@ -192,11 +202,25 @@ def classify_component(args: argparse.Namespace) -> dict[str, Any]:
             blockers=["milestone_target_not_allowed"],
         )
         return result
+    if args.product_repo and not product_repo:
+        result.update(
+            reconciliation_outcome="component_release_not_ready",
+            required_next_action="provide a product repository key using letters, numbers, dot, underscore, or hyphen",
+            blockers=["invalid_product_repository"],
+        )
+        return result
     if not product_repo:
         result.update(
             reconciliation_outcome="missing_product_selection",
             required_next_action="select exactly one product repository before component milestone reconciliation",
             blockers=["missing_product_selection"],
+        )
+        return result
+    if args.component_tag and not component_tag:
+        result.update(
+            reconciliation_outcome="component_release_not_ready",
+            required_next_action="provide a component tag using letters, numbers, dot, underscore, or hyphen",
+            blockers=["invalid_component_tag"],
         )
         return result
     if not component_tag:
@@ -267,10 +291,12 @@ def classify_component(args: argparse.Namespace) -> dict[str, Any]:
     deployment = evidence.get("deployment_outcome")
     cleanup = evidence.get("cleanup_outcome")
     hub_reconciliation = evidence.get("hub_tracker_reconciliation_outcome") or evidence.get("hub_tracker_reconciliation")
-    child_state = evidence.get("child_release_state") or "released"
+    child_state = evidence.get("child_release_state")
     state = evidence_state(evidence)
 
     blockers: list[str] = []
+    if not state:
+        blockers.append("evidence_state_missing")
     if state in {"stale", "conflicting"}:
         blockers.append(f"{state}_component_evidence")
     if release != "completed":
@@ -283,7 +309,9 @@ def classify_component(args: argparse.Namespace) -> dict[str, Any]:
         blockers.append(f"cleanup_outcome_{cleanup or 'missing'}")
     if hub_reconciliation not in {"complete", "deferred"}:
         blockers.append(f"hub_tracker_reconciliation_{hub_reconciliation or 'missing'}")
-    if child_state not in {"released", "merged"}:
+    if not child_state:
+        blockers.append("child_release_state_missing")
+    elif child_state not in {"released", "merged"}:
         blockers.append(f"child_release_state_{child_state or 'missing'}")
 
     if blockers:
@@ -318,6 +346,8 @@ def repo_slug() -> str:
         return env_slug
     try:
         remote = subprocess.check_output(["git", "config", "--get", "remote.origin.url"], text=True).strip()
+    except FileNotFoundError:
+        fail("missing_git", "git is required to resolve the GitHub repository", 2)
     except subprocess.CalledProcessError:
         fail("repo_unresolvable", "could not resolve GitHub repository from git remote")
     if remote.endswith(".git"):
@@ -329,13 +359,15 @@ def repo_slug() -> str:
     fail("repo_unresolvable", "could not resolve GitHub repository from git remote")
 
 
-def run_gh(args: list[str], label: str) -> Any:
+def run_gh(args: list[str], label: str, fail_on_error: bool = True) -> Any:
     try:
         completed = subprocess.run(["gh", *args], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     except FileNotFoundError:
         fail("missing_gh", "gh is required for apply mode", 2)
     except subprocess.CalledProcessError as exc:
         message = exc.stderr.strip() or exc.stdout.strip() or f"gh {label} failed"
+        if not fail_on_error:
+            raise GhCommandError(message) from exc
         fail(f"gh_{label}_failed", message)
     if completed.stdout.strip() == "":
         return None
@@ -359,19 +391,42 @@ def flatten_pages(value: Any) -> list[dict[str, Any]]:
     return items
 
 
-def ensure_milestone(title: str) -> int:
-    repo = repo_slug()
-    pages = run_gh(["api", "--paginate", "--slurp", f"repos/{repo}/milestones?state=all&per_page=100"], "milestone_list")
+def milestone_number_from_pages(pages: Any, title: str) -> int | None:
     for milestone in flatten_pages(pages):
         if milestone.get("title") == title and milestone.get("number") is not None:
             return int(milestone["number"])
-    created = run_gh(
-        ["api", "-X", "POST", f"repos/{repo}/milestones", "-f", f"title={title}", "-f", f"description=Release {title}"],
-        "milestone_create",
-    )
-    if not isinstance(created, dict) or created.get("number") is None:
-        fail("milestone_create_failed", f"GitHub milestone create response did not include a number for {title}")
-    return int(created["number"])
+    return None
+
+
+def list_milestones(repo: str) -> Any:
+    return run_gh(["api", "--paginate", "--slurp", f"repos/{repo}/milestones?state=all&per_page=100"], "milestone_list")
+
+
+def ensure_milestone(title: str) -> int:
+    repo = repo_slug()
+    existing = milestone_number_from_pages(list_milestones(repo), title)
+    if existing is not None:
+        return existing
+    create_error = None
+    try:
+        created = run_gh(
+            ["api", "-X", "POST", f"repos/{repo}/milestones", "-f", f"title={title}", "-f", f"description=Release {title}"],
+            "milestone_create",
+            fail_on_error=False,
+        )
+        if not isinstance(created, dict) or created.get("number") is None:
+            create_error = f"GitHub milestone create response did not include a number for {title}"
+        else:
+            return int(created["number"])
+    except GhCommandError as exc:
+        create_error = str(exc)
+    except (TypeError, ValueError) as exc:
+        create_error = str(exc)
+
+    raced = milestone_number_from_pages(list_milestones(repo), title)
+    if raced is not None:
+        return raced
+    fail("milestone_create_failed", create_error or f"failed to create milestone {title}")
 
 
 def issue_milestone_number(issue: int) -> int | None:
@@ -386,8 +441,14 @@ def issue_milestone_number(issue: int) -> int | None:
 
 
 def assign_milestone(issue: int, milestone_number: int) -> str:
-    if issue_milestone_number(issue) == milestone_number:
+    existing_milestone = issue_milestone_number(issue)
+    if existing_milestone == milestone_number:
         return "reused"
+    if existing_milestone is not None:
+        fail(
+            "milestone_conflict",
+            f"issue {issue} already has milestone {existing_milestone}; refusing to replace with {milestone_number}",
+        )
     repo = repo_slug()
     run_gh(["api", "-X", "PATCH", f"repos/{repo}/issues/{issue}", "-F", f"milestone={milestone_number}"], "milestone_assign")
     return "assigned"
@@ -447,12 +508,17 @@ def component_blocker(component: dict[str, Any]) -> str | None:
     return None
 
 
-def inspect_parent_state(args: argparse.Namespace) -> dict[str, Any]:
-    parent_issue = validate_issue(args.parent_issue, "parent-issue")
-    manifest = load_json_file(args.delivery_manifest, "delivery_manifest")
-    assert manifest is not None
+def load_delivery_manifest(path: str) -> dict[str, Any]:
+    manifest = load_json_file(path, "delivery_manifest")
+    if manifest is None:
+        fail("delivery_manifest_not_found", "delivery manifest file not found")
     if manifest.get("schema_version") != BUNDLE_SCHEMA:
         fail("invalid_manifest_schema", f"delivery manifest must use schema_version {BUNDLE_SCHEMA}")
+    return manifest
+
+
+def inspect_parent_state_from_manifest(args: argparse.Namespace, manifest: dict[str, Any]) -> dict[str, Any]:
+    parent_issue = validate_issue(args.parent_issue, "parent-issue")
     components = [c for c in manifest.get("components", []) if isinstance(c, dict)]
     blockers: list[dict[str, Any]] = []
     released = 0
@@ -479,11 +545,17 @@ def inspect_parent_state(args: argparse.Namespace) -> dict[str, Any]:
         state = "blocked"
         mutation_allowed = False
         next_action = "correct delivery bundle evidence before parent release status mutation"
-    elif finalized and released > 0:
+    elif finalized and released > 0 and unreleased == 0:
         outcome = "parent_released"
         state = "released"
         mutation_allowed = True
         next_action = "record parent release status in the delivery bundle manifest"
+    elif finalized and unreleased > 0:
+        outcome = "parent_blocked"
+        state = "blocked"
+        mutation_allowed = False
+        next_action = "finish or remove unreleased component children before final bundle release"
+        blockers.append({"component_key": None, "blocker": "finalized_bundle_has_unreleased_components"})
     elif released > 0 and unreleased > 0:
         outcome = "parent_partially_released"
         state = "partially_released"
@@ -513,24 +585,39 @@ def inspect_parent_state(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def inspect_parent_state(args: argparse.Namespace) -> dict[str, Any]:
+    return inspect_parent_state_from_manifest(args, load_delivery_manifest(args.delivery_manifest))
+
+
 def cmd_inspect_parent(args: argparse.Namespace) -> None:
     output(inspect_parent_state(args), args.json)
 
 
 def atomic_json_write(path: str, data: dict[str, Any]) -> None:
     parent = os.path.dirname(os.path.abspath(path)) or "."
-    os.makedirs(parent, exist_ok=True)
     base = os.path.basename(path)
     fd = None
     tmp_path = None
     try:
+        os.makedirs(parent, exist_ok=True)
         fd, tmp_path = tempfile.mkstemp(prefix=f".{base}.", suffix=".tmp", dir=parent)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             fd = None
             json.dump(data, handle, indent=2, sort_keys=True)
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         load_json_file(tmp_path, "staged_json")
         os.replace(tmp_path, path)
+        dir_flags = getattr(os, "O_DIRECTORY", 0)
+        try:
+            dir_fd = os.open(parent, dir_flags)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
     except OSError as exc:
         fail("status_write_failed", f"failed to write JSON atomically: {exc}")
     finally:
@@ -541,11 +628,10 @@ def atomic_json_write(path: str, data: dict[str, Any]) -> None:
 
 
 def cmd_apply_parent(args: argparse.Namespace) -> None:
-    result = inspect_parent_state(args)
+    manifest = load_delivery_manifest(args.delivery_manifest)
+    result = inspect_parent_state_from_manifest(args, manifest)
     if result.get("mutation_allowed") is not True:
         fail(str(result["blockers"][0]["blocker"] if result["blockers"] else "parent_not_released"), result["required_next_action"], 1, result)
-    manifest = load_json_file(args.delivery_manifest, "delivery_manifest")
-    assert manifest is not None
     release_status = {
         "parent_issue": int(args.parent_issue),
         "state": "released",
@@ -593,7 +679,6 @@ def add_component_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--product-repo", dest="product_repo")
     parser.add_argument("--component-tag", dest="component_tag")
     parser.add_argument("--evidence-file", dest="evidence_file")
-    parser.add_argument("--delivery-manifest", dest="delivery_manifest")
     parser.add_argument("--version")
     parser.add_argument("--json", action="store_true")
 
