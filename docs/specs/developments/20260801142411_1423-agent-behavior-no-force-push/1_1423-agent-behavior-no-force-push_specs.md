@@ -68,9 +68,11 @@ normal follow-up commit after review, CI, or local validation.
 
 **Considerations**:
 
-- Amending local commits is allowed only while it remains local-only and does
-  not require rewriting a pushed branch.
-- A normal fix commit is preferred once the branch has been pushed.
+- The runner follows the
+  [published branch update rule](../../../best-practices/2-version-control.md#published-branch-updates)
+  for local-only amendments and follow-up commits on published branches.
+- This spec adds the execution-time guard that blocks unauthorized destructive
+  branch updates in agent workflow paths.
 
 ### Use Case 2: Agent attempts an unauthorized force push
 
@@ -117,20 +119,25 @@ safe non-destructive alternative is not appropriate.
 
 **Steps**:
 
-1. The runner asks for explicit authorization naming the branch and destructive
-   action.
-2. The operator confirms that exact action.
-3. The runner records the authorization evidence in the run summary.
-4. The runner performs only the authorized branch update and resumes the normal
-   readiness flow.
+1. The runner asks for explicit authorization naming the authenticated operator,
+   repository or PR, full branch ref, exact destructive action, expected remote
+   tip, and one execution or expiry.
+2. The operator confirms that exact action and target.
+3. The runner validates that the authorization matches the current repository,
+   PR or branch ref, destructive action, and remote tip.
+4. The runner records the authorization evidence in the run summary.
+5. The runner performs only the authorized branch update, consumes or expires
+   the authorization, and resumes the normal readiness flow.
 
-**Postconditions**: Any destructive branch update is traceable to a specific
-human authorization.
+**Postconditions**: Any destructive branch update is traceable to a specific,
+non-replayable human authorization.
 
 **Information shown**:
 
 - The branch and action covered by the exception.
-- The authorization evidence and scope.
+- The authorization evidence and scope, including operator, repository or PR,
+  full branch ref, exact action, expected remote tip, and one execution or
+  expiry.
 - The follow-up verification that the PR branch remains reviewable.
 
 **Actions available**:
@@ -140,8 +147,11 @@ human authorization.
 
 **Considerations**:
 
-- Authorization for one branch or action does not apply to other branches,
-  later pushes, admin merges, rebases, or unrelated destructive operations.
+- Authorization for one branch or action does not apply to other repositories,
+  same-named branches, later remote tips, later pushes, admin merges, rebases,
+  or unrelated destructive operations.
+- Authorization is single-use or expires before a later branch update, so it
+  cannot be replayed after the target changes.
 
 ## Business Rules
 
@@ -149,14 +159,19 @@ human authorization.
   branch without explicit human authorization for the exact branch and action.
 - General bounded-run confirmation, delegated review authority, delegated merge
   authority, and risk acceptance are not force-push authorization.
-- Once a workflow branch has been pushed, follow-up fixes should preserve remote
-  history by adding new commits unless a named exception is approved.
-- Local-only amend or squash work is allowed only before the branch is pushed
-  and before review context can be affected.
+- Published branch updates follow the
+  [published branch update rule](../../../best-practices/2-version-control.md#published-branch-updates);
+  this spec adds the agent execution-time guard and exact exception behavior.
+- Authorization must bind to the authenticated workflow operator, repository or
+  PR, full branch ref, exact destructive action, expected remote tip, and one
+  execution or expiry.
+- The runner must reject authorization that does not match the current target,
+  and must consume or invalidate matching authorization after use.
 - A blocked force-push attempt must stop before mutating the remote branch and
   must present a safe alternative or request explicit authorization.
 - Any approved exception must be recorded in the run output with the branch,
-  action, and authorization source.
+  action, expected remote tip, authorization source, and consumption or expiry
+  outcome.
 - The guard must apply to workflow branch update paths used by spec, plan,
   implementation, review-fix, and batch supervision flows.
 
@@ -167,7 +182,8 @@ human authorization.
 - **Blocked action**: A stop message names the branch, the prohibited action,
   and the missing authorization evidence.
 - **Exception record**: A narrowly approved exception records the branch,
-  action, and human authorization in the run summary.
+  action, expected remote tip, authorization source, and single-use or expiry
+  handling in the run summary.
 - **Review continuity**: The PR readiness flow continues to show reviewer and
   CI state after safe follow-up commits.
 
@@ -182,14 +198,28 @@ human authorization.
 - [ ] Local-only amend behavior remains allowed before a workflow branch has
       been pushed.
 - [ ] A human can authorize one exact destructive branch update by naming the
-      branch and action, and that authorization is recorded in the run summary.
+      authenticated operator, repository or PR, full branch ref, exact action,
+      expected remote tip, and one execution or expiry, and that authorization
+      is recorded in the run summary.
 - [ ] Authorization for one destructive branch update does not carry over to a
-      different branch, later push, merge action, or unrelated recovery.
+      different repository, same-named branch, later remote tip, later push,
+      merge action, or unrelated recovery.
 - [ ] The guard applies consistently across spec, plan, implementation,
       review-fix, and batch-supervision branch update flows.
 - [ ] Regression coverage verifies unauthorized force-push blocking, safe
       follow-up commits, local-only amend allowance, and a narrowly authorized
-      exception.
+      exception across spec, plan, implementation, review-fix, and
+      batch-supervision branch update flows.
+
+## Regression Coverage Matrix
+
+| Guarded workflow path | Unauthorized force push blocks | Safe follow-up commit proceeds | Local-only amend remains allowed | Single-use authorized exception proceeds |
+| --- | --- | --- | --- | --- |
+| Spec branch update | Required | Required | Required | Required |
+| Plan branch update | Required | Required | Required | Required |
+| Implementation branch update | Required | Required | Required | Required |
+| Review-fix branch update | Required | Required | Required | Required |
+| Batch-supervision branch update | Required | Required | Required | Required |
 
 ## Coverage Matrix
 
