@@ -30,6 +30,12 @@ Repository-specific workflow providers live in `.ai-dev-workflow.yaml`. Today, `
 - Always update CHANGELOG before opening a PR (except spec/plan-only PRs; for fixes to unreleased work, update the existing entry instead of adding a new one; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved at merge time); **hotfix exception**: `hotfix/*` PRs write a new versioned section (e.g., `[1.0.1] - YYYY-MM-DD`) as the **first `##` section** in `CHANGELOG.md` (above all existing headers, including prior hotfix versions and `[Unreleased]`) — hotfixes patch released code and are released immediately on merge
 - No `git push --force`, `reset --hard`, or rebase on shared branches without explicit human approval
 - Humans merge PRs — agents open them
+- Cursor Task/subagent runs consume model quota according to the subagent's
+  configured `model` in `.cursor/agents/*.md`, not just the Composer model.
+  Use `/run-item` and the configured subagents for normal workflow runs; override
+  a subagent model only for a specific complexity, cost, quota, or failover
+  reason and restore the tier intent afterward. See
+  `docs/workflow/development-workflow/agent-model-config.md`.
 
 ### Development artifacts
 
