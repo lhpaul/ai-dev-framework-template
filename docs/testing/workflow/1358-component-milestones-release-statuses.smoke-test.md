@@ -40,6 +40,7 @@ Before running this smoke test:
 | Partial delivery bundle path | `$PARTIAL_BUNDLE` |
 | Finalized delivery bundle path | `$FINALIZED_BUNDLE` |
 | Blocked delivery bundle path | `$BLOCKED_BUNDLE` |
+| Corrected delivery bundle path | `$CORRECTED_BUNDLE` |
 | Mocked GitHub call log | `$GH_CALL_LOG` |
 | Helper | `scripts/development-workflow/component-milestone-reconciliation.sh` |
 | Fixture helper | `scripts/development-workflow/tests/setup-component-milestone-fixture.sh` |
@@ -81,28 +82,46 @@ MISSING_EVIDENCE_PATH="$(jq -r '.evidence.missing_path' "$fixture_json")"
 PARTIAL_BUNDLE="$(jq -r '.bundles.partial' "$fixture_json")"
 FINALIZED_BUNDLE="$(jq -r '.bundles.finalized' "$fixture_json")"
 BLOCKED_BUNDLE="$(jq -r '.bundles.blocked' "$fixture_json")"
+CORRECTED_BUNDLE="$(jq -r '.bundles.corrected' "$fixture_json")"
 STATUS_WRITE_FAILURE_BUNDLE="$(jq -r '.bundles.status_write_failure' "$fixture_json")"
 STATUS_WRITE_FAILURE_TARGET="$(jq -r '.status_write_failure_target' "$fixture_json")"
+EVIDENCE_CASES="$(jq -c '.evidence_cases' "$fixture_json")"
 
 gh_log_hash() {
-  git hash-object "$GH_CALL_LOG" 2>/dev/null || printf '%s\n' empty
+  if [ ! -r "$GH_CALL_LOG" ]; then
+    echo "ERROR_CODE=gh_call_log_unreadable message='call log is not readable'" >&2
+    return 1
+  fi
+  git hash-object "$GH_CALL_LOG"
 }
 
 count_gh_calls() {
   local pattern="$1"
-  local count
-  count="$(rg -c -- "$pattern" "$GH_CALL_LOG" 2>/dev/null || true)"
-  if [ -z "$count" ]; then
-    printf '%s\n' 0
-  else
-    printf '%s\n' "$count"
+  local output status
+  if [ ! -r "$GH_CALL_LOG" ]; then
+    echo "ERROR_CODE=gh_call_log_unreadable message='call log is not readable'" >&2
+    return 1
   fi
+  set +e
+  output="$(rg -c -- "$pattern" "$GH_CALL_LOG" 2>&1)"
+  status=$?
+  set -e
+  case "$status" in
+    0) printf '%s\n' "$output" ;;
+    1) printf '%s\n' 0 ;;
+    *)
+      printf "ERROR_CODE=gh_call_log_search_failed message='%s'\n" "$output" >&2
+      return "$status"
+      ;;
+  esac
 }
 ```
 
-The fixture helper is mandatory. It must create every file path emitted in
-`fixtures.json`, install a mocked `gh` command directory, and initialize
-`$GH_CALL_LOG` before any apply-mode step runs.
+The fixture helper is an implementation artifact required by this runbook. It
+must create every file path emitted in `fixtures.json`, install a mocked `gh`
+command directory, initialize `$GH_CALL_LOG`, and include `evidence_cases`
+entries for the complete evidence decision-gate matrix before any apply-mode
+step runs.
 
 ---
 
@@ -246,10 +265,43 @@ jq -e '
   .reconciliation_outcome == "component_target_mismatch" and
   .mutation_allowed == false
 ' "$SMOKE_TMP/mismatch.json"
+test "$log_hash_after_apply" = "$(gh_log_hash)"
+
+jq -c '.[]' <<< "$EVIDENCE_CASES" | while IFS= read -r evidence_case; do
+  case_name="$(jq -r '.name' <<< "$evidence_case")"
+  expected_outcome="$(jq -r '.expected_outcome' <<< "$evidence_case")"
+  product_repo="$(jq -r '.product_repo // empty' <<< "$evidence_case")"
+  component_tag="$(jq -r '.component_tag // empty' <<< "$evidence_case")"
+  evidence_file="$(jq -r '.evidence_file // empty' <<< "$evidence_case")"
+  output_file="$SMOKE_TMP/evidence-case-${case_name}.json"
+  before_case_hash="$(gh_log_hash)"
+
+  cmd=("$HELPER" apply-component --issue "$COMPONENT_ISSUE" --target-kind component_child --json)
+  [ -z "$product_repo" ] || cmd+=(--product-repo "$product_repo")
+  [ -z "$component_tag" ] || cmd+=(--component-tag "$component_tag")
+  [ -z "$evidence_file" ] || cmd+=(--evidence-file "$evidence_file")
+
+  set +e
+  "${cmd[@]}" > "$output_file" 2> "$SMOKE_TMP/evidence-case-${case_name}.err"
+  case_status=$?
+  set -e
+  if [ "$case_status" -eq 0 ]; then
+    echo "ERROR_CODE=evidence_case_accepted message='blocked case unexpectedly succeeded'" >&2
+    exit 1
+  fi
+  jq -e \
+    --arg expected "$expected_outcome" '
+    .reconciliation_outcome == $expected and
+    .mutation_allowed == false
+  ' "$output_file"
+  test "$before_case_hash" = "$(gh_log_hash)"
+done
 ```
 
-**Expected result**: No evidence record stays pending. Mismatched or invalid
-evidence blocks before milestone or tracker mutation.
+**Expected result**: Missing product selection, missing tags, malformed or
+wrong-schema evidence, incomplete evidence, and pending, failed, blocked, stale,
+conflicting, or mismatched evidence each return the exact expected outcome and
+leave the mocked GitHub call log unchanged.
 
 ### Step 5: Reject Parent And Delivery Milestone Writes
 
@@ -288,6 +340,28 @@ workflow-hub milestone writes.
 ```bash
 "$HELPER" inspect-parent \
   --parent-issue "$PARENT_ISSUE" \
+  --delivery-manifest "$BLOCKED_BUNDLE" \
+  --json > "$SMOKE_TMP/parent-blocked.json"
+
+jq -e '
+  .reconciliation_outcome == "parent_blocked" and
+  .parent_release_state == "blocked" and
+  .mutation_allowed == false
+' "$SMOKE_TMP/parent-blocked.json"
+
+"$HELPER" inspect-parent \
+  --parent-issue "$PARENT_ISSUE" \
+  --delivery-manifest "$CORRECTED_BUNDLE" \
+  --require-finalized \
+  --json > "$SMOKE_TMP/parent-corrected.json"
+
+jq -e '
+  .reconciliation_outcome == "parent_released" and
+  .parent_release_state == "released"
+' "$SMOKE_TMP/parent-corrected.json"
+
+"$HELPER" inspect-parent \
+  --parent-issue "$PARENT_ISSUE" \
   --delivery-manifest "$PARTIAL_BUNDLE" \
   --json > "$SMOKE_TMP/parent-partial.json"
 
@@ -298,9 +372,10 @@ jq -e '
 ' "$SMOKE_TMP/parent-partial.json"
 ```
 
-**Expected result**: A bundle with at least one released component and at least
-one unreleased current component reports partial release without finalizing the
-parent.
+**Expected result**: Blocked bundle evidence reports `parent_blocked`; corrected
+evidence recovers to `parent_released`; a bundle with at least one released
+component and at least one unreleased current component reports partial release
+without finalizing the parent.
 
 ### Step 7: Inspect Final Parent Release State
 
@@ -319,6 +394,13 @@ jq -e '
   .milestone_assignment.parent_epic_stamped == false and
   .milestone_assignment.delivery_bundle_stamped == false
 ' "$SMOKE_TMP/parent-final.json"
+jq -e '
+  .schema_version == "delivery_bundle_manifest.v1" and
+  (.status | type == "string") and
+  (.components | type == "array") and
+  (.readiness | type == "object") and
+  all(.components[]; (.evidence_state | type == "string"))
+' "$FINALIZED_BUNDLE"
 
 log_hash_before_parent_apply="$(gh_log_hash)"
 "$HELPER" apply-parent \
@@ -338,7 +420,29 @@ jq -e '
 ' "$FINALIZED_BUNDLE"
 test "$log_hash_before_parent_apply" = "$(gh_log_hash)"
 
+parent_hash_after_apply="$(git hash-object "$FINALIZED_BUNDLE")"
+"$HELPER" apply-parent \
+  --parent-issue "$PARENT_ISSUE" \
+  --delivery-manifest "$FINALIZED_BUNDLE" \
+  --require-finalized \
+  --json > "$SMOKE_TMP/parent-reapply.json"
+
+jq -e '
+  .reconciliation_outcome == "parent_released" and
+  .release_status.state == "released" and
+  (.idempotent == true or .release_status.action == "unchanged")
+' "$SMOKE_TMP/parent-reapply.json"
+test "$parent_hash_after_apply" = "$(git hash-object "$FINALIZED_BUNDLE")"
+test "$log_hash_before_parent_apply" = "$(gh_log_hash)"
+
 failed_hash_before="$(git hash-object "$STATUS_WRITE_FAILURE_BUNDLE")"
+if [ -e "$STATUS_WRITE_FAILURE_TARGET" ]; then
+  failure_target_existed=1
+  failure_target_hash="$(git hash-object "$STATUS_WRITE_FAILURE_TARGET")"
+else
+  failure_target_existed=0
+  failure_target_hash=""
+fi
 set +e
 "$HELPER" apply-parent \
   --parent-issue "$PARENT_ISSUE" \
@@ -353,6 +457,11 @@ if [ "$failed_status" -eq 0 ]; then
   exit 1
 fi
 test "$failed_hash_before" = "$(git hash-object "$STATUS_WRITE_FAILURE_BUNDLE")"
+if [ "$failure_target_existed" -eq 1 ]; then
+  test "$failure_target_hash" = "$(git hash-object "$STATUS_WRITE_FAILURE_TARGET")"
+else
+  test ! -e "$STATUS_WRITE_FAILURE_TARGET"
+fi
 ```
 
 **Expected result**: A finalized bundle moves parent release state to released
@@ -435,7 +544,7 @@ bundle finalization.
 
 | Entity | Scenario | How to load |
 | --- | --- | --- |
-| Component evidence | Complete, missing, mismatched, pending, failed, blocked, stale, and conflicting | `bash scripts/development-workflow/tests/setup-component-milestone-fixture.sh --output-dir "$SMOKE_TMP" --json` |
+| Component evidence | Complete, missing product, ambiguous product, missing tag, missing file, malformed JSON, wrong schema, incomplete, mismatched, pending, failed, blocked, stale, and conflicting | `bash scripts/development-workflow/tests/setup-component-milestone-fixture.sh --output-dir "$SMOKE_TMP" --json` |
 | Delivery bundle | Partial, blocked, finalized, corrected-after-blocked, and write-failure parent states | `bash scripts/development-workflow/tests/setup-component-milestone-fixture.sh --output-dir "$SMOKE_TMP" --json` |
 | GitHub API | Existing milestone, missing milestone, issue assignment, duplicate reapply, and call log | Mock `gh` executable emitted by `setup-component-milestone-fixture.sh` |
 
