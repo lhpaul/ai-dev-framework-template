@@ -92,6 +92,9 @@ case "$*" in
       malformed_response)
         printf '{"number":102,"state":"OPEN","isDraft":false,"baseRefName":"develop","headRefName":"feature/mock-pr-102","mergeStateStatus":"CLEAN","statusCheckRollup":%s}\n' "$check_success"
         ;;
+      dirty_pending)
+        emit_pr 102 OPEN false develop feature/mock-pr-102 DIRTY "$check_pending"
+        ;;
       *)
         emit_pr 102 OPEN false develop feature/mock-pr-102 CLEAN "$check_success"
         ;;
@@ -185,6 +188,17 @@ export MOCK_SCENARIO=base_mismatch
 rm -f "$MOCK_GH_STATE_DIR"/*.count
 base_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
 run_test "base_mismatch_blocks" "base_ref_mismatch" "$(json_field "$base_output" 102 reason)"
+
+export MOCK_SCENARIO=failing
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+failing_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
+run_test "failing_checks_block" "checks_failed" "$(json_field "$failing_output" 102 reason)"
+
+export MOCK_SCENARIO=dirty_pending
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+dirty_pending_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
+run_test "dirty_state_overrides_pending_checks" "merge_state_non_clean" "$(json_field "$dirty_pending_output" 102 reason)"
+run_test "dirty_pending_not_retryable" "false" "$(json_field "$dirty_pending_output" 102 retryable)"
 
 export MOCK_SCENARIO=malformed_response
 set +e

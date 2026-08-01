@@ -490,6 +490,12 @@ classify_recheck_json() {
     printf 'merge_blocked|false|hold|base_ref_mismatch|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
     return 0
   fi
+  case "$merge_state" in
+    DIRTY|BLOCKED|BEHIND|UNSTABLE|HAS_HOOKS)
+      printf 'merge_blocked|false|hold|merge_state_non_clean|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
+      return 0
+      ;;
+  esac
   if [ "$checks_state" = "failure" ]; then
     printf 'merge_blocked|false|hold|checks_failed|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
     return 0
@@ -513,9 +519,6 @@ classify_recheck_json() {
       else
         printf 'retryable|true|hold|merge_state_unknown|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
       fi
-      ;;
-    DIRTY|BLOCKED|BEHIND|UNSTABLE|HAS_HOOKS)
-      printf 'merge_blocked|false|hold|merge_state_non_clean|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
       ;;
     *)
       printf 'helper_failed|false|error|unclassified_state|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
