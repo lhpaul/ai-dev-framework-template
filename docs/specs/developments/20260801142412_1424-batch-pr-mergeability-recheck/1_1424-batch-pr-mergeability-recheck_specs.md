@@ -71,7 +71,11 @@ after the latest base-branch change.
 
 - The recheck must happen even when all PRs were clean at the start of the
   batch.
-- The recheck applies only to the explicit in-scope PR list for the batch.
+- The recheck applies only to the frozen in-scope PR set selected for the batch,
+  whether the batch came from an explicit list, delegated `/run-items`, or
+  batch-merge discovery.
+- A PR discovered during recheck outside the frozen set is observation-only and
+  must not trigger mutation, additional rechecks, or opportunistic advancement.
 
 ### Use Case 2: Remaining PR becomes conflicted
 
@@ -83,31 +87,43 @@ state.
 **Steps**:
 
 1. The runner detects the non-clean refreshed state.
-2. The runner stops before attempting to merge that PR.
-3. The runner records the PR as merge-blocked or routes it to the established
-   conflict-resolution flow when that is available and in scope.
-4. The runner continues only with other remaining PRs whose refreshed evidence
-   is clean and whose order remains valid.
+2. The runner classifies the refreshed state as retryable or terminal for that
+   PR.
+3. The runner keeps retryable pending or temporarily unknown states under
+   supervision until they become clean or hit the configured timeout.
+4. The runner records dirty, blocked, timed-out unknown, failing, or otherwise
+   terminal non-clean states as `merge_blocked` for that PR and stops before
+   attempting to merge it.
+5. The runner preserves the original PR order, skips the blocked PR without
+   reordering remaining entries, and continues only with later PRs whose
+   independently refreshed evidence is clean and whose existing merge-order
+   guardrails remain satisfied.
 
 **Postconditions**: A PR invalidated by a sibling merge is not merged or
 reported ready using stale evidence.
 
 **Information shown**:
 
-- The affected PR and refreshed non-clean state.
+- The affected PR, refreshed non-clean state, and whether the state is retryable
+  or terminal.
 - The sibling merge that invalidated prior evidence.
 - The required next action, such as resolving conflicts or rerunning readiness.
 
 **Actions available**:
 
 - Resolve the conflict and rerun readiness for the affected PR.
-- Continue with other refreshed-clean PRs when safe.
+- Continue with later refreshed-clean PRs without reordering the original batch
+  when existing merge-order guardrails still allow it.
 - Stop the batch when the remaining order or state is no longer safe.
 
 **Considerations**:
 
-- A non-clean recheck is a real terminal or routing condition for that PR, not a
-  transient state to ignore.
+- Pending and temporarily unknown states remain supervised until the configured
+  polling or retry window ends; they are not terminal while legitimate checks
+  are still in progress.
+- Dirty, conflicted, blocked, failing, timed-out unknown, or exhausted pending
+  states are terminal `merge_blocked` outcomes for that PR until it is updated
+  and readiness is rerun.
 - The summary must not claim the PR is ready or merged unless refreshed evidence
   supports that claim.
 
@@ -139,19 +155,38 @@ each step.
 - Continue the batch merge sequence.
 - Stop if any later refreshed state changes.
 
+**Considerations**:
+
+- The same stale-evidence boundary repeats after every successful sibling merge.
+- A later recheck can still change a previously refreshed-clean PR to retryable
+  or terminal non-clean, and the summary must reflect the latest evidence.
+
 ## Business Rules
 
 - A successful sibling PR merge invalidates previously collected mergeability
   evidence for every unmerged PR in the same bounded batch.
+- The batch has one frozen in-scope PR set after selection. This applies to
+  explicit-list batches, delegated `/run-items` runs, and batch-merge discovery.
 - The workflow must re-query authoritative PR state for all remaining in-scope
   PRs before attempting another merge or reporting a final ready state.
 - A remaining PR with dirty, blocked, unknown, behind, failing, pending, or
   otherwise non-clean refreshed evidence must not be merged under stale
   readiness.
+- Pending and temporarily unknown states are retryable only while checks are
+  legitimately in progress and within the configured polling or retry window.
+  Once the window is exhausted, the PR is terminal `merge_blocked` until updated
+  and rerun.
+- Dirty, conflicted, blocked, failing, or behind states are terminal
+  `merge_blocked` for the affected PR unless the existing workflow routes the PR
+  into an in-scope fix path before continuing.
+- A blocked PR does not by itself stop processing later PRs. The runner must
+  preserve the original order, skip the blocked entry, and continue only when
+  each later PR has independently refreshed clean evidence and all existing
+  merge-order guardrails remain satisfied.
 - Per-PR terminal outcomes must reflect refreshed state after the last sibling
   merge that could affect that PR.
-- Out-of-scope PRs must not be rechecked for mutation or opportunistic
-  advancement under an explicit-list batch.
+- Out-of-scope PRs discovered during recheck are observation-only and must not
+  be rechecked for mutation, labeled, merged, or opportunistically advanced.
 - The recheck requirement applies to delegated `/run-items` merges and scoped
   batch-merge flows that process more than one PR against the same base.
 - Conflict recovery must preserve the repository's no-force-push policy; any
@@ -166,9 +201,15 @@ each step.
 - **Stale evidence boundary**: The summary identifies that pre-merge clean
   evidence was invalidated by a base-branch update.
 - **Blocked PR outcome**: A conflicted or non-clean remaining PR receives a
-  named terminal outcome such as `merge_blocked`, with the required next action.
+  named terminal outcome of `merge_blocked`, with the required next action.
 - **Final batch summary**: The final report distinguishes merged PRs from PRs
   held after refreshed mergeability changed.
+- **Outcome contract**: For delegated `/run-items` merge supervision, refreshed
+  rechecks use the existing terminal outcomes: `merged`, `merge_blocked`,
+  `policy_inconsistent`, `ready_human_merge`, and `out_of_scope`. In scoped
+  Protocol 94 batch-merge output, `merge_blocked` maps to the existing
+  skipped-or-held conflict/not-ready outcome while preserving the more specific
+  refreshed-state reason in the summary.
 
 ## Acceptance Criteria
 
@@ -180,12 +221,19 @@ each step.
 - [ ] A remaining PR whose refreshed state is dirty, blocked, unknown, behind,
       failing, pending, or otherwise non-clean is not merged under the prior
       clean result.
+- [ ] Pending and temporarily unknown states remain supervised while checks are
+      legitimately in progress and become terminal `merge_blocked` only after
+      the configured polling or retry window is exhausted.
 - [ ] The blocked PR's summary names the sibling merge that invalidated the
       previous evidence and the refreshed state that prevents merge.
 - [ ] Refreshed-clean PRs can continue through the batch merge sequence without
       a new human approval when the original delegated policy still applies.
-- [ ] Explicit-list scope is preserved: out-of-scope PRs are not mutated,
-      labeled, merged, or opportunistically advanced during the recheck.
+- [ ] The original PR order is preserved when a PR becomes blocked; the blocked
+      PR is skipped, not reordered, and later PRs merge only after independent
+      refreshed-clean evidence and existing merge-order guardrails pass.
+- [ ] Frozen batch scope is preserved: out-of-scope PRs are observation-only and
+      are not rechecked for mutation, labeled, merged, or opportunistically
+      advanced during the recheck.
 - [ ] The final batch summary reports per-PR terminal outcomes based on the
       latest post-sibling-merge evidence.
 - [ ] Regression coverage simulates two initially clean sibling PRs where the
@@ -197,9 +245,11 @@ each step.
 | Refreshed state after sibling merge | Required outcome | Information shown | Next action |
 | --- | --- | --- | --- |
 | Clean and required checks still pass | Continue | PR number, refreshed clean state, next merge candidate | Merge according to current order and guardrails |
-| Dirty or conflicted | Merge blocked | PR number, invalidating sibling merge, dirty state | Resolve conflicts or rerun readiness after update |
-| Unknown, blocked, behind, pending, or failing | Merge blocked or keep supervising when checks are still legitimately in progress | PR number, refreshed state, reason it is not mergeable now | Re-query until terminal, route to fixes, or stop with blocker |
-| Out-of-scope PR discovered during recheck | Out of scope | Identifier and explicit-list boundary | Skip all mutations for that PR |
+| Pending checks still legitimately in progress | Retryable supervision | PR number, invalidating sibling merge, pending checks | Continue polling until clean, failing, or timeout |
+| Temporarily unknown state within retry window | Retryable supervision | PR number, invalidating sibling merge, unavailable evidence | Re-query until evidence is available or timeout expires |
+| Dirty or conflicted | `merge_blocked` | PR number, invalidating sibling merge, dirty state | Preserve order, skip this PR, resolve conflicts or rerun readiness after update |
+| Blocked, behind, failing, timed-out unknown, or exhausted pending | `merge_blocked` | PR number, refreshed terminal non-clean state, reason it cannot merge now | Preserve order, skip this PR, route to fixes or stop with blocker |
+| Out-of-scope PR discovered during recheck | `out_of_scope` observation | Identifier and frozen batch boundary | Skip all mutations and do not add it to the recheck set |
 
 ## Coverage Matrix
 
@@ -207,9 +257,9 @@ each step.
 | --- | --- |
 | 1. Recheck remaining PRs | Use Case 1, Business Rules, AC1 |
 | 2. Prevent stale clean evidence reuse | Use Cases 1-2, Business Rules, AC2-AC4 |
-| 3. Stop or route non-clean PRs | Use Case 2, Operational Visibility, AC3-AC4 |
-| 4. Keep summaries accurate | Operational Visibility, AC6-AC7 |
-| 5. Add regression coverage | Acceptance Criteria AC8 |
+| 3. Stop or route non-clean PRs | Use Case 2, Operational Visibility, AC3-AC6 |
+| 4. Keep summaries accurate | Operational Visibility, AC8 |
+| 5. Add regression coverage | Acceptance Criteria AC9 |
 
 ## Out of Scope (MVP)
 
@@ -225,11 +275,4 @@ each step.
 
 ## PR-Visible Deferral Notes
 
-- **Universal conflict repair**: Deferred because the core requirement is to
-  prevent stale mergeability use and route invalidated PRs correctly.
-- **Batch selection changes**: Deferred because the feature applies during
-  merge supervision, after the in-scope PR list is known.
-- **Out-of-scope PR handling**: Deferred to existing explicit-list scope
-  guardrails; rechecks must not widen the batch.
-- **Force-push prevention**: Deferred to #1423, which is an orthogonal sibling
-  workflow-safety item from the same retrospective.
+See [Out of Scope (MVP)](#out-of-scope-mvp) for the canonical deferral list.
