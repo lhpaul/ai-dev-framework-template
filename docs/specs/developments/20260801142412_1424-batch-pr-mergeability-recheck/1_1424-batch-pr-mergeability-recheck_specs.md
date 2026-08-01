@@ -90,7 +90,8 @@ state.
 2. The runner classifies the refreshed state as retryable or terminal for that
    PR.
 3. The runner keeps retryable pending or temporarily unknown states under
-   supervision until they become clean or hit the configured timeout.
+   supervision until they become clean, become terminal non-clean, or hit the
+   configured timeout.
 4. The runner records dirty, blocked, timed-out unknown, failing, or otherwise
    terminal non-clean states as `merge_blocked` for that PR and stops before
    attempting to merge it.
@@ -124,6 +125,9 @@ reported ready using stale evidence.
 - Dirty, conflicted, blocked, failing, timed-out unknown, or exhausted pending
   states are terminal `merge_blocked` outcomes for that PR until it is updated
   and readiness is rerun.
+- A retryable state that changes to dirty, conflicted, blocked, failing, behind,
+  or another terminal non-clean state leaves retry supervision immediately and
+  is recorded as `merge_blocked`.
 - The summary must not claim the PR is ready or merged unless refreshed evidence
   supports that claim.
 
@@ -174,8 +178,8 @@ each step.
   readiness.
 - Pending and temporarily unknown states are retryable only while checks are
   legitimately in progress and within the configured polling or retry window.
-  Once the window is exhausted, the PR is terminal `merge_blocked` until updated
-  and rerun.
+  Record `merge_blocked` immediately if the state becomes terminal non-clean;
+  otherwise record `merge_blocked` when the window expires.
 - Dirty, conflicted, blocked, failing, or behind states are terminal
   `merge_blocked` for the affected PR unless the existing workflow routes the PR
   into an in-scope fix path before continuing.
@@ -222,8 +226,10 @@ each step.
       failing, pending, or otherwise non-clean is not merged under the prior
       clean result.
 - [ ] Pending and temporarily unknown states remain supervised while checks are
-      legitimately in progress and become terminal `merge_blocked` only after
-      the configured polling or retry window is exhausted.
+      legitimately in progress, become terminal `merge_blocked` immediately if
+      the refreshed state changes to terminal non-clean, and otherwise become
+      terminal `merge_blocked` only after the configured polling or retry window
+      is exhausted.
 - [ ] The blocked PR's summary names the sibling merge that invalidated the
       previous evidence and the refreshed state that prevents merge.
 - [ ] Refreshed-clean PRs can continue through the batch merge sequence without
