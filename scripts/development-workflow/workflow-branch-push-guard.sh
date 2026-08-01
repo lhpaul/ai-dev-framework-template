@@ -306,7 +306,9 @@ expected_remote_tip=${expected_remote_tip}
 run_id=${claim_run_id}
 state=rolled_back
 reason=conditional_update_failed"
-  gh pr comment "$pr_number" --body "$rollback_body" >/dev/null 2>&1 || true
+  if ! gh pr comment "$pr_number" --body "$rollback_body" >/dev/null 2>&1; then
+    printf 'PUSH_GUARD_WARNING=rollback_marker_failed\n'
+  fi
   block "conditional_update_failed"
 fi
 
@@ -317,5 +319,7 @@ branch_ref=${branch_ref}
 expected_remote_tip=${expected_remote_tip}
 run_id=${claim_run_id}
 state=consumed"
-gh pr comment "$pr_number" --body "$consumed_body" >/dev/null 2>&1 || true
+if ! gh pr comment "$pr_number" --body "$consumed_body" >/dev/null 2>&1; then
+  printf 'PUSH_GUARD_WARNING=consumed_marker_failed\n'
+fi
 allowed "authorized_once" "true"
