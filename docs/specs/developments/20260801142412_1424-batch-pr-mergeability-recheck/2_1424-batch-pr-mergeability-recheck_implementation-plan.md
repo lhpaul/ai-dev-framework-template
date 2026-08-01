@@ -97,16 +97,26 @@ has already landed.
   `MERGE_RESULT=clean` is followed by `recheck-remaining` before another
   `merge --pr` call.
 - [ ] Add a bounded retry helper for pending and temporarily unknown states.
-  Keep defaults short enough for operator feedback and configurable through
-  environment variables if needed. Defaults: 3 attempts, 10 seconds between
-  attempts, and a 60-second wall-clock deadline per remaining PR. Retry stops at
-  whichever bound is reached first; if both are reached on the same refresh,
-  `reason` must be `retry_attempts_exhausted`, `retryable` must be `false`, and
-  the record must be classified as `merge_blocked`. Before each external
-  refresh, compute the remaining wall-clock budget and apply it as the refresh
-  command timeout; cap every sleep to the same remaining budget. If no budget
-  remains before refresh or sleep, emit `reason: retry_deadline_exhausted`.
+  Keep defaults short enough for operator feedback and configurable through the
+  environment-variable contract below. Retry stops at whichever bound is reached
+  first; if both are reached on the same refresh, `reason` must be
+  `retry_attempts_exhausted`, `retryable` must be `false`, and the record must
+  be classified as `merge_blocked`. Before each external refresh, compute the
+  remaining wall-clock budget and apply it as the refresh command timeout; cap
+  every sleep to the same remaining budget. If no budget remains before refresh
+  or sleep, emit `reason: retry_deadline_exhausted`.
 - [ ] Keep existing CHANGELOG deduplication and MERGED-state checks intact.
+
+Retry environment variables:
+
+| Variable | Unit | Default | Invalid value behavior |
+| --- | --- | --- | --- |
+| `BATCH_MERGE_RECHECK_ATTEMPTS` | Count | `3` | Emit `helper_failed` with `reason: invalid_retry_config` and exit non-zero |
+| `BATCH_MERGE_RECHECK_SLEEP_SECONDS` | Seconds | `10` | Emit `helper_failed` with `reason: invalid_retry_config` and exit non-zero |
+| `BATCH_MERGE_RECHECK_DEADLINE_SECONDS` | Seconds | `60` | Emit `helper_failed` with `reason: invalid_retry_config` and exit non-zero |
+
+Each value must be a base-10 non-negative integer, except
+`BATCH_MERGE_RECHECK_ATTEMPTS`, which must be at least `1`.
 
 ### Recheck Output Contract
 
@@ -122,9 +132,9 @@ Required fields for every record:
 | `record_type` | `remaining_pr`, `out_of_scope_observation`, or `error` |
 | `pr` | Pull request number; `null` only for helper-wide `error` records |
 | `original_index` | Zero-based index in frozen `--prs`; `null` for out-of-scope observations and helper-wide errors |
-| `invalidating_sibling_pr` | The just-merged sibling PR number; never `null` after input validation succeeds |
-| `base_ref` | Refreshed PR base; `null` only when unavailable because of `helper_failed` |
-| `head_ref` | Refreshed PR head; `null` only when unavailable because of `helper_failed` |
+| `invalidating_sibling_pr` | The just-merged sibling PR number; `null` only for input-validation helper-wide errors that occur before `--after-merged-pr` is parsed |
+| `base_ref` | Refreshed PR base; `null` only when unavailable because of `helper_failed` or an out-of-scope observation with incomplete read-only data |
+| `head_ref` | Refreshed PR head; `null` only when unavailable because of `helper_failed` or an out-of-scope observation with incomplete read-only data |
 | `merge_state` | Raw GitHub `mergeStateStatus`, upper-case; `null` only when unavailable because of `helper_failed` |
 | `checks_state` | `success`, `pending`, `failure`, `unknown`, or `not_required`; `null` only when unavailable because of `helper_failed` |
 | `classification` | `clean`, `retryable`, `merge_blocked`, `out_of_scope_observation`, or `helper_failed` |
@@ -155,8 +165,12 @@ Classification precedence for in-scope `remaining_pr` records:
 `out_of_scope_observation` records bypass in-scope eligibility and mutation
 rules. They must still include the selected `TARGET_BASE`, the
 `invalidating_sibling_pr`, the observed PR number, and the observed head/base
-refs when available. Their required stable `reason` is
-`not_in_frozen_scope`, and protocol summaries must preserve that exact value.
+refs when available. If the read-only observation query returns an open PR
+number without complete head/base refs, emit the observation with nullable
+`head_ref` or `base_ref`; do not convert it to `helper_failed` unless the
+observation query itself failed or returned malformed JSON. Their required
+stable `reason` is `not_in_frozen_scope`, and protocol summaries must preserve
+that exact value.
 
 The subcommand exits `0` when all records were fetched and classified, including
 when one or more in-scope PRs are `merge_blocked`. It exits non-zero only for
@@ -166,7 +180,10 @@ failures must emit a final `helper_failed` JSON record before exit when stdout
 is still available. That record must use `record_type: "error"`,
 `classification: "helper_failed"`, `outcome: "error"`, `retryable: false`,
 `attempts: 0` unless a per-PR retry was already in progress, and nullable state
-fields exactly as defined in the schema table.
+fields exactly as defined in the schema table. For helper-wide errors,
+`deadline_seconds` is the parsed effective deadline when available, otherwise
+`null`; `invalidating_sibling_pr` is the parsed sibling PR when available,
+otherwise `null`.
 
 ### Protocols and Workflow Documentation
 

@@ -60,9 +60,11 @@ scenario passes.
 
 **Maps to**: AC1, AC2, AC3, AC5, AC10
 
-1. Load the fixture where PRs `101` and `102` initially report clean.
-2. Mark PR `101` merged in the mocked GitHub state.
-3. Set PR `102` to refreshed `mergeStateStatus: DIRTY`.
+1. Load the fixture where PRs `101` and `102` initially report `OPEN`, clean,
+   and targeting `develop`.
+2. Keep PR `101` open and clean for the initial merge command.
+3. Set the fixture transition so a successful `merge --pr 101` changes PR `101`
+   to merged and changes PR `102` to refreshed `mergeStateStatus: DIRTY`.
 4. Run the caller path that will consume the recheck result:
 
    ```bash
@@ -159,8 +161,8 @@ merged only after independent refreshed-clean evidence.
 
 **Maps to**: AC8
 
-1. Make the mocked GitHub state include PR `104` targeting `develop`, absent
-   from the supplied `--prs` list.
+1. Make the mocked GitHub state include open PR `104` targeting `develop`,
+   absent from the supplied `--prs` list.
 2. Run the feature command with frozen list `101,102,103`.
 3. Assert exactly one PR `104` record appears, and only as:
 
