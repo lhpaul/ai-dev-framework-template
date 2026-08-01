@@ -1719,6 +1719,7 @@ mutation and require `workflow-branch-push-guard.sh` with exact trusted
 single-use human authorization. Delegated batch merge authority remains
 separate from branch-history rewrite authorization.
 
+<!-- workflow-shell-contract: bash -->
 ```bash
 # Newest summary comment's updated_at, normalized to epoch seconds, vs the
 # branch's latest commit time.
