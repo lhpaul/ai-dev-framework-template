@@ -28,24 +28,24 @@ troubleshooting for both workflow hubs and product repositories.
 
 Derived from issue #1359:
 
-1. Add setup, operating, migration, and troubleshooting guidance for existing
+- **O1**: Add setup, operating, migration, and troubleshooting guidance for existing
    workflow hubs.
-2. Add setup, operating, migration, and troubleshooting guidance for product
+- **O2**: Add setup, operating, migration, and troubleshooting guidance for product
    repositories.
-3. Add regression coverage for component routing.
-4. Add regression coverage for configuration validation.
-5. Add regression coverage for milestones.
-6. Add regression coverage for bundle finalization.
-7. Add regression coverage for partial failures.
-8. Add regression coverage for reruns.
-9. Add regression coverage for `single_repo` compatibility.
-10. Add release-runbook or self-review evidence requirements for hub
+- **O3**: Add regression coverage for component routing.
+- **O4**: Add regression coverage for configuration validation.
+- **O5**: Add regression coverage for milestones.
+- **O6**: Add regression coverage for bundle finalization.
+- **O7**: Add regression coverage for partial failures.
+- **O8**: Add regression coverage for reruns.
+- **O9**: Add regression coverage for `single_repo` compatibility.
+- **O10**: Add release-runbook or self-review evidence requirements for hub
     operations.
-11. Add release-runbook or self-review evidence requirements for product
+- **O11**: Add release-runbook or self-review evidence requirements for product
     operations.
-12. Define prospective migration behavior.
-13. Do not alter historical milestones automatically.
-14. Provide an end-to-end non-secret fixture or equivalent deterministic harness
+- **O12**: Define prospective migration behavior.
+- **O13**: Do not alter historical milestones automatically.
+- **O14**: Provide an end-to-end non-secret fixture or equivalent deterministic harness
     for the full multi-repository release path.
 
 ## Spec-Dispatch Context
@@ -192,7 +192,9 @@ requirements for that contract are:
   no-rewrite baseline.
 - **Inputs owned by product repositories**: product repository release contract
   fixture, selected-product release evidence fixture, product release cleanup
-  evidence fixture, and product-side failure or retry fixture.
+  evidence fixture, product-side failure or retry fixture, and product-owned
+  historical no-rewrite baseline covering historical milestones, tags,
+  changelogs, and delivery records.
 - **Shared read-only inputs**: the previously accepted ownership, routing,
   bundle, milestone, and `single_repo` compatibility rules from #1353, #1354,
   #1356, #1357, and #1358.
@@ -212,7 +214,8 @@ The contract must include these product-level assertions:
 | Namespaced component milestones | A verified component release produces the expected component milestone outcome without stamping parent epics or delivery issues. |
 | Bundle finalization | A delivery bundle finalizes only when every declared component has complete accepted evidence. |
 | Partial failures | Failed, blocked, stale, missing, or conflicting evidence produces a blocked or retryable outcome without losing accepted evidence. |
-| Reruns | Re-running accepted evidence is idempotent, and re-running corrected evidence supersedes the prior failed or blocked attempt. |
+| Reruns | Every run and side-effecting step has durable identity; stale attempts are rejected; cleanup and handoff steps have idempotency or completion guards; corrected reruns supersede older attempts without allowing late results or repeated side effects. |
+| Migration no-rewrite | Hub-owned and product-owned historical baselines are compared before and after adoption, and historical milestones, tags, changelogs, and delivery records remain unchanged. |
 | `single_repo` compatibility | The non-hub single-repository invariant from [#1358](../20260731193728_1358-component-milestones-release-statuses/1_1358-component-milestones-release-statuses_specs.md) remains true without redefining that runtime contract here. |
 
 **Information shown**:
@@ -293,6 +296,12 @@ historical release records remain stable.
   milestones, bundle finalization, partial failures, reruns, and `single_repo`
   compatibility.
 - The end-to-end assurance path must be deterministic and non-secret.
+- Assurance runs must use durable run and step identities for side-effecting
+  cleanup and handoff steps.
+- Stale assurance attempts must be rejected when a newer corrected attempt has
+  superseded them.
+- Cleanup and handoff reruns must be guarded by idempotency or recorded
+  completion so they cannot repeat a side effect.
 - A skipped assurance scenario must state why it is not applicable.
 - Existing historical release records must not be automatically rewritten by
   adoption.
@@ -332,6 +341,27 @@ historical release records remain stable.
 After `validated` returns to `configured`, the next assurance run supersedes the
 previous validation result and must end in either `validated` or `blocked`.
 
+### Assurance Outcomes
+
+Assurance outcomes describe individual harness scenarios and are separate from
+the adoption status of a repository or release path.
+
+| Code value | Display label | Description |
+| --- | --- | --- |
+| `pass` | Pass | The scenario completed and met its required assertion. |
+| `fail` | Fail | The scenario completed but violated its required assertion. |
+| `blocked` | Blocked | The scenario could not run because required setup, evidence, or ownership information is missing or unsafe. |
+| `skipped` | Skipped | The workflow maintainer marked the scenario not applicable and recorded a rationale before the run completed. |
+| `retryable` | Retryable | The scenario stopped on a recoverable condition and can run again after correction without losing accepted evidence. |
+
+The workflow maintainer determines scenario applicability before accepting the
+assurance result. A skipped scenario keeps adoption eligible for `validated`
+only when the rationale proves the scenario is outside the current adoption
+scope. A retryable scenario maps to adoption status `blocked` until a corrected
+rerun ends in `pass`, `skipped` with rationale, or another terminal assurance
+outcome. Any `fail` or unresolved `blocked` scenario maps the adoption status to
+`blocked`.
+
 ## Operational Visibility
 
 - **Logs**: Adoption and assurance runs must report configuration scope,
@@ -359,7 +389,7 @@ previous validation result and must end in either `validated` or `blocked`.
       failures, reruns, and `single_repo` compatibility.
 - [ ] The full multi-repository release path has an end-to-end non-secret
       fixture or equivalent deterministic harness that reports pass/fail/blocked
-      outcomes and produced evidence.
+      /skipped/retryable outcomes and produced evidence.
 - [ ] Prospective migration guidance states that historical milestones and other
       historical release records are not rewritten automatically.
 - [ ] Skipped or not-applicable assurance checks include an explicit rationale.
@@ -369,22 +399,22 @@ previous validation result and must end in either `validated` or `blocked`.
 
 ## Coverage Matrix
 
-| Brief objective | Covered by |
+| Objective ID | Covered by |
 | --- | --- |
-| Add setup, operating, migration, and troubleshooting guidance for workflow hubs | AC1 |
-| Add setup, operating, migration, and troubleshooting guidance for product repositories | AC2 |
-| Add regression coverage for component routing | AC4, AC5 |
-| Add regression coverage for configuration validation | AC4, AC5 |
-| Add regression coverage for milestones | AC4, AC5 |
-| Add regression coverage for bundle finalization | AC4, AC5 |
-| Add regression coverage for partial failures | AC4, AC5 |
-| Add regression coverage for reruns | AC4, AC5 |
-| Add regression coverage for `single_repo` compatibility | AC4, AC5 |
-| Add release-runbook or self-review evidence requirements for hub operations | AC3 |
-| Add release-runbook or self-review evidence requirements for product operations | AC3 |
-| Define prospective migration behavior | AC1, AC6 |
-| Do not alter historical milestones automatically | AC6 |
-| Provide an end-to-end non-secret fixture or deterministic harness | AC5 |
+| O1 | AC1 |
+| O2 | AC2 |
+| O3 | AC4, AC5 |
+| O4 | AC4, AC5 |
+| O5 | AC4, AC5 |
+| O6 | AC4, AC5 |
+| O7 | AC4, AC5 |
+| O8 | AC4, AC5 |
+| O9 | AC4, AC5 |
+| O10 | AC3 |
+| O11 | AC3 |
+| O12 | AC1, AC6 |
+| O13 | AC6 |
+| O14 | AC5 |
 
 ## Out of Scope (MVP)
 
