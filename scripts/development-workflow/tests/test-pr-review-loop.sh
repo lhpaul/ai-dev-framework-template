@@ -2937,6 +2937,59 @@ run_test "bugbot_success_blocker_beats_explicit_skip_exit_code" "1" "$actual_exi
 rm -rf "$_bugbot_mock_dir_161b"
 unset _bugbot_mock_dir_161b actual_output actual_exit
 
+# A blocking check conclusion with only an explicit skip message should still
+# surface the authoritative skip, not a synthetic blocker.
+_bugbot_mock_dir_161c="$(mktemp -d)"
+printf '0\n' > "$_bugbot_mock_dir_161c/comment_calls"
+cat > "$_bugbot_mock_dir_161c/gh" <<'BUGBOT_GH_161C'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc161csha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -eq 1 ]; then
+      printf '[]\n'
+    else
+      printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","commit_id":"abc161csha","path":"src/lib.c","line":10,"body":"Skipping Bugbot: your auto mode classified this PR to skip. Visit the Bugbot dashboard to update your settings."}]\n'
+    fi
+    exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"failure","started_at":"2020-01-01T00:00:00Z"}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc161csha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_161C
+chmod +x "$_bugbot_mock_dir_161c/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_161c:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_failure_explicit_skip_only_result" "RESULT=skipped" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_failure_explicit_skip_only_reason" "REASON=explicit-skip" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_failure_explicit_skip_only_exit_code" "0" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_161c"
+unset _bugbot_mock_dir_161c actual_output actual_exit
+
 # ---------------------------------------------------------------------------
 # Test 16.2: needs_fixes path — conclusion=failure, blocking cursor[bot] review
 # ---------------------------------------------------------------------------
