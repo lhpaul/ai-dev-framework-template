@@ -37,6 +37,7 @@ has already landed.
 | Current batch scope | Parent `/run-items` invocation | Frozen scope: `#1423,#1424`; relationship decision recorded as orthogonal. |
 | Same-surface open PRs | `gh pr list --base develop --state open --json number,title,headRefName,files --jq '.[] | {number,title,headRefName,files:[.files[].path]}'` | No open PRs targeting `develop`; no same-surface operational conflict. |
 | Batch merge surface search | `rg -n "batch-merge.sh|mergeability|mergeStateStatus|MERGE_RESULT|CHANGELOG_DEDUPED|ready_human_merge|merge_blocked" scripts/development-workflow/batch-merge.sh docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md .agents/skills/run-items/SKILL.md .codex/skills/batch-merge/SKILL.md scripts/development-workflow/tests` | 104 matches across `batch-merge.sh`, Protocols 90/94, run-items and batch-merge skills, and existing tests. |
+| Batch command and orchestration mirror search | `rg -l "batch-merge.sh|Batch Merge|merge_blocked|ready_human_merge|remaining PR|Sequential Merge" .agents/skills .codex/skills .claude/commands .cursor/commands .claude/agents .cursor/agents` | Matching mirror files include `.agents/skills/batch-merge/SKILL.md`, `.claude/commands/batch-merge.md`, `.cursor/commands/batch-merge.md`, run-item/run-items/run-epic commands and skills, item-orchestrator/orchestrator agents, and Codex orchestration skills. |
 | Current merge helper state | `sed -n '520,780p' scripts/development-workflow/batch-merge.sh` | `merge --pr` revalidates only the PR being merged, pushes base, and marks the PR merged; it has no remaining-PR recheck subcommand. |
 | Current Protocol 94 loop | `sed -n '1,680p' docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` | Sequential loop processes one PR at a time, then cleanup, then proceeds; it does not require a recheck of unmerged siblings after each success. |
 
@@ -104,10 +105,27 @@ has already landed.
 - [ ] Update `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md`
   Step 5.5 so delegated `/run-items` batch merge handoff preserves the frozen
   in-scope PR list and consumes the refreshed outcome contract.
-- [ ] Update `.agents/skills/run-items/SKILL.md` and
-  `.codex/skills/batch-merge/SKILL.md` so Codex and command aliases require the
-  post-sibling-merge recheck and report `merged`, `merge_blocked`,
-  `policy_inconsistent`, `ready_human_merge`, or `out_of_scope` as applicable.
+- [ ] Update `.agents/skills/batch-merge/SKILL.md`,
+  `.codex/skills/batch-merge/SKILL.md`, `.claude/commands/batch-merge.md`, and
+  `.cursor/commands/batch-merge.md` so every batch-merge command surface
+  requires the post-sibling-merge recheck before selecting the next PR.
+- [ ] Update delegated orchestration mirrors that can invoke batch merge:
+  `.agents/skills/run-items/SKILL.md`,
+  `.agents/skills/run-items/agents/openai.yaml`,
+  `.agents/skills/run-item/SKILL.md`, `.agents/skills/run-epic/SKILL.md`,
+  `.codex/skills/workflow-orchestrator/SKILL.md`,
+  `.codex/skills/workflow-orchestrator/agents/openai.yaml`,
+  `.codex/skills/workflow-item-orchestrator/SKILL.md`,
+  `.codex/skills/workflow-item-orchestrator/agents/openai.yaml`,
+  `.claude/agents/orchestrator.md`, `.cursor/agents/orchestrator.md`,
+  `.claude/agents/item-orchestrator.md`,
+  `.cursor/agents/item-orchestrator.md`, `.claude/commands/run-items.md`,
+  `.cursor/commands/run-items.md`, `.claude/commands/run-item.md`,
+  `.cursor/commands/run-item.md`, `.claude/commands/run-epic.md`, and
+  `.cursor/commands/run-epic.md`.
+- [ ] Rerun the batch command and orchestration mirror search from the
+  Verification Log before submitting; every hit must be updated or explicitly
+  documented as out of scope in the implementation PR's self-review log.
 - [ ] Update `scripts/development-workflow/README.md` with the new subcommand,
   output fields, retry semantics, and caller sequence.
 
@@ -173,8 +191,8 @@ checklist.
 - [ ] `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` - add the post-sibling-merge recheck step, retry semantics, and `merge_blocked` summary.
 - [ ] `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` - require delegated `/run-items` merge supervision to pass the frozen PR list and consume refreshed outcomes.
 - [ ] `scripts/development-workflow/README.md` - document the recheck subcommand and output contract.
-- [ ] `.agents/skills/run-items/SKILL.md` - mirror the run-items delegated merge behavior.
-- [ ] `.codex/skills/batch-merge/SKILL.md` - mirror batch-merge command behavior.
+- [ ] `.agents/skills/batch-merge/SKILL.md`, `.codex/skills/batch-merge/SKILL.md`, `.claude/commands/batch-merge.md`, and `.cursor/commands/batch-merge.md` - mirror batch-merge command behavior.
+- [ ] `.agents/skills/run-items/SKILL.md`, `.agents/skills/run-items/agents/openai.yaml`, `.agents/skills/run-item/SKILL.md`, `.agents/skills/run-epic/SKILL.md`, `.codex/skills/workflow-orchestrator/SKILL.md`, `.codex/skills/workflow-orchestrator/agents/openai.yaml`, `.codex/skills/workflow-item-orchestrator/SKILL.md`, `.codex/skills/workflow-item-orchestrator/agents/openai.yaml`, `.claude/agents/orchestrator.md`, `.cursor/agents/orchestrator.md`, `.claude/agents/item-orchestrator.md`, `.cursor/agents/item-orchestrator.md`, `.claude/commands/run-items.md`, `.cursor/commands/run-items.md`, `.claude/commands/run-item.md`, `.cursor/commands/run-item.md`, `.claude/commands/run-epic.md`, and `.cursor/commands/run-epic.md` - mirror delegated orchestration behavior.
 - [ ] `REVIEW.md` - update only if implementation adds reviewer-visible checks for stale mergeability evidence.
 
 ---
