@@ -71,6 +71,46 @@ Use this when:
 - An agent needs a deterministic destination check before creating a backlog item.
 - You want to create a GitHub issue from a shell environment without manual `gh` typing.
 
+### `batch-merge.sh recheck-remaining`
+
+Refreshes mergeability for the frozen in-scope PR list after a sibling PR has
+merged into the target base.
+
+Usage:
+
+```bash
+./scripts/development-workflow/batch-merge.sh recheck-remaining \
+  --prs 101,102,103 \
+  --after-merged-pr 101 \
+  --base develop
+```
+
+What it does:
+
+- Parses only the comma-separated `--prs` list as the mutation scope.
+- Skips the just-merged PR and rechecks every remaining in-scope PR in original
+  order.
+- Emits one compact JSON object per line with fields for PR number, original
+  order, invalidating sibling PR, refreshed base/head refs, merge state, checks
+  state, classification, retryability, attempts, deadline, outcome, and reason.
+- Reports open PRs targeting the base but absent from `--prs` as
+  `out_of_scope_observation` records only; it never labels, merges, retries, or
+  adds those PRs to the batch.
+
+Retry configuration:
+
+- `BATCH_MERGE_RECHECK_ATTEMPTS` defaults to `3`.
+- `BATCH_MERGE_RECHECK_SLEEP_SECONDS` defaults to `10`.
+- `BATCH_MERGE_RECHECK_DEADLINE_SECONDS` defaults to `60`.
+
+Exit behavior:
+
+- Exit `0` means all records were fetched and classified, including
+  `merge_blocked` records.
+- Exit `2` means invalid input, invalid retry config, GitHub/API failure,
+  malformed response, or another helper failure. The helper emits a
+  `helper_failed` JSON record when stdout is still available.
+
 ### `discover-workflow-state.sh`
 
 Prints a compact snapshot of the repository's workflow-related state.

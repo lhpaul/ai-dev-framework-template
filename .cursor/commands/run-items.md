@@ -104,8 +104,9 @@ Key responsibilities:
   `gh pr merge <pr> --admin` attempt. Then route normal candidates into
   Protocol 94 batch merge using only the explicit in-scope PR list: run
   `batch-merge.sh discover --prs <comma-separated-in-scope-prs>` and continue
-  through merge, cleanup, and tracker reconciliation. Never use Protocol 94
-  auto-discovery from `/run-items`. If any stage does not allow merge, finish at the
+  through merge, cleanup, post-sibling-merge `recheck-remaining` calls, and
+  tracker reconciliation while keeping that explicit PR list frozen. Never use
+  Protocol 94 auto-discovery from `/run-items`. If any stage does not allow merge, finish at the
   `ready-for-human-review` handoff, report the exact
   `stages.<stage>.may_merge_pr: false` guardrail for each affected PR, and tell
   the human to invoke `/batch-merge` or adjust guardrails to permit delegated

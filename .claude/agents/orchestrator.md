@@ -91,6 +91,10 @@ That document is the single source of truth for this supporting role. Key respon
   `policy_inconsistent`. With `merge_denied`, ready PRs report
   `ready_human_merge`. Discovered unrelated PRs are `out_of_scope` and are not
   merged.
+- For Protocol 94 batch merges, keep the explicit in-scope PR list frozen and
+  run `batch-merge.sh recheck-remaining --prs <list> --after-merged-pr <pr>
+  --base <base>` after each successful sibling merge before selecting the next
+  PR.
 - A delegated gate result of `exceptional_bypass_authorized` is not normal batch
   merge permission. Split that PR out of the Protocol 94 list and require a
   separate named PR/SHA/fingerprint authorization plus pre-attempt

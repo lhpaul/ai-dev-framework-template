@@ -36,6 +36,7 @@ Follow `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md`
      - All other files (or overlapping doc changes): pause, show conflict markers, wait for human to resolve or abort.
    - On `MERGE_RESULT=failed`: report the error, mark `failed`, continue.
    - After each successful merge: complete the post-merge sequence from Protocol 94 Step 4.2 (push the target base branch, verify GitHub shows `MERGED`, delete the remote branch if it still exists, create a temporary local branch if needed, then run `./scripts/development-workflow/post-merge-cleanup.sh --base <target-base> <branch>`).
+   - Before selecting the next PR, run `./scripts/development-workflow/batch-merge.sh recheck-remaining --prs <comma-separated-approved-pr-list> --after-merged-pr <number> --base <target-base>` for the frozen in-scope PR list. Continue only with remaining PRs whose refreshed JSONL record is `classification=clean`; record `classification=merge_blocked` as `merge_blocked`, and treat `out_of_scope_observation` as read-only.
 
 7. **Final summary**: always print a table listing every candidate PR with its outcome code (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, `failed`, `not_attempted`).
 

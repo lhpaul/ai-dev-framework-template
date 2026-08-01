@@ -312,7 +312,37 @@ After a clean or resolved merge, in order:
 
    If cleanup fails: report the failure but **do not halt remaining merges**. The human can re-run cleanup manually.
 
-5. Report the per-PR outcome immediately (see outcome codes in Step 5).
+5. **Recheck remaining in-scope PRs before selecting the next merge.**
+
+   When the approved batch has any unmerged in-scope PRs after this merge,
+   prior mergeability evidence for those PRs is stale. Run:
+
+   ```bash
+   ./scripts/development-workflow/batch-merge.sh recheck-remaining \
+     --prs <comma-separated-approved-pr-list> \
+     --after-merged-pr <number> \
+     --base "$BASE_BRANCH"
+   ```
+
+   Parse each JSONL record before attempting another merge:
+   - `classification=clean` and `outcome=continue` means the PR may remain in
+     the candidate set, subject to the existing order and guardrails.
+   - `classification=retryable` means the helper is still supervising pending
+     or unknown state; do not merge until the helper emits a terminal record.
+   - `classification=merge_blocked` means record the PR outcome as
+     `merge_blocked`, including `invalidating_sibling_pr`, `merge_state`,
+     `checks_state`, and `reason`, then skip that PR without reordering.
+   - `classification=out_of_scope_observation` is read-only information. Do
+     not label, merge, retry for mutation, or add that PR to the frozen list.
+   - `classification=helper_failed` or a non-zero helper exit is batch-fatal
+     for the current sequence; stop before any further merge attempt and report
+     the helper reason.
+
+   The helper preserves the frozen `--prs` order. Continue only with remaining
+   in-scope PRs that independently recheck clean after the latest sibling
+   merge.
+
+6. Report the per-PR outcome immediately (see outcome codes in Step 5).
 
 ### 4.3 Conflict classification
 
@@ -441,8 +471,10 @@ Batch Merge Summary
  #103  │ fix: conflict fix            │ merged_human
  #104  │ feat: missing label          │ skipped_not_ready
  #105  │ fix: bad conflict            │ skipped_conflict
+ #106  │ feat: invalidated sibling    │ merge_blocked
+ #107  │ feat: outside frozen scope    │ out_of_scope
 ──────────────────────────────────────────────────────────────────────────────
-Merged: 3  |  Skipped: 2  |  Failed: 0  |  Not attempted: 0
+Merged: 3  |  Skipped: 2  |  Blocked: 1  |  Observed: 1  |  Failed: 0  |  Not attempted: 0
 ```
 
 **Outcome codes**:
@@ -454,10 +486,12 @@ Merged: 3  |  Skipped: 2  |  Failed: 0  |  Not attempted: 0
 | `merged_human`      | Merged after human resolved non-trivial conflict(s)                                      |
 | `skipped_not_ready` | Skipped because PR lacked `ready-for-human-review` and human chose to exclude it         |
 | `skipped_conflict`  | Skipped because human aborted conflict resolution; `develop` returned to pre-merge state |
+| `merge_blocked`     | Held because a post-sibling-merge recheck found non-clean or exhausted retry state       |
+| `out_of_scope`      | Observed during recheck but outside the frozen approved PR list; no mutation performed   |
 | `failed`            | Merge failed for an unexpected reason                                                    |
 | `not_attempted`     | PR was not processed when human aborted the entire batch                                 |
 
-Include details of any auto-resolved conflicts in the summary (which files, what entries were combined).
+Include details of any auto-resolved conflicts in the summary (which files, what entries were combined). For `merge_blocked`, include the invalidating sibling PR, refreshed merge state, refreshed checks state, and helper reason.
 
 ---
 
