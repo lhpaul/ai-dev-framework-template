@@ -12,10 +12,17 @@ Usage: setup-multi-repo-release-assurance-fixture.sh --output-dir DIR [--json]
 EOF
 }
 
+fail() {
+  local code="$1"
+  local message="$2"
+  printf 'ERROR_CODE=%s message=%q\n' "$code" "$message" >&2
+  exit 2
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --output-dir)
-      [ "$#" -ge 2 ] || { usage; exit 2; }
+      [ "$#" -ge 2 ] || { usage; fail "missing_output_dir_value" "--output-dir requires a value"; }
       OUTPUT_DIR="$2"
       shift 2
       ;;
@@ -28,14 +35,16 @@ while [ "$#" -gt 0 ]; do
       exit 0
       ;;
     *)
-      echo "Unknown argument: $1" >&2
       usage
-      exit 2
+      fail "unknown_argument" "unknown argument: $1"
       ;;
   esac
 done
 
-[ -n "$OUTPUT_DIR" ] || { usage; exit 2; }
+[ -n "$OUTPUT_DIR" ] || { usage; fail "missing_output_dir" "--output-dir is required"; }
+if ! command -v jq >/dev/null 2>&1; then
+  fail "missing_jq" "jq is required"
+fi
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(CDPATH='' cd -- "$OUTPUT_DIR" && pwd -P)"
 
