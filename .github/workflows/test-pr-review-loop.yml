@@ -13,8 +13,10 @@ on:
       - 'scripts/development-workflow/workflow-next-action.sh'
       - 'scripts/development-workflow/hub-*.sh'
       - 'scripts/development-workflow/open-product-pr.sh'
+      - 'scripts/development-workflow/workflow-branch-push-guard.sh'
       - 'scripts/development-workflow/validate-workflow-hub-skeletons.py'
       - 'scripts/development-workflow/tests/test-pr-review-loop.sh'
+      - 'scripts/development-workflow/tests/test-workflow-branch-push-guard.sh'
       - 'scripts/development-workflow/tests/test-haystack-commit-msg-hook.sh'
       - 'scripts/development-workflow/tests/test-workflow-hub-smoke-fixtures.sh'
       - 'scripts/development-workflow/tests/fixtures/workflow-hub-smoke/**'
@@ -38,6 +40,9 @@ jobs:
 
       - name: Run pr-review-loop test harness
         run: bash scripts/development-workflow/tests/test-pr-review-loop.sh
+
+      - name: Run workflow branch push guard test harness
+        run: bash scripts/development-workflow/tests/test-workflow-branch-push-guard.sh
 
       - name: Run Haystack commit-msg hook test harness
         run: bash scripts/development-workflow/tests/test-haystack-commit-msg-hook.sh

@@ -43,6 +43,10 @@ Recommended model tier: `economy`
    `policy_inconsistent`. With `merge_denied`, ready PRs report
    `ready_human_merge`. Discovered unrelated PRs are `out_of_scope` and are not
    merged.
+   Delegated batch merge authority never authorizes force-pushing a PR branch;
+   if a destructive PR branch update would be required, stop before mutation and
+   route the exact operation through
+   `scripts/development-workflow/workflow-branch-push-guard.sh`.
 15. When supervising sweep, batch, helper-extraction, numeric-target, or
    pattern-completeness items, require residual gate evidence before accepting
    `ready-for-human-review` as terminal.

@@ -16,7 +16,10 @@ Recommended model tier: `premium`
    each completed logical sub-part, do not intentionally batch all completed
    sub-parts into one end-of-run commit, and never commit incomplete, failing,
    or incoherent edits only to satisfy the requirement.
-7. Before any other planning work, run the Step 0 Template-Fit Check: read `.ai-dev-workflow.yaml` and if `template.is_template` is `true`, evaluate whether the spec is generic enough for a framework template. If the spec references a framework-specific language or runtime not used by the template's own toolchain (e.g., React, Rails, Django), surface the structured warning from Step 0 and halt until the human responds. Do not write any plan content while this check is pending.
+7. Use follow-up commits for published plan PR branches. If a destructive
+   branch update would be required, stop before mutation and route the exact
+   push through `scripts/development-workflow/workflow-branch-push-guard.sh`.
+8. Before any other planning work, run the Step 0 Template-Fit Check: read `.ai-dev-workflow.yaml` and if `template.is_template` is `true`, evaluate whether the spec is generic enough for a framework template. If the spec references a framework-specific language or runtime not used by the template's own toolchain (e.g., React, Rails, Django), surface the structured warning from Step 0 and halt until the human responds. Do not write any plan content while this check is pending.
 8. When the spec implies pattern-based completeness, run a live repo query, record a Verification Log, and only use frozen enumerations when explicitly authorized in the spec.
 9. For sweep, batch, helper-extraction, numeric-target, or pattern-completeness
    plans, name the residual verification strategy and evidence source

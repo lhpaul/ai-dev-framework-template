@@ -479,5 +479,9 @@ The orchestrator should include the batch-merge summary in its overall `Step 6: 
 - **The base branch must never be left in a conflicted state.** Every code path that encounters a conflict has either a resolution path or a `git merge --abort` fallback.
 - **Do not use `gh pr close`.** The merge must be recognized by GitHub as a real merge, not a closed-unmerged PR.
 - **Do not force-push** or rebase PR branches.
+- If conflict recovery or remaining-PR supervision would require rewriting a
+  workflow PR branch, stop before mutation and route the exact operation through
+  `scripts/development-workflow/workflow-branch-push-guard.sh`; batch merge
+  approval does not authorize a force-push.
 - **Already-merged PRs stay merged** even if the human aborts the batch mid-run.
 - If `post-merge-cleanup` fails, report the failure and continue — do not halt remaining merges.

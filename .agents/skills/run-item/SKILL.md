@@ -54,6 +54,9 @@ advances exactly one non-epic item through Protocol 91.
    Stop before mutation on `incompatible` or `verification_blocked`, report the
    evidence and human action, and never delete, reset, rebase, check out, or
    force-push the branch automatically. Tracking divergence is diagnostic only.
+   If a published workflow PR branch update would require a destructive push,
+   stop before mutation and route the exact operation through
+   `scripts/development-workflow/workflow-branch-push-guard.sh`.
 8. Before dispatching a Backlog item into Writing Spec, run or consume
    `scripts/development-workflow/spec-dispatch-context.sh`. For direct
    single-item runs, pass the selected item plus relevant in-scope Backlog peers

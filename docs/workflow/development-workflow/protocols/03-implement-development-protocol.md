@@ -108,6 +108,18 @@ the approved work through the normal PR path. Do not force-push, rebase, reset,
 or otherwise rewrite shared history. After pushing the replacement, verify that
 its normal push-triggered checks start; escalate if they do not.
 
+### Workflow PR Branch Push Guard
+
+For implementation and review-fix branches, use focused follow-up commits after
+a branch has been published. Before any workflow PR branch update that would use
+`--force`, `--force-with-lease`, a `+<src>:<dst>` refspec, or another remote
+history rewrite, run
+`scripts/development-workflow/workflow-branch-push-guard.sh` and let the helper
+perform the push. General workflow confirmation, delegated review authority,
+delegated merge authority, and risk acceptance are not authorization for a
+shared-history rewrite. If the guard blocks, stop before mutation and report the
+safe follow-up commit path or the exact human authorization evidence required.
+
 ## Scope-Residual Evidence Gate
 
 When the item title, body, spec, or plan describes sweep, batch, helper

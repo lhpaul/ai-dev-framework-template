@@ -71,6 +71,22 @@ Use this when:
 - An agent needs a deterministic destination check before creating a backlog item.
 - You want to create a GitHub issue from a shell environment without manual `gh` typing.
 
+### `workflow-branch-push-guard.sh`
+
+Executes workflow PR branch pushes behind the repository no-force-push policy.
+Use normal follow-up commits for published PR branches whenever possible. If a
+workflow branch update would rewrite remote history, call this helper with the
+canonical repository, full `refs/heads/<branch>` ref, PR number, push mode,
+expected remote tip, authorization JSON, and the exact `git push` arguments
+after `--`.
+
+The helper permits normal pushes, permits first publication only after a fresh
+remote-ref no-match check, and blocks destructive modes unless trusted,
+single-use human authorization matches the current repository, PR, branch ref,
+action, operator, and expected remote tip. It emits stable
+`PUSH_GUARD_RESULT`, `PUSH_GUARD_REASON`, `BRANCH_REF`,
+`EXPECTED_REMOTE_TIP`, and `AUTHORIZATION_CONSUMED` fields.
+
 ### `discover-workflow-state.sh`
 
 Prints a compact snapshot of the repository's workflow-related state.

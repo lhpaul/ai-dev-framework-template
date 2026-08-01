@@ -1,202 +1,72 @@
-# Smoke Test Runbook: Agent Behavior No-Force-Push Guard
+# No-Force-Push Guard Smoke Test
 
-**Feature**: Agent behavior no-force-push guard
-**Spec**: [Agent Behavior No-Force-Push Guard - Spec](../../specs/developments/20260801142411_1423-agent-behavior-no-force-push/1_1423-agent-behavior-no-force-push_specs.md)
-**Created in**: Plan Ready stage
-**Updated in**: In Development stage
+## Scope
 
----
+Issue #1423 adds an execution-time guard for workflow PR branch updates that
+would rewrite published history.
 
-## Prerequisites
+## Preconditions
 
-Before running this smoke test:
+- `gh` is authenticated for the repository when running a real authorization
+  check.
+- The implementation PR has run the unit harness:
+  `bash scripts/development-workflow/tests/test-workflow-branch-push-guard.sh`.
 
-- [ ] You are in a disposable clone or temporary Git fixture, not a repository
-      with human work in progress.
-- [ ] `gh`, `git`, `jq`, and Bash are available.
-- [ ] The corresponding implementation has landed on the branch being
-      validated, including `workflow-branch-push-guard.sh` and its regression
-      tests. This runbook validates post-merge behavior, not an unmerged plan
-      branch.
-- [ ] The test helper can create temporary local and remote branches in the
-      disposable fixture.
+## Checks
 
----
+1. Run the guard harness and confirm unauthorized destructive updates stop
+   before mutation:
 
-## Test Data
+   ```bash
+   bash scripts/development-workflow/tests/test-workflow-branch-push-guard.sh
+   ```
 
-| Item | Value |
+   Expected: the `missing_auth_blocks`, `missing_auth_no_push`,
+   `stale_tip_blocks`, and `untrusted_source_blocks` cases pass.
+
+2. Confirm normal branch updates remain allowed:
+
+   ```bash
+   bash scripts/development-workflow/tests/test-workflow-branch-push-guard.sh
+   ```
+
+   Expected: the `normal_published_allowed` and `normal_unpublished_allowed`
+   cases pass.
+
+3. Confirm narrowly authorized destructive updates are single-use and
+   conditional:
+
+   ```bash
+   bash scripts/development-workflow/tests/test-workflow-branch-push-guard.sh
+   ```
+
+   Expected: `authorized_allowed`, `authorized_consumed`,
+   `existing_claim_blocks`, and `conditional_failure_blocks` pass.
+
+4. Confirm delegated merge risk blockers remain independent from branch-push
+   authorization:
+
+   ```bash
+   bash scripts/development-workflow/tests/test-run-epic-risk-classifier.sh
+   ```
+
+   Expected: the `push_authorization_does_not_clear_*` cases pass.
+
+5. Inspect the implementation PR self-review log for the branch-update guidance
+   inventory. Expected: spec, plan, implementation, review-fix, item
+   orchestration, and batch supervision surfaces either reference
+   `workflow-branch-push-guard.sh` or are documented as out of scope.
+
+## Acceptance Mapping
+
+| Acceptance criterion | Evidence |
 | --- | --- |
-| Test PR branch | Temporary branch created by the test fixture |
-| Remote tip | Captured before each guarded push attempt |
-| Authorization fixture | Temporary canonical JSON file with matching and mismatched records |
-| Feature command | `scripts/development-workflow/workflow-branch-push-guard.sh` |
-
----
-
-## Smoke Test Steps
-
-### Step 1: Run the automated guard regression
-
-**Maps to**: AC1, AC2, AC3, AC4, AC5, AC6, AC7, AC9, AC10
-
-1. Run `bash scripts/development-workflow/tests/test-workflow-branch-push-guard.sh`.
-2. Confirm the output reports passing cases for unauthorized destructive push
-   blocking, safe follow-up push, local-only amend allowance, exact authorized
-   exception, stale remote tip, mismatched scope, expiry, and replay.
-
-**Expected result**: The regression exits zero and every listed guard scenario
-passes.
-
-### Step 2: Verify unauthorized destructive update stops before mutation
-
-**Maps to**: AC1, AC2
-
-1. In the disposable fixture, create and push a PR-like branch.
-2. Attempt a guarded destructive update without an authorization record:
-   `scripts/development-workflow/workflow-branch-push-guard.sh --repo-root "$PWD" --remote origin --repo lhpaul/ai-dev-framework-template --branch-ref refs/heads/<branch> --mode force-with-lease --pr <number> --expected-remote-tip <sha> -- git push --force-with-lease=refs/heads/<branch>:<sha> origin HEAD:refs/heads/<branch>`.
-3. Read the guard output.
-4. Re-read the remote branch tip.
-
-**Expected result**: The guard reports a blocked result naming the branch, the
-prohibited action, and that general workflow confirmation is insufficient. It
-exits `1` with `PUSH_GUARD_REASON=missing_authorization`, and the remote tip is
-unchanged.
-
-### Step 3: Verify safe follow-up commit path
-
-**Maps to**: AC3
-
-1. Add a normal follow-up commit to the pushed test branch.
-2. Run the guarded normal push path:
-   `scripts/development-workflow/workflow-branch-push-guard.sh --repo-root "$PWD" --remote origin --repo lhpaul/ai-dev-framework-template --branch-ref refs/heads/<branch> --mode normal --pr <number> -- git push origin HEAD:refs/heads/<branch>`.
-3. Re-read the remote branch tip.
-
-**Expected result**: The guard allows the push and the remote branch advances
-without rewriting history. It exits `0` with
-`PUSH_GUARD_REASON=normal_push_allowed`.
-
-### Step 4: Verify local-only amend remains allowed
-
-**Maps to**: AC4
-
-1. Create a local branch that has not been pushed.
-2. Amend the local commit.
-3. Run the guarded first-publish path with `--mode normal`.
-4. Confirm the guard used a fresh remote-ref existence check rather than local
-   upstream metadata to classify the branch as unpublished.
-5. Repeat with an authentication failure, malformed remote, and remote pointing
-   to a different repository.
-
-**Expected result**: The first publish is allowed because no published PR branch
-history is rewritten and the remote branch ref did not exist immediately before
-the publish. The guard exits `0` with
-`PUSH_GUARD_REASON=unpublished_ref_allowed` only for Git's explicit no-match
-status. Authentication, transport, malformed-remote, and repository mismatch
-cases fail closed instead of proving the branch is unpublished.
-
-### Step 5: Verify exact authorized exception
-
-**Maps to**: AC5, AC6, AC7, AC8
-
-1. Create a canonical JSON authorization record with these required fields:
-   `schema_version`, `authorization_id`, `canonical_repo`, `pr_number`,
-   `branch_ref`, `action`, `expected_remote_tip`, `operator_login`,
-   `authorized_by`, `source_kind`, `source_id`, `source_url`,
-   `source_fingerprint_sha256`, `issued_at`, `expires_at`, and
-   `single_use: true`.
-2. Ensure the trusted source behind `source_url` is authored by the
-   authenticated human operator and that its fingerprint matches the JSON
-   record.
-3. Run the guarded destructive update with:
-   `scripts/development-workflow/workflow-branch-push-guard.sh --repo-root "$PWD" --remote origin --repo lhpaul/ai-dev-framework-template --branch-ref refs/heads/<branch> --mode force-with-lease --pr <number> --expected-remote-tip <sha> --authorization-json <auth.json> -- git push --force-with-lease=refs/heads/<branch>:<sha> origin HEAD:refs/heads/<branch>`.
-4. Attempt to reuse the same record.
-5. Repeat with records that use PR-only scope, the wrong repository, a
-   same-named branch in a different repository, wrong action, stale tip,
-   expired authorization, tampered source fingerprint, and unauthorized writer.
-6. Run two concurrent guarded attempts with the same valid record from separate
-   workspaces or processes.
-7. Simulate a conditional ref-update failure after the local claim and verify
-   the claim rolls back without counting as successful consumption.
-
-**Expected result**: The exact matching update succeeds once through a
-server-side conditional ref update with the full expected tip. Concurrent
-same-record attempts from separate workspaces allow exactly one claimant to
-proceed through the shared GitHub claim marker. PR-only, mismatched, stale,
-expired, tampered, unauthorized-writer, remote URL mismatch, remote lookup
-failure, or replayed records are blocked. Conditional update failure posts a
-claim rollback marker and requires fresh authorization for the new remote tip.
-Existing risk-classifier hard blockers are not cleared by the push
-authorization.
-
-### Step 6: Verify guidance inventory classification
-
-**Maps to**: AC9, AC10
-
-1. Run the implementation PR's push-inventory command across workflow scripts,
-   protocols, `.agents/skills`, `.codex/skills`, `.claude/agents`,
-   `.cursor/agents`, `.claude/commands`, and `.cursor/commands`.
-2. Confirm every matched push or branch-update guidance entry is classified by
-   force behavior, remote, wrapper, multiline form, and test scope.
-3. Confirm each non-test spec, plan, implementation, review-fix, and
-   batch-supervision surface either references the shared guard or is explicitly
-   listed as out of scope in the implementation PR self-review log.
-
-**Expected result**: The self-review log contains an executable inventory and
-out-of-scope classification; there is no unclassified branch-update guidance.
-
-### Last Step: Validate & Shut Down
-
-- Verify all assertions in the checklist below are met.
-- Remove temporary local and remote branches created by the disposable fixture.
-
----
-
-## Assertions Checklist
-
-- [ ] Unauthorized destructive PR branch updates stop before remote mutation.
-- [ ] Stop output names the branch, action, and missing exact authorization.
-- [ ] Safe follow-up commits can update an already-pushed PR branch.
-- [ ] Local-only amend before first publication remains allowed only when a
-      fresh remote-ref existence check proves the branch is unpublished.
-- [ ] Exact destructive authorization is scoped to canonical repo, full branch
-      ref, repository-scoped PR number, action, expected tip, authenticated
-      operator, trusted source, and single-use claim.
-- [ ] PR-only, stale-tip, mismatched-scope, tampered, unauthorized-writer,
-      remote URL mismatch, remote lookup failure, and consumed-record
-      authorizations block.
-- [ ] Concurrent same-record attempts from separate workspaces allow exactly one
-      success; replay after consumption blocks.
-- [ ] Conditional ref-update failure records claim rollback rather than counting
-      as successful authorization consumption.
-- [ ] `force_push_required` and `destructive_action_required` remain separate
-      hard blocker classifications.
-- [ ] The implementation PR includes an executable inventory proving spec, plan,
-      implementation, review-fix, and batch-supervision guidance points to the
-      shared guard or is explicitly out of scope.
-
----
-
-## Seed Data Reference
-
-| Entity | Scenario | How to load |
-| --- | --- | --- |
-| Temporary Git fixture | Published branch, unpublished branch, remote-tip changes | Created by `test-workflow-branch-push-guard.sh` |
-| Authorization records | Matching, PR-only, mismatched, stale, expired, tampered, unauthorized-writer, remote-mismatch, lookup-failure, concurrent, replayed | Created by `test-workflow-branch-push-guard.sh` |
-
----
-
-## Troubleshooting
-
-| Symptom | Likely cause | Fix |
-| --- | --- | --- |
-| Remote tip changed unexpectedly | The fixture reused an existing branch | Rerun in a fresh temp repository or delete the fixture branch |
-| Authorization appears valid but blocks | Operator, full ref, action, or expected tip differs | Print the guard's parsed fields and compare to the fixture |
-| Risk classifier no longer blocks | Implementation coupled push authorization to PR risk clearance | Restore independent risk-classifier blocker handling |
-
----
-
-## Known Limitations
-
-- The smoke runbook uses disposable Git fixtures; do not run destructive branch
-  update tests against shared human branches.
+| Unauthorized force push blocks before mutation | Guard harness missing-authorization and no-push assertions |
+| Stop message names branch/action/missing authorization | Stable `PUSH_GUARD_*` output fields |
+| Safe follow-up push proceeds | Guard harness normal published branch assertion |
+| Local-only unpublished publish remains allowed | Guard harness unpublished ref assertion |
+| Exact human authorization proceeds once | Guard harness authorized and consumed assertions |
+| Scope mismatch or stale tip blocks | Guard harness wrong-repo, stale-tip, untrusted-source assertions |
+| Conditional update failure does not consume success | Guard harness rollback/conditional failure assertion |
+| Risk blockers remain hard blockers | Risk-classifier authorization regression |
+| Guard applies across workflow stages | Protocol and agent/skill guidance inventory |

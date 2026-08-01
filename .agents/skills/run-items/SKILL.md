@@ -110,8 +110,11 @@ proposal step.
    explicit in-scope PR list:
    run
    `batch-merge.sh discover --prs <comma-separated-in-scope-prs>` and continue
-   through merge, cleanup, and tracker reconciliation. Never use Protocol 94
-   auto-discovery from `/run-items`. If any stage does not allow merge, finish at the
+   through merge, cleanup, and tracker reconciliation. Delegated batch merge
+   authority never authorizes force-pushing a PR branch; if a destructive PR
+   branch update would be required, stop before mutation and route the exact
+   operation through `scripts/development-workflow/workflow-branch-push-guard.sh`.
+   Never use Protocol 94 auto-discovery from `/run-items`. If any stage does not allow merge, finish at the
    `ready-for-human-review` handoff, report the exact
    `stages.<stage>.may_merge_pr: false` guardrail for each affected PR, and tell
    the human to invoke `$batch-merge` or adjust guardrails to permit delegated

@@ -49,6 +49,9 @@ and artifact repo root. A matching item number alone is insufficient. Only
 `incompatible` or `verification_blocked`, report their distinct evidence and
 human action, and never delete, reset, rebase, check out, or force-push the
 branch automatically. Tracking divergence is diagnostic only.
+If a published workflow PR branch update would require a destructive push, stop
+before mutation and route the exact operation through
+`scripts/development-workflow/workflow-branch-push-guard.sh`.
 
 **Checkpoint-resume gate**: When resuming after a human-checkpoint pause from a
 prior worktree-isolated run, run Protocol 91's `checkpoint-resume-gate.sh`

@@ -1711,6 +1711,14 @@ gh pr view <pr_number> --json isDraft,labels,comments \
 
 **Summary-comment recency (verifying the summary matches the _latest_ commit)**: The presence checks above confirm a reviewer-loop summary _exists_, but to confirm Step 7 ran against the **current** head commit (e.g., after a fix push or a rebase), compare the summary comment's **`updated_at`** to the latest commit's timestamp — **never `created_at`**. `pr-review-loop.sh` maintains a **single** summary comment and **updates it in place** on each run, so `created_at` reflects the _first_ run and a `created_at`-based freshness check produces false "stale / incomplete" verdicts for PRs whose summary was legitimately refreshed. Fetch `updated_at` via REST (`gh api repos/{owner}/{repo}/issues/{n}/comments`), since `gh pr view --json comments` does not expose it:
 
+**No-force-push supervision**: Batch supervision must not authorize, imply, or
+perform a force-push to any in-scope PR branch. If a sub-runner reports that a
+workflow PR branch update would require `--force`, `--force-with-lease`, a
+force refspec, or another shared-history rewrite, stop that item before remote
+mutation and require `workflow-branch-push-guard.sh` with exact trusted
+single-use human authorization. Delegated batch merge authority remains
+separate from branch-history rewrite authorization.
+
 ```bash
 # Newest summary comment's updated_at, normalized to epoch seconds, vs the
 # branch's latest commit time.
