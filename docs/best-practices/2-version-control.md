@@ -105,6 +105,13 @@ If an amend was attempted after publication, stop before force-pushing. Preserve
 the published history and use normal follow-up commits for a coherent recovery;
 ask for human direction when no safe recovery path is clear.
 
+Workflow PR branch updates that would rewrite remote history must run through
+`scripts/development-workflow/workflow-branch-push-guard.sh`. General workflow
+approval, delegated review authority, delegated merge authority, and risk
+acceptance are not force-push authorization; the guard requires exact, trusted,
+single-use human authorization for the repository, PR, full branch ref, action,
+operator, and expected remote tip.
+
 ## Safety Rules
 
 The following actions require explicit human approval before executing:

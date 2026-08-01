@@ -23,7 +23,12 @@ Recommended model tier: `premium`
    each completed logical sub-part, do not intentionally batch all completed
    sub-parts into one end-of-run commit, and never commit incomplete, failing,
    or incoherent edits only to satisfy the requirement.
-8. Before opening the draft spec PR, complete Protocol 01's Document Quality
+8. Use follow-up commits for published spec PR branches. If a destructive
+   branch update would be required, stop before mutation and route the exact
+   push through `scripts/development-workflow/workflow-branch-push-guard.sh`.
+   In `workflow_hub`, resolve the helper from `WORKFLOW_TOOL_ROOT` and pass the
+   pushed checkout as `--repo-root "$ARTIFACT_REPO_ROOT"`.
+9. Before opening the draft spec PR, complete Protocol 01's Document Quality
    Gate and include the gate log in the PR description. For tracker-backed
    briefs, include the mandatory Brief Objective List, Coverage Matrix, and
    PR-visible Deferral Notes as part of that gate. For complex workflow
