@@ -1721,6 +1721,7 @@ separate from branch-history rewrite authorization.
 
 <!-- workflow-shell-contract: bash -->
 ```bash
+bash <<'BASH'
 # Newest summary comment's updated_at, normalized to epoch seconds, vs the
 # branch's latest commit time.
 COMMIT_EPOCH=$(git log -1 --format=%ct "origin/<branch>")
@@ -1741,6 +1742,7 @@ PY
 # A summary whose updated_at epoch is >= COMMIT_EPOCH corresponds to the current
 # head; an older updated_at means Step 7 has not re-run on the latest commit
 # (genuinely stale).
+BASH
 ```
 
 **Classification table** (evaluate in order; first matching row wins):
