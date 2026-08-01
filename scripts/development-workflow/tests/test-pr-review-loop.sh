@@ -2812,6 +2812,22 @@ else
 fi
 run_test "bugbot_clean_phrase_not_usage_limit" "active" "$actual"
 
+bugbot_explicit_skip_body="Skipping Bugbot: your auto mode classified this PR to skip. Visit the Bugbot dashboard to update your settings."
+if is_bugbot_explicit_skip_message "$bugbot_explicit_skip_body"; then
+  actual="explicit_skip"
+else
+  actual="active"
+fi
+run_test "bugbot_explicit_skip_message_detected" "explicit_skip" "$actual"
+
+if is_bugbot_explicit_skip_message "Cursor Bugbot found no issues in this pull request."; then
+  actual="explicit_skip"
+else
+  actual="active"
+fi
+run_test "bugbot_clean_phrase_not_explicit_skip" "active" "$actual"
+unset bugbot_explicit_skip_body actual
+
 # ---------------------------------------------------------------------------
 # Test 16.1: clean path — check run conclusion=success, no blocking comments
 # ---------------------------------------------------------------------------
@@ -2866,6 +2882,113 @@ run_test "bugbot_clean_blocking_count" "BLOCKING_COUNT=0" \
 run_test "bugbot_clean_exit_code" "0" "$actual_exit"
 rm -rf "$_bugbot_mock_dir_161"
 unset _bugbot_mock_dir_161 actual_output actual_exit
+
+# A successful check-run with both an explicit skip and a real finding must
+# preserve the blocker. The comments endpoint returns empty for Phase 1, then
+# mixed comments for the success-conclusion inspection.
+_bugbot_mock_dir_161b="$(mktemp -d)"
+printf '0\n' > "$_bugbot_mock_dir_161b/comment_calls"
+cat > "$_bugbot_mock_dir_161b/gh" <<'BUGBOT_GH_161B'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc161bsha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -eq 1 ]; then
+      printf '[]\n'
+    else
+      printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","commit_id":"abc161bsha","path":"src/lib.c","line":10,"body":"Skipping Bugbot: your auto mode classified this PR to skip. Visit the Bugbot dashboard to update your settings."},{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:01:00Z","commit_id":"abc161bsha","path":"src/lib.c","line":11,"body":"BUGBOT_REVIEW: null pointer"}]\n'
+    fi
+    exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"success","started_at":"2020-01-01T00:00:00Z"}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc161bsha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_161B
+chmod +x "$_bugbot_mock_dir_161b/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_161b:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_success_blocker_beats_explicit_skip_result" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_success_blocker_beats_explicit_skip_blocking_count" "BLOCKING_COUNT=1" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "bugbot_success_blocker_beats_explicit_skip_exit_code" "1" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_161b"
+unset _bugbot_mock_dir_161b actual_output actual_exit
+
+# A blocking check conclusion with only an explicit skip message should still
+# surface the authoritative skip, not a synthetic blocker.
+_bugbot_mock_dir_161c="$(mktemp -d)"
+printf '0\n' > "$_bugbot_mock_dir_161c/comment_calls"
+cat > "$_bugbot_mock_dir_161c/gh" <<'BUGBOT_GH_161C'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc161csha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -eq 1 ]; then
+      printf '[]\n'
+    else
+      printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","commit_id":"abc161csha","path":"src/lib.c","line":10,"body":"Skipping Bugbot: your auto mode classified this PR to skip. Visit the Bugbot dashboard to update your settings."}]\n'
+    fi
+    exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[{"name":"Cursor Bugbot","app":{"slug":"cursor"},"status":"completed","conclusion":"failure","started_at":"2020-01-01T00:00:00Z"}]}\n'
+    exit 0 ;;
+  *"headRefOid"*)
+    printf 'abc161csha\n'; exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_161C
+chmod +x "$_bugbot_mock_dir_161c/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_161c:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_failure_explicit_skip_only_result" "RESULT=skipped" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_failure_explicit_skip_only_reason" "REASON=explicit-skip" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_failure_explicit_skip_only_exit_code" "0" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_161c"
+unset _bugbot_mock_dir_161c actual_output actual_exit
 
 # ---------------------------------------------------------------------------
 # Test 16.2: needs_fixes path — conclusion=failure, blocking cursor[bot] review
@@ -2928,6 +3051,8 @@ case "$*" in
     printf 'abc162bsha\n'; exit 0 ;;
   *"--jq .commit.committer.date"*)
     printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"--method POST"*)
+    printf 'ERROR: trigger POST reached unexpectedly\n' >&2; exit 1 ;;
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
@@ -3102,6 +3227,56 @@ rm -rf "$_bugbot_mock_dir_164"
 unset _bugbot_mock_dir_164 actual_output actual_exit
 
 # ---------------------------------------------------------------------------
+# Test 16.4b: explicit Bugbot skip issue comment is warning-only
+#
+# Cursor can post an issue comment saying Bugbot skipped the PR before a check
+# run appears. That is an explicit platform decision, not an unavailable
+# reviewer; the loop must surface it as RESULT=skipped and avoid trigger POST.
+# ---------------------------------------------------------------------------
+_bugbot_mock_dir_164b="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_164b/gh" <<'BUGBOT_GH_164B'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc164bsha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","body":"Skipping Bugbot: your auto mode classified this PR to skip. Visit the Bugbot dashboard to update your settings."}]\n'
+    exit 0 ;;
+  *"check-runs"*)
+    printf '{"check_runs":[]}\n'; exit 0 ;;
+  *)
+    printf 'ERROR: unexpected gh call: %s\n' "$*" >&2; exit 1 ;;
+esac
+BUGBOT_GH_164B
+chmod +x "$_bugbot_mock_dir_164b/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_164b:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_explicit_skip_result" "RESULT=skipped" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_explicit_skip_reason" "REASON=explicit-skip" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "bugbot_explicit_skip_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "bugbot_explicit_skip_exit_code" "0" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_164b"
+unset _bugbot_mock_dir_164b actual_output actual_exit
+
+# ---------------------------------------------------------------------------
 # Test 16.5: escalate (head-sha-unavailable) — pulls API returns empty SHA
 # ---------------------------------------------------------------------------
 _bugbot_mock_dir_165="$(mktemp -d)"
@@ -3188,6 +3363,48 @@ run_test "bugbot_existing_findings_reason" "REASON=existing_findings" \
 run_test "bugbot_existing_findings_exit_code" "1" "$actual_exit"
 rm -rf "$_bugbot_mock_dir_166"
 unset _bugbot_mock_dir_166 actual_output actual_exit
+
+# Existing blockers must take precedence over an explicit skip comment.
+_bugbot_mock_dir_166b="$(mktemp -d)"
+cat > "$_bugbot_mock_dir_166b/gh" <<'BUGBOT_GH_166B'
+#!/usr/bin/env bash
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc166bsha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:00:00Z","commit_id":"abc166bsha","path":"src/lib.c","line":10,"body":"BUGBOT_REVIEW: null pointer"},{"user":{"login":"cursor[bot]"},"created_at":"2020-01-02T00:01:00Z","commit_id":"abc166bsha","path":"src/lib.c","line":11,"body":"Skipping Bugbot: your auto mode classified this PR to skip. Visit the Bugbot dashboard to update your settings."}]\n'
+    exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"check-runs"*)
+    printf 'ERROR: check-runs reached unexpectedly\n' >&2; exit 1 ;;
+  *"--method POST"*)
+    printf 'ERROR: trigger POST reached unexpectedly\n' >&2; exit 1 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+BUGBOT_GH_166B
+chmod +x "$_bugbot_mock_dir_166b/gh"
+
+unset BUGBOT_BOT_LOGIN BUGBOT_CHECK_NAME BUGBOT_TRIGGER_COMMENT
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_bugbot_overrides"
+  _ec=0
+  PATH="$_bugbot_mock_dir_166b:$PATH" run_bugbot_review "42" "feature/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "bugbot_existing_blocker_beats_explicit_skip_result" "RESULT=needs_fixes" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "bugbot_existing_blocker_beats_explicit_skip_blocking_count" "BLOCKING_COUNT=1" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "bugbot_existing_blocker_beats_explicit_skip_exit_code" "1" "$actual_exit"
+rm -rf "$_bugbot_mock_dir_166b"
+unset _bugbot_mock_dir_166b actual_output actual_exit
 
 # ---------------------------------------------------------------------------
 # Test 16.7: trigger-failed path — trigger comment POST fails

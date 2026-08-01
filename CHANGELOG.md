@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cursor model quota guidance** (#1407): Clarify Cursor Task/subagent model
   quota behavior and the decision path for one-off subagent model overrides.
 
+### Fixed
+
+- **Bugbot explicit skip handling** (#1381): Treat Cursor Bugbot explicit skip
+  comments as warning-only skipped reviews instead of unavailable or blocking
+  reviewer failures.
+
 ## [0.40.0] - 2026-07-30
 
 ### Added
