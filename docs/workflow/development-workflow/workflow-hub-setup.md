@@ -161,9 +161,9 @@ fails with guidance before orchestration reaches delegated merge gates.
 Before a workflow hub starts multi-repository release mutation, follow
 [Multi-repository release adoption](multi-repo-release-adoption.md) and record
 assurance evidence. Adoption validation must pass before release mutation unless
-the release remains in the existing `single_repo` path. The assurance evidence
-must include historical no-rewrite results for both hub-owned and product-owned
-baselines.
+the release remains in the existing `single_repo` path. Continue only when
+`adoption_status=validated` and the assurance evidence shows unchanged
+historical no-rewrite results for both hub-owned and product-owned baselines.
 
 Run the non-secret workflow-hub smoke fixture:
 

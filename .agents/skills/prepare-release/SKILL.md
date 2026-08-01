@@ -32,5 +32,6 @@ This is the Codex command-style alias for Claude Code `/prepare-release`.
    parent release status without stamping parent or delivery issues.
 8. For first-time or changed workflow-hub multi-repository adoption, collect
    self-review evidence with the multi-repository release adoption guide before
-   release mutation. Continue only when adoption assurance is validated, or stop
-   with the emitted owner action.
+   release PR creation or any release mutation. Continue only when adoption
+   assurance is validated with unchanged hub-owned and product-owned historical
+   baselines, or stop with the emitted owner action.

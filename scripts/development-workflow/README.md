@@ -155,18 +155,20 @@ Usage:
 What it does:
 
 - Emits `multi_repo_release_assurance.v1`.
-- Aggregates scenario outcomes into `adoption_status`.
-- Accepts only `pass`, `fail`, `blocked`, `skipped`, and `retryable` outcomes.
-- Treats adoption as `validated` only when every required scenario passes or
-  has an approved skipped rationale.
-- Blocks unapproved skips, failures, blocked scenarios, unresolved retryable
-  runs, repeated side effects, and historical baseline mutations.
+- Reads explicit fixture directories containing scenario inputs and historical
+  before/after baselines.
+- Writes JSON to stdout; redirect it to the release runbook or self-review
+  evidence path chosen by the operator.
+- Aggregates scenario outcomes into `adoption_status` using the canonical
+  contract in
+  `docs/workflow/development-workflow/multi-repo-release-adoption.md`.
 - Compares hub-owned and product-owned historical no-rewrite baselines.
 - Emits `owner_actions[]` and `required_next_action` for release runbook
   evidence.
 
 Run focused coverage with:
 
+<!-- workflow-shell-contract: bash -->
 ```bash
 bash scripts/development-workflow/tests/test-multi-repo-release-assurance.sh
 ```

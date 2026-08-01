@@ -116,6 +116,7 @@ workflow hub treats routed product release evidence as adopted. The adoption
 assurance must preserve historical no-rewrite baselines for hub-owned delivery
 records and product-owned release records; it must not change prior tags,
 changelog entries, milestones, delivery records, or tracker release state.
+Release mutation stops until assurance returns `adoption_status=validated`.
 
 In `single_repo` mode, all artifact ownership stays exactly as it works today:
 the tracker item, spec, plan, implementation branch, PR, CI, reviewer loop, smoke

@@ -19,6 +19,13 @@ from typing import Any, NoReturn
 
 SCHEMA = "multi_repo_release_assurance.v1"
 VALID_OUTCOMES = {"pass", "fail", "blocked", "skipped", "retryable"}
+REQUIRED_EVIDENCE = {
+    "component_routing": ["selected_product_repo_key", "canonical_repository_identity", "release_contract"],
+    "configuration_validation": ["hub_config", "product_config"],
+    "namespaced_component_milestones": ["component_evidence", "milestone_reconciliation"],
+    "bundle_finalization": ["delivery_bundle_manifest", "component_evidence"],
+    "reruns": ["run_id", "step_id", "idempotency_guard"],
+}
 
 
 class Parser(argparse.ArgumentParser):
@@ -93,13 +100,34 @@ def normalize_scenario(raw: Any) -> dict[str, Any]:
     outcome = str(raw.get("outcome") or "")
     if outcome not in VALID_OUTCOMES:
         fail("invalid_outcome", f"scenario {name} has invalid outcome: {outcome}")
-    approved_skipped = bool(raw.get("approved_skipped", False))
+    approved_skipped_raw = raw.get("approved_skipped", False)
+    if not isinstance(approved_skipped_raw, bool):
+        fail("invalid_scenario", f"scenario {name} approved_skipped must be a boolean")
+    approved_skipped = approved_skipped_raw
     if outcome == "skipped" and not approved_skipped:
         raw = {**raw, "required_next_action": raw.get("required_next_action") or "record skipped rationale before validation"}
     if raw.get("stale_attempt") is True and outcome != "retryable":
         fail("invalid_scenario", f"scenario {name} marks stale_attempt outside retryable outcome")
     if raw.get("side_effect_repeated") is True:
-        raw = {**raw, "outcome": "fail", "required_next_action": "fix idempotency or completion guard before adoption"}
+        raw = {
+            **raw,
+            "outcome": "fail",
+            "approved_skipped": False,
+            "required_next_action": "fix idempotency or completion guard before adoption",
+        }
+        approved_skipped = False
+    missing_evidence = []
+    if raw.get("required", True) is not False and raw.get("outcome") == "pass":
+        for key in REQUIRED_EVIDENCE.get(name, []):
+            value = raw.get(key)
+            if value in (None, "", [], {}):
+                missing_evidence.append(key)
+        if missing_evidence:
+            raw = {
+                **raw,
+                "outcome": "fail",
+                "required_next_action": "provide required evidence before adoption: " + ", ".join(missing_evidence),
+            }
     return {
         "name": name,
         "owner": raw.get("owner") or "hub",
@@ -112,6 +140,7 @@ def normalize_scenario(raw: Any) -> dict[str, Any]:
         "step_id": raw.get("step_id") or "",
         "supersedes": raw.get("supersedes") or "",
         "idempotency_guard": raw.get("idempotency_guard") or "",
+        "missing_evidence": missing_evidence,
     }
 
 

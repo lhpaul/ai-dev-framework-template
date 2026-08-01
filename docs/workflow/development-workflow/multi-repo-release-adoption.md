@@ -38,16 +38,17 @@ Run location: workflow hub checkout.
 2. Validate versioned and local config with
    `validate-workflow-config.sh --repo <product-repo> --require-local`.
 3. Confirm each product checkout with `hub-status.sh --repo <product-repo>`.
-4. Before release mutation, resolve the selected product with
+4. Build non-mutating assurance inputs from the intended selected product,
+   target binding, component evidence, delivery bundle state, milestone
+   reconciliation, rerun identity, and historical baselines.
+5. Run the assurance harness before release mutation. Continue only when
+   `adoption_status=validated` and both hub-owned and product-owned historical
+   baselines are unchanged.
+6. After validation, resolve and persist the selected product target with
    `component-release-target.sh --repo <product-repo> --json`.
-5. Persist `component_release_target.v1` with release evidence and create
-   `component_release_evidence.v1` from that binding.
-6. Attach component evidence to the hub-owned delivery bundle with
-   `delivery-bundle-manifest.sh update-component`.
-7. Reconcile component child milestones and parent release status with
-   `component-milestone-reconciliation.sh`.
-8. Run the assurance harness and attach its summary to the release runbook or
-   self-review evidence.
+7. Create `component_release_evidence.v1`, update the hub-owned delivery
+   bundle, reconcile component milestones, and attach the assurance summary to
+   the release runbook or self-review evidence.
 
 The hub owns tracker coordination, specs, implementation plans, delivery bundle
 manifests, component release evidence handoffs, parent release status, and
@@ -80,7 +81,12 @@ stable evidence file paths or artifact URLs that the hub can reference.
 
 `scripts/development-workflow/multi-repo-release-assurance.sh` emits
 `multi_repo_release_assurance.v1`. The summary is release self-review evidence,
-not a replacement for the release helpers it checks.
+not a replacement for the release helpers it checks. See
+[`scripts/development-workflow/README.md`](../../../scripts/development-workflow/README.md#multi-repo-release-assurancesh)
+for fixture inputs, baseline inputs, output location, and invocation details.
+Attach the generated assurance evidence to the release self-review before
+mutating release branches, changelogs, tags, GitHub Releases, delivery bundles,
+milestones, cleanup evidence, or tracker release state.
 
 | Scenario | Required evidence | Validated result |
 | --- | --- | --- |
@@ -88,7 +94,7 @@ not a replacement for the release helpers it checks.
 | Configuration validation | Hub config and product config validation records | The correcting owner is named for invalid hub or product config. |
 | Namespaced component milestones | Component evidence and milestone reconciliation output | Only the matching component child can receive `<product-repo>@<component-tag>`. |
 | Delivery bundle finalization | Delivery bundle manifest and accepted component evidence | Parent release status changes only after every declared current component is complete. |
-| Partial failures | Failed, blocked, stale, missing, or conflicting evidence | The scenario reports `blocked` or `retryable` with a required next action. |
+| Partial failures | Failed, blocked, stale, missing, or conflicting evidence | Incorrect accepted evidence reports `fail`; missing or owner-waiting evidence reports `blocked`; stale corrected attempts report `retryable`. |
 | Reruns | Durable run id, step id, supersession, and idempotency guard | Stale attempts are rejected and repeated cleanup or handoff side effects block adoption. |
 | Migration no-rewrite | Hub-owned historical baseline and product-owned historical baseline | Historical files are byte-for-byte unchanged before and after assurance. |
 | `single_repo` compatibility | Non-hub release fixture | Existing single-repository release and milestone behavior remains valid without hub fixtures. |
@@ -117,7 +123,9 @@ Use these scenario outcomes exactly:
 Adoption status is `validated` only when every required scenario is `pass` or
 approved `skipped` with rationale, and every historical no-rewrite baseline is
 unchanged. Any `fail`, `blocked`, unapproved `skipped`, unresolved `retryable`,
-or historical baseline mutation makes adoption status `blocked`.
+missing required evidence for a `pass` scenario, or historical baseline mutation
+makes adoption status `blocked`. `approved_skipped` must be a JSON boolean;
+string values such as `"false"` are invalid input.
 
 ## Historical No-Rewrite
 

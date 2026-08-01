@@ -65,10 +65,35 @@ write_manifest() {
     valid)
       jq -nS '{
         scenarios:[
-          {name:"component_routing", owner:"hub", outcome:"pass"},
-          {name:"configuration_validation", owner:"hub", outcome:"pass"},
-          {name:"namespaced_component_milestones", owner:"hub", outcome:"pass"},
-          {name:"bundle_finalization", owner:"hub", outcome:"pass"},
+          {
+            name:"component_routing",
+            owner:"hub",
+            outcome:"pass",
+            selected_product_repo_key:"mobile-app",
+            canonical_repository_identity:"example/mobile-app",
+            release_contract:"sha256:valid-contract"
+          },
+          {
+            name:"configuration_validation",
+            owner:"hub",
+            outcome:"pass",
+            hub_config:"validated",
+            product_config:"validated"
+          },
+          {
+            name:"namespaced_component_milestones",
+            owner:"hub",
+            outcome:"pass",
+            component_evidence:"component_release_evidence.v1",
+            milestone_reconciliation:"mobile-app@v1.2.3"
+          },
+          {
+            name:"bundle_finalization",
+            owner:"hub",
+            outcome:"pass",
+            delivery_bundle_manifest:"delivery_bundle_manifest.v1",
+            component_evidence:"component_release_evidence.v1"
+          },
           {name:"partial_failures", owner:"product", outcome:"pass"},
           {name:"reruns", owner:"product", outcome:"pass", run_id:"run-2", step_id:"cleanup", supersedes:"run-1", idempotency_guard:"cleanup-complete"},
           {name:"migration_no_rewrite", owner:"hub", outcome:"pass"},
@@ -98,6 +123,17 @@ write_manifest() {
         ]
       }' > "$root/assurance.json"
       ;;
+    missing-evidence)
+      jq -nS '{
+        scenarios:[
+          {name:"component_routing", owner:"hub", outcome:"pass"},
+          {name:"configuration_validation", owner:"hub", outcome:"pass"},
+          {name:"namespaced_component_milestones", owner:"hub", outcome:"pass"},
+          {name:"bundle_finalization", owner:"hub", outcome:"pass"},
+          {name:"reruns", owner:"product", outcome:"pass", run_id:"run-2"}
+        ]
+      }' > "$root/assurance.json"
+      ;;
     *)
       echo "Unknown manifest mode: $mode" >&2
       exit 2
@@ -110,8 +146,9 @@ blocked_dir="$OUTPUT_DIR/blocked"
 retryable_dir="$OUTPUT_DIR/retryable"
 history_mutation_dir="$OUTPUT_DIR/history-mutation"
 repeated_side_effect_dir="$OUTPUT_DIR/repeated-side-effect"
+missing_evidence_dir="$OUTPUT_DIR/missing-evidence"
 
-for dir in "$valid_dir" "$blocked_dir" "$retryable_dir" "$repeated_side_effect_dir"; do
+for dir in "$valid_dir" "$blocked_dir" "$retryable_dir" "$repeated_side_effect_dir" "$missing_evidence_dir"; do
   mkdir -p "$dir"
   write_baselines "$dir"
 done
@@ -123,6 +160,7 @@ write_manifest "$blocked_dir" blocked
 write_manifest "$retryable_dir" retryable
 write_manifest "$history_mutation_dir" valid
 write_manifest "$repeated_side_effect_dir" repeated-side-effect
+write_manifest "$missing_evidence_dir" missing-evidence
 
 fixture_json="$(jq -nS \
   --arg valid "$valid_dir" \
@@ -130,13 +168,15 @@ fixture_json="$(jq -nS \
   --arg retryable "$retryable_dir" \
   --arg history_mutation "$history_mutation_dir" \
   --arg repeated_side_effect "$repeated_side_effect_dir" \
+  --arg missing_evidence "$missing_evidence_dir" \
   '{
     fixtures:{
       valid:$valid,
       blocked:$blocked,
       retryable:$retryable,
       history_mutation:$history_mutation,
-      repeated_side_effect:$repeated_side_effect
+      repeated_side_effect:$repeated_side_effect,
+      missing_evidence:$missing_evidence
     }
   }')"
 

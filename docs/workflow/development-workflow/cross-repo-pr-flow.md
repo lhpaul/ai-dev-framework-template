@@ -94,10 +94,11 @@ workflow docs, still open implementation PRs in the hub repository.
 
 For adopted multi-repository releases, attach release assurance evidence from
 [Multi-repository release adoption](multi-repo-release-adoption.md) to the
-release runbook or PR self-review. The evidence must show the selected product
-target, component evidence handoff, delivery bundle status, component milestone
-reconciliation, owner actions, and historical no-rewrite result before release
-mutation proceeds.
+release runbook or PR self-review. The evidence must show
+`adoption_status=validated`, the selected product target, component evidence
+handoff, delivery bundle status, component milestone reconciliation, owner
+actions, and unchanged hub-owned and product-owned historical baseline results
+before release mutation proceeds. The existing `single_repo` path is exempt.
 
 ## Route The Work Item
 

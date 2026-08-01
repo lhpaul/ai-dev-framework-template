@@ -66,6 +66,7 @@ BLOCKED_FIXTURE="$(jq -r '.fixtures.blocked' "$fixture_json")"
 RETRYABLE_FIXTURE="$(jq -r '.fixtures.retryable' "$fixture_json")"
 HISTORY_MUTATION_FIXTURE="$(jq -r '.fixtures.history_mutation' "$fixture_json")"
 REPEATED_SIDE_EFFECT_FIXTURE="$(jq -r '.fixtures.repeated_side_effect' "$fixture_json")"
+MISSING_EVIDENCE_FIXTURE="$(jq -r '.fixtures.missing_evidence' "$fixture_json")"
 
 "$HELPER" --fixture-dir "$VALID_FIXTURE" --json > "$TMP_ROOT/valid.json"
 run_test "valid_schema" "multi_repo_release_assurance.v1" "$(jq -r '.schema_version' "$TMP_ROOT/valid.json")"
@@ -94,6 +95,11 @@ run_contains "history_mutation_action" "restore historical baseline" "$(cat "$TM
 run_test "repeated_side_effect_blocks" "blocked" "$(jq -r '.adoption_status' "$TMP_ROOT/repeated-side-effect.json")"
 run_test "repeated_side_effect_forces_fail" "fail" "$(jq -r '.scenario_results[0].outcome' "$TMP_ROOT/repeated-side-effect.json")"
 run_contains "repeated_side_effect_action" "idempotency" "$(cat "$TMP_ROOT/repeated-side-effect.json")"
+
+"$HELPER" --fixture-dir "$MISSING_EVIDENCE_FIXTURE" --json > "$TMP_ROOT/missing-evidence.json"
+run_test "missing_evidence_blocks" "blocked" "$(jq -r '.adoption_status' "$TMP_ROOT/missing-evidence.json")"
+run_test "missing_evidence_forces_fail" "fail" "$(jq -r '.scenario_results[] | select(.name == "component_routing") | .outcome' "$TMP_ROOT/missing-evidence.json")"
+run_contains "missing_evidence_action" "provide required evidence before adoption" "$(cat "$TMP_ROOT/missing-evidence.json")"
 
 "$HELPER" --fixture-dir "$VALID_FIXTURE" > "$TMP_ROOT/valid.env"
 run_contains "shell_output_status" "ADOPTION_STATUS=validated" "$(cat "$TMP_ROOT/valid.env")"
