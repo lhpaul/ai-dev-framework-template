@@ -14,7 +14,7 @@ Before running this smoke test:
 
 - [ ] You are on the #1358 implementation branch after the implementation PR
       changes are present.
-- [ ] `jq`, `git`, `python3`, Bash, and `gh` are available.
+- [ ] `jq`, `git`, `python3`, Bash, `gh`, and `rg` are available.
 - [ ] The repository has no unrelated local changes that would obscure smoke
       test output.
 - [ ] `scripts/development-workflow/component-milestone-reconciliation.sh`
