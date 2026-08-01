@@ -296,12 +296,8 @@ historical release records remain stable.
   milestones, bundle finalization, partial failures, reruns, and `single_repo`
   compatibility.
 - The end-to-end assurance path must be deterministic and non-secret.
-- Assurance runs must use durable run and step identities for side-effecting
-  cleanup and handoff steps.
-- Stale assurance attempts must be rejected when a newer corrected attempt has
-  superseded them.
-- Cleanup and handoff reruns must be guarded by idempotency or recorded
-  completion so they cannot repeat a side effect.
+- Reruns must follow the durable identity, stale-attempt rejection, and
+  idempotency requirements defined in [Use Case 3](#use-case-3-verify-the-full-release-path-with-deterministic-assurance).
 - A skipped assurance scenario must state why it is not applicable.
 - Existing historical release records must not be automatically rewritten by
   adoption.
@@ -355,12 +351,11 @@ the adoption status of a repository or release path.
 | `retryable` | Retryable | The scenario stopped on a recoverable condition and can run again after correction without losing accepted evidence. |
 
 The workflow maintainer determines scenario applicability before accepting the
-assurance result. A skipped scenario keeps adoption eligible for `validated`
-only when the rationale proves the scenario is outside the current adoption
-scope. A retryable scenario maps to adoption status `blocked` until a corrected
-rerun ends in `pass`, `skipped` with rationale, or another terminal assurance
-outcome. Any `fail` or unresolved `blocked` scenario maps the adoption status to
-`blocked`.
+assurance result. Adoption status is `validated` only when every required
+scenario is `pass` or an approved `skipped` with rationale. Adoption status is
+`blocked` when any scenario is `fail`, `blocked`, or unresolved `retryable`. A
+`retryable` scenario becomes eligible for `validated` only after a corrected
+rerun reaches `pass` or approved `skipped` with rationale.
 
 ## Operational Visibility
 
@@ -375,25 +370,25 @@ outcome. Any `fail` or unresolved `blocked` scenario maps the adoption status to
 
 ## Acceptance Criteria
 
-- [ ] A workflow maintainer can follow hub adoption guidance that identifies
+- [ ] **AC1**: A workflow maintainer can follow hub adoption guidance that identifies
       hub-owned artifacts, product-owned artifacts, validation steps,
       troubleshooting, and the prospective migration boundary.
-- [ ] A product repository maintainer can follow product adoption guidance that
+- [ ] **AC2**: A product repository maintainer can follow product adoption guidance that
       identifies product-owned release artifacts, evidence handoff
       requirements, validation steps, troubleshooting, and cleanup/retry
       expectations.
-- [ ] The release runbook or self-review evidence requirements cover both hub
+- [ ] **AC3**: The release runbook or self-review evidence requirements cover both hub
       operations and product operations.
-- [ ] Regression coverage verifies component routing, configuration validation,
+- [ ] **AC4**: Regression coverage verifies component routing, configuration validation,
       namespaced component milestones, delivery bundle finalization, partial
       failures, reruns, and `single_repo` compatibility.
-- [ ] The full multi-repository release path has an end-to-end non-secret
-      fixture or equivalent deterministic harness that reports pass/fail/blocked
-      /skipped/retryable outcomes and produced evidence.
-- [ ] Prospective migration guidance states that historical milestones and other
+- [ ] **AC5**: The full multi-repository release path has an end-to-end non-secret
+      fixture or equivalent deterministic harness that reports pass, fail,
+      blocked, skipped, and retryable outcomes and produced evidence.
+- [ ] **AC6**: Prospective migration guidance states that historical milestones and other
       historical release records are not rewritten automatically.
-- [ ] Skipped or not-applicable assurance checks include an explicit rationale.
-- [ ] Documentation uses the ownership and status language established by
+- [ ] **AC7**: Skipped or not-applicable assurance checks include an explicit rationale.
+- [ ] **AC8**: Documentation uses the ownership and status language established by
       #1353, #1354, #1356, #1357, and #1358 without redefining those runtime
       contracts.
 
