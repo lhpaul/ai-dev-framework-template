@@ -1554,6 +1554,7 @@ run_bugbot_review() {
   fi
 
   existing_blocking_file="$(mktemp)"
+  local existing_explicit_skip_seen=0
 
   while IFS= read -r comment_json; do
     [ -z "${comment_json:-}" ] && continue
@@ -1587,9 +1588,9 @@ run_bugbot_review() {
       continue
     fi
     if is_bugbot_explicit_skip_message "$body"; then
-      rm -f "$existing_blocking_file"
-      bugbot_return_explicit_skip "$pr_number" "$branch_name"
-      return 0
+      existing_explicit_skip_seen=1
+      existing_suggestion_count=$((existing_suggestion_count + 1))
+      continue
     fi
     # Bugbot informational notes are counted as suggestions, not blockers (AC-4).
     if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
@@ -1638,9 +1639,9 @@ run_bugbot_review() {
       continue
     fi
     if is_bugbot_explicit_skip_message "$body"; then
-      rm -f "$existing_blocking_file"
-      bugbot_return_explicit_skip "$pr_number" "$branch_name"
-      return 0
+      existing_explicit_skip_seen=1
+      existing_suggestion_count=$((existing_suggestion_count + 1))
+      continue
     fi
     if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
       existing_suggestion_count=$((existing_suggestion_count + 1))
@@ -1649,6 +1650,12 @@ run_bugbot_review() {
     existing_blocking_count=$((existing_blocking_count + 1))
     printf '%s\n' "$review_json" >> "$existing_blocking_file"
   done <<< "$existing_reviews"
+
+  if [ "$existing_explicit_skip_seen" -eq 1 ] && [ "$existing_blocking_count" -eq 0 ]; then
+    rm -f "$existing_blocking_file"
+    bugbot_return_explicit_skip "$pr_number" "$branch_name"
+    return 0
+  fi
 
   if [ "$existing_blocking_count" -gt 0 ]; then
     print_kv RESULT needs_fixes
@@ -1826,6 +1833,7 @@ run_bugbot_review() {
           # No blocking findings per the check run. Read cursor[bot] inline
           # comments to confirm and collect any suggestions.
           blocking_lines_file="$(mktemp)"
+          local clean_explicit_skip_seen=0
           set +e
 	          local _clean_comments
 	          local _clean_comments_rc=0
@@ -1862,9 +1870,8 @@ run_bugbot_review() {
             if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
               suggestion_count=$((suggestion_count + 1))
             elif is_bugbot_explicit_skip_message "$body"; then
-              rm -f "$blocking_lines_file"
-              bugbot_return_explicit_skip "$pr_number" "$branch_name"
-              return 0
+              clean_explicit_skip_seen=1
+              suggestion_count=$((suggestion_count + 1))
             else
               blocking_count=$((blocking_count + 1))
               printf '%s\n' "$comment_json" >> "$blocking_lines_file"
@@ -1893,6 +1900,12 @@ run_bugbot_review() {
             return 1
           fi
 
+          if [ "$clean_explicit_skip_seen" -eq 1 ]; then
+            rm -f "$blocking_lines_file"
+            bugbot_return_explicit_skip "$pr_number" "$branch_name"
+            return 0
+          fi
+
           rm -f "$blocking_lines_file"
           print_kv RESULT clean
           print_kv PLATFORM "$platform"
@@ -1908,6 +1921,7 @@ run_bugbot_review() {
         failure|action_required)
           # Blocking findings. Read cursor[bot] reviews/comments for the summary.
           blocking_lines_file="$(mktemp)"
+          local blocking_explicit_skip_seen=0
           set +e
 	          local _blocking_comments _blocking_reviews
 	          local _blocking_comments_rc=0
@@ -1965,9 +1979,8 @@ run_bugbot_review() {
             if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
               suggestion_count=$((suggestion_count + 1))
             elif is_bugbot_explicit_skip_message "$body"; then
-              rm -f "$blocking_lines_file"
-              bugbot_return_explicit_skip "$pr_number" "$branch_name"
-              return 0
+              blocking_explicit_skip_seen=1
+              suggestion_count=$((suggestion_count + 1))
             else
               blocking_count=$((blocking_count + 1))
               inline_count=$((inline_count + 1))
@@ -1989,9 +2002,10 @@ run_bugbot_review() {
               comment_count=$((comment_count + 1))
               continue
             elif is_bugbot_explicit_skip_message "$body"; then
-              rm -f "$blocking_lines_file"
-              bugbot_return_explicit_skip "$pr_number" "$branch_name"
-              return 0
+              blocking_explicit_skip_seen=1
+              suggestion_count=$((suggestion_count + 1))
+              comment_count=$((comment_count + 1))
+              continue
             fi
             # For COMMENTED reviews, treat as blocking when there are inline
             # blocking comments (umbrella review) or when the body carries
@@ -2011,6 +2025,12 @@ run_bugbot_review() {
             blocking_count=$((blocking_count + 1))
             printf '%s\n' "$review_json" >> "$blocking_lines_file"
           done <<< "${_blocking_reviews:-}"
+
+          if [ "$blocking_explicit_skip_seen" -eq 1 ] && [ "$blocking_count" -eq 0 ]; then
+            rm -f "$blocking_lines_file"
+            bugbot_return_explicit_skip "$pr_number" "$branch_name"
+            return 0
+          fi
 
           # Ensure BLOCKING_COUNT >= 1 when the check run verdict is blocking,
           # even when cursor[bot] embeds all findings in the review body.
