@@ -90,6 +90,26 @@ component has complete, consistent evidence. It does not create a shared suite
 version, shared release branch, product tag, GitHub Release, or product
 deployment artifact.
 
+`scripts/development-workflow/component-milestone-reconciliation.sh` reconciles
+the hub tracker release view after component evidence and delivery bundle
+evidence exist. In `workflow_hub` mode, component milestones are namespaced as
+`<product-repo>@<component-tag>` and may be assigned only to the component child
+whose `component_release_evidence.v1` matches the selected product repository,
+stable repository identity, release correlation key, contract revision, cleanup
+outcome, hub tracker reference, and child release state. Parent epics and
+delivery bundle issues remain milestone-free in workflow-hub mode; the hub-owned
+delivery manifest records customer-facing shipped composition instead.
+
+Parent release state is separate from GitHub Project workflow Status. The
+component milestone reconciliation helper reports `not_released`,
+`partially_released`, `blocked`, or `released` from
+`delivery_bundle_manifest.v1`; apply mode writes a manifest `release_status`
+object and audit event only after finalized bundle evidence proves every
+declared current component is released. A workflow-hub delivery with exactly one
+selected product repository still uses the namespaced component milestone and
+delivery bundle finalization path. Plain `vX.Y.Z` milestone stamping remains the
+non-hub `single_repo` compatibility path.
+
 In `single_repo` mode, all artifact ownership stays exactly as it works today:
 the tracker item, spec, plan, implementation branch, PR, CI, reviewer loop, smoke
 runbook, and release evidence are all handled in the same repository.

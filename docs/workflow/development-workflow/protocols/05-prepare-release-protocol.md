@@ -173,6 +173,37 @@ If any delivery bundle field is unknown, leave the component release evidence in
 place and let the hub operator attach it later. Do not infer a bundle key from a
 temporary file path or product branch name.
 
+After component release evidence, product cleanup evidence, and hub tracker
+reconciliation are complete, reconcile the hub-owned component milestone and
+release status from the hub checkout. Component-child reconciliation may create
+or reuse `<product-repo>@<component-tag>` and assign it only to the matching
+component child. Parent-epic reconciliation may update the delivery manifest
+`release_status` only after the delivery bundle is finalized; it must not stamp
+a milestone on the parent epic or delivery bundle issue:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+scripts/development-workflow/component-milestone-reconciliation.sh apply-component \
+  --issue "${COMPONENT_CHILD_ISSUE:?}" \
+  --target-kind component_child \
+  --product-repo "${TARGET_REPO_KEY:?}" \
+  --component-tag "${COMPONENT_TAG:?}" \
+  --evidence-file /path/to/component-release-evidence.json \
+  --json
+
+scripts/development-workflow/component-milestone-reconciliation.sh inspect-parent \
+  --parent-issue "${PARENT_EPIC_ISSUE:?}" \
+  --delivery-manifest "${DELIVERY_BUNDLE_MANIFEST:?}" \
+  --require-finalized \
+  --json
+```
+
+If the helper reports `component_release_pending`,
+`component_release_not_ready`, `component_target_mismatch`,
+`component_tag_missing`, `parent_blocked`, `parent_partially_released`, or
+`parent_not_released`, stop before tracker milestone or release-status mutation
+and report the emitted `required_next_action`.
+
 ---
 
 ## Step 2: Create the Release Branch
