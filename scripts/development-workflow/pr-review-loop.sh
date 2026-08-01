@@ -1185,6 +1185,11 @@ bugbot_return_usage_limit() {
 }
 
 bugbot_return_explicit_skip() {
+  if [ "$#" -ne 2 ]; then
+    echo "ERROR: bugbot_return_explicit_skip requires exactly 2 arguments." >&2
+    return 1
+  fi
+
   local pr_number="$1"
   local branch_name="$2"
 

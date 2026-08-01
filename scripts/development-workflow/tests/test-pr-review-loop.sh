@@ -2998,6 +2998,8 @@ case "$*" in
     printf 'abc162bsha\n'; exit 0 ;;
   *"--jq .commit.committer.date"*)
     printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"--method POST"*)
+    printf 'ERROR: trigger POST reached unexpectedly\n' >&2; exit 1 ;;
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
@@ -3195,10 +3197,8 @@ case "$*" in
     exit 0 ;;
   *"check-runs"*)
     printf '{"check_runs":[]}\n'; exit 0 ;;
-  *"--method POST"*)
-    printf 'ERROR: trigger POST reached unexpectedly\n' >&2; exit 1 ;;
   *)
-    printf '[]\n'; exit 0 ;;
+    printf 'ERROR: unexpected gh call: %s\n' "$*" >&2; exit 1 ;;
 esac
 BUGBOT_GH_164B
 chmod +x "$_bugbot_mock_dir_164b/gh"

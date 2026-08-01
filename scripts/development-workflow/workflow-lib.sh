@@ -450,6 +450,11 @@ is_bugbot_disabled_message() {
 }
 
 is_bugbot_explicit_skip_message() {
+  if [ "$#" -ne 1 ]; then
+    echo "ERROR: is_bugbot_explicit_skip_message requires exactly 1 argument." >&2
+    return 1
+  fi
+
   local body="$1"
 
   case "$body" in
