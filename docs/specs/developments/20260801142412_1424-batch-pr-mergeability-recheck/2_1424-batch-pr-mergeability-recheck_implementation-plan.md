@@ -63,7 +63,7 @@ has already landed.
 | Remaining PR state is temporarily unknown | `hold` | Classify as `retryable`; re-query within bounded timeout; exhausted attempts or deadline becomes `merge_blocked` | `batch-merge.sh`, Protocol 94 |
 | Remaining PR becomes dirty, conflicted, blocked, behind, failing, or exhausted pending | `hold` | Classify as `merge_blocked`; do not merge; record invalidating sibling merge and refreshed state; skip without reordering | `batch-merge.sh`, Protocol 94, Protocol 90 |
 | Out-of-scope PR is visible during recheck | `observe` | Classify as `out_of_scope_observation`; do not mutate, label, merge, or add to the recheck set | Protocol 90, run-items skill, summary output |
-| Base push or MERGED-state verification fails after sibling merge | `error` or `hold` depending on PR state | Classify helper failures as `helper_failed`; stop processing affected PR until base/GitHub state is authoritative | `batch-merge.sh`, Protocol 94 |
+| Base push or MERGED-state verification fails after sibling merge | `error` | Classify helper failures as `helper_failed`; exit non-zero and stop processing until base/GitHub state is authoritative | `batch-merge.sh`, Protocol 94 |
 
 ---
 
@@ -102,7 +102,10 @@ has already landed.
   attempts, and a 60-second wall-clock deadline per remaining PR. Retry stops at
   whichever bound is reached first; if both are reached on the same refresh,
   `reason` must be `retry_attempts_exhausted`, `retryable` must be `false`, and
-  the record must be classified as `merge_blocked`.
+  the record must be classified as `merge_blocked`. Before each external
+  refresh, compute the remaining wall-clock budget and apply it as the refresh
+  command timeout; cap every sleep to the same remaining budget. If no budget
+  remains before refresh or sleep, emit `reason: retry_deadline_exhausted`.
 - [ ] Keep existing CHANGELOG deduplication and MERGED-state checks intact.
 
 ### Recheck Output Contract
@@ -152,7 +155,8 @@ Classification precedence for in-scope `remaining_pr` records:
 `out_of_scope_observation` records bypass in-scope eligibility and mutation
 rules. They must still include the selected `TARGET_BASE`, the
 `invalidating_sibling_pr`, the observed PR number, and the observed head/base
-refs when available.
+refs when available. Their required stable `reason` is
+`not_in_frozen_scope`, and protocol summaries must preserve that exact value.
 
 The subcommand exits `0` when all records were fetched and classified, including
 when one or more in-scope PRs are `merge_blocked`. It exits non-zero only for

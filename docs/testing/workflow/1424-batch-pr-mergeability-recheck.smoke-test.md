@@ -179,7 +179,7 @@ merged only after independent refreshed-clean evidence.
      "attempts": 1,
      "deadline_seconds": 60,
      "outcome": "observe",
-     "reason": "not_in_frozen_pr_list"
+     "reason": "not_in_frozen_scope"
    }
    ```
 
@@ -213,6 +213,7 @@ the batch.
 - [ ] Refreshed-clean PRs can continue under the original delegated policy.
 - [ ] Original PR order is preserved when an entry becomes blocked.
 - [ ] Out-of-scope PRs are observation-only and emitted exactly once.
+- [ ] Out-of-scope PR summaries preserve `reason: not_in_frozen_scope`.
 - [ ] The mocked call log proves no mutation targeted out-of-scope PRs.
 - [ ] Final batch summary uses latest post-sibling-merge evidence.
 
