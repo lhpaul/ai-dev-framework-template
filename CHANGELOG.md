@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-08-02
+
+### Changed
+
+- **Guard workflow branch pushes** (#1423): Add an execution-time
+  no-force-push guard for workflow PR branch updates and exact
+  human-authorized exceptions.
+- **Cursor model quota guidance** (#1407): Clarify Cursor Task/subagent model
+  quota behavior and the decision path for one-off subagent model overrides.
+- **Recheck batch mergeability after sibling merges** (#1424): Refresh
+  remaining PR mergeability after each batch merge and hold stale or non-clean
+  PRs.
+
+### Fixed
+
+- **Bugbot explicit skip handling** (#1381): Treat Cursor Bugbot explicit skip
+  comments as warning-only skipped reviews instead of unavailable or blocking
+  reviewer failures.
+
 ## [0.40.0] - 2026-07-30
 
 ### Added
@@ -1328,7 +1347,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.41.0...HEAD
+[0.41.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.37.1...v0.38.0

@@ -18,6 +18,8 @@ if [ "${HARNESS_MODE:-0}" -eq 1 ] && [ "${BASH_SOURCE[0]}" != "$0" ]; then
   _HARNESS_MODE_EFFECTIVE=1
 fi
 
+BUGBOT_HANDLED_SKIP_RC=3
+
 # --- unlock subcommand ---
 # Must run before the single-instance lock guard so stale-lock recovery always
 # works: if a previous invocation crashed, the lock guard would re-acquire the
@@ -1182,6 +1184,28 @@ bugbot_return_usage_limit() {
   return 2
 }
 
+bugbot_return_explicit_skip() {
+  if [ "$#" -ne 2 ]; then
+    echo "ERROR: bugbot_return_explicit_skip requires exactly 2 arguments." >&2
+    return 1
+  fi
+
+  local pr_number="$1"
+  local branch_name="$2"
+
+  echo "WARN: Bugbot explicitly skipped this PR. Treating the skip as a non-blocking warning; no Bugbot review findings were produced." >&2
+  print_kv RESULT skipped
+  print_kv REASON explicit-skip
+  print_kv PLATFORM bugbot
+  print_kv PR_NUMBER "$pr_number"
+  print_kv BRANCH "$branch_name"
+  print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+  print_kv COMMENT_COUNT 1
+  print_kv BLOCKING_COUNT 0
+  print_kv SUGGESTION_COUNT 1
+  return 0
+}
+
 bugbot_since_iso_for_sha() {
   local repo="$1"
   local head_sha="$2"
@@ -1229,6 +1253,10 @@ bugbot_check_disabled_issue_comments() {
   return 0
 }
 
+# Returns:
+#   0 when no unavailable/skip comment applies
+#   2 when an escalation or disabled/usage-limit outcome was emitted
+#   BUGBOT_HANDLED_SKIP_RC when an explicit successful skip outcome was emitted
 bugbot_escalate_for_unavailable_issue_comments() {
   local repo="$1"
   local pr_number="$2"
@@ -1268,6 +1296,10 @@ bugbot_escalate_for_unavailable_issue_comments() {
     if [ "$allow_usage_limit" -eq 1 ] && is_bugbot_usage_limit_message "$body"; then
       bugbot_return_usage_limit "$pr_number" "$branch_name"
       return 2
+    fi
+    if is_bugbot_explicit_skip_message "$body"; then
+      bugbot_return_explicit_skip "$pr_number" "$branch_name"
+      return "$BUGBOT_HANDLED_SKIP_RC"
     fi
   done <<< "$unavailable_bodies"
 
@@ -1381,6 +1413,9 @@ bugbot_escalate_if_disabled_without_check_run() {
   set -e
   if [ "$_unavailable_comments_rc" -eq 2 ]; then
     return 2
+  fi
+  if [ "$_unavailable_comments_rc" -eq "$BUGBOT_HANDLED_SKIP_RC" ]; then
+    return "$BUGBOT_HANDLED_SKIP_RC"
   fi
 
   return 0
@@ -1524,6 +1559,7 @@ run_bugbot_review() {
   fi
 
   existing_blocking_file="$(mktemp)"
+  local existing_explicit_skip_seen=0
 
   while IFS= read -r comment_json; do
     [ -z "${comment_json:-}" ] && continue
@@ -1553,6 +1589,11 @@ run_bugbot_review() {
         bugbot_return_disabled "$pr_number" "$branch_name"
         return 2
       fi
+      existing_suggestion_count=$((existing_suggestion_count + 1))
+      continue
+    fi
+    if is_bugbot_explicit_skip_message "$body"; then
+      existing_explicit_skip_seen=1
       existing_suggestion_count=$((existing_suggestion_count + 1))
       continue
     fi
@@ -1602,6 +1643,11 @@ run_bugbot_review() {
       existing_suggestion_count=$((existing_suggestion_count + 1))
       continue
     fi
+    if is_bugbot_explicit_skip_message "$body"; then
+      existing_explicit_skip_seen=1
+      existing_suggestion_count=$((existing_suggestion_count + 1))
+      continue
+    fi
     if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
       existing_suggestion_count=$((existing_suggestion_count + 1))
       continue
@@ -1609,6 +1655,12 @@ run_bugbot_review() {
     existing_blocking_count=$((existing_blocking_count + 1))
     printf '%s\n' "$review_json" >> "$existing_blocking_file"
   done <<< "$existing_reviews"
+
+  if [ "$existing_explicit_skip_seen" -eq 1 ] && [ "$existing_blocking_count" -eq 0 ]; then
+    rm -f "$existing_blocking_file"
+    bugbot_return_explicit_skip "$pr_number" "$branch_name"
+    return 0
+  fi
 
   if [ "$existing_blocking_count" -gt 0 ]; then
     print_kv RESULT needs_fixes
@@ -1675,6 +1727,9 @@ run_bugbot_review() {
     set -e
     if [ "$_bb_disabled_rc" -eq 2 ]; then
       return 2
+    fi
+    if [ "$_bb_disabled_rc" -eq "$BUGBOT_HANDLED_SKIP_RC" ]; then
+      return 0
     fi
     # No Cursor Bugbot check run for this head — post the trigger comment.
     set +e
@@ -1771,6 +1826,9 @@ run_bugbot_review() {
       if [ "$_bb_disabled_poll_rc" -eq 2 ]; then
         return 2
       fi
+      if [ "$_bb_disabled_poll_rc" -eq "$BUGBOT_HANDLED_SKIP_RC" ]; then
+        return 0
+      fi
     fi
 
     if [ "$status_val" = "completed" ]; then
@@ -1780,6 +1838,7 @@ run_bugbot_review() {
           # No blocking findings per the check run. Read cursor[bot] inline
           # comments to confirm and collect any suggestions.
           blocking_lines_file="$(mktemp)"
+          local clean_explicit_skip_seen=0
           set +e
 	          local _clean_comments
 	          local _clean_comments_rc=0
@@ -1815,6 +1874,9 @@ run_bugbot_review() {
             comment_count=$((comment_count + 1))
             if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
               suggestion_count=$((suggestion_count + 1))
+            elif is_bugbot_explicit_skip_message "$body"; then
+              clean_explicit_skip_seen=1
+              suggestion_count=$((suggestion_count + 1))
             else
               blocking_count=$((blocking_count + 1))
               printf '%s\n' "$comment_json" >> "$blocking_lines_file"
@@ -1843,6 +1905,12 @@ run_bugbot_review() {
             return 1
           fi
 
+          if [ "$clean_explicit_skip_seen" -eq 1 ] && [ "$blocking_count" -eq 0 ]; then
+            rm -f "$blocking_lines_file"
+            bugbot_return_explicit_skip "$pr_number" "$branch_name"
+            return 0
+          fi
+
           rm -f "$blocking_lines_file"
           print_kv RESULT clean
           print_kv PLATFORM "$platform"
@@ -1858,6 +1926,7 @@ run_bugbot_review() {
         failure|action_required)
           # Blocking findings. Read cursor[bot] reviews/comments for the summary.
           blocking_lines_file="$(mktemp)"
+          local blocking_explicit_skip_seen=0
           set +e
 	          local _blocking_comments _blocking_reviews
 	          local _blocking_comments_rc=0
@@ -1914,6 +1983,9 @@ run_bugbot_review() {
             comment_count=$((comment_count + 1))
             if is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
               suggestion_count=$((suggestion_count + 1))
+            elif is_bugbot_explicit_skip_message "$body"; then
+              blocking_explicit_skip_seen=1
+              suggestion_count=$((suggestion_count + 1))
             else
               blocking_count=$((blocking_count + 1))
               inline_count=$((inline_count + 1))
@@ -1931,6 +2003,11 @@ run_bugbot_review() {
             elif [ -z "$body" ]; then
               continue
             elif is_soft_suggestion "$body" || is_bugbot_clean_review "$body"; then
+              suggestion_count=$((suggestion_count + 1))
+              comment_count=$((comment_count + 1))
+              continue
+            elif is_bugbot_explicit_skip_message "$body"; then
+              blocking_explicit_skip_seen=1
               suggestion_count=$((suggestion_count + 1))
               comment_count=$((comment_count + 1))
               continue
@@ -1953,6 +2030,12 @@ run_bugbot_review() {
             blocking_count=$((blocking_count + 1))
             printf '%s\n' "$review_json" >> "$blocking_lines_file"
           done <<< "${_blocking_reviews:-}"
+
+          if [ "$blocking_explicit_skip_seen" -eq 1 ] && [ "$blocking_count" -eq 0 ]; then
+            rm -f "$blocking_lines_file"
+            bugbot_return_explicit_skip "$pr_number" "$branch_name"
+            return 0
+          fi
 
           # Ensure BLOCKING_COUNT >= 1 when the check run verdict is blocking,
           # even when cursor[bot] embeds all findings in the review body.
@@ -1995,6 +2078,9 @@ run_bugbot_review() {
           set -e
           if [ "$_bb_neutral_unavailable_rc" -eq 2 ]; then
             return 2
+          fi
+          if [ "$_bb_neutral_unavailable_rc" -eq "$BUGBOT_HANDLED_SKIP_RC" ]; then
+            return 0
           fi
 
           # Non-blocking informational outcome — clean, no real findings.

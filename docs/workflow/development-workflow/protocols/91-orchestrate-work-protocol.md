@@ -601,6 +601,13 @@ rebase, check out, force-push, or otherwise rewrite an incompatible or
 unverifiable branch. Any destructive cleanup or different recovery path
 requires a separate explicit human decision.
 
+If a spec, plan, implementation, or review-fix update would rewrite a published
+workflow PR branch, stop before mutation and run
+`scripts/development-workflow/workflow-branch-push-guard.sh`. Only the guard may
+execute an authorized destructive PR branch update, and only after matching
+trusted, single-use human authorization for the exact repository, PR, full
+branch ref, action, operator, and expected remote tip.
+
 Record one of `fresh_branch`, `compatible_reuse`,
 `incompatible_reuse_blocked`, or `reuse_verification_blocked` in the Work Item
 Runner summary.

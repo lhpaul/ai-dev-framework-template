@@ -71,6 +71,41 @@ Use this when:
 - An agent needs a deterministic destination check before creating a backlog item.
 - You want to create a GitHub issue from a shell environment without manual `gh` typing.
 
+### `workflow-branch-push-guard.sh`
+
+Executes workflow PR branch pushes behind the repository no-force-push policy.
+Use normal follow-up commits for published PR branches whenever possible. If a
+workflow branch update would rewrite remote history, call this helper with the
+canonical repository, full `refs/heads/<branch>` ref, PR number, push mode,
+expected remote tip, authorization JSON, and the exact `git push` arguments
+after `--`.
+
+The helper permits normal pushes, permits first publication only after a fresh
+remote-ref no-match check, and blocks destructive modes unless trusted,
+single-use human authorization matches the current repository, PR, branch ref,
+action, operator, and expected remote tip. It emits stable
+`PUSH_GUARD_RESULT`, `PUSH_GUARD_REASON`, `BRANCH_REF`,
+`EXPECTED_REMOTE_TIP`, and `AUTHORIZATION_CONSUMED` fields.
+
+### `batch-merge.sh recheck-remaining`
+
+Refreshes mergeability for the frozen in-scope PR list after a sibling PR has
+merged into the target base.
+
+Usage:
+
+<!-- workflow-shell-contract: bash -->
+```bash
+bash ./scripts/development-workflow/batch-merge.sh recheck-remaining \
+  --prs 101,102,103 \
+  --after-merged-pr 101 \
+  --base develop
+```
+
+Protocol 94 is the source of truth for frozen scope, record schema, retry
+semantics, observation handling, and exit behavior:
+[`94-batch-merge-protocol.md`](../../docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md).
+
 ### `discover-workflow-state.sh`
 
 Prints a compact snapshot of the repository's workflow-related state.

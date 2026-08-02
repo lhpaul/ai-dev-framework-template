@@ -18,6 +18,6 @@ Key rules:
 - Print the merge plan (Step 3 of the protocol) for visibility, then proceed immediately without waiting for user confirmation.
 - For each PR, run `./scripts/development-workflow/batch-merge.sh merge --pr <number>`.
 - Auto-resolve CHANGELOG and non-overlapping documentation conflicts; pause and escalate non-trivial conflicts.
-- After each successful merge: push the target base branch, verify GitHub shows the PR as `MERGED`, delete the remote branch, run `./scripts/development-workflow/post-merge-cleanup.sh --base <target-base> <branch>`.
+- After each successful merge, follow Protocol 94 Step 4.2 for verification, guarded branch deletion, local branch preparation, cleanup, and post-recheck admission before selecting another PR.
 - Never leave the target base branch in a conflicted state.
 - Always print the final summary table (Step 5) regardless of outcome.

@@ -1711,7 +1711,17 @@ gh pr view <pr_number> --json isDraft,labels,comments \
 
 **Summary-comment recency (verifying the summary matches the _latest_ commit)**: The presence checks above confirm a reviewer-loop summary _exists_, but to confirm Step 7 ran against the **current** head commit (e.g., after a fix push or a rebase), compare the summary comment's **`updated_at`** to the latest commit's timestamp — **never `created_at`**. `pr-review-loop.sh` maintains a **single** summary comment and **updates it in place** on each run, so `created_at` reflects the _first_ run and a `created_at`-based freshness check produces false "stale / incomplete" verdicts for PRs whose summary was legitimately refreshed. Fetch `updated_at` via REST (`gh api repos/{owner}/{repo}/issues/{n}/comments`), since `gh pr view --json comments` does not expose it:
 
+**No-force-push supervision**: Batch supervision must not authorize, imply, or
+perform a force-push to any in-scope PR branch. If a sub-runner reports that a
+workflow PR branch update would require `--force`, `--force-with-lease`, a
+force refspec, or another shared-history rewrite, stop that item before remote
+mutation and require `workflow-branch-push-guard.sh` with exact trusted
+single-use human authorization. Delegated batch merge authority remains
+separate from branch-history rewrite authorization.
+
+<!-- workflow-shell-contract: bash -->
 ```bash
+bash <<'BASH'
 # Newest summary comment's updated_at, normalized to epoch seconds, vs the
 # branch's latest commit time.
 COMMIT_EPOCH=$(git log -1 --format=%ct "origin/<branch>")
@@ -1732,6 +1742,7 @@ PY
 # A summary whose updated_at epoch is >= COMMIT_EPOCH corresponds to the current
 # head; an older updated_at means Step 7 has not re-run on the latest commit
 # (genuinely stale).
+BASH
 ```
 
 **Classification table** (evaluate in order; first matching row wins):
@@ -1952,9 +1963,9 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
 
 3. **Present the validated merge plan to the human** and require explicit approval before any merge starts. The human must confirm before the orchestrator invokes `94-batch-merge-protocol.md`.
 
-4. **Once the human approves**, follow `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` starting from **Step 3.5** (the pre-merge clean-state check and sequential merge loop). The merge plan confirmation (Protocol 94 Step 3) has already been satisfied by Step 5.5.3 above, but Step 3.5 has **not** been satisfied and must still run. Pass only the approved ordered PR list after Step 5.5.2 filtering, and include skipped entries in the final summary.
+4. **Once the human approves**, follow `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` starting from **Step 3.5** (the pre-merge clean-state check and sequential merge loop). The merge plan confirmation (Protocol 94 Step 3) has already been satisfied by Step 5.5.3 above, but Step 3.5 has **not** been satisfied and must still run. Pass only the approved ordered PR list after Step 5.5.2 filtering, keep that list frozen for every `recheck-remaining --prs <list>` call after sibling merges, require the Protocol 94 post-recheck admission gate before each next merge or readiness claim, and include skipped entries in the final summary.
 
-5. **Include the batch-merge summary** (Step 5 of Protocol 94) in the orchestrator's Step 6 summary output.
+5. **Include the batch-merge summary** (Step 5 of Protocol 94) in the orchestrator's Step 6 summary output. For any remaining PR held by a post-sibling-merge recheck, report terminal outcome `merge_blocked` with the invalidating sibling PR, refreshed merge state, refreshed checks state, and reason from the helper JSONL record. For any read-only out-of-scope observation, report `out_of_scope` without mutating that PR.
 
 ### Batch-merge routing rule (mandatory)
 
