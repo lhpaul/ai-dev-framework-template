@@ -6,7 +6,7 @@
 # Keeps the local repo clean after merging developments.
 #
 # Usage:
-#   ./scripts/development-workflow/post-merge-cleanup.sh [--repo <name>] [--repo-root <path>] [--base <branch>] [BRANCH]
+#   ./scripts/development-workflow/post-merge-cleanup.sh [--repo <name>] [--repo-root <path>] [--base <branch>] [--pr <number>] [BRANCH]
 #
 # - No BRANCH: use current branch (run while still on the merged branch).
 # - BRANCH: name of the local branch to delete (e.g. feature/my-feature).
@@ -35,6 +35,7 @@ TO_DELETE=""
 target_repo=""
 repo_root="$HUB_REPO_ROOT"
 base_branch_override=""
+merged_pr_number=""
 
 require_option_value() {
   local option="$1"
@@ -62,6 +63,11 @@ while [ "$#" -gt 0 ]; do
       base_branch_override="$2"
       shift 2
       ;;
+    --pr)
+      require_option_value "$@"
+      merged_pr_number="$2"
+      shift 2
+      ;;
     -h|--help)
       sed -n '2,16p' "$0"
       exit 0
@@ -76,6 +82,10 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+case "$merged_pr_number" in
+  ''|*[!0-9]*) [ -z "$merged_pr_number" ] || { echo "Invalid --pr '${merged_pr_number}' — must be a positive integer." >&2; exit 64; } ;;
+esac
 
 HUB_REPO_ROOT="$repo_root"
 cd "$HUB_REPO_ROOT" || exit 1
@@ -165,17 +175,29 @@ elif [ "$ACTION_REPOSITORY_KIND" = "hub_owned" ]; then
     echo "ERROR: could not resolve GitHub repository for merged PR base lookup; pass --base <branch> to override." >&2
     exit 1
   fi
-  if ! merged_base="$(
-    gh pr list \
-      --repo "$cleanup_repo_slug" \
-      --state merged \
-      --head "$TO_DELETE" \
-      --limit 1 \
-      --json baseRefName \
-      --jq '.[0].baseRefName // empty'
-  )"; then
-    echo "ERROR: could not query merged PR base for branch '$TO_DELETE'; pass --base <branch> to override." >&2
-    exit 1
+  if [ -n "$merged_pr_number" ]; then
+    if ! merged_pr_base_json="$(
+      gh pr view "$merged_pr_number" \
+        --repo "$cleanup_repo_slug" \
+        --json state,baseRefName,headRefName
+    )"; then
+      echo "ERROR: could not query merged PR #${merged_pr_number} base; pass --base <branch> to override." >&2
+      exit 1
+    fi
+    merged_base="$(printf '%s\n' "$merged_pr_base_json" | jq -r --arg branch "$TO_DELETE" 'select(type == "object" and .state == "MERGED" and .headRefName == $branch) | .baseRefName // empty')"
+  else
+    if ! merged_base="$(
+      gh pr list \
+        --repo "$cleanup_repo_slug" \
+        --state merged \
+        --head "$TO_DELETE" \
+        --limit 1 \
+        --json baseRefName \
+        --jq '.[0].baseRefName // empty'
+    )"; then
+      echo "ERROR: could not query merged PR base for branch '$TO_DELETE'; pass --base <branch> to override." >&2
+      exit 1
+    fi
   fi
   if [ -z "$merged_base" ]; then
     echo "ERROR: could not determine merged PR base for branch '$TO_DELETE'; pass --base <branch> to override." >&2
@@ -222,21 +244,37 @@ verify_merged_pr_for_branch() {
   local branch="$1"
   local lookup_repo="$2"
 
+  if [ -n "$merged_pr_number" ]; then
+    gh pr view "$merged_pr_number" \
+      --repo "$lookup_repo" \
+      --json number,state,headRefName,isCrossRepository,headRepository,headRepositoryOwner |
+      jq -c --arg branch "$branch" 'select(type == "object" and (.number | type == "number") and .state == "MERGED" and .headRefName == $branch)'
+    return
+  fi
+
   gh pr list \
     --repo "$lookup_repo" \
     --state merged \
     --head "$branch" \
     --limit 1 \
-    --json number \
-    --jq '.[0].number // empty'
+    --json number,isCrossRepository,headRepository,headRepositoryOwner \
+    --jq '.[0] // empty'
 }
 
 cleanup_remote_implementation_branch() {
   local branch="$1"
-  local lookup_repo merged_pr push_err push_exit
+  local lookup_repo merged_pr_json merged_pr is_cross_repository push_err push_exit
 
   if [ "$branch_owner_kind" != "implementation" ]; then
     return 0
+  fi
+
+  if [ -z "$merged_pr_number" ]; then
+    print_kv REMOTE_DELETE_RESULT "skipped"
+    print_kv REMOTE_DELETE_REASON "pr_number_required"
+    print_kv_escaped ERROR_MESSAGE "Remote implementation branch '${branch}' was not deleted because --pr <merged-pr-number> is required to bind cleanup to the exact merged PR."
+    echo "ERROR: remote implementation branch '$branch' was not deleted because --pr <merged-pr-number> is required." >&2
+    return 1
   fi
 
   if ! lookup_repo="$(remote_cleanup_repo_slug)"; then
@@ -246,19 +284,30 @@ cleanup_remote_implementation_branch() {
     return 1
   fi
 
-  if ! merged_pr="$(verify_merged_pr_for_branch "$branch" "$lookup_repo")"; then
+  if ! merged_pr_json="$(verify_merged_pr_for_branch "$branch" "$lookup_repo")"; then
     print_kv REMOTE_DELETE_RESULT "skipped"
     print_kv_escaped ERROR_MESSAGE "Could not query merged PRs for branch '${branch}' in '${lookup_repo}'."
     echo "ERROR: could not query merged PRs for branch '$branch' in '$lookup_repo'." >&2
     return 1
   fi
 
-  if [ -z "$merged_pr" ]; then
+  if [ -z "$merged_pr_json" ]; then
     print_kv REMOTE_DELETE_RESULT "skipped"
-    print_kv REMOTE_DELETE_REASON "pr_not_merged"
-    print_kv_escaped ERROR_MESSAGE "Remote implementation branch '${branch}' was not deleted because no merged PR was found."
-    echo "ERROR: remote implementation branch '$branch' was not deleted because no merged PR was found." >&2
+    print_kv REMOTE_DELETE_REASON "pr_not_merged_or_branch_mismatch"
+    print_kv_escaped ERROR_MESSAGE "Remote implementation branch '${branch}' was not deleted because PR #${merged_pr_number} is not MERGED or does not use that head branch."
+    echo "ERROR: remote implementation branch '$branch' was not deleted because PR #${merged_pr_number} is not MERGED or does not use that head branch." >&2
     return 1
+  fi
+
+  merged_pr="$(printf '%s\n' "$merged_pr_json" | jq -r '.number // empty')"
+  is_cross_repository="$(printf '%s\n' "$merged_pr_json" | jq -r '.isCrossRepository // false')"
+  if [ "$is_cross_repository" = "true" ]; then
+    print_kv REMOTE_DELETE_RESULT "skipped"
+    print_kv REMOTE_DELETE_REASON "cross_repository_pr"
+    print_kv REMOTE_DELETE_PR_NUMBER "$merged_pr"
+    print_kv_escaped ERROR_MESSAGE "Remote implementation branch '${branch}' was not deleted because merged PR #${merged_pr} is cross-repository; refusing to delete an unqualified branch from origin."
+    echo "Remote implementation branch '$branch' not deleted because merged PR #${merged_pr} is cross-repository." >&2
+    return 0
   fi
 
   print_kv REMOTE_DELETE_PR_NUMBER "$merged_pr"
@@ -292,13 +341,21 @@ if ! git show-ref --quiet "refs/heads/$TO_DELETE"; then
       exit 2
     fi
   fi
-  if ! VERIFIED_MERGED_PR="$(gh pr list \
-    --repo "$merged_pr_lookup_repo" \
-    --state merged \
-    --head "$TO_DELETE" \
-    --limit 1 \
-    --json number \
-    --jq '.[0].number // empty')"; then
+  if [ -n "$merged_pr_number" ]; then
+    if ! verified_merged_pr_json="$(gh pr view "$merged_pr_number" \
+      --repo "$merged_pr_lookup_repo" \
+      --json number,state,headRefName)"; then
+      echo "Local branch '$TO_DELETE' does not exist and merged PR #${merged_pr_number} lookup failed (gh command failed)." >&2
+      exit 2
+    fi
+    VERIFIED_MERGED_PR="$(printf '%s\n' "$verified_merged_pr_json" | jq -r --arg branch "$TO_DELETE" 'select(type == "object" and (.number | type == "number") and .state == "MERGED" and .headRefName == $branch) | .number // empty')"
+  elif ! VERIFIED_MERGED_PR="$(gh pr list \
+      --repo "$merged_pr_lookup_repo" \
+      --state merged \
+      --head "$TO_DELETE" \
+      --limit 1 \
+      --json number \
+      --jq '.[0].number // empty')"; then
     echo "Local branch '$TO_DELETE' does not exist and merged PR lookup failed (gh command failed)." >&2
     exit 2
   fi
@@ -466,10 +523,14 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
           exit 1
         fi
       fi
-      MERGED_PR="$(gh pr list --repo "$merged_pr_repo" --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty')" || {
-        echo "ERROR: could not query merged PRs for branch '$TO_DELETE' in '$merged_pr_repo' (gh command failed)." >&2
-        exit 1
-      }
+      if [ -n "$merged_pr_number" ]; then
+        MERGED_PR="$merged_pr_number"
+      else
+        MERGED_PR="$(gh pr list --repo "$merged_pr_repo" --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty')" || {
+          echo "ERROR: could not query merged PRs for branch '$TO_DELETE' in '$merged_pr_repo' (gh command failed)." >&2
+          exit 1
+        }
+      fi
       if [ -n "$MERGED_PR" ]; then
         CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
       elif [ -n "$VERIFIED_MERGED_PR" ]; then
@@ -516,6 +577,7 @@ else
     fi
     if [ -n "$pr_closes_repo" ]; then
       CLOSING_PR="${VERIFIED_MERGED_PR:-}"
+      [ -n "$CLOSING_PR" ] || CLOSING_PR="$merged_pr_number"
       if [ -z "$CLOSING_PR" ]; then
         if ! CLOSING_PR="$(gh pr list --repo "$pr_closes_repo" --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty' 2>/dev/null)"; then
           echo "ERROR: could not query merged PRs for branch '$TO_DELETE' in '$pr_closes_repo' (gh command failed)." >&2

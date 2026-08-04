@@ -55,7 +55,7 @@ Key responsibilities:
 - If the gate reports `exceptional_bypass_authorized`, require the separate
   named PR/SHA/fingerprint authorization and pre-attempt
   `reviewer-access-bypass` audit marker before one exact human-authorized
-  `gh pr merge <pr> --admin` attempt; delegated epic policy is not enough.
+  `gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` attempt; delegated epic policy is not enough.
 - After `merge_allowed`, continue through Protocol 95 Step 11: merge, merge
   verification, branch deletion/pruning, `post-merge-cleanup.sh`, live tracker
   verification, audit update, rediscovery, and continuation inspection.

@@ -100,7 +100,7 @@ That document is the single source of truth for this supporting role. Key respon
   merge permission. Split that PR out of the Protocol 94 list and require a
   separate named PR/SHA/fingerprint authorization plus pre-attempt
   `reviewer-access-bypass` audit marker before one exact human-authorized
-  `gh pr merge <pr> --admin` attempt.
+  `gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` attempt.
 - Before accepting any item as terminal in the batch summary, require the
   item runner's `## Ground-Truth Completion Verification` section from
   `item-completion-self-check.sh` or run the helper directly from current

@@ -48,7 +48,7 @@ The prelude command flags mirror this command's scope flags (`--target`, `--issu
 - If the merge gate returns `exceptional_bypass_authorized`, require the
   separate named PR/SHA/fingerprint authorization and pre-attempt
   `reviewer-access-bypass` audit marker before one exact human-authorized
-  `gh pr merge <pr> --admin` attempt; delegated merge authority is not enough
+  `gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` attempt; delegated merge authority is not enough
 - Treat merge authority explicitly: `merge_granted` means readiness is
   intermediate and the runner continues through merge; `merge_denied` means the
   ready PR stops as `ready_human_merge` and no merge command is run. Stopping

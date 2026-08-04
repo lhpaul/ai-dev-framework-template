@@ -174,7 +174,7 @@ Process PRs one at a time in the approved order.
 
 ### 4.1 Per-PR merge attempt
 
-> **Critical sequencing rule**: Call `batch-merge.sh merge --pr N` for **exactly one PR at a
+> **Critical sequencing rule**: Call `batch-merge.sh merge --pr N --expected-head-sha <reviewed-headRefOid>` for **exactly one PR at a
 > time**, inspect `MERGE_RESULT`, and fully resolve the outcome (merge success, conflict
 > resolution, or abort) **before** advancing to the next PR. Never wrap multiple merge
 > calls in a single non-interactive shell loop (e.g., `for pr in …; do … merge --pr $pr; done`)
@@ -188,16 +188,23 @@ For each PR in the approved order:
 
 > Merging PR #N: _title_ (branch: _branch_)...
 
-**b. Run the merge script:**
+**b. Capture the reviewed PR head SHA from the readiness evidence:**
+
+Use the `headRefOid` captured during the latest readiness/review gate for this
+PR. `batch-merge.sh discover` emits this as `PR_HEAD_SHA` in each candidate
+record for handoff into the merge command. If that SHA is missing or stale, stop
+and rerun the review/CI readiness gate before merging.
+
+**c. Run the merge script with the reviewed SHA:**
 
 ```bash
 # Standard (merging into develop):
-./scripts/development-workflow/batch-merge.sh merge --pr <number>
+./scripts/development-workflow/batch-merge.sh merge --pr <number> --expected-head-sha <reviewed-headRefOid>
 
 # Integration-branch override (merging into develop-<slug> or other base):
-./scripts/development-workflow/batch-merge.sh --base develop-<slug> merge --pr <number>
+./scripts/development-workflow/batch-merge.sh --base develop-<slug> merge --pr <number> --expected-head-sha <reviewed-headRefOid>
 # Equivalent using the env var form:
-# TARGET_BASE=develop-<slug> ./scripts/development-workflow/batch-merge.sh merge --pr <number>
+# TARGET_BASE=develop-<slug> ./scripts/development-workflow/batch-merge.sh merge --pr <number> --expected-head-sha <reviewed-headRefOid>
 ```
 
 Parse the output:
@@ -254,7 +261,7 @@ After a clean or resolved merge, in order:
    > **Exceptional reviewer access bypass**: If a PR was excluded from the
    > normal batch route because `run-epic-delegated-gate.sh` returned
    > `exceptional_bypass_authorized`, do not merge it through `batch-merge.sh`.
-   > The runner must use the exact named `gh pr merge <pr> --admin` command only
+   > The runner must use the exact named `gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` command only
    > after verifying the PR/SHA/fingerprint authorization and pre-attempt
    > `reviewer-access-bypass` audit marker. After the one attempt, verify
    > GitHub's live PR state, update the same audit marker, fetch the refreshed
@@ -307,7 +314,7 @@ After a clean or resolved merge, in order:
    # pre-merge develop commit, not the PR's tip, but post-merge-cleanup.sh only
    # needs the branch *name* to delete it — the commit it points to is irrelevant.
    git branch "$BRANCH" "origin/$BRANCH" 2>/dev/null || git branch "$BRANCH" HEAD~1 2>/dev/null || true
-   ./scripts/development-workflow/post-merge-cleanup.sh --base "$BASE_BRANCH" "$BRANCH"
+   ./scripts/development-workflow/post-merge-cleanup.sh --base "$BASE_BRANCH" --pr "$PR_NUMBER" "$BRANCH"
    ```
 
    If cleanup fails: report the failure but **do not halt remaining merges**. The human can re-run cleanup manually.

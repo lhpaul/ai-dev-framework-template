@@ -54,8 +54,8 @@ install_gh_mock() {
   cat > "$1/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
 case "$*" in
-  *"pr view 123"*"--json baseRefName,headRefName"*)
-    printf '{"baseRefName":"main","headRefName":"feature/test"}\n'
+  *"pr view 123"*"--json baseRefName,headRefName,headRefOid"*)
+    printf '{"baseRefName":"main","headRefName":"feature/test","headRefOid":"%s"}\n' "${MOCK_PR_HEAD_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}"
     exit 0
     ;;
   *)
@@ -133,10 +133,23 @@ run_test "clean_empty_findings_comments" "COMMENT_COUNT=0" "$(line_for COMMENT_C
 run_test "clean_empty_findings_exit" "0" "$(exit_code)"
 
 reset_mocks
-set_mock_stdout '{"findings":[{"severity":"Critical","message":"fix this"}]}'
+set_mock_stdout '{"findings":[]}'
+MOCK_PR_HEAD_SHA="0000000000000000000000000000000000000000"
+export MOCK_PR_HEAD_SHA
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$REPO_ROOT"
+unset MOCK_PR_HEAD_SHA
+run_test "repo_root_head_mismatch_escalates" "RESULT=escalate" "$(line_for RESULT)"
+run_test "repo_root_head_mismatch_reason" "REASON=checkout_head_mismatch" "$(line_for REASON)"
+run_test "repo_root_head_mismatch_exit" "2" "$(exit_code)"
+
+reset_mocks
+set_mock_stdout '{"findings":[{"severity":"Critical","path":"scripts/example.sh","line":42,"message":"fix this"}]}'
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "blocking_finding_result" "RESULT=needs_fixes" "$(line_for RESULT)"
 run_test "blocking_finding_count" "BLOCKING_COUNT=1" "$(line_for BLOCKING_COUNT)"
+run_test "blocking_finding_path" "BLOCKING_1_PATH=scripts/example.sh" "$(line_for BLOCKING_1_PATH)"
+run_test "blocking_finding_line" "BLOCKING_1_LINE=42" "$(line_for BLOCKING_1_LINE)"
+run_test "blocking_finding_body" "BLOCKING_1_BODY=fix this" "$(line_for BLOCKING_1_BODY)"
 run_test "blocking_finding_exit" "1" "$(exit_code)"
 
 reset_mocks
@@ -145,6 +158,13 @@ set_mock_stdout '{"type":"finding","finding":{"severity":"High","message":"fix t
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "ndjson_blocking_finding_result" "RESULT=needs_fixes" "$(line_for RESULT)"
 run_test "ndjson_blocking_finding_count" "BLOCKING_COUNT=1" "$(line_for BLOCKING_COUNT)"
+
+reset_mocks
+set_mock_stdout '{"type":"finding","finding":{"severity":"High","path":"scripts/example.sh","line":7,"message":"fix single event"}}'
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "single_event_blocking_finding_result" "RESULT=needs_fixes" "$(line_for RESULT)"
+run_test "single_event_blocking_finding_count" "BLOCKING_COUNT=1" "$(line_for BLOCKING_COUNT)"
+run_test "single_event_blocking_finding_path" "BLOCKING_1_PATH=scripts/example.sh" "$(line_for BLOCKING_1_PATH)"
 
 reset_mocks
 set_mock_stdout '{"type":"status","message":"review started"}

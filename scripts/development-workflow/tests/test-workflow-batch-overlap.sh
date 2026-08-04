@@ -31,7 +31,7 @@ write_items() {
 }
 
 item_json() {
-  local id="$1" title="$2" brief="$3" file_set="${4:-unknown}" priority="${5:-Normal}" created_at="${6:-2026-01-01T00:00:00Z}" next_action="${7:-implement}"
+  local id="$1" title="$2" brief="$3" file_set="${4:-unknown}" priority="${5:-Normal}" created_at="${6:-2026-01-01T00:00:00Z}" next_action="${7:-implement}" branch="${8:-}"
   jq -cn \
     --arg id "$id" \
     --arg title "$title" \
@@ -40,7 +40,8 @@ item_json() {
     --arg priority "$priority" \
     --arg createdAt "$created_at" \
     --arg nextAction "$next_action" \
-    '{id:$id,title:$title,brief:$brief,fileSet:$fileSet,priority:$priority,createdAt:$createdAt,nextAction:$nextAction}'
+    --arg branch "$branch" \
+    '{id:$id,title:$title,brief:$brief,fileSet:$fileSet,priority:$priority,createdAt:$createdAt,nextAction:$nextAction,branch:$branch}'
 }
 
 class_for() {
@@ -136,6 +137,12 @@ write_items "$transitive" \
 run_test "transitive_overlaps_form_one_serial_group" "trans-a,trans-b,trans-c" "$(pair_value "$transitive" '.serialGroups[0].itemIds | join(",")')"
 run_test "priority_orders_serial_keep" "trans-a" "$(pair_value "$transitive" '.serialGroups[0].keepItemId')"
 
+branch_tie="$TMP_ROOT/branch-tie.json"
+write_items "$branch_tie" \
+  "$(item_json tie-z "Shared A" "Update GET /tie." "unknown" "Normal" "2026-01-01T00:00:00Z" "implement" "feature/a-branch")" \
+  "$(item_json tie-a "Shared B" "Update GET /tie." "unknown" "Normal" "2026-01-01T00:00:00Z" "implement" "feature/z-branch")"
+run_test "branch_orders_serial_keep" "tie-z" "$(pair_value "$branch_tie" '.serialGroups[0].keepItemId')"
+
 decision_probe="$("$OVERLAP" --input "$parent_route" --json)"
 batch_fp="$(printf '%s\n' "$decision_probe" | jq -r '.batchFingerprint')"
 evidence_hash="$(printf '%s\n' "$decision_probe" | jq -r '.pairs[0].evidenceHash')"
@@ -145,7 +152,12 @@ run_test "matching_pair_decision_allows_parallel" "parallel_eligible" "$(dispatc
 
 reversed_decision="$TMP_ROOT/reversed-decisions.jsonl"
 printf '{"batchFingerprint":"%s","itemIds":["parent-b","parent-a"],"evidenceHash":"%s","decision":"allow_parallel"}\n' "$batch_fp" "$evidence_hash" > "$reversed_decision"
-run_test "reversed_pair_order_matches" "parallel_eligible" "$(dispatch_for "$parent_route" "$reversed_decision")"
+run_test "allow_parallel_requires_human_instruction" "serial" "$(dispatch_for "$parent_route" "$reversed_decision")"
+
+reversed_instruction_decision="$TMP_ROOT/reversed-instruction-decisions.jsonl"
+printf '{"batchFingerprint":"%s","itemIds":["parent-b","parent-a"],"evidenceHash":"%s","decision":"allow_parallel","recordedHumanInstruction":"approved current suspected pair in reverse order"}\n' "$batch_fp" "$evidence_hash" > "$reversed_instruction_decision"
+run_test "reversed_pair_order_matches_with_instruction" "parallel_eligible" "$(dispatch_for "$parent_route" "$reversed_instruction_decision")"
+run_test "missing_instruction_marked_stale" "missing_human_instruction" "$("$OVERLAP" --input "$parent_route" --decision-file "$reversed_decision" --json | jq -r '.staleDecisions[0].status')"
 
 stale_decision="$TMP_ROOT/stale-decisions.jsonl"
 printf '{"batchFingerprint":"sha256:stale","pairId":"parent-a--parent-b","evidenceHash":"%s","decision":"allow_parallel"}\n' "$evidence_hash" > "$stale_decision"

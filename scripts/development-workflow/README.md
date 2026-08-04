@@ -83,7 +83,11 @@ after `--`.
 The helper permits normal pushes, permits first publication only after a fresh
 remote-ref no-match check, and blocks destructive modes unless trusted,
 single-use human authorization matches the current repository, PR, branch ref,
-action, operator, and expected remote tip. It emits stable
+action, operator, expected remote tip, and authorized new tip. The authorizer
+must be a separate GitHub `User` with repository `admin` permission; the
+executing credential cannot self-authorize, and the trusted authorization
+comment must include the exact `operator_login` so approval cannot be copied to
+another credential. It emits stable
 `PUSH_GUARD_RESULT`, `PUSH_GUARD_REASON`, `BRANCH_REF`,
 `EXPECTED_REMOTE_TIP`, and `AUTHORIZATION_CONSUMED` fields.
 
@@ -610,8 +614,12 @@ branch.
 Usage:
 
 ```bash
-./scripts/development-workflow/post-merge-cleanup.sh [--base develop-workflow-hub-mode] [BRANCH]
+./scripts/development-workflow/post-merge-cleanup.sh [--base develop-workflow-hub-mode] [--pr merged-pr-number] [BRANCH]
 ```
+
+- With `--pr`: bind implementation remote branch cleanup to the exact merged PR
+  before deleting any remote branch. Use this after known implementation PR
+  merges.
 
 - No argument: use the current branch (run while still on the merged branch).
 - With `BRANCH`: branch name to delete (e.g. `feature/my-feature`).
@@ -662,8 +670,8 @@ Usage:
 # Discovery mode — explicit PR list
 ./scripts/development-workflow/batch-merge.sh discover --prs 101,102,103
 
-# Per-PR merge — attempt to merge one PR into develop (called in a loop by the agent)
-./scripts/development-workflow/batch-merge.sh merge --pr 101
+# Per-PR merge — attempt to merge one reviewed PR into develop (called in a loop by the agent)
+./scripts/development-workflow/batch-merge.sh merge --pr 101 --expected-head-sha <reviewed-headRefOid>
 ```
 
 Outputs structured `KEY=VALUE` lines. See the script header for the full output format.

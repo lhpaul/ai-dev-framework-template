@@ -2356,14 +2356,14 @@ run_coderabbit_cli_review() {
 
   : "$poll_interval"
   require_gh
-  cd_workflow_repo_root
+  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/coderabbit-cli-reviewer.sh"
+  review_repo_root="${repo_root:-$(workflow_repo_root)}"
+  cd "$review_repo_root"
 
   local owner repo_name repo
   repo="$(repo_slug)"
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
   repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
-
-  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/coderabbit-cli-reviewer.sh"
 
   local coderabbit_cli_stderr_file
   local coderabbit_cli_config_file="${AI_DEV_WORKFLOW_CONFIG_FILE:-${config_file:-}}"
@@ -2372,9 +2372,9 @@ run_coderabbit_cli_review() {
 
   set +e
   if [ -n "$coderabbit_cli_config_file" ] && [ -f "$coderabbit_cli_config_file" ]; then
-    script_output="$(AI_DEV_WORKFLOW_CONFIG_FILE="$coderabbit_cli_config_file" "$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" 2>"$coderabbit_cli_stderr_file")"
+    script_output="$(AI_DEV_WORKFLOW_CONFIG_FILE="$coderabbit_cli_config_file" "$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" --repo-root "$review_repo_root" 2>"$coderabbit_cli_stderr_file")"
   else
-    script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" 2>"$coderabbit_cli_stderr_file")"
+    script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" --repo-root "$review_repo_root" 2>"$coderabbit_cli_stderr_file")"
   fi
   script_exit=$?
   set -e
@@ -2413,6 +2413,11 @@ run_coderabbit_cli_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT "$blocking_count"
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      for index in $(seq 1 "$blocking_count"); do
+        print_kv "BLOCKING_${index}_PATH" "$(kv_value_default "BLOCKING_${index}_PATH" "$script_output" "")"
+        print_kv "BLOCKING_${index}_LINE" "$(kv_value_default "BLOCKING_${index}_LINE" "$script_output" "")"
+        print_kv "BLOCKING_${index}_BODY" "$(kv_value_default "BLOCKING_${index}_BODY" "$script_output" "")"
+      done
       return 1
       ;;
     2)

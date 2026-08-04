@@ -607,7 +607,9 @@ workflow PR branch, stop before mutation and run
 `scripts/development-workflow/workflow-branch-push-guard.sh`. Only the guard may
 execute an authorized destructive PR branch update, and only after matching
 trusted, single-use human authorization for the exact repository, PR, full
-branch ref, action, operator, and expected remote tip.
+branch ref, action, operator, expected remote tip, and authorized new tip from
+a separate GitHub `User` with repository `admin` permission. The executing
+credential cannot self-authorize.
 
 Record one of `fresh_branch`, `compatible_reuse`,
 `incompatible_reuse_blocked`, or `reuse_verification_blocked` in the Work Item
@@ -2118,7 +2120,7 @@ Merge through the normal repository path only when the gate returns
 `guardrails-enforcement.md` passes. If the gate reports
 `exceptional_bypass_authorized`, do not treat it as normal delegated merge
 authority: verify the pre-attempt `reviewer-access-bypass` audit marker, execute
-exactly the named `gh pr merge <pr> --admin` command once, immediately verify
+exactly the named `gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` command once, immediately verify
 the live PR state, and update the same audit marker with `merged` or `failed`.
 Any head SHA, fingerprint, CI, reviewer, or check-state drift returns to Gate 5
 for fresh authorization. For medium-risk decisions, include a complete "why safe
@@ -2892,7 +2894,7 @@ state according to this table:
   pass `--repo <product-repo>` for product-owned implementation branches:
 
 ```bash
-./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> <merged-branch>
+./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> --pr <merged-pr-number> <merged-branch>
 ```
 
 - After cleanup, re-read the live tracker status and Project status. If the live

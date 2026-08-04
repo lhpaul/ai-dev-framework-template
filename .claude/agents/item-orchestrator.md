@@ -78,7 +78,7 @@ reporting the item terminal.
 When the gate returns `exceptional_bypass_authorized`, do not treat it as normal
 delegated merge authority; require the separate named PR/SHA/fingerprint
 authorization and pre-attempt `reviewer-access-bypass` audit marker before one
-exact human-authorized `gh pr merge <pr> --admin` attempt.
+exact human-authorized `gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` attempt.
 Treat merge authority explicitly: `merge_granted` means readiness is
 intermediate and the runner continues through merge; `merge_denied` means the
 ready PR stops as `ready_human_merge` and no merge command is run. A

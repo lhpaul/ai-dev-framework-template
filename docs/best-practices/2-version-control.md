@@ -110,7 +110,9 @@ Workflow PR branch updates that would rewrite remote history must run through
 approval, delegated review authority, delegated merge authority, and risk
 acceptance are not force-push authorization; the guard requires exact, trusted,
 single-use human authorization for the repository, PR, full branch ref, action,
-operator, and expected remote tip.
+operator, expected remote tip, and authorized new tip from a separate GitHub
+`User` with repository `admin` permission. The executing credential cannot
+self-authorize.
 
 ## Safety Rules
 

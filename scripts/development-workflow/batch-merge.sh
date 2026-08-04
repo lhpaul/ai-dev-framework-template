@@ -14,7 +14,7 @@
 #   ./scripts/development-workflow/batch-merge.sh [--base <branch>] discover --include-checkpointed --prs 101,102,103
 #
 #   # --- Per-PR merge mode ---
-#   ./scripts/development-workflow/batch-merge.sh [--base <branch>] merge --pr 101
+#   ./scripts/development-workflow/batch-merge.sh [--base <branch>] merge --pr 101 --expected-head-sha <sha>
 #
 #   # --- Safe branch deletion (MERGED-state guard) ---
 #   ./scripts/development-workflow/batch-merge.sh [--base <branch>] delete-branch --pr 101
@@ -26,6 +26,7 @@
 #   PR_NUMBER=<n>
 #   PR_TITLE=<title>
 #   PR_BRANCH=<branch>
+#   PR_HEAD_SHA=<headRefOid>
 #   PR_BASE=<base-branch>
 #   PR_LABELS=<label1,label2,...>
 #   PR_READY_LABEL=true|false
@@ -55,6 +56,7 @@
 #   DELETE_PR_NUMBER=<n>
 #   DELETE_RESULT=deleted|skipped|not_found
 #   DELETE_BRANCH=<branch-name>          (absent when metadata fetch fails before branch is known)
+#   DELETE_IS_CROSS_REPOSITORY=true|false
 #   DELETE_PR_STATE=<state>              (only when DELETE_RESULT=skipped due to non-MERGED state)
 #   ERROR_MESSAGE=<text>                 (when DELETE_RESULT=skipped; covers non-MERGED state and push failures)
 #
@@ -88,7 +90,7 @@ usage() {
 Usage:
   batch-merge.sh [--base <branch>] discover [--include-checkpointed] [--prs <num1,num2,...>]
   batch-merge.sh recheck-remaining --prs <num1,num2,...> --after-merged-pr <number> --base <branch>
-  batch-merge.sh [--base <branch>] merge --pr <number>
+  batch-merge.sh [--base <branch>] merge --pr <number> --expected-head-sha <sha>
   batch-merge.sh [--base <branch>] delete-branch --pr <number>
 
   --base  Target integration branch (default: develop).
@@ -207,17 +209,18 @@ fetch_pr_meta() {
 
   local json
   json="$(gh pr view "$pr_num" \
-    --json number,title,headRefName,baseRefName,labels,createdAt,isDraft \
+    --json number,title,headRefName,headRefOid,baseRefName,labels,createdAt,isDraft \
     2>/dev/null)" || {
     echo "FETCH_ERROR=could not fetch PR #${pr_num}" >&2
     return 1
   }
 
-  local number title branch base created_at labels_csv ready_label is_draft has_needs_fixes has_human_checkpoint
+  local number title branch head_sha base created_at labels_csv ready_label is_draft has_needs_fixes has_human_checkpoint
 
   number="$(printf '%s' "$json" | jq -r '.number')"
   title="$(printf '%s' "$json" | jq -r '.title')"
   branch="$(printf '%s' "$json" | jq -r '.headRefName')"
+  head_sha="$(printf '%s' "$json" | jq -r '.headRefOid // ""')"
   base="$(printf '%s' "$json" | jq -r '.baseRefName')"
   created_at="$(printf '%s' "$json" | jq -r '.createdAt')"
   labels_csv="$(printf '%s' "$json" | jq -r '[.labels[].name] | join(",")')"
@@ -247,6 +250,7 @@ fetch_pr_meta() {
   print_kv PR_NUMBER         "$number"
   print_kv_escaped PR_TITLE  "$title"
   print_kv PR_BRANCH         "$branch"
+  print_kv PR_HEAD_SHA       "$head_sha"
   print_kv PR_BASE           "$base"
   print_kv PR_LABELS         "$labels_csv"
   print_kv PR_READY_LABEL    "$ready_label"
@@ -451,7 +455,8 @@ normalize_checks_state() {
       | group_by(check_key)
       | map(last)
     ) as $required |
-    if ($required | length) == 0 then "pending"
+    if ($checks | length) == 0 then "pending"
+    elif ($required | length) == 0 then "pending"
     elif ($required | any(.[]; (state | test("failure|error|cancelled|timed_out|action_required|startup_failure")))) then "failure"
     elif ($required | any(.[]; (state | test("pending|queued|in_progress|waiting|requested|expected")))) then "pending"
     elif ($required | all(.[]; (state | test("success|completed:success|completed:skipped|completed:neutral")))) then "success"
@@ -928,6 +933,7 @@ PYEOF
 
 cmd_merge() {
   local pr_num=""
+  local expected_head_sha=""
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -942,6 +948,11 @@ cmd_merge() {
         TARGET_BASE="$2"
         shift 2
         ;;
+      --expected-head-sha)
+        [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--expected-head-sha requires a commit SHA value"
+        expected_head_sha="$2"
+        shift 2
+        ;;
       *)
         die "Unknown option: $1"
         ;;
@@ -954,6 +965,10 @@ cmd_merge() {
   case "$pr_num" in
     ''|*[!0-9]*) die "Invalid PR number '${pr_num}' — must be a positive integer" ;;
   esac
+  [ -n "$expected_head_sha" ] || die "--expected-head-sha is required; pass the reviewed PR headRefOid captured by the readiness gate"
+  if ! [[ "$expected_head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    die "Invalid --expected-head-sha '${expected_head_sha}' — must be a 40-character lowercase commit SHA"
+  fi
 
   require_gh
 
@@ -971,14 +986,21 @@ cmd_merge() {
 
   # Revalidate the PR immediately before merging. A PR may have been
   # retargeted, closed, or labeled needs-fixes since discovery.
-  local pr_json branch base state is_draft
-  pr_json="$(gh pr view "$pr_num" --json headRefName,baseRefName,state,labels,isDraft 2>/dev/null)" || \
+  local pr_json branch base state is_draft current_head_sha
+  pr_json="$(gh pr view "$pr_num" --json headRefName,headRefOid,baseRefName,state,labels,isDraft 2>/dev/null)" || \
     merge_die "Could not fetch metadata for PR #${pr_num}"
 
   branch="$(printf '%s' "$pr_json" | jq -r '.headRefName')"
+  current_head_sha="$(printf '%s' "$pr_json" | jq -r '.headRefOid // ""')"
   base="$(printf '%s' "$pr_json" | jq -r '.baseRefName')"
   state="$(printf '%s' "$pr_json" | jq -r '.state')"
   is_draft="$(printf '%s' "$pr_json" | jq -r '.isDraft')"
+  if ! [[ "$current_head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    merge_die "Could not determine current headRefOid for PR #${pr_num}"
+  fi
+  if [ "$current_head_sha" != "$expected_head_sha" ]; then
+    merge_die "PR #${pr_num} head changed from reviewed SHA ${expected_head_sha} to ${current_head_sha}; rerun review/CI before merging"
+  fi
 
   [ "$base" = "$TARGET_BASE" ] || \
     merge_die "PR #${pr_num} targets '${base}', not '${TARGET_BASE}'"
@@ -989,10 +1011,6 @@ cmd_merge() {
 
   if printf '%s' "$pr_json" | jq -e '.labels[].name | select(. == "needs-fixes")' >/dev/null 2>&1; then
     merge_die "PR #${pr_num} is labeled needs-fixes"
-  fi
-
-  if printf '%s' "$pr_json" | jq -e '.labels[].name | select(. == "do-not-merge")' >/dev/null 2>&1; then
-    merge_die "PR #${pr_num} is labeled do-not-merge"
   fi
 
   if printf '%s' "$pr_json" | jq -e '.labels[].name | select(. == "human-checkpoint-required")' >/dev/null 2>&1; then
@@ -1028,11 +1046,16 @@ cmd_merge() {
   local merge_ref="FETCH_HEAD"
   git fetch origin "$pr_head_ref" >/dev/null 2>&1 || \
     merge_die "Could not fetch ${pr_head_ref} from origin"
+  local fetched_head_sha
+  fetched_head_sha="$(git rev-parse "${merge_ref}^{commit}" 2>/dev/null || true)"
+  if [ "$fetched_head_sha" != "$expected_head_sha" ]; then
+    merge_die "Fetched ${pr_head_ref} resolved to ${fetched_head_sha:-unknown}, expected reviewed SHA ${expected_head_sha}; rerun review/CI before merging"
+  fi
 
   # Attempt the merge (capture output; the 'if' absorbs the non-zero exit code
   # so set -e does not fire on a failed merge).
   local merge_output
-  if merge_output="$(git merge --no-ff --no-edit -m "Merge PR #${pr_num} (${branch})" "$merge_ref" 2>&1)"; then
+  if merge_output="$(git merge --no-ff --no-edit -m "Merge PR #${pr_num} (${branch})" "$expected_head_sha" 2>&1)"; then
     # Post-merge CHANGELOG deduplication guard.
     # A clean git merge can still produce structural CHANGELOG violations when the
     # incoming PR placed its entries under a category header (e.g. ### Fixed) that
@@ -1082,7 +1105,7 @@ cmd_merge() {
     # If the call fails (e.g. already-MERGED idempotent case, API error, or
     # auth issue), check the actual PR state.  Only warn when the PR is still
     # not MERGED — the caller's Step 4.2 MERGED-state poll is the safety net.
-    if ! gh pr merge "$pr_num" --merge 2>/dev/null; then
+    if ! gh pr merge "$pr_num" --merge --match-head-commit "$expected_head_sha" 2>/dev/null; then
       local post_state
       post_state="$(gh pr view "$pr_num" --json state --jq '.state' 2>/dev/null)" || post_state=""
       if [ "$post_state" != "MERGED" ]; then
@@ -1163,15 +1186,17 @@ cmd_delete_branch() {
     exit 2
   }
 
-  # Fetch the current PR state and branch name.
-  local pr_json branch state
-  pr_json="$(gh pr view "$pr_num" --json headRefName,state 2>/dev/null)" || \
+  # Fetch the current PR state and branch ownership.
+  local pr_json branch state is_cross_repository
+  pr_json="$(gh pr view "$pr_num" --json headRefName,state,isCrossRepository,headRepository,headRepositoryOwner 2>/dev/null)" || \
     delete_die "Could not fetch metadata for PR #${pr_num}"
 
   branch="$(printf '%s' "$pr_json" | jq -r '.headRefName')"
   state="$(printf '%s' "$pr_json" | jq -r '.state')"
+  is_cross_repository="$(printf '%s' "$pr_json" | jq -r '.isCrossRepository // false')"
 
   print_kv DELETE_BRANCH "$branch"
+  print_kv DELETE_IS_CROSS_REPOSITORY "$is_cross_repository"
 
   # Guard: only delete the remote branch when GitHub confirms MERGED state.
   # If the PR is CLOSED (not MERGED) it means the merge push has not been
@@ -1182,6 +1207,14 @@ cmd_delete_branch() {
     print_kv DELETE_RESULT   "skipped"
     print_kv DELETE_PR_STATE "$state"
     print_kv_escaped ERROR_MESSAGE "PR #${pr_num} is in state '${state}' (not MERGED) — branch '${branch}' was NOT deleted. Verify the merge push completed and GitHub has updated the PR state before retrying."
+    return 0
+  fi
+
+  if [ "$is_cross_repository" = "true" ]; then
+    echo "INFO: PR #${pr_num} is from a fork — skipping origin branch deletion for head branch '${branch}'." >&2
+    print_kv DELETE_RESULT "skipped"
+    print_kv DELETE_PR_STATE "$state"
+    print_kv_escaped ERROR_MESSAGE "PR #${pr_num} is cross-repository; branch '${branch}' belongs to the head repository, so origin branch deletion was skipped."
     return 0
   fi
 

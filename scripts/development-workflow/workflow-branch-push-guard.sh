@@ -53,6 +53,12 @@ allowed() {
   printf 'AUTHORIZATION_CONSUMED=%s\n' "$2"
 }
 
+body_field() {
+  local body="$1"
+  local field="$2"
+  printf '%s\n' "$body" | awk -F= -v key="$field" '$1 == key {print substr($0, length(key) + 2); exit}'
+}
+
 require_value() {
   local option="$1"
   local value="${2:-}"
@@ -136,7 +142,12 @@ case "$pr_number" in
 esac
 remote_url="$(git -C "$repo_root" remote get-url "$remote" 2>/dev/null)" || die "remote_url_unavailable"
 branch_name="${branch_ref#refs/heads/}"
-push_refspec="HEAD:${branch_ref}"
+local_branch_tip="$(git -C "$repo_root" rev-parse "${branch_ref}^{commit}" 2>/dev/null)" || die "local_branch_tip_unavailable"
+case "$local_branch_tip" in
+  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+  *) die "local_branch_tip_unavailable" ;;
+esac
+push_refspec="${local_branch_tip}:${branch_ref}"
 
 push_args_has_force=false
 for push_arg in "${push_args[@]}"; do
@@ -242,6 +253,7 @@ fi
 [ -f "$authorization_json" ] || die "authorization_file_unreadable"
 [ -n "$remote_tip" ] || block "remote_tip_mismatch"
 [ "$remote_tip" = "$expected_remote_tip" ] || block "remote_tip_mismatch"
+current_head_tip="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null)" || die "head_tip_unavailable"
 
 json_get() {
   local path="$1"
@@ -255,6 +267,7 @@ auth_pr="$(json_get '.pr_number | tostring')"
 auth_branch_ref="$(json_get '.branch_ref')"
 auth_action="$(json_get '.action')"
 auth_expected_tip="$(json_get '.expected_remote_tip')"
+auth_authorized_new_tip="$(json_get '.authorized_new_tip // .authorizedNewTip')"
 auth_operator="$(json_get '.operator_login')"
 auth_authorized_by="$(json_get '.authorized_by')"
 auth_source_kind="$(json_get '.source_kind')"
@@ -263,7 +276,7 @@ auth_source_fingerprint="$(json_get '.source_fingerprint_sha256')"
 auth_expires_at="$(json_get '.expires_at')"
 auth_single_use="$(json_get '.single_use | tostring')"
 
-for required in auth_schema_version authorization_id auth_repo auth_pr auth_branch_ref auth_action auth_expected_tip auth_operator auth_authorized_by auth_source_kind auth_source_id auth_source_fingerprint auth_expires_at auth_single_use; do
+for required in auth_schema_version authorization_id auth_repo auth_pr auth_branch_ref auth_action auth_expected_tip auth_authorized_new_tip auth_operator auth_authorized_by auth_source_kind auth_source_id auth_source_fingerprint auth_expires_at auth_single_use; do
   [ -n "${!required}" ] || block "authorization_scope_mismatch"
 done
 
@@ -273,32 +286,42 @@ done
 [ "$auth_branch_ref" = "$branch_ref" ] || block "authorization_scope_mismatch"
 [ "$auth_action" = "$mode" ] || block "authorization_scope_mismatch"
 [ "$auth_expected_tip" = "$expected_remote_tip" ] || block "authorization_scope_mismatch"
+[[ "$auth_authorized_new_tip" =~ ^[0-9a-f]{40}$ ]] || block "authorization_scope_mismatch"
+[ "$auth_authorized_new_tip" = "$current_head_tip" ] || block "authorization_scope_mismatch"
 [ "$auth_single_use" = "true" ] || block "authorization_scope_mismatch"
-[ "$auth_authorized_by" = "$auth_operator" ] || block "authorization_scope_mismatch"
-
-if ! python3 - "$auth_expires_at" <<'PY' >/dev/null 2>&1
-from datetime import datetime, timezone
-import sys
-raw = sys.argv[1].replace("Z", "+00:00")
-expires = datetime.fromisoformat(raw)
-if expires.tzinfo is None:
-    expires = expires.replace(tzinfo=timezone.utc)
-raise SystemExit(0 if expires > datetime.now(timezone.utc) else 1)
-PY
-then
-  block "authorization_expired"
-fi
 
 operator_login="$(gh api user --jq '.login' 2>/dev/null)" || die "gh_user_unavailable"
 [ "$operator_login" = "$auth_operator" ] || block "authorization_scope_mismatch"
+[ "$auth_authorized_by" != "$auth_operator" ] || block "untrusted_authorization_source"
 
+trusted_expires_at=""
 case "$auth_source_kind" in
   github_comment|github_pr_comment|github_issue_comment)
     comment_json="$(gh api "repos/${canonical_repo}/issues/comments/${auth_source_id}" 2>/dev/null)" || die "trusted_source_unavailable"
     comment_author="$(printf '%s\n' "$comment_json" | jq -r '.user.login // empty')"
+    comment_author_type="$(printf '%s\n' "$comment_json" | jq -r '.user.type // empty')"
     comment_body="$(printf '%s\n' "$comment_json" | jq -r '.body // empty')"
+    comment_issue_url="$(printf '%s\n' "$comment_json" | jq -r '.issue_url // empty')"
     [ "$comment_author" = "$auth_authorized_by" ] || block "untrusted_authorization_source"
+    [ "$comment_author" != "$operator_login" ] || block "untrusted_authorization_source"
+    [ "$comment_author_type" = "User" ] || block "untrusted_authorization_source"
+    comment_author_permission="$(gh api "repos/${canonical_repo}/collaborators/${comment_author}/permission" --jq '.permission // empty' 2>/dev/null)" || block "untrusted_authorization_source"
+    [ "$comment_author_permission" = "admin" ] || block "untrusted_authorization_source"
+    case "$comment_issue_url" in
+      */issues/"$pr_number") ;;
+      *) block "untrusted_authorization_source" ;;
+    esac
     printf '%s\n' "$comment_body" | grep -Fq "$authorization_id" || block "untrusted_authorization_source"
+    [ "$(body_field "$comment_body" authorization_id)" = "$authorization_id" ] || block "untrusted_authorization_source"
+    [ "$(body_field "$comment_body" canonical_repo)" = "$canonical_repo" ] || block "untrusted_authorization_source"
+    [ "$(body_field "$comment_body" pr_number)" = "$pr_number" ] || block "untrusted_authorization_source"
+    [ "$(body_field "$comment_body" branch_ref)" = "$branch_ref" ] || block "untrusted_authorization_source"
+    [ "$(body_field "$comment_body" action)" = "$mode" ] || block "untrusted_authorization_source"
+    [ "$(body_field "$comment_body" operator_login)" = "$auth_operator" ] || block "untrusted_authorization_source"
+    [ "$(body_field "$comment_body" expected_remote_tip)" = "$expected_remote_tip" ] || block "untrusted_authorization_source"
+    [ "$(body_field "$comment_body" authorized_new_tip)" = "$auth_authorized_new_tip" ] || block "untrusted_authorization_source"
+    trusted_expires_at="$(body_field "$comment_body" expires_at)"
+    [ "$trusted_expires_at" = "$auth_expires_at" ] || block "untrusted_authorization_source"
     computed_fingerprint="$(printf '%s' "$comment_body" | openssl dgst -sha256 -r | awk '{print $1}')"
     case "$auth_source_fingerprint" in
       sha256:*) expected_fingerprint="${auth_source_fingerprint#sha256:}" ;;
@@ -311,15 +334,49 @@ case "$auth_source_kind" in
     ;;
 esac
 
+if ! python3 - "$trusted_expires_at" <<'PY' >/dev/null 2>&1
+from datetime import datetime, timezone
+import sys
+raw = sys.argv[1].replace("Z", "+00:00")
+expires = datetime.fromisoformat(raw)
+if expires.tzinfo is None:
+    expires = expires.replace(tzinfo=timezone.utc)
+raise SystemExit(0 if expires > datetime.now(timezone.utc) else 1)
+PY
+then
+  block "authorization_expired"
+fi
+
 claim_run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 lock_ref="refs/tags/workflow-force-push-locks/$(printf '%s' "$authorization_id" | openssl dgst -sha256 -r | awk '{print $1}')"
+lock_delete_ref="${lock_ref#refs/}"
+
+rollback_claim() {
+  local reason="$1"
+  local rollback_body="workflow-force-push-authorization-claim
+authorization_id=${authorization_id}
+canonical_repo=${canonical_repo}
+branch_ref=${branch_ref}
+expected_remote_tip=${expected_remote_tip}
+authorized_new_tip=${auth_authorized_new_tip}
+run_id=${claim_run_id}
+state=rolled_back
+reason=${reason}"
+  if ! gh pr comment "$pr_number" --body "$rollback_body" >/dev/null 2>&1; then
+    printf 'PUSH_GUARD_WARNING=rollback_marker_failed\n'
+  fi
+  if ! gh api -X DELETE "repos/${canonical_repo}/git/refs/${lock_delete_ref}" >/dev/null 2>&1; then
+    printf 'PUSH_GUARD_WARNING=lock_release_failed\n'
+  fi
+}
+
 set +e
 lock_output="$(gh api -X POST "repos/${canonical_repo}/git/refs" -f "ref=${lock_ref}" -f "sha=${expected_remote_tip}" 2>&1)"
 lock_status=$?
 set -e
 if [ "$lock_status" -ne 0 ]; then
   printf '%s\n' "$lock_output" | grep -Eiq 'Reference already exists|already_exists|already exists' && block "authorization_already_claimed"
-  block "authorization_already_claimed"
+  die "lock_claim_failed"
 fi
 
 claim_body="workflow-force-push-authorization-claim
@@ -327,37 +384,39 @@ authorization_id=${authorization_id}
 canonical_repo=${canonical_repo}
 branch_ref=${branch_ref}
 expected_remote_tip=${expected_remote_tip}
+authorized_new_tip=${auth_authorized_new_tip}
 run_id=${claim_run_id}
 state=claimed"
-gh pr comment "$pr_number" --body "$claim_body" >/dev/null || die "claim_marker_failed"
+if ! gh pr comment "$pr_number" --body "$claim_body" >/dev/null 2>&1; then
+  if ! gh api -X DELETE "repos/${canonical_repo}/git/refs/${lock_delete_ref}" >/dev/null 2>&1; then
+    printf 'PUSH_GUARD_WARNING=lock_release_failed\n'
+  fi
+  die "claim_marker_failed"
+fi
 
+if ! current_head_tip="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null)"; then
+  rollback_claim "head_tip_unavailable"
+  die "head_tip_unavailable"
+fi
+if [ "$current_head_tip" != "$auth_authorized_new_tip" ]; then
+  rollback_claim "head_tip_mismatch"
+  block "authorization_scope_mismatch"
+fi
+
+authorized_push_refspec="${auth_authorized_new_tip}:${branch_ref}"
 set +e
 case "$mode" in
   force)
-    git -C "$repo_root" push --force "$remote" "$push_refspec"
+    git -C "$repo_root" push "--force-with-lease=${branch_ref}:${expected_remote_tip}" "$remote" "$authorized_push_refspec"
     ;;
   force-with-lease)
-    git -C "$repo_root" push "--force-with-lease=${branch_ref}:${expected_remote_tip}" "$remote" "$push_refspec"
+    git -C "$repo_root" push "--force-with-lease=${branch_ref}:${expected_remote_tip}" "$remote" "$authorized_push_refspec"
     ;;
 esac
 push_status=$?
 set -e
 if [ "$push_status" -ne 0 ]; then
-  lock_delete_ref="${lock_ref#refs/}"
-  rollback_body="workflow-force-push-authorization-claim
-authorization_id=${authorization_id}
-canonical_repo=${canonical_repo}
-branch_ref=${branch_ref}
-expected_remote_tip=${expected_remote_tip}
-run_id=${claim_run_id}
-state=rolled_back
-reason=conditional_update_failed"
-  if ! gh pr comment "$pr_number" --body "$rollback_body" >/dev/null 2>&1; then
-    printf 'PUSH_GUARD_WARNING=rollback_marker_failed\n'
-  fi
-  if ! gh api -X DELETE "repos/${canonical_repo}/git/refs/${lock_delete_ref}" >/dev/null 2>&1; then
-    printf 'PUSH_GUARD_WARNING=lock_release_failed\n'
-  fi
+  rollback_claim "conditional_update_failed"
   block "conditional_update_failed"
 fi
 
@@ -366,6 +425,7 @@ authorization_id=${authorization_id}
 canonical_repo=${canonical_repo}
 branch_ref=${branch_ref}
 expected_remote_tip=${expected_remote_tip}
+authorized_new_tip=${auth_authorized_new_tip}
 run_id=${claim_run_id}
 state=consumed"
 if ! gh pr comment "$pr_number" --body "$consumed_body" >/dev/null 2>&1; then

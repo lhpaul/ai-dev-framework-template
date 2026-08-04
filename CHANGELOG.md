@@ -10,8 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Template sync review hardening**: Backport reviewer-discovered safeguards
-  for batch merge metadata, delegated epic merge evidence, reviewer bypass
-  authorization, and workflow branch push-lock cleanup.
+  for batch merge metadata, reviewed-head pinning, delegated epic merge
+  evidence, reviewer-loop blockers, reviewer bypass authorization, PR-bound
+  cleanup, and workflow branch push-lock cleanup.
 
 ## [0.41.0] - 2026-08-02
 

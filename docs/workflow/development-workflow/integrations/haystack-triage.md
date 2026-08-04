@@ -348,8 +348,9 @@ the delegated gate may present a human-only exceptional path. That path requires
 current green CI, zero blocking reviewer findings, current access-denial
 evidence, remediation evidence, a named authorization for the exact PR/head
 SHA/evidence fingerprint, and a pre-attempt `reviewer-access-bypass` audit
-comment. It authorizes exactly one named `gh pr merge <pr> --admin` attempt; it
-is never implied by delegated merge policy or batch approval.
+comment. It authorizes exactly one named
+`gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` attempt;
+it is never implied by delegated merge policy or batch approval.
 
 ### Triage returns `status=pending` (analysis in progress — automatic retry)
 

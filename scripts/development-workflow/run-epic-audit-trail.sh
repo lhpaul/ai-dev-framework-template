@@ -441,9 +441,12 @@ validate_reviewer_access_bypass_scope() {
 
   printf '%s\n' "$json" | jq -er --arg expected_pr "$expected_pr" '
     (.pr.number | tostring) as $input_pr |
+    ((.pr.head_sha // .pr.headSha) | tostring) as $head_sha |
     ((.proposed_action // .proposedAction) | tostring) as $action |
-    ($action == ("gh pr merge " + $expected_pr + " --admin")) and ($input_pr == $expected_pr)
-  ' >/dev/null || error_exit "reviewer access-bypass input must target PR #${expected_pr} and proposed action 'gh pr merge ${expected_pr} --admin'"
+    ($head_sha | test("^[0-9a-f]{40}$"))
+    and ($action == ("gh pr merge " + $expected_pr + " --admin --match-head-commit " + $head_sha))
+    and ($input_pr == $expected_pr)
+  ' >/dev/null || error_exit "reviewer access-bypass input must target PR #${expected_pr} and proposed action 'gh pr merge ${expected_pr} --admin --match-head-commit <head-sha>'"
 }
 
 find_marker_comment_id() {

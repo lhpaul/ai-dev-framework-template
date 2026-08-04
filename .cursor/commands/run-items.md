@@ -101,7 +101,7 @@ Key responsibilities:
   `exceptional_bypass_authorized`, split it out of the normal batch-merge list
   and require separate named PR/SHA/fingerprint authorization plus pre-attempt
   `reviewer-access-bypass` audit before one exact human-authorized
-  `gh pr merge <pr> --admin` attempt. Then route normal candidates into
+  `gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` attempt. Then route normal candidates into
   Protocol 94 batch merge using only the explicit in-scope PR list: run
   `batch-merge.sh discover --prs <comma-separated-in-scope-prs>` and continue
   through merge, cleanup, post-sibling-merge `recheck-remaining` calls, and

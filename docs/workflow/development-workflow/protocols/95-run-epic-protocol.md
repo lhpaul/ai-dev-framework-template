@@ -647,7 +647,7 @@ Before merge:
 
 Proceed to the normal repository merge protocol only when the delegated gate
 reports `merge_allowed`. If the gate reports `exceptional_bypass_authorized`,
-execute only the named human-authorized `gh pr merge <pr> --admin` attempt after
+execute only the named human-authorized `gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` attempt after
 verifying the current PR/SHA/fingerprint authorization and pre-attempt
 `reviewer-access-bypass` audit record, then verify live PR state and update that
 same audit record with the result. If the gate reports `fix_required`, remove
@@ -678,7 +678,7 @@ When all gates permit merge:
    mode, pass `--repo <product-repo>` for product-owned implementation branches:
 
    ```bash
-   ./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> <merged-branch>
+   ./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> --pr <merged-pr-number> <merged-branch>
    ```
 
    For scoped batch merges, follow Protocol 94 so every merged PR runs its
