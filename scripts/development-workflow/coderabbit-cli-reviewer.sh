@@ -205,7 +205,9 @@ if [ -n "$REPO_ROOT" ]; then
     print_result escalate 0 0 0 head_sha_unavailable "head_sha_unavailable"
     exit 2
   fi
-  CURRENT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true)"
+  if ! CURRENT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)"; then
+    CURRENT_SHA=""
+  fi
   if [ "$CURRENT_SHA" != "$HEAD_SHA" ]; then
     echo "ERROR: checkout HEAD does not match PR head ($CURRENT_SHA != $HEAD_SHA)" >&2
     print_result escalate 0 0 0 checkout_head_mismatch "checkout_head_mismatch"

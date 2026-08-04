@@ -1047,7 +1047,9 @@ cmd_merge() {
   git fetch origin "$pr_head_ref" >/dev/null 2>&1 || \
     merge_die "Could not fetch ${pr_head_ref} from origin"
   local fetched_head_sha
-  fetched_head_sha="$(git rev-parse "${merge_ref}^{commit}" 2>/dev/null || true)"
+  if ! fetched_head_sha="$(git rev-parse "${merge_ref}^{commit}" 2>/dev/null)"; then
+    fetched_head_sha=""
+  fi
   if [ "$fetched_head_sha" != "$expected_head_sha" ]; then
     merge_die "Fetched ${pr_head_ref} resolved to ${fetched_head_sha:-unknown}, expected reviewed SHA ${expected_head_sha}; rerun review/CI before merging"
   fi

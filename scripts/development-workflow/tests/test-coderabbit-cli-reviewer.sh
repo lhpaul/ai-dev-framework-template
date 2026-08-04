@@ -55,7 +55,12 @@ install_gh_mock() {
 #!/usr/bin/env bash
 case "$*" in
   *"pr view 123"*"--json baseRefName,headRefName,headRefOid"*)
-    printf '{"baseRefName":"main","headRefName":"feature/test","headRefOid":"%s"}\n' "${MOCK_PR_HEAD_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}"
+    if [ -n "${MOCK_PR_HEAD_SHA:-}" ]; then
+      mock_head_sha="$MOCK_PR_HEAD_SHA"
+    elif ! mock_head_sha="$(git rev-parse HEAD 2>/dev/null)"; then
+      mock_head_sha=""
+    fi
+    printf '{"baseRefName":"main","headRefName":"feature/test","headRefOid":"%s"}\n' "$mock_head_sha"
     exit 0
     ;;
   *)

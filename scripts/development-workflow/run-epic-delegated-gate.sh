@@ -153,9 +153,11 @@ github_verified_authorization_events() {
         continue
         ;;
     esac
-    fetched="$(gh api "$endpoint" 2>/dev/null || true)"
+    if ! fetched="$(gh api "$endpoint" 2>/dev/null)"; then
+      continue
+    fi
     [ -n "$fetched" ] || continue
-    normalized="$(printf '%s\n' "$fetched" | jq -c --arg type "$type" --arg pr_number "$pr_number" '
+    if ! normalized="$(printf '%s\n' "$fetched" | jq -c --arg type "$type" --arg pr_number "$pr_number" '
       def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
       def url_targets_pr($url; $segment):
         ($url // "" | tostring | test("/" + $segment + "/" + $pr_number + "($|[?#])"));
@@ -175,11 +177,19 @@ github_verified_authorization_events() {
           else false end
         )
       }
-    ' 2>/dev/null || true)"
+    ' 2>/dev/null)"; then
+      continue
+    fi
     [ -n "$normalized" ] || continue
-    permission_response="$(gh api "repos/${repo}/collaborators/${authorized_by}/permission" 2>/dev/null || true)"
-    author_permission="$(printf '%s\n' "$permission_response" | jq -r '.permission // ""' 2>/dev/null || true)"
-    normalized="$(printf '%s\n' "$normalized" | jq -c --arg permission "$author_permission" '.authorPermission = $permission' 2>/dev/null || true)"
+    if ! permission_response="$(gh api "repos/${repo}/collaborators/${authorized_by}/permission" 2>/dev/null)"; then
+      permission_response=""
+    fi
+    if ! author_permission="$(printf '%s\n' "$permission_response" | jq -r '.permission // ""' 2>/dev/null)"; then
+      author_permission=""
+    fi
+    if ! normalized="$(printf '%s\n' "$normalized" | jq -c --arg permission "$author_permission" '.authorPermission = $permission' 2>/dev/null)"; then
+      continue
+    fi
     [ -n "$normalized" ] || continue
     if printf '%s\n' "$normalized" | jq -e \
       --arg author "$authorized_by" \
@@ -233,7 +243,9 @@ github_verified_bypass_audit() {
   fi
 
   local comments
-  comments="$(gh api --paginate --slurp "repos/${repo}/issues/${pr_number}/comments?per_page=100" 2>/dev/null || true)"
+  if ! comments="$(gh api --paginate --slurp "repos/${repo}/issues/${pr_number}/comments?per_page=100" 2>/dev/null)"; then
+    comments=""
+  fi
   if [ -z "$comments" ]; then
     printf '{"present":false}\n'
     return 0
