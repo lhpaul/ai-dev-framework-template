@@ -38,9 +38,18 @@ JSON
 {"number":43,"title":"clean PR","headRefName":"feature/43-clean","baseRefName":"develop","labels":[{"name":"ready-for-human-review"},{"name":"ready-for-regression"}],"createdAt":"2026-06-22T12:01:00Z","isDraft":false}
 JSON
     ;;
+  pr\ view\ 44\ --json\ number,title,headRefName,baseRefName,labels,createdAt,isDraft)
+    printf 'metadata unavailable for PR 44\n' >&2
+    exit 70
+    ;;
   pr\ view\ 42\ --json\ headRefName,baseRefName,state,labels,isDraft)
     cat <<'JSON'
 {"headRefName":"feature/42-checkpointed","baseRefName":"develop","state":"OPEN","labels":[{"name":"ready-for-human-review"},{"name":"ready-for-regression"},{"name":"human-checkpoint-required"}],"isDraft":false}
+JSON
+    ;;
+  pr\ view\ 45\ --json\ headRefName,baseRefName,state,labels,isDraft)
+    cat <<'JSON'
+{"headRefName":"feature/45-paused","baseRefName":"develop","state":"OPEN","labels":[{"name":"ready-for-human-review"},{"name":"ready-for-regression"},{"name":"do-not-merge"}],"isDraft":false}
 JSON
     ;;
   pr\ diff\ 42\ --name-only|pr\ diff\ 43\ --name-only)
@@ -84,11 +93,25 @@ run_test "explicit_checkpoint_include_emits_candidate" "yes" "$(grep -q '^PR_NUM
 run_test "explicit_checkpoint_candidate_marks_flag" "true" "$(awk -F= '$1=="PR_HAS_HUMAN_CHECKPOINT"{print $2; exit}' <<< "$include_output")"
 
 set +e
+explicit_missing_output="$("$HELPER" discover --prs 44 2>&1)"
+explicit_missing_status=$?
+set -e
+run_test "explicit_discovery_metadata_failure_exit" "2" "$explicit_missing_status"
+run_test "explicit_discovery_metadata_failure_message" "yes" "$(grep -q 'explicitly requested PR #44' <<< "$explicit_missing_output" && echo yes || echo no)"
+
+set +e
 merge_output="$("$HELPER" merge --pr 42 2>&1)"
 merge_status=$?
 set -e
 run_test "merge_refuses_checkpoint_label_status" "2" "$merge_status"
 run_test "merge_refuses_checkpoint_label_message" "yes" "$(grep -q 'human-checkpoint-required' <<< "$merge_output" && echo yes || echo no)"
+
+set +e
+do_not_merge_output="$("$HELPER" merge --pr 45 2>&1)"
+do_not_merge_status=$?
+set -e
+run_test "merge_refuses_do_not_merge_label_status" "2" "$do_not_merge_status"
+run_test "merge_refuses_do_not_merge_label_message" "yes" "$(grep -q 'do-not-merge' <<< "$do_not_merge_output" && echo yes || echo no)"
 
 echo ""
 echo "=== Summary ==="

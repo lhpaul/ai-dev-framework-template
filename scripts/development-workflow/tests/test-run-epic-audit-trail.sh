@@ -296,6 +296,10 @@ cat > "$bypass_fixture" <<'JSON'
 JSON
 bad_bypass_fixture="$TMP_ROOT/bad-bypass.json"
 jq 'del(.authorization.authorized_by)' "$bypass_fixture" > "$bad_bypass_fixture"
+mismatched_bypass_pr_fixture="$TMP_ROOT/mismatched-bypass-pr.json"
+jq '.pr.number = 99' "$bypass_fixture" > "$mismatched_bypass_pr_fixture"
+mismatched_bypass_action_fixture="$TMP_ROOT/mismatched-bypass-action.json"
+jq '.proposed_action = "gh pr merge 99 --admin"' "$bypass_fixture" > "$mismatched_bypass_action_fixture"
 empty_fixture="$TMP_ROOT/empty.json"
 : > "$empty_fixture"
 malformed_fixture="$TMP_ROOT/malformed.json"
@@ -311,6 +315,8 @@ run_fails_contains "requires_advisory_rationale" "non-fixed advisory decisions r
 run_fails_contains "rejects_missing_pr_required_field" "missing required PR disposition fields" "$HELPER" render-pr-disposition --input "$missing_pr_field_fixture"
 run_fails_contains "rejects_bad_ledger_items_type" "missing required epic ledger fields" "$HELPER" render-epic-ledger --input "$bad_ledger_fixture"
 run_fails_contains "rejects_missing_bypass_required_field" "missing required reviewer access-bypass fields: authorization.authorized_by" "$HELPER" render-reviewer-access-bypass --input "$bad_bypass_fixture"
+run_fails_contains "rejects_mismatched_bypass_pr_on_apply" "reviewer access-bypass input must target PR #42" "$HELPER" apply-reviewer-access-bypass --input "$mismatched_bypass_pr_fixture" --pr 42
+run_fails_contains "rejects_mismatched_bypass_action_on_apply" "proposed action 'gh pr merge 42 --admin'" "$HELPER" apply-reviewer-access-bypass --input "$mismatched_bypass_action_fixture" --pr 42
 run_fails_contains "rejects_missing_input_file" "input file not found" "$HELPER" render-pr-disposition --input "$missing_fixture"
 run_fails_contains "rejects_empty_input_file" "input file is empty" "$HELPER" render-pr-disposition --input "$empty_fixture"
 run_fails_contains "rejects_malformed_input_json" "input file is not valid JSON" "$HELPER" render-pr-disposition --input "$malformed_fixture"

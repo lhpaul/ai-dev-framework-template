@@ -84,6 +84,10 @@ PY
     printf '{"user":{"login":"%s"},"body":%s}\n' "${MOCK_COMMENT_AUTHOR:-lhpaul}" "$body"
     ;;
 	  pr\ comment\ 1423\ --body*)
+	    if [ "${MOCK_PR_COMMENT_MODE:-ok}" = "fail" ]; then
+	      printf 'comment failed\n' >&2
+	      exit 1
+	    fi
 	    printf '%s\n' "$*" | sed 's/^pr comment 1423 --body //' > "$WORKFLOW_PUSH_GUARD_CLAIM_BODY"
 	    printf 'https://github.com/lhpaul/ai-dev-framework-template/pull/1423#issuecomment-1\n'
 	    ;;
@@ -92,7 +96,10 @@ PY
 	      printf '{"message":"Reference already exists"}\n' >&2
 	      exit 1
 	    fi
-	    printf '{"ref":"refs/tags/workflow-force-push-locks/mock"}\n'
+		    printf '{"ref":"refs/tags/workflow-force-push-locks/mock"}\n'
+		    ;;
+	  api\ -X\ DELETE\ repos/lhpaul/ai-dev-framework-template/git/refs/tags/workflow-force-push-locks/*)
+	    printf '{}\n'
 	    ;;
   api\ --paginate\ --slurp\ repos/lhpaul/ai-dev-framework-template/issues/1423/comments?per_page=100)
     if [ "${MOCK_EXISTING_CLAIM:-none}" = "other" ]; then
@@ -284,6 +291,7 @@ run_test "conditional_failure_status" "1" "$push_fail_status"
 run_test "conditional_failure_blocks" "conditional_update_failed" "$(guard_field "$push_fail_output" PUSH_GUARD_REASON)"
 run_test "conditional_failure_unconsumed" "false" "$(guard_field "$push_fail_output" AUTHORIZATION_CONSUMED)"
 run_test "conditional_failure_rolled_back_marker" "1" "$(file_count 'state=rolled_back' "$CLAIM_BODY")"
+run_test "conditional_failure_releases_lock" "1" "$(call_log_count 'api -X DELETE repos/lhpaul/ai-dev-framework-template/git/refs/tags/workflow-force-push-locks/')"
 
 export MOCK_REMOTE_REF=fail
 set +e

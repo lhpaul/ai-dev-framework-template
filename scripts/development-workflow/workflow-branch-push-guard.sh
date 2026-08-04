@@ -343,6 +343,7 @@ esac
 push_status=$?
 set -e
 if [ "$push_status" -ne 0 ]; then
+  lock_delete_ref="${lock_ref#refs/}"
   rollback_body="workflow-force-push-authorization-claim
 authorization_id=${authorization_id}
 canonical_repo=${canonical_repo}
@@ -353,6 +354,9 @@ state=rolled_back
 reason=conditional_update_failed"
   if ! gh pr comment "$pr_number" --body "$rollback_body" >/dev/null 2>&1; then
     printf 'PUSH_GUARD_WARNING=rollback_marker_failed\n'
+  fi
+  if ! gh api -X DELETE "repos/${canonical_repo}/git/refs/${lock_delete_ref}" >/dev/null 2>&1; then
+    printf 'PUSH_GUARD_WARNING=lock_release_failed\n'
   fi
   block "conditional_update_failed"
 fi

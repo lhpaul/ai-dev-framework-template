@@ -232,6 +232,23 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     reviewer_checks | map(select(reviewer_check_non_green(.)));
   def reviewer_check_names:
     reviewer_checks | map(reviewer_check_name(.));
+  def advisory_entries:
+    if ((.advisories // null) | type) == "array" then .advisories
+    elif ((.reviewer.advisories // null) | type) == "array" then .reviewer.advisories
+    else [] end;
+  def advisory_count:
+    ((.reviewer.advisoryCount // .reviewer.advisory_count // 0) | tonumber);
+  def accepted_advisory_missing_rationale($advisory):
+    (($advisory.decision // $advisory.disposition // $advisory.status // "") | ascii_downcase) as $decision |
+    (($advisory.rationale // $advisory.reason // $advisory.mitigation // "") | tostring | gsub("^\\s+|\\s+$"; "") | length) as $rationale_length |
+    ($decision | test("accept")) and ($rationale_length == 0);
+  def advisory_missing_disposition($advisory):
+    (($advisory.decision // $advisory.disposition // $advisory.status // "") | ascii_downcase) as $decision |
+    (($decision | IN("fixed", "accepted")) | not);
+  def advisory_evidence_incomplete:
+    (advisory_entries) as $advisories |
+    (advisory_count > 0 and ($advisories | length) < advisory_count)
+    or ($advisories | any(advisory_missing_disposition(.) or accepted_advisory_missing_rationale(.)));
   def ci_status_checks:
     (reviewer_check_names) as $reviewerNames |
     (.statusChecks // [])
@@ -270,6 +287,52 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     and (access_obj.cannotUnblockInTime // access_obj.cannot_unblock_in_time // false) == true
     and ((access_obj.bypassReason // access_obj.bypass_reason // "") | tostring | length) > 0;
   def authorization: (.authorization // .reviewerAccessAuthorization // .reviewer_access_authorization // {});
+  def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
+  def authorization_by: trim_text(authorization.authorizedBy // authorization.authorized_by);
+  def authorization_at: trim_text(authorization.authorizedAt // authorization.authorized_at);
+  def authorization_text: trim_text(authorization.authorizationText // authorization.authorization_text);
+  def named_authorization_present:
+    (authorization_by | test("^[A-Za-z0-9][A-Za-z0-9-]{0,38}$"))
+    and (authorization_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+    and (authorization_text | length) > 0;
+  def pr_head_sha: ((.pr.headSha // .pr.head_sha // .pr.headRefOid // "") | tostring);
+  def valid_pr_head_sha: (pr_head_sha | test("^[0-9a-f]{40}$"));
+  def authorization_events:
+    if ((.authorizationEvents // null) | type) == "array" then .authorizationEvents
+    elif ((.reviewerAccessAuthorizationEvents // null) | type) == "array" then .reviewerAccessAuthorizationEvents
+    elif ((.reviewer_access_authorization_events // null) | type) == "array" then .reviewer_access_authorization_events
+    elif ((.trustedAuthorizationEvents // null) | type) == "array" then .trustedAuthorizationEvents
+    else [] end;
+  def event_author($event):
+    trim_text(
+      if (($event.author // null) | type) == "object" then
+        ($event.author.login // $event.author.name // "")
+      else
+        ($event.author // $event.login // $event.authorLogin // $event.author_login)
+      end
+    );
+  def trusted_authorization_event_present:
+    . as $state |
+    (.computedEvidenceFingerprint // "") as $fingerprint |
+    (pr_head_sha) as $pr_head_sha |
+    (authorization_by) as $authorization_by |
+    (authorization_at) as $authorization_at |
+    (authorization_text) as $authorization_text |
+    authorization_events
+    | any(. as $event |
+        ((trim_text($event.source // $event.provider) | ascii_downcase) == "github")
+        and ((trim_text($event.type // $event.eventType // $event.event_type) | ascii_downcase)
+          | IN("comment", "issue_comment", "pull_request_review", "review"))
+        and (event_author($event) == $authorization_by)
+        and (trim_text($event.createdAt // $event.created_at // $event.submittedAt // $event.submitted_at) == $authorization_at)
+        and (
+          (trim_text($event.body // $event.text // $event.authorizationText // $event.authorization_text) == $authorization_text)
+          or (($event.body // $event.text // "") | tostring | contains($authorization_text))
+        )
+        and (((($event.pullRequest // $event.pull_request // $event.prNumber // $event.pr_number) | tostring) == (($state.pr.number // "") | tostring)))
+        and ((trim_text($event.headSha // $event.head_sha) == $pr_head_sha))
+        and ((trim_text($event.evidenceFingerprint // $event.evidence_fingerprint) == $fingerprint))
+      );
   def bypass_audit: (.bypassAudit // .bypass_audit // {});
   def reviewer_blocks:
     ((.reviewer.blockingCount // .reviewer.blocking_count // 0) | tonumber) > 0
@@ -283,10 +346,13 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     elif (($blockedChecks | length) == 0) then "not_applicable"
     elif (access_denial_verified | not) then "insufficient_evidence"
     elif (remediation_ready | not) then "access_restricted"
+    elif (valid_pr_head_sha | not) then "insufficient_evidence"
     elif ((authorization.pullRequest // authorization.pull_request // null) == null) then "authorization_required"
+    elif (named_authorization_present | not) then "authorization_required"
     elif (((authorization.pullRequest // authorization.pull_request) | tostring) != ((.pr.number // "") | tostring)
-       or ((authorization.headSha // authorization.head_sha // "") != (.pr.headSha // .pr.head_sha // .pr.headRefOid // ""))
+       or ((authorization.headSha // authorization.head_sha // "") != pr_head_sha)
        or ((authorization.evidenceFingerprint // authorization.evidence_fingerprint // "") != $fingerprint)) then "authorization_stale"
+    elif (trusted_authorization_event_present | not) then "authorization_required"
     elif ((bypass_audit.present // false) != true
        or ((bypass_audit.evidenceFingerprint // bypass_audit.evidence_fingerprint // "") != $fingerprint)
        or ((bypass_audit.state // "") != "authorized_pending_attempt")) then "audit_required"
@@ -379,6 +445,9 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
    else $reasons end) as $reasons |
   (if ((.reviewer.acceptedAdvisoriesWithoutRationale // 0) | tonumber) > 0
    then add_reason($reasons; "accepted advisories require rationale")
+   else $reasons end) as $reasons |
+  (if advisory_evidence_incomplete
+   then add_reason($reasons; "reviewer advisories require per-finding fix or acceptance rationale")
    else $reasons end) as $reasons |
   (if (ci_policy == "none") and (risk_merge_permitted != true) and risk_ci_only_blockers
    then $reasons

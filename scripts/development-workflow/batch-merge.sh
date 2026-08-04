@@ -347,6 +347,9 @@ cmd_discover() {
 
     local meta
     if ! meta="$(fetch_pr_meta "$pr_num" 2>&1)"; then
+      if [ -n "$explicit_prs" ]; then
+        die "could not fetch metadata for explicitly requested PR #${pr_num}; aborting explicit batch discovery"
+      fi
       echo "WARNING: skipping PR #${pr_num} — could not fetch metadata" >&2
       continue
     fi
@@ -431,14 +434,24 @@ normalize_checks_state() {
   local json="$1"
   printf '%s\n' "$json" | jq -r '
     def check_name: (.name // .context // .workflowName // "");
+    def check_key:
+      if .__typename == "StatusContext" then check_name
+      else ((.workflowName // .workflow // .app.name // "") + "\u0000" + check_name)
+      end;
     def state:
       if .__typename == "StatusContext" then ((.state // "") | ascii_downcase)
       else
         (((.status // "") | ascii_downcase) + ":" + ((.conclusion // "") | ascii_downcase))
       end;
     (.statusCheckRollup // []) as $checks |
-    ($checks | map(select((check_name | test("^E2E regression \\(placeholder\\)$") | not)))) as $required |
-    if ($required | length) == 0 then "not_required"
+    (
+      $checks
+      | map(select((check_name | test("^E2E regression \\(placeholder\\)$") | not)))
+      | sort_by(check_key, (.startedAt // .completedAt // .updatedAt // .createdAt // ""))
+      | group_by(check_key)
+      | map(last)
+    ) as $required |
+    if ($required | length) == 0 then "pending"
     elif ($required | any(.[]; (state | test("failure|error|cancelled|timed_out|action_required|startup_failure")))) then "failure"
     elif ($required | any(.[]; (state | test("pending|queued|in_progress|waiting|requested|expected")))) then "pending"
     elif ($required | all(.[]; (state | test("success|completed:success|completed:skipped|completed:neutral")))) then "success"
@@ -976,6 +989,10 @@ cmd_merge() {
 
   if printf '%s' "$pr_json" | jq -e '.labels[].name | select(. == "needs-fixes")' >/dev/null 2>&1; then
     merge_die "PR #${pr_num} is labeled needs-fixes"
+  fi
+
+  if printf '%s' "$pr_json" | jq -e '.labels[].name | select(. == "do-not-merge")' >/dev/null 2>&1; then
+    merge_die "PR #${pr_num} is labeled do-not-merge"
   fi
 
   if printf '%s' "$pr_json" | jq -e '.labels[].name | select(. == "human-checkpoint-required")' >/dev/null 2>&1; then

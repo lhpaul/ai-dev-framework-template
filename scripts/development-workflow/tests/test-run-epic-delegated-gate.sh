@@ -131,6 +131,9 @@ cat > "$base_fixture" <<'JSON'
     "advisoryCount": 1,
     "acceptedAdvisoriesWithoutRationale": 0
   },
+  "advisories": [
+    {"source": "codex", "category": "advisory", "decision": "accepted", "rationale": "reviewed and accepted for delegated gate fixture"}
+  ],
   "risk": {
     "risk": "medium",
     "mergePermitted": true,
@@ -333,7 +336,7 @@ run_test "audit_required_before_merge" "blocked" "$(decision_for "$audit_fixture
 
 reviewer_access_base_fixture="$(write_fixture reviewer-access-base '
   .repository = "example/mobile-app"
-  | .pr.headSha = "abc123"
+  | .pr.headSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   | .pr.mergeStateStatus = "BLOCKED"
   | .reviewer.reason = "forbidden"
   | .reviewerChecks = [{"name":"Haystack / Review","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://example.test/haystack"}]
@@ -354,7 +357,7 @@ run_test "access_restricted_recommends_remediation_first" "human_required:access
 
 authorization_required_fixture="$(write_fixture authorization-required '
   .repository = "example/mobile-app"
-  | .pr.headSha = "abc123"
+  | .pr.headSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   | .pr.mergeStateStatus = "BLOCKED"
   | .reviewer.reason = "forbidden"
   | .reviewerChecks = [{"name":"Haystack / Review","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://example.test/haystack"}]
@@ -370,12 +373,22 @@ authorization_required_fixture="$(write_fixture authorization-required '
 ')"
 authorization_required_output="$("$GATE" --input "$authorization_required_fixture" --json)"
 authorization_fingerprint="$(printf '%s\n' "$authorization_required_output" | jq -r '.reviewerAccess.evidenceFingerprint')"
+trusted_authorization_event_filter="| .authorizationEvents = [{
+  source: \"github\",
+  type: \"issue_comment\",
+  pullRequest: 42,
+  headSha: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",
+  evidenceFingerprint: \"$authorization_fingerprint\",
+  author: \"lhpaul\",
+  createdAt: \"2026-07-29T12:00:00Z\",
+  body: \"Approve admin merge for PR #42\"
+}]"
 run_test "reviewer_access_requires_named_authorization" "human_required:authorization_required" "$(printf '%s\n' "$authorization_required_output" | jq -r '.decision + ":" + .reviewerAccess.classification')"
 run_test "reviewer_access_reports_fingerprint" "yes" "$(grep -Eq '^sha256:[0-9a-f]{64}$' <<< "$authorization_fingerprint" && echo yes || echo no)"
 
 authorization_stale_fixture="$(write_fixture authorization-stale "
   .repository = \"example/mobile-app\"
-  | .pr.headSha = \"abc123\"
+  | .pr.headSha = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"
   | .pr.mergeStateStatus = \"BLOCKED\"
   | .reviewer.reason = \"forbidden\"
   | .reviewerChecks = [{\"name\":\"Haystack / Review\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"detailsUrl\":\"https://example.test/haystack\"}]
@@ -404,7 +417,7 @@ run_test "reviewer_access_stale_authorization_blocks" "human_required:authorizat
 
 audit_required_fixture="$(write_fixture access-audit-required "
   .repository = \"example/mobile-app\"
-  | .pr.headSha = \"abc123\"
+  | .pr.headSha = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"
   | .pr.mergeStateStatus = \"BLOCKED\"
   | .reviewer.reason = \"forbidden\"
   | .reviewerChecks = [{\"name\":\"Haystack / Review\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"detailsUrl\":\"https://example.test/haystack\"}]
@@ -419,12 +432,13 @@ audit_required_fixture="$(write_fixture access-audit-required "
     }
   | .authorization = {
       pullRequest: 42,
-      headSha: \"abc123\",
+      headSha: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",
       evidenceFingerprint: \"$authorization_fingerprint\",
       authorizedBy: \"lhpaul\",
       authorizedAt: \"2026-07-29T12:00:00Z\",
       authorizationText: \"Approve admin merge for PR #42\"
     }
+  $trusted_authorization_event_filter
 ")"
 run_test "reviewer_access_requires_pre_attempt_audit" "human_required:audit_required" "$(
   "$GATE" --input "$audit_required_fixture" --json |
@@ -433,7 +447,7 @@ run_test "reviewer_access_requires_pre_attempt_audit" "human_required:audit_requ
 
 exceptional_authorized_fixture="$(write_fixture access-exceptional-authorized "
   .repository = \"example/mobile-app\"
-  | .pr.headSha = \"abc123\"
+  | .pr.headSha = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"
   | .pr.mergeStateStatus = \"BLOCKED\"
   | .reviewer.reason = \"forbidden\"
   | .reviewerChecks = [{\"name\":\"Haystack / Review\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"detailsUrl\":\"https://example.test/haystack\"}]
@@ -448,12 +462,13 @@ exceptional_authorized_fixture="$(write_fixture access-exceptional-authorized "
     }
   | .authorization = {
       pullRequest: 42,
-      headSha: \"abc123\",
+      headSha: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",
       evidenceFingerprint: \"$authorization_fingerprint\",
       authorizedBy: \"lhpaul\",
       authorizedAt: \"2026-07-29T12:00:00Z\",
       authorizationText: \"Approve admin merge for PR #42\"
     }
+  $trusted_authorization_event_filter
   | .bypassAudit = {
       present: true,
       state: \"authorized_pending_attempt\",
@@ -466,9 +481,25 @@ run_test "reviewer_access_exceptional_authorization_is_separate_result" "excepti
     jq -r '.decision + ":" + (.mergePermitted|tostring) + ":" + (.exceptionalAdminMergePermitted|tostring) + ":" + .reviewerAccess.proposedAction'
 )"
 
+missing_trusted_authorization_event_fixture="$TMP_ROOT/access-missing-trusted-authorization-event.json"
+jq 'del(.authorizationEvents)' \
+  "$exceptional_authorized_fixture" > "$missing_trusted_authorization_event_fixture"
+run_test "reviewer_access_missing_trusted_authorization_event_blocks_bypass" "human_required:authorization_required:false" "$(
+  "$GATE" --input "$missing_trusted_authorization_event_fixture" --json |
+    jq -r '.decision + ":" + .reviewerAccess.classification + ":" + (.exceptionalAdminMergePermitted|tostring)'
+)"
+
+mismatched_trusted_authorization_event_fixture="$TMP_ROOT/access-mismatched-trusted-authorization-event.json"
+jq '.authorizationEvents[0].headSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
+  "$exceptional_authorized_fixture" > "$mismatched_trusted_authorization_event_fixture"
+run_test "reviewer_access_mismatched_trusted_authorization_event_blocks_bypass" "human_required:authorization_required:false" "$(
+  "$GATE" --input "$mismatched_trusted_authorization_event_fixture" --json |
+    jq -r '.decision + ":" + .reviewerAccess.classification + ":" + (.exceptionalAdminMergePermitted|tostring)'
+)"
+
 exceptional_with_status_reviewer_fixture="$(write_fixture access-exceptional-status-reviewer "
   .repository = \"example/mobile-app\"
-  | .pr.headSha = \"abc123\"
+  | .pr.headSha = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"
   | .pr.mergeStateStatus = \"BLOCKED\"
   | .statusChecks += [{\"name\":\"Haystack / Review\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"detailsUrl\":\"https://example.test/haystack\"}]
   | .reviewer.reason = \"forbidden\"
@@ -484,9 +515,19 @@ exceptional_with_status_reviewer_fixture="$(write_fixture access-exceptional-sta
     }
 ")"
 exceptional_status_reviewer_fingerprint="$("$GATE" --input "$exceptional_with_status_reviewer_fixture" --json | jq -r '.reviewerAccess.evidenceFingerprint')"
+trusted_status_reviewer_authorization_event_filter="| .authorizationEvents = [{
+  source: \"github\",
+  type: \"issue_comment\",
+  pullRequest: 42,
+  headSha: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",
+  evidenceFingerprint: \"$exceptional_status_reviewer_fingerprint\",
+  author: \"lhpaul\",
+  createdAt: \"2026-07-29T12:00:00Z\",
+  body: \"Approve admin merge for PR #42\"
+}]"
 exceptional_with_status_reviewer_authorized_fixture="$(write_fixture access-exceptional-status-reviewer-authorized "
   .repository = \"example/mobile-app\"
-  | .pr.headSha = \"abc123\"
+  | .pr.headSha = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"
   | .pr.mergeStateStatus = \"BLOCKED\"
   | .statusChecks += [{\"name\":\"Haystack / Review\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"detailsUrl\":\"https://example.test/haystack\"}]
   | .reviewer.reason = \"forbidden\"
@@ -502,12 +543,13 @@ exceptional_with_status_reviewer_authorized_fixture="$(write_fixture access-exce
     }
   | .authorization = {
       pullRequest: 42,
-      headSha: \"abc123\",
+      headSha: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",
       evidenceFingerprint: \"$exceptional_status_reviewer_fingerprint\",
       authorizedBy: \"lhpaul\",
       authorizedAt: \"2026-07-29T12:00:00Z\",
       authorizationText: \"Approve admin merge for PR #42\"
     }
+  $trusted_status_reviewer_authorization_event_filter
   | .bypassAudit = {
       present: true,
       state: \"authorized_pending_attempt\",
@@ -522,7 +564,7 @@ run_test "reviewer_status_check_does_not_block_exceptional_bypass" "exceptional_
 
 exceptional_clean_merge_state_fixture="$(write_fixture access-exceptional-clean-merge-state "
   .repository = \"example/mobile-app\"
-  | .pr.headSha = \"abc123\"
+  | .pr.headSha = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"
   | .pr.mergeStateStatus = \"CLEAN\"
   | .reviewer.reason = \"forbidden\"
   | .reviewerChecks = [{\"name\":\"Haystack / Review\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"detailsUrl\":\"https://example.test/haystack\"}]
@@ -537,12 +579,13 @@ exceptional_clean_merge_state_fixture="$(write_fixture access-exceptional-clean-
     }
   | .authorization = {
       pullRequest: 42,
-      headSha: \"abc123\",
+      headSha: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",
       evidenceFingerprint: \"$authorization_fingerprint\",
       authorizedBy: \"lhpaul\",
       authorizedAt: \"2026-07-29T12:00:00Z\",
       authorizationText: \"Approve admin merge for PR #42\"
     }
+  $trusted_authorization_event_filter
   | .bypassAudit = {
       present: true,
       state: \"authorized_pending_attempt\",
@@ -557,7 +600,7 @@ run_test "reviewer_access_clean_merge_state_uses_normal_merge" "merge_allowed:tr
 
 exceptional_missing_label_fixture="$(write_fixture access-exceptional-missing-label "
   .repository = \"example/mobile-app\"
-  | .pr.headSha = \"abc123\"
+  | .pr.headSha = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"
   | .pr.mergeStateStatus = \"BLOCKED\"
   | .pr.labels = [\"ready-for-regression\"]
   | .reviewer.reason = \"forbidden\"
@@ -573,12 +616,13 @@ exceptional_missing_label_fixture="$(write_fixture access-exceptional-missing-la
     }
   | .authorization = {
       pullRequest: 42,
-      headSha: \"abc123\",
+      headSha: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",
       evidenceFingerprint: \"$authorization_fingerprint\",
       authorizedBy: \"lhpaul\",
       authorizedAt: \"2026-07-29T12:00:00Z\",
       authorizationText: \"Approve admin merge for PR #42\"
     }
+  $trusted_authorization_event_filter
   | .bypassAudit = {
       present: true,
       state: \"authorized_pending_attempt\",
@@ -593,7 +637,7 @@ run_test "reviewer_access_exceptional_does_not_bypass_missing_labels" "blocked:f
 
 exceptional_not_mergeable_fixture="$(write_fixture access-exceptional-not-mergeable "
   .repository = \"example/mobile-app\"
-  | .pr.headSha = \"abc123\"
+  | .pr.headSha = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"
   | .pr.mergeable = \"CONFLICTING\"
   | .pr.mergeStateStatus = \"BLOCKED\"
   | .reviewer.reason = \"forbidden\"
@@ -609,12 +653,13 @@ exceptional_not_mergeable_fixture="$(write_fixture access-exceptional-not-mergea
     }
   | .authorization = {
       pullRequest: 42,
-      headSha: \"abc123\",
+      headSha: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",
       evidenceFingerprint: \"$authorization_fingerprint\",
       authorizedBy: \"lhpaul\",
       authorizedAt: \"2026-07-29T12:00:00Z\",
       authorizationText: \"Approve admin merge for PR #42\"
     }
+  $trusted_authorization_event_filter
   | .bypassAudit = {
       present: true,
       state: \"authorized_pending_attempt\",
@@ -628,7 +673,7 @@ run_test "reviewer_access_exceptional_requires_mergeable_pr" "blocked:false" "$(
 )"
 
 access_without_reviewer_checks_fixture="$(write_fixture access-without-reviewer-checks '
-  .pr.headSha = "abc123"
+  .pr.headSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   | .reviewer.reason = "forbidden"
   | .accessRestriction = {reason:"forbidden", evidence:"HTTP 403", remediationAttempted:true, cannotUnblockInTime:true, bypassReason:"release window"}
 ')"
@@ -638,7 +683,7 @@ run_test "reviewer_access_requires_reviewer_check_evidence" "blocked:insufficien
 )"
 
 missing_denial_fixture="$(write_fixture access-missing-denial '
-  .pr.headSha = "abc123"
+  .pr.headSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   | .pr.mergeStateStatus = "BLOCKED"
   | .reviewer.reason = ""
   | .reviewerChecks = [{"name":"Haystack / Review","status":"COMPLETED","conclusion":"FAILURE"}]
@@ -649,7 +694,7 @@ run_test "reviewer_access_missing_denial_fails_closed" "blocked:insufficient_evi
 )"
 
 unrelated_denial_evidence_fixture="$(write_fixture access-unrelated-denial-evidence '
-  .pr.headSha = "abc123"
+  .pr.headSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   | .pr.mergeStateStatus = "BLOCKED"
   | .reviewer.reason = ""
   | .reviewerChecks = [{"name":"Haystack / Review","status":"COMPLETED","conclusion":"FAILURE"}]
@@ -661,7 +706,7 @@ run_test "reviewer_access_unrelated_denial_text_fails_closed" "blocked:insuffici
 )"
 
 access_with_ci_failure_fixture="$(write_fixture access-ci-failure '
-  .pr.headSha = "abc123"
+  .pr.headSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   | .pr.mergeStateStatus = "BLOCKED"
   | .statusChecks[0].conclusion = "FAILURE"
   | .reviewer.reason = "forbidden"
@@ -674,7 +719,7 @@ run_test "reviewer_access_ci_failure_takes_precedence" "fix_required:ci_blocker"
 )"
 
 access_with_status_reviewer_check_fixture="$(write_fixture access-status-reviewer-check '
-  .pr.headSha = "abc123"
+  .pr.headSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   | .pr.mergeStateStatus = "BLOCKED"
   | .statusChecks = [
       {"name":"guard","status":"COMPLETED","conclusion":"SUCCESS"},
@@ -690,7 +735,7 @@ run_test "reviewer_access_status_reviewer_check_not_ci_blocker" "human_required:
 )"
 
 access_with_review_blocker_fixture="$(write_fixture access-review-blocker '
-  .pr.headSha = "abc123"
+  .pr.headSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   | .pr.mergeStateStatus = "BLOCKED"
   | .reviewer.reason = "forbidden"
   | .reviewer.blockingCount = 1
@@ -718,14 +763,14 @@ run_test "no_mutating_gh_commands" "no" "$(
 
 # --- bulk advisory warning (non-fatal) ---
 
-# Fixture: advisory_count=6 but only 1 advisories[] entry — should warn, not block
+# Fixture: advisory_count=6 but only 1 advisories[] entry — should warn and block
 bulk_advisory_gate_fixture="$(write_fixture bulk-advisory-gate \
   '.reviewer.advisoryCount = 6 | .advisories = [{"source": "haystack", "category": "Minor", "decision": "accepted", "rationale": "reviewed and accepted"}]')"
 
 bulk_gate_stderr="$("$GATE" --input "$bulk_advisory_gate_fixture" --json 2>&1 >/dev/null)"
 run_test "bulk_advisory_gate_emits_warning" "yes" \
   "$(grep -q 'per-finding review' <<< "$bulk_gate_stderr" && echo yes || echo no)"
-run_test "bulk_advisory_gate_does_not_block_merge" "merge_allowed" \
+run_test "bulk_advisory_gate_blocks_merge" "fix_required" \
   "$(decision_for "$bulk_advisory_gate_fixture")"
 
 # Fixture: advisory_count=0 — no warning even with no advisories[] entries

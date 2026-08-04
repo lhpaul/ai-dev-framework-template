@@ -572,6 +572,7 @@ readiness can continue.
 After candidate discovery and a clean nested-artifact guard, validate the exact
 expected branch against the run's approved base:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/validate-branch-reuse.sh \
   --issue "$ISSUE_NUMBER" \
