@@ -6,6 +6,7 @@ description: After a development PR is merged, sync with origin, switch to the m
 # Post-merge cleanup
 
 1. From the repository root, run:
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    ./scripts/development-workflow/post-merge-cleanup.sh [--base base-branch] [--pr merged-pr-number] [branch-name]
    ```

@@ -2893,6 +2893,7 @@ state according to this table:
   base explicitly when it is not the repository default. In `workflow_hub` mode,
   pass `--repo <product-repo>` for product-owned implementation branches:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> --pr <merged-pr-number> <merged-branch>
 ```

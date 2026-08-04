@@ -677,6 +677,7 @@ When all gates permit merge:
    merges, use the cleanup helper after merge verification. In `workflow_hub`
    mode, pass `--repo <product-repo>` for product-owned implementation branches:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    ./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> --pr <merged-pr-number> <merged-branch>
    ```

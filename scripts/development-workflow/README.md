@@ -98,7 +98,7 @@ merged into the target base.
 
 Usage:
 
-<!-- workflow-shell-contract: bash -->
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 bash ./scripts/development-workflow/batch-merge.sh recheck-remaining \
   --prs 101,102,103 \
@@ -271,7 +271,7 @@ Runs one or more automated PR review platforms in order, then classifies finding
 
 Usage:
 
-<!-- workflow-shell-contract: bash -->
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 bash ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch feature/my-branch] [--platform greptile] [--platform devin] [--platform coderabbit] [--platform coderabbit-cli]
 ```
@@ -613,6 +613,7 @@ branch.
 
 Usage:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/post-merge-cleanup.sh [--base develop-workflow-hub-mode] [--pr merged-pr-number] [BRANCH]
 ```
@@ -663,6 +664,7 @@ Deterministic merge pipeline for parallel batch PRs. Handles PR discovery (auto 
 
 Usage:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Discovery mode — auto-discover all ready-for-human-review PRs targeting develop
 ./scripts/development-workflow/batch-merge.sh discover

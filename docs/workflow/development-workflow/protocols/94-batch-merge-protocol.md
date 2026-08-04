@@ -197,6 +197,7 @@ and rerun the review/CI readiness gate before merging.
 
 **c. Run the merge script with the reviewed SHA:**
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Standard (merging into develop):
 ./scripts/development-workflow/batch-merge.sh merge --pr <number> --expected-head-sha <reviewed-headRefOid>
@@ -306,6 +307,7 @@ After a clean or resolved merge, in order:
    via `origin/<branch>` without creating a local tracking branch, create a
    temporary local branch first:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    BRANCH="$(gh pr view <number> --json headRefName --jq '.headRefName')"
    BASE_BRANCH="${TARGET_BASE:-develop}"
