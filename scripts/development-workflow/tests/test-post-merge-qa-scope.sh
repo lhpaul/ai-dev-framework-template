@@ -16,6 +16,9 @@ TMP_ROOT="$(mktemp -d)" || {
 }
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
+DOWNSTREAM_ROOT="$TMP_ROOT/downstream"
+DOWNSTREAM_HELPER="$DOWNSTREAM_ROOT/scripts/development-workflow/post-merge-qa-scope.sh"
+
 run_test() {
   local name="$1" expected="$2" actual="$3"
   if [ "$actual" = "$expected" ]; then
@@ -91,6 +94,10 @@ STUB
 chmod +x "$MOCK_BIN/gh"
 export PATH="$MOCK_BIN:$PATH"
 
+mkdir -p "$(dirname -- "$DOWNSTREAM_HELPER")"
+cp "$HELPER" "$DOWNSTREAM_HELPER"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" "$(dirname -- "$DOWNSTREAM_HELPER")/workflow-lib.sh"
+
 run_fails_contains "requires_base" "--base is required" "$HELPER" --json
 run_fails_contains "requires_base_value" "--base requires a value" "$HELPER" --base --json
 run_fails_contains "rejects_feature_base" "Disallowed base" "$HELPER" --base feature/foo --json
@@ -128,6 +135,15 @@ out_no_tracker="$(AI_DEV_WORKFLOW_CONFIG_FILE="$NO_TRACKER_CONFIG" "$HELPER" --b
 }
 run_test "no_tracker_override_uses_pr_fallback" "merged-prs" "$(printf '%s' "$out_no_tracker" | jq -er '.scopeSource')"
 run_test "no_tracker_override_is_fallback" "true" "$(printf '%s' "$out_no_tracker" | jq -er '.fallback')"
+
+out_no_config="$(cd "$DOWNSTREAM_ROOT" && "$DOWNSTREAM_HELPER" --base develop --json)" || {
+  echo "FAIL: no-config helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_no_config="{}"
+}
+run_test "no_config_uses_pr_fallback" "merged-prs" "$(printf '%s' "$out_no_config" | jq -er '.scopeSource')"
+run_test "no_config_is_not_provider_backed" "false" "$(printf '%s' "$out_no_config" | jq -er '.providerBacked')"
+run_test "no_config_is_fallback" "true" "$(printf '%s' "$out_no_config" | jq -er '.fallback')"
 
 out2="$("$HELPER" --base develop --issues 42 --json)" || {
   echo "FAIL: explicit_issue helper exited non-zero"

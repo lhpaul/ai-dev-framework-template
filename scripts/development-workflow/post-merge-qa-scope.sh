@@ -144,8 +144,11 @@ candidates_file="$tmp_dir/candidates.jsonl"
 notes_file="$tmp_dir/notes.jsonl"
 : > "$notes_file"
 
-effective_config_file="$(workflow_effective_config_file)"
-tracker_provider_raw="$(workflow_config_provider issue_tracker "$effective_config_file")"
+effective_config_file="$(workflow_effective_config_file 2>/dev/null || true)"
+tracker_provider_raw=""
+if [ -n "$effective_config_file" ]; then
+  tracker_provider_raw="$(workflow_config_provider issue_tracker "$effective_config_file")"
+fi
 tracker_provider="$(workflow_normalize_issue_tracker_provider "$tracker_provider_raw")"
 tracker_discovery_required=false
 if [ "$base" = "develop" ] && [ -n "$tracker_provider" ] && [ "$tracker_provider" != "none" ]; then
