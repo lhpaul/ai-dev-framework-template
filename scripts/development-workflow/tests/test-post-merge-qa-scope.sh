@@ -108,8 +108,17 @@ run_test "recent_merged_count" "1" "$(printf '%s' "$out" | jq -er '.candidateCou
 run_test "confirmation_required" "true" "$(printf '%s' "$out" | jq -er '.confirmationRequired')"
 run_test "read_only_present" "yes" "$(printf '%s' "$out" | jq -er 'if .readOnlyGuarantee then "yes" else "no" end')"
 run_test "base_echoed" "develop" "$(printf '%s' "$out" | jq -er '.base')"
-run_test "default_scope_source" "merged-prs" "$(printf '%s' "$out" | jq -er '.scopeSource')"
-run_test "default_is_fallback" "true" "$(printf '%s' "$out" | jq -er '.fallback')"
+run_test "recent_merged_scope_source" "explicit" "$(printf '%s' "$out" | jq -er '.scopeSource')"
+run_test "recent_merged_is_not_fallback" "false" "$(printf '%s' "$out" | jq -er '.fallback')"
+
+out_tracker_required="$("$HELPER" --base develop --json)" || {
+  echo "FAIL: configured tracker helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_tracker_required="{}"
+}
+run_test "configured_tracker_requires_discovery" "0" "$(printf '%s' "$out_tracker_required" | jq -er '.candidateCount')"
+run_test "configured_tracker_scope_source" "tracker-post-merge" "$(printf '%s' "$out_tracker_required" | jq -er '.scopeSource')"
+run_test "configured_tracker_is_not_fallback" "false" "$(printf '%s' "$out_tracker_required" | jq -er '.fallback')"
 
 out2="$("$HELPER" --base develop --issues 42 --json)" || {
   echo "FAIL: explicit_issue helper exited non-zero"

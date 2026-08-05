@@ -62,7 +62,10 @@ Default proposal preference (when the operator did not already pin items):
 - For `develop`: provider-backed tracker items in the repository's configured
   post-merge state (for example, `Merged`) that have shipped onto `QA_BASE`.
   Resolve the provider from `.ai-dev-workflow.yaml` (`issue_tracker.provider`)
-  when configured; do not hardcode one tracker vendor into the protocol.
+  when configured; do not hardcode one tracker vendor into the protocol. When
+  the helper sees a configured provider but no `--tracker-items`, it must return
+  an empty `tracker-post-merge` proposal and require discovery before human
+  confirmation; it must not silently substitute a PR-derived fallback.
 - For `develop-<slug>`: items and PRs associated with that integration branch
   and already merged into that branch. Do not require final post-merge tracker
   state for integration-branch QA unless the repository's tracker workflow

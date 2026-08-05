@@ -9,6 +9,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/workflow-lib.sh"
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -139,6 +143,13 @@ candidates_file="$tmp_dir/candidates.jsonl"
 : > "$candidates_file"
 notes_file="$tmp_dir/notes.jsonl"
 : > "$notes_file"
+
+tracker_provider_raw="$(workflow_issue_tracker_provider_raw)"
+tracker_provider="$(workflow_normalize_issue_tracker_provider "$tracker_provider_raw")"
+tracker_discovery_required=false
+if [ "$base" = "develop" ] && [ -n "$tracker_provider" ] && [ "$tracker_provider" != "none" ]; then
+  tracker_discovery_required=true
+fi
 
 append_note() {
   jq -nc --arg note "$1" '{note: $note}' >> "$notes_file"
@@ -271,14 +282,17 @@ fi
 
 # Default: if no filters produced candidates, suggest recent merged
 if [ ! -s "$candidates_file" ] && [ "$recent_merged" -eq 0 ] && [ -z "$issues_arg" ] && [ -z "$tracker_items_arg" ] && [ -z "$epic" ]; then
-  if ! gh pr list --base "$base" --state merged --limit 10 \
-    --json number,title,url,mergedAt > "$tmp_dir/default-merged.json"; then
-    echo "Failed to list default merged PRs for base '$base'" >&2
-    exit 1
+  if [ "$tracker_discovery_required" = true ]; then
+    append_note "Configured issue tracker '$tracker_provider' requires provider-backed post-merge discovery on develop. Resolve eligible items and pass them with --tracker-items before human confirmation; PR-derived fallback was not proposed."
+  else
+    if ! gh pr list --base "$base" --state merged --limit 10 \
+      --json number,title,url,mergedAt > "$tmp_dir/default-merged.json"; then
+      echo "Failed to list default merged PRs for base '$base'" >&2
+      exit 1
+    fi
+    append_rows_from_json_array "$tmp_dir/default-merged.json" "pull_request" "default: up to 10 recent merged PRs into $base"
+    append_note "No explicit scope flags; proposed up to 10 recent merged PRs into $base (capped, not fully paginated). Confirm or adjust before testing."
   fi
-  append_rows_from_json_array "$tmp_dir/default-merged.json" "pull_request" "default: up to 10 recent merged PRs into $base"
-  append_note "No explicit scope flags; proposed up to 10 recent merged PRs into $base (capped, not fully paginated). Confirm or adjust before testing."
-  append_note "If the repository has a configured issue tracker, provider-backed post-merge item discovery should be performed before accepting this PR-derived fallback."
 fi
 
 candidates_json="$(if [ -s "$candidates_file" ]; then jq -e -s 'unique_by(.kind + ":" + .id)' "$candidates_file"; else printf '[]\n'; fi)" || {
@@ -303,8 +317,14 @@ elif [ -n "$issues_arg" ]; then
 elif [ -n "$epic" ]; then
   scope_source="epic"
   fallback=false
+elif [ "$recent_merged" -gt 0 ]; then
+  scope_source="explicit"
+  fallback=false
 elif [ "$base" != "develop" ]; then
   scope_source="integration-branch"
+  fallback=false
+elif [ "$tracker_discovery_required" = true ]; then
+  scope_source="tracker-post-merge"
   fallback=false
 fi
 
