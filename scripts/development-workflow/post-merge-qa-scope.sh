@@ -289,20 +289,26 @@ if [ ! -s "$candidates_file" ] && [ "$recent_merged" -eq 0 ] && [ -z "$issues_ar
   if [ "$tracker_discovery_required" = true ]; then
     append_note "Configured issue tracker '$tracker_provider' requires provider-backed post-merge discovery on develop. Resolve eligible items and pass them with --tracker-items before human confirmation; PR-derived fallback was not proposed."
   else
+    if ! gh pr list --base "$base" --state merged --limit 10 \
+      --json number,title,url,mergedAt,closingIssuesReferences > "$tmp_dir/default-merged.json"; then
+      echo "Failed to list default merged PRs for base '$base'" >&2
+      exit 1
+    fi
     if [[ "$base" =~ ^develop-(.+)$ ]]; then
       integration_label="integration-branch:${BASH_REMATCH[1]}"
       if gh issue list --label "$integration_label" --state all --limit 50 \
-        --json number,title,url > "$tmp_dir/default-integration-issues.json" 2>/dev/null; then
-        append_rows_from_json_array "$tmp_dir/default-integration-issues.json" "issue" "default integration branch via $integration_label (limit 50)"
-        append_note "Integration-branch issue list is capped at 50 (not fully paginated)."
+        --json number,title,url > "$tmp_dir/default-integration-label-issues.json" 2>/dev/null; then
+        jq --slurpfile merged_prs "$tmp_dir/default-merged.json" \
+          '[.[] | select(.number as $number | any($merged_prs[0][]?.closingIssuesReferences[]?; .number == $number))]' \
+          "$tmp_dir/default-integration-label-issues.json" > "$tmp_dir/default-integration-issues.json" || {
+          echo "Failed to match integration-branch issues to merged PRs for base '$base'" >&2
+          exit 1
+        }
+        append_rows_from_json_array "$tmp_dir/default-integration-issues.json" "issue" "default integration branch via $integration_label and merged PR closing references (limit 50)"
+        append_note "Integration-branch issue list is capped at 50 and includes only items referenced by merged PRs."
       else
         append_note "Could not list issues for label $integration_label; the default proposal includes only merged PRs."
       fi
-    fi
-    if ! gh pr list --base "$base" --state merged --limit 10 \
-      --json number,title,url,mergedAt > "$tmp_dir/default-merged.json"; then
-      echo "Failed to list default merged PRs for base '$base'" >&2
-      exit 1
     fi
     append_rows_from_json_array "$tmp_dir/default-merged.json" "pull_request" "default: up to 10 recent merged PRs into $base"
     append_note "No explicit scope flags; proposed up to 10 recent merged PRs into $base (capped, not fully paginated). Confirm or adjust before testing."

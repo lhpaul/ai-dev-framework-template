@@ -57,7 +57,7 @@ case "$*" in
   *"pr list"*"--state merged"*)
     # Include a malformed row to verify skip-and-continue behavior
     cat <<'JSON'
-[{"number":101,"title":"Merged feature","url":"https://example.test/pr/101","mergedAt":"2026-07-01T00:00:00Z"},{"number":null,"title":"Bad","url":"https://example.test/pr/bad"}]
+[{"number":101,"title":"Merged feature","url":"https://example.test/pr/101","mergedAt":"2026-07-01T00:00:00Z","closingIssuesReferences":[{"number":51}]},{"number":null,"title":"Bad","url":"https://example.test/pr/bad"}]
 JSON
     ;;
   *"issue view"*"--json"*)
@@ -190,6 +190,7 @@ out_integration="$("$HELPER" --base develop-demo --json)" || {
 }
 run_test "integration_scope_source" "integration-branch" "$(printf '%s' "$out_integration" | jq -er '.scopeSource')"
 run_test "integration_default_includes_labelled_issue" "yes" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 51) | if . then "yes" else "no" end')"
+run_test "integration_default_excludes_unmerged_labelled_issue" "no" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 50) | if . then "yes" else "no" end')"
 run_test "integration_default_includes_merged_pr" "yes" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 101) | if . then "yes" else "no" end')"
 
 run_fails_contains "rejects_invalid_issues" "Invalid issue in --issues" "$HELPER" --base develop --issues "abc" --json
