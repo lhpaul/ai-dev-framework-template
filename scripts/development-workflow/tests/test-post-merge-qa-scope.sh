@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
 HELPER="$REPO_ROOT/scripts/development-workflow/post-merge-qa-scope.sh"
+NO_TRACKER_CONFIG="$SCRIPT_DIR/fixtures/post-merge-qa-tracker-none.yaml"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -119,6 +120,14 @@ out_tracker_required="$("$HELPER" --base develop --json)" || {
 run_test "configured_tracker_requires_discovery" "0" "$(printf '%s' "$out_tracker_required" | jq -er '.candidateCount')"
 run_test "configured_tracker_scope_source" "tracker-post-merge" "$(printf '%s' "$out_tracker_required" | jq -er '.scopeSource')"
 run_test "configured_tracker_is_not_fallback" "false" "$(printf '%s' "$out_tracker_required" | jq -er '.fallback')"
+
+out_no_tracker="$(AI_DEV_WORKFLOW_CONFIG_FILE="$NO_TRACKER_CONFIG" "$HELPER" --base develop --json)" || {
+  echo "FAIL: no-tracker override helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_no_tracker="{}"
+}
+run_test "no_tracker_override_uses_pr_fallback" "merged-prs" "$(printf '%s' "$out_no_tracker" | jq -er '.scopeSource')"
+run_test "no_tracker_override_is_fallback" "true" "$(printf '%s' "$out_no_tracker" | jq -er '.fallback')"
 
 out2="$("$HELPER" --base develop --issues 42 --json)" || {
   echo "FAIL: explicit_issue helper exited non-zero"
