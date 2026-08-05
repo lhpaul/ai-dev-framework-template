@@ -45,6 +45,8 @@ Record the resolved target as `QA_BASE`.
 
 Prefer the helper:
 
+<!-- workflow-shell-contract: bash-zsh -->
+
 ```bash
 ./scripts/development-workflow/post-merge-qa-scope.sh \
   --base "$QA_BASE" \
