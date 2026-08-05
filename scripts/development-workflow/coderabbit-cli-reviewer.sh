@@ -12,11 +12,13 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 
 usage() {
   cat >&2 <<'EOF'
-Usage: coderabbit-cli-reviewer.sh <pr_number> <owner> <repo> [--timeout <seconds>]
+Usage: coderabbit-cli-reviewer.sh <pr_number> <owner> <repo> [--timeout <seconds>] [--repo-root <path>]
 
 Options:
   --timeout <seconds>  Maximum seconds to wait for the CodeRabbit CLI.
                        Defaults to CODERABBIT_CLI_REVIEW_TIMEOUT or 120.
+  --repo-root <path>   Repository checkout to review. When supplied, HEAD must
+                       match the pull request head SHA before the CLI is run.
 EOF
 }
 
@@ -82,6 +84,7 @@ if ! valid_slug_component "$REPO"; then
 fi
 
 TIMEOUT="${CODERABBIT_CLI_REVIEW_TIMEOUT:-120}"
+REPO_ROOT=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --timeout)
@@ -90,6 +93,14 @@ while [ "$#" -gt 0 ]; do
         exit 3
       fi
       TIMEOUT="$2"
+      shift 2
+      ;;
+    --repo-root)
+      if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
+        echo "ERROR: --repo-root requires a value" >&2
+        exit 3
+      fi
+      REPO_ROOT="$2"
       shift 2
       ;;
     -h|--help)
@@ -172,14 +183,59 @@ esac
 
 BASE_BRANCH=""
 HEAD_BRANCH=""
+HEAD_SHA=""
 if command -v gh >/dev/null 2>&1; then
   pr_json=""
-  if pr_json="$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json baseRefName,headRefName 2>/dev/null)"; then
+  if pr_json="$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json baseRefName,headRefName,headRefOid 2>/dev/null)"; then
     BASE_BRANCH="$(printf '%s\n' "$pr_json" | jq -r '.baseRefName // empty' 2>/dev/null || true)"
     HEAD_BRANCH="$(printf '%s\n' "$pr_json" | jq -r '.headRefName // empty' 2>/dev/null || true)"
+    HEAD_SHA="$(printf '%s\n' "$pr_json" | jq -r '.headRefOid // empty' 2>/dev/null || true)"
   fi
 fi
 BASE_BRANCH="${BASE_BRANCH:-develop}"
+
+normalize_github_remote_slug() {
+  local raw="$1"
+  local slug="$raw"
+
+  slug="${slug#git@github.com:}"
+  slug="${slug#ssh://git@github.com/}"
+  slug="${slug#https://github.com/}"
+  slug="${slug#http://github.com/}"
+  slug="${slug%.git}"
+  printf '%s\n' "$slug"
+}
+
+if [ -n "$REPO_ROOT" ]; then
+  if [ ! -d "$REPO_ROOT/.git" ] && ! git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "ERROR: --repo-root is not a Git checkout: $REPO_ROOT" >&2
+    print_result escalate 0 0 0 invalid_repo_root "invalid_repo_root"
+    exit 2
+  fi
+  if [ -z "$HEAD_SHA" ]; then
+    echo "ERROR: could not resolve pull request head SHA for #$PR_NUMBER" >&2
+    print_result escalate 0 0 0 head_sha_unavailable "head_sha_unavailable"
+    exit 2
+  fi
+  if ! repo_root_origin="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null)"; then
+    repo_root_origin=""
+  fi
+  repo_root_slug="$(normalize_github_remote_slug "$repo_root_origin")"
+  if [ "$repo_root_slug" != "$OWNER/$REPO" ]; then
+    echo "ERROR: --repo-root origin does not match expected repository ($repo_root_slug != $OWNER/$REPO)" >&2
+    print_result escalate 0 0 0 repo_root_mismatch "repo_root_mismatch"
+    exit 2
+  fi
+  if ! CURRENT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)"; then
+    CURRENT_SHA=""
+  fi
+  if [ "$CURRENT_SHA" != "$HEAD_SHA" ]; then
+    echo "ERROR: checkout HEAD does not match PR head ($CURRENT_SHA != $HEAD_SHA)" >&2
+    print_result escalate 0 0 0 checkout_head_mismatch "checkout_head_mismatch"
+    exit 2
+  fi
+  cd "$REPO_ROOT"
+fi
 
 if command -v cr >/dev/null 2>&1; then
   CODERABBIT_CMD="cr"
@@ -269,7 +325,12 @@ normalized_stdout_json="$(
       select(((.type // "") | tostring | ascii_downcase) == "finding")
       | (.finding // .data // .);
     if length == 1 then
-      .[0]
+      .[0] as $one
+      | if (($one | type) == "object" and (($one.type // "") | tostring | ascii_downcase) == "finding") then
+          {findings: [($one | event_finding)]}
+        else
+          $one
+        end
     else
       {findings: [.[] | objects | event_finding]}
     end
@@ -325,6 +386,55 @@ parse_result="$(
       end
   ' 2>/dev/null
 )" || parse_result=""
+blocking_findings_json="$(
+  printf '%s\n' "$normalized_stdout_json" | jq -c '
+    def finding_arrays:
+      if type == "array" then
+        .
+      else
+        [
+          .findings?, .comments?, .issues?, .results?, .reviews?, .feedback?,
+          .review.findings?, .review.comments?, .review.issues?,
+          .data.findings?, .data.comments?, .data.issues?
+        ]
+        | map(select(type == "array"))
+        | if length == 0 then [] else add end
+      end;
+    def severity_text:
+      [
+        .severity?, .level?, .category?, .type?, .priority?, .impact?,
+        .classification?, .kind?, .status?, .state?
+      ]
+      | map(select(type == "string"))
+      | join(" ")
+      | ascii_downcase;
+    def blocking:
+      severity_text as $s
+      | ($s | test("critical|blocker|blocking|error|bug|security|vulnerability|high|major|must.fix|changes.requested|needs.fixes|needs.changes"));
+    def text_value:
+      [
+        .message?, .body?, .description?, .title?, .summary?, .comment?, .text?,
+        .finding.message?, .finding.body?, .finding.description?
+      ]
+      | map(select(type == "string" and length > 0))
+      | .[0] // "";
+    def path_value:
+      [
+        .path?, .file?, .filename?, .filepath?, .filePath?,
+        .location.path?, .location.file?, .position.path?
+      ]
+      | map(select(type == "string" and length > 0))
+      | .[0] // "";
+    def line_value:
+      [
+        .line?, .startLine?, .start_line?, .location.line?, .location.startLine?,
+        .position.line?
+      ]
+      | map(select((type == "number") or (type == "string" and length > 0)))
+      | .[0] // "";
+    [finding_arrays[] | select(blocking) | {path: path_value, line: (line_value | tostring), body: text_value}]
+  ' 2>/dev/null
+)" || blocking_findings_json="[]"
 
 parse_status="$(printf '%s\n' "$parse_result" | awk -F= '$1 == "PARSE_STATUS" { print $2; exit }')"
 rate_limit_output=false
@@ -365,6 +475,14 @@ case "$parse_status" in
     fi
     if [ "$blocking_count" -gt 0 ]; then
       print_result needs_fixes "$comment_count" "$blocking_count" "$suggestion_count"
+      index=1
+      while IFS= read -r blocking_finding; do
+        [ -n "$blocking_finding" ] || continue
+        print_kv_escaped "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_finding" | jq -r '.path // ""')"
+        print_kv_escaped "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_finding" | jq -r '.line // ""')"
+        print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_finding" | jq -r '.body // ""')"
+        index=$((index + 1))
+      done < <(printf '%s\n' "$blocking_findings_json" | jq -c '.[]?' 2>/dev/null)
       exit 1
     fi
     if [ "$cli_exit" -ne 0 ]; then

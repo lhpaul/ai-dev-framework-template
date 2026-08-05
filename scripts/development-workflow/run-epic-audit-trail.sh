@@ -435,6 +435,20 @@ render_reviewer_access_bypass() {
   } | redact_text
 }
 
+validate_reviewer_access_bypass_scope() {
+  local json="$1"
+  local expected_pr="$2"
+
+  printf '%s\n' "$json" | jq -er --arg expected_pr "$expected_pr" '
+    (.pr.number | tostring) as $input_pr |
+    ((.pr.head_sha // .pr.headSha) | tostring) as $head_sha |
+    ((.proposed_action // .proposedAction) | tostring) as $action |
+    ($head_sha | test("^[0-9a-f]{40}$"))
+    and ($action == ("gh pr merge " + $expected_pr + " --admin --match-head-commit " + $head_sha))
+    and ($input_pr == $expected_pr)
+  ' >/dev/null || error_exit "reviewer access-bypass input must target PR #${expected_pr} and proposed action 'gh pr merge ${expected_pr} --admin --match-head-commit <head-sha>'"
+}
+
 find_marker_comment_id() {
   local target="$1"
   local marker="$2"
@@ -542,6 +556,7 @@ case "$command" in
     if [ -z "$pr_number" ] || ! is_positive_int "$pr_number"; then
       error_exit "--pr must be a positive integer"
     fi
+    validate_reviewer_access_bypass_scope "$input_json" "$pr_number"
     body="$(render_reviewer_access_bypass "$input_json")"
     apply_comment "$pr_number" "$REVIEWER_ACCESS_BYPASS_MARKER" "$body"
     ;;

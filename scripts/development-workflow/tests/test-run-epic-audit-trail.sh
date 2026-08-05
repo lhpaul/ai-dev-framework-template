@@ -64,6 +64,7 @@ JSON
     fi
     ;;
   api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/123\ --input\ -)
+    cat >/dev/null || true
     if [ "${MOCK_COMMENT_MODE:-missing}" = "patch-fail" ]; then
       printf 'patch failed\n' >&2
       exit 1
@@ -71,12 +72,15 @@ JSON
     printf '{"id":123}\n'
     ;;
   api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/456\ --input\ -)
+    cat >/dev/null || true
     printf '{"id":456}\n'
     ;;
   api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/789\ --input\ -)
+    cat >/dev/null || true
     printf '{"id":789}\n'
     ;;
   api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/10/comments\ --input\ -)
+    cat >/dev/null || true
     if [ "${MOCK_COMMENT_MODE:-missing}" = "post-fail" ]; then
       printf 'post failed\n' >&2
       exit 1
@@ -84,9 +88,11 @@ JSON
     printf '{"id":124}\n'
     ;;
   api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/900/comments\ --input\ -)
+    cat >/dev/null || true
     printf '{"id":457}\n'
     ;;
   api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/42/comments\ --input\ -)
+    cat >/dev/null || true
     printf '{"id":790}\n'
     ;;
   *)
@@ -263,11 +269,11 @@ cat > "$bypass_fixture" <<'JSON'
   "authorization": {
     "authorized_by": "lhpaul",
     "authorized_at": "2026-07-29T12:00:00Z",
-    "authorization_text": "Approve gh pr merge 42 --admin for ghp_FAKE_PLACEHOLDER"
+    "authorization_text": "Approve gh pr merge 42 --admin --match-head-commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa for ghp_FAKE_PLACEHOLDER"
   },
   "pr": {
     "number": 42,
-    "head_sha": "abc123"
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "evidence_fingerprint": "sha256:abc123",
   "ci": {
@@ -286,7 +292,7 @@ cat > "$bypass_fixture" <<'JSON'
     "remediation_status": "org approval requested",
     "bypass_reason": "release window cannot wait for org approval"
   },
-  "proposed_action": "gh pr merge 42 --admin",
+  "proposed_action": "gh pr merge 42 --admin --match-head-commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "attempt": {
     "result": "not_attempted",
     "exit_code": "",
@@ -296,6 +302,12 @@ cat > "$bypass_fixture" <<'JSON'
 JSON
 bad_bypass_fixture="$TMP_ROOT/bad-bypass.json"
 jq 'del(.authorization.authorized_by)' "$bypass_fixture" > "$bad_bypass_fixture"
+mismatched_bypass_pr_fixture="$TMP_ROOT/mismatched-bypass-pr.json"
+jq '.pr.number = 99' "$bypass_fixture" > "$mismatched_bypass_pr_fixture"
+mismatched_bypass_action_fixture="$TMP_ROOT/mismatched-bypass-action.json"
+jq '.proposed_action = "gh pr merge 99 --admin --match-head-commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' "$bypass_fixture" > "$mismatched_bypass_action_fixture"
+mismatched_bypass_head_fixture="$TMP_ROOT/mismatched-bypass-head.json"
+jq '.proposed_action = "gh pr merge 42 --admin --match-head-commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' "$bypass_fixture" > "$mismatched_bypass_head_fixture"
 empty_fixture="$TMP_ROOT/empty.json"
 : > "$empty_fixture"
 malformed_fixture="$TMP_ROOT/malformed.json"
@@ -311,6 +323,9 @@ run_fails_contains "requires_advisory_rationale" "non-fixed advisory decisions r
 run_fails_contains "rejects_missing_pr_required_field" "missing required PR disposition fields" "$HELPER" render-pr-disposition --input "$missing_pr_field_fixture"
 run_fails_contains "rejects_bad_ledger_items_type" "missing required epic ledger fields" "$HELPER" render-epic-ledger --input "$bad_ledger_fixture"
 run_fails_contains "rejects_missing_bypass_required_field" "missing required reviewer access-bypass fields: authorization.authorized_by" "$HELPER" render-reviewer-access-bypass --input "$bad_bypass_fixture"
+run_fails_contains "rejects_mismatched_bypass_pr_on_apply" "reviewer access-bypass input must target PR #42" "$HELPER" apply-reviewer-access-bypass --input "$mismatched_bypass_pr_fixture" --pr 42
+run_fails_contains "rejects_mismatched_bypass_action_on_apply" "proposed action 'gh pr merge 42 --admin --match-head-commit <head-sha>'" "$HELPER" apply-reviewer-access-bypass --input "$mismatched_bypass_action_fixture" --pr 42
+run_fails_contains "rejects_mismatched_bypass_head_on_apply" "proposed action 'gh pr merge 42 --admin --match-head-commit <head-sha>'" "$HELPER" apply-reviewer-access-bypass --input "$mismatched_bypass_head_fixture" --pr 42
 run_fails_contains "rejects_missing_input_file" "input file not found" "$HELPER" render-pr-disposition --input "$missing_fixture"
 run_fails_contains "rejects_empty_input_file" "input file is empty" "$HELPER" render-pr-disposition --input "$empty_fixture"
 run_fails_contains "rejects_malformed_input_json" "input file is not valid JSON" "$HELPER" render-pr-disposition --input "$malformed_fixture"
@@ -397,7 +412,7 @@ run_test "uses_json_input_for_comments" "yes" "$(grep -q -- '--input -' "$CALL_L
 bypass_output="$("$HELPER" render-reviewer-access-bypass --input "$bypass_fixture")"
 run_test "renders_reviewer_access_bypass_marker" "yes" "$(grep -q '<!-- reviewer-access-bypass -->' <<< "$bypass_output" && echo yes || echo no)"
 run_test "renders_reviewer_access_bypass_state" "yes" "$(grep -q 'authorized_pending_attempt' <<< "$bypass_output" && echo yes || echo no)"
-run_test "renders_reviewer_access_bypass_action" "yes" "$(grep -q 'gh pr merge 42 --admin' <<< "$bypass_output" && echo yes || echo no)"
+run_test "renders_reviewer_access_bypass_action" "yes" "$(grep -q 'gh pr merge 42 --admin --match-head-commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' <<< "$bypass_output" && echo yes || echo no)"
 run_test "redacts_bypass_tokens_and_paths" "yes" "$(
   grep -q '\[REDACTED_TOKEN\]' <<< "$bypass_output" &&
     grep -q '\[REDACTED_LOCAL_PATH\]' <<< "$bypass_output" &&

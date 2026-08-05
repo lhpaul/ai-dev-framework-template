@@ -27,6 +27,9 @@ printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
 check_success='[{"__typename":"CheckRun","name":"policy","status":"COMPLETED","conclusion":"SUCCESS"}]'
 check_pending='[{"__typename":"CheckRun","name":"policy","status":"IN_PROGRESS","conclusion":null}]'
 check_failure='[{"__typename":"CheckRun","name":"policy","status":"COMPLETED","conclusion":"FAILURE"}]'
+check_duplicate='[{"__typename":"CheckRun","name":"policy","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-01-01T00:00:00Z"},{"__typename":"CheckRun","name":"policy","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T00:01:00Z"}]'
+check_duplicate_workflows='[{"__typename":"CheckRun","name":"policy","workflowName":"required-a","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-01-01T00:00:00Z"},{"__typename":"CheckRun","name":"policy","workflowName":"required-b","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T00:01:00Z"}]'
+check_placeholder_only='[{"__typename":"CheckRun","name":"E2E regression (placeholder)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T00:00:00Z"}]'
 
 emit_pr() {
   pr="$1"
@@ -104,6 +107,15 @@ case "$*" in
         ;;
       failing)
         emit_pr 102 OPEN false develop feature/mock-pr-102 CLEAN "$check_failure"
+        ;;
+      duplicate_checks)
+        emit_pr 102 OPEN false develop feature/mock-pr-102 CLEAN "$check_duplicate"
+        ;;
+      duplicate_workflow_checks)
+        emit_pr 102 OPEN false develop feature/mock-pr-102 CLEAN "$check_duplicate_workflows"
+        ;;
+      placeholder_only_checks)
+        emit_pr 102 OPEN false develop feature/mock-pr-102 CLEAN "$check_placeholder_only"
         ;;
       malformed_response)
         printf '{"number":102,"state":"OPEN","isDraft":false,"baseRefName":"develop","headRefName":"feature/mock-pr-102","mergeStateStatus":"CLEAN","statusCheckRollup":%s}\n' "$check_success"
@@ -237,6 +249,27 @@ export MOCK_SCENARIO=failing
 rm -f "$MOCK_GH_STATE_DIR"/*.count
 failing_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
 run_test "failing_checks_block" "checks_failed" "$(json_field "$failing_output" 102 reason)"
+
+export MOCK_SCENARIO=duplicate_checks
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+duplicate_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
+run_test "duplicate_checks_use_latest" "clean" "$(json_field "$duplicate_output" 102 classification)"
+
+export MOCK_SCENARIO=duplicate_workflow_checks
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+duplicate_workflow_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
+run_test "same_check_name_different_workflow_kept" "checks_failed" "$(json_field "$duplicate_workflow_output" 102 reason)"
+
+export MOCK_SCENARIO=placeholder_only_checks
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+set +e
+placeholder_only_output="$(BATCH_MERGE_RECHECK_ATTEMPTS=1 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
+placeholder_only_status=$?
+set -e
+run_test "placeholder_only_status" "0" "$placeholder_only_status"
+run_test "placeholder_only_checks_state" "pending" "$(json_field "$placeholder_only_output" 102 checks_state)"
+run_test "placeholder_only_classification" "merge_blocked" "$(json_field "$placeholder_only_output" 102 classification)"
+run_test "placeholder_only_reason" "retry_attempts_exhausted" "$(json_field "$placeholder_only_output" 102 reason)"
 
 export MOCK_SCENARIO=dirty_pending
 rm -f "$MOCK_GH_STATE_DIR"/*.count

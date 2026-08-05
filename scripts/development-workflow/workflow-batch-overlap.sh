@@ -240,7 +240,8 @@ def pair_id(left_id: str, right_id: str) -> str:
 def item_sort_key(item: dict):
     priority = PRIORITY_RANK.get(str(item.get("priority", "")).lower(), 2)
     created = str(item.get("createdAt") or item.get("created_at") or "")
-    return (priority, created, item["id"])
+    branch = str(item.get("branch") or item.get("branchName") or item.get("branch_name") or item["id"])
+    return (priority, created, branch, item["id"])
 
 
 def classify_pair(left: dict, right: dict) -> dict:
@@ -355,12 +356,19 @@ def apply_decisions(pairs: list[dict], batch_fingerprint: str, decisions: list[d
             if decision.get("decision") not in {"allow_parallel", "serialize"}:
                 stale.append({**decision, "status": "invalid_decision"})
                 continue
+            instruction_value = decision.get("recordedHumanInstruction", decision.get("instruction", ""))
+            instruction = instruction_value.strip() if isinstance(instruction_value, str) else ""
+            if decision.get("decision") == "allow_parallel" and not instruction:
+                stale.append({**decision, "status": "missing_human_instruction"})
+                continue
             accepted = decision
         if accepted:
+            accepted_instruction_value = accepted.get("recordedHumanInstruction", accepted.get("instruction", ""))
+            accepted_instruction = accepted_instruction_value.strip() if isinstance(accepted_instruction_value, str) else ""
             pair["decision"] = {
                 "status": "accepted",
                 "decision": accepted["decision"],
-                "recordedInstruction": accepted.get("recordedHumanInstruction", accepted.get("instruction", "")),
+                "recordedInstruction": accepted_instruction,
             }
             if accepted["decision"] == "allow_parallel":
                 pair["defaultDispatch"] = "parallel_eligible"
@@ -441,6 +449,7 @@ for raw in raw_items:
         "brief": str(raw.get("brief") or raw.get("description") or ""),
         "priority": str(raw.get("priority") or "Normal"),
         "createdAt": str(raw.get("createdAt") or raw.get("created_at") or ""),
+        "branch": str(raw.get("branch") or raw.get("branchName") or raw.get("branch_name") or ""),
         "nextAction": next_action,
         "planFiles": parse_file_set(raw.get("fileSet", raw.get("file_set"))),
     }
@@ -458,6 +467,7 @@ batch_fingerprint = sha256({
             "fileSet": item["planFiles"],
             "priority": item["priority"],
             "createdAt": item["createdAt"],
+            "branch": item["branch"],
             "nextAction": item["nextAction"],
         }
         for item in sorted(implementation_items, key=lambda item: item["id"])

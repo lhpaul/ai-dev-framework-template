@@ -28,14 +28,14 @@ Follow `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md`
 5. **Merge plan display**: present the final ordered merge plan, then proceed immediately without waiting for user confirmation.
 
 6. **Sequential merge loop**: for each PR in order:
-   - Run `./scripts/development-workflow/batch-merge.sh merge --pr <number>`
+   - Run `./scripts/development-workflow/batch-merge.sh merge --pr <number> --expected-head-sha <reviewed-headRefOid>` using the head SHA captured by the latest readiness/review gate.
    - On `MERGE_RESULT=clean`: proceed to post-merge steps.
    - On `MERGE_RESULT=conflict`: classify each conflicted file:
      - `CHANGELOG.md`: auto-resolve by combining all `[Unreleased]` entries (HEAD side first, incoming side second, no entries dropped). Report what was combined.
      - Documentation files (`docs/`, `.claude/`, `.cursor/`, `.codex/`): auto-resolve if non-overlapping; escalate if overlapping.
      - All other files (or overlapping doc changes): pause, show conflict markers, wait for human to resolve or abort.
    - On `MERGE_RESULT=failed`: report the error, mark `failed`, continue.
-   - After each successful merge: complete the post-merge sequence from Protocol 94 Step 4.2 (the merge helper already pushed the target base branch and called `gh pr merge`; verify GitHub shows `MERGED`, delete the remote branch if it still exists, create a temporary local branch if needed, then run `./scripts/development-workflow/post-merge-cleanup.sh --base <target-base> <branch>`).
+   - After each successful merge: complete the post-merge sequence from Protocol 94 Step 4.2 (the merge helper already pushed the target base branch and called `gh pr merge`; verify GitHub shows `MERGED`, delete the remote branch if it still exists, create a temporary local branch if needed, then run `./scripts/development-workflow/post-merge-cleanup.sh --base <target-base> --pr <number> <branch>`).
    - Before selecting the next PR, run `./scripts/development-workflow/batch-merge.sh recheck-remaining --prs <comma-separated-approved-pr-list> --after-merged-pr <number> --base <target-base>` for the frozen in-scope PR list. Apply Protocol 94 Step 4.2 as the source of truth for post-recheck admission semantics.
 
 7. **Final summary**: always print a table listing every candidate PR with its outcome code (`merged_clean`, `merged_auto`, `merged_human`, `skipped_not_ready`, `skipped_conflict`, `merge_blocked`, `out_of_scope`, `failed`, `not_attempted`).

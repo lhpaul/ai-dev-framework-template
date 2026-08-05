@@ -58,6 +58,238 @@ load_input_json() {
   printf '%s\n' "$raw"
 }
 
+github_authorization_event_candidates() {
+  printf '%s\n' "$1" | jq -c '
+    def authorization_events:
+      if ((.authorizationEvents // null) | type) == "array" then .authorizationEvents
+      elif ((.reviewerAccessAuthorizationEvents // null) | type) == "array" then .reviewerAccessAuthorizationEvents
+      elif ((.reviewer_access_authorization_events // null) | type) == "array" then .reviewer_access_authorization_events
+      elif ((.trustedAuthorizationEvents // null) | type) == "array" then .trustedAuthorizationEvents
+      else [] end;
+    def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
+    def authorization: (.authorization // .reviewerAccessAuthorization // .reviewer_access_authorization // {});
+    def authorization_by: trim_text(authorization.authorizedBy // authorization.authorized_by);
+    def authorization_at: trim_text(authorization.authorizedAt // authorization.authorized_at);
+    def authorization_text: trim_text(authorization.authorizationText // authorization.authorization_text);
+    def pr_head_sha: ((.pr.headSha // .pr.head_sha // .pr.headRefOid // "") | tostring);
+    def event_id($event): trim_text($event.databaseId // $event.database_id // $event.commentId // $event.comment_id // $event.reviewId // $event.review_id // $event.id);
+    def event_kind($event): trim_text($event.type // $event.eventType // $event.event_type);
+    {
+      repo: trim_text(.repository // .githubRepo // .github_repo // .repo // .productRepo.githubRepo // .productRepo.github_repo),
+      prNumber: (.pr.number // null),
+      headSha: pr_head_sha,
+      evidenceFingerprint: (.computedEvidenceFingerprint // ""),
+      authorizedBy: authorization_by,
+      authorizedAt: authorization_at,
+      authorizationText: authorization_text,
+      events: (authorization_events | map({
+        id: event_id(.),
+        type: event_kind(.)
+      }))
+    }
+  '
+}
+
+github_verified_authorization_events() {
+  local state="$1"
+  local candidates repo pr_number head_sha fingerprint authorized_by authorized_at authorization_text
+  candidates="$(github_authorization_event_candidates "$state" 2>/dev/null)" || {
+    printf '[]\n'
+    return 0
+  }
+  repo="$(printf '%s\n' "$candidates" | jq -r '.repo // ""')"
+  pr_number="$(printf '%s\n' "$candidates" | jq -r '.prNumber // ""')"
+  head_sha="$(printf '%s\n' "$candidates" | jq -r '.headSha // ""')"
+  fingerprint="$(printf '%s\n' "$candidates" | jq -r '.evidenceFingerprint // ""')"
+  authorized_by="$(printf '%s\n' "$candidates" | jq -r '.authorizedBy // ""')"
+  authorized_at="$(printf '%s\n' "$candidates" | jq -r '.authorizedAt // ""')"
+  authorization_text="$(printf '%s\n' "$candidates" | jq -r '.authorizationText // ""')"
+
+  if [ -z "$repo" ]; then
+    repo="$(repo_slug 2>/dev/null || true)"
+  fi
+  if ! workflow_is_valid_github_repo_slug "$repo"; then
+    printf '[]\n'
+    return 0
+  fi
+  if ! [[ "$pr_number" =~ ^[0-9]+$ && "$head_sha" =~ ^[0-9a-f]{40}$ && "$fingerprint" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    printf '[]\n'
+    return 0
+  fi
+  if ! [[ "$authorized_by" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ && "$authorized_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+    printf '[]\n'
+    return 0
+  fi
+  if [ -z "$authorization_text" ]; then
+    printf '[]\n'
+    return 0
+  fi
+  local expected_authorization_text="I authorize gh pr merge ${pr_number} --admin --match-head-commit ${head_sha} for PR #${pr_number} at head ${head_sha} with evidence fingerprint ${fingerprint}"
+  if [ "$authorization_text" != "$expected_authorization_text" ]; then
+    printf '[]\n'
+    return 0
+  fi
+
+  local verified='[]'
+  local event id type endpoint fetched normalized permission_response author_permission
+  while IFS= read -r event; do
+    [ -n "$event" ] || continue
+    id="$(printf '%s\n' "$event" | jq -r '.id // ""')"
+    type="$(printf '%s\n' "$event" | jq -r '.type // ""' | tr '[:upper:]' '[:lower:]')"
+    if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+      continue
+    fi
+    case "$type" in
+      comment|issue_comment)
+        endpoint="repos/${repo}/issues/comments/${id}"
+        ;;
+      review|pull_request_review)
+        endpoint="repos/${repo}/pulls/${pr_number}/reviews/${id}"
+        ;;
+      pull_request_review_comment|review_comment)
+        endpoint="repos/${repo}/pulls/comments/${id}"
+        ;;
+      *)
+        continue
+        ;;
+    esac
+    if ! fetched="$(gh api "$endpoint" 2>/dev/null)"; then
+      continue
+    fi
+    [ -n "$fetched" ] || continue
+    if ! normalized="$(printf '%s\n' "$fetched" | jq -c --arg type "$type" --arg pr_number "$pr_number" '
+      def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
+      def url_targets_pr($url; $segment):
+        ($url // "" | tostring | test("/" + $segment + "/" + $pr_number + "($|[?#])"));
+      {
+        source: "github",
+        type: $type,
+        id: ((.id // "") | tostring),
+        author: (.user.login // ""),
+        authorType: (.user.type // ""),
+        authorAssociation: (.author_association // ""),
+        createdAt: (.created_at // .submitted_at // ""),
+        body: (.body // ""),
+        targetPullRequest: (
+          if ($type | IN("comment", "issue_comment")) then url_targets_pr(.issue_url; "issues")
+          elif ($type | IN("review", "pull_request_review")) then url_targets_pr(.pull_request_url; "pulls")
+          elif ($type | IN("pull_request_review_comment", "review_comment")) then url_targets_pr(.pull_request_url; "pulls")
+          else false end
+        )
+      }
+    ' 2>/dev/null)"; then
+      continue
+    fi
+    [ -n "$normalized" ] || continue
+    if ! permission_response="$(gh api "repos/${repo}/collaborators/${authorized_by}/permission" 2>/dev/null)"; then
+      permission_response=""
+    fi
+    if ! author_permission="$(printf '%s\n' "$permission_response" | jq -r '.permission // ""' 2>/dev/null)"; then
+      author_permission=""
+    fi
+    if ! normalized="$(printf '%s\n' "$normalized" | jq -c --arg permission "$author_permission" '.authorPermission = $permission' 2>/dev/null)"; then
+      continue
+    fi
+    [ -n "$normalized" ] || continue
+    if printf '%s\n' "$normalized" | jq -e \
+      --arg author "$authorized_by" \
+      --arg created "$authorized_at" \
+      --arg expected "$expected_authorization_text" \
+      '.author == $author
+       and .createdAt == $created
+       and ((.authorType // "") == "User")
+       and ((.authorPermission // "") == "admin")
+       and (.targetPullRequest == true)
+       and ((.body | gsub("^\\s+|\\s+$"; "")) == $expected)' >/dev/null; then
+      verified="$(jq -c --argjson item "$normalized" '. + [$item]' <<< "$verified")"
+    fi
+  done < <(printf '%s\n' "$candidates" | jq -c '.events[]?')
+
+  printf '%s\n' "$verified"
+}
+
+github_verified_bypass_audit() {
+  local state="$1"
+  local audit_candidate repo pr_number head_sha fingerprint
+  audit_candidate="$(printf '%s\n' "$state" | jq -c '
+    def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
+    def bypass_audit: (.bypassAudit // .bypass_audit // {});
+    {
+      repo: trim_text(.repository // .githubRepo // .github_repo // .repo // .productRepo.githubRepo // .productRepo.github_repo),
+      prNumber: (.pr.number // null),
+      headSha: ((.pr.headSha // .pr.head_sha // .pr.headRefOid // "") | tostring),
+      evidenceFingerprint: (.computedEvidenceFingerprint // ""),
+      state: trim_text(bypass_audit.state),
+      commentId: trim_text(bypass_audit.commentId // bypass_audit.comment_id)
+    }
+  ' 2>/dev/null)" || {
+    printf '{"present":false}\n'
+    return 0
+  }
+  repo="$(printf '%s\n' "$audit_candidate" | jq -r '.repo // ""')"
+  pr_number="$(printf '%s\n' "$audit_candidate" | jq -r '.prNumber // ""')"
+  head_sha="$(printf '%s\n' "$audit_candidate" | jq -r '.headSha // ""')"
+  fingerprint="$(printf '%s\n' "$audit_candidate" | jq -r '.evidenceFingerprint // ""')"
+  if [ -z "$repo" ]; then
+    repo="$(repo_slug 2>/dev/null || true)"
+  fi
+  if ! workflow_is_valid_github_repo_slug "$repo"; then
+    printf '{"present":false}\n'
+    return 0
+  fi
+  if ! [[ "$pr_number" =~ ^[0-9]+$ && "$head_sha" =~ ^[0-9a-f]{40}$ && "$fingerprint" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    printf '{"present":false}\n'
+    return 0
+  fi
+
+  local comments
+  if ! comments="$(gh api --paginate --slurp "repos/${repo}/issues/${pr_number}/comments?per_page=100" 2>/dev/null)"; then
+    comments=""
+  fi
+  if [ -z "$comments" ]; then
+    printf '{"present":false}\n'
+    return 0
+  fi
+  printf '%s\n' "$comments" | jq -c \
+    --arg marker '<!-- reviewer-access-bypass -->' \
+    --arg state 'authorized_pending_attempt' \
+    --arg pr "#${pr_number}" \
+    --arg head "$head_sha" \
+    --arg fp "$fingerprint" \
+    --arg action "gh pr merge ${pr_number} --admin --match-head-commit ${head_sha}" '
+    def audit_lines:
+      (.body // "" | split("\n") | map(gsub("\r$"; "")));
+    def audit_section:
+      audit_lines as $lines
+      | ($lines | index("## Reviewer Access Bypass Audit")) as $heading
+      | if $heading == null then {}
+        else ($heading + 2) as $start
+        | {
+            state: ($lines[$start] // ""),
+            pr: ($lines[$start + 4] // ""),
+            head: ($lines[$start + 5] // ""),
+            fingerprint: ($lines[$start + 6] // ""),
+            action: ($lines[$start + 7] // ""),
+            terminator: ($lines[$start + 8] // "")
+          }
+        end;
+    [.[][]? | select((.body // "") | contains($marker)) | audit_section as $audit | {
+      present: true,
+      commentId: ((.id // "") | tostring),
+      state: $state,
+      evidenceFingerprint: $fp,
+      body: (.body // "")
+    } | select(
+      ($audit.state == "- State: " + $state)
+      and ($audit.pr == "- PR: " + $pr)
+      and ($audit.head == "- Head SHA: `" + $head + "`")
+      and ($audit.fingerprint == "- Evidence fingerprint: `" + $fp + "`")
+      and ($audit.action == "- Proposed action: `" + $action + "`")
+      and ($audit.terminator == "")
+    )][0] // {present:false}
+  ' 2>/dev/null || printf '{"present":false}\n'
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --input)
@@ -141,6 +373,10 @@ material_evidence_json="$(printf '%s\n' "$state_json" | jq -cS '
 ' 2>/dev/null)" || error_exit "failed to assemble material evidence fingerprint input"
 material_fingerprint="$(printf '%s' "$material_evidence_json" | openssl dgst -sha256 -r | awk '{print $1}')"
 state_json="$(printf '%s\n' "$state_json" | jq --arg fp "sha256:${material_fingerprint}" '.computedEvidenceFingerprint = $fp' 2>/dev/null)" || error_exit "failed to attach material evidence fingerprint"
+verified_authorization_events="$(github_verified_authorization_events "$state_json")"
+state_json="$(printf '%s\n' "$state_json" | jq --argjson events "$verified_authorization_events" '.githubVerifiedAuthorizationEvents = $events' 2>/dev/null)" || error_exit "failed to attach verified authorization events"
+verified_bypass_audit="$(github_verified_bypass_audit "$state_json")"
+state_json="$(printf '%s\n' "$state_json" | jq --argjson audit "$verified_bypass_audit" '.githubVerifiedBypassAudit = $audit' 2>/dev/null)" || error_exit "failed to attach verified bypass audit"
 
 decision_json="$(printf '%s\n' "$state_json" | jq '
   def policy: if (.policy | type) == "object" then .policy else {} end;
@@ -187,10 +423,15 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     else [] end;
   def item_number:
     (.item.number // .item.issue_number // .item.issueNumber // null);
+  def checkpoint_state($cp):
+    (($cp.satisfaction_state // "pending") | tostring | gsub("^\\s+|\\s+$"; "") | ascii_downcase);
+  def invalid_checkpoint_states:
+    checkpoint_list
+    | map(select((checkpoint_state(.) | IN("pending", "satisfied", "waived")) | not));
   def checkpoint_applies($cp; $item; $prStage):
     ($item != null)
     and (($cp.item_number | tonumber) == ($item | tonumber))
-    and (($cp.satisfaction_state // "pending") == "pending")
+    and (checkpoint_state($cp) == "pending")
     and (stage_rank($cp.stage) > 0)
     and (stage_rank($cp.stage) <= stage_rank($prStage));
   def pending_checkpoints:
@@ -217,6 +458,10 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     else [] end;
   def reviewer_check_name($check):
     ($check.name // $check.context // $check.workflowName // $check.provider // "unknown");
+  def reviewer_check_key($check):
+    if ($check.__typename // "") == "StatusContext" then reviewer_check_name($check)
+    else (($check.workflowName // $check.workflow // $check.provider // "") + "\u0000" + reviewer_check_name($check))
+    end;
   def reviewer_check_non_green($check):
     (($check.conclusion // "") | ascii_downcase) as $conclusion |
     (($check.status // "") | ascii_downcase) as $status |
@@ -230,12 +475,29 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     end;
   def non_green_reviewer_checks:
     reviewer_checks | map(select(reviewer_check_non_green(.)));
-  def reviewer_check_names:
-    reviewer_checks | map(reviewer_check_name(.));
+  def reviewer_check_keys:
+    reviewer_checks | map(reviewer_check_key(.));
+  def advisory_entries:
+    if ((.advisories // null) | type) == "array" then .advisories
+    elif ((.reviewer.advisories // null) | type) == "array" then .reviewer.advisories
+    else [] end;
+  def advisory_count:
+    ((.reviewer.advisoryCount // .reviewer.advisory_count // 0) | tonumber);
+  def accepted_advisory_missing_rationale($advisory):
+    (($advisory.decision // $advisory.disposition // $advisory.status // "") | ascii_downcase) as $decision |
+    (($advisory.rationale // $advisory.reason // $advisory.mitigation // "") | tostring | gsub("^\\s+|\\s+$"; "") | length) as $rationale_length |
+    ($decision | test("accept")) and ($rationale_length == 0);
+  def advisory_missing_disposition($advisory):
+    (($advisory.decision // $advisory.disposition // $advisory.status // "") | ascii_downcase) as $decision |
+    (($decision | IN("fixed", "accepted")) | not);
+  def advisory_evidence_incomplete:
+    (advisory_entries) as $advisories |
+    (advisory_count > 0 and ($advisories | length) < advisory_count)
+    or ($advisories | any(advisory_missing_disposition(.) or accepted_advisory_missing_rationale(.)));
   def ci_status_checks:
-    (reviewer_check_names) as $reviewerNames |
+    (reviewer_check_keys) as $reviewerKeys |
     (.statusChecks // [])
-    | map(. as $check | select(($reviewerNames | index(reviewer_check_name($check)) | not)));
+    | map(. as $check | select(($reviewerKeys | index(reviewer_check_key($check)) | not)));
   def current_ci_blocker:
     if ci_policy == "none" then
       false
@@ -270,7 +532,48 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     and (access_obj.cannotUnblockInTime // access_obj.cannot_unblock_in_time // false) == true
     and ((access_obj.bypassReason // access_obj.bypass_reason // "") | tostring | length) > 0;
   def authorization: (.authorization // .reviewerAccessAuthorization // .reviewer_access_authorization // {});
-  def bypass_audit: (.bypassAudit // .bypass_audit // {});
+  def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
+  def authorization_by: trim_text(authorization.authorizedBy // authorization.authorized_by);
+  def authorization_at: trim_text(authorization.authorizedAt // authorization.authorized_at);
+  def authorization_text: trim_text(authorization.authorizationText // authorization.authorization_text);
+  def named_authorization_present:
+    (authorization_by | test("^[A-Za-z0-9][A-Za-z0-9-]{0,38}$"))
+    and (authorization_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+    and (authorization_text | length) > 0;
+  def pr_head_sha: ((.pr.headSha // .pr.head_sha // .pr.headRefOid // "") | tostring);
+  def valid_pr_head_sha: (pr_head_sha | test("^[0-9a-f]{40}$"));
+  def authorization_events:
+    if ((.githubVerifiedAuthorizationEvents // null) | type) == "array" then .githubVerifiedAuthorizationEvents
+    else [] end;
+  def event_author($event):
+    trim_text(
+      if (($event.author // null) | type) == "object" then
+        ($event.author.login // $event.author.name // "")
+      else
+        ($event.author // $event.login // $event.authorLogin // $event.author_login)
+      end
+    );
+  def trusted_author($event):
+    (trim_text($event.authorType // $event.author_type) == "User")
+    and (trim_text($event.authorPermission // $event.author_permission) == "admin");
+  def target_pr_verified($event):
+    ($event.targetPullRequest // $event.target_pull_request // false) == true;
+  def trusted_authorization_event_present:
+    (authorization_by) as $authorization_by |
+    (authorization_at) as $authorization_at |
+    (authorization_text) as $authorization_text |
+    authorization_events
+    | any(. as $event |
+        ((trim_text($event.source // $event.provider) | ascii_downcase) == "github")
+        and ((trim_text($event.type // $event.eventType // $event.event_type) | ascii_downcase)
+          | IN("comment", "issue_comment", "pull_request_review", "review", "pull_request_review_comment", "review_comment"))
+        and (event_author($event) == $authorization_by)
+        and trusted_author($event)
+        and target_pr_verified($event)
+        and (trim_text($event.createdAt // $event.created_at // $event.submittedAt // $event.submitted_at) == $authorization_at)
+        and (trim_text($event.body // $event.text // $event.authorizationText // $event.authorization_text) == $authorization_text)
+      );
+  def bypass_audit: (.githubVerifiedBypassAudit // {});
   def reviewer_blocks:
     ((.reviewer.blockingCount // .reviewer.blocking_count // 0) | tonumber) > 0
     or ((.reviewer.status // "") | test("needs_fixes|failed|blocked"));
@@ -283,10 +586,13 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     elif (($blockedChecks | length) == 0) then "not_applicable"
     elif (access_denial_verified | not) then "insufficient_evidence"
     elif (remediation_ready | not) then "access_restricted"
+    elif (valid_pr_head_sha | not) then "insufficient_evidence"
     elif ((authorization.pullRequest // authorization.pull_request // null) == null) then "authorization_required"
+    elif (named_authorization_present | not) then "authorization_required"
     elif (((authorization.pullRequest // authorization.pull_request) | tostring) != ((.pr.number // "") | tostring)
-       or ((authorization.headSha // authorization.head_sha // "") != (.pr.headSha // .pr.head_sha // .pr.headRefOid // ""))
+       or ((authorization.headSha // authorization.head_sha // "") != pr_head_sha)
        or ((authorization.evidenceFingerprint // authorization.evidence_fingerprint // "") != $fingerprint)) then "authorization_stale"
+    elif (trusted_authorization_event_present | not) then "authorization_required"
     elif ((bypass_audit.present // false) != true
        or ((bypass_audit.evidenceFingerprint // bypass_audit.evidence_fingerprint // "") != $fingerprint)
        or ((bypass_audit.state // "") != "authorized_pending_attempt")) then "audit_required"
@@ -303,13 +609,13 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
         elif $classification == "authorization_required" then "obtain fresh named human authorization for the exact PR, head SHA, and evidence fingerprint"
         elif $classification == "authorization_stale" then "refresh evidence and obtain a new named authorization"
         elif $classification == "audit_required" then "write and verify the pre-attempt reviewer access-bypass audit record"
-        elif $classification == "exceptional_bypass_authorized" then "execute exactly the named gh pr merge --admin action once, then verify and update audit"
+        elif $classification == "exceptional_bypass_authorized" then "execute exactly the named gh pr merge --admin --match-head-commit action once, then verify and update audit"
         elif $classification == "insufficient_evidence" then "refresh reviewer check and provider access-denial evidence"
         elif $classification == "ci_blocker" then "fix or complete CI before considering reviewer access restriction"
         elif $classification == "review_blocker" then "fix reviewer findings before considering reviewer access restriction"
         else "not applicable" end
       ),
-      proposedAction: (if $classification == "exceptional_bypass_authorized" then "gh pr merge " + ((.pr.number // "") | tostring) + " --admin" else "" end)
+      proposedAction: (if $classification == "exceptional_bypass_authorized" then "gh pr merge " + ((.pr.number // "") | tostring) + " --admin --match-head-commit " + pr_head_sha else "" end)
     };
   def add_reason($reasons; $reason): $reasons + [$reason];
   def reason_count($reasons): $reasons | length;
@@ -321,6 +627,10 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
 
   . as $state |
   [] as $reasons |
+  (invalid_checkpoint_states) as $invalidCheckpointStates |
+  (if ($invalidCheckpointStates | length) > 0
+   then add_reason($reasons; "human_checkpoint_required: invalid checkpoint satisfaction_state; expected pending, satisfied, or waived")
+   else $reasons end) as $reasons |
   (if (policy.delegateReview // false) != true
    then add_reason($reasons; "delegated review authority is missing")
    else $reasons end) as $reasons |
@@ -379,6 +689,9 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
    else $reasons end) as $reasons |
   (if ((.reviewer.acceptedAdvisoriesWithoutRationale // 0) | tonumber) > 0
    then add_reason($reasons; "accepted advisories require rationale")
+   else $reasons end) as $reasons |
+  (if advisory_evidence_incomplete
+   then add_reason($reasons; "reviewer advisories require per-finding fix or acceptance rationale")
    else $reasons end) as $reasons |
   (if (ci_policy == "none") and (risk_merge_permitted != true) and risk_ci_only_blockers
    then $reasons

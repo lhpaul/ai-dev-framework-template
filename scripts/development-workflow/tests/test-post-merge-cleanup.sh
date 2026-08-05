@@ -90,9 +90,13 @@ case "$1 $2" in
     fi
     if [ "$head" = "${GH_MERGED_HEAD:-}" ] && [ -n "${GH_MERGED_PR:-}" ]; then
       if [[ "$args" == *"--jq"* ]]; then
-        printf '%s\n' "$GH_MERGED_PR"
+        if [[ "$args" == *"isCrossRepository"* ]]; then
+          printf '{"number":%s,"isCrossRepository":%s,"headRepository":{"name":"repo","owner":{"login":"owner"}},"headRepositoryOwner":{"login":"owner"}}\n' "$GH_MERGED_PR" "${GH_IS_CROSS_REPOSITORY:-false}"
+        else
+          printf '%s\n' "$GH_MERGED_PR"
+        fi
       else
-        printf '[{"number":%s}]\n' "$GH_MERGED_PR"
+        printf '[{"number":%s,"isCrossRepository":%s}]\n' "$GH_MERGED_PR" "${GH_IS_CROSS_REPOSITORY:-false}"
       fi
     else
       if [[ "$args" == *"--jq"* ]]; then
@@ -103,7 +107,33 @@ case "$1 $2" in
     fi
     ;;
   "pr view")
-    if [[ "$args" == *"--jq"* ]]; then
+    pr_number="${3:-}"
+    if [[ "$args" == *"--json number,state,headRefName,isCrossRepository"* ]]; then
+      if [ "$pr_number" = "${GH_MERGED_PR:-}" ] && [ "${GH_PR_STATE:-MERGED}" = "MERGED" ] && [ "${GH_PR_HEAD_REF_NAME:-${GH_MERGED_HEAD:-}}" = "${GH_MERGED_HEAD:-}" ]; then
+        printf '{"number":%s,"state":"%s","headRefName":"%s","isCrossRepository":%s,"headRepository":{"name":"repo","owner":{"login":"owner"}},"headRepositoryOwner":{"login":"owner"}}\n' \
+          "$GH_MERGED_PR" \
+          "${GH_PR_STATE:-MERGED}" \
+          "${GH_PR_HEAD_REF_NAME:-${GH_MERGED_HEAD:-}}" \
+          "${GH_IS_CROSS_REPOSITORY:-false}"
+      else
+        printf '\n'
+      fi
+    elif [[ "$args" == *"--json number,state,headRefName"* ]]; then
+      if [ "$pr_number" = "${GH_MERGED_PR:-}" ]; then
+        printf '{"number":%s,"state":"%s","headRefName":"%s"}\n' \
+          "$GH_MERGED_PR" \
+          "${GH_PR_STATE:-MERGED}" \
+          "${GH_PR_HEAD_REF_NAME:-${GH_MERGED_HEAD:-}}"
+      else
+        printf '\n'
+      fi
+    elif [[ "$args" == *"--json state,baseRefName,headRefName"* ]]; then
+      if [ "$pr_number" = "${GH_MERGED_PR:-}" ]; then
+        printf 'develop\n'
+      else
+        printf '\n'
+      fi
+    elif [[ "$args" == *"--jq"* ]]; then
       printf '\n'
     else
       printf '{"body":"","title":""}\n'
@@ -182,7 +212,7 @@ merged_output="$(
   GH_MERGED_PR=77 \
   WORKFLOW_TARGET_GITHUB_REPO=example/repo \
   PATH="$stub_bin:$PATH" \
-  "$HELPER" --repo-root "$merged_repo" --base develop "$merged_branch"
+  "$HELPER" --repo-root "$merged_repo" --base develop --pr 77 "$merged_branch"
 )"
 run_contains "merged_implementation_remote_deleted" "REMOTE_DELETE_RESULT=deleted" "$merged_output"
 run_contains "merged_implementation_records_pr" "REMOTE_DELETE_PR_NUMBER=77" "$merged_output"
@@ -195,7 +225,7 @@ absent_output="$(
   GH_MERGED_PR=78 \
   WORKFLOW_TARGET_GITHUB_REPO=example/repo \
   PATH="$stub_bin:$PATH" \
-  "$HELPER" --repo-root "$absent_repo" --base develop "$absent_branch"
+  "$HELPER" --repo-root "$absent_repo" --base develop --pr 78 "$absent_branch"
 )"
 run_contains "already_absent_remote_is_successful" "REMOTE_DELETE_RESULT=not_found" "$absent_output"
 run_contains "already_absent_remote_status" "REMOTE_DELETE_STATUS=already_absent" "$absent_output"
@@ -204,12 +234,33 @@ unmerged_branch="feature/noissue-unmerged"
 unmerged_repo="$(make_repo unmerged "$unmerged_branch" yes)"
 run_fails_contains \
   "unmerged_implementation_skips_remote_delete" \
-  "REMOTE_DELETE_REASON=pr_not_merged" \
+  "REMOTE_DELETE_REASON=pr_number_required" \
   env WORKFLOW_TARGET_GITHUB_REPO=example/repo \
     PATH="$stub_bin:$PATH" \
     "$HELPER" --repo-root "$unmerged_repo" --base develop "$unmerged_branch"
 run_test "unmerged_remote_ref_still_exists" "yes" "$(
   if "$REAL_GIT" -C "$unmerged_repo" ls-remote --heads origin "$unmerged_branch" | grep -q .; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+
+fork_branch="feature/noissue-fork-pr"
+fork_repo="$(make_repo fork "$fork_branch" yes)"
+fork_output="$(
+  GH_MERGED_HEAD="$fork_branch" \
+  GH_MERGED_PR=81 \
+  GH_IS_CROSS_REPOSITORY=true \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$fork_repo" --base develop --pr 81 "$fork_branch"
+)"
+run_contains "fork_remote_delete_skipped" "REMOTE_DELETE_RESULT=skipped" "$fork_output"
+run_contains "fork_remote_delete_reason" "REMOTE_DELETE_REASON=cross_repository_pr" "$fork_output"
+run_contains "fork_remote_delete_records_pr" "REMOTE_DELETE_PR_NUMBER=81" "$fork_output"
+run_test "fork_remote_ref_remains" "yes" "$(
+  if "$REAL_GIT" -C "$fork_repo" ls-remote --heads origin "$fork_branch" | grep -q .; then
     printf 'yes'
   else
     printf 'no'
@@ -232,6 +283,18 @@ run_test "spec_remote_ref_remains" "yes" "$(
   fi
 )"
 
+persistent_mismatch_branch="spec/123-persistent"
+persistent_mismatch_repo="$(make_repo persistent-mismatch "$persistent_mismatch_branch" yes)"
+run_fails_contains \
+  "persistent_branch_pr_mismatch_blocks_tracker" \
+  "refusing cleanup and tracker updates" \
+  env GH_MERGED_HEAD="$persistent_mismatch_branch" \
+    GH_MERGED_PR=84 \
+    GH_PR_HEAD_REF_NAME="spec/different-branch" \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$stub_bin:$PATH" \
+    "$HELPER" --repo-root "$persistent_mismatch_repo" --base develop --pr 84 "$persistent_mismatch_branch"
+
 hub_sync_branch="feature/sync-template-v0.37.0"
 hub_sync_repo="$(make_repo hub-sync "$hub_sync_branch" yes)"
 printf 'mode: workflow_hub\n' >"$hub_sync_repo/.ai-dev-workflow.yaml"
@@ -251,6 +314,35 @@ fail_bin="$TMP_ROOT/fail-bin"
 write_gh_stub "$fail_bin"
 write_git_failure_stub "$fail_bin"
 run_fails_contains \
+  "exact_pr_head_mismatch_blocks_delete" \
+  "REMOTE_DELETE_REASON=pr_not_merged_or_branch_mismatch" \
+  env GH_MERGED_HEAD="$merged_branch" \
+    GH_MERGED_PR=82 \
+    GH_PR_HEAD_REF_NAME="feature/different-branch" \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$stub_bin:$PATH" \
+    "$HELPER" --repo-root "$(make_repo exact-mismatch "$merged_branch" yes)" --base develop --pr 82 "$merged_branch"
+
+quoted_branch='feature/x"),true#'
+quoted_repo="$(make_repo quoted "$quoted_branch" yes)"
+run_fails_contains \
+  "quoted_branch_does_not_bypass_exact_pr_filter" \
+  "REMOTE_DELETE_REASON=pr_not_merged_or_branch_mismatch" \
+  env GH_MERGED_HEAD="$quoted_branch" \
+    GH_MERGED_PR=83 \
+    GH_PR_HEAD_REF_NAME="feature/different-branch" \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$stub_bin:$PATH" \
+    "$HELPER" --repo-root "$quoted_repo" --base develop --pr 83 "$quoted_branch"
+run_test "quoted_branch_remote_ref_remains" "yes" "$(
+  if "$REAL_GIT" -C "$quoted_repo" ls-remote --heads origin "$quoted_branch" | grep -q .; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+
+run_fails_contains \
   "remote_delete_failure_blocks_cleanup" \
   "REMOTE_DELETE_RESULT=failed" \
   env GH_MERGED_HEAD="$fail_branch" \
@@ -259,7 +351,7 @@ run_fails_contains \
     REAL_GIT="$REAL_GIT" \
     WORKFLOW_TARGET_GITHUB_REPO=example/repo \
     PATH="$fail_bin:$PATH" \
-    "$HELPER" --repo-root "$fail_repo" --base develop "$fail_branch"
+    "$HELPER" --repo-root "$fail_repo" --base develop --pr 79 "$fail_branch"
 run_test "failed_delete_local_branch_remains" "yes" "$(
   if "$REAL_GIT" -C "$fail_repo" show-ref --quiet "refs/heads/$fail_branch"; then
     printf 'yes'

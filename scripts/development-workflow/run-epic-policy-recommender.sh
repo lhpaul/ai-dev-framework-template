@@ -322,8 +322,10 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   def normalize_checkpoint($cp):
     $cp
     | .item_number |= (if type == "number" then . else tonumber? // . end)
-    | .satisfaction_state |= (. // "pending")
-    | if .satisfaction_state == "waived" and ((.waiver_rationale // "") | length) == 0 then
+    | .satisfaction_state |= ((. // "pending") | tostring | gsub("^\\s+|\\s+$"; "") | ascii_downcase)
+    | if ((.satisfaction_state | IN("pending", "satisfied", "waived")) | not) then
+        error("checkpoint satisfaction_state must be one of: pending, satisfied, waived")
+      elif .satisfaction_state == "waived" and ((.waiver_rationale // "") | length) == 0 then
         error("waived checkpoints require waiver_rationale")
       else .
       end;
