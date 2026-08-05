@@ -189,6 +189,8 @@ out_integration="$("$HELPER" --base develop-demo --json)" || {
   out_integration="{}"
 }
 run_test "integration_scope_source" "integration-branch" "$(printf '%s' "$out_integration" | jq -er '.scopeSource')"
+run_test "integration_default_includes_labelled_issue" "yes" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 51) | if . then "yes" else "no" end')"
+run_test "integration_default_includes_merged_pr" "yes" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 101) | if . then "yes" else "no" end')"
 
 run_fails_contains "rejects_invalid_issues" "Invalid issue in --issues" "$HELPER" --base develop --issues "abc" --json
 run_fails_contains "rejects_invalid_tracker_items" "Invalid tracker item in --tracker-items" "$HELPER" --base develop --tracker-items "bad/item" --json
