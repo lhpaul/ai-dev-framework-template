@@ -108,6 +108,8 @@ run_test "recent_merged_count" "1" "$(printf '%s' "$out" | jq -er '.candidateCou
 run_test "confirmation_required" "true" "$(printf '%s' "$out" | jq -er '.confirmationRequired')"
 run_test "read_only_present" "yes" "$(printf '%s' "$out" | jq -er 'if .readOnlyGuarantee then "yes" else "no" end')"
 run_test "base_echoed" "develop" "$(printf '%s' "$out" | jq -er '.base')"
+run_test "default_scope_source" "merged-prs" "$(printf '%s' "$out" | jq -er '.scopeSource')"
+run_test "default_is_fallback" "true" "$(printf '%s' "$out" | jq -er '.fallback')"
 
 out2="$("$HELPER" --base develop --issues 42 --json)" || {
   echo "FAIL: explicit_issue helper exited non-zero"
@@ -115,6 +117,7 @@ out2="$("$HELPER" --base develop --issues 42 --json)" || {
   out2="{}"
 }
 run_test "explicit_issue" "42" "$(printf '%s' "$out2" | jq -er '.candidates[0].number')"
+run_test "explicit_scope_source" "explicit" "$(printf '%s' "$out2" | jq -er '.scopeSource')"
 
 out_tracker="$("$HELPER" --base develop --tracker-items LEA-223,LEA-224 --json)" || {
   echo "FAIL: tracker_items helper exited non-zero"
@@ -123,6 +126,8 @@ out_tracker="$("$HELPER" --base develop --tracker-items LEA-223,LEA-224 --json)"
 }
 run_test "tracker_items_count" "2" "$(printf '%s' "$out_tracker" | jq -er '.candidateCount')"
 run_test "tracker_item_id" "LEA-223" "$(printf '%s' "$out_tracker" | jq -er '.candidates[0].id')"
+run_test "tracker_scope_source" "tracker-post-merge" "$(printf '%s' "$out_tracker" | jq -er '.scopeSource')"
+run_test "tracker_is_provider_backed" "true" "$(printf '%s' "$out_tracker" | jq -er '.providerBacked')"
 out_tracker_text="$("$HELPER" --base develop --tracker-items LEA-223)" || {
   echo "FAIL: tracker_items text helper exited non-zero"
   FAIL_COUNT=$((FAIL_COUNT + 1))
@@ -142,6 +147,14 @@ out3="$("$HELPER" --base develop-demo --epic 50 --json)" || {
 }
 run_test "epic_child_included" "yes" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .number == 51) | if . then "yes" else "no" end')"
 run_test "epic_self_excluded" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .number == 50) | if . then "yes" else "no" end')"
+run_test "epic_scope_source" "epic" "$(printf '%s' "$out3" | jq -er '.scopeSource')"
+
+out_integration="$("$HELPER" --base develop-demo --json)" || {
+  echo "FAIL: integration helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_integration="{}"
+}
+run_test "integration_scope_source" "integration-branch" "$(printf '%s' "$out_integration" | jq -er '.scopeSource')"
 
 run_fails_contains "rejects_invalid_issues" "Invalid issue in --issues" "$HELPER" --base develop --issues "abc" --json
 run_fails_contains "rejects_invalid_tracker_items" "Invalid tracker item in --tracker-items" "$HELPER" --base develop --tracker-items "bad/item" --json

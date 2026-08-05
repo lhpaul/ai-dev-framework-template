@@ -78,8 +78,10 @@ PRs) as seeds or filters.
 
 Every proposal must state its scope source (`tracker-post-merge`,
 `integration-branch`, `merged-prs`, `explicit`, or `epic`) and whether it is
-provider-backed or fallback. Present the proposal to the human. **Do not
-exercise flows until the human confirms or adjusts the scope.**
+provider-backed or fallback. The helper emits `scopeSource`, `providerBacked`,
+and `fallback` in JSON, and renders the same metadata in text output. Present
+the proposal to the human. **Do not exercise flows until the human confirms or
+adjusts the scope.**
 
 | Confirmed scope | Action |
 | --- | --- |

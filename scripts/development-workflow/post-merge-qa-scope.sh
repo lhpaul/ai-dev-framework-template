@@ -290,12 +290,36 @@ notes_json="$(if [ -s "$notes_file" ]; then jq -e -s '[.[].note]' "$notes_file";
   exit 1
 }
 
+scope_source="merged-prs"
+provider_backed=false
+fallback=true
+if [ -n "$tracker_items_arg" ]; then
+  scope_source="tracker-post-merge"
+  provider_backed=true
+  fallback=false
+elif [ -n "$issues_arg" ]; then
+  scope_source="explicit"
+  fallback=false
+elif [ -n "$epic" ]; then
+  scope_source="epic"
+  fallback=false
+elif [ "$base" != "develop" ]; then
+  scope_source="integration-branch"
+  fallback=false
+fi
+
 result="$(jq -n \
   --arg base "$base" \
+  --arg scope_source "$scope_source" \
+  --argjson provider_backed "$provider_backed" \
+  --argjson fallback "$fallback" \
   --argjson candidates "$candidates_json" \
   --argjson notes "$notes_json" \
   '{
     base: $base,
+    scopeSource: $scope_source,
+    providerBacked: $provider_backed,
+    fallback: $fallback,
     candidateCount: ($candidates | length),
     candidates: $candidates,
     notes: $notes,
@@ -311,6 +335,9 @@ if [ "$json_output" -eq 1 ]; then
   printf '%s\n' "$result"
 else
   printf 'QA base: %s\n' "$base"
+  printf 'Scope source: %s\n' "$(printf '%s' "$result" | jq -er '.scopeSource')"
+  printf 'Provider-backed: %s\n' "$(printf '%s' "$result" | jq -er '.providerBacked')"
+  printf 'Fallback: %s\n' "$(printf '%s' "$result" | jq -er '.fallback')"
   printf 'Candidates: %s\n' "$(printf '%s' "$result" | jq -er '.candidateCount')"
   printf '%s\n' "$result" | jq -r '.candidates[]? | "- [\(.kind) #\(.number // .id)] \(.title) — \(.reason)"'
   printf '%s\n' "$result" | jq -r '.notes[]? | "Note: \(.)"'
