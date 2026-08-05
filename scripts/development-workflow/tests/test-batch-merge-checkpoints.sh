@@ -52,6 +52,11 @@ JSON
 {"headRefName":"feature/43-clean","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","state":"OPEN","labels":[{"name":"ready-for-human-review"},{"name":"ready-for-regression"}],"isDraft":false}
 JSON
     ;;
+  pr\ view\ 46\ --json\ headRefName,headRefOid,baseRefName,state,labels,isDraft)
+    cat <<'JSON'
+{"headRefName":"feature/46-blocked","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","state":"OPEN","labels":[{"name":"ready-for-human-review"},{"name":"ready-for-regression"},{"name":"do-not-merge"}],"isDraft":false}
+JSON
+    ;;
   pr\ view\ 45\ --json\ headRefName,state,isCrossRepository,headRepository,headRepositoryOwner)
     cat <<'JSON'
 {"headRefName":"feature/fork-cleanup","state":"MERGED","isCrossRepository":true,"headRepository":{"name":"forked-repo","owner":{"login":"contributor"}},"headRepositoryOwner":{"login":"contributor"}}
@@ -149,6 +154,13 @@ merge_status=$?
 set -e
 run_test "merge_refuses_checkpoint_label_status" "2" "$merge_status"
 run_test "merge_refuses_checkpoint_label_message" "yes" "$(grep -q 'human-checkpoint-required' <<< "$merge_output" && echo yes || echo no)"
+
+set +e
+do_not_merge_output="$("$HELPER" merge --pr 46 --expected-head-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 2>&1)"
+do_not_merge_status=$?
+set -e
+run_test "merge_refuses_do_not_merge_label_status" "2" "$do_not_merge_status"
+run_test "merge_refuses_do_not_merge_label_message" "yes" "$(grep -q 'do-not-merge' <<< "$do_not_merge_output" && echo yes || echo no)"
 
 set +e
 missing_expected_head_output="$("$HELPER" merge --pr 43 2>&1)"

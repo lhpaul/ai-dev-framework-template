@@ -2119,8 +2119,8 @@ Merge through the normal repository path only when the gate returns
 `merge_allowed` **and** every required-evidence check in section 3 Gate 5 of
 `guardrails-enforcement.md` passes. If the gate reports
 `exceptional_bypass_authorized`, do not treat it as normal delegated merge
-authority: verify the pre-attempt `reviewer-access-bypass` audit marker, execute
-exactly the named `gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` command once, immediately verify
+authority: follow the canonical exceptional-bypass policy in
+[`guardrails-enforcement.md`](../guardrails-enforcement.md) Gate 5, immediately verify
 the live PR state, and update the same audit marker with `merged` or `failed`.
 Any head SHA, fingerprint, CI, reviewer, or check-state drift returns to Gate 5
 for fresh authorization. For medium-risk decisions, include a complete "why safe

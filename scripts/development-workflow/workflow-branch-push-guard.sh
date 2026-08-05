@@ -406,10 +406,7 @@ fi
 authorized_push_refspec="${auth_authorized_new_tip}:${branch_ref}"
 set +e
 case "$mode" in
-  force)
-    git -C "$repo_root" push "--force-with-lease=${branch_ref}:${expected_remote_tip}" "$remote" "$authorized_push_refspec"
-    ;;
-  force-with-lease)
+  force|force-with-lease)
     git -C "$repo_root" push "--force-with-lease=${branch_ref}:${expected_remote_tip}" "$remote" "$authorized_push_refspec"
     ;;
 esac

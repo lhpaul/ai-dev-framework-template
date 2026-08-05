@@ -255,8 +255,8 @@ Verified access restrictions on third-party reviewer checks use a
 remediation-first, human-only exceptional merge gate. See
 [`guardrails-enforcement.md`](guardrails-enforcement.md) Gate 5 and
 [`integrations/haystack-triage.md`](integrations/haystack-triage.md) for the
-required current evidence, named authorization, pre-attempt audit, and one-shot
-`gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` boundary.
+canonical evidence, authorization, pre-attempt audit, and one-shot admin merge
+boundary.
 
 Codex skills are stored in `.agents/skills/` for repo-scoped Codex discovery, with legacy canonical definitions retained in `.codex/skills/`. Install them into the local Codex environment with:
 

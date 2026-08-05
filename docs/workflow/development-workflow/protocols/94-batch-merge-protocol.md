@@ -309,7 +309,15 @@ After a clean or resolved merge, in order:
 
    <!-- workflow-shell-contract: bash-zsh -->
    ```bash
-   BRANCH="$(gh pr view <number> --json headRefName --jq '.headRefName')"
+   PR_NUMBER="<number>"
+   BRANCH="$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')" || {
+     printf 'ERROR: could not resolve head branch for PR #%s\n' "$PR_NUMBER" >&2
+     exit 1
+   }
+   [ -n "$BRANCH" ] || {
+     printf 'ERROR: PR #%s has no head branch\n' "$PR_NUMBER" >&2
+     exit 1
+   }
    BASE_BRANCH="${TARGET_BASE:-develop}"
    # Try origin/<branch> first; fall back to HEAD~1 if the remote branch was
    # already deleted (e.g., repo has auto-delete enabled). HEAD~1 points to the

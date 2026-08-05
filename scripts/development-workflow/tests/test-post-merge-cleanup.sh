@@ -283,6 +283,18 @@ run_test "spec_remote_ref_remains" "yes" "$(
   fi
 )"
 
+persistent_mismatch_branch="spec/123-persistent"
+persistent_mismatch_repo="$(make_repo persistent-mismatch "$persistent_mismatch_branch" yes)"
+run_fails_contains \
+  "persistent_branch_pr_mismatch_blocks_tracker" \
+  "refusing cleanup and tracker updates" \
+  env GH_MERGED_HEAD="$persistent_mismatch_branch" \
+    GH_MERGED_PR=84 \
+    GH_PR_HEAD_REF_NAME="spec/different-branch" \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$stub_bin:$PATH" \
+    "$HELPER" --repo-root "$persistent_mismatch_repo" --base develop --pr 84 "$persistent_mismatch_branch"
+
 hub_sync_branch="feature/sync-template-v0.37.0"
 hub_sync_repo="$(make_repo hub-sync "$hub_sync_branch" yes)"
 printf 'mode: workflow_hub\n' >"$hub_sync_repo/.ai-dev-workflow.yaml"

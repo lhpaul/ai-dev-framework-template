@@ -198,8 +198,13 @@ runner has current CI/reviewer/check evidence, App-access remediation evidence,
 a named human authorization for the exact PR, head SHA, and evidence
 fingerprint, and a verified pre-attempt `<!-- reviewer-access-bypass -->` audit
 record. Only then may the gate return `exceptional_bypass_authorized`, which
-authorizes exactly one named
-`gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` attempt.
+authorizes exactly one named command:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```text
+gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>
+```
+
 Delegated mode, `may_merge_pr`, batch approval, risk tolerance, or satisfied
 unrelated checkpoints never substitute for that authorization.
 

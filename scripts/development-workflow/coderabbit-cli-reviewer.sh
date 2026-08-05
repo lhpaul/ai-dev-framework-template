@@ -194,6 +194,18 @@ if command -v gh >/dev/null 2>&1; then
 fi
 BASE_BRANCH="${BASE_BRANCH:-develop}"
 
+normalize_github_remote_slug() {
+  local raw="$1"
+  local slug="$raw"
+
+  slug="${slug#git@github.com:}"
+  slug="${slug#ssh://git@github.com/}"
+  slug="${slug#https://github.com/}"
+  slug="${slug#http://github.com/}"
+  slug="${slug%.git}"
+  printf '%s\n' "$slug"
+}
+
 if [ -n "$REPO_ROOT" ]; then
   if [ ! -d "$REPO_ROOT/.git" ] && ! git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
     echo "ERROR: --repo-root is not a Git checkout: $REPO_ROOT" >&2
@@ -203,6 +215,15 @@ if [ -n "$REPO_ROOT" ]; then
   if [ -z "$HEAD_SHA" ]; then
     echo "ERROR: could not resolve pull request head SHA for #$PR_NUMBER" >&2
     print_result escalate 0 0 0 head_sha_unavailable "head_sha_unavailable"
+    exit 2
+  fi
+  if ! repo_root_origin="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null)"; then
+    repo_root_origin=""
+  fi
+  repo_root_slug="$(normalize_github_remote_slug "$repo_root_origin")"
+  if [ "$repo_root_slug" != "$OWNER/$REPO" ]; then
+    echo "ERROR: --repo-root origin does not match expected repository ($repo_root_slug != $OWNER/$REPO)" >&2
+    print_result escalate 0 0 0 repo_root_mismatch "repo_root_mismatch"
     exit 2
   fi
   if ! CURRENT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)"; then
@@ -457,8 +478,8 @@ case "$parse_status" in
       index=1
       while IFS= read -r blocking_finding; do
         [ -n "$blocking_finding" ] || continue
-        print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_finding" | jq -r '.path // ""')"
-        print_kv "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_finding" | jq -r '.line // ""')"
+        print_kv_escaped "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_finding" | jq -r '.path // ""')"
+        print_kv_escaped "BLOCKING_${index}_LINE" "$(printf '%s\n' "$blocking_finding" | jq -r '.line // ""')"
         print_kv_escaped "BLOCKING_${index}_BODY" "$(printf '%s\n' "$blocking_finding" | jq -r '.body // ""')"
         index=$((index + 1))
       done < <(printf '%s\n' "$blocking_findings_json" | jq -c '.[]?' 2>/dev/null)

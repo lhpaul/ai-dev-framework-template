@@ -159,6 +159,22 @@ printf '{"batchFingerprint":"%s","itemIds":["parent-b","parent-a"],"evidenceHash
 run_test "reversed_pair_order_matches_with_instruction" "parallel_eligible" "$(dispatch_for "$parent_route" "$reversed_instruction_decision")"
 run_test "missing_instruction_marked_stale" "missing_human_instruction" "$("$OVERLAP" --input "$parent_route" --decision-file "$reversed_decision" --json | jq -r '.staleDecisions[0].status')"
 
+null_instruction_decision="$TMP_ROOT/null-instruction-decisions.jsonl"
+printf '{"batchFingerprint":"%s","pairId":"parent-a--parent-b","evidenceHash":"%s","decision":"allow_parallel","recordedHumanInstruction":null}\n' "$batch_fp" "$evidence_hash" > "$null_instruction_decision"
+run_test "null_recorded_instruction_rejected" "missing_human_instruction" "$("$OVERLAP" --input "$parent_route" --decision-file "$null_instruction_decision" --json | jq -r '.staleDecisions[0].status')"
+
+false_instruction_decision="$TMP_ROOT/false-instruction-decisions.jsonl"
+printf '{"batchFingerprint":"%s","pairId":"parent-a--parent-b","evidenceHash":"%s","decision":"allow_parallel","recordedHumanInstruction":false}\n' "$batch_fp" "$evidence_hash" > "$false_instruction_decision"
+run_test "false_recorded_instruction_rejected" "missing_human_instruction" "$("$OVERLAP" --input "$parent_route" --decision-file "$false_instruction_decision" --json | jq -r '.staleDecisions[0].status')"
+
+numeric_instruction_decision="$TMP_ROOT/numeric-instruction-decisions.jsonl"
+printf '{"batchFingerprint":"%s","pairId":"parent-a--parent-b","evidenceHash":"%s","decision":"allow_parallel","recordedHumanInstruction":0}\n' "$batch_fp" "$evidence_hash" > "$numeric_instruction_decision"
+run_test "numeric_recorded_instruction_rejected" "missing_human_instruction" "$("$OVERLAP" --input "$parent_route" --decision-file "$numeric_instruction_decision" --json | jq -r '.staleDecisions[0].status')"
+
+whitespace_instruction_decision="$TMP_ROOT/whitespace-instruction-decisions.jsonl"
+printf '{"batchFingerprint":"%s","pairId":"parent-a--parent-b","evidenceHash":"%s","decision":"allow_parallel","recordedHumanInstruction":"   "}\n' "$batch_fp" "$evidence_hash" > "$whitespace_instruction_decision"
+run_test "whitespace_recorded_instruction_rejected" "missing_human_instruction" "$("$OVERLAP" --input "$parent_route" --decision-file "$whitespace_instruction_decision" --json | jq -r '.staleDecisions[0].status')"
+
 stale_decision="$TMP_ROOT/stale-decisions.jsonl"
 printf '{"batchFingerprint":"sha256:stale","pairId":"parent-a--parent-b","evidenceHash":"%s","decision":"allow_parallel"}\n' "$evidence_hash" > "$stale_decision"
 run_test "stale_decision_does_not_apply" "serial" "$(dispatch_for "$parent_route" "$stale_decision")"

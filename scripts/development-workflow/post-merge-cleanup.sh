@@ -367,6 +367,24 @@ if ! git show-ref --quiet "refs/heads/$TO_DELETE"; then
   echo "Local branch '$TO_DELETE' is already gone; verified merged PR #${VERIFIED_MERGED_PR} — continuing with fetch, base update, and tracker cleanup."
 fi
 
+if [ -n "$merged_pr_number" ] && [ -z "$VERIFIED_MERGED_PR" ]; then
+  if ! merged_pr_lookup_repo="$(remote_cleanup_repo_slug)"; then
+    echo "ERROR: could not resolve GitHub repository for merged PR #${merged_pr_number} validation." >&2
+    exit 1
+  fi
+  if ! verified_merged_pr_json="$(verify_merged_pr_for_branch "$TO_DELETE" "$merged_pr_lookup_repo")"; then
+    echo "ERROR: could not query merged PR #${merged_pr_number} for branch '$TO_DELETE' in '$merged_pr_lookup_repo'." >&2
+    exit 1
+  fi
+  VERIFIED_MERGED_PR="$(printf '%s\n' "$verified_merged_pr_json" | jq -r '.number // empty')"
+  if [ -z "$VERIFIED_MERGED_PR" ]; then
+    print_kv REMOTE_DELETE_REASON "pr_not_merged_or_branch_mismatch"
+    print_kv_escaped ERROR_MESSAGE "PR #${merged_pr_number} is not MERGED or does not use branch '${TO_DELETE}'; refusing cleanup and tracker updates."
+    echo "ERROR: PR #${merged_pr_number} is not MERGED or does not use branch '$TO_DELETE'; refusing cleanup and tracker updates." >&2
+    exit 2
+  fi
+fi
+
 if [ "$LOCAL_BRANCH_MISSING" -eq 1 ]; then
   echo "Post-merge cleanup: will switch to $DEVELOP_BRANCH in $CLEANUP_REPO_ROOT (local branch '$TO_DELETE' already removed)."
 else

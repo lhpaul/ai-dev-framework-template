@@ -647,9 +647,8 @@ Before merge:
 
 Proceed to the normal repository merge protocol only when the delegated gate
 reports `merge_allowed`. If the gate reports `exceptional_bypass_authorized`,
-execute only the named human-authorized `gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` attempt after
-verifying the current PR/SHA/fingerprint authorization and pre-attempt
-`reviewer-access-bypass` audit record, then verify live PR state and update that
+follow the canonical exceptional-bypass policy in
+[`guardrails-enforcement.md`](../guardrails-enforcement.md) Gate 5, then verify live PR state and update that
 same audit record with the result. If the gate reports `fix_required`, remove
 readiness labels, fix, rerun validation/reviewer/CI, and return to Step 8. If it
 reports `human_required`, stop for human authority, setup, access remediation,

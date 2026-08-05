@@ -453,6 +453,14 @@ set -e
 run_test "locally_extended_expiry_status" "1" "$locally_extended_expiry_status"
 run_test "locally_extended_expiry_blocks" "untrusted_authorization_source" "$(guard_field "$locally_extended_expiry_output" PUSH_GUARD_REASON)"
 
+write_auth force-with-lease lhpaul/ai-dev-framework-template refs/heads/feature/test abc123 lhpaul 2026-08-01T00:00:00Z
+set +e
+expired_authorization_output="$(run_guard force-with-lease --expected-remote-tip abc123 --authorization-json "$AUTH_FILE" -- --force-with-lease=refs/heads/feature/test:abc123 origin refs/heads/feature/test:refs/heads/feature/test)"
+expired_authorization_status=$?
+set -e
+run_test "expired_authorization_status" "1" "$expired_authorization_status"
+run_test "expired_authorization_blocks" "authorization_expired" "$(guard_field "$expired_authorization_output" PUSH_GUARD_REASON)"
+
 export MOCK_EXISTING_CLAIM=other
 write_auth
 set +e

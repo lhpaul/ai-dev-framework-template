@@ -346,11 +346,9 @@ rerun the reviewer loop and delegated merge gate. If access cannot be restored
 in the required window and this check is the only remaining protection blocker,
 the delegated gate may present a human-only exceptional path. That path requires
 current green CI, zero blocking reviewer findings, current access-denial
-evidence, remediation evidence, a named authorization for the exact PR/head
-SHA/evidence fingerprint, and a pre-attempt `reviewer-access-bypass` audit
-comment. It authorizes exactly one named
-`gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` attempt;
-it is never implied by delegated merge policy or batch approval.
+evidence, remediation evidence, and the canonical exceptional-bypass policy in
+[`guardrails-enforcement.md`](../guardrails-enforcement.md) Gate 5. It is never
+implied by delegated merge policy or batch approval.
 
 ### Triage returns `status=pending` (analysis in progress — automatic retry)
 

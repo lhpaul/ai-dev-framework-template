@@ -99,9 +99,8 @@ Key responsibilities:
   `run-epic-risk-classifier.sh` and `run-epic-delegated-gate.sh`; continue only
   when every normally merged in-scope PR returns `merge_allowed`. If any PR returns
   `exceptional_bypass_authorized`, split it out of the normal batch-merge list
-  and require separate named PR/SHA/fingerprint authorization plus pre-attempt
-  `reviewer-access-bypass` audit before one exact human-authorized
-  `gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` attempt. Then route normal candidates into
+  and follow the canonical exceptional-bypass policy in
+  `docs/workflow/development-workflow/guardrails-enforcement.md` Gate 5. Then route normal candidates into
   Protocol 94 batch merge using only the explicit in-scope PR list: run
   `batch-merge.sh discover --prs <comma-separated-in-scope-prs>` and continue
   through merge, cleanup, post-sibling-merge `recheck-remaining` calls, and

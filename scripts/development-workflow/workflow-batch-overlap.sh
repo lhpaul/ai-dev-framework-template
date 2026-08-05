@@ -356,16 +356,19 @@ def apply_decisions(pairs: list[dict], batch_fingerprint: str, decisions: list[d
             if decision.get("decision") not in {"allow_parallel", "serialize"}:
                 stale.append({**decision, "status": "invalid_decision"})
                 continue
-            instruction = str(decision.get("recordedHumanInstruction", decision.get("instruction", ""))).strip()
+            instruction_value = decision.get("recordedHumanInstruction", decision.get("instruction", ""))
+            instruction = instruction_value.strip() if isinstance(instruction_value, str) else ""
             if decision.get("decision") == "allow_parallel" and not instruction:
                 stale.append({**decision, "status": "missing_human_instruction"})
                 continue
             accepted = decision
         if accepted:
+            accepted_instruction_value = accepted.get("recordedHumanInstruction", accepted.get("instruction", ""))
+            accepted_instruction = accepted_instruction_value.strip() if isinstance(accepted_instruction_value, str) else ""
             pair["decision"] = {
                 "status": "accepted",
                 "decision": accepted["decision"],
-                "recordedInstruction": str(accepted.get("recordedHumanInstruction", accepted.get("instruction", ""))).strip(),
+                "recordedInstruction": accepted_instruction,
             }
             if accepted["decision"] == "allow_parallel":
                 pair["defaultDispatch"] = "parallel_eligible"

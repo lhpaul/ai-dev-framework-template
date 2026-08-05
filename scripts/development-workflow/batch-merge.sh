@@ -1013,6 +1013,10 @@ cmd_merge() {
     merge_die "PR #${pr_num} is labeled needs-fixes"
   fi
 
+  if printf '%s' "$pr_json" | jq -e '.labels[].name | select(. == "do-not-merge")' >/dev/null 2>&1; then
+    merge_die "PR #${pr_num} is labeled do-not-merge"
+  fi
+
   if printf '%s' "$pr_json" | jq -e '.labels[].name | select(. == "human-checkpoint-required")' >/dev/null 2>&1; then
     merge_die "PR #${pr_num} is labeled human-checkpoint-required — satisfy or waive the checkpoint, record audit evidence, and sync labels before merging"
   fi
