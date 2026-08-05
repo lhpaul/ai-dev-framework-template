@@ -96,6 +96,7 @@ run_fails_contains "rejects_feature_base" "Disallowed base" "$HELPER" --base fea
 run_fails_contains "rejects_bad_recent" "--recent-merged-prs must be" "$HELPER" --base develop --recent-merged-prs no --json
 run_fails_contains "requires_epic_value" "--epic requires a value" "$HELPER" --base develop --epic --json
 run_fails_contains "requires_issues_value" "--issues requires a value" "$HELPER" --base develop --issues --json
+run_fails_contains "requires_tracker_items_value" "--tracker-items requires a value" "$HELPER" --base develop --tracker-items --json
 run_fails_contains "requires_recent_value" "--recent-merged-prs requires a value" "$HELPER" --base develop --recent-merged-prs --json
 
 out="$("$HELPER" --base develop --recent-merged-prs 1 --json)" || {
@@ -115,6 +116,25 @@ out2="$("$HELPER" --base develop --issues 42 --json)" || {
 }
 run_test "explicit_issue" "42" "$(printf '%s' "$out2" | jq -er '.candidates[0].number')"
 
+out_tracker="$("$HELPER" --base develop --tracker-items LEA-223,LEA-224 --json)" || {
+  echo "FAIL: tracker_items helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_tracker="{}"
+}
+run_test "tracker_items_count" "2" "$(printf '%s' "$out_tracker" | jq -er '.candidateCount')"
+run_test "tracker_item_id" "LEA-223" "$(printf '%s' "$out_tracker" | jq -er '.candidates[0].id')"
+out_tracker_text="$("$HELPER" --base develop --tracker-items LEA-223)" || {
+  echo "FAIL: tracker_items text helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_tracker_text=""
+}
+if grep -Fq -- "[tracker_item #LEA-223]" <<<"$out_tracker_text"; then
+  tracker_text_present="yes"
+else
+  tracker_text_present="no"
+fi
+run_test "tracker_item_text_id" "yes" "$tracker_text_present"
+
 out3="$("$HELPER" --base develop-demo --epic 50 --json)" || {
   echo "FAIL: epic helper exited non-zero"
   FAIL_COUNT=$((FAIL_COUNT + 1))
@@ -124,6 +144,7 @@ run_test "epic_child_included" "yes" "$(printf '%s' "$out3" | jq -er 'any(.candi
 run_test "epic_self_excluded" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .number == 50) | if . then "yes" else "no" end')"
 
 run_fails_contains "rejects_invalid_issues" "Invalid issue in --issues" "$HELPER" --base develop --issues "abc" --json
+run_fails_contains "rejects_invalid_tracker_items" "Invalid tracker item in --tracker-items" "$HELPER" --base develop --tracker-items "bad/item" --json
 run_fails_contains "rejects_missing_issue" "Failed to read issue" "$HELPER" --base develop --issues "999001" --json
 
 echo ""

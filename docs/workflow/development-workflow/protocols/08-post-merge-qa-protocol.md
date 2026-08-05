@@ -50,21 +50,34 @@ Prefer the helper:
   --base "$QA_BASE" \
   [--epic <number>] \
   [--issues <csv>] \
+  [--tracker-items <csv>] \
   [--recent-merged-prs <n>] \
   --json
 ```
 
 Default proposal preference (when the operator did not already pin items):
 
-- Items / PRs already merged onto `QA_BASE`, or
-- When an epic is indicated: items associated with that epic’s integration
-  branch
+- For `develop`: provider-backed tracker items in the repository's configured
+  post-merge state (for example, `Merged`) that have shipped onto `QA_BASE`.
+  Resolve the provider from `.ai-dev-workflow.yaml` (`issue_tracker.provider`)
+  when configured; do not hardcode one tracker vendor into the protocol.
+- For `develop-<slug>`: items and PRs associated with that integration branch
+  and already merged into that branch. Do not require final post-merge tracker
+  state for integration-branch QA unless the repository's tracker workflow
+  explicitly does so.
+- If provider-backed tracker discovery is unavailable, unclear, or not
+  configured, fall back to recently merged PRs on `QA_BASE` and state that the
+  proposal is PR-derived.
+- When an epic is indicated: items associated with that epic's integration
+  branch, plus any PRs merged into the resolved QA base for those items.
 
 Honor explicit operator inputs (single item, several items, epic, recent merged
 PRs) as seeds or filters.
 
-Present the proposal to the human. **Do not exercise flows until the human
-confirms or adjusts the scope.**
+Every proposal must state its scope source (`tracker-post-merge`,
+`integration-branch`, `merged-prs`, `explicit`, or `epic`) and whether it is
+provider-backed or fallback. Present the proposal to the human. **Do not
+exercise flows until the human confirms or adjusts the scope.**
 
 | Confirmed scope | Action |
 | --- | --- |

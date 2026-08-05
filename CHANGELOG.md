@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Post-merge QA scope discovery**: Prefer configured tracker post-merge items
+  on `develop`, keep integration-branch QA semantics explicit, and allow
+  provider-backed tracker IDs to seed the read-only scope helper.
 - **Bugbot explicit skip handling** (#1381): Treat Cursor Bugbot explicit skip
   comments as warning-only skipped reviews instead of unavailable or blocking
   reviewer failures.
