@@ -67,10 +67,11 @@ Default proposal preference (when the operator did not already pin items):
   an empty, non-confirmable `tracker-post-merge` proposal (`discoveryRequired:
   true`) and require discovery before human confirmation; it must not silently
   substitute a PR-derived fallback.
-- For `develop-<slug>`: items and PRs associated with that integration branch
-  and already merged into that branch. Do not require final post-merge tracker
-  state for integration-branch QA unless the repository's tracker workflow
-  explicitly does so.
+- For `develop-<slug>`: items associated with a PR merged into that integration
+  branch, plus those merged PRs. Do not require final post-merge tracker state
+  for integration-branch QA unless the repository's tracker workflow explicitly
+  does so. If item discovery is unavailable, identify the proposal as a
+  PR-derived fallback.
 - If provider-backed tracker discovery is unavailable, unclear, or not
   configured, fall back to recently merged PRs on `QA_BASE` and state that the
   proposal is PR-derived.

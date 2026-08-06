@@ -54,10 +54,13 @@ cat >"$MOCK_BIN/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
+  *"pr list"*"--base develop-empty"*)
+    echo '[]'
+    ;;
   *"pr list"*"--state merged"*)
     # Include a malformed row to verify skip-and-continue behavior
     cat <<'JSON'
-[{"number":101,"title":"Merged feature","url":"https://example.test/pr/101","mergedAt":"2026-07-01T00:00:00Z","closingIssuesReferences":[{"number":51}]},{"number":null,"title":"Bad","url":"https://example.test/pr/bad"}]
+[{"number":101,"title":"Merged feature","url":"https://example.test/pr/101","mergedAt":"2026-07-01T00:00:00Z","headRefName":"fix/51-merged-feature","body":"Implements #51"},{"number":null,"title":"Bad","url":"https://example.test/pr/bad"}]
 JSON
     ;;
   *"issue view"*"--json"*)
@@ -81,6 +84,10 @@ JSON
     fi
     ;;
   *"issue list"*"integration-branch:demo"*)
+    if [ "$FAIL_INTEGRATION_ISSUE_LIST" = "1" ]; then
+      echo "integration issue query failed" >&2
+      exit 1
+    fi
     cat <<'JSON'
 [{"number":50,"title":"Epic","url":"https://example.test/issues/50"},{"number":51,"title":"Child","url":"https://example.test/issues/51"}]
 JSON
@@ -93,6 +100,7 @@ esac
 STUB
 chmod +x "$MOCK_BIN/gh"
 export PATH="$MOCK_BIN:$PATH"
+export FAIL_INTEGRATION_ISSUE_LIST=""
 
 mkdir -p "$(dirname -- "$DOWNSTREAM_HELPER")"
 cp "$HELPER" "$DOWNSTREAM_HELPER"
@@ -129,6 +137,14 @@ run_test "configured_tracker_scope_source" "tracker-post-merge" "$(printf '%s' "
 run_test "configured_tracker_is_not_fallback" "false" "$(printf '%s' "$out_tracker_required" | jq -er '.fallback')"
 run_test "configured_tracker_is_not_confirmable" "false" "$(printf '%s' "$out_tracker_required" | jq -er '.confirmationRequired')"
 run_test "configured_tracker_requires_discovery_flag" "true" "$(printf '%s' "$out_tracker_required" | jq -er '.discoveryRequired')"
+
+out_explicit_empty="$("$HELPER" --base develop-empty --recent-merged-prs 1 --json)" || {
+  echo "FAIL: explicit empty helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_explicit_empty="{}"
+}
+run_test "explicit_empty_scope_remains_confirmable" "true" "$(printf '%s' "$out_explicit_empty" | jq -er '.confirmationRequired')"
+run_test "explicit_empty_scope_does_not_require_discovery" "false" "$(printf '%s' "$out_explicit_empty" | jq -er '.discoveryRequired')"
 
 out_no_tracker="$(AI_DEV_WORKFLOW_CONFIG_FILE="$NO_TRACKER_CONFIG" "$HELPER" --base develop --json)" || {
   echo "FAIL: no-tracker override helper exited non-zero"
@@ -194,6 +210,14 @@ run_test "integration_scope_source" "integration-branch" "$(printf '%s' "$out_in
 run_test "integration_default_includes_labelled_issue" "yes" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 51) | if . then "yes" else "no" end')"
 run_test "integration_default_excludes_unmerged_labelled_issue" "no" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 50) | if . then "yes" else "no" end')"
 run_test "integration_default_includes_merged_pr" "yes" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 101) | if . then "yes" else "no" end')"
+
+out_integration_fallback="$(FAIL_INTEGRATION_ISSUE_LIST=1 "$HELPER" --base develop-demo --json)" || {
+  echo "FAIL: degraded integration helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_integration_fallback="{}"
+}
+run_test "degraded_integration_uses_pr_fallback" "merged-prs" "$(printf '%s' "$out_integration_fallback" | jq -er '.scopeSource')"
+run_test "degraded_integration_is_fallback" "true" "$(printf '%s' "$out_integration_fallback" | jq -er '.fallback')"
 
 run_fails_contains "rejects_invalid_issues" "Invalid issue in --issues" "$HELPER" --base develop --issues "abc" --json
 run_fails_contains "rejects_invalid_tracker_items" "Invalid tracker item in --tracker-items" "$HELPER" --base develop --tracker-items "bad/item" --json
