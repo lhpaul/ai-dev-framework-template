@@ -127,6 +127,8 @@ out_tracker_required="$("$HELPER" --base develop --json)" || {
 run_test "configured_tracker_requires_discovery" "0" "$(printf '%s' "$out_tracker_required" | jq -er '.candidateCount')"
 run_test "configured_tracker_scope_source" "tracker-post-merge" "$(printf '%s' "$out_tracker_required" | jq -er '.scopeSource')"
 run_test "configured_tracker_is_not_fallback" "false" "$(printf '%s' "$out_tracker_required" | jq -er '.fallback')"
+run_test "configured_tracker_is_not_confirmable" "false" "$(printf '%s' "$out_tracker_required" | jq -er '.confirmationRequired')"
+run_test "configured_tracker_requires_discovery_flag" "true" "$(printf '%s' "$out_tracker_required" | jq -er '.discoveryRequired')"
 
 out_no_tracker="$(AI_DEV_WORKFLOW_CONFIG_FILE="$NO_TRACKER_CONFIG" "$HELPER" --base develop --json)" || {
   echo "FAIL: no-tracker override helper exited non-zero"

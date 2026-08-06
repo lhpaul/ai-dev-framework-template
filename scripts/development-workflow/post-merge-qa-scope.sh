@@ -348,13 +348,25 @@ elif [ "$tracker_discovery_required" = true ]; then
   fallback=false
 fi
 
+confirmation_required=true
+discovery_required=false
+empty_scope_stop="If the human confirms an empty scope, stop without preflight, flows, or a fix PR."
+if [ "$tracker_discovery_required" = true ] && [ ! -s "$candidates_file" ]; then
+  confirmation_required=false
+  discovery_required=true
+  empty_scope_stop="Provider-backed tracker discovery is required before QA scope can be confirmed."
+fi
+
 result="$(jq -n \
   --arg base "$base" \
   --arg scope_source "$scope_source" \
   --argjson provider_backed "$provider_backed" \
   --argjson fallback "$fallback" \
+  --argjson confirmation_required "$confirmation_required" \
+  --argjson discovery_required "$discovery_required" \
   --argjson candidates "$candidates_json" \
   --argjson notes "$notes_json" \
+  --arg empty_scope_stop "$empty_scope_stop" \
   '{
     base: $base,
     scopeSource: $scope_source,
@@ -363,8 +375,9 @@ result="$(jq -n \
     candidateCount: ($candidates | length),
     candidates: $candidates,
     notes: $notes,
-    confirmationRequired: true,
-    emptyScopeStop: "If the human confirms an empty scope, stop without preflight, flows, or a fix PR.",
+    confirmationRequired: $confirmation_required,
+    discoveryRequired: $discovery_required,
+    emptyScopeStop: $empty_scope_stop,
     readOnlyGuarantee: "No tracker updates, branch creation, PR edits, merges, issue closure, or flow exercise were performed."
   }')" || {
   echo "Failed to build scope proposal JSON" >&2
@@ -381,6 +394,10 @@ else
   printf 'Candidates: %s\n' "$(printf '%s' "$result" | jq -er '.candidateCount')"
   printf '%s\n' "$result" | jq -r '.candidates[]? | "- [\(.kind) #\(.number // .id)] \(.title) — \(.reason)"'
   printf '%s\n' "$result" | jq -r '.notes[]? | "Note: \(.)"'
-  echo "Confirmation required before exercising flows."
+  if [ "$(printf '%s' "$result" | jq -er '.confirmationRequired')" = true ]; then
+    echo "Confirmation required before exercising flows."
+  else
+    echo "Provider-backed tracker discovery is required before QA scope can be confirmed."
+  fi
   echo "Read-only guarantee: No tracker updates, branch creation, PR edits, merges, issue closure, or flow exercise were performed."
 fi
