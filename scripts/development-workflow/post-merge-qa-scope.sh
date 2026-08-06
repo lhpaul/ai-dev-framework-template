@@ -210,6 +210,16 @@ append_rows_from_json_array() {
   done < <(jq -c '.[]' "$json_file")
 }
 
+# Keep only GitHub issues explicitly associated with a merged implementation PR.
+# Closing references are unavailable for non-default PR bases, so accept either
+# an issue reference in the title/body or a canonical workflow branch identifier.
+filter_issues_referenced_by_merged_prs() {
+  local issues_file="$1" merged_prs_file="$2" output_file="$3"
+  jq --slurpfile merged_prs "$merged_prs_file" \
+    '[.[] | .number as $number | select(any($merged_prs[0][]?; ((.headRefName // "") | test("^(feature|fix|refactor|hotfix|spec|implementation-plan)/" + ($number | tostring) + "(-|$)")) or (((.title // "") + "\n" + (.body // "")) | test("(^|[^0-9])#" + ($number | tostring) + "([^0-9]|$)"))))]' \
+    "$issues_file" > "$output_file"
+}
+
 # Explicit issues (file-backed loop — exits abort the main script)
 if [ -n "$issues_arg" ]; then
   issues_list="$tmp_dir/issues-list.txt"
@@ -274,8 +284,18 @@ if [ -n "$epic" ]; then
     fi
     if gh issue list --label "$integration_label" --state all --limit 50 \
       --json number,title,url > "$tmp_dir/epic-issues.json" 2>/dev/null; then
-      append_rows_from_json_array "$tmp_dir/epic-issues.json" "issue" "epic #$epic via $integration_label (limit 50)" "$epic"
-      append_note "Epic issue list is capped at 50 (not fully paginated)."
+      if gh pr list --base "$base" --state merged --limit 50 \
+        --json number,title,url,mergedAt,headRefName,body > "$tmp_dir/epic-merged-prs.json"; then
+        if ! filter_issues_referenced_by_merged_prs "$tmp_dir/epic-issues.json" "$tmp_dir/epic-merged-prs.json" "$tmp_dir/epic-merged-issues.json"; then
+          echo "Failed to match epic issues to merged PRs for base '$base'" >&2
+          exit 1
+        fi
+        append_rows_from_json_array "$tmp_dir/epic-merged-issues.json" "issue" "epic #$epic via $integration_label and merged PR references (limit 50)" "$epic"
+        append_rows_from_json_array "$tmp_dir/epic-merged-prs.json" "pull_request" "epic #$epic merged PRs into $base (limit 50)"
+        append_note "Epic issue and merged-PR lists are capped at 50 and include only explicitly associated items."
+      else
+        append_note "Could not list merged PRs for epic #$epic on $base; no label-only items were proposed."
+      fi
     else
       append_note "Could not list issues for label $integration_label; ask the human to supply --issues."
     fi
@@ -300,14 +320,12 @@ if [ ! -s "$candidates_file" ] && [ "$recent_merged" -eq 0 ] && [ -z "$issues_ar
       integration_label="integration-branch:$integration_slug"
       if gh issue list --label "$integration_label" --state all --limit 50 \
         --json number,title,url > "$tmp_dir/default-integration-label-issues.json" 2>/dev/null; then
-        jq --slurpfile merged_prs "$tmp_dir/default-merged.json" \
-          '[.[] | select(.number as $number | any($merged_prs[0][]?; (((.headRefName // "") + "\n" + (.title // "") + "\n" + (.body // "")) | test("(^|[^0-9])" + ($number | tostring) + "([^0-9]|$)"))))]' \
-          "$tmp_dir/default-integration-label-issues.json" > "$tmp_dir/default-integration-issues.json" || {
+        filter_issues_referenced_by_merged_prs "$tmp_dir/default-integration-label-issues.json" "$tmp_dir/default-merged.json" "$tmp_dir/default-integration-issues.json" || {
           echo "Failed to match integration-branch issues to merged PRs for base '$base'" >&2
           exit 1
         }
         append_rows_from_json_array "$tmp_dir/default-integration-issues.json" "issue" "default integration branch via $integration_label and merged PR references (limit 50)"
-        append_note "Integration-branch issue list is capped at 50 and includes only items referenced by merged PR title, body, or branch name."
+        append_note "Integration-branch issue list is capped at 50 and includes only items explicitly referenced by merged PR title, body, or canonical branch name."
       else
         integration_discovery_degraded=true
         append_note "Could not list issues for label $integration_label; the default proposal includes only merged PRs."

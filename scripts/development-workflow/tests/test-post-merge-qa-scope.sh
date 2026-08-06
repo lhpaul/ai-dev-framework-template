@@ -200,6 +200,7 @@ out3="$("$HELPER" --base develop-demo --epic 50 --json)" || {
 run_test "epic_child_included" "yes" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .number == 51) | if . then "yes" else "no" end')"
 run_test "epic_self_excluded" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .number == 50) | if . then "yes" else "no" end')"
 run_test "epic_scope_source" "epic" "$(printf '%s' "$out3" | jq -er '.scopeSource')"
+run_test "epic_merged_pr_included" "yes" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 101) | if . then "yes" else "no" end')"
 
 out_integration="$("$HELPER" --base develop-demo --json)" || {
   echo "FAIL: integration helper exited non-zero"
