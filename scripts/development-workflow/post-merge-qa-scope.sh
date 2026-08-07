@@ -216,14 +216,14 @@ append_rows_from_json_array() {
 filter_issues_referenced_by_merged_prs() {
   local issues_file="$1" merged_prs_file="$2" output_file="$3"
   jq --slurpfile merged_prs "$merged_prs_file" \
-    '[.[] | .number as $number | select(any($merged_prs[0][]?; ((.headRefName // "") | test("^(feature|fix|refactor|hotfix|spec|implementation-plan)/" + ($number | tostring) + "(-|$)")) or (((.title // "") + "\n" + (.body // "")) | test("(^|[^0-9])#" + ($number | tostring) + "([^0-9]|$)"))))]' \
+    '[.[] | .number as $number | select(any($merged_prs[0][]?; . as $pr | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/")) and (((($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^0-9])#" + ($number | tostring) + "([^0-9]|$)"))))))]' \
     "$issues_file" > "$output_file"
 }
 
 filter_merged_prs_for_issues() {
   local merged_prs_file="$1" issues_file="$2" output_file="$3"
   jq --slurpfile issues "$issues_file" \
-    '($issues[0] | map(.number)) as $issue_numbers | [.[] | . as $pr | select(any($issue_numbers[]; . as $number | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix|spec|implementation-plan)/" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^0-9])#" + ($number | tostring) + "([^0-9]|$)"))))]' \
+    '($issues[0] | map(.number)) as $issue_numbers | [.[] | . as $pr | select((($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/")) and any($issue_numbers[]; . as $number | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^0-9])#" + ($number | tostring) + "([^0-9]|$)"))))]' \
     "$merged_prs_file" > "$output_file"
 }
 
@@ -231,6 +231,10 @@ filter_merged_prs_for_issues() {
 if [ -n "$issues_arg" ]; then
   issues_list="$tmp_dir/issues-list.txt"
   printf '%s\n' "$issues_arg" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | awk 'NF' > "$issues_list"
+  if [ ! -s "$issues_list" ]; then
+    echo "--issues must contain at least one issue" >&2
+    exit 64
+  fi
   while IFS= read -r issue; do
     if ! printf '%s\n' "$issue" | grep -Eq '^[1-9][0-9]*$'; then
       echo "Invalid issue in --issues: $issue" >&2

@@ -56,7 +56,7 @@ set -euo pipefail
 case "$*" in
   *"pr list"*"--base develop-demo"*)
     cat <<'JSON'
-[{"number":101,"title":"Merged feature","url":"https://example.test/pr/101","mergedAt":"2026-07-01T00:00:00Z","headRefName":"fix/51-merged-feature","body":"Implements #51"},{"number":102,"title":"Unrelated work","url":"https://example.test/pr/102","mergedAt":"2026-07-02T00:00:00Z","headRefName":"fix/99-unrelated","body":"Implements #99"}]
+[{"number":101,"title":"Merged feature","url":"https://example.test/pr/101","mergedAt":"2026-07-01T00:00:00Z","headRefName":"fix/51-merged-feature","body":"Implements #51"},{"number":102,"title":"Unrelated work","url":"https://example.test/pr/102","mergedAt":"2026-07-02T00:00:00Z","headRefName":"fix/99-unrelated","body":"Implements #99"},{"number":103,"title":"Spec only","url":"https://example.test/pr/103","mergedAt":"2026-07-03T00:00:00Z","headRefName":"spec/52-spec-only","body":"Documents #52"},{"number":104,"title":"Plan only #53","url":"https://example.test/pr/104","mergedAt":"2026-07-04T00:00:00Z","headRefName":"implementation-plan/53-plan-only","body":"Plans #53"}]
 JSON
     ;;
   *"pr list"*"--base develop-empty"*)
@@ -94,7 +94,7 @@ JSON
       exit 1
     fi
     cat <<'JSON'
-[{"number":50,"title":"Epic","url":"https://example.test/issues/50"},{"number":51,"title":"Child","url":"https://example.test/issues/51"}]
+[{"number":50,"title":"Epic","url":"https://example.test/issues/50"},{"number":51,"title":"Child","url":"https://example.test/issues/51"},{"number":52,"title":"Spec-only child","url":"https://example.test/issues/52"},{"number":53,"title":"Plan-only child","url":"https://example.test/issues/53"}]
 JSON
     ;;
   *)
@@ -207,6 +207,8 @@ run_test "epic_self_excluded" "no" "$(printf '%s' "$out3" | jq -er 'any(.candida
 run_test "epic_scope_source" "epic" "$(printf '%s' "$out3" | jq -er '.scopeSource')"
 run_test "epic_merged_pr_included" "yes" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 101) | if . then "yes" else "no" end')"
 run_test "epic_unrelated_pr_excluded" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 102) | if . then "yes" else "no" end')"
+run_test "epic_excludes_spec_only_issue" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 52) | if . then "yes" else "no" end')"
+run_test "epic_excludes_plan_only_pr" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 104) | if . then "yes" else "no" end')"
 
 out_integration="$("$HELPER" --base develop-demo --json)" || {
   echo "FAIL: integration helper exited non-zero"
@@ -227,6 +229,7 @@ run_test "degraded_integration_uses_pr_fallback" "merged-prs" "$(printf '%s' "$o
 run_test "degraded_integration_is_fallback" "true" "$(printf '%s' "$out_integration_fallback" | jq -er '.fallback')"
 
 run_fails_contains "rejects_invalid_issues" "Invalid issue in --issues" "$HELPER" --base develop --issues "abc" --json
+run_fails_contains "rejects_empty_issues" "--issues must contain at least one" "$HELPER" --base develop --issues "," --json
 run_fails_contains "rejects_invalid_tracker_items" "Invalid tracker item in --tracker-items" "$HELPER" --base develop --tracker-items "bad/item" --json
 run_fails_contains "rejects_empty_tracker_items" "--tracker-items must contain at least one" "$HELPER" --base develop --tracker-items "," --json
 run_fails_contains "rejects_missing_issue" "Failed to read issue" "$HELPER" --base develop --issues "999001" --json
