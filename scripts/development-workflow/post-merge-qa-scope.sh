@@ -216,14 +216,14 @@ append_rows_from_json_array() {
 filter_issues_referenced_by_merged_prs() {
   local issues_file="$1" merged_prs_file="$2" output_file="$3"
   jq --slurpfile merged_prs "$merged_prs_file" \
-    '[.[] | .number as $number | select(any($merged_prs[0][]?; . as $pr | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/")) and (((($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/(([A-Z][A-Z0-9]{1,7}|[a-z][a-z0-9])-)?" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^0-9])#" + ($number | tostring) + "([^0-9]|$)"))))))]' \
+    '[.[] | .number as $number | select(any($merged_prs[0][]?; . as $pr | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/")) and (((($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/([A-Za-z][A-Za-z0-9]{0,7}-)?" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^0-9])#" + ($number | tostring) + "([^0-9]|$)"))))))]' \
     "$issues_file" > "$output_file"
 }
 
 filter_merged_prs_for_issues() {
   local merged_prs_file="$1" issues_file="$2" output_file="$3"
   jq --slurpfile issues "$issues_file" \
-    '($issues[0] | map(.number)) as $issue_numbers | [.[] | . as $pr | select((($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/")) and any($issue_numbers[]; . as $number | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/(([A-Z][A-Z0-9]{1,7}|[a-z][a-z0-9])-)?" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^0-9])#" + ($number | tostring) + "([^0-9]|$)"))))]' \
+    '($issues[0] | map(.number)) as $issue_numbers | [.[] | . as $pr | select((($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/")) and any($issue_numbers[]; . as $number | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/([A-Za-z][A-Za-z0-9]{0,7}-)?" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^0-9])#" + ($number | tostring) + "([^0-9]|$)"))))]' \
     "$merged_prs_file" > "$output_file"
 }
 
@@ -281,6 +281,7 @@ if [ "$recent_merged" -gt 0 ]; then
   append_note "Merged-PR proposal is capped at --recent-merged-prs=$recent_merged (not fully paginated)."
 fi
 
+epic_discovery_degraded=false
 # Epic association (best-effort)
 if [ -n "$epic" ]; then
   if ! gh issue view "$epic" --json number,title,url,labels,body > "$tmp_dir/epic.json" 2>/dev/null; then
@@ -313,9 +314,11 @@ if [ -n "$epic" ]; then
         append_rows_from_json_array "$tmp_dir/epic-associated-prs.json" "pull_request" "epic #$epic associated merged PRs into $base (limit 50)"
         append_note "Epic issue and merged-PR lists are capped at 50 and include only explicitly associated items."
       else
+        epic_discovery_degraded=true
         append_note "Could not list merged PRs for epic #$epic on $base; no label-only items were proposed."
       fi
     else
+      epic_discovery_degraded=true
       append_note "Could not list issues for label $integration_label; ask the human to supply --issues."
     fi
   else
@@ -376,7 +379,11 @@ elif [ -n "$issues_arg" ]; then
   fallback=false
 elif [ -n "$epic" ]; then
   scope_source="epic"
-  fallback=false
+  if [ "$epic_discovery_degraded" = true ]; then
+    fallback=true
+  else
+    fallback=false
+  fi
 elif [ "$recent_merged" -gt 0 ]; then
   scope_source="explicit"
   fallback=false
@@ -399,6 +406,10 @@ if [ "$tracker_discovery_required" = true ] && [ ! -s "$candidates_file" ] && [ 
   confirmation_required=false
   discovery_required=true
   empty_scope_stop="Provider-backed tracker discovery is required before QA scope can be confirmed."
+elif [ "$epic_discovery_degraded" = true ] && [ ! -s "$candidates_file" ]; then
+  confirmation_required=false
+  discovery_required=true
+  empty_scope_stop="Epic discovery failed before a concrete QA scope could be confirmed; supply --issues, --tracker-items, or rerun discovery."
 fi
 
 result="$(jq -n \
