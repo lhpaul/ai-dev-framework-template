@@ -56,7 +56,7 @@ set -euo pipefail
 case "$*" in
   *"pr list"*"--base develop-demo"*)
     cat <<'JSON'
-[{"number":101,"title":"Merged feature","url":"https://example.test/pr/101","mergedAt":"2026-07-01T00:00:00Z","headRefName":"feature/ENG-51-merged-feature","body":"Implementation branch uses tracker prefix"},{"number":102,"title":"Unrelated work","url":"https://example.test/pr/102","mergedAt":"2026-07-02T00:00:00Z","headRefName":"fix/99-unrelated","body":"Implements #99"},{"number":103,"title":"Spec only","url":"https://example.test/pr/103","mergedAt":"2026-07-03T00:00:00Z","headRefName":"spec/52-spec-only","body":"Documents #52"},{"number":104,"title":"Plan only #53","url":"https://example.test/pr/104","mergedAt":"2026-07-04T00:00:00Z","headRefName":"implementation-plan/53-plan-only","body":"Plans #53"},{"number":105,"title":"Lowercase tracker prefix","url":"https://example.test/pr/105","mergedAt":"2026-07-05T00:00:00Z","headRefName":"fix/lh-54-lowercase-prefix","body":"Implementation branch uses lowercase tracker prefix"},{"number":106,"title":"Short uppercase tracker prefix","url":"https://example.test/pr/106","mergedAt":"2026-07-06T00:00:00Z","headRefName":"feature/A-55-short-uppercase-prefix","body":"Implementation branch uses short uppercase tracker prefix"},{"number":107,"title":"Long lowercase tracker prefix","url":"https://example.test/pr/107","mergedAt":"2026-07-07T00:00:00Z","headRefName":"refactor/abc-56-long-lowercase-prefix","body":"Implementation branch uses long lowercase tracker prefix"}]
+[{"number":101,"title":"Merged feature","url":"https://example.test/pr/101","mergedAt":"2026-07-01T00:00:00Z","headRefName":"feature/ENG-51-merged-feature","body":"Implementation branch uses tracker prefix"},{"number":102,"title":"Unrelated work","url":"https://example.test/pr/102","mergedAt":"2026-07-02T00:00:00Z","headRefName":"fix/99-unrelated","body":"Implements #99"},{"number":103,"title":"Spec only","url":"https://example.test/pr/103","mergedAt":"2026-07-03T00:00:00Z","headRefName":"spec/52-spec-only","body":"Documents #52"},{"number":104,"title":"Plan only #53","url":"https://example.test/pr/104","mergedAt":"2026-07-04T00:00:00Z","headRefName":"implementation-plan/53-plan-only","body":"Plans #53"},{"number":105,"title":"Lowercase tracker prefix","url":"https://example.test/pr/105","mergedAt":"2026-07-05T00:00:00Z","headRefName":"fix/lh-54-lowercase-prefix","body":"Implementation branch uses lowercase tracker prefix"},{"number":106,"title":"Short uppercase tracker prefix","url":"https://example.test/pr/106","mergedAt":"2026-07-06T00:00:00Z","headRefName":"feature/A-55-short-uppercase-prefix","body":"Implementation branch uses short uppercase tracker prefix"},{"number":107,"title":"Long lowercase tracker prefix","url":"https://example.test/pr/107","mergedAt":"2026-07-07T00:00:00Z","headRefName":"refactor/abc-56-long-lowercase-prefix","body":"Implementation branch uses long lowercase tracker prefix"},{"number":108,"title":"Color update","url":"https://example.test/pr/108","mergedAt":"2026-07-08T00:00:00Z","headRefName":"fix/77-color-update","body":"Use color #51a3d2"}]
 JSON
     ;;
   *"pr list"*"--base develop-empty"*)
@@ -119,6 +119,7 @@ run_fails_contains "requires_epic_value" "--epic requires a value" "$HELPER" --b
 run_fails_contains "requires_issues_value" "--issues requires a value" "$HELPER" --base develop --issues --json
 run_fails_contains "requires_tracker_items_value" "--tracker-items requires a value" "$HELPER" --base develop --tracker-items --json
 run_fails_contains "requires_recent_value" "--recent-merged-prs requires a value" "$HELPER" --base develop --recent-merged-prs --json
+run_fails_contains "rejects_mixed_scope_flags" "cannot be combined" "$HELPER" --base develop --tracker-items LEA-223 --recent-merged-prs 1 --json
 
 out="$("$HELPER" --base develop --recent-merged-prs 1 --json)" || {
   echo "FAIL: recent_merged helper exited non-zero"
@@ -207,6 +208,7 @@ run_test "epic_self_excluded" "no" "$(printf '%s' "$out3" | jq -er 'any(.candida
 run_test "epic_scope_source" "epic" "$(printf '%s' "$out3" | jq -er '.scopeSource')"
 run_test "epic_merged_pr_included" "yes" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 101) | if . then "yes" else "no" end')"
 run_test "epic_unrelated_pr_excluded" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 102) | if . then "yes" else "no" end')"
+run_test "epic_hex_color_reference_excluded" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 108) | if . then "yes" else "no" end')"
 run_test "epic_excludes_spec_only_issue" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 52) | if . then "yes" else "no" end')"
 run_test "epic_excludes_plan_only_pr" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 104) | if . then "yes" else "no" end')"
 run_test "epic_includes_lowercase_tracker_prefix_issue" "yes" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 54) | if . then "yes" else "no" end')"
@@ -222,6 +224,17 @@ run_test "degraded_epic_scope_source" "epic" "$(printf '%s' "$out_epic_degraded"
 run_test "degraded_epic_is_fallback" "true" "$(printf '%s' "$out_epic_degraded" | jq -er '.fallback')"
 run_test "degraded_epic_is_not_confirmable" "false" "$(printf '%s' "$out_epic_degraded" | jq -er '.confirmationRequired')"
 run_test "degraded_epic_requires_discovery" "true" "$(printf '%s' "$out_epic_degraded" | jq -er '.discoveryRequired')"
+out_epic_degraded_text="$(FAIL_INTEGRATION_ISSUE_LIST=1 "$HELPER" --base develop-demo --epic 50)" || {
+  echo "FAIL: degraded epic text helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_epic_degraded_text=""
+}
+if grep -Fq -- "Epic discovery failed before a concrete QA scope could be confirmed" <<<"$out_epic_degraded_text"; then
+  degraded_epic_text_reason="yes"
+else
+  degraded_epic_text_reason="no"
+fi
+run_test "degraded_epic_text_uses_actual_reason" "yes" "$degraded_epic_text_reason"
 
 out_integration="$("$HELPER" --base develop-demo --json)" || {
   echo "FAIL: integration helper exited non-zero"

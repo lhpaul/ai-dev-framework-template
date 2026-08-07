@@ -115,6 +115,16 @@ if [ -z "$base" ]; then
   exit 64
 fi
 
+scope_flag_count=0
+[ -n "$epic" ] && scope_flag_count=$((scope_flag_count + 1))
+[ -n "$issues_arg" ] && scope_flag_count=$((scope_flag_count + 1))
+[ -n "$tracker_items_arg" ] && scope_flag_count=$((scope_flag_count + 1))
+[ "$recent_merged" != "0" ] && scope_flag_count=$((scope_flag_count + 1))
+if [ "$scope_flag_count" -gt 1 ]; then
+  echo "--epic, --issues, --tracker-items, and --recent-merged-prs cannot be combined" >&2
+  exit 64
+fi
+
 if ! printf '%s\n' "$base" | grep -Eq '^develop(-[A-Za-z0-9][A-Za-z0-9._-]*)?$'; then
   echo "Disallowed base '$base'. Allowed: develop or develop-<slug>." >&2
   exit 64
@@ -216,14 +226,14 @@ append_rows_from_json_array() {
 filter_issues_referenced_by_merged_prs() {
   local issues_file="$1" merged_prs_file="$2" output_file="$3"
   jq --slurpfile merged_prs "$merged_prs_file" \
-    '[.[] | .number as $number | select(any($merged_prs[0][]?; . as $pr | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/")) and (((($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/([A-Za-z][A-Za-z0-9]{0,7}-)?" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^0-9])#" + ($number | tostring) + "([^0-9]|$)"))))))]' \
+    '[.[] | .number as $number | select(any($merged_prs[0][]?; . as $pr | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/")) and (((($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/([A-Za-z][A-Za-z0-9]{0,7}-)?" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^[:alnum:]])#" + ($number | tostring) + "([^[:alnum:]]|$)"))))))]' \
     "$issues_file" > "$output_file"
 }
 
 filter_merged_prs_for_issues() {
   local merged_prs_file="$1" issues_file="$2" output_file="$3"
   jq --slurpfile issues "$issues_file" \
-    '($issues[0] | map(.number)) as $issue_numbers | [.[] | . as $pr | select((($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/")) and any($issue_numbers[]; . as $number | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/([A-Za-z][A-Za-z0-9]{0,7}-)?" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^0-9])#" + ($number | tostring) + "([^0-9]|$)"))))]' \
+    '($issues[0] | map(.number)) as $issue_numbers | [.[] | . as $pr | select((($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/")) and any($issue_numbers[]; . as $number | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/([A-Za-z][A-Za-z0-9]{0,7}-)?" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^[:alnum:]])#" + ($number | tostring) + "([^[:alnum:]]|$)"))))]' \
     "$merged_prs_file" > "$output_file"
 }
 
@@ -452,7 +462,7 @@ else
   if [ "$(printf '%s' "$result" | jq -er '.confirmationRequired')" = true ]; then
     echo "Confirmation required before exercising flows."
   else
-    echo "Provider-backed tracker discovery is required before QA scope can be confirmed."
+    printf '%s\n' "$result" | jq -er '.emptyScopeStop'
   fi
   echo "Read-only guarantee: No tracker updates, branch creation, PR edits, merges, issue closure, or flow exercise were performed."
 fi
