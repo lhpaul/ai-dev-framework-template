@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
 HELPER="$REPO_ROOT/scripts/development-workflow/post-merge-qa-scope.sh"
+NO_TRACKER_CONFIG="$SCRIPT_DIR/fixtures/post-merge-qa-tracker-none.yaml"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -14,6 +15,9 @@ TMP_ROOT="$(mktemp -d)" || {
   exit 1
 }
 trap 'rm -rf "$TMP_ROOT"' EXIT
+
+DOWNSTREAM_ROOT="$TMP_ROOT/downstream"
+DOWNSTREAM_HELPER="$DOWNSTREAM_ROOT/scripts/development-workflow/post-merge-qa-scope.sh"
 
 run_test() {
   local name="$1" expected="$2" actual="$3"
@@ -50,10 +54,18 @@ cat >"$MOCK_BIN/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
+  *"pr list"*"--base develop-demo"*)
+    cat <<'JSON'
+[{"number":101,"title":"Merged feature","url":"https://example.test/pr/101","mergedAt":"2026-07-01T00:00:00Z","headRefName":"feature/ENG-51-merged-feature","body":"Implementation branch uses tracker prefix"},{"number":102,"title":"Unrelated work","url":"https://example.test/pr/102","mergedAt":"2026-07-02T00:00:00Z","headRefName":"fix/99-unrelated","body":"Implements #99"},{"number":103,"title":"Spec only","url":"https://example.test/pr/103","mergedAt":"2026-07-03T00:00:00Z","headRefName":"spec/52-spec-only","body":"Documents #52"},{"number":104,"title":"Plan only #53","url":"https://example.test/pr/104","mergedAt":"2026-07-04T00:00:00Z","headRefName":"implementation-plan/53-plan-only","body":"Plans #53"},{"number":105,"title":"Lowercase tracker prefix","url":"https://example.test/pr/105","mergedAt":"2026-07-05T00:00:00Z","headRefName":"fix/lh-54-lowercase-prefix","body":"Implementation branch uses lowercase tracker prefix"},{"number":106,"title":"Short uppercase tracker prefix","url":"https://example.test/pr/106","mergedAt":"2026-07-06T00:00:00Z","headRefName":"feature/A-55-short-uppercase-prefix","body":"Implementation branch uses short uppercase tracker prefix"},{"number":107,"title":"Long lowercase tracker prefix","url":"https://example.test/pr/107","mergedAt":"2026-07-07T00:00:00Z","headRefName":"refactor/abc-56-long-lowercase-prefix","body":"Implementation branch uses long lowercase tracker prefix"},{"number":108,"title":"Color update","url":"https://example.test/pr/108","mergedAt":"2026-07-08T00:00:00Z","headRefName":"fix/77-color-update","body":"Use color #51a3d2"}]
+JSON
+    ;;
+  *"pr list"*"--base develop-empty"*)
+    echo '[]'
+    ;;
   *"pr list"*"--state merged"*)
     # Include a malformed row to verify skip-and-continue behavior
     cat <<'JSON'
-[{"number":101,"title":"Merged feature","url":"https://example.test/pr/101","mergedAt":"2026-07-01T00:00:00Z"},{"number":null,"title":"Bad","url":"https://example.test/pr/bad"}]
+[{"number":101,"title":"Merged feature","url":"https://example.test/pr/101","mergedAt":"2026-07-01T00:00:00Z","headRefName":"fix/51-merged-feature","body":"Implements #51"},{"number":null,"title":"Bad","url":"https://example.test/pr/bad"}]
 JSON
     ;;
   *"issue view"*"--json"*)
@@ -77,8 +89,12 @@ JSON
     fi
     ;;
   *"issue list"*"integration-branch:demo"*)
+    if [ "$FAIL_INTEGRATION_ISSUE_LIST" = "1" ]; then
+      echo "integration issue query failed" >&2
+      exit 1
+    fi
     cat <<'JSON'
-[{"number":50,"title":"Epic","url":"https://example.test/issues/50"},{"number":51,"title":"Child","url":"https://example.test/issues/51"}]
+[{"number":50,"title":"Epic","url":"https://example.test/issues/50"},{"number":51,"title":"Child","url":"https://example.test/issues/51"},{"number":52,"title":"Spec-only child","url":"https://example.test/issues/52"},{"number":53,"title":"Plan-only child","url":"https://example.test/issues/53"},{"number":54,"title":"Lowercase-prefix child","url":"https://example.test/issues/54"},{"number":55,"title":"Short-uppercase-prefix child","url":"https://example.test/issues/55"},{"number":56,"title":"Long-lowercase-prefix child","url":"https://example.test/issues/56"}]
 JSON
     ;;
   *)
@@ -89,6 +105,11 @@ esac
 STUB
 chmod +x "$MOCK_BIN/gh"
 export PATH="$MOCK_BIN:$PATH"
+export FAIL_INTEGRATION_ISSUE_LIST=""
+
+mkdir -p "$(dirname -- "$DOWNSTREAM_HELPER")"
+cp "$HELPER" "$DOWNSTREAM_HELPER"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" "$(dirname -- "$DOWNSTREAM_HELPER")/workflow-lib.sh"
 
 run_fails_contains "requires_base" "--base is required" "$HELPER" --json
 run_fails_contains "requires_base_value" "--base requires a value" "$HELPER" --base --json
@@ -96,7 +117,9 @@ run_fails_contains "rejects_feature_base" "Disallowed base" "$HELPER" --base fea
 run_fails_contains "rejects_bad_recent" "--recent-merged-prs must be" "$HELPER" --base develop --recent-merged-prs no --json
 run_fails_contains "requires_epic_value" "--epic requires a value" "$HELPER" --base develop --epic --json
 run_fails_contains "requires_issues_value" "--issues requires a value" "$HELPER" --base develop --issues --json
+run_fails_contains "requires_tracker_items_value" "--tracker-items requires a value" "$HELPER" --base develop --tracker-items --json
 run_fails_contains "requires_recent_value" "--recent-merged-prs requires a value" "$HELPER" --base develop --recent-merged-prs --json
+run_fails_contains "rejects_mixed_scope_flags" "cannot be combined" "$HELPER" --base develop --tracker-items LEA-223 --recent-merged-prs 1 --json
 
 out="$("$HELPER" --base develop --recent-merged-prs 1 --json)" || {
   echo "FAIL: recent_merged helper exited non-zero"
@@ -107,6 +130,44 @@ run_test "recent_merged_count" "1" "$(printf '%s' "$out" | jq -er '.candidateCou
 run_test "confirmation_required" "true" "$(printf '%s' "$out" | jq -er '.confirmationRequired')"
 run_test "read_only_present" "yes" "$(printf '%s' "$out" | jq -er 'if .readOnlyGuarantee then "yes" else "no" end')"
 run_test "base_echoed" "develop" "$(printf '%s' "$out" | jq -er '.base')"
+run_test "recent_merged_scope_source" "explicit" "$(printf '%s' "$out" | jq -er '.scopeSource')"
+run_test "recent_merged_is_not_fallback" "false" "$(printf '%s' "$out" | jq -er '.fallback')"
+
+out_tracker_required="$("$HELPER" --base develop --json)" || {
+  echo "FAIL: configured tracker helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_tracker_required="{}"
+}
+run_test "configured_tracker_requires_discovery" "0" "$(printf '%s' "$out_tracker_required" | jq -er '.candidateCount')"
+run_test "configured_tracker_scope_source" "tracker-post-merge" "$(printf '%s' "$out_tracker_required" | jq -er '.scopeSource')"
+run_test "configured_tracker_is_not_fallback" "false" "$(printf '%s' "$out_tracker_required" | jq -er '.fallback')"
+run_test "configured_tracker_is_not_confirmable" "false" "$(printf '%s' "$out_tracker_required" | jq -er '.confirmationRequired')"
+run_test "configured_tracker_requires_discovery_flag" "true" "$(printf '%s' "$out_tracker_required" | jq -er '.discoveryRequired')"
+
+out_explicit_empty="$("$HELPER" --base develop-empty --recent-merged-prs 1 --json)" || {
+  echo "FAIL: explicit empty helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_explicit_empty="{}"
+}
+run_test "explicit_empty_scope_remains_confirmable" "true" "$(printf '%s' "$out_explicit_empty" | jq -er '.confirmationRequired')"
+run_test "explicit_empty_scope_does_not_require_discovery" "false" "$(printf '%s' "$out_explicit_empty" | jq -er '.discoveryRequired')"
+
+out_no_tracker="$(AI_DEV_WORKFLOW_CONFIG_FILE="$NO_TRACKER_CONFIG" "$HELPER" --base develop --json)" || {
+  echo "FAIL: no-tracker override helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_no_tracker="{}"
+}
+run_test "no_tracker_override_uses_pr_fallback" "merged-prs" "$(printf '%s' "$out_no_tracker" | jq -er '.scopeSource')"
+run_test "no_tracker_override_is_fallback" "true" "$(printf '%s' "$out_no_tracker" | jq -er '.fallback')"
+
+out_no_config="$(cd "$DOWNSTREAM_ROOT" && "$DOWNSTREAM_HELPER" --base develop --json)" || {
+  echo "FAIL: no-config helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_no_config="{}"
+}
+run_test "no_config_uses_pr_fallback" "merged-prs" "$(printf '%s' "$out_no_config" | jq -er '.scopeSource')"
+run_test "no_config_is_not_provider_backed" "false" "$(printf '%s' "$out_no_config" | jq -er '.providerBacked')"
+run_test "no_config_is_fallback" "true" "$(printf '%s' "$out_no_config" | jq -er '.fallback')"
 
 out2="$("$HELPER" --base develop --issues 42 --json)" || {
   echo "FAIL: explicit_issue helper exited non-zero"
@@ -114,6 +175,28 @@ out2="$("$HELPER" --base develop --issues 42 --json)" || {
   out2="{}"
 }
 run_test "explicit_issue" "42" "$(printf '%s' "$out2" | jq -er '.candidates[0].number')"
+run_test "explicit_scope_source" "explicit" "$(printf '%s' "$out2" | jq -er '.scopeSource')"
+
+out_tracker="$("$HELPER" --base develop --tracker-items LEA-223,LEA-224 --json)" || {
+  echo "FAIL: tracker_items helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_tracker="{}"
+}
+run_test "tracker_items_count" "2" "$(printf '%s' "$out_tracker" | jq -er '.candidateCount')"
+run_test "tracker_item_id" "LEA-223" "$(printf '%s' "$out_tracker" | jq -er '.candidates[0].id')"
+run_test "tracker_scope_source" "tracker-post-merge" "$(printf '%s' "$out_tracker" | jq -er '.scopeSource')"
+run_test "tracker_is_provider_backed" "true" "$(printf '%s' "$out_tracker" | jq -er '.providerBacked')"
+out_tracker_text="$("$HELPER" --base develop --tracker-items LEA-223)" || {
+  echo "FAIL: tracker_items text helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_tracker_text=""
+}
+if grep -Fq -- "[tracker_item #LEA-223]" <<<"$out_tracker_text"; then
+  tracker_text_present="yes"
+else
+  tracker_text_present="no"
+fi
+run_test "tracker_item_text_id" "yes" "$tracker_text_present"
 
 out3="$("$HELPER" --base develop-demo --epic 50 --json)" || {
   echo "FAIL: epic helper exited non-zero"
@@ -122,8 +205,62 @@ out3="$("$HELPER" --base develop-demo --epic 50 --json)" || {
 }
 run_test "epic_child_included" "yes" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .number == 51) | if . then "yes" else "no" end')"
 run_test "epic_self_excluded" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .number == 50) | if . then "yes" else "no" end')"
+run_test "epic_scope_source" "epic" "$(printf '%s' "$out3" | jq -er '.scopeSource')"
+run_test "epic_merged_pr_included" "yes" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 101) | if . then "yes" else "no" end')"
+run_test "epic_unrelated_pr_excluded" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 102) | if . then "yes" else "no" end')"
+run_test "epic_hex_color_reference_excluded" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 108) | if . then "yes" else "no" end')"
+run_test "epic_excludes_spec_only_issue" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 52) | if . then "yes" else "no" end')"
+run_test "epic_excludes_plan_only_pr" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 104) | if . then "yes" else "no" end')"
+run_test "epic_includes_lowercase_tracker_prefix_issue" "yes" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 54) | if . then "yes" else "no" end')"
+run_test "epic_includes_short_uppercase_tracker_prefix_issue" "yes" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 55) | if . then "yes" else "no" end')"
+run_test "epic_includes_long_lowercase_tracker_prefix_issue" "yes" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 56) | if . then "yes" else "no" end')"
+
+out_epic_degraded="$(FAIL_INTEGRATION_ISSUE_LIST=1 "$HELPER" --base develop-demo --epic 50 --json)" || {
+  echo "FAIL: degraded epic helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_epic_degraded="{}"
+}
+run_test "degraded_epic_scope_source" "epic" "$(printf '%s' "$out_epic_degraded" | jq -er '.scopeSource')"
+run_test "degraded_epic_is_fallback" "true" "$(printf '%s' "$out_epic_degraded" | jq -er '.fallback')"
+run_test "degraded_epic_is_not_confirmable" "false" "$(printf '%s' "$out_epic_degraded" | jq -er '.confirmationRequired')"
+run_test "degraded_epic_requires_discovery" "true" "$(printf '%s' "$out_epic_degraded" | jq -er '.discoveryRequired')"
+out_epic_degraded_text="$(FAIL_INTEGRATION_ISSUE_LIST=1 "$HELPER" --base develop-demo --epic 50)" || {
+  echo "FAIL: degraded epic text helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_epic_degraded_text=""
+}
+if grep -Fq -- "Epic discovery failed before a concrete QA scope could be confirmed" <<<"$out_epic_degraded_text"; then
+  degraded_epic_text_reason="yes"
+else
+  degraded_epic_text_reason="no"
+fi
+run_test "degraded_epic_text_uses_actual_reason" "yes" "$degraded_epic_text_reason"
+
+out_integration="$("$HELPER" --base develop-demo --json)" || {
+  echo "FAIL: integration helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_integration="{}"
+}
+run_test "integration_scope_source" "integration-branch" "$(printf '%s' "$out_integration" | jq -er '.scopeSource')"
+run_test "integration_default_includes_labelled_issue" "yes" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 51) | if . then "yes" else "no" end')"
+run_test "integration_default_includes_lowercase_tracker_prefix_issue" "yes" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 54) | if . then "yes" else "no" end')"
+run_test "integration_default_includes_short_uppercase_tracker_prefix_issue" "yes" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 55) | if . then "yes" else "no" end')"
+run_test "integration_default_includes_long_lowercase_tracker_prefix_issue" "yes" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 56) | if . then "yes" else "no" end')"
+run_test "integration_default_excludes_unmerged_labelled_issue" "no" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 50) | if . then "yes" else "no" end')"
+run_test "integration_default_includes_merged_pr" "yes" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 101) | if . then "yes" else "no" end')"
+
+out_integration_fallback="$(FAIL_INTEGRATION_ISSUE_LIST=1 "$HELPER" --base develop-demo --json)" || {
+  echo "FAIL: degraded integration helper exited non-zero"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  out_integration_fallback="{}"
+}
+run_test "degraded_integration_uses_pr_fallback" "merged-prs" "$(printf '%s' "$out_integration_fallback" | jq -er '.scopeSource')"
+run_test "degraded_integration_is_fallback" "true" "$(printf '%s' "$out_integration_fallback" | jq -er '.fallback')"
 
 run_fails_contains "rejects_invalid_issues" "Invalid issue in --issues" "$HELPER" --base develop --issues "abc" --json
+run_fails_contains "rejects_empty_issues" "--issues must contain at least one" "$HELPER" --base develop --issues "," --json
+run_fails_contains "rejects_invalid_tracker_items" "Invalid tracker item in --tracker-items" "$HELPER" --base develop --tracker-items "bad/item" --json
+run_fails_contains "rejects_empty_tracker_items" "--tracker-items must contain at least one" "$HELPER" --base develop --tracker-items "," --json
 run_fails_contains "rejects_missing_issue" "Failed to read issue" "$HELPER" --base develop --issues "999001" --json
 
 echo ""
