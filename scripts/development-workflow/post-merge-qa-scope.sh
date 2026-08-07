@@ -220,6 +220,13 @@ filter_issues_referenced_by_merged_prs() {
     "$issues_file" > "$output_file"
 }
 
+filter_merged_prs_for_issues() {
+  local merged_prs_file="$1" issues_file="$2" output_file="$3"
+  jq --slurpfile issues "$issues_file" \
+    '($issues[0] | map(.number)) as $issue_numbers | [.[] | . as $pr | select(any($issue_numbers[]; . as $number | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix|spec|implementation-plan)/" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^0-9])#" + ($number | tostring) + "([^0-9]|$)"))))]' \
+    "$merged_prs_file" > "$output_file"
+}
+
 # Explicit issues (file-backed loop — exits abort the main script)
 if [ -n "$issues_arg" ]; then
   issues_list="$tmp_dir/issues-list.txt"
@@ -245,6 +252,10 @@ fi
 if [ -n "$tracker_items_arg" ]; then
   tracker_items_list="$tmp_dir/tracker-items-list.txt"
   printf '%s\n' "$tracker_items_arg" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | awk 'NF' > "$tracker_items_list"
+  if [ ! -s "$tracker_items_list" ]; then
+    echo "--tracker-items must contain at least one tracker item" >&2
+    exit 64
+  fi
   while IFS= read -r tracker_item; do
     if ! printf '%s\n' "$tracker_item" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._:-]*$'; then
       echo "Invalid tracker item in --tracker-items: $tracker_item" >&2
@@ -291,7 +302,11 @@ if [ -n "$epic" ]; then
           exit 1
         fi
         append_rows_from_json_array "$tmp_dir/epic-merged-issues.json" "issue" "epic #$epic via $integration_label and merged PR references (limit 50)" "$epic"
-        append_rows_from_json_array "$tmp_dir/epic-merged-prs.json" "pull_request" "epic #$epic merged PRs into $base (limit 50)"
+        if ! filter_merged_prs_for_issues "$tmp_dir/epic-merged-prs.json" "$tmp_dir/epic-merged-issues.json" "$tmp_dir/epic-associated-prs.json"; then
+          echo "Failed to match merged PRs to epic issues for base '$base'" >&2
+          exit 1
+        fi
+        append_rows_from_json_array "$tmp_dir/epic-associated-prs.json" "pull_request" "epic #$epic associated merged PRs into $base (limit 50)"
         append_note "Epic issue and merged-PR lists are capped at 50 and include only explicitly associated items."
       else
         append_note "Could not list merged PRs for epic #$epic on $base; no label-only items were proposed."

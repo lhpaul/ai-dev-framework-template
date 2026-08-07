@@ -54,6 +54,11 @@ cat >"$MOCK_BIN/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
+  *"pr list"*"--base develop-demo"*)
+    cat <<'JSON'
+[{"number":101,"title":"Merged feature","url":"https://example.test/pr/101","mergedAt":"2026-07-01T00:00:00Z","headRefName":"fix/51-merged-feature","body":"Implements #51"},{"number":102,"title":"Unrelated work","url":"https://example.test/pr/102","mergedAt":"2026-07-02T00:00:00Z","headRefName":"fix/99-unrelated","body":"Implements #99"}]
+JSON
+    ;;
   *"pr list"*"--base develop-empty"*)
     echo '[]'
     ;;
@@ -201,6 +206,7 @@ run_test "epic_child_included" "yes" "$(printf '%s' "$out3" | jq -er 'any(.candi
 run_test "epic_self_excluded" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .number == 50) | if . then "yes" else "no" end')"
 run_test "epic_scope_source" "epic" "$(printf '%s' "$out3" | jq -er '.scopeSource')"
 run_test "epic_merged_pr_included" "yes" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 101) | if . then "yes" else "no" end')"
+run_test "epic_unrelated_pr_excluded" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 102) | if . then "yes" else "no" end')"
 
 out_integration="$("$HELPER" --base develop-demo --json)" || {
   echo "FAIL: integration helper exited non-zero"
@@ -222,6 +228,7 @@ run_test "degraded_integration_is_fallback" "true" "$(printf '%s' "$out_integrat
 
 run_fails_contains "rejects_invalid_issues" "Invalid issue in --issues" "$HELPER" --base develop --issues "abc" --json
 run_fails_contains "rejects_invalid_tracker_items" "Invalid tracker item in --tracker-items" "$HELPER" --base develop --tracker-items "bad/item" --json
+run_fails_contains "rejects_empty_tracker_items" "--tracker-items must contain at least one" "$HELPER" --base develop --tracker-items "," --json
 run_fails_contains "rejects_missing_issue" "Failed to read issue" "$HELPER" --base develop --issues "999001" --json
 
 echo ""
