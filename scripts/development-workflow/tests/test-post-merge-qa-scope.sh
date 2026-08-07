@@ -56,7 +56,7 @@ set -euo pipefail
 case "$*" in
   *"pr list"*"--base develop-demo"*)
     cat <<'JSON'
-[{"number":101,"title":"Merged feature","url":"https://example.test/pr/101","mergedAt":"2026-07-01T00:00:00Z","headRefName":"fix/51-merged-feature","body":"Implements #51"},{"number":102,"title":"Unrelated work","url":"https://example.test/pr/102","mergedAt":"2026-07-02T00:00:00Z","headRefName":"fix/99-unrelated","body":"Implements #99"},{"number":103,"title":"Spec only","url":"https://example.test/pr/103","mergedAt":"2026-07-03T00:00:00Z","headRefName":"spec/52-spec-only","body":"Documents #52"},{"number":104,"title":"Plan only #53","url":"https://example.test/pr/104","mergedAt":"2026-07-04T00:00:00Z","headRefName":"implementation-plan/53-plan-only","body":"Plans #53"}]
+[{"number":101,"title":"Merged feature","url":"https://example.test/pr/101","mergedAt":"2026-07-01T00:00:00Z","headRefName":"feature/ENG-51-merged-feature","body":"Implementation branch uses tracker prefix"},{"number":102,"title":"Unrelated work","url":"https://example.test/pr/102","mergedAt":"2026-07-02T00:00:00Z","headRefName":"fix/99-unrelated","body":"Implements #99"},{"number":103,"title":"Spec only","url":"https://example.test/pr/103","mergedAt":"2026-07-03T00:00:00Z","headRefName":"spec/52-spec-only","body":"Documents #52"},{"number":104,"title":"Plan only #53","url":"https://example.test/pr/104","mergedAt":"2026-07-04T00:00:00Z","headRefName":"implementation-plan/53-plan-only","body":"Plans #53"},{"number":105,"title":"Lowercase tracker prefix","url":"https://example.test/pr/105","mergedAt":"2026-07-05T00:00:00Z","headRefName":"fix/lh-54-lowercase-prefix","body":"Implementation branch uses lowercase tracker prefix"}]
 JSON
     ;;
   *"pr list"*"--base develop-empty"*)
@@ -94,7 +94,7 @@ JSON
       exit 1
     fi
     cat <<'JSON'
-[{"number":50,"title":"Epic","url":"https://example.test/issues/50"},{"number":51,"title":"Child","url":"https://example.test/issues/51"},{"number":52,"title":"Spec-only child","url":"https://example.test/issues/52"},{"number":53,"title":"Plan-only child","url":"https://example.test/issues/53"}]
+[{"number":50,"title":"Epic","url":"https://example.test/issues/50"},{"number":51,"title":"Child","url":"https://example.test/issues/51"},{"number":52,"title":"Spec-only child","url":"https://example.test/issues/52"},{"number":53,"title":"Plan-only child","url":"https://example.test/issues/53"},{"number":54,"title":"Lowercase-prefix child","url":"https://example.test/issues/54"}]
 JSON
     ;;
   *)
@@ -209,6 +209,7 @@ run_test "epic_merged_pr_included" "yes" "$(printf '%s' "$out3" | jq -er 'any(.c
 run_test "epic_unrelated_pr_excluded" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 102) | if . then "yes" else "no" end')"
 run_test "epic_excludes_spec_only_issue" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 52) | if . then "yes" else "no" end')"
 run_test "epic_excludes_plan_only_pr" "no" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 104) | if . then "yes" else "no" end')"
+run_test "epic_includes_lowercase_tracker_prefix_issue" "yes" "$(printf '%s' "$out3" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 54) | if . then "yes" else "no" end')"
 
 out_integration="$("$HELPER" --base develop-demo --json)" || {
   echo "FAIL: integration helper exited non-zero"
@@ -217,6 +218,7 @@ out_integration="$("$HELPER" --base develop-demo --json)" || {
 }
 run_test "integration_scope_source" "integration-branch" "$(printf '%s' "$out_integration" | jq -er '.scopeSource')"
 run_test "integration_default_includes_labelled_issue" "yes" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 51) | if . then "yes" else "no" end')"
+run_test "integration_default_includes_lowercase_tracker_prefix_issue" "yes" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 54) | if . then "yes" else "no" end')"
 run_test "integration_default_excludes_unmerged_labelled_issue" "no" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "issue" and .number == 50) | if . then "yes" else "no" end')"
 run_test "integration_default_includes_merged_pr" "yes" "$(printf '%s' "$out_integration" | jq -er 'any(.candidates[]; .kind == "pull_request" and .number == 101) | if . then "yes" else "no" end')"
 

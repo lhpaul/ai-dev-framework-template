@@ -216,14 +216,14 @@ append_rows_from_json_array() {
 filter_issues_referenced_by_merged_prs() {
   local issues_file="$1" merged_prs_file="$2" output_file="$3"
   jq --slurpfile merged_prs "$merged_prs_file" \
-    '[.[] | .number as $number | select(any($merged_prs[0][]?; . as $pr | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/")) and (((($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^0-9])#" + ($number | tostring) + "([^0-9]|$)"))))))]' \
+    '[.[] | .number as $number | select(any($merged_prs[0][]?; . as $pr | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/")) and (((($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/(([A-Z][A-Z0-9]{1,7}|[a-z][a-z0-9])-)?" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^0-9])#" + ($number | tostring) + "([^0-9]|$)"))))))]' \
     "$issues_file" > "$output_file"
 }
 
 filter_merged_prs_for_issues() {
   local merged_prs_file="$1" issues_file="$2" output_file="$3"
   jq --slurpfile issues "$issues_file" \
-    '($issues[0] | map(.number)) as $issue_numbers | [.[] | . as $pr | select((($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/")) and any($issue_numbers[]; . as $number | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^0-9])#" + ($number | tostring) + "([^0-9]|$)"))))]' \
+    '($issues[0] | map(.number)) as $issue_numbers | [.[] | . as $pr | select((($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/")) and any($issue_numbers[]; . as $number | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/(([A-Z][A-Z0-9]{1,7}|[a-z][a-z0-9])-)?" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^0-9])#" + ($number | tostring) + "([^0-9]|$)"))))]' \
     "$merged_prs_file" > "$output_file"
 }
 
