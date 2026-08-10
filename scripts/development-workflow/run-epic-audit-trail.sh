@@ -104,22 +104,38 @@ checkpoint_stage_filter='
 render_pr_disposition() {
   local json="$1"
   local missing
+  local missing_status=0
 
+  # NOTE: this function is called both directly (render-pr-disposition) and
+  # via command substitution, e.g. `body="$(render_pr_disposition ...)"`
+  # (apply-pr-disposition). Bash's `set -e` does not abort a function whose
+  # commands run inside a context where -e is already being ignored (which a
+  # nested command substitution is), so a failing `jq` call below would
+  # otherwise silently produce an empty $missing and let this guard pass
+  # vacuously in apply mode. Each dotted field lookup is wrapped in
+  # `try ... catch null` so a wrong-typed value (e.g. .item being a string)
+  # is reported as missing instead of crashing jq outright, and the exit
+  # status of the jq call itself is captured explicitly via `||` (not
+  # relied upon via -e propagation) so any other jq failure still aborts
+  # loudly in both call contexts. See issue #1430.
   missing="$(printf '%s\n' "$json" | jq -r '
     [
-      ["scope_source", .scope_source],
-      ["item.number", .item.number],
-      ["item.title", .item.title],
-      ["pr.number", .pr.number],
-      ["pr.head_sha", .pr.head_sha],
-      ["reviewer.result", .reviewer.result],
-      ["risk.level", .risk.level],
-      ["merge_authority", .merge_authority],
-      ["final_decision", .final_decision]
+      ["scope_source", (try .scope_source catch null)],
+      ["item.number", (try .item.number catch null)],
+      ["item.title", (try .item.title catch null)],
+      ["pr.number", (try .pr.number catch null)],
+      ["pr.head_sha", (try .pr.head_sha catch null)],
+      ["reviewer.result", (try .reviewer.result catch null)],
+      ["risk.level", (try .risk.level catch null)],
+      ["merge_authority", (try .merge_authority catch null)],
+      ["final_decision", (try .final_decision catch null)]
     ]
     | map(select(.[1] == null or (.[1] | tostring | length == 0)) | .[0])
     | join(", ")
-  ')"
+  ')" || missing_status=$?
+  if [ "$missing_status" -ne 0 ]; then
+    error_exit "failed to evaluate required PR disposition fields (jq exit ${missing_status})"
+  fi
   if [ -n "$missing" ]; then
     error_exit "missing required PR disposition fields: $missing"
   fi
@@ -378,27 +394,37 @@ render_epic_ledger() {
 render_reviewer_access_bypass() {
   local json="$1"
   local missing
+  local missing_status=0
 
+  # See the identical note in render_pr_disposition(): this function is
+  # called directly (render-reviewer-access-bypass) and via command
+  # substitution (apply-reviewer-access-bypass). Every dotted lookup is
+  # wrapped in `try ... catch null` so a wrong-typed value reports as
+  # missing instead of crashing jq, and the jq exit status is captured
+  # explicitly via `||` rather than relied upon via `set -e` propagation.
   missing="$(printf '%s\n' "$json" | jq -r '
     [
-      ["authorization.authorized_by", (.authorization.authorized_by // .authorization.authorizedBy)],
-      ["authorization.authorized_at", (.authorization.authorized_at // .authorization.authorizedAt)],
-      ["authorization.authorization_text", (.authorization.authorization_text // .authorization.authorizationText)],
-      ["pr.number", .pr.number],
-      ["pr.head_sha", (.pr.head_sha // .pr.headSha)],
-      ["evidence_fingerprint", (.evidence_fingerprint // .evidenceFingerprint)],
-      ["ci.result", (.ci.result // .ci_result)],
-      ["reviewer.result", (.reviewer.result // .reviewer.status)],
-      ["blocked_check.name", (.blocked_check.name // .blockedCheck.name)],
-      ["access.evidence", (.access.evidence // .accessRestriction.evidence)],
-      ["access.remediation_status", (.access.remediation_status // .access.remediationStatus)],
-      ["access.bypass_reason", (.access.bypass_reason // .access.bypassReason // .accessRestriction.bypassReason)],
-      ["proposed_action", (.proposed_action // .proposedAction)],
-      ["state", .state]
+      ["authorization.authorized_by", (try (.authorization.authorized_by // .authorization.authorizedBy) catch null)],
+      ["authorization.authorized_at", (try (.authorization.authorized_at // .authorization.authorizedAt) catch null)],
+      ["authorization.authorization_text", (try (.authorization.authorization_text // .authorization.authorizationText) catch null)],
+      ["pr.number", (try .pr.number catch null)],
+      ["pr.head_sha", (try (.pr.head_sha // .pr.headSha) catch null)],
+      ["evidence_fingerprint", (try (.evidence_fingerprint // .evidenceFingerprint) catch null)],
+      ["ci.result", (try (.ci.result // .ci_result) catch null)],
+      ["reviewer.result", (try (.reviewer.result // .reviewer.status) catch null)],
+      ["blocked_check.name", (try (.blocked_check.name // .blockedCheck.name) catch null)],
+      ["access.evidence", (try (.access.evidence // .accessRestriction.evidence) catch null)],
+      ["access.remediation_status", (try (.access.remediation_status // .access.remediationStatus) catch null)],
+      ["access.bypass_reason", (try (.access.bypass_reason // .access.bypassReason // .accessRestriction.bypassReason) catch null)],
+      ["proposed_action", (try (.proposed_action // .proposedAction) catch null)],
+      ["state", (try .state catch null)]
     ]
     | map(select(.[1] == null or (.[1] | tostring | length == 0)) | .[0])
     | join(", ")
-  ')"
+  ')" || missing_status=$?
+  if [ "$missing_status" -ne 0 ]; then
+    error_exit "failed to evaluate required reviewer access-bypass fields (jq exit ${missing_status})"
+  fi
   if [ -n "$missing" ]; then
     error_exit "missing required reviewer access-bypass fields: $missing"
   fi
@@ -536,7 +562,7 @@ case "$command" in
     fi
     validate_advisories "$input_json"
     warn_per_finding_advisories "$input_json"
-    body="$(render_pr_disposition "$input_json")"
+    body="$(render_pr_disposition "$input_json")" || error_exit "failed to render PR disposition (see error above)"
     apply_comment "$pr_number" "$PR_MARKER" "$body"
     ;;
   render-epic-ledger)
@@ -546,7 +572,7 @@ case "$command" in
     if [ -z "$epic_number" ] || ! is_positive_int "$epic_number"; then
       error_exit "--epic must be a positive integer"
     fi
-    body="$(render_epic_ledger "$input_json")"
+    body="$(render_epic_ledger "$input_json")" || error_exit "failed to render epic ledger (see error above)"
     apply_comment "$epic_number" "$EPIC_MARKER" "$body"
     ;;
   render-reviewer-access-bypass)
@@ -557,7 +583,7 @@ case "$command" in
       error_exit "--pr must be a positive integer"
     fi
     validate_reviewer_access_bypass_scope "$input_json" "$pr_number"
-    body="$(render_reviewer_access_bypass "$input_json")"
+    body="$(render_reviewer_access_bypass "$input_json")" || error_exit "failed to render reviewer access-bypass audit (see error above)"
     apply_comment "$pr_number" "$REVIEWER_ACCESS_BYPASS_MARKER" "$body"
     ;;
 esac

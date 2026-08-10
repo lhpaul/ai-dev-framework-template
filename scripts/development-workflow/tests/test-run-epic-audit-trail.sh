@@ -262,6 +262,11 @@ bad_ledger_fixture="$TMP_ROOT/bad-ledger.json"
 cat > "$bad_ledger_fixture" <<'JSON'
 {"epic": {"number": 916, "title": "Bad"}, "items": "not an array"}
 JSON
+wrong_typed_item_fixture="$TMP_ROOT/wrong-typed-item.json"
+jq '.item = "a-string"' "$pr_fixture" > "$wrong_typed_item_fixture"
+wrong_typed_ledger_epic_fixture="$TMP_ROOT/wrong-typed-ledger-epic.json"
+jq '.epic = "a-string"' "$ledger_fixture" > "$wrong_typed_ledger_epic_fixture"
+
 bypass_fixture="$TMP_ROOT/reviewer-access-bypass.json"
 cat > "$bypass_fixture" <<'JSON'
 {
@@ -302,6 +307,8 @@ cat > "$bypass_fixture" <<'JSON'
 JSON
 bad_bypass_fixture="$TMP_ROOT/bad-bypass.json"
 jq 'del(.authorization.authorized_by)' "$bypass_fixture" > "$bad_bypass_fixture"
+wrong_typed_bypass_fixture="$TMP_ROOT/wrong-typed-bypass.json"
+jq '.authorization = "a-string"' "$bypass_fixture" > "$wrong_typed_bypass_fixture"
 mismatched_bypass_pr_fixture="$TMP_ROOT/mismatched-bypass-pr.json"
 jq '.pr.number = 99' "$bypass_fixture" > "$mismatched_bypass_pr_fixture"
 mismatched_bypass_action_fixture="$TMP_ROOT/mismatched-bypass-action.json"
@@ -449,6 +456,48 @@ run_test "warns_on_bulk_acceptance_rationale" "yes" \
 no_advisory_stderr="$("$HELPER" render-pr-disposition --input "$no_advisory_fixture" 2>&1 >/dev/null)"
 run_test "no_warn_when_advisory_count_zero" "yes" \
   "$(printf '%s' "$no_advisory_stderr" | wc -c | tr -d ' ' | grep -qx '0' && echo yes || echo no)"
+
+echo ""
+echo "=== Planted-violation regression: apply-* required-field guard must not be inert (#1430) ==="
+# Prior to the fix, a wrong-typed field (e.g. .item being a string instead of
+# an object) made the required-field jq computation crash silently inside a
+# command-substituted context (`body="$(render_pr_disposition ...)"`), which
+# `set -e` does not abort. The guard's own [ -n "$missing" ] check then read
+# an empty string (jq produced no stdout) and passed vacuously, so apply-*
+# posted an incomplete audit comment and exited 0. These tests plant that
+# exact violation against all three apply-* subcommands and assert each now
+# fails loudly with no partial gh write, while a complete input still
+# succeeds (already proven above by the creates_*/updates_* tests).
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_wrong_typed_item" \
+  "missing required PR disposition fields: item.number, item.title" \
+  "$HELPER" apply-pr-disposition --input "$wrong_typed_item_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_wrong_type_writes_no_comment" "$calls_before" "$calls_after"
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_epic_ledger_rejects_wrong_typed_epic" \
+  "missing required epic ledger fields" \
+  "$HELPER" apply-epic-ledger --input "$wrong_typed_ledger_epic_fixture" --epic 900
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_epic_ledger_wrong_type_writes_no_comment" "$calls_before" "$calls_after"
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_reviewer_access_bypass_rejects_wrong_typed_authorization" \
+  "missing required reviewer access-bypass fields: authorization.authorized_by, authorization.authorized_at, authorization.authorization_text" \
+  "$HELPER" apply-reviewer-access-bypass --input "$wrong_typed_bypass_fixture" --pr 42
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_reviewer_access_bypass_wrong_type_writes_no_comment" "$calls_before" "$calls_after"
+
+# Same defect, exercised via the direct render-* path too: a wrong-typed
+# field must be reported precisely as missing rather than crashing jq.
+run_fails_contains "render_pr_disposition_rejects_wrong_typed_item" \
+  "missing required PR disposition fields: item.number, item.title" \
+  "$HELPER" render-pr-disposition --input "$wrong_typed_item_fixture"
+run_fails_contains "render_reviewer_access_bypass_rejects_wrong_typed_authorization" \
+  "missing required reviewer access-bypass fields: authorization.authorized_by, authorization.authorized_at, authorization.authorization_text" \
+  "$HELPER" render-reviewer-access-bypass --input "$wrong_typed_bypass_fixture"
 
 echo ""
 echo "=== Summary ==="
