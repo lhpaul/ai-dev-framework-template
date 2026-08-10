@@ -282,6 +282,13 @@ wrong_typed_checkpoint_policy_fixture="$TMP_ROOT/wrong-typed-checkpoint-policy.j
 jq '.checkpoint_policy = "a-string"' "$pr_fixture" > "$wrong_typed_checkpoint_policy_fixture"
 wrong_typed_verification_fixture="$TMP_ROOT/wrong-typed-verification.json"
 jq '.verification = "a-string"' "$pr_fixture" > "$wrong_typed_verification_fixture"
+# Same defect class, found during review of this PR's fix: .protocol_deviations
+# is an optional array field with no upstream validator (unlike .advisories,
+# which is protected by validate_advisories before render_pr_disposition is
+# ever called). A wrong-typed value crashed jq mid-render the same way the
+# CodeRabbit-flagged sections did.
+wrong_typed_protocol_deviations_fixture="$TMP_ROOT/wrong-typed-protocol-deviations.json"
+jq '.protocol_deviations = "a-string"' "$pr_fixture" > "$wrong_typed_protocol_deviations_fixture"
 
 bypass_fixture="$TMP_ROOT/reviewer-access-bypass.json"
 cat > "$bypass_fixture" <<'JSON'
@@ -570,6 +577,44 @@ run_fails_contains "render_pr_disposition_rejects_wrong_typed_checkpoint_policy"
 run_fails_contains "render_pr_disposition_rejects_wrong_typed_verification" \
   "failed to render verification evidence" \
   "$HELPER" render-pr-disposition --input "$wrong_typed_verification_fixture"
+
+echo ""
+echo "=== Planted-violation regression: wrong-typed protocol_deviations must not silently degrade (found in review of PR #1459) ==="
+# .protocol_deviations has no upstream validator (unlike .advisories, which
+# validate_advisories protects before render_pr_disposition is ever called),
+# so its jq capture inside the { ... } | redact_text body pipe needed the
+# same point-of-failure error_exit guard applied to invocation_policy,
+# checkpoint_policy, and verification above.
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_wrong_typed_protocol_deviations" \
+  "failed to render protocol deviations" \
+  "$HELPER" apply-pr-disposition --input "$wrong_typed_protocol_deviations_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_wrong_typed_protocol_deviations_writes_no_comment" "$calls_before" "$calls_after"
+
+run_fails_contains "render_pr_disposition_rejects_wrong_typed_protocol_deviations" \
+  "failed to render protocol deviations" \
+  "$HELPER" render-pr-disposition --input "$wrong_typed_protocol_deviations_fixture"
+
+# .advisories confirmatory coverage: validate_advisories already crashes
+# loudly on a wrong-typed .advisories value before render_pr_disposition is
+# reached, in both call contexts. This is not a fix in this PR — confirmatory
+# only, kept alongside the protocol_deviations regression above so future
+# changes to validate_advisories don't silently reopen the same defect class.
+wrong_typed_advisories_fixture="$TMP_ROOT/wrong-typed-advisories.json"
+jq '.advisories = "a-string"' "$pr_fixture" > "$wrong_typed_advisories_fixture"
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_wrong_typed_advisories" \
+  "failed to validate advisory entries" \
+  "$HELPER" apply-pr-disposition --input "$wrong_typed_advisories_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_wrong_typed_advisories_writes_no_comment" "$calls_before" "$calls_after"
+
+run_fails_contains "render_pr_disposition_rejects_wrong_typed_advisories" \
+  "failed to validate advisory entries" \
+  "$HELPER" render-pr-disposition --input "$wrong_typed_advisories_fixture"
 
 echo ""
 echo "=== Summary ==="

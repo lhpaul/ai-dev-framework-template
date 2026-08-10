@@ -122,21 +122,26 @@ render_pr_disposition() {
   #
   # The same -e-ignored context also means a failing jq call *inside* the
   # `{ ... } | redact_text` body block below (e.g. a wrong-typed
-  # .invocation_policy, .checkpoint_policy, or .verification) would not
-  # abort execution either — worse, because `{ ... }` is the first stage of
-  # a pipeline, bash runs it in its own subshell (pipelines run every
-  # non-last stage in a subshell unless `shopt -s lastpipe` is active,
-  # which this script does not set), so a shared flag variable set inside
-  # that block cannot be read after the pipe: it would still show its
-  # initial value once the pipe returns, silently masking the failure a
-  # second way. Each of those three optional sections below therefore
-  # calls `error_exit` immediately (via `|| error_exit ...`) the moment
-  # its jq capture fails, instead of deferring to a flag check — `exit` is
-  # not subject to -e semantics at all, so it terminates the `{ ... }`
-  # subshell right there; combined with `pipefail`, that makes the whole
-  # `{ ... } | redact_text` pipeline (and therefore this function, and the
-  # apply-* command substitution around it) report the failure reliably in
-  # both call contexts. See CodeRabbit finding on PR #1459 (issue #1430).
+  # .invocation_policy, .checkpoint_policy, .verification, or
+  # .protocol_deviations) would not abort execution either — worse, because
+  # `{ ... }` is the first stage of a pipeline, bash runs it in its own
+  # subshell (pipelines run every non-last stage in a subshell unless
+  # `shopt -s lastpipe` is active, which this script does not set), so a
+  # shared flag variable set inside that block cannot be read after the
+  # pipe: it would still show its initial value once the pipe returns,
+  # silently masking the failure a second way. Each of those four optional
+  # sections below therefore calls `error_exit` immediately (via
+  # `|| error_exit ...`) the moment its jq capture fails, instead of
+  # deferring to a flag check — `exit` is not subject to -e semantics at
+  # all, so it terminates the `{ ... }` subshell right there; combined with
+  # `pipefail`, that makes the whole `{ ... } | redact_text` pipeline (and
+  # therefore this function, and the apply-* command substitution around
+  # it) report the failure reliably in both call contexts. (.advisories has
+  # the same defect-class risk but is caught upstream instead, by
+  # `validate_advisories`, which runs before this function is ever called
+  # and crashes loudly on a wrong-typed value or a non-object array element
+  # in a non-subshell context.) See CodeRabbit finding on PR #1459
+  # (issue #1430).
   missing="$(printf '%s\n' "$json" | jq -r '
     [
       ["scope_source", (try .scope_source catch null)],
@@ -280,17 +285,18 @@ render_pr_disposition() {
     ')" || error_exit "failed to render verification evidence (jq error above)"
     printf '%s\n' "$rendered"
     printf '\n### Protocol Deviations\n\n'
-    if [ "$(printf '%s\n' "$json" | jq '(.protocol_deviations // []) | length')" -eq 0 ]; then
+    if [ "$(printf '%s\n' "$json" | jq '(.protocol_deviations // []) | if type == "array" then length else 1 end')" -eq 0 ]; then
       printf 'None.\n'
     else
       printf '| Action | Impact | Mitigation |\n'
       printf '| --- | --- | --- |\n'
-      printf '%s\n' "$json" | jq -r "$table_cell_filter"'
+      rendered="$(printf '%s\n' "$json" | jq -r "$table_cell_filter"'
         (.protocol_deviations // [])[] |
         "| " + ((.action // "") | cell) +
         " | " + ((.impact // "") | cell) +
         " | " + ((.mitigation // "") | cell) + " |"
-      '
+      ')" || error_exit "failed to render protocol deviations (jq error above)"
+      printf '%s\n' "$rendered"
     fi
   } | redact_text
 }

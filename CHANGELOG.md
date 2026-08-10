@@ -74,7 +74,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its own subshell — execution continued past the crash and the function
   still returned exit 0 with a silently degraded section. Each of the five
   risky jq captures in those sections now calls `error_exit` immediately on
-  failure (a deferred flag would not survive the subshell boundary).
+  failure (a deferred flag would not survive the subshell boundary). Review
+  of that fix found the same defect class also unpatched in the *optional*
+  `protocol_deviations` section (no upstream validator, unlike `.advisories`,
+  which `validate_advisories` already protects before `render_pr_disposition`
+  is ever called); its jq capture now uses the same `error_exit`-at-point-of-
+  failure guard, with matching planted-violation regression tests for both
+  the `apply-*` and direct `render-*` paths.
 
 ## [0.41.0] - 2026-08-02
 
