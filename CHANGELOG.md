@@ -48,6 +48,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for batch merge metadata, reviewed-head pinning, delegated epic merge
   evidence, reviewer-loop blockers, reviewer bypass authorization, PR-bound
   cleanup, and workflow branch push-lock cleanup.
+- **`run-epic-audit-trail.sh` required-field guard inert in `apply-*` modes**
+  (#1430): `render_pr_disposition` and `render_reviewer_access_bypass` could
+  post an incomplete audit comment and exit 0 when a required field was
+  wrong-typed (e.g. `.item` a string instead of an object). Bash's `set -e`
+  does not abort a function whose commands run inside a context where -e is
+  already ignored — which a nested command substitution is — so the guard's
+  `jq` computation crashed silently, `$missing` read empty, and
+  `apply-pr-disposition` / `apply-reviewer-access-bypass` posted a blank or
+  partial record while reporting success. Every dotted field lookup in both
+  guards is now wrapped in `try ... catch null` so a wrong-typed value is
+  reported as missing (not a jq crash), the guard's own jq exit status is
+  captured explicitly via `||` instead of relying on `-e` propagation, and
+  all three `apply-*` call sites (`apply-pr-disposition`, `apply-epic-ledger`,
+  `apply-reviewer-access-bypass`) now propagate a render failure with
+  `|| error_exit` as defense in depth. `render_epic_ledger`'s guard was
+  audited and confirmed already safe in both call contexts (it uses a
+  directly-tested `if ! jq -e ...; then error_exit; fi`, not the
+  assign-then-test pattern) and was left unchanged. A deeper instance of the
+  same defect class (found by CodeRabbit on this PR) affected the *optional*
+  `invocation_policy`, `checkpoint_policy`, and `verification` sections of
+  `render_pr_disposition`, which are not covered by the required-field guard:
+  a wrong-typed value crashed jq mid-render inside the `{ ... } | redact_text`
+  body pipe, and because that block runs as a non-last pipeline stage — in
+  its own subshell — execution continued past the crash and the function
+  still returned exit 0 with a silently degraded section. Each of the five
+  risky jq captures in those sections now calls `error_exit` immediately on
+  failure (a deferred flag would not survive the subshell boundary). Review
+  of that fix found the same defect class also unpatched in the *optional*
+  `protocol_deviations` section (no upstream validator, unlike `.advisories`,
+  which `validate_advisories` already protects before `render_pr_disposition`
+  is ever called); its jq capture now uses the same `error_exit`-at-point-of-
+  failure guard, with matching planted-violation regression tests for both
+  the `apply-*` and direct `render-*` paths.
 
 ## [0.41.0] - 2026-08-02
 

@@ -262,6 +262,34 @@ bad_ledger_fixture="$TMP_ROOT/bad-ledger.json"
 cat > "$bad_ledger_fixture" <<'JSON'
 {"epic": {"number": 916, "title": "Bad"}, "items": "not an array"}
 JSON
+wrong_typed_item_fixture="$TMP_ROOT/wrong-typed-item.json"
+jq '.item = "a-string"' "$pr_fixture" > "$wrong_typed_item_fixture"
+wrong_typed_ledger_epic_fixture="$TMP_ROOT/wrong-typed-ledger-epic.json"
+jq '.epic = "a-string"' "$ledger_fixture" > "$wrong_typed_ledger_epic_fixture"
+# CodeRabbit finding on PR #1459: a wrong-typed *optional* section
+# (invocation_policy / checkpoint_policy / verification — none of which
+# are part of the required-field guard above) crashed jq mid-render, deep
+# inside the `{ ... } | redact_text` body pipe. That failure could not
+# reach the caller via the top-level `missing` guard at all, and — because
+# the `{ ... }` block runs in its own subshell as a non-last pipeline
+# stage — a shared flag variable set inside it is invisible once the pipe
+# returns, so even a deferred-check fix would silently mask the failure a
+# second way. wrong_typed_invocation_policy_fixture is present (not null)
+# but the wrong JSON type, which is the reproduction shape.
+wrong_typed_invocation_policy_fixture="$TMP_ROOT/wrong-typed-invocation-policy.json"
+jq '.invocation_policy = "a-string"' "$pr_fixture" > "$wrong_typed_invocation_policy_fixture"
+wrong_typed_checkpoint_policy_fixture="$TMP_ROOT/wrong-typed-checkpoint-policy.json"
+jq '.checkpoint_policy = "a-string"' "$pr_fixture" > "$wrong_typed_checkpoint_policy_fixture"
+wrong_typed_verification_fixture="$TMP_ROOT/wrong-typed-verification.json"
+jq '.verification = "a-string"' "$pr_fixture" > "$wrong_typed_verification_fixture"
+# Same defect class, found during review of this PR's fix: .protocol_deviations
+# is an optional array field with no upstream validator (unlike .advisories,
+# which is protected by validate_advisories before render_pr_disposition is
+# ever called). A wrong-typed value crashed jq mid-render the same way the
+# CodeRabbit-flagged sections did.
+wrong_typed_protocol_deviations_fixture="$TMP_ROOT/wrong-typed-protocol-deviations.json"
+jq '.protocol_deviations = "a-string"' "$pr_fixture" > "$wrong_typed_protocol_deviations_fixture"
+
 bypass_fixture="$TMP_ROOT/reviewer-access-bypass.json"
 cat > "$bypass_fixture" <<'JSON'
 {
@@ -302,6 +330,8 @@ cat > "$bypass_fixture" <<'JSON'
 JSON
 bad_bypass_fixture="$TMP_ROOT/bad-bypass.json"
 jq 'del(.authorization.authorized_by)' "$bypass_fixture" > "$bad_bypass_fixture"
+wrong_typed_bypass_fixture="$TMP_ROOT/wrong-typed-bypass.json"
+jq '.authorization = "a-string"' "$bypass_fixture" > "$wrong_typed_bypass_fixture"
 mismatched_bypass_pr_fixture="$TMP_ROOT/mismatched-bypass-pr.json"
 jq '.pr.number = 99' "$bypass_fixture" > "$mismatched_bypass_pr_fixture"
 mismatched_bypass_action_fixture="$TMP_ROOT/mismatched-bypass-action.json"
@@ -449,6 +479,142 @@ run_test "warns_on_bulk_acceptance_rationale" "yes" \
 no_advisory_stderr="$("$HELPER" render-pr-disposition --input "$no_advisory_fixture" 2>&1 >/dev/null)"
 run_test "no_warn_when_advisory_count_zero" "yes" \
   "$(printf '%s' "$no_advisory_stderr" | wc -c | tr -d ' ' | grep -qx '0' && echo yes || echo no)"
+
+echo ""
+echo "=== Planted-violation regression: apply-* required-field guard must not be inert (#1430) ==="
+# Prior to the fix, a wrong-typed field (e.g. .item being a string instead of
+# an object) made the required-field jq computation crash silently inside a
+# command-substituted context (`body="$(render_pr_disposition ...)"`), which
+# `set -e` does not abort. The guard's own [ -n "$missing" ] check then read
+# an empty string (jq produced no stdout) and passed vacuously, so apply-*
+# posted an incomplete audit comment and exited 0. render_pr_disposition() and
+# render_reviewer_access_bypass() had this defect and were fixed with
+# try/catch + explicit jq-exit-status capture (see the comments in
+# run-epic-audit-trail.sh). render_epic_ledger() uses a different guard shape
+# (`jq -e ... ; if ! ...` — the jq exit status is already control-flow-tested,
+# so a crash correctly triggers `error_exit` even before this fix); it was
+# audited and left unchanged, and its wrong_typed_epic case below is a
+# confirmatory coverage test, not a regression case for this PR. These tests
+# plant the violation against all three apply-* subcommands and assert each
+# now fails loudly with no partial gh write, while a complete input still
+# succeeds (already proven above by the creates_*/updates_* tests).
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_wrong_typed_item" \
+  "missing required PR disposition fields: item.number, item.title" \
+  "$HELPER" apply-pr-disposition --input "$wrong_typed_item_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_wrong_type_writes_no_comment" "$calls_before" "$calls_after"
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_epic_ledger_rejects_wrong_typed_epic" \
+  "missing required epic ledger fields" \
+  "$HELPER" apply-epic-ledger --input "$wrong_typed_ledger_epic_fixture" --epic 900
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_epic_ledger_wrong_type_writes_no_comment" "$calls_before" "$calls_after"
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_reviewer_access_bypass_rejects_wrong_typed_authorization" \
+  "missing required reviewer access-bypass fields: authorization.authorized_by, authorization.authorized_at, authorization.authorization_text" \
+  "$HELPER" apply-reviewer-access-bypass --input "$wrong_typed_bypass_fixture" --pr 42
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_reviewer_access_bypass_wrong_type_writes_no_comment" "$calls_before" "$calls_after"
+
+# Same defect, exercised via the direct render-* path too: a wrong-typed
+# field must be reported precisely as missing rather than crashing jq.
+run_fails_contains "render_pr_disposition_rejects_wrong_typed_item" \
+  "missing required PR disposition fields: item.number, item.title" \
+  "$HELPER" render-pr-disposition --input "$wrong_typed_item_fixture"
+run_fails_contains "render_reviewer_access_bypass_rejects_wrong_typed_authorization" \
+  "missing required reviewer access-bypass fields: authorization.authorized_by, authorization.authorized_at, authorization.authorization_text" \
+  "$HELPER" render-reviewer-access-bypass --input "$wrong_typed_bypass_fixture"
+
+echo ""
+echo "=== Planted-violation regression: wrong-typed optional section must not silently degrade (CodeRabbit finding, #1430) ==="
+# A second, deeper layer of the same defect class (found by CodeRabbit
+# reviewing this PR): invocation_policy, checkpoint_policy, and
+# verification are *optional* fields, not covered by the required-field
+# `missing` guard above. A wrong-typed value for any of them (present, not
+# null/absent) crashed jq mid-render inside the `{ ... } | redact_text`
+# body pipe. In apply mode this was worse than the top-level guard bug:
+# execution continued past the crash to the end of the block (still inside
+# the -e-ignored substitution context), so the function returned exit 0
+# with a body that silently dropped just that one section, and
+# apply-pr-disposition posted it. Each of the five risky jq captures in
+# render_pr_disposition now calls error_exit immediately on failure rather
+# than deferring to a flag (a shared flag set inside `{ ... }` would not
+# survive the pipe: `{ ... } | redact_text` runs the `{ ... }` stage in its
+# own subshell as a non-last pipeline stage).
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_wrong_typed_invocation_policy" \
+  "failed to render invocation policy detail" \
+  "$HELPER" apply-pr-disposition --input "$wrong_typed_invocation_policy_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_wrong_typed_invocation_policy_writes_no_comment" "$calls_before" "$calls_after"
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_wrong_typed_checkpoint_policy" \
+  "failed to render checkpoint policy detail" \
+  "$HELPER" apply-pr-disposition --input "$wrong_typed_checkpoint_policy_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_wrong_typed_checkpoint_policy_writes_no_comment" "$calls_before" "$calls_after"
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_wrong_typed_verification" \
+  "failed to render verification evidence" \
+  "$HELPER" apply-pr-disposition --input "$wrong_typed_verification_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_wrong_typed_verification_writes_no_comment" "$calls_before" "$calls_after"
+
+# Same three cases via the direct render-* path.
+run_fails_contains "render_pr_disposition_rejects_wrong_typed_invocation_policy" \
+  "failed to render invocation policy detail" \
+  "$HELPER" render-pr-disposition --input "$wrong_typed_invocation_policy_fixture"
+run_fails_contains "render_pr_disposition_rejects_wrong_typed_checkpoint_policy" \
+  "failed to render checkpoint policy detail" \
+  "$HELPER" render-pr-disposition --input "$wrong_typed_checkpoint_policy_fixture"
+run_fails_contains "render_pr_disposition_rejects_wrong_typed_verification" \
+  "failed to render verification evidence" \
+  "$HELPER" render-pr-disposition --input "$wrong_typed_verification_fixture"
+
+echo ""
+echo "=== Planted-violation regression: wrong-typed protocol_deviations must not silently degrade (found in review of PR #1459) ==="
+# .protocol_deviations has no upstream validator (unlike .advisories, which
+# validate_advisories protects before render_pr_disposition is ever called),
+# so its jq capture inside the { ... } | redact_text body pipe needed the
+# same point-of-failure error_exit guard applied to invocation_policy,
+# checkpoint_policy, and verification above.
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_wrong_typed_protocol_deviations" \
+  "failed to render protocol deviations" \
+  "$HELPER" apply-pr-disposition --input "$wrong_typed_protocol_deviations_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_wrong_typed_protocol_deviations_writes_no_comment" "$calls_before" "$calls_after"
+
+run_fails_contains "render_pr_disposition_rejects_wrong_typed_protocol_deviations" \
+  "failed to render protocol deviations" \
+  "$HELPER" render-pr-disposition --input "$wrong_typed_protocol_deviations_fixture"
+
+# .advisories confirmatory coverage: validate_advisories already crashes
+# loudly on a wrong-typed .advisories value before render_pr_disposition is
+# reached, in both call contexts. This is not a fix in this PR — confirmatory
+# only, kept alongside the protocol_deviations regression above so future
+# changes to validate_advisories don't silently reopen the same defect class.
+wrong_typed_advisories_fixture="$TMP_ROOT/wrong-typed-advisories.json"
+jq '.advisories = "a-string"' "$pr_fixture" > "$wrong_typed_advisories_fixture"
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_wrong_typed_advisories" \
+  "failed to validate advisory entries" \
+  "$HELPER" apply-pr-disposition --input "$wrong_typed_advisories_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_wrong_typed_advisories_writes_no_comment" "$calls_before" "$calls_after"
+
+run_fails_contains "render_pr_disposition_rejects_wrong_typed_advisories" \
+  "failed to validate advisory entries" \
+  "$HELPER" render-pr-disposition --input "$wrong_typed_advisories_fixture"
 
 echo ""
 echo "=== Summary ==="
