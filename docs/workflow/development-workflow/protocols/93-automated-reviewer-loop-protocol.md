@@ -439,16 +439,26 @@ elapses, the loop times out and exits `escalate`.
 no "Reviews paused" comment, and no rate-limit comment. CodeRabbit stays silent with no
 visible signal.
 
-**Script behavior**: After `CODERABBIT_NO_TRIGGER_TIMEOUT` seconds of silence (default: 180 s,
-capped at half of the invocation's `--max-wait` so the fallback always has room to fire
-before the outer timeout — see `coderabbit_no_trigger_timeout_default` in
-`pr-review-loop.sh`; reduced from a fixed 600 s in issue #1433 to cut the idle wait before
-the proactive nudge) with no activity, no "Reviews paused" comment, and no rate-limit
-comment, `pr-review-loop.sh` posts `@coderabbitai review` to force a fresh review. The
-`coderabbit_no_trigger_retriggers` counter is incremented; `CODERABBIT_RATE_LIMIT_MAX_RETRIES`
-is the combined cap for total retrigger attempts across both this mechanism and the
-rate-limit retry path. The elapsed timer resets after posting so the triggered review has a
-full polling window.
+**Script behavior**: After `CODERABBIT_NO_TRIGGER_TIMEOUT` seconds of silence with no
+activity, no "Reviews paused" comment, and no rate-limit comment, `pr-review-loop.sh` posts
+`@coderabbitai review` to force a fresh review. The `coderabbit_no_trigger_retriggers`
+counter is incremented; `CODERABBIT_RATE_LIMIT_MAX_RETRIES` is the combined cap for total
+retrigger attempts across both this mechanism and the rate-limit retry path. The elapsed
+timer resets after posting so the triggered review has a full polling window.
+
+**Default timeout (issue #1433)**: reduced from a fixed 600 s to a computed default via
+`coderabbit_no_trigger_timeout_default` in `pr-review-loop.sh`, following this effective-timeout
+rule based on the invocation's `--max-wait`:
+
+| `--max-wait`          | Effective `CODERABBIT_NO_TRIGGER_TIMEOUT` default                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| >= 360 s (e.g. the 1200 s script default, or the 2400 s large-diff default) | 180 s — the hardcoded default; the half-`max_wait` cap does not bind.                                    |
+| 60 s – 359 s            | `floor(max_wait / 2)` — the cap binds and is always less than `max_wait`, guaranteeing room for a subsequent poll cycle before the outer timeout. |
+| < 60 s (e.g. the 180 s spec/\*/implementation-plan/\* doc-branch default) | `max(30 s, floor(max_wait / 2))` — a 30 s floor takes precedence over the halved cap; for `max_wait` at or below ~30 s this can leave little or no room before the outer timeout, but this repo never configures `--max-wait` below 180 s, so this is a defensive edge case rather than a realistic operating point. |
+
+An explicit `CODERABBIT_NO_TRIGGER_TIMEOUT` env var override is honored as-is (uncapped);
+`coderabbit_resolve_no_trigger_timeout` validates it and falls back to the computed default
+(with a `WARN` message) only when the override is not a positive integer.
 
 **Trigger condition**: Allowed up to `CODERABBIT_RATE_LIMIT_MAX_RETRIES` times total. If
 the cap is reached and CodeRabbit still has not responded, the loop exits `escalate`.
@@ -456,9 +466,9 @@ the cap is reached and CodeRabbit still has not responded, the loop exits `escal
 #### Diagnosing a stalled loop (manual polling)
 
 When an agent is polling manually — or when `pr-review-loop.sh` has been running for more
-than 3 minutes with no CodeRabbit activity on a default-`--max-wait` invocation (scale this
-proportionally for a custom `--max-wait`; see `coderabbit_no_trigger_timeout_default`) —
-check these markers before escalating:
+than the effective `CODERABBIT_NO_TRIGGER_TIMEOUT` window with no CodeRabbit activity (180 s
+on the default 1200 s `--max-wait` invocation; see the effective-timeout table above for
+other `--max-wait` values) — check these markers before escalating:
 
 1. **Check for a "Reviews paused" comment**: run:
 
@@ -475,9 +485,9 @@ check these markers before escalating:
    `max_wait` window before concluding CodeRabbit is unresponsive.
 
 3. **If neither marker is present and the effective `CODERABBIT_NO_TRIGGER_TIMEOUT` window has
-   elapsed with no activity** (default 180 s on a default-`--max-wait` invocation; see
-   `coderabbit_no_trigger_timeout_default`), Pattern 2 (silent non-trigger) is likely. The
-   script will post the retrigger automatically once that window elapses.
+   elapsed with no activity** (see the effective-timeout table above), Pattern 2 (silent
+   non-trigger) is likely. The script will post the retrigger automatically once that window
+   elapses.
 
 #### When to escalate vs. wait
 

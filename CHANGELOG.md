@@ -10,24 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Reduce CodeRabbit fallback latency in reviewer loop** (#1433):
-  `pr-review-loop.sh`'s silent-non-trigger fallback (the proactive
-  `@coderabbitai review` nudge posted when CodeRabbit does not auto-trigger
-  after a push) previously waited a fixed `CODERABBIT_NO_TRIGGER_TIMEOUT`
-  default of 600 s regardless of `--max-wait`, burning up to 10 minutes of
-  pure idle wait on the common default invocation before nudging CodeRabbit —
-  the exact latency reported in the #1429/#1431 retrospective. The same fixed
-  default also meant the fallback could never fire at all on short-`--max-wait`
-  invocations (e.g. the 180 s spec/\*/implementation-plan/\* doc-branch
-  default), since elapsed could never reach 600 s before the outer `max_wait`
-  timeout exited the loop first. A new `coderabbit_no_trigger_timeout_default`
-  helper now computes the default as 180 s (matching the already-vetted
-  `CODERABBIT_RATE_LIMIT_WAIT` cadence used by the analogous rate-limit retry
-  path), capped at half of `--max-wait` so the fallback always has room to
-  both fire and complete a subsequent poll cycle before the outer timeout, and
-  floored at 30 s. An explicit `CODERABBIT_NO_TRIGGER_TIMEOUT` env var override
-  is still honored as-is (uncapped). This is purely a timing change — it does
-  not alter the `coderabbit_success_status_count` description guard (#1437)
-  that rejects a rate-limited `success` commit status.
+  `pr-review-loop.sh`'s silent-non-trigger fallback previously waited a fixed
+  600 s `CODERABBIT_NO_TRIGGER_TIMEOUT` default regardless of `--max-wait`,
+  burning up to 10 minutes of idle wait before proactively nudging CodeRabbit
+  — the latency reported in the #1429/#1431 retrospective — and could never
+  fire at all on short-`--max-wait` invocations. Replaced with a computed
+  default (`coderabbit_no_trigger_timeout_default`, extracted alongside a new
+  `coderabbit_resolve_no_trigger_timeout` override-resolution helper) that
+  scales with `--max-wait`; a timing change only, it does not affect the
+  `coderabbit_success_status_count` description guard from #1437. See the
+  "CodeRabbit silence patterns" section in
+  [`93-automated-reviewer-loop-protocol.md`](docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md#coderabbit-silence-patterns)
+  for the full effective-timeout table.
 - **CodeRabbit success-status fallback ignored the description field** (#1437):
   Both `coderabbit_status_success_fallback` call sites in `pr-review-loop.sh`
   now reject a `success` CodeRabbit commit status whose description matches a

@@ -4246,20 +4246,50 @@ run_test "no_trigger_timeout_default_non_numeric_max_wait_fallback" "180" "$actu
 actual="$(coderabbit_no_trigger_timeout_default 0)"
 run_test "no_trigger_timeout_default_zero_max_wait_fallback" "180" "$actual"
 
+# Leading-zero decimal input (CodeRabbit finding on PR #1458): "080" passes
+# the ^[0-9]+$ digit-only regex guard but, without base-10 normalization, bash
+# arithmetic expansion parses a leading-zero literal as octal — and "080" is
+# not a valid octal literal (8 is not an octal digit), so `$((080 / 2))`
+# errors with "value too great for base" and aborts the script under
+# `set -euo pipefail`. The `10#$max_wait` prefix forces base-10 interpretation
+# so this must safely compute 40 (half of 80) instead of erroring.
+actual="$(coderabbit_no_trigger_timeout_default 080)"
+run_test "no_trigger_timeout_default_leading_zero_max_wait_normalized_base10" "40" "$actual"
+
 # ---------------------------------------------------------------------------
-# Area: run_coderabbit_review honors an explicit CODERABBIT_NO_TRIGGER_TIMEOUT
-# override uncapped (issue #1433) — the computed default above is only used
-# when the env var is unset.
+# Area: coderabbit_resolve_no_trigger_timeout (issue #1433, CodeRabbit finding
+# on PR #1458) — exercises the actual production override-resolution path
+# used by run_coderabbit_review, not just the underlying default-computation
+# helper tested above.
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== Area: CODERABBIT_NO_TRIGGER_TIMEOUT explicit override (issue #1433) ==="
+echo "=== Area: coderabbit_resolve_no_trigger_timeout (issue #1433) ==="
+
+# No override set: must fall through to coderabbit_no_trigger_timeout_default.
+unset CODERABBIT_NO_TRIGGER_TIMEOUT
+actual="$(coderabbit_resolve_no_trigger_timeout 180)"
+run_test "no_trigger_resolve_no_override_uses_computed_default" "90" "$actual"
 
 # An explicit override larger than the computed default for the given
 # max_wait must be honored as-is (uncapped) rather than silently reduced —
 # same pattern already used by CODERABBIT_RATE_LIMIT_WAIT / _MAX_RETRIES.
 export CODERABBIT_NO_TRIGGER_TIMEOUT=900
-actual="${CODERABBIT_NO_TRIGGER_TIMEOUT:-$(coderabbit_no_trigger_timeout_default 180)}"
-run_test "no_trigger_timeout_explicit_override_honored_uncapped" "900" "$actual"
+actual="$(coderabbit_resolve_no_trigger_timeout 180)"
+run_test "no_trigger_resolve_explicit_override_honored_uncapped" "900" "$actual"
+unset CODERABBIT_NO_TRIGGER_TIMEOUT
+
+# An invalid explicit override (non-numeric) must fall back to the computed
+# default (with a WARN to stderr, not asserted here) rather than propagating
+# a bad value or crashing the script.
+export CODERABBIT_NO_TRIGGER_TIMEOUT="not-a-number"
+actual="$(coderabbit_resolve_no_trigger_timeout 180 2>/dev/null)"
+run_test "no_trigger_resolve_invalid_override_falls_back_to_default" "90" "$actual"
+unset CODERABBIT_NO_TRIGGER_TIMEOUT
+
+# A zero explicit override (fails the `-le 0` guard) must also fall back.
+export CODERABBIT_NO_TRIGGER_TIMEOUT=0
+actual="$(coderabbit_resolve_no_trigger_timeout 1200 2>/dev/null)"
+run_test "no_trigger_resolve_zero_override_falls_back_to_default" "180" "$actual"
 unset CODERABBIT_NO_TRIGGER_TIMEOUT
 
 # ---------------------------------------------------------------------------
