@@ -653,7 +653,10 @@ same audit record with the result. If the gate reports `fix_required`, remove
 readiness labels, fix, rerun validation/reviewer/CI, and return to Step 8. If it
 reports `human_required`, stop for human authority, setup, access remediation,
 or risk tolerance. If it reports `blocked`, stop until required state is
-available.
+available. If it reports `not_applicable`, treat the candidate PR as
+`out_of_scope` per this step's closing note — it is never merged by this
+protocol. See [`guardrails-enforcement.md`](../guardrails-enforcement.md) Gate 5
+for the `pr.inScope` field contract this decision is derived from.
 
 If an in-scope child PR stops at readiness during a merge-granted run without a
 named blocker from this step, report `policy_inconsistent` in the PR

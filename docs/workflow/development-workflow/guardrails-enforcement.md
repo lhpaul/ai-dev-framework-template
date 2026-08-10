@@ -175,6 +175,15 @@ and run the existing helpers:
 ./scripts/development-workflow/run-epic-delegated-gate.sh --input <evidence-file>
 ```
 
+The evidence file's `pr.inScope` field is meaningful only when the runner has
+a resolved `/run-epic` scope to check the candidate PR against. Protocol 90 and
+91 callers assembling evidence for a `/run-items` or `/run-item` PR that has no
+resolved epic scope should **omit** `pr.inScope` entirely — the gate skips the
+scope check when the field is absent rather than defaulting to out-of-scope.
+Only set `pr.inScope: false` when scope resolution genuinely excluded the
+candidate PR; the gate then short-circuits with `decision: "not_applicable"`
+instead of piling the mismatch in among unrelated reasons.
+
 Merge through the repository-approved merge path **only when all of the
 following are satisfied**:
 

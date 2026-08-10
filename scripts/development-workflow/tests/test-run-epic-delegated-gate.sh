@@ -198,6 +198,109 @@ run_fails_contains "rejects_empty_fixture" "input file is empty" "$GATE" --input
 run_fails_contains "rejects_malformed_fixture" "input file is not valid JSON" "$GATE" --input "$malformed_file"
 run_fails_contains "rejects_whitespace_fixture" "input file is not valid JSON" "$GATE" --input "$whitespace_file"
 
+# --- incomplete .pr identity input must error, not degrade to a worst-case
+# --- decision full of false blockers (issue #1435) ---
+
+missing_pr_object_fixture="$(write_fixture missing-pr-object 'del(.pr)')"
+run_fails_contains "rejects_missing_pr_object" \
+  "evidence file's .pr object is missing required identity field(s): pr" \
+  "$GATE" --input "$missing_pr_object_fixture" --json
+
+# Exact reproduction of the reported evidence shape from issue #1435: the
+# evidence-assembly step ran but never populated .pr.number/.headRefName/
+# .baseRefName.
+unpopulated_pr_fixture="$(write_fixture unpopulated-pr \
+  '.pr.number = null | .pr.headRefName = "" | .pr.baseRefName = ""')"
+run_fails_contains "rejects_unpopulated_pr_identity" \
+  "evidence file's .pr object is missing required identity field(s): pr.number, pr.headRefName, pr.baseRefName" \
+  "$GATE" --input "$unpopulated_pr_fixture" --json
+run_test "unpopulated_pr_identity_no_worst_case_reasons" "no" "$(
+  set +e
+  output="$("$GATE" --input "$unpopulated_pr_fixture" --json 2>&1)"
+  set -e
+  grep -q '"decision": "human_required"' <<< "$output" && echo yes || echo no
+)"
+
+partial_pr_identity_fixture="$(write_fixture partial-pr-identity 'del(.pr.baseRefName)')"
+run_fails_contains "rejects_partial_pr_identity" \
+  "evidence file's .pr object is missing required identity field(s): pr.baseRefName" \
+  "$GATE" --input "$partial_pr_identity_fixture" --json
+
+# Whitespace-only identity strings are not a legitimate value -- trim_text()
+# must treat them the same as empty.
+whitespace_pr_identity_fixture="$(write_fixture whitespace-pr-identity \
+  '.pr.headRefName = "   " | .pr.baseRefName = "\t\n"')"
+run_fails_contains "rejects_whitespace_only_pr_identity" \
+  "evidence file's .pr object is missing required identity field(s): pr.headRefName, pr.baseRefName" \
+  "$GATE" --input "$whitespace_pr_identity_fixture" --json
+
+# Non-scalar / wrong-typed identity values must fail the same way as absent
+# ones -- a coerced-via-tostring value (e.g. a number for headRefName) must
+# not be accepted as a valid string, and .pr.number must be a positive
+# integer, not merely non-null.
+string_number_fixture="$(write_fixture string-number-pr-identity '.pr.number = "42"')"
+run_fails_contains "rejects_string_pr_number" \
+  "evidence file's .pr object is missing required identity field(s): pr.number" \
+  "$GATE" --input "$string_number_fixture" --json
+
+zero_number_fixture="$(write_fixture zero-pr-identity '.pr.number = 0')"
+run_fails_contains "rejects_zero_pr_number" \
+  "evidence file's .pr object is missing required identity field(s): pr.number" \
+  "$GATE" --input "$zero_number_fixture" --json
+
+negative_number_fixture="$(write_fixture negative-pr-identity '.pr.number = -1')"
+run_fails_contains "rejects_negative_pr_number" \
+  "evidence file's .pr object is missing required identity field(s): pr.number" \
+  "$GATE" --input "$negative_number_fixture" --json
+
+non_integer_number_fixture="$(write_fixture non-integer-pr-identity '.pr.number = 3.5')"
+run_fails_contains "rejects_non_integer_pr_number" \
+  "evidence file's .pr object is missing required identity field(s): pr.number" \
+  "$GATE" --input "$non_integer_number_fixture" --json
+
+numeric_branch_name_fixture="$(write_fixture numeric-branch-name-pr-identity '.pr.headRefName = 918')"
+run_fails_contains "rejects_numeric_head_ref_name" \
+  "evidence file's .pr object is missing required identity field(s): pr.headRefName" \
+  "$GATE" --input "$numeric_branch_name_fixture" --json
+
+object_branch_name_fixture="$(write_fixture object-branch-name-pr-identity '.pr.baseRefName = {}')"
+run_fails_contains "rejects_object_base_ref_name" \
+  "evidence file's .pr object is missing required identity field(s): pr.baseRefName" \
+  "$GATE" --input "$object_branch_name_fixture" --json
+
+array_branch_name_fixture="$(write_fixture array-branch-name-pr-identity '.pr.headRefName = []')"
+run_fails_contains "rejects_array_head_ref_name" \
+  "evidence file's .pr object is missing required identity field(s): pr.headRefName" \
+  "$GATE" --input "$array_branch_name_fixture" --json
+
+# .pr.inScope must be a literal boolean when present -- a value that merely
+# coerces to falsy/truthy via jq's `//` operator (null, a string, a number,
+# an object) must not silently decide the scope outcome either way.
+null_in_scope_fixture="$(write_fixture null-in-scope '.pr.inScope = null')"
+run_fails_contains "rejects_null_in_scope" \
+  "evidence file's .pr.inScope field is present but not a boolean (got type: null)" \
+  "$GATE" --input "$null_in_scope_fixture" --json
+
+string_in_scope_fixture="$(write_fixture string-in-scope '.pr.inScope = "false"')"
+run_fails_contains "rejects_string_in_scope" \
+  "evidence file's .pr.inScope field is present but not a boolean (got type: string)" \
+  "$GATE" --input "$string_in_scope_fixture" --json
+
+numeric_in_scope_fixture="$(write_fixture numeric-in-scope '.pr.inScope = 0')"
+run_fails_contains "rejects_numeric_in_scope" \
+  "evidence file's .pr.inScope field is present but not a boolean (got type: number)" \
+  "$GATE" --input "$numeric_in_scope_fixture" --json
+
+object_in_scope_fixture="$(write_fixture object-in-scope '.pr.inScope = {}')"
+run_fails_contains "rejects_object_in_scope" \
+  "evidence file's .pr.inScope field is present but not a boolean (got type: object)" \
+  "$GATE" --input "$object_in_scope_fixture" --json
+
+# Genuinely complete input (full .pr identity, as every fixture below
+# supplies) with a real blocker must still report it — see
+# "requires_human_review_label" -> blocked below, which proves the
+# validation step does not swallow real findings.
+
 no_ci_fixture="$(write_fixture no-ci '.statusChecks = [] | .ciPolicy = "none"')"
 run_test "ci_policy_none_allows_empty_checks" "merge_allowed" "$(decision_for "$no_ci_fixture")"
 
@@ -254,7 +357,21 @@ backlog_denied_fixture="$(write_fixture backlog-denied '.item.status = "Backlog"
 run_test "backlog_policy_denied_requires_human" "human_required" "$(decision_for "$backlog_denied_fixture")"
 
 out_of_scope_fixture="$(write_fixture out-of-scope '.pr.inScope = false')"
-run_test "candidate_not_in_scope_requires_human" "human_required" "$(decision_for "$out_of_scope_fixture")"
+run_test "candidate_not_in_scope_is_not_applicable" "not_applicable" "$(decision_for "$out_of_scope_fixture")"
+run_test "candidate_not_in_scope_has_single_scope_reason" "1:candidate PR is not in the resolved run-epic scope" "$(
+  "$GATE" --input "$out_of_scope_fixture" --json |
+    jq -r '(.reasons | length | tostring) + ":" + .reasons[0]'
+)"
+run_test "candidate_not_in_scope_merge_not_permitted" "false" "$("$GATE" --input "$out_of_scope_fixture" --json | jq -r '.mergePermitted')"
+run_test "candidate_not_in_scope_reviewer_access_not_applicable" "not_applicable" "$("$GATE" --input "$out_of_scope_fixture" --json | jq -r '.reviewerAccess.classification')"
+
+# When the caller never populates .pr.inScope at all (e.g. a Protocol 90
+# explicit-batch item run through the shared Gate 5 path, which has no
+# resolved run-epic scope to be in or out of), the scope check must be
+# skipped entirely rather than defaulting to "out of scope" and blocking.
+scope_absent_fixture="$(write_fixture scope-absent 'del(.pr.inScope)')"
+run_test "missing_scope_field_does_not_block" "merge_allowed" "$(decision_for "$scope_absent_fixture")"
+run_test "missing_scope_field_reason_absent" "false" "$(reason_match_for "$scope_absent_fixture" "not in the resolved")"
 
 draft_fixture="$(write_fixture draft '.pr.isDraft = true')"
 run_test "draft_blocks" "blocked" "$(decision_for "$draft_fixture")"
