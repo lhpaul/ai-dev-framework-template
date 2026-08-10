@@ -81,6 +81,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is ever called); its jq capture now uses the same `error_exit`-at-point-of-
   failure guard, with matching planted-violation regression tests for both
   the `apply-*` and direct `render-*` paths.
+- **`why_safe_to_merge` evidence silently dropped from the PR disposition audit
+  comment** (#1436): `run-epic-risk-classifier.sh` requires a complete
+  `.why_safe_to_merge` block (`scope`, `tests`, `reviewer_outcome`,
+  `ci_outcome`, `rollback_or_cleanup_risk`) before it will assign `medium`
+  risk, but `render_pr_disposition` — the only function that renders the
+  durable audit comment — never referenced `.why_safe_to_merge` anywhere in
+  its jq programs. Because the renderer is jq-based, an unconsumed top-level
+  key like `why_safe_to_merge` was silently dropped instead of raising an
+  error or warning, so a caller could pass the classifier's full output
+  (including a complete `why_safe_to_merge` block) into `apply-pr-disposition`
+  and the merge justification required for the risk decision would never
+  appear in the posted comment. Added a "Why Safe to Merge" section to
+  `render_pr_disposition`, mirroring the "Risk Reasons" section's rendering
+  pattern and using the same `error_exit`-at-point-of-failure guard shape as
+  the other optional sections (`invocation_policy`, `checkpoint_policy`,
+  `verification`, `protocol_deviations`) established by #1430, so a
+  wrong-typed `.why_safe_to_merge` value fails loudly instead of crashing
+  mid-render. As a complementary defense-in-depth measure (this issue's
+  proposed option 2), added `warn_unknown_pr_disposition_keys`, which emits a
+  non-fatal `WARN` to stderr for any top-level PR-disposition input key not in
+  a maintained allowlist, so a future unconsumed field degrades visibly
+  instead of repeating this exact silent-drop defect. A non-object
+  `.why_safe_to_merge` value (including `false`) is rejected as invalid
+  evidence rather than silently rendered as absent.
 
 ## [0.41.0] - 2026-08-02
 

@@ -10,6 +10,17 @@ PR_MARKER="<!-- run-epic:pr-disposition -->"
 EPIC_MARKER="<!-- run-epic:epic-ledger -->"
 REVIEWER_ACCESS_BYPASS_MARKER="<!-- reviewer-access-bypass -->"
 
+# Top-level keys render_pr_disposition() actually consumes. Kept in sync
+# manually with that function's jq programs — see warn_unknown_pr_disposition_keys()
+# below (issue #1436: render_pr_disposition is jq-based, so an unrecognized
+# top-level key like why_safe_to_merge used to be silently dropped from the
+# rendered comment instead of producing any warning).
+PR_DISPOSITION_KNOWN_KEYS='[
+  "scope_source", "item", "pr", "reviewer", "risk", "merge_authority",
+  "final_decision", "advisories", "invocation_policy", "checkpoint_policy",
+  "checkpointPolicy", "verification", "protocol_deviations", "why_safe_to_merge"
+]'
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -122,14 +133,14 @@ render_pr_disposition() {
   #
   # The same -e-ignored context also means a failing jq call *inside* the
   # `{ ... } | redact_text` body block below (e.g. a wrong-typed
-  # .invocation_policy, .checkpoint_policy, .verification, or
-  # .protocol_deviations) would not abort execution either — worse, because
+  # .invocation_policy, .checkpoint_policy, .verification, .why_safe_to_merge,
+  # or .protocol_deviations) would not abort execution either — worse, because
   # `{ ... }` is the first stage of a pipeline, bash runs it in its own
   # subshell (pipelines run every non-last stage in a subshell unless
   # `shopt -s lastpipe` is active, which this script does not set), so a
   # shared flag variable set inside that block cannot be read after the
   # pipe: it would still show its initial value once the pipe returns,
-  # silently masking the failure a second way. Each of those four optional
+  # silently masking the failure a second way. Each of those five optional
   # sections below therefore calls `error_exit` immediately (via
   # `|| error_exit ...`) the moment its jq capture fails, instead of
   # deferring to a flag check — `exit` is not subject to -e semantics at
@@ -181,6 +192,24 @@ render_pr_disposition() {
     '
     printf '\n### Risk Reasons\n\n'
     printf '%s\n' "$json" | jq -r '(.risk.reasons // [])[]? | "- " + (.|tostring)'
+    printf '\n### Why Safe to Merge\n\n'
+    if [ "$(printf '%s\n' "$json" | jq 'if .why_safe_to_merge == null then 0 else 1 end')" -eq 0 ]; then
+      printf 'Not recorded.\n'
+    else
+      rendered="$(printf '%s\n' "$json" | jq -r '
+        if (.why_safe_to_merge | type) != "object" then
+          error("why_safe_to_merge must be an object")
+        else
+          .why_safe_to_merge as $w |
+          "- Scope: " + (($w.scope // "") | tostring),
+          "- Tests: " + (($w.tests // "") | tostring),
+          "- Reviewer outcome: " + (($w.reviewer_outcome // "") | tostring),
+          "- CI outcome: " + (($w.ci_outcome // "") | tostring),
+          "- Rollback or cleanup risk: " + (($w.rollback_or_cleanup_risk // "") | tostring)
+        end
+      ')" || error_exit "failed to render why-safe-to-merge detail (jq error above)"
+      printf '%s\n' "$rendered"
+    fi
     printf '\n### Invocation Policy\n\n'
     if [ "$(printf '%s\n' "$json" | jq 'if (.invocation_policy // null) == null then 0 else 1 end')" -eq 0 ]; then
       printf 'Not recorded.\n'
@@ -346,6 +375,25 @@ warn_per_finding_advisories() {
       printf 'WARN: %d advisory entry/entries contain generic bulk-acceptance rationale; per-finding rationale is required by protocol\n' \
         "$bulk_rationale" >&2
     fi
+  fi
+}
+
+# Complement to the "Why Safe to Merge" section fix (issue #1436): render_pr_disposition()
+# is jq-based, so passing an unrecognized top-level key (a typo, a renamed
+# field, or evidence a caller believed would be rendered) is silently dropped
+# from the audit comment rather than reported. This warns — non-fatally, so a
+# forward-compatible caller adding a new top-level field is not blocked — the
+# same way warn_per_finding_advisories() warns on protocol-shape issues that
+# don't rise to a hard error.
+warn_unknown_pr_disposition_keys() {
+  local json="$1"
+  local unknown
+  unknown="$(printf '%s\n' "$json" | jq -r --argjson known "$PR_DISPOSITION_KNOWN_KEYS" '
+    (keys - $known) | join(", ")
+  ' 2>/dev/null)" || error_exit "failed to check for unknown PR disposition keys (jq parse error)"
+  if [ -n "$unknown" ]; then
+    printf 'WARN: unrecognized top-level PR disposition field(s) will not appear in the rendered audit comment: %s\n' \
+      "$unknown" >&2
   fi
 }
 
@@ -584,6 +632,7 @@ case "$command" in
   render-pr-disposition)
     validate_advisories "$input_json"
     warn_per_finding_advisories "$input_json"
+    warn_unknown_pr_disposition_keys "$input_json"
     render_pr_disposition "$input_json"
     ;;
   apply-pr-disposition)
@@ -592,6 +641,7 @@ case "$command" in
     fi
     validate_advisories "$input_json"
     warn_per_finding_advisories "$input_json"
+    warn_unknown_pr_disposition_keys "$input_json"
     body="$(render_pr_disposition "$input_json")" || error_exit "failed to render PR disposition (see error above)"
     apply_comment "$pr_number" "$PR_MARKER" "$body"
     ;;

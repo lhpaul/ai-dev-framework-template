@@ -151,6 +151,13 @@ cat > "$pr_fixture" <<'JSON'
   "risk": {"level": "medium", "reasons": ["workflow script change"]},
   "merge_authority": "--max-risk medium delegated by user",
   "final_decision": "merge_approved",
+  "why_safe_to_merge": {
+    "scope": "audit trail rendering only, no schema migration",
+    "tests": "unit tests in test-run-epic-audit-trail.sh, all green",
+    "reviewer_outcome": "clean, 0 blocking",
+    "ci_outcome": "green on abc123",
+    "rollback_or_cleanup_risk": "low - additive rendering change only"
+  },
   "invocation_policy": {
     "original_command": "$run-epic issues 920 /tmp/fake-placeholder/local",
     "copy_paste_command": "$run-epic --items 920 --delegate-review --may-merge --may-start-backlog true --max-risk medium --base develop-delegated-epic-orchestration",
@@ -222,8 +229,7 @@ cat > "$pr_fixture" <<'JSON'
         "satisfied_by": "human-reviewer"
       }
     ]
-  },
-  "notes": "token ghp_FAKE_PLACEHOLDER /tmp/fake-placeholder/local"
+  }
 }
 JSON
 
@@ -289,6 +295,31 @@ jq '.verification = "a-string"' "$pr_fixture" > "$wrong_typed_verification_fixtu
 # CodeRabbit-flagged sections did.
 wrong_typed_protocol_deviations_fixture="$TMP_ROOT/wrong-typed-protocol-deviations.json"
 jq '.protocol_deviations = "a-string"' "$pr_fixture" > "$wrong_typed_protocol_deviations_fixture"
+# Issue #1436: .why_safe_to_merge is required by run-epic-risk-classifier.sh's
+# why_safe_complete() for medium-risk PRs but, before this fix, was never
+# rendered by render_pr_disposition() — a jq-based renderer silently drops
+# unconsumed top-level keys instead of warning. missing_why_safe_to_merge_fixture
+# and wrong_typed_why_safe_to_merge_fixture exercise both failure directions of
+# the fix: the "Not recorded." fallback when absent, and the same
+# error_exit-on-jq-failure guard shape used by the other optional sections
+# above when the value is present but the wrong JSON type.
+missing_why_safe_to_merge_fixture="$TMP_ROOT/missing-why-safe-to-merge.json"
+jq 'del(.why_safe_to_merge)' "$pr_fixture" > "$missing_why_safe_to_merge_fixture"
+wrong_typed_why_safe_to_merge_fixture="$TMP_ROOT/wrong-typed-why-safe-to-merge.json"
+jq '.why_safe_to_merge = "a-string"' "$pr_fixture" > "$wrong_typed_why_safe_to_merge_fixture"
+# CodeRabbit finding on this PR: jq's `//` operator treats `false` as falsy,
+# so `.why_safe_to_merge // null` previously evaluated a boolean `false` value
+# the same as an absent field — silently falling back to "Not recorded."
+# instead of rejecting the wrong type, letting apply mode write an audit
+# comment for invalid evidence. boolean_why_safe_to_merge_fixture exercises
+# that specific falsy-boolean edge case.
+boolean_why_safe_to_merge_fixture="$TMP_ROOT/boolean-why-safe-to-merge.json"
+jq '.why_safe_to_merge = false' "$pr_fixture" > "$boolean_why_safe_to_merge_fixture"
+# Same issue's complementary ask: a strict-unknown-keys warning so a future
+# unconsumed top-level key degrades loudly (a warning, not silent data loss)
+# instead of repeating this exact defect.
+unknown_key_fixture="$TMP_ROOT/unknown-key.json"
+jq '.mystery_field = "surprise"' "$pr_fixture" > "$unknown_key_fixture"
 
 bypass_fixture="$TMP_ROOT/reviewer-access-bypass.json"
 cat > "$bypass_fixture" <<'JSON'
@@ -365,6 +396,18 @@ run_test "renders_pr_marker" "yes" "$(grep -q '<!-- run-epic:pr-disposition -->'
 run_test "renders_reviewed_sha" "yes" "$(grep -q 'abc123' <<< "$pr_output" && echo yes || echo no)"
 run_test "renders_advisory_decision" "yes" "$(grep -q 'accepted' <<< "$pr_output" && echo yes || echo no)"
 run_test "renders_protocol_deviation" "yes" "$(grep -q 'documented<br>rationale' <<< "$pr_output" && echo yes || echo no)"
+# Issue #1436: assert on the actual rendered content of every why_safe_to_merge
+# field, not just section presence — a header with no field content would
+# still be silent data loss for the evidence a medium-risk merge relies on.
+run_test "renders_why_safe_to_merge_section" "yes" "$(
+  grep -q '### Why Safe to Merge' <<< "$pr_output" &&
+    grep -Fq -- '- Scope: audit trail rendering only, no schema migration' <<< "$pr_output" &&
+    grep -Fq -- '- Tests: unit tests in test-run-epic-audit-trail.sh, all green' <<< "$pr_output" &&
+    grep -Fq -- '- Reviewer outcome: clean, 0 blocking' <<< "$pr_output" &&
+    grep -Fq -- '- CI outcome: green on abc123' <<< "$pr_output" &&
+    grep -Fq -- '- Rollback or cleanup risk: low - additive rendering change only' <<< "$pr_output" &&
+    echo yes || echo no
+)"
 run_test "renders_invocation_policy" "yes" "$(grep -q '### Invocation Policy' <<< "$pr_output" && grep -q 'accepted recommended policy' <<< "$pr_output" && echo yes || echo no)"
 run_test "renders_policy_table" "yes" "$(grep -q '| mayStartBacklog | true | true | true |' <<< "$pr_output" && grep -q '| maxRisk | medium | medium | medium |' <<< "$pr_output" && echo yes || echo no)"
 run_test "renders_checkpoint_policy" "yes" "$(grep -q '### Checkpoint Policy' <<< "$pr_output" && grep -q 'approve data model' <<< "$pr_output" && echo yes || echo no)"
@@ -383,6 +426,18 @@ run_test "redacts_sensitive_values" "yes" "$(! grep -Eq 'ghp_FAKE_PLACEHOLDER|Au
 
 legacy_policy_output="$("$HELPER" render-pr-disposition --input "$legacy_policy_fixture")"
 run_test "legacy_pr_disposition_policy_optional" "yes" "$(grep -q 'Not recorded' <<< "$legacy_policy_output" && echo yes || echo no)"
+
+missing_why_output="$("$HELPER" render-pr-disposition --input "$missing_why_safe_to_merge_fixture")"
+run_test "why_safe_to_merge_optional_when_absent" "yes" "$(
+  awk '/### Why Safe to Merge/,/### Invocation Policy/' <<< "$missing_why_output" | grep -q 'Not recorded.' && echo yes || echo no
+)"
+
+unknown_key_stderr="$("$HELPER" render-pr-disposition --input "$unknown_key_fixture" 2>&1 >/dev/null)"
+run_test "warns_on_unrecognized_top_level_key" "yes" "$(
+  grep -q 'unrecognized top-level PR disposition field(s)' <<< "$unknown_key_stderr" &&
+    grep -q 'mystery_field' <<< "$unknown_key_stderr" &&
+    echo yes || echo no
+)"
 
 ledger_output="$("$HELPER" render-epic-ledger --input "$ledger_fixture")"
 run_test "renders_ledger_marker" "yes" "$(grep -q '<!-- run-epic:epic-ledger -->' <<< "$ledger_output" && echo yes || echo no)"
@@ -405,6 +460,19 @@ run_test "no_duplicate_pr_comments" "1" "$(grep -c 'POST repos/lhpaul/ai-dev-fra
 run_fails_contains "comment_list_failure_errors" "failed to read comments" env MOCK_COMMENT_MODE=list-fail "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10
 run_fails_contains "comment_post_failure_errors" "post failed" env MOCK_COMMENT_MODE=post-fail "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10
 run_fails_contains "comment_patch_failure_errors" "patch failed" env MOCK_COMMENT_MODE=patch-fail "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10
+
+# CodeRabbit finding on this PR: the unknown-key warning was only exercised
+# via render-pr-disposition above. Confirm the apply-pr-disposition path
+# warns identically (non-fatal) and still writes the comment — the contract
+# is "warn, don't block", so a caller must not lose the audit write over an
+# unrecognized field.
+unknown_key_apply_output="$("$HELPER" apply-pr-disposition --input "$unknown_key_fixture" --pr 10 2>&1)"
+run_test "apply_pr_disposition_warns_on_unknown_key_and_still_writes_comment" "yes" "$(
+  grep -q 'unrecognized top-level PR disposition field(s)' <<< "$unknown_key_apply_output" &&
+    grep -q 'mystery_field' <<< "$unknown_key_apply_output" &&
+    grep -q 'CREATED_COMMENT=1' <<< "$unknown_key_apply_output" &&
+    echo yes || echo no
+)"
 
 ledger_create_output="$("$HELPER" apply-epic-ledger --input "$ledger_fixture" --epic 900)"
 run_test "creates_epic_ledger_when_missing" "CREATED_COMMENT=1" "$ledger_create_output"
@@ -615,6 +683,48 @@ run_test "apply_pr_disposition_wrong_typed_advisories_writes_no_comment" "$calls
 run_fails_contains "render_pr_disposition_rejects_wrong_typed_advisories" \
   "failed to validate advisory entries" \
   "$HELPER" render-pr-disposition --input "$wrong_typed_advisories_fixture"
+
+echo ""
+echo "=== Planted-violation regression: why_safe_to_merge must render and must not silently degrade (issue #1436) ==="
+# Before this fix, render_pr_disposition() never referenced .why_safe_to_merge
+# anywhere in its jq programs, so the medium-risk merge evidence
+# run-epic-risk-classifier.sh's why_safe_complete() requires was silently
+# dropped from the durable audit comment with no error or warning. The
+# rendering assertion above (renders_why_safe_to_merge_section) proves the
+# positive direction with a complete block. This section proves the negative
+# direction: a wrong-typed .why_safe_to_merge value (present, not
+# null/absent) is caught by the same error_exit-on-jq-failure guard shape
+# used for invocation_policy/checkpoint_policy/verification/protocol_deviations
+# above, rather than crashing mid-render and silently posting a partial
+# comment.
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_wrong_typed_why_safe_to_merge" \
+  "failed to render why-safe-to-merge detail" \
+  "$HELPER" apply-pr-disposition --input "$wrong_typed_why_safe_to_merge_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_wrong_typed_why_safe_to_merge_writes_no_comment" "$calls_before" "$calls_after"
+
+run_fails_contains "render_pr_disposition_rejects_wrong_typed_why_safe_to_merge" \
+  "failed to render why-safe-to-merge detail" \
+  "$HELPER" render-pr-disposition --input "$wrong_typed_why_safe_to_merge_fixture"
+
+# CodeRabbit finding on this PR: `false // null` evaluates to `null` in jq, so
+# a boolean `false` value for .why_safe_to_merge was previously treated as
+# absent (falling back to "Not recorded.") instead of being rejected as the
+# wrong type — letting apply mode write an audit comment for invalid
+# evidence. The fix replaced the `//`-based presence check with an explicit
+# `== null` check plus an explicit `type != "object"` rejection.
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_boolean_why_safe_to_merge" \
+  "failed to render why-safe-to-merge detail" \
+  "$HELPER" apply-pr-disposition --input "$boolean_why_safe_to_merge_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_boolean_why_safe_to_merge_writes_no_comment" "$calls_before" "$calls_after"
+
+run_fails_contains "render_pr_disposition_rejects_boolean_why_safe_to_merge" \
+  "failed to render why-safe-to-merge detail" \
+  "$HELPER" render-pr-disposition --input "$boolean_why_safe_to_merge_fixture"
 
 echo ""
 echo "=== Summary ==="
