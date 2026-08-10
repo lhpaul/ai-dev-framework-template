@@ -1707,7 +1707,10 @@ If one or more automated code review platforms are configured (see [`integration
 
 **Standalone use:** This step (and Step 8) can be run for a single PR without full orchestration — see [`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md) and the `/run-reviewer-loop` command (Cursor) or `automated-reviewer-loop` agent (Claude Code) or `workflow-reviewer-loop` skill (Codex).
 
-**Important:** Run Step 7 **to completion** and use its result before running Step 8. Do not run Step 7 in the background while proceeding to Step 8. The review loop can take several minutes (poll interval × wait for bot). Only when the script exits with `clean` or `skipped` may you continue to Step 8.
+**Important — run in the foreground, to completion, in the same turn:** This rule has two distinct parts, and both failures are prohibited, not just one:
+
+1. **Do not race ahead.** Do not run Step 7 in the background while proceeding to Step 8 without its result.
+2. **Do not background-and-yield.** Do not start `pr-review-loop.sh` in the background and then **end your turn** to wait for it. A backgrounded process's completion notification is delivered to whatever dispatched *you* (the parent orchestrator, or a human) — never back to you. If you end your turn while the loop is still running in the background, you park permanently: not blocked, not escalated, not dead, just structurally unable to ever observe your own process finishing. A parked runner is indistinguishable from a terminated one from the outside, which means it will not be recovered automatically. Run Step 7 in the foreground, or if you must background it, keep polling it yourself **in the same turn** until it returns. The review loop can take several minutes (poll interval × wait for bot); that is expected — stay with it. Only when the script exits with `clean` or `skipped`, observed by you in-turn, may you continue to Step 8.
 
 The helper script evaluates configured platforms sequentially. For each platform it checks for **existing** blocking findings from the bot (e.g. from a review that already ran on PR open) before posting a new trigger. If it finds any, it exits with `needs_fixes` without moving on to later platforms — so the fixer addresses them first; after a push, the next run starts again from the first configured platform. Supported platforms include `greptile`, `devin`, `coderabbit`, and `codex-github` (Codex GitHub App — async bot reviewer handled deterministically by `pr-review-loop.sh`).
 
@@ -2153,6 +2156,8 @@ the live tracker verification described in Step 10 before reporting the item
 terminal.
 
 **Only after Step 7 (and Step 7b for implementation PRs) has completed**, wait for required checks to settle.
+
+**Same foreground rule as Step 7 applies here.** Do not start `pr-ci-loop.sh` in the background and end your turn to wait for it — the completion notification is delivered to your dispatcher, not to you, and ending your turn while it runs parks you permanently, indistinguishable from a dead runner. Run it in the foreground, or poll it yourself in the same turn until it returns a terminal result.
 
 Prefer the helper script:
 

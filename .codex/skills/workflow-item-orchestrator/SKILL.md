@@ -72,3 +72,8 @@ Recommended model tier: `balanced`
     and `--require-review-threads true` (helper defaults are false). A
     `discrepancy` or `unavailable_required` result is non-terminal; return to the
     matching Protocol 91 gate instead of reporting success.
+21. **Foreground loop execution — never background-and-yield**: Protocol 91
+    Step 7 and Step 8 define the mandatory foreground-execution rule for
+    `pr-review-loop.sh` and `pr-ci-loop.sh` (run each to completion in-turn;
+    never background one and end your turn to wait for it). That rule applies
+    to every dispatch this skill makes exactly as written there.
