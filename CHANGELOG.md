@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`REVIEW.md` requires planted-violation proofs and an E2E fixture contract** (#1443):
+  two quality disciplines that proved decisive in downstream framework-hardening
+  runs — new checks must prove they catch a real planted violation, and feature
+  PRs must extend the E2E fixture with their edge cases — lived only in prompts
+  and memory, not in the review contract. `REVIEW.md` now states both as
+  `Verification Discipline` core rules and wires them into the `Code Review
+  Checklist` → Pass 2 as enforceable "Additional checks" blocks (planted-violation
+  proof for any new/modified check, guard, lint rule, or CI job; fixture
+  extension gated on a repository actually having a committed, non-placeholder
+  E2E suite). `docs/best-practices/3-testing.md` gets the mirrored
+  implementer-facing "Planted-Violation Proofs" and "E2E Fixture Contract"
+  sections, following the same reviewer/implementer-mirror pattern already used
+  for Filter-Schema Canary Tests. Documentation-only change; see the PR
+  description for the recursive proof this item's own rule was applied to.
+
 ### Fixed
 
 - **`retro-metrics.md` excluded from sync overwrites, with an approval-based
