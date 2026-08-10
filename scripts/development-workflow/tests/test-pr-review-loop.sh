@@ -4146,23 +4146,36 @@ export MOCK_GH_OUTPUT='[{"context":"ci/build","state":"success","description":"r
 actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
 run_test "coderabbit_success_status_count_non_coderabbit_context_ignored" "0" "$actual"
 
-# Argument validation: empty repo or head_sha must not call `gh api` (no
-# MOCK_GH_OUTPUT set — a call would fail loudly) and must safely return "0"
+# Argument validation: empty repo or head_sha must short-circuit before the
+# `gh api` call (asserted via MOCK_GH_CALL_LOG — the mock's default fallback
+# returns "[]"/exit 0 for ANY input, so checking only the return value/exit
+# code would pass even without the guard; the call-log assertion is what
+# actually proves the guard prevents the API call) and must safely return "0"
 # rather than propagating a nonzero exit status, since both call sites assign
 # this function's output via `var="$(coderabbit_success_status_count ...)"`
-# under `set -e euo pipefail`, where a nonzero return would abort the whole
+# under `set -euo pipefail`, where a nonzero return would abort the whole
 # reviewer-loop script instead of falling through to the normal "no success
 # status found" path.
 unset MOCK_GH_OUTPUT
+_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log"
 actual="$(coderabbit_success_status_count "" "abc123")"
 actual_exit=$?
 run_test "coderabbit_success_status_count_empty_repo_returns_zero" "0" "$actual"
 run_test "coderabbit_success_status_count_empty_repo_exit_zero" "0" "$actual_exit"
+run_test "coderabbit_success_status_count_empty_repo_no_api_call" "" "$(cat "$_call_log")"
+rm -f "$_call_log"
+unset MOCK_GH_CALL_LOG
 
+_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log"
 actual="$(coderabbit_success_status_count "owner/repo" "")"
 actual_exit=$?
 run_test "coderabbit_success_status_count_empty_head_sha_returns_zero" "0" "$actual"
 run_test "coderabbit_success_status_count_empty_head_sha_exit_zero" "0" "$actual_exit"
+run_test "coderabbit_success_status_count_empty_head_sha_no_api_call" "" "$(cat "$_call_log")"
+rm -f "$_call_log"
+unset MOCK_GH_CALL_LOG
 
 # ---------------------------------------------------------------------------
 # Summary
