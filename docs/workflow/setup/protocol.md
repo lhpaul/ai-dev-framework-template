@@ -378,6 +378,7 @@ decline.
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 today="$(date +%Y-%m-%d)"
 cp docs/workflow/retro-metrics.md "docs/workflow/retro-metrics.inherited-${today}.md"
 # Reset: keep the preamble and table header/separator rows, drop all data rows below them.
