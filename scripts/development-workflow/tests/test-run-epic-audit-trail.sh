@@ -464,9 +464,16 @@ echo "=== Planted-violation regression: apply-* required-field guard must not be
 # command-substituted context (`body="$(render_pr_disposition ...)"`), which
 # `set -e` does not abort. The guard's own [ -n "$missing" ] check then read
 # an empty string (jq produced no stdout) and passed vacuously, so apply-*
-# posted an incomplete audit comment and exited 0. These tests plant that
-# exact violation against all three apply-* subcommands and assert each now
-# fails loudly with no partial gh write, while a complete input still
+# posted an incomplete audit comment and exited 0. render_pr_disposition() and
+# render_reviewer_access_bypass() had this defect and were fixed with
+# try/catch + explicit jq-exit-status capture (see the comments in
+# run-epic-audit-trail.sh). render_epic_ledger() uses a different guard shape
+# (`jq -e ... ; if ! ...` — the jq exit status is already control-flow-tested,
+# so a crash correctly triggers `error_exit` even before this fix); it was
+# audited and left unchanged, and its wrong_typed_epic case below is a
+# confirmatory coverage test, not a regression case for this PR. These tests
+# plant the violation against all three apply-* subcommands and assert each
+# now fails loudly with no partial gh write, while a complete input still
 # succeeds (already proven above by the creates_*/updates_* tests).
 
 calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
