@@ -329,12 +329,85 @@ Generate all files using the information collected. Follow the placeholder struc
 
 ---
 
+## Step 10.5: Reset Inherited Retrospective Metrics Logs
+
+The template repository's own `docs/workflow/retro-metrics.md` and
+`docs/workflow/retro-metrics-platforms.md` describe the **template
+repository's own** batch/retrospective history. When a project is bootstrapped
+from the template (cloned, or created via "Use this template"), these files
+are copied verbatim along with everything else, so a freshly bootstrapped
+project may already contain rows that describe someone else's PR history, not
+this project's. Left in place, `06b-meta-retrospective-protocol.md` would
+trend that inherited data as if it were this project's own, and the project's
+first genuine retrospective row would be silently appended after it with
+nothing distinguishing the two (see issue reference: retro-metrics.md ships to
+downstream projects with another project's history).
+
+**Check for inherited data** (a freshly-initialized file has 0 rows):
+
+```bash
+for f in docs/workflow/retro-metrics.md docs/workflow/retro-metrics-platforms.md; do
+  if [ -f "$f" ]; then
+    count=$(awk '/^\| *-+/{found=1; next} found && /^\|/' "$f" | wc -l | tr -d ' ')
+    echo "$f: $count existing data row(s)"
+  fi
+done
+```
+
+**If both files report 0 rows**: nothing to do — skip the rest of this step.
+
+**If either file reports 1 or more rows**: tell the human, for example:
+
+> "`docs/workflow/retro-metrics.md` already contains N row(s) describing PR/batch
+> history. Since this is a fresh project, these almost certainly describe the
+> template repository's own history, not yours — carrying them forward would
+> mislead the meta-retrospective protocol's trend analysis. I recommend
+> archiving them to `docs/workflow/retro-metrics.inherited-<date>.md` (nothing
+> is deleted) and resetting the tracked file to header-only so your own
+> retrospectives start a clean, accurate log. Proceed? (recommended: yes)"
+
+Ask the same question for `retro-metrics-platforms.md` if it also reports rows.
+**Do not archive or reset either file without an explicit "yes" from the human
+for that specific file** — this is a project-owned log, and a human who
+deliberately wants to keep the inherited rows (for example, a fork of an
+established downstream project rather than a fresh bootstrap) must be able to
+decline.
+
+**On explicit approval**, for each approved file:
+
+```bash
+today="$(date +%Y-%m-%d)"
+cp docs/workflow/retro-metrics.md "docs/workflow/retro-metrics.inherited-${today}.md"
+# Reset: keep the preamble and table header/separator rows, drop all data rows below them.
+awk '
+  /^\| *-+/ { print; found=1; next }
+  found && /^\|/ { next }
+  { print }
+' docs/workflow/retro-metrics.md > docs/workflow/retro-metrics.md.tmp \
+  && mv docs/workflow/retro-metrics.md.tmp docs/workflow/retro-metrics.md
+```
+
+Apply the equivalent commands for `docs/workflow/retro-metrics-platforms.md`
+when approved (same archive-then-reset pattern, substituting the file name).
+Verify each reset file still has its header/preamble intact and zero data
+rows before continuing, then include the archive file(s) and reset file(s) in
+the Step 11 commit below.
+
+**Self-protection**: this step only ever applies within a freshly bootstrapped
+downstream project's own working copy. It is never appropriate to run this
+step against the upstream template repository itself (`.ai-dev-workflow.yaml`
+→ `template.is_template: true`) — if that flag is `true`, skip this step
+entirely regardless of row counts, since the template's own rows are its
+genuine history, not inherited data.
+
+---
+
 ## Step 11: Git Execution
 
 After generating all files:
 
 1. Create branch: `git checkout -b setup/project-documentation` from the default branch
-2. Write all generated files
+2. Write all generated files (including any retro-metrics archive/reset files from Step 10.5)
 3. Commit: `docs: initialize project documentation via setup agent`
 4. Push and open PR targeting the default branch with:
    - Title: `docs: initialize project documentation`
