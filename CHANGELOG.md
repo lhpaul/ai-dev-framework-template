@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CodeRabbit success-status fallback ignored the description field** (#1437):
+  Both `coderabbit_status_success_fallback` call sites in `pr-review-loop.sh`
+  now reject a `success` CodeRabbit commit status whose description matches a
+  rate-limit or "review limit" not-actually-reviewed pattern (e.g. CodeRabbit's
+  confirmed "Review limit reached ... Next review available in: N minutes"
+  banner) via a new shared `coderabbit_success_status_count` helper, instead of
+  treating any `success` state as evidence a review completed. Closes the
+  false-clean risk left open by the existing thread-gate settle-wait
+  mitigation, which only audits existing threads and passes trivially when
+  CodeRabbit never actually reviewed the PR.
 - **Runners parking on backgrounded Step 7/8 loops** (#1434): Prohibit
   backgrounding `pr-review-loop.sh` / `pr-ci-loop.sh` and ending the turn to
   wait for them — the completion notification goes to the dispatcher, not the
