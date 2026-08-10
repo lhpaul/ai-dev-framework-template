@@ -331,6 +331,26 @@ Generate all files using the information collected. Follow the placeholder struc
 
 ## Step 10.5: Reset Inherited Retrospective Metrics Logs
 
+**Self-protection (check this first, before anything else in this step)**:
+this step only ever applies within a freshly bootstrapped downstream
+project's own working copy. It is never appropriate to run this step against
+the upstream template repository itself.
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+set -euo pipefail
+if grep -Eq '^\s*is_template:\s*true\s*$' .ai-dev-workflow.yaml 2>/dev/null; then
+  echo "template.is_template: true — skipping Step 10.5 entirely (this is the template repository itself)."
+  exit 0
+fi
+```
+
+If `template.is_template` is `true`, **stop here and skip the rest of this
+step** regardless of row counts — do not run the count, prompt, archive, or
+reset commands below. The template's own rows are its genuine history, not
+inherited data. Only continue past this point when the flag is absent or
+`false`.
+
 The template repository's own `docs/workflow/retro-metrics.md` and
 `docs/workflow/retro-metrics-platforms.md` describe the **template
 repository's own** batch/retrospective history. When a project is bootstrapped
@@ -343,15 +363,29 @@ first genuine retrospective row would be silently appended after it with
 nothing distinguishing the two (see issue reference: retro-metrics.md ships to
 downstream projects with another project's history).
 
-**Check for inherited data** (a freshly-initialized file has 0 rows):
+**Check for inherited data** (a freshly-initialized file has 0 rows). Fails
+closed — a missing file is reported explicitly rather than silently skipped,
+and a read/count failure aborts with a visible error instead of resolving to
+a false `0`. The counter stops at the first non-table line after the header
+separator, so it only ever counts actual data rows:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 for f in docs/workflow/retro-metrics.md docs/workflow/retro-metrics-platforms.md; do
-  if [ -f "$f" ]; then
-    count=$(awk '/^\| *-+/{found=1; next} found && /^\|/' "$f" | wc -l | tr -d ' ')
-    echo "$f: $count existing data row(s)"
+  if [ ! -f "$f" ]; then
+    echo "$f: not found (skipping)"
+    continue
   fi
+  if ! count=$(awk '
+    /^\| *-+/ { found=1; next }
+    found && /^\|/ { print; next }
+    found && !/^\|/ { exit }
+  ' "$f" | wc -l | tr -d ' '); then
+    echo "ERROR: failed to count data rows in $f" >&2
+    exit 1
+  fi
+  echo "$f: $count existing data row(s)"
 done
 ```
 
@@ -374,13 +408,21 @@ deliberately wants to keep the inherited rows (for example, a fork of an
 established downstream project rather than a fresh bootstrap) must be able to
 decline.
 
-**On explicit approval**, for each approved file:
+**On explicit approval**, for each approved file: archive first, refusing to
+overwrite an existing archive from an earlier attempt, and only reset once the
+archive is confirmed written — if archiving fails or an archive already
+exists, stop before touching the tracked file:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
 today="$(date +%Y-%m-%d)"
-cp docs/workflow/retro-metrics.md "docs/workflow/retro-metrics.inherited-${today}.md"
+archive="docs/workflow/retro-metrics.inherited-${today}.md"
+if [ -e "$archive" ]; then
+  echo "ERROR: archive destination already exists: $archive — refusing to overwrite. Resolve manually (e.g. rename the prior archive) before re-running this step." >&2
+  exit 1
+fi
+cp docs/workflow/retro-metrics.md "$archive"
 # Reset: keep the preamble and table header/separator rows, drop all data rows below them.
 awk '
   /^\| *-+/ { print; found=1; next }
@@ -396,13 +438,6 @@ Verify each reset file still has its header/preamble intact and zero data
 rows before continuing, then include the archive file(s) and reset file(s) in
 the Step 11 commit below.
 
-**Self-protection**: this step only ever applies within a freshly bootstrapped
-downstream project's own working copy. It is never appropriate to run this
-step against the upstream template repository itself (`.ai-dev-workflow.yaml`
-→ `template.is_template: true`) — if that flag is `true`, skip this step
-entirely regardless of row counts, since the template's own rows are its
-genuine history, not inherited data.
-
 ---
 
 ## Step 11: Git Execution
@@ -411,8 +446,11 @@ After generating all files:
 
 1. Create branch: `git checkout -b setup/project-documentation` from the default branch
 2. Write all generated files (including any retro-metrics archive/reset files from Step 10.5)
-3. Commit: `docs: initialize project documentation via setup agent`
-4. Push and open PR targeting the default branch with:
+3. Stage everything generated in this run, including the Step 10.5 archive and
+   reset files (`git commit` only picks up staged changes — untracked archive
+   files and the reset log would otherwise be silently omitted): `git add -A`
+4. Commit: `docs: initialize project documentation via setup agent`
+5. Push and open PR targeting the default branch with:
    - Title: `docs: initialize project documentation`
    - Body: summary of what was generated, list of TODOs for the team to review
 
