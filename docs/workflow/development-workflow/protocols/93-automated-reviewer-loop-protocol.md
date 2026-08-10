@@ -15,6 +15,8 @@ This protocol is **standalone**: it can be invoked for any open PR (or set of PR
 
 > **Release PR exemption**: The automated reviewer loop applies only to develop-targeting PRs (feature, fix, refactor, hotfix backport). PRs whose head branch matches `release/*` or `hotfix/*` are **exempt** — `pr-review-loop.sh` automatically exits with `RESULT=skipped` and `REASON=release_pr` for these PRs. All changes in a release PR were already reviewed when their individual feature/fix PRs merged into `develop`. For release PR readiness, follow [`05-prepare-release-protocol.md`](05-prepare-release-protocol.md) Step 7 instead.
 
+> **Run in the foreground — do not background-and-yield**: This protocol reuses Step 7 and Step 8 of `91-orchestrate-work-protocol.md` as-is, including their foreground-execution rule. Never start `pr-review-loop.sh` or `pr-ci-loop.sh` in the background and then end your turn to wait for it. The completion notification is delivered to whatever dispatched you, not to you — ending your turn while a loop runs in the background parks you permanently, indistinguishable from a dead runner, with no path back. Run each script in the foreground, or poll it yourself in the same turn until it returns a terminal result.
+
 ---
 
 ## Scope: which PR(s)
