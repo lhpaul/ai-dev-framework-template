@@ -105,6 +105,7 @@ render_pr_disposition() {
   local json="$1"
   local missing
   local missing_status=0
+  local rendered
 
   # NOTE: this function is called both directly (render-pr-disposition) and
   # via command substitution, e.g. `body="$(render_pr_disposition ...)"`
@@ -118,6 +119,24 @@ render_pr_disposition() {
   # status of the jq call itself is captured explicitly via `||` (not
   # relied upon via -e propagation) so any other jq failure still aborts
   # loudly in both call contexts. See issue #1430.
+  #
+  # The same -e-ignored context also means a failing jq call *inside* the
+  # `{ ... } | redact_text` body block below (e.g. a wrong-typed
+  # .invocation_policy, .checkpoint_policy, or .verification) would not
+  # abort execution either — worse, because `{ ... }` is the first stage of
+  # a pipeline, bash runs it in its own subshell (pipelines run every
+  # non-last stage in a subshell unless `shopt -s lastpipe` is active,
+  # which this script does not set), so a shared flag variable set inside
+  # that block cannot be read after the pipe: it would still show its
+  # initial value once the pipe returns, silently masking the failure a
+  # second way. Each of those three optional sections below therefore
+  # calls `error_exit` immediately (via `|| error_exit ...`) the moment
+  # its jq capture fails, instead of deferring to a flag check — `exit` is
+  # not subject to -e semantics at all, so it terminates the `{ ... }`
+  # subshell right there; combined with `pipefail`, that makes the whole
+  # `{ ... } | redact_text` pipeline (and therefore this function, and the
+  # apply-* command substitution around it) report the failure reliably in
+  # both call contexts. See CodeRabbit finding on PR #1459 (issue #1430).
   missing="$(printf '%s\n' "$json" | jq -r '
     [
       ["scope_source", (try .scope_source catch null)],
@@ -161,15 +180,16 @@ render_pr_disposition() {
     if [ "$(printf '%s\n' "$json" | jq 'if (.invocation_policy // null) == null then 0 else 1 end')" -eq 0 ]; then
       printf 'Not recorded.\n'
     else
-      printf '%s\n' "$json" | jq -r '
+      rendered="$(printf '%s\n' "$json" | jq -r '
         (.invocation_policy // {}) as $p |
         "- Original command: `" + (($p.original_command // $p.originalCommand // "") | tostring) + "`",
         "- Copy-paste equivalent: `" + (($p.copy_paste_command // $p.copyPasteCommand // "") | tostring) + "`",
         "- Confirmation: " + (($p.confirmation // $p.confirmationReason // "not recorded") | tostring)
-      '
+      ')" || error_exit "failed to render invocation policy detail (jq error above)"
+      printf '%s\n' "$rendered"
       printf '\n| Field | Recommended | Selected | Effective |\n'
       printf '| --- | --- | --- | --- |\n'
-      printf '%s\n' "$json" | jq -r "$table_cell_filter"'
+      rendered="$(printf '%s\n' "$json" | jq -r "$table_cell_filter"'
         (.invocation_policy // {}) as $p |
         ($p.recommended_policy // $p.recommendedPolicy // {}) as $r |
         ($p.selected_policy // $p.selectedPolicy // {}) as $s |
@@ -179,13 +199,14 @@ render_pr_disposition() {
         " | " + (($r[$field] // "") | cell) +
         " | " + (($s[$field] // "") | cell) +
         " | " + (($e[$field] // "") | cell) + " |"
-      '
+      ')" || error_exit "failed to render invocation policy table (jq error above)"
+      printf '%s\n' "$rendered"
     fi
     printf '\n### Checkpoint Policy\n\n'
     if [ "$(printf '%s\n' "$json" | jq 'if (.checkpoint_policy // .checkpointPolicy // null) == null then 0 else 1 end')" -eq 0 ]; then
       printf 'Not recorded.\n'
     else
-      printf '%s\n' "$json" | jq -r "$checkpoint_stage_filter"'
+      rendered="$(printf '%s\n' "$json" | jq -r "$checkpoint_stage_filter"'
         (.checkpoint_policy // .checkpointPolicy // {}) as $cp |
         (.item.number) as $itemNum |
         (.pr.branch // "") as $branch |
@@ -204,10 +225,11 @@ render_pr_disposition() {
                 end
               )] | length | tostring
         )
-      '
+      ')" || error_exit "failed to render checkpoint policy detail (jq error above)"
+      printf '%s\n' "$rendered"
       printf '\n| Item | Stage | Domain | State | Reason | Required action |\n'
       printf '| --- | --- | --- | --- | --- | --- |\n'
-      printf '%s\n' "$json" | jq -r "$table_cell_filter $checkpoint_stage_filter"'
+      rendered="$(printf '%s\n' "$json" | jq -r "$table_cell_filter $checkpoint_stage_filter"'
         (.checkpoint_policy // .checkpointPolicy // {}) as $cp |
         (.item.number) as $itemNum |
         (.pr.branch // "") as $branch |
@@ -228,7 +250,8 @@ render_pr_disposition() {
         " | " + ((.satisfaction_state // "pending") | cell) +
         " | " + ((.reason // "") | cell) +
         " | " + ((.required_human_action // "") | cell) + " |"
-      '
+      ')" || error_exit "failed to render checkpoint policy table (jq error above)"
+      printf '%s\n' "$rendered"
     fi
     printf '\n### Advisory Decisions\n\n'
     if [ "$(printf '%s\n' "$json" | jq '(.advisories // []) | length')" -eq 0 ]; then
@@ -245,7 +268,7 @@ render_pr_disposition() {
       '
     fi
     printf '\n### Verification Evidence\n\n'
-    printf '%s\n' "$json" | jq -r '
+    rendered="$(printf '%s\n' "$json" | jq -r '
       (.verification // {}) as $v |
       "- Labels: " + (($v.labels // []) | join(", ")),
       "- CI result: " + (($v.ci_result // "unknown") | tostring),
@@ -254,7 +277,8 @@ render_pr_disposition() {
       "- PR merge state: " + (($v.merge_state // "unknown") | tostring),
       "- Issue state: " + (($v.issue_state // "unknown") | tostring),
       "- Project status: " + (($v.project_status // "unknown") | tostring)
-    '
+    ')" || error_exit "failed to render verification evidence (jq error above)"
+    printf '%s\n' "$rendered"
     printf '\n### Protocol Deviations\n\n'
     if [ "$(printf '%s\n' "$json" | jq '(.protocol_deviations // []) | length')" -eq 0 ]; then
       printf 'None.\n'

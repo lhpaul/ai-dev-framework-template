@@ -266,6 +266,22 @@ wrong_typed_item_fixture="$TMP_ROOT/wrong-typed-item.json"
 jq '.item = "a-string"' "$pr_fixture" > "$wrong_typed_item_fixture"
 wrong_typed_ledger_epic_fixture="$TMP_ROOT/wrong-typed-ledger-epic.json"
 jq '.epic = "a-string"' "$ledger_fixture" > "$wrong_typed_ledger_epic_fixture"
+# CodeRabbit finding on PR #1459: a wrong-typed *optional* section
+# (invocation_policy / checkpoint_policy / verification — none of which
+# are part of the required-field guard above) crashed jq mid-render, deep
+# inside the `{ ... } | redact_text` body pipe. That failure could not
+# reach the caller via the top-level `missing` guard at all, and — because
+# the `{ ... }` block runs in its own subshell as a non-last pipeline
+# stage — a shared flag variable set inside it is invisible once the pipe
+# returns, so even a deferred-check fix would silently mask the failure a
+# second way. wrong_typed_invocation_policy_fixture is present (not null)
+# but the wrong JSON type, which is the reproduction shape.
+wrong_typed_invocation_policy_fixture="$TMP_ROOT/wrong-typed-invocation-policy.json"
+jq '.invocation_policy = "a-string"' "$pr_fixture" > "$wrong_typed_invocation_policy_fixture"
+wrong_typed_checkpoint_policy_fixture="$TMP_ROOT/wrong-typed-checkpoint-policy.json"
+jq '.checkpoint_policy = "a-string"' "$pr_fixture" > "$wrong_typed_checkpoint_policy_fixture"
+wrong_typed_verification_fixture="$TMP_ROOT/wrong-typed-verification.json"
+jq '.verification = "a-string"' "$pr_fixture" > "$wrong_typed_verification_fixture"
 
 bypass_fixture="$TMP_ROOT/reviewer-access-bypass.json"
 cat > "$bypass_fixture" <<'JSON'
@@ -505,6 +521,55 @@ run_fails_contains "render_pr_disposition_rejects_wrong_typed_item" \
 run_fails_contains "render_reviewer_access_bypass_rejects_wrong_typed_authorization" \
   "missing required reviewer access-bypass fields: authorization.authorized_by, authorization.authorized_at, authorization.authorization_text" \
   "$HELPER" render-reviewer-access-bypass --input "$wrong_typed_bypass_fixture"
+
+echo ""
+echo "=== Planted-violation regression: wrong-typed optional section must not silently degrade (CodeRabbit finding, #1430) ==="
+# A second, deeper layer of the same defect class (found by CodeRabbit
+# reviewing this PR): invocation_policy, checkpoint_policy, and
+# verification are *optional* fields, not covered by the required-field
+# `missing` guard above. A wrong-typed value for any of them (present, not
+# null/absent) crashed jq mid-render inside the `{ ... } | redact_text`
+# body pipe. In apply mode this was worse than the top-level guard bug:
+# execution continued past the crash to the end of the block (still inside
+# the -e-ignored substitution context), so the function returned exit 0
+# with a body that silently dropped just that one section, and
+# apply-pr-disposition posted it. Each of the five risky jq captures in
+# render_pr_disposition now calls error_exit immediately on failure rather
+# than deferring to a flag (a shared flag set inside `{ ... }` would not
+# survive the pipe: `{ ... } | redact_text` runs the `{ ... }` stage in its
+# own subshell as a non-last pipeline stage).
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_wrong_typed_invocation_policy" \
+  "failed to render invocation policy detail" \
+  "$HELPER" apply-pr-disposition --input "$wrong_typed_invocation_policy_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_wrong_typed_invocation_policy_writes_no_comment" "$calls_before" "$calls_after"
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_wrong_typed_checkpoint_policy" \
+  "failed to render checkpoint policy detail" \
+  "$HELPER" apply-pr-disposition --input "$wrong_typed_checkpoint_policy_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_wrong_typed_checkpoint_policy_writes_no_comment" "$calls_before" "$calls_after"
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_wrong_typed_verification" \
+  "failed to render verification evidence" \
+  "$HELPER" apply-pr-disposition --input "$wrong_typed_verification_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_wrong_typed_verification_writes_no_comment" "$calls_before" "$calls_after"
+
+# Same three cases via the direct render-* path.
+run_fails_contains "render_pr_disposition_rejects_wrong_typed_invocation_policy" \
+  "failed to render invocation policy detail" \
+  "$HELPER" render-pr-disposition --input "$wrong_typed_invocation_policy_fixture"
+run_fails_contains "render_pr_disposition_rejects_wrong_typed_checkpoint_policy" \
+  "failed to render checkpoint policy detail" \
+  "$HELPER" render-pr-disposition --input "$wrong_typed_checkpoint_policy_fixture"
+run_fails_contains "render_pr_disposition_rejects_wrong_typed_verification" \
+  "failed to render verification evidence" \
+  "$HELPER" render-pr-disposition --input "$wrong_typed_verification_fixture"
 
 echo ""
 echo "=== Summary ==="

@@ -65,7 +65,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `|| error_exit` as defense in depth. `render_epic_ledger`'s guard was
   audited and confirmed already safe in both call contexts (it uses a
   directly-tested `if ! jq -e ...; then error_exit; fi`, not the
-  assign-then-test pattern) and was left unchanged.
+  assign-then-test pattern) and was left unchanged. A deeper instance of the
+  same defect class (found by CodeRabbit on this PR) affected the *optional*
+  `invocation_policy`, `checkpoint_policy`, and `verification` sections of
+  `render_pr_disposition`, which are not covered by the required-field guard:
+  a wrong-typed value crashed jq mid-render inside the `{ ... } | redact_text`
+  body pipe, and because that block runs as a non-last pipeline stage — in
+  its own subshell — execution continued past the crash and the function
+  still returned exit 0 with a silently degraded section. Each of the five
+  risky jq captures in those sections now calls `error_exit` immediately on
+  failure (a deferred flag would not survive the subshell boundary).
 
 ## [0.41.0] - 2026-08-02
 
