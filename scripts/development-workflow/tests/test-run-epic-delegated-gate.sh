@@ -226,6 +226,14 @@ run_fails_contains "rejects_partial_pr_identity" \
   "evidence file's .pr object is missing required identity field(s): pr.baseRefName" \
   "$GATE" --input "$partial_pr_identity_fixture" --json
 
+# Whitespace-only identity strings are not a legitimate value -- trim_text()
+# must treat them the same as empty.
+whitespace_pr_identity_fixture="$(write_fixture whitespace-pr-identity \
+  '.pr.headRefName = "   " | .pr.baseRefName = "\t\n"')"
+run_fails_contains "rejects_whitespace_only_pr_identity" \
+  "evidence file's .pr object is missing required identity field(s): pr.headRefName, pr.baseRefName" \
+  "$GATE" --input "$whitespace_pr_identity_fixture" --json
+
 # Genuinely complete input (full .pr identity, as every fixture below
 # supplies) with a real blocker must still report it — see
 # "requires_human_review_label" -> blocked below, which proves the
