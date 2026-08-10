@@ -337,11 +337,14 @@ Use `SYNC_MANIFEST` and `SYNC_SELECTED_ENTRIES` to determine the file lists. If 
 
 **If `SYNC_MANIFEST` is loaded**: read selected `categories.always_sync` entries from `SYNC_SELECTED_ENTRIES` and enumerate those paths from the template. Each entry may specify a `path` (single file or directory prefix) and an optional `glob` pattern for recursive enumeration. Do not compare or apply entries from `SYNC_SKIPPED_ENTRIES`; list them in the summary under "Skipped by repository role".
 
+**Precedence over nested project-specific files**: when enumerating an always-sync directory glob (e.g. `docs/workflow/**/*`), exclude any path that also appears as an exact `path` in the selected `categories.project_specific` entries — do not compare or apply it as always-sync. Move it into the project-specific handling described below instead. This currently applies to `docs/workflow/retro-metrics.md` and `docs/workflow/retro-metrics-platforms.md`, which are project-owned append-only logs nested inside the otherwise template-owned `docs/workflow/` tree — never overwrite them with the template's own rows.
+
 **If `SYNC_MANIFEST=absent`** (fallback): use the embedded list below.
 
 ```
 REVIEW.md                         <- canonical review contract for spec, plan, and code review gates
-docs/workflow/                          <- full tree, all files recursively
+docs/workflow/                          <- full tree, all files recursively, EXCEPT retro-metrics.md
+                                            and retro-metrics-platforms.md (project-specific, see below)
 .claude/agents/                   <- all *.md files
 .claude/commands/                 <- all *.md files
 .claude/skills/                   <- all *.md files (including this skill itself)
@@ -357,7 +360,7 @@ docs/best-practices/2-version-control.md
 docs/best-practices/3-testing.md
 ```
 
-**Comparison method:** For each path in the always-sync list, enumerate files with `find` (or equivalent) and compare each path to the template using `cmp` or `diff -q`. Do not rely on ad-hoc agent inspection alone — a missed directory is a silent sync gap.
+**Comparison method:** For each path in the always-sync list, enumerate files with `find` (or equivalent) and compare each path to the template using `cmp` or `diff -q`, applying the precedence exclusion above. Do not rely on ad-hoc agent inspection alone — a missed directory is a silent sync gap.
 
 For each file in these paths:
 
@@ -422,9 +425,13 @@ docs/best-practices/stack/
 .gitignore
 CLAUDE.md
 GEMINI.md
+docs/workflow/retro-metrics.md              <- see "Append-only metrics logs" carve-out below
+docs/workflow/retro-metrics-platforms.md    <- see "Append-only metrics logs" carve-out below
 ```
 
 For each of these: if template and project differ, show what the template has that the project might want to add; classify as **Optional additive update** (user decides). Do not apply changes to these paths without explicit user approval.
+
+**Append-only metrics logs carve-out**: `docs/workflow/retro-metrics.md` and `docs/workflow/retro-metrics-platforms.md` are append-only history logs, not documentation the template ever meaningfully "improves." Do not diff them against the template or propose additive updates from the template's own rows — the template's rows describe the template repository's own batch history, not this project's, and merging them in would corrupt the log. Only ever mention these two files if the manifest's `docs/workflow/retro-metrics*` migration note (see Step 0.5 / migration notes) applies.
 
 Everything else not listed above (application code, project configs, etc.) is also never overwritten.
 

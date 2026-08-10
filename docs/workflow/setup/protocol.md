@@ -329,14 +329,134 @@ Generate all files using the information collected. Follow the placeholder struc
 
 ---
 
+## Step 10.5: Reset Inherited Retrospective Metrics Logs
+
+**Self-protection (check this first, before anything else in this step)**:
+this step only ever applies within a freshly bootstrapped downstream
+project's own working copy. It is never appropriate to run this step against
+the upstream template repository itself.
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+set -euo pipefail
+if grep -Eq '^\s*is_template:\s*true\s*$' .ai-dev-workflow.yaml 2>/dev/null; then
+  echo "template.is_template: true — skipping Step 10.5 entirely (this is the template repository itself)."
+  exit 0
+fi
+```
+
+If `template.is_template` is `true`, **stop here and skip the rest of this
+step** regardless of row counts — do not run the count, prompt, archive, or
+reset commands below. The template's own rows are its genuine history, not
+inherited data. Only continue past this point when the flag is absent or
+`false`.
+
+The template repository's own `docs/workflow/retro-metrics.md` and
+`docs/workflow/retro-metrics-platforms.md` describe the **template
+repository's own** batch/retrospective history. When a project is bootstrapped
+from the template (cloned, or created via "Use this template"), these files
+are copied verbatim along with everything else, so a freshly bootstrapped
+project may already contain rows that describe someone else's PR history, not
+this project's. Left in place, `06b-meta-retrospective-protocol.md` would
+trend that inherited data as if it were this project's own, and the project's
+first genuine retrospective row would be silently appended after it with
+nothing distinguishing the two (see issue reference: retro-metrics.md ships to
+downstream projects with another project's history).
+
+**Check for inherited data** (a freshly-initialized file has 0 rows). Fails
+closed — a missing file is reported explicitly rather than silently skipped.
+`retro-metrics-platforms.md` can accumulate more than one header/separator
+block over time (a new one is written whenever the configured platform set
+changes — see `append_compare_metrics_row` in `pr-review-loop.sh`), so the
+counter locates the **most recent** separator line and counts only the rows
+below it — the ones that describe this project's actual runs under the
+current schema:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+set -euo pipefail
+for f in docs/workflow/retro-metrics.md docs/workflow/retro-metrics-platforms.md; do
+  if [ ! -f "$f" ]; then
+    echo "$f: not found (skipping)"
+    continue
+  fi
+  last_sep_line="$(grep -nE '^\| *-+' "$f" | tail -1 | cut -d: -f1 || true)"
+  if [ -z "$last_sep_line" ]; then
+    echo "$f: no table header found yet (0 data rows)"
+    continue
+  fi
+  total_lines="$(wc -l < "$f" | tr -d ' ')"
+  echo "$f: $(( total_lines - last_sep_line )) existing data row(s)"
+done
+```
+
+**If both files report 0 rows**: nothing to do — skip the rest of this step.
+
+**If either file reports 1 or more rows**: tell the human, for example:
+
+> "`docs/workflow/retro-metrics.md` already contains N row(s) describing PR/batch
+> history. Since this is a fresh project, these almost certainly describe the
+> template repository's own history, not yours — carrying them forward would
+> mislead the meta-retrospective protocol's trend analysis. I recommend
+> archiving them to `docs/workflow/retro-metrics.inherited-<date>.md` (nothing
+> is deleted) and resetting the tracked file to header-only so your own
+> retrospectives start a clean, accurate log. Proceed? (recommended: yes)"
+
+Ask the same question for `retro-metrics-platforms.md` if it also reports rows.
+**Do not archive or reset either file without an explicit "yes" from the human
+for that specific file** — this is a project-owned log, and a human who
+deliberately wants to keep the inherited rows (for example, a fork of an
+established downstream project rather than a fresh bootstrap) must be able to
+decline.
+
+**On explicit approval**, for each approved file: archive first, refusing to
+overwrite an existing archive from an earlier attempt, and only reset once the
+archive is confirmed written — if archiving fails or an archive already
+exists, stop before touching the tracked file:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+set -euo pipefail
+today="$(date +%Y-%m-%d)"
+archive="docs/workflow/retro-metrics.inherited-${today}.md"
+if [ -e "$archive" ]; then
+  echo "ERROR: archive destination already exists: $archive — refusing to overwrite. Resolve manually (e.g. rename the prior archive) before re-running this step." >&2
+  exit 1
+fi
+cp docs/workflow/retro-metrics.md "$archive"
+# Reset: keep the preamble and the MOST RECENT header/separator block (the
+# current schema — do not assume there is only one; retro-metrics-platforms.md
+# in particular can have several when platform configuration changed over
+# time), and drop everything below that block. Keeping only the first block
+# would leave a stale schema and orphan a later, currently-active header.
+last_sep_line="$(grep -nE '^\| *-+' docs/workflow/retro-metrics.md | tail -1 | cut -d: -f1 || true)"
+if [ -z "$last_sep_line" ]; then
+  echo "ERROR: no table header separator found in docs/workflow/retro-metrics.md — refusing to reset an unexpected file format." >&2
+  exit 1
+fi
+sed -n "1,${last_sep_line}p" docs/workflow/retro-metrics.md > docs/workflow/retro-metrics.md.tmp \
+  && mv docs/workflow/retro-metrics.md.tmp docs/workflow/retro-metrics.md
+```
+
+Apply the equivalent commands for `docs/workflow/retro-metrics-platforms.md`
+when approved (same archive-then-reset pattern, substituting the file name).
+Verify each reset file still has its header/preamble intact and zero data
+rows before continuing, then include the archive file(s) and reset file(s) in
+the Step 11 commit below.
+
+---
+
 ## Step 11: Git Execution
 
 After generating all files:
 
 1. Create branch: `git checkout -b setup/project-documentation` from the default branch
-2. Write all generated files
-3. Commit: `docs: initialize project documentation via setup agent`
-4. Push and open PR targeting the default branch with:
+2. Write all generated files (including any retro-metrics archive/reset files from Step 10.5)
+3. Stage everything generated in this run, including the Step 10.5 archive and
+   reset files (`git commit` only picks up staged changes — untracked archive
+   files and the reset log would otherwise be silently omitted): `git add -A`
+4. Commit: `docs: initialize project documentation via setup agent`
+5. Push and open PR targeting the default branch with:
    - Title: `docs: initialize project documentation`
    - Body: summary of what was generated, list of TODOs for the team to review
 

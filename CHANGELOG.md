@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`retro-metrics.md` excluded from sync overwrites, with an approval-based
+  bootstrap migration for inherited rows** (#1438):
+  `docs/workflow/retro-metrics.md` and `docs/workflow/retro-metrics-platforms.md`
+  were caught by the `docs/workflow/` `always_sync` glob in
+  `sync-manifest.yaml`, so downstream projects (which still receive this
+  template repository's own batch/retrospective history verbatim on initial
+  bootstrap — a literal file copy, not something `/sync-template` controls)
+  risked having their own accumulated history overwritten by the template's
+  rows on a subsequent `/sync-template` run. `sync-manifest.yaml` now carves
+  both files out as explicit `project_specific` entries that take precedence
+  over the enclosing glob (mirrored into the three `sync-template`
+  skill/command copies), and `docs/workflow/setup/protocol.md` adds Step 10.5
+  to detect any inherited rows during project bootstrap and, only with
+  explicit human approval (the human may decline), archive and reset them —
+  skipped entirely in the template repository itself
+  (`template.is_template: true`). A migration note in `sync-manifest.yaml`
+  covers already-bootstrapped downstream projects on their next sync.
 - **Reduce CodeRabbit fallback latency in reviewer loop** (#1433):
   `pr-review-loop.sh`'s silent-non-trigger fallback previously waited a fixed
   600 s `CODERABBIT_NO_TRIGGER_TIMEOUT` default regardless of `--max-wait`,
