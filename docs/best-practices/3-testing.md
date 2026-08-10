@@ -97,7 +97,7 @@ When this repository has a committed, non-placeholder E2E/functional test suite 
 
 The fixture's initial state must be **deterministic and versioned**: rebuilding it from the same seed inputs produces a byte-identical result, and the fixture change ships in the same PR as the code change it supports (not a manual, undocumented data edit).
 
-**Not applicable** when no committed E2E suite exists yet (e.g., this template's placeholder `E2E regression (placeholder)` CI job, before a real suite replaces it). Once a real suite exists, record a not-applicable rationale explicitly rather than silently skipping fixture work.
+**Not applicable** when no committed E2E suite exists yet (e.g., this template's placeholder `E2E regression (placeholder)` CI job, before a real suite replaces it) — record the not-applicable rationale explicitly rather than silently skipping the check. Once a real suite exists, this requirement is active: extend the fixture in the same PR rather than silently skipping fixture work.
 
 See `REVIEW.md` → Code Review Checklist → Pass 2 → "PRs that add a feature (when a committed E2E suite exists)" for the reviewer-facing enforcement of this rule.
 
