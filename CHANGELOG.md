@@ -48,6 +48,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for batch merge metadata, reviewed-head pinning, delegated epic merge
   evidence, reviewer-loop blockers, reviewer bypass authorization, PR-bound
   cleanup, and workflow branch push-lock cleanup.
+- **`run-epic-audit-trail.sh` required-field guard inert in `apply-*` modes**
+  (#1430): `render_pr_disposition` and `render_reviewer_access_bypass` could
+  post an incomplete audit comment and exit 0 when a required field was
+  wrong-typed (e.g. `.item` a string instead of an object). Bash's `set -e`
+  does not abort a function whose commands run inside a context where -e is
+  already ignored — which a nested command substitution is — so the guard's
+  `jq` computation crashed silently, `$missing` read empty, and
+  `apply-pr-disposition` / `apply-reviewer-access-bypass` posted a blank or
+  partial record while reporting success. Every dotted field lookup in both
+  guards is now wrapped in `try ... catch null` so a wrong-typed value is
+  reported as missing (not a jq crash), the guard's own jq exit status is
+  captured explicitly via `||` instead of relying on `-e` propagation, and
+  all three `apply-*` call sites (`apply-pr-disposition`, `apply-epic-ledger`,
+  `apply-reviewer-access-bypass`) now propagate a render failure with
+  `|| error_exit` as defense in depth. `render_epic_ledger`'s guard was
+  audited and confirmed already safe in both call contexts (it uses a
+  directly-tested `if ! jq -e ...; then error_exit; fi`, not the
+  assign-then-test pattern) and was left unchanged.
 
 ## [0.41.0] - 2026-08-02
 
