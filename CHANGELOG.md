@@ -15,8 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runner, so doing so parks the runner permanently and indistinguishably from
   a dead one. Applied to Protocol 91 (Step 7 and Step 8), Protocol 93, the
   `automated-reviewer-loop` and `item-orchestrator` agents (Claude Code and
-  Cursor), and the matching `workflow-reviewer-loop` and
-  `workflow-item-orchestrator` Codex skills.
+  Cursor), the matching `workflow-reviewer-loop` and
+  `workflow-item-orchestrator` Codex skills, and the `/run-reviewer-loop`
+  command surfaces (Claude Code and Cursor).
 - **Post-merge QA scope discovery**: Prefer configured tracker post-merge items
   on `develop`, keep integration-branch QA semantics explicit, and allow
   provider-backed tracker IDs to seed the read-only scope helper.
