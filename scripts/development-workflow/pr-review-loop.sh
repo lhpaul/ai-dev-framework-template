@@ -3923,6 +3923,20 @@ coderabbit_thread_gate_clean() {
 # status is not counted — same dedup pattern used before this fix existed.
 coderabbit_success_status_count() {
   local repo="$1" head_sha="$2"
+  # Validate arguments before the API call: a missing repo or head_sha would
+  # otherwise build an invalid endpoint and fail inside the pipeline with an
+  # unstructured shell error. Print "0" and return 0 (rather than a nonzero
+  # exit) because both call sites assign this function's output directly via
+  # `var="$(coderabbit_success_status_count ...)"` under `set -e` — a nonzero
+  # return there aborts the entire reviewer-loop script immediately instead of
+  # letting the caller's normal "no success status found" path run. Treating
+  # invalid arguments as "no genuine success status found" is the same safe
+  # default the rest of this function already falls back to on API failure.
+  if [ -z "$repo" ] || [ -z "$head_sha" ]; then
+    echo "ERROR: coderabbit_success_status_count requires non-empty repo and head_sha arguments (got repo='${repo:-}' head_sha='${head_sha:-}')" >&2
+    printf '%s\n' 0
+    return 0
+  fi
   gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
     | jq -s '[.[].[] | select(
               (.context // "" | ascii_downcase | test("coderabbit"))

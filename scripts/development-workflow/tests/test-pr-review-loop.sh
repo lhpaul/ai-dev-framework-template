@@ -4104,6 +4104,19 @@ export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","descri
 actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
 run_test "coderabbit_success_status_count_rate_limit_hyphen_case_insensitive" "0" "$actual"
 
+# Each alternative in the "rate.?limit|review limit|next review available"
+# regex must independently reject on its own — tested in isolation so a future
+# accidental removal of one alternative is caught even if the other two still
+# pass. "review limit" alone (no "rate limit" or "next review available" text).
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","description":"Review limit exceeded for this repository","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_review_limit_phrase_alone_rejected" "0" "$actual"
+
+# "next review available" alone (no "rate limit" or "review limit" text).
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","description":"Please retry — next review available shortly","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_next_review_available_phrase_alone_rejected" "0" "$actual"
+
 # Non-success state is never counted regardless of description.
 export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"pending","description":"Reviewing...","updated_at":"2026-08-10T00:00:00Z"}]'
 actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
@@ -4133,7 +4146,23 @@ export MOCK_GH_OUTPUT='[{"context":"ci/build","state":"success","description":"r
 actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
 run_test "coderabbit_success_status_count_non_coderabbit_context_ignored" "0" "$actual"
 
+# Argument validation: empty repo or head_sha must not call `gh api` (no
+# MOCK_GH_OUTPUT set — a call would fail loudly) and must safely return "0"
+# rather than propagating a nonzero exit status, since both call sites assign
+# this function's output via `var="$(coderabbit_success_status_count ...)"`
+# under `set -e euo pipefail`, where a nonzero return would abort the whole
+# reviewer-loop script instead of falling through to the normal "no success
+# status found" path.
 unset MOCK_GH_OUTPUT
+actual="$(coderabbit_success_status_count "" "abc123")"
+actual_exit=$?
+run_test "coderabbit_success_status_count_empty_repo_returns_zero" "0" "$actual"
+run_test "coderabbit_success_status_count_empty_repo_exit_zero" "0" "$actual_exit"
+
+actual="$(coderabbit_success_status_count "owner/repo" "")"
+actual_exit=$?
+run_test "coderabbit_success_status_count_empty_head_sha_returns_zero" "0" "$actual"
+run_test "coderabbit_success_status_count_empty_head_sha_exit_zero" "0" "$actual_exit"
 
 # ---------------------------------------------------------------------------
 # Summary
