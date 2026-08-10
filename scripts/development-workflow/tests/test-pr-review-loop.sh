@@ -4070,6 +4070,114 @@ run_test "pr_agent_workflow_exact_review_command" "1" \
   "$(grep_count_or_zero "github.event.comment.body == '/review'" "$REPO_ROOT/.github/workflows/pr-agent.yml")"
 
 # ---------------------------------------------------------------------------
+# Area: coderabbit_success_status_count (issue #1437)
+#
+# Verifies the shared helper used by both coderabbit_status_success_fallback
+# call sites in run_coderabbit_review rejects a `success` commit status whose
+# description indicates the review was rate-limited / did not actually run,
+# while still counting a genuine success status as clean evidence. Uses the
+# same MOCK_GH_OUTPUT single-array pattern as Area 2 (check_unreplied_rest_comments):
+# --paginate | jq -s flattens via .[].[] so a single JSON array is sufficient.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area: coderabbit_success_status_count (issue #1437) ==="
+
+unset MOCK_GH_POST_EXIT MOCK_GH_POST_OUTPUT MOCK_GH_CALL_LOG MOCK_GH_EXIT
+
+# CONTROL: genuine success status with a normal description — must count as 1.
+# This is the "still reports clean for a genuine success description" direction.
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","description":"Review completed: 0 findings","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_genuine_success" "1" "$actual"
+
+# PLANTED VIOLATION: success status whose description is CodeRabbit's confirmed
+# rate-limit banner text — must NOT count (0), proving the false-clean hole from
+# issue #1437 is closed. Before this fix, checking .state alone would have
+# returned 1 here (false clean).
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","description":"Review limit reached. Next review available in: 43 minutes","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_rate_limited_description_rejected" "0" "$actual"
+
+# Rate-limit description with different casing and hyphen separator — regex is
+# the same test("rate.?limit"; "i") pattern already used elsewhere in this script.
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","description":"RATE-LIMIT: try again later","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_rate_limit_hyphen_case_insensitive" "0" "$actual"
+
+# Each alternative in the "rate.?limit|review limit|next review available"
+# regex must independently reject on its own — tested in isolation so a future
+# accidental removal of one alternative is caught even if the other two still
+# pass. "review limit" alone (no "rate limit" or "next review available" text).
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","description":"Review limit exceeded for this repository","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_review_limit_phrase_alone_rejected" "0" "$actual"
+
+# "next review available" alone (no "rate limit" or "review limit" text).
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","description":"Please retry — next review available shortly","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_next_review_available_phrase_alone_rejected" "0" "$actual"
+
+# Non-success state is never counted regardless of description.
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"pending","description":"Reviewing...","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_pending_not_counted" "0" "$actual"
+
+# Missing/null description on a genuine success status must still count (no
+# regression for the common case where CodeRabbit sets no description at all).
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_missing_description_still_counts" "1" "$actual"
+
+# Dedup by context: an older genuine success is superseded by a newer
+# rate-limited success on the same context — only the latest (rejected) entry
+# should be considered, so the count must be 0.
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","description":"Review completed: 0 findings","updated_at":"2026-08-10T00:00:00Z"},{"context":"coderabbit/review","state":"success","description":"Review limit reached. Next review available in: 10 minutes","updated_at":"2026-08-10T00:05:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_dedup_latest_rate_limited" "0" "$actual"
+
+# Dedup by context: an older rate-limited success is superseded by a newer
+# genuine success on the same context — the count must be 1.
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","description":"Review limit reached. Next review available in: 10 minutes","updated_at":"2026-08-10T00:00:00Z"},{"context":"coderabbit/review","state":"success","description":"Review completed: 0 findings","updated_at":"2026-08-10T00:05:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_dedup_latest_genuine" "1" "$actual"
+
+# Non-coderabbit context is ignored entirely.
+export MOCK_GH_OUTPUT='[{"context":"ci/build","state":"success","description":"rate limit exceeded","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_non_coderabbit_context_ignored" "0" "$actual"
+
+# Argument validation: empty repo or head_sha must short-circuit before the
+# `gh api` call (asserted via MOCK_GH_CALL_LOG — the mock's default fallback
+# returns "[]"/exit 0 for ANY input, so checking only the return value/exit
+# code would pass even without the guard; the call-log assertion is what
+# actually proves the guard prevents the API call) and must safely return "0"
+# rather than propagating a nonzero exit status, since both call sites assign
+# this function's output via `var="$(coderabbit_success_status_count ...)"`
+# under `set -euo pipefail`, where a nonzero return would abort the whole
+# reviewer-loop script instead of falling through to the normal "no success
+# status found" path.
+unset MOCK_GH_OUTPUT
+_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log"
+actual="$(coderabbit_success_status_count "" "abc123")"
+actual_exit=$?
+run_test "coderabbit_success_status_count_empty_repo_returns_zero" "0" "$actual"
+run_test "coderabbit_success_status_count_empty_repo_exit_zero" "0" "$actual_exit"
+run_test "coderabbit_success_status_count_empty_repo_no_api_call" "" "$(cat "$_call_log")"
+rm -f "$_call_log"
+unset MOCK_GH_CALL_LOG
+
+_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log"
+actual="$(coderabbit_success_status_count "owner/repo" "")"
+actual_exit=$?
+run_test "coderabbit_success_status_count_empty_head_sha_returns_zero" "0" "$actual"
+run_test "coderabbit_success_status_count_empty_head_sha_exit_zero" "0" "$actual_exit"
+run_test "coderabbit_success_status_count_empty_head_sha_no_api_call" "" "$(cat "$_call_log")"
+rm -f "$_call_log"
+unset MOCK_GH_CALL_LOG
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

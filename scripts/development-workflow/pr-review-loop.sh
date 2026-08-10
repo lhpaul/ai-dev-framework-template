@@ -3897,6 +3897,60 @@ coderabbit_thread_gate_clean() {
   return 0
 }
 
+# Returns the count of CodeRabbit commit statuses for $head_sha on $repo that
+# are genuinely successful — i.e., context matches "coderabbit" (case
+# insensitive), the latest status per context has state == "success", AND the
+# status description does not match a rate-limit / not-actually-reviewed
+# pattern.
+#
+# Background (issue #1437): CodeRabbit can set a `success` commit status for
+# branch-protection compatibility while its description explicitly states the
+# review did not actually run. The confirmed real-world text (observed on
+# lhpaul/personal-finances PR #33) is "Review limit reached ... Next review
+# available in: N minutes" — note this does NOT contain the substring "rate
+# limit", so matching only the existing test("rate.?limit"; "i") comment-marker
+# regex used elsewhere in this script would miss it. The pattern below matches
+# both: the generic "rate limit" phrasing (kept for consistency with the
+# existing comment-marker regex, in case CodeRabbit also uses that wording in
+# a status description) AND the confirmed "review limit" / "next review
+# available" banner wording. Checking .state alone treats either case as a
+# completed clean review — a false clean. Both coderabbit_status_success_fallback
+# call sites in run_coderabbit_review use this helper so the description guard
+# is applied identically at both sites.
+#
+# Deduplicates by context (keeping the latest entry per context via
+# max_by(.updated_at)) before checking state/description, so a superseded
+# status is not counted — same dedup pattern used before this fix existed.
+coderabbit_success_status_count() {
+  local repo="$1" head_sha="$2"
+  # Validate arguments before the API call: a missing repo or head_sha would
+  # otherwise build an invalid endpoint and fail inside the pipeline with an
+  # unstructured shell error. Print "0" and return 0 (rather than a nonzero
+  # exit) because both call sites assign this function's output directly via
+  # `var="$(coderabbit_success_status_count ...)"` under `set -e` — a nonzero
+  # return there aborts the entire reviewer-loop script immediately instead of
+  # letting the caller's normal "no success status found" path run. Treating
+  # invalid arguments as "no genuine success status found" is the same safe
+  # default the rest of this function already falls back to on API failure.
+  if [ -z "$repo" ] || [ -z "$head_sha" ]; then
+    echo "ERROR: coderabbit_success_status_count requires non-empty repo and head_sha arguments (got repo='${repo:-}' head_sha='${head_sha:-}')" >&2
+    printf '%s\n' 0
+    return 0
+  fi
+  gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
+    | jq -s '[.[].[] | select(
+              (.context // "" | ascii_downcase | test("coderabbit"))
+            )]
+            | group_by(.context) | map(max_by(.updated_at))
+            | map(select(
+                .state == "success"
+                and ((.description // "")
+                     | test("rate.?limit|review limit|next review available"; "i")
+                     | not)
+              ))
+            | length'
+}
+
 run_coderabbit_review() {
   local pr_number="$1"
   local branch_name="$2"
@@ -4259,20 +4313,14 @@ run_coderabbit_review() {
         coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
         echo "INFO: CodeRabbit rate limit detected (retry $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — checking for SUCCESS commit status before waiting" >&2
         # --- Early SUCCESS check before retry wait ---
-        # Check whether CodeRabbit already posted a SUCCESS commit status for the current
-        # HEAD SHA. This happens when CodeRabbit signals the result via a commit status
-        # during a rate-limit window on a parallel batch. If found, skip the retry wait
-        # entirely and treat the PR as clean via coderabbit_status_success_fallback.
+        # Check whether CodeRabbit already posted a genuine SUCCESS commit status for
+        # the current HEAD SHA (state == "success" AND description is not a rate-limit
+        # message — see coderabbit_success_status_count / issue #1437). This happens
+        # when CodeRabbit signals the result via a commit status during a rate-limit
+        # window on a parallel batch. If found, skip the retry wait entirely and treat
+        # the PR as clean via coderabbit_status_success_fallback.
         local coderabbit_early_success_count
-        coderabbit_early_success_count="$(
-          gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
-            | jq -s '[.[].[] | select(
-                    (.context // "" | ascii_downcase | test("coderabbit"))
-                  )]
-                  | group_by(.context) | map(max_by(.updated_at))
-                  | map(select(.state == "success"))
-                  | length'
-        )"
+        coderabbit_early_success_count="$(coderabbit_success_status_count "$repo" "$head_sha")"
         if [ "${coderabbit_early_success_count:-0}" -gt 0 ]; then
           # SUCCESS status can appear while older CodeRabbit review threads stay unresolved
           # on the PR. Do not short-circuit to clean until GraphQL thread audit passes —
@@ -4326,26 +4374,16 @@ run_coderabbit_review() {
       if [ "$coderabbit_any_activity" -eq 0 ]; then
         # --- SUCCESS commit-status fallback ---
         # Before running stale-findings recovery or escalating, check whether CodeRabbit
-        # already posted a SUCCESS commit-status context for the current HEAD SHA. This
-        # happens during rate-limit windows on parallel batches: CodeRabbit signals the
-        # result via a commit status rather than an inline review comment. If found, treat
-        # the PR as clean and return immediately without scanning for stale findings.
-        # Context name is matched case-insensitively to guard against future renames.
-        local coderabbit_success_status_count
-        # Deduplicate by context (keep latest entry per context) before checking state,
-        # so a superseded status (e.g., an old success followed by a failure on the same
-        # context) is not counted. This matches the deduplication pattern used by the
-        # Devin adapter above.
-        coderabbit_success_status_count="$(
-          gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
-            | jq -s '[.[].[] | select(
-                    (.context // "" | ascii_downcase | test("coderabbit"))
-                  )]
-                  | group_by(.context) | map(max_by(.updated_at))
-                  | map(select(.state == "success"))
-                  | length'
-        )"
-        if [ "${coderabbit_success_status_count:-0}" -gt 0 ]; then
+        # already posted a genuine SUCCESS commit-status context for the current HEAD SHA
+        # (state == "success" AND description is not a rate-limit message — see
+        # coderabbit_success_status_count / issue #1437). This happens during rate-limit
+        # windows on parallel batches: CodeRabbit signals the result via a commit status
+        # rather than an inline review comment. If found, treat the PR as clean and return
+        # immediately without scanning for stale findings. Context name is matched
+        # case-insensitively to guard against future renames.
+        local coderabbit_success_status_result_count
+        coderabbit_success_status_result_count="$(coderabbit_success_status_count "$repo" "$head_sha")"
+        if [ "${coderabbit_success_status_result_count:-0}" -gt 0 ]; then
           # SUCCESS status can appear while older CodeRabbit review threads stay unresolved
           # on the PR. Do not short-circuit to clean until GraphQL thread audit passes.
           # Wait before the audit: CodeRabbit may set SUCCESS while still posting inline
