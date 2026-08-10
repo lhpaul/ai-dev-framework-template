@@ -653,7 +653,13 @@ same audit record with the result. If the gate reports `fix_required`, remove
 readiness labels, fix, rerun validation/reviewer/CI, and return to Step 8. If it
 reports `human_required`, stop for human authority, setup, access remediation,
 or risk tolerance. If it reports `blocked`, stop until required state is
-available.
+available. If it reports `not_applicable` (the evidence file's `pr.inScope`
+field is present and `false`), treat the candidate PR as `out_of_scope` per
+this step's closing note — it is never merged by this protocol. When the
+evidence omits `pr.inScope` entirely (for example, evidence assembled outside
+a resolved `/run-epic` scope), the gate skips the scope check rather than
+defaulting to `not_applicable` or `human_required`; it does not signal that a
+PR belongs to this epic's scope by itself.
 
 If an in-scope child PR stops at readiness during a merge-granted run without a
 named blocker from this step, report `policy_inconsistent` in the PR

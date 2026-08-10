@@ -346,6 +346,34 @@ fi
 effective_root="${repo_root:-$(workflow_repo_root)}"
 state_json="$(workflow_merge_ci_policy_into_json "$state_json" "$effective_root" "$product_repo")"
 
+# Refuse to evaluate reasons against an incompletely populated .pr object. A
+# caller-side evidence-assembly failure that leaves .pr.number/.headRefName/
+# .baseRefName unpopulated is indistinguishable, field-by-field, from a real
+# blocker once the reasons cascade below applies its per-field worst-case
+# defaults — that conflation is what produces a misleading pile of false
+# blockers instead of a clear, actionable error. These three fields are the
+# minimal PR identity every live `gh pr view` read always populates, so their
+# absence is a reliable, low-false-positive signal of missing/failed evidence
+# assembly rather than a legitimate "field intentionally omitted" case (unlike
+# optional fields such as labels, mergeStateStatus, or auditDispositionPresent,
+# which existing callers legitimately omit and expect worst-case defaulting
+# for).
+pr_identity_gaps="$(printf '%s\n' "$state_json" | jq -r '
+  def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
+  (if (.pr | type) != "object" then ["pr"]
+   else
+     [
+       (if (.pr.number == null) then "pr.number" else empty end),
+       (if (trim_text(.pr.headRefName) | length) == 0 then "pr.headRefName" else empty end),
+       (if (trim_text(.pr.baseRefName) | length) == 0 then "pr.baseRefName" else empty end)
+     ]
+   end) | join(", ")
+' 2>/dev/null)" || error_exit "failed to validate evidence .pr object (jq parse error)"
+
+if [ -n "$pr_identity_gaps" ]; then
+  error_exit "evidence file's .pr object is missing required identity field(s): ${pr_identity_gaps}. A missing PR identity field cannot be distinguished from a genuine blocker, so this gate refuses to evaluate reasons against incomplete input instead of defaulting every unpopulated field to its worst-case interpretation. Populate .pr.number, .pr.headRefName, and .pr.baseRefName from a live PR read before calling this gate."
+fi
+
 material_evidence_json="$(printf '%s\n' "$state_json" | jq -cS '
   def reviewer_checks:
     if ((.reviewerChecks // null) | type) == "array" then .reviewerChecks
@@ -624,8 +652,36 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     and pr_mergeable_ok
     and (($reasons | length) > 0)
     and ($reasons | all(. == "PR merge state is not CLEAN"));
+  def scope_field_present: (.pr | type) == "object" and (.pr | has("inScope"));
+  def scope_value_true: (.pr.inScope // false) == true;
 
   . as $state |
+  if (scope_field_present and (scope_value_true | not)) then
+  {
+    decision: "not_applicable",
+    mergePermitted: false,
+    exceptionalAdminMergePermitted: false,
+    reasons: ["candidate PR is not in the resolved run-epic scope"],
+    reviewerAccess: {
+      classification: "not_applicable",
+      pullRequest: (.pr.number // null),
+      headSha: pr_head_sha,
+      evidenceFingerprint: (.computedEvidenceFingerprint // ""),
+      blockedReviewerChecks: [],
+      primaryAction: "not applicable",
+      proposedAction: ""
+    },
+    nextAction: "not applicable: candidate PR is not in the resolved run-epic scope; no action is required from this gate for this PR",
+    pr: {
+      number: (.pr.number // null),
+      headRefName: (.pr.headRefName // ""),
+      baseRefName: (.pr.baseRefName // "")
+    },
+    policy: policy,
+    readOnlyGuarantee: "No reviewer-loop runs, CI polling, label edits, tracker updates, comments, merges, issue closure, or branch deletion were performed."
+  }
+  else
+  (
   [] as $reasons |
   (invalid_checkpoint_states) as $invalidCheckpointStates |
   (if ($invalidCheckpointStates | length) > 0
@@ -642,9 +698,6 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
    else $reasons end) as $reasons |
   (if (.item.status // "") == "Backlog" and ((policy.mayStartBacklog // false) != true)
    then add_reason($reasons; "Backlog item cannot start without explicit may-start-backlog authority")
-   else $reasons end) as $reasons |
-  (if (.pr.inScope // false) != true
-   then add_reason($reasons; "candidate PR is not in the resolved run-epic scope")
    else $reasons end) as $reasons |
   (if (if (.pr | has("isDraft")) then .pr.isDraft else true end) == true
    then add_reason($reasons; "PR is still draft")
@@ -713,7 +766,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
       elif ($reviewerAccessClassification | IN("access_restricted", "authorization_required", "authorization_stale", "audit_required")) then "human_required"
       elif $count == 0 then "merge_allowed"
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "fix_required"
-      elif ($reasons | any(test("authority|risk gate|needs-setup|not in the resolved|Backlog|human_checkpoint_required|human-checkpoint|graduation_approval_required"))) then "human_required"
+      elif ($reasons | any(test("authority|risk gate|needs-setup|Backlog|human_checkpoint_required|human-checkpoint|graduation_approval_required"))) then "human_required"
       else "blocked"
       end
     ),
@@ -728,7 +781,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "remove readiness labels, fix, rerun validation, reviewer loop, CI loop, and this gate"
       elif ($reasons | any(test("human_checkpoint_required|human-checkpoint"))) then "stop for the named human checkpoint action, record satisfied or waived evidence, sync labels, and rerun this gate"
       elif ($reasons | any(test("graduation_approval_required"))) then "stop for explicit graduation approval via /graduate-development before mutating"
-      elif ($reasons | any(test("authority|risk gate|needs-setup|not in the resolved|Backlog"))) then "stop for human authority or setup before mutating"
+      elif ($reasons | any(test("authority|risk gate|needs-setup|Backlog"))) then "stop for human authority or setup before mutating"
       else "block until required state is available"
       end
     ),
@@ -740,6 +793,8 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     policy: policy,
     readOnlyGuarantee: "No reviewer-loop runs, CI polling, label edits, tracker updates, comments, merges, issue closure, or branch deletion were performed."
   }
+  )
+  end
 ' 2>/dev/null)" || error_exit "failed to evaluate delegated gate decision (jq parse error)"
 
 if [ -z "$decision_json" ]; then

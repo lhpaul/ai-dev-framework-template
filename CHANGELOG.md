@@ -105,6 +105,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of repeating this exact silent-drop defect. A non-object
   `.why_safe_to_merge` value (including `false`) is rejected as invalid
   evidence rather than silently rendered as absent.
+- **`run-epic-delegated-gate.sh` degraded to worst-case `human_required` on
+  incomplete input instead of erroring** (#1435): an evidence file whose `.pr`
+  object was never populated (e.g. `.pr.number: null`, empty
+  `.pr.headRefName`/`.pr.baseRefName`) previously fell through to every
+  per-field worst-case default at once — reproduced against real evidence as
+  an 8-reason `human_required` verdict, at least 5 of the reasons factually
+  false for the PR at evaluation time. The gate now validates `.pr.number`,
+  `.pr.headRefName`, and `.pr.baseRefName` — the three identity fields every
+  live `gh pr view` read always populates — before evaluating any reason, and
+  refuses with a clear `ERROR:` naming the missing field(s) instead of
+  defaulting each one independently. Separately, `.pr.inScope` — meaningful
+  only for a resolved `/run-epic` scope — now short-circuits to a distinct
+  `not_applicable` decision with a single reason when explicitly `false`
+  (previously buried among unrelated defaulted reasons under
+  `human_required`), and is skipped entirely (no reason added) when the key is
+  absent, so `/run-items`/`/run-item` Gate 5 callers with no resolved epic
+  scope no longer need to hand-assemble `pr.inScope: true` to get a usable
+  evaluation. Other optional `.pr`/`.reviewer`/`.risk`/`.policy` fields keep
+  their existing per-field worst-case defaulting, which is intentional and
+  covered by pre-existing tests (e.g. `missing_risk_gate_requires_human`).
+  Updated `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md`
+  and `docs/workflow/development-workflow/guardrails-enforcement.md` (Gate 5)
+  to document the new `not_applicable` decision and the omit-`pr.inScope`
+  guidance for non-run-epic callers.
 
 ## [0.41.0] - 2026-08-02
 
