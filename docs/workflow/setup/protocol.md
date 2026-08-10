@@ -364,10 +364,13 @@ nothing distinguishing the two (see issue reference: retro-metrics.md ships to
 downstream projects with another project's history).
 
 **Check for inherited data** (a freshly-initialized file has 0 rows). Fails
-closed — a missing file is reported explicitly rather than silently skipped,
-and a read/count failure aborts with a visible error instead of resolving to
-a false `0`. The counter stops at the first non-table line after the header
-separator, so it only ever counts actual data rows:
+closed — a missing file is reported explicitly rather than silently skipped.
+`retro-metrics-platforms.md` can accumulate more than one header/separator
+block over time (a new one is written whenever the configured platform set
+changes — see `append_compare_metrics_row` in `pr-review-loop.sh`), so the
+counter locates the **most recent** separator line and counts only the rows
+below it — the ones that describe this project's actual runs under the
+current schema:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
@@ -377,15 +380,13 @@ for f in docs/workflow/retro-metrics.md docs/workflow/retro-metrics-platforms.md
     echo "$f: not found (skipping)"
     continue
   fi
-  if ! count=$(awk '
-    /^\| *-+/ { found=1; next }
-    found && /^\|/ { print; next }
-    found && !/^\|/ { exit }
-  ' "$f" | wc -l | tr -d ' '); then
-    echo "ERROR: failed to count data rows in $f" >&2
-    exit 1
+  last_sep_line="$(grep -nE '^\| *-+' "$f" | tail -1 | cut -d: -f1 || true)"
+  if [ -z "$last_sep_line" ]; then
+    echo "$f: no table header found yet (0 data rows)"
+    continue
   fi
-  echo "$f: $count existing data row(s)"
+  total_lines="$(wc -l < "$f" | tr -d ' ')"
+  echo "$f: $(( total_lines - last_sep_line )) existing data row(s)"
 done
 ```
 
@@ -423,12 +424,17 @@ if [ -e "$archive" ]; then
   exit 1
 fi
 cp docs/workflow/retro-metrics.md "$archive"
-# Reset: keep the preamble and table header/separator rows, drop all data rows below them.
-awk '
-  /^\| *-+/ { print; found=1; next }
-  found && /^\|/ { next }
-  { print }
-' docs/workflow/retro-metrics.md > docs/workflow/retro-metrics.md.tmp \
+# Reset: keep the preamble and the MOST RECENT header/separator block (the
+# current schema — do not assume there is only one; retro-metrics-platforms.md
+# in particular can have several when platform configuration changed over
+# time), and drop everything below that block. Keeping only the first block
+# would leave a stale schema and orphan a later, currently-active header.
+last_sep_line="$(grep -nE '^\| *-+' docs/workflow/retro-metrics.md | tail -1 | cut -d: -f1 || true)"
+if [ -z "$last_sep_line" ]; then
+  echo "ERROR: no table header separator found in docs/workflow/retro-metrics.md — refusing to reset an unexpected file format." >&2
+  exit 1
+fi
+sed -n "1,${last_sep_line}p" docs/workflow/retro-metrics.md > docs/workflow/retro-metrics.md.tmp \
   && mv docs/workflow/retro-metrics.md.tmp docs/workflow/retro-metrics.md
 ```
 
