@@ -345,6 +345,7 @@ downstream projects with another project's history).
 
 **Check for inherited data** (a freshly-initialized file has 0 rows):
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 for f in docs/workflow/retro-metrics.md docs/workflow/retro-metrics-platforms.md; do
   if [ -f "$f" ]; then
@@ -375,6 +376,7 @@ decline.
 
 **On explicit approval**, for each approved file:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 today="$(date +%Y-%m-%d)"
 cp docs/workflow/retro-metrics.md "docs/workflow/retro-metrics.inherited-${today}.md"
