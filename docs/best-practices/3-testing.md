@@ -71,7 +71,7 @@ Any PR that adds a new filter parameter to a tool schema (Zod, JSON Schema, Joi,
 
 ## Planted-Violation Proofs
 
-Any PR that adds or modifies an automated check, guard, lint rule, or CI job **must prove it catches the violation it targets** before it may be merged. This mirrors and generalizes the Filter-Schema Canary Test requirement above beyond filter parameters.
+Any PR that adds or materially modifies an automated check, guard, lint rule, or CI job **must prove it catches the violation it targets** before it may be merged. This mirrors and generalizes the Filter-Schema Canary Test requirement above beyond filter parameters.
 
 **What a planted-violation proof must do**:
 
@@ -81,7 +81,7 @@ Any PR that adds or modifies an automated check, guard, lint rule, or CI job **m
 
 **Why**: A check that is declared but never exercised against a real failure case can silently do nothing — passing every PR by coincidence rather than by validation. Proving both directions (fails-when-present, passes-when-absent) is the only way to confirm a control actually works. This discipline traced multiple real defects during framework hardening work, including a base-10 parsing bug and destructive reset logic that a description-only review pass missed.
 
-**Exemption**: Pure refactors of already-proven validation logic, with no behavior change, do not require re-proof — state the exemption rationale in the PR.
+**Exemption**: Pure refactors of already-proven validation logic, with no behavior change, are exempt from re-proof; state the exemption rationale in the PR.
 
 See `REVIEW.md` → Code Review Checklist → Pass 2 → "PRs that add or modify an automated check, guard, lint rule, or CI job" for the reviewer-facing enforcement of this rule.
 
