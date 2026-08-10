@@ -307,6 +307,14 @@ missing_why_safe_to_merge_fixture="$TMP_ROOT/missing-why-safe-to-merge.json"
 jq 'del(.why_safe_to_merge)' "$pr_fixture" > "$missing_why_safe_to_merge_fixture"
 wrong_typed_why_safe_to_merge_fixture="$TMP_ROOT/wrong-typed-why-safe-to-merge.json"
 jq '.why_safe_to_merge = "a-string"' "$pr_fixture" > "$wrong_typed_why_safe_to_merge_fixture"
+# CodeRabbit finding on this PR: jq's `//` operator treats `false` as falsy,
+# so `.why_safe_to_merge // null` previously evaluated a boolean `false` value
+# the same as an absent field — silently falling back to "Not recorded."
+# instead of rejecting the wrong type, letting apply mode write an audit
+# comment for invalid evidence. boolean_why_safe_to_merge_fixture exercises
+# that specific falsy-boolean edge case.
+boolean_why_safe_to_merge_fixture="$TMP_ROOT/boolean-why-safe-to-merge.json"
+jq '.why_safe_to_merge = false' "$pr_fixture" > "$boolean_why_safe_to_merge_fixture"
 # Same issue's complementary ask: a strict-unknown-keys warning so a future
 # unconsumed top-level key degrades loudly (a warning, not silent data loss)
 # instead of repeating this exact defect.
@@ -687,6 +695,23 @@ run_test "apply_pr_disposition_wrong_typed_why_safe_to_merge_writes_no_comment" 
 run_fails_contains "render_pr_disposition_rejects_wrong_typed_why_safe_to_merge" \
   "failed to render why-safe-to-merge detail" \
   "$HELPER" render-pr-disposition --input "$wrong_typed_why_safe_to_merge_fixture"
+
+# CodeRabbit finding on this PR: `false // null` evaluates to `null` in jq, so
+# a boolean `false` value for .why_safe_to_merge was previously treated as
+# absent (falling back to "Not recorded.") instead of being rejected as the
+# wrong type — letting apply mode write an audit comment for invalid
+# evidence. The fix replaced the `//`-based presence check with an explicit
+# `== null` check plus an explicit `type != "object"` rejection.
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_boolean_why_safe_to_merge" \
+  "failed to render why-safe-to-merge detail" \
+  "$HELPER" apply-pr-disposition --input "$boolean_why_safe_to_merge_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_boolean_why_safe_to_merge_writes_no_comment" "$calls_before" "$calls_after"
+
+run_fails_contains "render_pr_disposition_rejects_boolean_why_safe_to_merge" \
+  "failed to render why-safe-to-merge detail" \
+  "$HELPER" render-pr-disposition --input "$boolean_why_safe_to_merge_fixture"
 
 echo ""
 echo "=== Summary ==="

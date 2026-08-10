@@ -102,7 +102,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proposed option 2), added `warn_unknown_pr_disposition_keys`, which emits a
   non-fatal `WARN` to stderr for any top-level PR-disposition input key not in
   a maintained allowlist, so a future unconsumed field degrades visibly
-  instead of repeating this exact silent-drop defect.
+  instead of repeating this exact silent-drop defect. Code review found that
+  the initial presence check (`.why_safe_to_merge // null`) used jq's `//`
+  operator, which treats a boolean `false` value the same as an absent field
+  — so a `false`-valued `.why_safe_to_merge` silently rendered as
+  "Not recorded." instead of being rejected as the wrong type, letting apply
+  mode write an audit comment for invalid evidence. Replaced the check with
+  an explicit `== null` presence test plus an explicit `type != "object"`
+  rejection, with a matching planted-violation regression test for the
+  boolean case.
 
 ## [0.41.0] - 2026-08-02
 

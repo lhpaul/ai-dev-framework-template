@@ -193,16 +193,20 @@ render_pr_disposition() {
     printf '\n### Risk Reasons\n\n'
     printf '%s\n' "$json" | jq -r '(.risk.reasons // [])[]? | "- " + (.|tostring)'
     printf '\n### Why Safe to Merge\n\n'
-    if [ "$(printf '%s\n' "$json" | jq 'if (.why_safe_to_merge // null) == null then 0 else 1 end')" -eq 0 ]; then
+    if [ "$(printf '%s\n' "$json" | jq 'if .why_safe_to_merge == null then 0 else 1 end')" -eq 0 ]; then
       printf 'Not recorded.\n'
     else
       rendered="$(printf '%s\n' "$json" | jq -r '
-        (.why_safe_to_merge // {}) as $w |
-        "- Scope: " + (($w.scope // "") | tostring),
-        "- Tests: " + (($w.tests // "") | tostring),
-        "- Reviewer outcome: " + (($w.reviewer_outcome // "") | tostring),
-        "- CI outcome: " + (($w.ci_outcome // "") | tostring),
-        "- Rollback or cleanup risk: " + (($w.rollback_or_cleanup_risk // "") | tostring)
+        if (.why_safe_to_merge | type) != "object" then
+          error("why_safe_to_merge must be an object")
+        else
+          .why_safe_to_merge as $w |
+          "- Scope: " + (($w.scope // "") | tostring),
+          "- Tests: " + (($w.tests // "") | tostring),
+          "- Reviewer outcome: " + (($w.reviewer_outcome // "") | tostring),
+          "- CI outcome: " + (($w.ci_outcome // "") | tostring),
+          "- Rollback or cleanup risk: " + (($w.rollback_or_cleanup_risk // "") | tostring)
+        end
       ')" || error_exit "failed to render why-safe-to-merge detail (jq error above)"
       printf '%s\n' "$rendered"
     fi
