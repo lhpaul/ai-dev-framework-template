@@ -439,12 +439,16 @@ elapses, the loop times out and exits `escalate`.
 no "Reviews paused" comment, and no rate-limit comment. CodeRabbit stays silent with no
 visible signal.
 
-**Script behavior**: After `CODERABBIT_NO_TRIGGER_TIMEOUT` seconds of silence (default: 600 s)
-with no activity, no "Reviews paused" comment, and no rate-limit comment, `pr-review-loop.sh`
-posts `@coderabbitai review` to force a fresh review. The `coderabbit_no_trigger_retriggers`
-counter is incremented; `CODERABBIT_RATE_LIMIT_MAX_RETRIES` is the combined cap for total
-retrigger attempts across both this mechanism and the rate-limit retry path. The elapsed
-timer resets after posting so the triggered review has a full polling window.
+**Script behavior**: After `CODERABBIT_NO_TRIGGER_TIMEOUT` seconds of silence (default: 180 s,
+capped at half of the invocation's `--max-wait` so the fallback always has room to fire
+before the outer timeout — see `coderabbit_no_trigger_timeout_default` in
+`pr-review-loop.sh`; reduced from a fixed 600 s in issue #1433 to cut the idle wait before
+the proactive nudge) with no activity, no "Reviews paused" comment, and no rate-limit
+comment, `pr-review-loop.sh` posts `@coderabbitai review` to force a fresh review. The
+`coderabbit_no_trigger_retriggers` counter is incremented; `CODERABBIT_RATE_LIMIT_MAX_RETRIES`
+is the combined cap for total retrigger attempts across both this mechanism and the
+rate-limit retry path. The elapsed timer resets after posting so the triggered review has a
+full polling window.
 
 **Trigger condition**: Allowed up to `CODERABBIT_RATE_LIMIT_MAX_RETRIES` times total. If
 the cap is reached and CodeRabbit still has not responded, the loop exits `escalate`.
@@ -452,7 +456,9 @@ the cap is reached and CodeRabbit still has not responded, the loop exits `escal
 #### Diagnosing a stalled loop (manual polling)
 
 When an agent is polling manually — or when `pr-review-loop.sh` has been running for more
-than 10 minutes with no CodeRabbit activity — check these markers before escalating:
+than 3 minutes with no CodeRabbit activity on a default-`--max-wait` invocation (scale this
+proportionally for a custom `--max-wait`; see `coderabbit_no_trigger_timeout_default`) —
+check these markers before escalating:
 
 1. **Check for a "Reviews paused" comment**: run:
 
@@ -468,9 +474,10 @@ than 10 minutes with no CodeRabbit activity — check these markers before escal
    current HEAD push. If the script already posted the retrigger, wait for the full
    `max_wait` window before concluding CodeRabbit is unresponsive.
 
-3. **If neither marker is present and >10 min have elapsed with no activity**, Pattern 2
-   (silent non-trigger) is likely. The script will post the retrigger automatically once
-   `CODERABBIT_NO_TRIGGER_TIMEOUT` (default: 600 s) elapses.
+3. **If neither marker is present and the effective `CODERABBIT_NO_TRIGGER_TIMEOUT` window has
+   elapsed with no activity** (default 180 s on a default-`--max-wait` invocation; see
+   `coderabbit_no_trigger_timeout_default`), Pattern 2 (silent non-trigger) is likely. The
+   script will post the retrigger automatically once that window elapses.
 
 #### When to escalate vs. wait
 
