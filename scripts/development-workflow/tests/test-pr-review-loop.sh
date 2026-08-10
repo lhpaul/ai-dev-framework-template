@@ -4178,6 +4178,121 @@ rm -f "$_call_log"
 unset MOCK_GH_CALL_LOG
 
 # ---------------------------------------------------------------------------
+# Area: coderabbit_no_trigger_timeout_default (issue #1433)
+#
+# Verifies the computed default for the CodeRabbit silent-non-trigger fallback
+# timeout (scripts/development-workflow/pr-review-loop.sh lines 3989-4004).
+# Prior behavior: a fixed 600 s default, decoupled from --max-wait. Two bugs
+# this fixes: (1) latency — 600 s of pure idle wait before the proactive
+# "@coderabbitai review" nudge on the common default max_wait=1200 invocation;
+# (2) correctness — on short-max_wait invocations (e.g. the 180 s doc-branch
+# default) elapsed could never reach 600 before the outer max_wait exit, so
+# the silent-non-trigger safety net could never fire at all.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area: coderabbit_no_trigger_timeout_default (issue #1433) ==="
+
+# CONTROL / latency fix: the common default invocation (max_wait=1200, the
+# hardcoded default in main()) must now yield 180 — a 420 s (7 min) reduction
+# from the old fixed 600 s default. half_max_wait=600 does not cap the 180 s
+# hardcoded default, so the hardcoded value wins.
+actual="$(coderabbit_no_trigger_timeout_default 1200)"
+run_test "no_trigger_timeout_default_common_max_wait_1200" "180" "$actual"
+
+# PLANTED VIOLATION / correctness fix: doc-branch default max_wait=180. Under
+# the OLD fixed-600 default, elapsed could never reach 600 before the loop's
+# own "elapsed >= max_wait" (180) exit fires first — the silent-non-trigger
+# retrigger block (pr-review-loop.sh ~line 4315,
+# `coderabbit_no_trigger_retriggers < ... && elapsed >= coderabbit_no_trigger_timeout`)
+# would be permanently unreachable on these branches. The half-max_wait cap
+# (line 3996) must produce 90 (half of 180, below the 180 hardcoded default)
+# so the fallback has room to fire with a full max_wait/2 remaining for a
+# subsequent poll cycle. Reverting the cap (deleting lines 3994-3999, leaving
+# only the hardcoded 180 default) makes this assertion fail — 180 is not < 180
+# under `--max-wait 180`, so the retrigger could never fire before timeout;
+# this was manually verified during implementation (see PR description) and
+# is the concrete regression this test guards against.
+actual="$(coderabbit_no_trigger_timeout_default 180)"
+run_test "no_trigger_timeout_default_doc_branch_max_wait_180_capped" "90" "$actual"
+
+# Large-diff invocation (max_wait=2400): half is 1200, well above the 180
+# hardcoded default, so the cap must NOT kick in — the hardcoded default wins.
+actual="$(coderabbit_no_trigger_timeout_default 2400)"
+run_test "no_trigger_timeout_default_large_diff_max_wait_2400_uncapped" "180" "$actual"
+
+# Floor: a pathologically small max_wait (40) yields half_max_wait=20, below
+# the 30 s floor (line 4000-4002) — the floor must win over the smaller capped
+# value so at least one nudge attempt has a usable window.
+actual="$(coderabbit_no_trigger_timeout_default 40)"
+run_test "no_trigger_timeout_default_floor_applies_below_30" "30" "$actual"
+
+# Boundary: max_wait=360 -> half=180, exactly equal to the hardcoded default.
+# The cap only applies when half_max_wait is STRICTLY less than the hardcoded
+# default (line 3996 uses `-lt`), so at the boundary the hardcoded default
+# must still be the result (not fall through to some other branch).
+actual="$(coderabbit_no_trigger_timeout_default 360)"
+run_test "no_trigger_timeout_default_boundary_max_wait_360" "180" "$actual"
+
+# Invalid/empty max_wait must safely fall back to the hardcoded default
+# instead of crashing on arithmetic with a non-numeric value.
+actual="$(coderabbit_no_trigger_timeout_default "")"
+run_test "no_trigger_timeout_default_empty_max_wait_fallback" "180" "$actual"
+
+actual="$(coderabbit_no_trigger_timeout_default "not-a-number")"
+run_test "no_trigger_timeout_default_non_numeric_max_wait_fallback" "180" "$actual"
+
+# Zero max_wait must not attempt a division-relevant cap and must fall back to
+# the hardcoded default (guarded by `-gt 0` on line 3994).
+actual="$(coderabbit_no_trigger_timeout_default 0)"
+run_test "no_trigger_timeout_default_zero_max_wait_fallback" "180" "$actual"
+
+# Leading-zero decimal input (CodeRabbit finding on PR #1458): "080" passes
+# the ^[0-9]+$ digit-only regex guard but, without base-10 normalization, bash
+# arithmetic expansion parses a leading-zero literal as octal — and "080" is
+# not a valid octal literal (8 is not an octal digit), so `$((080 / 2))`
+# errors with "value too great for base" and aborts the script under
+# `set -euo pipefail`. The `10#$max_wait` prefix forces base-10 interpretation
+# so this must safely compute 40 (half of 80) instead of erroring.
+actual="$(coderabbit_no_trigger_timeout_default 080)"
+run_test "no_trigger_timeout_default_leading_zero_max_wait_normalized_base10" "40" "$actual"
+
+# ---------------------------------------------------------------------------
+# Area: coderabbit_resolve_no_trigger_timeout (issue #1433, CodeRabbit finding
+# on PR #1458) — exercises the actual production override-resolution path
+# used by run_coderabbit_review, not just the underlying default-computation
+# helper tested above.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area: coderabbit_resolve_no_trigger_timeout (issue #1433) ==="
+
+# No override set: must fall through to coderabbit_no_trigger_timeout_default.
+unset CODERABBIT_NO_TRIGGER_TIMEOUT
+actual="$(coderabbit_resolve_no_trigger_timeout 180)"
+run_test "no_trigger_resolve_no_override_uses_computed_default" "90" "$actual"
+
+# An explicit override larger than the computed default for the given
+# max_wait must be honored as-is (uncapped) rather than silently reduced —
+# same pattern already used by CODERABBIT_RATE_LIMIT_WAIT / _MAX_RETRIES.
+export CODERABBIT_NO_TRIGGER_TIMEOUT=900
+actual="$(coderabbit_resolve_no_trigger_timeout 180)"
+run_test "no_trigger_resolve_explicit_override_honored_uncapped" "900" "$actual"
+unset CODERABBIT_NO_TRIGGER_TIMEOUT
+
+# An invalid explicit override (non-numeric) must fall back to the computed
+# default (with a WARN to stderr, not asserted here) rather than propagating
+# a bad value or crashing the script.
+export CODERABBIT_NO_TRIGGER_TIMEOUT="not-a-number"
+actual="$(coderabbit_resolve_no_trigger_timeout 180 2>/dev/null)"
+run_test "no_trigger_resolve_invalid_override_falls_back_to_default" "90" "$actual"
+unset CODERABBIT_NO_TRIGGER_TIMEOUT
+
+# A zero explicit override (fails the `-le 0` guard) must also fall back.
+export CODERABBIT_NO_TRIGGER_TIMEOUT=0
+actual="$(coderabbit_resolve_no_trigger_timeout 1200 2>/dev/null)"
+run_test "no_trigger_resolve_zero_override_falls_back_to_default" "180" "$actual"
+unset CODERABBIT_NO_TRIGGER_TIMEOUT
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

@@ -3951,6 +3951,106 @@ coderabbit_success_status_count() {
             | length'
 }
 
+# coderabbit_no_trigger_timeout_default <max_wait>
+#
+# Computes the default silent-non-trigger fallback timeout (issue #1433):
+# how long run_coderabbit_review waits with zero CodeRabbit activity before
+# proactively posting "@coderabbitai review" (see the "Auto-retrigger: detect
+# CodeRabbit silent non-trigger after push" block below).
+#
+# Background: the previous fixed default was 600 s, decoupled from max_wait.
+# Two problems: (1) on the common default invocation (max_wait=1200 s), it
+# burned up to 10 minutes of pure idle wait before nudging CodeRabbit — the
+# exact "waited out CodeRabbit auto-trigger timeouts" latency reported in
+# #1433 from the #1429/#1431 retrospective; (2) on short-max_wait
+# invocations (e.g. the 180 s spec/*  and implementation-plan/* doc-branch
+# default — see the "Branch-type-aware default timeout" section in --help),
+# elapsed could never reach 600 before the outer max_wait timeout exits the
+# loop, so the silent-non-trigger safety net never had a chance to fire at
+# all on those branches.
+#
+# Fix: default to 180 s — the same already-vetted "give CodeRabbit time,
+# then nudge" cadence CODERABBIT_RATE_LIMIT_WAIT already uses elsewhere in
+# this script for the analogous rate-limit retry path.
+#
+# Effective-timeout rule (piecewise, by max_wait):
+#   - max_wait >= 360 s: effective = 180 s (the hardcoded default; the half-
+#     max_wait cap below does not bind).
+#   - 60 s <= max_wait < 360 s: effective = floor(max_wait / 2) (the cap
+#     binds and is always < max_wait, so a subsequent poll cycle is
+#     guaranteed to have room before the outer max_wait timeout).
+#   - max_wait < 60 s: effective = max(30, floor(max_wait / 2)) — the 30 s
+#     floor takes precedence over the halved cap in this range. For
+#     max_wait <= ~30 s this can leave little or no room before the outer
+#     timeout (the floor exists only so a pathologically small max_wait
+#     still gets one nudge attempt rather than a zero-second window). This
+#     repo never configures --max-wait below 180 s (the doc-branch default;
+#     see PR_REVIEW_LOOP_DOC_MAX_WAIT in --help), so this range is a
+#     defensive edge case, not a realistic operating point.
+#
+# This is purely a *timing* change: it does not touch, weaken, or bypass the
+# coderabbit_success_status_count description guard (#1437) that prevents a
+# rate-limited "success" commit status from being treated as a real clean
+# review — that check runs unconditionally on whatever HEAD SHA state exists
+# when it is reached, regardless of how quickly this function got there.
+#
+# Only used to compute the *default* — an explicit CODERABBIT_NO_TRIGGER_TIMEOUT
+# env var override is honored as-is (uncapped) by the caller, matching how
+# other env-var overrides in this script are treated.
+coderabbit_no_trigger_timeout_default() {
+  local max_wait="${1:-0}"
+  local hardcoded_default=180
+  local floor=30
+  local effective="$hardcoded_default"
+  if [[ "$max_wait" =~ ^[0-9]+$ ]] && [ "$((10#$max_wait))" -gt 0 ]; then
+    # Force base-10 interpretation with the `10#` prefix: a caller-supplied
+    # value with a leading zero (e.g. "080") passes the ^[0-9]+$ digit check
+    # above but is otherwise parsed as octal by bash arithmetic expansion,
+    # and "080" is not a valid octal literal (8 is not an octal digit) —
+    # `$((080 / 2))` errors with "value too great for base" and aborts the
+    # script under `set -euo pipefail`. See the
+    # no_trigger_timeout_default_leading_zero_max_wait_normalized_base10 test.
+    local half_max_wait
+    half_max_wait=$((10#$max_wait / 2))
+    if [ "$half_max_wait" -lt "$effective" ]; then
+      effective="$half_max_wait"
+    fi
+  fi
+  if [ "$effective" -lt "$floor" ]; then
+    effective="$floor"
+  fi
+  printf '%s\n' "$effective"
+}
+
+# coderabbit_resolve_no_trigger_timeout <max_wait>
+#
+# Resolves the effective CODERABBIT_NO_TRIGGER_TIMEOUT for a given max_wait:
+# honors an explicit CODERABBIT_NO_TRIGGER_TIMEOUT env var override (uncapped)
+# when it is set and a valid positive integer, printing a WARN to stderr and
+# falling back to coderabbit_no_trigger_timeout_default(<max_wait>) when it is
+# set but invalid, or computing that default directly when it is unset.
+#
+# Extracted as its own function (rather than inlined in run_coderabbit_review)
+# specifically so tests can exercise the production override-resolution path
+# directly — including the env var precedence and validation-failure fallback
+# — without needing to drive run_coderabbit_review's full polling loop.
+coderabbit_resolve_no_trigger_timeout() {
+  local max_wait="$1"
+  local override="${CODERABBIT_NO_TRIGGER_TIMEOUT:-}"
+  if [ -z "$override" ]; then
+    coderabbit_no_trigger_timeout_default "$max_wait"
+    return 0
+  fi
+  if ! [[ "$override" =~ ^[0-9]+$ ]] || [ "$((10#$override))" -le 0 ]; then
+    local fallback
+    fallback="$(coderabbit_no_trigger_timeout_default "$max_wait")"
+    echo "WARN: CODERABBIT_NO_TRIGGER_TIMEOUT must be a positive integer; defaulting to ${fallback}" >&2
+    printf '%s\n' "$fallback"
+    return 0
+  fi
+  printf '%s\n' "$override"
+}
+
 run_coderabbit_review() {
   local pr_number="$1"
   local branch_name="$2"
@@ -4148,7 +4248,12 @@ run_coderabbit_review() {
   local coderabbit_rate_limit_retries=0
   local coderabbit_rate_limit_max_retries="${CODERABBIT_RATE_LIMIT_MAX_RETRIES:-2}"
   local coderabbit_rate_limit_wait="${CODERABBIT_RATE_LIMIT_WAIT:-180}"
-  local coderabbit_no_trigger_timeout="${CODERABBIT_NO_TRIGGER_TIMEOUT:-600}"
+  # See coderabbit_resolve_no_trigger_timeout / coderabbit_no_trigger_timeout_default
+  # (issue #1433) for why the default is computed from max_wait rather than a
+  # fixed constant, and for env var override / validation-fallback handling
+  # (including the WARN-and-fallback path for an invalid explicit override).
+  local coderabbit_no_trigger_timeout
+  coderabbit_no_trigger_timeout="$(coderabbit_resolve_no_trigger_timeout "$max_wait")"
   local coderabbit_no_trigger_retriggers=0
   if ! [[ "$coderabbit_rate_limit_max_retries" =~ ^[0-9]+$ ]]; then
     echo "WARN: CODERABBIT_RATE_LIMIT_MAX_RETRIES must be a non-negative integer; defaulting to 2" >&2
@@ -4157,10 +4262,6 @@ run_coderabbit_review() {
   if ! [[ "$coderabbit_rate_limit_wait" =~ ^[0-9]+$ ]] || [ "$coderabbit_rate_limit_wait" -le 0 ]; then
     echo "WARN: CODERABBIT_RATE_LIMIT_WAIT must be a positive integer; defaulting to 180" >&2
     coderabbit_rate_limit_wait=180
-  fi
-  if ! [[ "$coderabbit_no_trigger_timeout" =~ ^[0-9]+$ ]] || [ "$coderabbit_no_trigger_timeout" -le 0 ]; then
-    echo "WARN: CODERABBIT_NO_TRIGGER_TIMEOUT must be a positive integer; defaulting to 600" >&2
-    coderabbit_no_trigger_timeout=600
   fi
 
   while :; do
@@ -4251,10 +4352,12 @@ run_coderabbit_review() {
     # CodeRabbit sometimes does not auto-trigger after a push commit: no review
     # appears, no "Reviews paused" comment, and no rate-limit comment — CodeRabbit
     # simply stays silent. When no activity has been seen after
-    # CODERABBIT_NO_TRIGGER_TIMEOUT seconds (default 600 s), post
-    # "@coderabbitai review" to force a fresh review. Uses
-    # CODERABBIT_RATE_LIMIT_MAX_RETRIES as the combined retrigger cap so callers
-    # have a single knob for total retrigger attempts across both mechanisms.
+    # CODERABBIT_NO_TRIGGER_TIMEOUT seconds (default: see
+    # coderabbit_no_trigger_timeout_default — 180 s, capped at half of
+    # max_wait; issue #1433), post "@coderabbitai review" to force a fresh
+    # review. Uses CODERABBIT_RATE_LIMIT_MAX_RETRIES as the combined retrigger
+    # cap so callers have a single knob for total retrigger attempts across
+    # both mechanisms.
     if [ "$coderabbit_any_activity" -eq 0 ] \
         && [ "$coderabbit_retrigger_attempted" -eq 0 ] \
         && [ "$coderabbit_no_trigger_retriggers" -lt "$coderabbit_rate_limit_max_retries" ] \
