@@ -360,18 +360,38 @@ state_json="$(workflow_merge_ci_policy_into_json "$state_json" "$effective_root"
 # for).
 pr_identity_gaps="$(printf '%s\n' "$state_json" | jq -r '
   def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
+  def valid_positive_int($value):
+    if ($value | type) != "number" then false
+    else ($value == ($value | floor)) and ($value > 0)
+    end;
+  def valid_nonblank_string($value):
+    if ($value | type) != "string" then false
+    else (trim_text($value) | length) > 0
+    end;
   (if (.pr | type) != "object" then ["pr"]
    else
      [
-       (if (.pr.number == null) then "pr.number" else empty end),
-       (if (trim_text(.pr.headRefName) | length) == 0 then "pr.headRefName" else empty end),
-       (if (trim_text(.pr.baseRefName) | length) == 0 then "pr.baseRefName" else empty end)
+       (if (valid_positive_int(.pr.number) | not) then "pr.number" else empty end),
+       (if (valid_nonblank_string(.pr.headRefName) | not) then "pr.headRefName" else empty end),
+       (if (valid_nonblank_string(.pr.baseRefName) | not) then "pr.baseRefName" else empty end)
      ]
    end) | join(", ")
 ' 2>/dev/null)" || error_exit "failed to validate evidence .pr object (jq parse error)"
 
 if [ -n "$pr_identity_gaps" ]; then
-  error_exit "evidence file's .pr object is missing required identity field(s): ${pr_identity_gaps}. A missing PR identity field cannot be distinguished from a genuine blocker, so this gate refuses to evaluate reasons against incomplete input instead of defaulting every unpopulated field to its worst-case interpretation. Populate .pr.number, .pr.headRefName, and .pr.baseRefName from a live PR read before calling this gate."
+  error_exit "evidence file's .pr object is missing required identity field(s): ${pr_identity_gaps}. A missing or malformed PR identity field (pr.number must be a positive integer; pr.headRefName/pr.baseRefName must be non-blank strings) cannot be distinguished from a genuine blocker, so this gate refuses to evaluate reasons against incomplete input instead of defaulting every unpopulated field to its worst-case interpretation. Populate .pr.number, .pr.headRefName, and .pr.baseRefName from a live PR read before calling this gate."
+fi
+
+# .pr.inScope is optional (see the scope short-circuit below), but when
+# present it must be a literal boolean. A non-boolean value (null, a string
+# such as "false", a number, or an object) is caller-side evidence-assembly
+# noise, not a real scope determination -- silently coercing it via jq's `//`
+# truthiness would (depending on the value) either wrongly skip the scope
+# check or wrongly trigger the not_applicable short-circuit for a PR whose
+# scope was never actually resolved to false.
+if printf '%s\n' "$state_json" | jq -e '(.pr | type) == "object" and (.pr | has("inScope")) and ((.pr.inScope | type) != "boolean")' >/dev/null 2>&1; then
+  pr_scope_type="$(printf '%s\n' "$state_json" | jq -r '.pr.inScope | type' 2>/dev/null)"
+  error_exit "evidence file's .pr.inScope field is present but not a boolean (got type: ${pr_scope_type:-unknown}). Omit .pr.inScope entirely when there is no resolved /run-epic scope to check the candidate PR against, or set it to the literal boolean true or false."
 fi
 
 material_evidence_json="$(printf '%s\n' "$state_json" | jq -cS '
@@ -653,10 +673,14 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     and (($reasons | length) > 0)
     and ($reasons | all(. == "PR merge state is not CLEAN"));
   def scope_field_present: (.pr | type) == "object" and (.pr | has("inScope"));
-  def scope_value_true: (.pr.inScope // false) == true;
+  # A literal boolean check, not truthiness: the bash preflight above already
+  # rejects a present non-boolean .pr.inScope before this jq program runs, but
+  # this definition stays independently correct (no `// false` defaulting) so
+  # it cannot mis-decide even if that upstream guard is ever bypassed.
+  def scope_value_false: (.pr.inScope | type) == "boolean" and (.pr.inScope == false);
 
   . as $state |
-  if (scope_field_present and (scope_value_true | not)) then
+  if (scope_field_present and scope_value_false) then
   {
     decision: "not_applicable",
     mergePermitted: false,

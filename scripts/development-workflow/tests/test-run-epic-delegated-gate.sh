@@ -234,6 +234,68 @@ run_fails_contains "rejects_whitespace_only_pr_identity" \
   "evidence file's .pr object is missing required identity field(s): pr.headRefName, pr.baseRefName" \
   "$GATE" --input "$whitespace_pr_identity_fixture" --json
 
+# Non-scalar / wrong-typed identity values must fail the same way as absent
+# ones -- a coerced-via-tostring value (e.g. a number for headRefName) must
+# not be accepted as a valid string, and .pr.number must be a positive
+# integer, not merely non-null.
+string_number_fixture="$(write_fixture string-number-pr-identity '.pr.number = "42"')"
+run_fails_contains "rejects_string_pr_number" \
+  "evidence file's .pr object is missing required identity field(s): pr.number" \
+  "$GATE" --input "$string_number_fixture" --json
+
+zero_number_fixture="$(write_fixture zero-pr-identity '.pr.number = 0')"
+run_fails_contains "rejects_zero_pr_number" \
+  "evidence file's .pr object is missing required identity field(s): pr.number" \
+  "$GATE" --input "$zero_number_fixture" --json
+
+negative_number_fixture="$(write_fixture negative-pr-identity '.pr.number = -1')"
+run_fails_contains "rejects_negative_pr_number" \
+  "evidence file's .pr object is missing required identity field(s): pr.number" \
+  "$GATE" --input "$negative_number_fixture" --json
+
+non_integer_number_fixture="$(write_fixture non-integer-pr-identity '.pr.number = 3.5')"
+run_fails_contains "rejects_non_integer_pr_number" \
+  "evidence file's .pr object is missing required identity field(s): pr.number" \
+  "$GATE" --input "$non_integer_number_fixture" --json
+
+numeric_branch_name_fixture="$(write_fixture numeric-branch-name-pr-identity '.pr.headRefName = 918')"
+run_fails_contains "rejects_numeric_head_ref_name" \
+  "evidence file's .pr object is missing required identity field(s): pr.headRefName" \
+  "$GATE" --input "$numeric_branch_name_fixture" --json
+
+object_branch_name_fixture="$(write_fixture object-branch-name-pr-identity '.pr.baseRefName = {}')"
+run_fails_contains "rejects_object_base_ref_name" \
+  "evidence file's .pr object is missing required identity field(s): pr.baseRefName" \
+  "$GATE" --input "$object_branch_name_fixture" --json
+
+array_branch_name_fixture="$(write_fixture array-branch-name-pr-identity '.pr.headRefName = []')"
+run_fails_contains "rejects_array_head_ref_name" \
+  "evidence file's .pr object is missing required identity field(s): pr.headRefName" \
+  "$GATE" --input "$array_branch_name_fixture" --json
+
+# .pr.inScope must be a literal boolean when present -- a value that merely
+# coerces to falsy/truthy via jq's `//` operator (null, a string, a number,
+# an object) must not silently decide the scope outcome either way.
+null_in_scope_fixture="$(write_fixture null-in-scope '.pr.inScope = null')"
+run_fails_contains "rejects_null_in_scope" \
+  "evidence file's .pr.inScope field is present but not a boolean (got type: null)" \
+  "$GATE" --input "$null_in_scope_fixture" --json
+
+string_in_scope_fixture="$(write_fixture string-in-scope '.pr.inScope = "false"')"
+run_fails_contains "rejects_string_in_scope" \
+  "evidence file's .pr.inScope field is present but not a boolean (got type: string)" \
+  "$GATE" --input "$string_in_scope_fixture" --json
+
+numeric_in_scope_fixture="$(write_fixture numeric-in-scope '.pr.inScope = 0')"
+run_fails_contains "rejects_numeric_in_scope" \
+  "evidence file's .pr.inScope field is present but not a boolean (got type: number)" \
+  "$GATE" --input "$numeric_in_scope_fixture" --json
+
+object_in_scope_fixture="$(write_fixture object-in-scope '.pr.inScope = {}')"
+run_fails_contains "rejects_object_in_scope" \
+  "evidence file's .pr.inScope field is present but not a boolean (got type: object)" \
+  "$GATE" --input "$object_in_scope_fixture" --json
+
 # Genuinely complete input (full .pr identity, as every fixture below
 # supplies) with a real blocker must still report it — see
 # "requires_human_review_label" -> blocked below, which proves the
