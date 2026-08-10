@@ -461,6 +461,19 @@ run_fails_contains "comment_list_failure_errors" "failed to read comments" env M
 run_fails_contains "comment_post_failure_errors" "post failed" env MOCK_COMMENT_MODE=post-fail "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10
 run_fails_contains "comment_patch_failure_errors" "patch failed" env MOCK_COMMENT_MODE=patch-fail "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10
 
+# CodeRabbit finding on this PR: the unknown-key warning was only exercised
+# via render-pr-disposition above. Confirm the apply-pr-disposition path
+# warns identically (non-fatal) and still writes the comment — the contract
+# is "warn, don't block", so a caller must not lose the audit write over an
+# unrecognized field.
+unknown_key_apply_output="$("$HELPER" apply-pr-disposition --input "$unknown_key_fixture" --pr 10 2>&1)"
+run_test "apply_pr_disposition_warns_on_unknown_key_and_still_writes_comment" "yes" "$(
+  grep -q 'unrecognized top-level PR disposition field(s)' <<< "$unknown_key_apply_output" &&
+    grep -q 'mystery_field' <<< "$unknown_key_apply_output" &&
+    grep -q 'CREATED_COMMENT=1' <<< "$unknown_key_apply_output" &&
+    echo yes || echo no
+)"
+
 ledger_create_output="$("$HELPER" apply-epic-ledger --input "$ledger_fixture" --epic 900)"
 run_test "creates_epic_ledger_when_missing" "CREATED_COMMENT=1" "$ledger_create_output"
 
