@@ -3992,7 +3992,8 @@ coderabbit_no_trigger_timeout_default() {
   local floor=30
   local effective="$hardcoded_default"
   if [[ "$max_wait" =~ ^[0-9]+$ ]] && [ "$max_wait" -gt 0 ]; then
-    local half_max_wait=$((max_wait / 2))
+    local half_max_wait
+    half_max_wait=$((max_wait / 2))
     if [ "$half_max_wait" -lt "$effective" ]; then
       effective="$half_max_wait"
     fi
