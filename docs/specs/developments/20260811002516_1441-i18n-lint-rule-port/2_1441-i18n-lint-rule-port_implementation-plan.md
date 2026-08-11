@@ -7,10 +7,16 @@
 
 ## Summary
 
-**Approach**: This template ships no application source code, no JS/TS test
-runner, and no per-project i18n runtime (`docs/best-practices/stack/` files
-are curated, framework-owned **reference documentation**, not executable
-project code — see `stack/supabase.md` for the established pattern). The
+**Approach**: This template ships no application source code and no
+per-project i18n runtime. The only tracked JS/TS surfaces are the
+placeholder `e2e/` Playwright scaffold (a single `baseline.spec.ts`
+placeholder test, explicitly meant to be replaced by a downstream project's
+own specs) and the `hooks/` Haystack tooling (git-hook internals, not a unit
+test runner) — neither is a product application source tree, and neither
+hosts a unit-test runner (Jest/Vitest) suited to the source PR's
+`.test.ts` suites (`docs/best-practices/stack/` files are curated,
+framework-owned **reference documentation**, not executable project code —
+see `stack/supabase.md` for the established pattern). The
 `personal-finances` reference (`#34` / PR #41) is a React Native + i18next
 implementation; the template cannot host it as live, CI-enforced code without
 inventing a JS toolchain this repo does not otherwise have, which is out of
@@ -52,12 +58,17 @@ suite) and the catalogue/resolver skeleton" — fails the fit check as
 literally stated: `eslint-plugin-i18next`, `i18next`/`react-i18next`,
 `expo-localization`, and the Jest test suites in the source PR are all
 React Native/JS-stack-specific, and this template repository's own toolchain
-has no Node application, no `package.json` test runner beyond markdown
-tooling, and no JS/TS files under version control anywhere except
-`node_modules`/build artifacts. Shipping the source PR's `.ts`/`.test.ts`
-files here would create orphaned code with no CI job ever executing it —
-which is itself a "declared-but-unverified control" under `REVIEW.md`'s own
-Verification Discipline clause, the opposite of what the issue is asking for.
+has no Node application source tree and no unit-test runner (Jest/Vitest)
+capable of hosting them. The repository's only tracked JS/TS surfaces are
+the placeholder `e2e/` Playwright E2E scaffold (a single
+`baseline.spec.ts` placeholder, per `REVIEW.md`'s own "E2E regression
+(placeholder)" framing — not a committed functional suite) and the
+`hooks/` Haystack git-hook internals; neither is a product application, and
+neither is a unit-test runner suited to the source PR's `.test.ts` suites.
+Shipping the source PR's `.ts`/`.test.ts` files here would create orphaned
+code with no CI job ever executing it — which is itself a
+"declared-but-unverified control" under `REVIEW.md`'s own Verification
+Discipline clause, the opposite of what the issue is asking for.
 
 **Resolution — narrowed scope (Protocol 02 Step 0 option 2)**: The task
 handoff that dispatched this item explicitly pre-authorized this narrowing,
