@@ -357,6 +357,13 @@ scanning ... over ... structured text" signal.
     category (c).
   - Negative lookalike, category: `"force a component re-render"` does not
     match category (c) (no git/version-control context).
+  - Negative lookalike, category (c) safety-lease exclusion: `"the caller
+    uses git push --force-with-lease, which is safe"` does **not** match
+    category (c) — the safety-lease phrase must suppress the match even
+    though the force-push keyword is present, matching BR1c's explicit
+    "without a safety lease" qualifier. This is the case the earlier draft of
+    this addendum omitted; see the `classify()` sample above for the
+    positive-match-AND-NOT-safe-phrase implementation this test proves.
   - Negative lookalike, category: `"the retry count is a secret constant we
     tune later"` does not match category (b) (no credential/token/exposure
     context — the pattern requires "secret"/"credential"/"token"/"password"
@@ -465,7 +472,14 @@ classify() {
     matched_category="a"
   elif printf '%s' "$finding_text" | grep -qiE '(secret|credential|token|password).*(expos|log|leak|plaintext)'; then
     matched_category="b"
-  elif printf '%s' "$finding_text" | grep -qiE '(force[- ]?push|--force\b|hard reset|history rewrite).*(lease|atomic|destructive)?'; then
+  # Category (c) requires BOTH an unsafe force/history-rewrite keyword AND the
+  # absence of a "force-with-lease" (or equivalent safety-lease) phrase — BR1c
+  # is explicitly "a force operation without a safety lease", so a finding
+  # that itself states the operation is lease-protected must NOT match. POSIX
+  # ERE has no negative lookahead, so this is a positive-match-AND-NOT-safe-
+  # phrase check across two grep calls, not a single regex.
+  elif printf '%s' "$finding_text" | grep -qiE '(force[- ]?push|--force\b|hard reset|history rewrite)' \
+    && ! printf '%s' "$finding_text" | grep -qiE '(force[- ]?with[- ]?lease|--force-with-lease)'; then
     matched_category="c"
   elif printf '%s' "$finding_text" | grep -qiE '(injection|unsanitized|eval\(|path.traversal)'; then
     matched_category="d"
