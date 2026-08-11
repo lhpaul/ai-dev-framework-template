@@ -179,7 +179,20 @@ workflow decision-gate matrix" requirement for both the spec and this plan.
       or with no matching decision event, are unaffected by this input.
       This is what allows a verified human decision to actually persist
       into the tracking-comment/audit record instead of only existing as an
-      in-memory Gate 5 evaluation result.
+      in-memory Gate 5 evaluation result. **Conflicting duplicate events**:
+      `--decision-events` must contain at most one verified event per
+      `findingId`. If two or more events share the same `findingId` at the
+      current head SHA — regardless of whether their `decision`/`rationale`
+      values agree or disagree — `reconcile` fails closed: it does not pick
+      one arbitrarily or apply either, leaves the entry's status
+      unconditionally `pending`, and emits a warning identifying the
+      duplicate `findingId` and the conflicting comment references, so the
+      ambiguity surfaces as a human-visible signal rather than becoming
+      input-order-dependent. This is a hard rule regardless of upstream
+      cause (e.g., two different humans posting conflicting decision
+      comments) — `github_verified_security_advisory_decisions` passes
+      through every verified event it finds; deduplication/conflict
+      rejection is `reconcile`'s responsibility, not the gate's.
   - **Canonical resolved-entry schema**: every reconciled entry with status
     `fixed`, `human-accepted`, or `human-rejected` carries `id`, `category`,
     `matchedFile`, `status`, `headSha`, and, when resolved by a human
@@ -464,7 +477,13 @@ manual/documentation-review smoke test (no UI — this is workflow tooling).
    unaffected; two fresh findings sharing the same `(matchedCategory,
    matchedFile)` key in one `--current` input are reconciled as two distinct
    entries (stable-order pairing), never silently merged or overwriting one
-   another's status.
+   another's status; two `--decision-events` entries sharing the same
+   `findingId` at the current head SHA — whether they agree
+   (`human-accepted` + `human-accepted`) or conflict
+   (`human-accepted` + `human-rejected`) — leave that entry `pending`
+   (fail-closed) rather than applying either one, and `reconcile` emits a
+   duplicate-`findingId` warning identifying both source comment
+   references.
 10. AC14: `render_pr_disposition` output test — the "Security-Sensitive
     Advisory Findings" heading text never equals or is nested under the
     existing "Advisory Decisions" heading; both are present in the same
@@ -555,6 +574,13 @@ scanning ... over ... structured text" signal.
     only in the diff-hunk context, not the finding text itself.
   - Empty/absent file path (PR-level issue comment, no inline `path`): Part B
     always fails by construction — asserted directly, not inferred.
+  - Multiline finding text: a finding text with an embedded newline splitting
+    a category regex's two halves across separate lines, e.g. `"this finding
+    describes an auth\nbypass on the enforcement surface"` (category (a)'s
+    auth/bypass halves on different lines), still matches category (a) — this
+    proves `match_re`'s newline-to-space normalization (see `classify()`
+    sample above), not a raw `grep -qiE` call, which evaluates a multiline
+    string one line at a time and would otherwise miss this exact case.
 - **Unit test mapping**: `test-security-advisory-classifier.sh` — one
   `run_test` case per bullet above, plus the AC1/AC2/AC3 fixture cases from
   "Key scenarios to test" items 1–3.
@@ -620,10 +646,18 @@ extend.
 
 # match_re distinguishes "no match" (grep exit 1) from a genuine command
 # error (grep exit >=2, e.g. a malformed pattern or an I/O failure) so a
-# `grep` failure is never silently treated as a normal non-match.
+# `grep` failure is never silently treated as a normal non-match. It also
+# normalizes embedded newlines to spaces before matching: `grep -qiE`
+# evaluates a multiline string one line at a time, so a category regex whose
+# two halves land on different lines (a real shape for Markdown-formatted PR
+# review-comment bodies) would otherwise never match even though the finding
+# text, read as prose, clearly describes the category. Normalizing here — not
+# in each call site — keeps every category test (a)-(e) multiline-safe by
+# construction.
 match_re() {
-  local text="$1" pattern="$2" status
-  printf '%s' "$text" | grep -qiE "$pattern"
+  local text="$1" pattern="$2" status normalized
+  normalized="${text//$'\n'/ }"
+  printf '%s' "$normalized" | grep -qiE "$pattern"
   status=$?
   if (( status >= 2 )); then
     echo "classify: internal error: grep failed evaluating pattern" >&2
