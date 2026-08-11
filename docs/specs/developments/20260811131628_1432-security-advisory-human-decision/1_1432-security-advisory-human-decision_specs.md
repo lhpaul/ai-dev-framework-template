@@ -321,25 +321,34 @@ protection as one merged through `/run-epic`.
   repository permission, and that it is tied to the specific finding, PR
   number, and current head commit. A generic prior PR approval, an unrelated
   comment, or agent-authored rationale does not satisfy this rule.
-- **BR7 (invalidation and re-classification on push)**: A human decision or
-  fix recorded for a security-sensitive advisory finding is valid only for
-  the exact PR head commit it was recorded against, matching BR6's "current
-  head commit" requirement precisely. Any later push to the PR invalidates
-  the prior disposition — unconditionally, whether or not that push touches
-  the code the finding was about, mirroring the exact-head-SHA invalidation
-  rule the workflow already uses for verified reviewer-access-bypass
-  authorization. The workflow then re-evaluates the finding's content and
-  location against the BR1 classification test at the new head commit:
-  - If the finding still matches BR1 at the new head commit, its status
-    returns to pending and requires a fresh fix or a fresh human decision
-    recorded against the new head commit.
+- **BR7 (every tracked finding is re-evaluated on every push, regardless of
+  its current status)**: A human decision or fix recorded for a
+  security-sensitive advisory finding is valid only for the exact PR head
+  commit it was recorded against, matching BR6's "current head commit"
+  requirement precisely. On any later push to the PR, **every currently
+  tracked security-sensitive finding — whether its status is `pending`,
+  `fixed`, `human-accepted`, or `human-rejected` — is re-evaluated against
+  the BR1 classification test at the new head commit**, not only findings
+  that already carry a fix or human decision:
+  - If the finding still matches BR1 at the new head commit: any
+    previously recorded `fixed` / `human-accepted` / `human-rejected`
+    disposition is invalidated — unconditionally, whether or not the push
+    touched the code the finding was about, mirroring the exact-head-SHA
+    invalidation rule the workflow already uses for verified
+    reviewer-access-bypass authorization — and the finding's status is (or
+    remains) `pending`, requiring a fresh fix or a fresh human decision
+    recorded against the new head commit. A finding that was already
+    `pending` before the push simply remains `pending`.
   - If the finding no longer matches BR1 at the new head commit (for
-    example, the flagged code was removed, or the specific content the
-    classification matched is no longer present), the finding exits this
-    gate's tracking entirely — it is not carried forward as pending, and
+    example, the flagged code was removed or fixed by an unrelated change,
+    or the specific content the classification matched is no longer
+    present), the finding exits this gate's tracking entirely — regardless
+    of whether its prior status was `pending` or already resolved — and
     Gate 4/5 do not block on it.
   A decision or fix recorded against a superseded head commit must never be
-  silently treated as still resolving the finding at a later head commit.
+  silently treated as still resolving the finding at a later head commit,
+  and a `pending` finding must never keep blocking Gate 5 once it no longer
+  matches BR1 at the current head commit.
 - **BR8 (applies to every delegated-merge caller)**: The requirement is
   evaluated the same way for `/run-item`, `/run-items`, and `/run-epic` Gate
   4/5 evidence. It is part of the gate's normal reasons evaluation, not
@@ -381,13 +390,16 @@ that is the value Gate 4/5 read.
   risk with rationale, recorded against the current head commit.
 - `pending` → `human-rejected` when a verified human decision confirms a
   false positive with rationale, recorded against the current head commit.
-- `fixed` / `human-accepted` / `human-rejected` → re-evaluated against BR1
-  on any later push to the PR (per BR7): if the finding still matches BR1 at
-  the new head commit, its status becomes `pending` (audit reason
-  "superseded by new commit") — not a separate `stale` status — re-entering
-  the decision requirement for the new head commit; if the finding no longer
-  matches BR1 at the new head commit, it exits tracking under this lifecycle
-  entirely and is not carried forward as `pending`.
+- Every status (`pending`, `fixed`, `human-accepted`, `human-rejected`) is
+  re-evaluated against BR1 on any later push to the PR (per BR7):
+  - If the finding still matches BR1 at the new head commit: a prior
+    `fixed` / `human-accepted` / `human-rejected` status becomes `pending`
+    (audit reason "superseded by new commit") — not a separate `stale`
+    status; a prior `pending` status simply remains `pending`. Either way,
+    the decision requirement applies at the new head commit.
+  - If the finding no longer matches BR1 at the new head commit — from any
+    prior status, including `pending` — it exits tracking under this
+    lifecycle entirely and is not carried forward as `pending`.
 
 ---
 
@@ -422,7 +434,8 @@ that is the value Gate 4/5 read.
 | Security-sensitive finding pending, no verified human decision | Finding remains pending | Gate 4 leaves the accept/reject decision to a human; Gate 5 blocks delegated merge regardless of mode, `may_merge_pr`, or unrelated checkpoint state | Distinct pending signal; matched category/mechanism | Gate 4/5 reasons; PR-visible label |
 | Security-sensitive finding has a verified human decision matched to the current PR, head commit, and finding | Finding resolved (accepted or rejected) | Gate 4/5 proceed treating it as resolved | Decider identity, timestamp, disposition, rationale, matched PR/head SHA/finding | PR comment/review referenced by Gate 5 evidence |
 | Any new push occurs on a PR carrying a previously resolved (`fixed`/`human-accepted`/`human-rejected`) security-sensitive finding, and the finding still matches BR1 at the new head commit | Prior disposition is invalidated; finding is re-classified as still security-sensitive | Finding's evaluated status returns to `pending`; requires a fresh fix or fresh human decision recorded against the new head commit | "Superseded by new commit" audit reason; persisted/evaluated value is `pending`, not a separate stale status | Gate 4/5 reasons |
-| Any new push occurs on a PR carrying a previously resolved security-sensitive finding, and the finding no longer matches BR1 at the new head commit | Prior disposition is invalidated; finding is re-classified as no longer security-sensitive | Finding exits tracking under this gate entirely; no further action required from this gate for it | Re-classification result (no longer matches BR1) | Gate 4/5 reasons |
+| Any new push occurs on a PR carrying a `pending` security-sensitive finding (never fixed or human-decided), and the finding still matches BR1 at the new head commit | Finding remains classified security-sensitive | Finding's evaluated status remains `pending`; still requires a fix or human decision | Same matched category/mechanism re-confirmed at the new head commit | Gate 4/5 reasons |
+| Any new push occurs on a PR carrying a previously tracked security-sensitive finding — `pending`, `fixed`, `human-accepted`, or `human-rejected` — and the finding no longer matches BR1 at the new head commit | Finding is re-classified as no longer security-sensitive, regardless of its prior status | Finding exits tracking under this gate entirely; no further action required from this gate for it; Gate 5 does not keep blocking on it | Re-classification result (no longer matches BR1) | Gate 4/5 reasons |
 | An unrelated bounded-prelude checkpoint (or a blanket waiver of several) is satisfied or waived | No effect on any pending security-sensitive advisory finding | Continue requiring the finding's own decision | Distinctness from checkpoint lifecycle | Gate 4/5 reasons vs. checkpoint reasons |
 | Gate 4/5 evidence assembled by `/run-item`, `/run-items`, or `/run-epic`, with `pr.inScope` absent or `true` | Security-sensitive advisory check runs as part of normal evaluation | Same reasons cascade regardless of invocation surface | Same evidence fields across surfaces | Gate 4/5 for all three invocation surfaces |
 | Gate 4/5 evidence assembled with `pr.inScope` explicitly `false` | Existing not-applicable scope short-circuit applies | No action required from this gate for this PR in this run | Existing `not_applicable` decision | Existing scope short-circuit behavior |
@@ -487,7 +500,13 @@ that is the value Gate 4/5 read.
       without carrying forward a pending block. Either way, a decision or fix
       recorded against a superseded head commit does not resolve the finding
       at the new head commit.
-- [ ] **AC13**: The reviewer-loop / Gate 5 summary surfaces each
+- [ ] **AC13**: If any later push occurs on a PR carrying a security-sensitive
+      finding that is still `pending` (never fixed or human-decided), the
+      workflow re-evaluates it against BR1 at the new head commit the same
+      way as a resolved finding: it remains `pending` and blocking if it
+      still matches BR1, and exits tracking under this gate — no longer
+      blocking Gate 5 — if it no longer matches BR1 at the new head commit.
+- [ ] **AC14**: The reviewer-loop / Gate 5 summary surfaces each
       security-sensitive advisory finding and its current disposition state
       in a section visibly distinct from the existing non-security advisory
       dispositions.
@@ -499,7 +518,7 @@ that is the value Gate 4/5 read.
 | Brief objective | Covered by | Acceptance criteria |
 | --- | --- | --- |
 | 1. Security-sensitive advisory findings require an explicit human decision to accept or reject (a verifiable fix remains agent-available) even when the reviewer loop is otherwise clean | Use Cases 1-2, BR1, BR5, BR6 | AC1, AC4, AC10, AC11 |
-| 2. The delegated-merge path does not treat an unfixed security-sensitive finding as resolved without a human accept/reject decision | Use Cases 1-2, BR5, BR7 | AC4, AC5, AC12 |
+| 2. The delegated-merge path does not treat an unfixed security-sensitive finding as resolved without a human accept/reject decision | Use Cases 1-2, BR5, BR7 | AC4, AC5, AC12, AC13 |
 | 3. Narrow, evidence-backed definition with a stated expected trigger rate | Overview, BR1-BR3 | AC1, AC2, AC3 |
 | 4. Distinct mechanism, not reused checkpoint label/stop-condition/lifecycle | Use Case 3, BR4 | AC6, AC7 |
 | 5. Applies to every delegated-merge invocation surface, independent of `pr.inScope` | Use Case 4, BR8, BR9 | AC8, AC9 |
