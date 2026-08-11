@@ -97,11 +97,11 @@ before writing the plan, matching the max-autonomy default in Step 2 below.
 | Check | Command / query | Result |
 | --- | --- | --- |
 | Repo revision | `git rev-parse --short HEAD` | `6830fd9` (worktree base = `origin/develop` after PR #1465 merge) |
-| Template ships no JS/TS app code | `find . -maxdepth 2 -type d ! -path './.git*' ! -path './node_modules*'` (in `ai-dev-framework-template`) | Only `.agents/ .claude/ .codex/ .codex-worktrees/ .cursor/ .entire/ .git/ .github/ .haystack/ .tmp/ .worktrees/ docs/ e2e/ hooks/ scripts/ template/` — `e2e/` is an unpopulated Playwright placeholder (`node_modules/`, `tests/`, config only, no committed spec files); `package.json` scripts only run `prettier` on markdown. No app source tree exists anywhere in the repo. |
+| Template ships no product application source tree or unit-test runner | `find . -maxdepth 2 -type d ! -path './.git*' ! -path './node_modules*'` (top-level dirs) and `git ls-files -- '*.ts' '*.tsx'` (every tracked `.ts`/`.tsx` file repo-wide, any depth, in `ai-dev-framework-template`) | Top-level dirs: `.agents/ .claude/ .codex/ .codex-worktrees/ .cursor/ .entire/ .git/ .github/ .haystack/ .tmp/ .worktrees/ docs/ e2e/ hooks/ scripts/ template/`. The `git ls-files` scan is the source of truth for tracked `.ts`/`.tsx` files at any depth (the top-level `find` alone cannot prove this): it returns exactly 12 files — `e2e/playwright.config.ts` and `e2e/tests/baseline.spec.ts` (a tracked Playwright placeholder spec, run by `"test": "playwright test"` in `e2e/package.json`), plus 10 files under `hooks/agent-context/` and `hooks/truncation-checker/` (Haystack git-hook internals, not a unit-test runner). Neither surface is a product application source tree, and neither hosts a unit-test runner (Jest/Vitest) suited to the source PR's `.test.ts` suites. |
 | `docs/best-practices/stack/` precedent | `ls docs/best-practices/stack/` | Only `.gitkeep` and `supabase.md`; `supabase.md` is pure prose + illustrative TypeScript code blocks, not a runnable/tested file, confirming the doc-only pattern this plan follows. |
 | `STACK-SPECIFIC.md` precedent row | `sed -n '1,40p' docs/best-practices/STACK-SPECIFIC.md` | The "Best Practices by Technology" table already has a concrete `| Supabase | [stack/supabase.md](stack/supabase.md) |` row alongside placeholder rows, confirming new concrete rows are added directly to this shared template file rather than left for per-project setup only. |
 | Reference implementation is merged and proven | `gh pr view 41 --repo lhpaul/personal-finances` | MERGED. PR body includes a three-run lint transcript (fails on a planted literal at `apps/mobile/src/dev/DesignSystemGallery.tsx:76:34`, passes before/after) and a `grep -rn "no-literal-string"` showing zero `eslint-disable` usages. |
-| Scanner already covers the dynamic-key gap named in the issue | `sed -n '1,135p' apps/mobile/src/test-utils/catalogue-key-scan.ts` and `sed -n '1,111p' apps/mobile/src/test-utils/catalogue-key-scan.test.ts` (in `personal-finances`) | `parseFirstArgument`'s E13 handling and tests `E13`/`E13b` explicitly classify `t('ds.a' + suffix)` and `t('ds.' + section + '.title')` as **dynamic**, not as the quoted prefix — this is the fixed behavior; the source repo's single squashed commit (`git log --follow` returns one entry) means the "first version… unverified" regression is documented only in the plan/PR review history, not recoverable from `git log`. This plan documents the pitfall and its fix explicitly in `i18n.md` rather than relying on inaccessible git history. |
+| Scanner already covers the dynamic-key gap named in the issue | `sed -n '1,135p' apps/mobile/src/test-utils/catalogue-key-scan.ts`, `sed -n '1,111p' apps/mobile/src/test-utils/catalogue-key-scan.test.ts`, and `git log --follow --oneline -- apps/mobile/src/test-utils/catalogue-key-scan.ts` (in `personal-finances`) | `parseFirstArgument`'s E13 handling and tests `E13`/`E13b` explicitly classify `t('ds.a' + suffix)` and `t('ds.' + section + '.title')` as **dynamic**, not as the quoted prefix — this is the fixed behavior. `git log --follow` returns exactly one commit (`54d4390`) for this file, confirming PR #41 was merged as a single squashed commit; the "first version… unverified" regression is therefore documented only in the plan/PR review history, not recoverable from `git log`. This plan documents the pitfall and its fix explicitly in `i18n.md` rather than relying on inaccessible git history. |
 | `REVIEW.md` "Additional checks" block format | `grep -n "Additional checks for" REVIEW.md` | 10 existing conditional blocks follow a consistent `Additional checks for **<condition>**:` heading + bullet-list format; this plan's new block follows the same format, placed after the existing "automated check, guard, lint rule, or CI job" block (line ~318) since it is a specialization of that same discipline. |
 | Parser-risk classifier | Applied Protocol 02 Step 3 classification criteria against Layer-by-Layer Changes below | **Not applicable** — no file under `scripts/lint/`/`scripts/parse/` (or equivalent) is added or modified; the scanner is reproduced only as an illustrative, non-executed code block inside a documentation file. See "Parser-risk classification" note under Layer-by-Layer Changes. |
 | Cross-cutting checklist classifier | Applied Protocol 02 Step 3 classification criteria against the `REVIEW.md` change | **Not applicable** — the new block is a narrow, conditional "Additional checks for…" entry (the same pattern as the ten existing conditional blocks), not a new mandatory category every plan/implementation must address, and it does not rename or restructure an existing checklist category. |
@@ -264,8 +264,15 @@ repository's own CI).
 4. `docs/best-practices/STACK-SPECIFIC.md` and `docs/best-practices/3-testing.md`
    cross-references resolve to the new file and do not duplicate its
    content.
-5. All modified/added Markdown files pass the repository's own markdown
-   lint and heuristic lint commands (see Implementation Order step 8).
+5. All six modified/added Markdown files (the implementation plan itself,
+   `i18n.md`, `STACK-SPECIFIC.md`, `3-testing.md`, `REVIEW.md`, and the
+   smoke-test runbook) pass standard `markdownlint-cli2` linting. The two
+   files under `docs/specs/developments/` and `docs/testing/workflow/` (the
+   plan and the smoke-test runbook) additionally pass the heuristic lint
+   script, which is scoped to those two directories only per
+   `scripts/lint/README.md` and does not apply to `i18n.md`,
+   `STACK-SPECIFIC.md`, `3-testing.md`, or `REVIEW.md`. See Implementation
+   Order step 7.
 
 **Smoke test runbook**: `docs/testing/workflow/1441-i18n-lint-rule-port.smoke-test.md`
 
@@ -362,8 +369,30 @@ project with a configured i18n / catalogue convention** (see
    entries per `REVIEW.md`'s Plan Review Checklist. The implementation PR
    adds:
    - `- **Port i18n no-literal-string doctrine and catalogue reference** (#1441): adds \`docs/best-practices/stack/i18n.md\` with the portable no-hardcoded-string doctrine, a React Native/i18next worked example, and the dynamic-key scanner pitfall, plus a conditional \`REVIEW.md\` review-gate check.`
-7. Run validation:
-   - `npx markdownlint-cli2 "docs/best-practices/stack/i18n.md" "docs/best-practices/STACK-SPECIFIC.md" "docs/best-practices/3-testing.md" "docs/testing/workflow/1441-i18n-lint-rule-port.smoke-test.md" "REVIEW.md"`
-   - `find docs/specs/developments/20260811002516_1441-i18n-lint-rule-port docs/testing/workflow -name "*.md" -print0 | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md`
+7. Run validation (`bash` — the second command relies on Bash's `pipefail`
+   and process substitution, not portable `sh`):
+   - `npx markdownlint-cli2 "docs/specs/developments/20260811002516_1441-i18n-lint-rule-port/2_1441-i18n-lint-rule-port_implementation-plan.md" "docs/best-practices/stack/i18n.md" "docs/best-practices/STACK-SPECIFIC.md" "docs/best-practices/3-testing.md" "docs/testing/workflow/1441-i18n-lint-rule-port.smoke-test.md" "REVIEW.md"`
+   - Heuristic lint, fail-closed (validates both scan directories exist and
+     the discovered file list is non-empty before invoking the linter, and
+     propagates `find`/`python3` failures instead of allowing a silent
+     success):
+
+     ```bash
+     set -euo pipefail
+     for d in docs/specs/developments/20260811002516_1441-i18n-lint-rule-port docs/testing/workflow; do
+       [ -d "$d" ] || { echo "missing required directory: $d" >&2; exit 1; }
+     done
+     md_files=()
+     while IFS= read -r -d '' f; do
+       md_files+=("$f")
+     done < <(find docs/specs/developments/20260811002516_1441-i18n-lint-rule-port docs/testing/workflow -name "*.md" -print0)
+     [ "${#md_files[@]}" -gt 0 ] || { echo "no markdown files found to lint" >&2; exit 1; }
+     python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md "${md_files[@]}"
+     ```
+
+     (Bash 3.2-compatible — uses process substitution, not the Bash-4-only
+     `mapfile`/`readarray` builtins, since this repository's shell
+     conventions target Bash 3.2 as documented in
+     `scripts/lint/workflow-shell-snippet-lint.py`'s `BASH4` check.)
 8. Execute the smoke test runbook and record the results in the
    implementation PR.

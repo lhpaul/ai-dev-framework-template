@@ -122,24 +122,37 @@ i18n review overhead onto projects that do not use this pattern.
 
 **Maps to**: repository quality gate
 
-1. Run:
+1. Run standard `markdownlint-cli2` against all six modified/added Markdown
+   files, including the implementation plan itself:
 
    ```bash
-   npx markdownlint-cli2 "docs/best-practices/stack/i18n.md" "docs/best-practices/STACK-SPECIFIC.md" "docs/best-practices/3-testing.md" "docs/testing/workflow/1441-i18n-lint-rule-port.smoke-test.md" "REVIEW.md"
+   npx markdownlint-cli2 "docs/specs/developments/20260811002516_1441-i18n-lint-rule-port/2_1441-i18n-lint-rule-port_implementation-plan.md" "docs/best-practices/stack/i18n.md" "docs/best-practices/STACK-SPECIFIC.md" "docs/best-practices/3-testing.md" "docs/testing/workflow/1441-i18n-lint-rule-port.smoke-test.md" "REVIEW.md"
    ```
 
 2. Confirm exit code 0.
-3. Run:
+3. Run the heuristic lint script, scoped only to
+   `docs/specs/developments/` and `docs/testing/workflow/` (it does not
+   apply to `i18n.md`, `STACK-SPECIFIC.md`, `3-testing.md`, or `REVIEW.md`),
+   fail-closed:
 
    ```bash
-   find docs/specs/developments/20260811002516_1441-i18n-lint-rule-port docs/testing/workflow -name "*.md" -print0 \
-     | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md
+   set -euo pipefail
+   for d in docs/specs/developments/20260811002516_1441-i18n-lint-rule-port docs/testing/workflow; do
+     [ -d "$d" ] || { echo "missing required directory: $d" >&2; exit 1; }
+   done
+   md_files=()
+   while IFS= read -r -d '' f; do
+     md_files+=("$f")
+   done < <(find docs/specs/developments/20260811002516_1441-i18n-lint-rule-port docs/testing/workflow -name "*.md" -print0)
+   [ "${#md_files[@]}" -gt 0 ] || { echo "no markdown files found to lint" >&2; exit 1; }
+   python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md "${md_files[@]}"
    ```
 
 4. Confirm exit code 0.
 
-**Expected result**: All modified/added Markdown files pass both lint
-passes cleanly.
+**Expected result**: All six files pass standard `markdownlint-cli2`
+cleanly; the plan and smoke-test runbook additionally pass the
+directory-scoped heuristic lint cleanly.
 
 ---
 
@@ -173,7 +186,7 @@ No seed data required.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| `markdownlint-cli2` fails on a relative link | New file added outside the linted glob patterns above, or a link path is wrong relative to `docs/best-practices/stack/` | Re-check the relative path from the linting file's own directory, not the repo root. |
+| `markdownlint-cli2` fails on a relative link | A link path is wrong relative to the linting file's own directory (e.g. `docs/best-practices/stack/`) | Re-check the relative path from the linting file's own directory, not the repo root. |
 | Heuristic lint flags a broken cross-reference | `STACK-SPECIFIC.md` or `3-testing.md` link text/path does not match the actual new file path | Confirm the exact path `docs/best-practices/stack/i18n.md` is used consistently. |
 | Reviewer reads the worked example as a mandatory dependency | Missing or unclear "illustrative, not universal" framing at the top of the worked-example section | Add or strengthen the framing sentence; see plan Risks & Mitigations. |
 
