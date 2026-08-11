@@ -182,9 +182,9 @@ finding raised against its current head commit.
 
 **Considerations**:
 
-- If a later push changes the code the decision was about, the prior
-  decision is invalidated for the new state (see Business Rules) — a stale
-  decision must not be silently reused across commits.
+- Any later push to the PR — whether or not it touches the code the finding
+  was about — invalidates the decision (see BR7); a decision recorded against
+  a superseded head commit must not be silently reused across commits.
 
 ### Use Case 3: A blanket checkpoint waiver does not resolve a pending security-sensitive advisory finding
 
@@ -313,12 +313,18 @@ protection as one merged through `/run-epic`.
   repository permission, and that it is tied to the specific finding, PR
   number, and current head commit. A generic prior PR approval, an unrelated
   comment, or agent-authored rationale does not satisfy this rule.
-- **BR7 (decisions do not carry across code changes)**: A human decision
+- **BR7 (decisions do not carry across any later push)**: A human decision
   recorded for a security-sensitive advisory finding is valid only for the
-  PR head commit it was recorded against. If a later push changes the
-  underlying code the finding was about, the finding returns to pending and
-  requires a fresh fix or fresh human decision; a stale decision must not be
-  silently treated as still resolving the finding.
+  exact PR head commit it was recorded against, matching BR6's "current head
+  commit" requirement precisely. Any later push to the PR — whether or not
+  it touches the code the finding was about — invalidates the decision. If
+  the finding still applies at the new head commit, it returns to pending
+  and requires a fresh fix or a fresh human decision recorded against the
+  new head commit; a decision recorded against a superseded head commit must
+  not be silently treated as still resolving the finding. This mirrors the
+  exact-head-SHA invalidation rule the workflow already uses for verified
+  reviewer-access-bypass authorization, so the same push invalidates both
+  consistently rather than requiring two different staleness definitions.
 - **BR8 (applies to every delegated-merge caller)**: The requirement is
   evaluated the same way for `/run-item`, `/run-items`, and `/run-epic` Gate
   4/5 evidence. It is part of the gate's normal reasons evaluation, not
@@ -344,19 +350,27 @@ protection as one merged through `/run-epic`.
 | `fixed`           | Fixed                         | Runner (or human) applied a verifiable code fix; cited commit SHA recorded.                      |
 | `human-accepted`  | Accepted by Human              | A verified human decision accepted the risk with a recorded rationale.                           |
 | `human-rejected`  | Rejected by Human (False Positive) | A verified human decision confirmed the finding does not apply, with a recorded rationale.  |
-| `stale`           | Superseded by New Commit       | A prior `fixed`/`human-accepted`/`human-rejected` disposition no longer applies because the underlying code changed; returns to `pending`. |
+
+These four values are the only persisted dispositions Gate 4/5 evaluate for a
+security-sensitive advisory finding. "Superseded by new commit" (see below)
+is not a fifth persisted status — it is the audit reason recorded at the
+moment a `fixed` / `human-accepted` / `human-rejected` disposition is
+invalidated; the finding's persisted value at that point is `pending`, and
+that is the value Gate 4/5 read.
 
 **Valid transitions**:
 
 - `pending` → `fixed` when a verifiable code fix is applied and cited (runner
-  or human).
+  or human), recorded against the current head commit.
 - `pending` → `human-accepted` when a verified human decision accepts the
-  risk with rationale.
+  risk with rationale, recorded against the current head commit.
 - `pending` → `human-rejected` when a verified human decision confirms a
-  false positive with rationale.
-- `fixed` / `human-accepted` / `human-rejected` → `stale` when a later push
-  changes the code the disposition was recorded against.
-- `stale` → `pending` immediately (re-enters the decision requirement).
+  false positive with rationale, recorded against the current head commit.
+- `fixed` / `human-accepted` / `human-rejected` → `pending`, immediately and
+  automatically, on any later push to the PR (per BR7). The workflow records
+  an audit reason ("superseded by new commit") for the invalidation, but the
+  finding's evaluated status becomes `pending` — not a separate `stale`
+  status — re-entering the decision requirement for the new head commit.
 
 ---
 
@@ -390,7 +404,7 @@ protection as one merged through `/run-epic`.
 | Security-sensitive finding disposition = fixed, with a cited commit | Finding resolved | Gate 4/5 continue evaluating the PR normally | Cited commit SHA | Reviewer-loop / Gate 5 summary |
 | Security-sensitive finding pending, no verified human decision | Finding remains pending | Gate 4 leaves the accept/reject decision to a human; Gate 5 blocks delegated merge regardless of mode, `may_merge_pr`, or unrelated checkpoint state | Distinct pending signal; matched category/mechanism | Gate 4/5 reasons; PR-visible label |
 | Security-sensitive finding has a verified human decision matched to the current PR, head commit, and finding | Finding resolved (accepted or rejected) | Gate 4/5 proceed treating it as resolved | Decider identity, timestamp, disposition, rationale, matched PR/head SHA/finding | PR comment/review referenced by Gate 5 evidence |
-| A new push changes the code underlying a previously resolved security-sensitive finding | Prior disposition becomes stale | Finding returns to pending; requires a fresh fix or fresh human decision | Stale-decision reason | Gate 4/5 reasons |
+| Any new push occurs on a PR carrying a previously resolved (`fixed`/`human-accepted`/`human-rejected`) security-sensitive finding | Prior disposition is invalidated | Finding's evaluated status returns to `pending`; requires a fresh fix or fresh human decision recorded against the new head commit | "Superseded by new commit" audit reason; persisted/evaluated value is `pending`, not a separate stale status | Gate 4/5 reasons |
 | An unrelated bounded-prelude checkpoint (or a blanket waiver of several) is satisfied or waived | No effect on any pending security-sensitive advisory finding | Continue requiring the finding's own decision | Distinctness from checkpoint lifecycle | Gate 4/5 reasons vs. checkpoint reasons |
 | Gate 4/5 evidence assembled by `/run-item`, `/run-items`, or `/run-epic`, with `pr.inScope` absent or `true` | Security-sensitive advisory check runs as part of normal evaluation | Same reasons cascade regardless of invocation surface | Same evidence fields across surfaces | Gate 4/5 for all three invocation surfaces |
 | Gate 4/5 evidence assembled with `pr.inScope` explicitly `false` | Existing not-applicable scope short-circuit applies | No action required from this gate for this PR in this run | Existing `not_applicable` decision | Existing scope short-circuit behavior |
@@ -444,9 +458,14 @@ protection as one merged through `/run-epic`.
       and current head commit; a generic prior approval, an unrelated
       comment, or agent-authored rationale does not satisfy this
       requirement.
-- [ ] **AC12**: If the code underlying a previously fixed/accepted/rejected
-      security-sensitive finding changes in a later push, the finding returns
-      to pending and requires a fresh fix or fresh human decision.
+- [ ] **AC12**: If any later push occurs on a PR carrying a previously
+      fixed/human-accepted/human-rejected security-sensitive finding —
+      whether or not that push touches the code the finding was about — the
+      finding's evaluated status returns to `pending` (recorded with a
+      "superseded by new commit" audit reason) and requires a fresh fix or a
+      fresh human decision recorded against the new head commit; a decision
+      recorded against a superseded head commit does not resolve the finding
+      at the new head commit.
 - [ ] **AC13**: The reviewer-loop / Gate 5 summary surfaces each
       security-sensitive advisory finding and its current disposition state
       in a section visibly distinct from the existing non-security advisory
