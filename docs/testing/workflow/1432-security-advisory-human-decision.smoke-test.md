@@ -301,22 +301,25 @@ status or metadata, for any of the four persisted statuses.
    "Security-Sensitive Advisory Findings" section render, are visibly
    distinct (different headings, no nesting), and each lists only its own
    entries.
-3. Add a `human-accepted` entry and a `human-rejected` entry to
-   `.securityAdvisories[]`, each with `decider`, `decidedAt`, and
-   `rationale` populated. Confirm the rendered output contains all three
-   fields' actual values for each entry (not just the row existing) —
-   assert on the literal decider name, timestamp, and rationale text
-   appearing in the rendered section.
+3. Add a `human-accepted` entry, a `human-rejected` entry, and a `fixed`
+   entry to `.securityAdvisories[]` — the human-decided entries each with
+   `decider`, `decidedAt`, and `rationale` populated, the fixed entry with
+   `fixCommit` populated. Confirm the rendered output contains all field
+   values' actual content for each entry (not just the row existing) —
+   assert on the literal decider name, timestamp, and rationale text for the
+   human-decided entries, and on the literal fix commit SHA for the fixed
+   entry.
 4. Run `run-epic-audit-trail.sh apply-pr-disposition` (or the equivalent
    validation entry point) with, as separate fixture cases: a
    `human-accepted` entry omitting `rationale`; a `human-accepted` entry
    omitting `decider`; a `human-accepted` entry omitting `decidedAt`; a
-   `human-rejected` entry omitting `rationale`; and a `fixed` entry omitting
-   `fixCommit`. Confirm every one of the five cases hard-fails with
-   `error_exit` individually (mirroring, and stricter than, the existing
-   "non-fixed advisory decisions require rationale" rule), and that the
-   process does not silently render or persist an entry missing any of its
-   status-specific required fields.
+   `human-rejected` entry omitting `rationale`; a `human-rejected` entry
+   omitting `decider`; a `human-rejected` entry omitting `decidedAt`; and a
+   `fixed` entry omitting `fixCommit`. Confirm every one of the seven cases
+   hard-fails with `error_exit` individually (mirroring, and stricter than,
+   the existing "non-fixed advisory decisions require rationale" rule), and
+   that the process does not silently render or persist an entry missing any
+   of its status-specific required fields.
 
 **Expected result**: A human or future retrospective can see security-
 sensitive findings and their disposition state at a glance, separate from

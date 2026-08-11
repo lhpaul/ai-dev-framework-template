@@ -259,9 +259,11 @@ workflow decision-gate matrix" requirement for both the spec and this plan.
 
 - [ ] Accept two new optional evidence fields: `.securityAdvisories[]`
   (reconciled tracker output — id, category, matchedFile, status, headSha,
-  firstTrackedAt, fixCommit, and, for human-resolved entries, decider,
-  decidedAt, rationale — the canonical resolved-entry schema defined in
-  Stage 2 above) and `.securityAdvisoryDecisionEvents[]` (raw candidate
+  firstTrackedAt, and, for `fixed` entries, fixCommit; for human-resolved
+  entries, decider, decidedAt, rationale — the canonical resolved-entry
+  schema defined in Stage 2 above; a `pending` entry carries none of
+  `fixCommit`/`decider`/`decidedAt`/`rationale`) and
+  `.securityAdvisoryDecisionEvents[]` (raw candidate
   GitHub comment refs, same `{id, type}` shape `.authorizationEvents[]`
   already uses).
 - [ ] New function `github_verified_security_advisory_decisions`, structurally
