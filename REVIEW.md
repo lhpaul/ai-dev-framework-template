@@ -324,7 +324,7 @@ Additional checks for **PRs that add or modify an automated check, guard, lint r
 
 Additional checks for **PRs that add or modify user-facing copy in a
 project with a configured i18n / catalogue convention** (see
-`docs/best-practices/stack/i18n.md`):
+[`docs/best-practices/stack/i18n.md`](docs/best-practices/stack/i18n.md)):
 
 - **Applicability gate**: this check applies only to a downstream project that has adopted an i18n / catalogue convention for user-facing copy. When a project has not adopted this convention, this check is not applicable; do not treat it as a blanket requirement for every PR in every repository.
 - **Enforcement is active** (blocking when applicable): confirm the project's no-hardcoded-string enforcement mechanism (a lint rule or equivalent machine check) is configured and currently enabled, not merely documented as a convention.
