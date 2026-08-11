@@ -160,8 +160,27 @@ workflow decision-gate matrix" requirement for both the spec and this plan.
   `.securityAdvisoryDecisionEvents[]` matching that entry's exact finding
   id/PR/head SHA), add reason
   `"security_sensitive_advisory_pending: finding <id> (<category> @ <file>) requires a fixed commit or a verified human accept/reject decision at head <sha>"`
-  and force `decision: "human_required"` — never `merge_allowed` — regardless
-  of `mode`, `policy.mayMerge`, or unrelated checkpoint state (BR5, AC5, AC6).
+  — never `merge_allowed` — regardless of `mode`, `policy.mayMerge`, or
+  unrelated checkpoint state (BR5, AC5, AC6). `mergePermitted` already becomes
+  `false` automatically once this reason is added (it is computed as
+  `$count == 0`), but the `decision` **string** is not: the existing
+  `decision`/`nextAction` `elif` chains (same file, ~line 792-793 and
+  ~line 805-808) classify accumulated `$reasons` entries by testing them
+  against fixed keyword regexes — `test("reviewer blocking|CI checks|
+  unresolved blocking|advisories")` selects `"fix_required"`, and
+  `test("authority|risk gate|needs-setup|Backlog|human_checkpoint_required|
+  human-checkpoint|graduation_approval_required")` selects `"human_required"`
+  — not a generic "any reason present → non-merge decision" mapping. The
+  `security_sensitive_advisory_pending` reason text does not match either
+  existing pattern, so without further wiring it would silently fall through
+  to the final catch-all `"blocked"` branch instead of `"human_required"`.
+  This step must therefore also extend both `elif` alternatives (decision at
+  ~line 793 and nextAction at ~line 808) with an additional match on
+  `security_sensitive_advisory_pending`, so the gate's `decision` field is
+  verifiably `"human_required"` — not merely a non-`merge_allowed` value —
+  matching what this bullet and the spec's Workflow Decision-Gate Matrix
+  require, and so `nextAction` gives the human a specific instruction rather
+  than the generic `"block until required state is available"` message.
 - [ ] This new branch does not read, write, or call any of the existing
   `checkpoint_list` / `pending_checkpoints` / `checkpoint_reason` / `invalid_checkpoint_states`
   functions (BR4) — it is a fully independent code path using its own reason
@@ -179,10 +198,22 @@ workflow decision-gate matrix" requirement for both the spec and this plan.
   `warn_per_finding_advisories()`: a `human-accepted` or `human-rejected`
   entry without rationale is a hard `error_exit` (mirrors the existing
   "non-fixed advisory decisions require rationale" rule at line 346).
-- [ ] Add `securityAdvisories` to the required-fields documentation comment
-  near line 20 (informational only — this field stays optional at the
-  script's required-fields gate itself, since most PRs will legitimately have
-  zero security-sensitive findings; only non-empty entries are validated).
+- [ ] Add `"securityAdvisories"` to the `PR_DISPOSITION_KNOWN_KEYS` array
+  (lines 18-22) — this array is not merely documentation: it is consumed at
+  runtime by `warn_unknown_pr_disposition_keys()` (line 388, called from both
+  the `render-pr-disposition` and `apply-pr-disposition` command paths at
+  lines 635 and 644) to WARN when a top-level input key is not recognized.
+  This is exactly the class of bug issue #1436 introduced this array to catch
+  (an unrecognized key silently dropped from the rendered comment); omitting
+  `securityAdvisories` from this list would not silently drop the new
+  section (the new `render_pr_disposition` jq explicitly consumes
+  `.securityAdvisories`, per the bullet above), but it would print a
+  misleading `WARN: unrecognized top-level PR disposition field(s) will not
+  appear in the rendered audit comment: securityAdvisories` on every run that
+  includes the field, contradicting the field actually being rendered. This
+  field stays optional at the script's separate required-fields gate, since
+  most PRs will legitimately have zero security-sensitive findings; only
+  non-empty entries are validated by `validate_security_advisories()`.
 
 ### Protocol updates (Stage 4 — orchestration wiring, all docs-only)
 
@@ -270,8 +301,12 @@ manual/documentation-review smoke test (no UI — this is workflow tooling).
    `securitySensitive: true`.
 4. AC4/AC5/BR5: gate test — a PR with one `pending` `.securityAdvisories[]`
    entry, `policy.mayMerge: true`, `mode: delegated`, and every other gate
-   condition green still returns `decision != "merge_allowed"` and includes
-   the `security_sensitive_advisory_pending` reason.
+   condition green still returns `decision == "human_required"` (not merely
+   `!= "merge_allowed"` — the test must assert the exact string, since the
+   gate's `elif` classification chain requires an explicit keyword match to
+   produce `"human_required"` rather than falling through to the generic
+   `"blocked"` catch-all) and includes the `security_sensitive_advisory_pending`
+   reason.
 5. AC6: gate test — the same PR additionally carrying a `waived`
    `human-checkpoint-required` checkpoint for an unrelated item/stage still
    blocks on the security-sensitive finding (proves the two mechanisms are
@@ -328,15 +363,28 @@ scanning ... over ... structured text" signal.
     co-occurring with an exposure/logging/handling verb, not the bare word
     "secret").
   - Multiple category keywords on one line: a finding containing both
-    "force push" and "secret" text matches on the first category in priority
-    order (a→b→c→d→e) — the test asserts `matchedCategory == "b"` when the
-    finding text lists the secret-exposure sentence first, proving ordering
-    is text-order-first, not a fixed category-priority override, and
-    documents this precisely so implementers do not have to guess.
+    "force push" and "secret" text matches the first category tested in the
+    classifier's fixed evaluation order (a→b→c→d→e) — the test asserts
+    `matchedCategory == "b"` regardless of which keyword phrase appears first
+    in the finding text, because category (b)'s exposure-verb pattern is
+    tested before category (c)'s force-push pattern in the ordered `elif`
+    chain (see Code Samples). This is a fixed category-priority override, not
+    text-position-based matching; documenting this precisely means
+    implementers do not have to guess whether ordering follows text position
+    or category priority — it is category priority, unconditionally.
   - Overlapping categories (a) vs (e): "this change bypasses the auth check"
     — asserted to match category (a) specifically (auth bypass takes
-    precedence when both an auth noun and "bypass" co-occur), not the more
-    generic category (e).
+    precedence when both an auth noun and "bypass"/"skip"/"spoof" co-occur,
+    **in either text order**), not the more generic category (e). This
+    requires category (a)'s regex to match both "auth ... bypass" and
+    "bypass ... auth" orderings: a single-direction
+    `auth(entication|orization)?.*(bypass|skip|spoof)` pattern does **not**
+    match this example (`bypass` appears before `auth` in the text) and would
+    incorrectly fall through to category (e)'s
+    `(bypass|weaken|disable|circumvent).*(guard|gate|policy|check)` pattern
+    instead (since "bypasses ... check" does match category (e) as an
+    unrelated substring). The Code Samples illustrative regex below is
+    corrected to match both orderings for this reason.
   - File-location exact-match boundary: a finding against
     `scripts/development-workflow/run-epic-risk-classifier-notes.sh` (a
     lookalike, non-enforcement-surface file) does not match Part B even
@@ -409,7 +457,11 @@ extend.
 classify() {
   local finding_text="$1" file_path="$2"
   local matched_category=""
-  if printf '%s' "$finding_text" | grep -qiE 'auth(entication|orization)?.*(bypass|skip|spoof)'; then
+  # Category (a) matches "auth ... bypass" and "bypass ... auth" order-
+  # independently (see Parser-risk addendum, "Overlapping categories (a) vs
+  # (e)") so it is tested and matched before the more generic category (e)
+  # bypass/guard pattern below, regardless of which token appears first.
+  if printf '%s' "$finding_text" | grep -qiE 'auth(entication|orization)?.*(bypass|skip|spoof)|(bypass|skip|spoof).*auth(entication|orization)?'; then
     matched_category="a"
   elif printf '%s' "$finding_text" | grep -qiE '(secret|credential|token|password).*(expos|log|leak|plaintext)'; then
     matched_category="b"
@@ -458,14 +510,21 @@ I record a human decision for security-sensitive advisory finding sec-4f2a9c1b0d
 3. **Stage 3a — Gate wiring (depends on Stage 1+2 output shapes)**: Modify
    `scripts/development-workflow/run-epic-delegated-gate.sh`: add
    `github_verified_security_advisory_decisions`, the new evidence fields,
-   and the new reasons-cascade branch inside the existing normal-cascade
-   `else` block. Extend
+   the new reasons-cascade branch inside the existing normal-cascade `else`
+   block, **and** the additional `elif` alternatives on the existing
+   `decision`/`nextAction` classification chains (~line 793 / ~line 808) that
+   recognize `security_sensitive_advisory_pending` and select
+   `"human_required"` — this last part is required precisely because those
+   chains classify by fixed keyword-regex match, not by "any reason present,"
+   as detailed in the Layer-by-Layer Changes bullet above. Extend
    `scripts/development-workflow/tests/test-run-epic-delegated-gate.sh` with
    the AC4/AC5/AC6/AC8/AC9/AC10/AC11 test cases from "Key scenarios to test."
    Planted-violation proof: show `decision: "merge_allowed"` before the new
    branch exists (with a fixture `pending` `.securityAdvisories[]` entry and
-   every other gate condition green), and `decision: "human_required"` with
-   the `security_sensitive_advisory_pending` reason after.
+   every other gate condition green), and `decision: "human_required"`
+   (asserted as the exact string, not merely non-`merge_allowed`) with the
+   `security_sensitive_advisory_pending` reason after both the reasons-cascade
+   branch and the classification-chain `elif` alternatives exist.
 4. **Stage 3b — Audit rendering (depends on Stage 3a's evidence shape)**:
    Modify `scripts/development-workflow/run-epic-audit-trail.sh`: add the
    "Security-Sensitive Advisory Findings" section, `validate_security_advisories()`,

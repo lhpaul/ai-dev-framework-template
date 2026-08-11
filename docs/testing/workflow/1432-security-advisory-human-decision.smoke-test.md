@@ -96,8 +96,11 @@ correctly classified as security-sensitive.
    with `policy.mayMerge: true` and `mode: delegated`, plus one
    `.securityAdvisories[]` entry with `status: "pending"`.
 2. Run `run-epic-delegated-gate.sh --input <evidence-file> --json`.
-3. Confirm `decision != "merge_allowed"` and `reasons[]` includes a string
-   starting with `security_sensitive_advisory_pending:`.
+3. Confirm `decision == "human_required"` (the exact string, not merely
+   `!= "merge_allowed"` — the gate's decision-classification chain requires
+   an explicit keyword match to produce `"human_required"` rather than
+   falling through to the generic `"blocked"` value) and `reasons[]` includes
+   a string starting with `security_sensitive_advisory_pending:`.
 4. Re-run with the same entry's `status` set to `"fixed"` and a `fixCommit`
    present, and separately with a verified
    `.securityAdvisoryDecisionEvents[]` entry resolving it as
