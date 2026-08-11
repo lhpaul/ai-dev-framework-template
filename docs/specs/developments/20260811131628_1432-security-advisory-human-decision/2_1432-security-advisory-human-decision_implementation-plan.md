@@ -498,6 +498,17 @@ scanning ... over ... structured text" signal.
     "without a safety lease" qualifier. This is the case the earlier draft of
     this addendum omitted; see the `classify()` sample above for the
     positive-match-AND-NOT-safe-phrase implementation this test proves.
+  - Negative lookalike, category (c) safety-lease exclusion, unhyphenated
+    phrasing: `"force push with a safety lease"` (no `force-with-lease`
+    hyphenated token) also does **not** match category (c) — the NOT-check
+    additionally excludes any `with (a|an|the)? (safety )?lease` phrasing, not
+    only the literal `force-with-lease`/`--force-with-lease` tokens, so a
+    finding phrased without the hyphenated flag name is still correctly
+    recognized as describing safe, lease-protected usage. Conversely, the
+    positive fixture `"raw git push --force is used here without a safety
+    lease"` still matches category (c): "without" is not "with " (no space
+    directly follows the substring "with" inside "without"), so the NOT-check
+    does not fire on the positive case.
   - Negative lookalike, category: `"the retry count is a secret constant we
     tune later"` does not match category (b) (no credential/token/exposure
     context — the pattern requires "secret"/"credential"/"token"/"password"
@@ -646,7 +657,7 @@ classify() {
   # ERE has no negative lookahead, so this is a positive-match-AND-NOT-safe-
   # phrase check across two `match_re` calls, not a single regex.
   elif match_re "$finding_text" '(force[- ]?push|--force\b|hard reset|history rewrite)' \
-    && ! match_re "$finding_text" '(force[- ]?with[- ]?lease|--force-with-lease)'; then
+    && ! match_re "$finding_text" '(force[- ]?with[- ]?lease|--force-with-lease|with (a |an |the )?(safety[- ]?)?lease)'; then
     matched_category="c"
   elif match_re "$finding_text" '(injection|unsanitized|eval\(|path.traversal)'; then
     matched_category="d"
