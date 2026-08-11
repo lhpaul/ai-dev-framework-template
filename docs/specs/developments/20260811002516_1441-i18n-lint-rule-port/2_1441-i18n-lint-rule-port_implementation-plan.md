@@ -97,7 +97,7 @@ before writing the plan, matching the max-autonomy default in Step 2 below.
 | Check | Command / query | Result |
 | --- | --- | --- |
 | Repo revision | `git rev-parse --short HEAD` | `6830fd9` (worktree base = `origin/develop` after PR #1465 merge) |
-| Template ships no product application source tree or unit-test runner | `find . -maxdepth 2 -type d ! -path './.git*' ! -path './node_modules*'` (top-level dirs) and `git ls-files -- '*.ts' '*.tsx'` (every tracked `.ts`/`.tsx` file repo-wide, any depth, in `ai-dev-framework-template`) | Top-level dirs: `.agents/ .claude/ .codex/ .codex-worktrees/ .cursor/ .entire/ .git/ .github/ .haystack/ .tmp/ .worktrees/ docs/ e2e/ hooks/ scripts/ template/`. The `git ls-files` scan is the source of truth for tracked `.ts`/`.tsx` files at any depth (the top-level `find` alone cannot prove this): it returns exactly 12 files — `e2e/playwright.config.ts` and `e2e/tests/baseline.spec.ts` (a tracked Playwright placeholder spec, run by `"test": "playwright test"` in `e2e/package.json`), plus 10 files under `hooks/agent-context/` and `hooks/truncation-checker/` (Haystack git-hook internals, not a unit-test runner). Neither surface is a product application source tree, and neither hosts a unit-test runner (Jest/Vitest) suited to the source PR's `.test.ts` suites. |
+| Template ships no product application source tree or unit-test runner | `find . -maxdepth 2 -type d ! -path './.git*' ! -path './node_modules*'` (top-level dirs); `git ls-files -- '*.ts' '*.tsx'` (every tracked `.ts`/`.tsx` file repo-wide, any depth); `git show HEAD:e2e/package.json \| grep -nE '"test"[[:space:]]*:[[:space:]]*"playwright test"'` (confirms the `e2e/` test script); `git grep -nEi '"(jest\|vitest)"' -- '*package.json'` (confirms no Jest/Vitest manifest entry anywhere in the repo) | Top-level dirs: `.agents/ .claude/ .codex/ .codex-worktrees/ .cursor/ .entire/ .git/ .github/ .haystack/ .tmp/ .worktrees/ docs/ e2e/ hooks/ scripts/ template/`. The `git ls-files` scan is the source of truth for tracked `.ts`/`.tsx` files at any depth (the top-level `find` alone cannot prove this): it returns exactly 12 files — `e2e/playwright.config.ts` and `e2e/tests/baseline.spec.ts` (a tracked Playwright placeholder spec), plus 10 files under `hooks/agent-context/` and `hooks/truncation-checker/` (Haystack git-hook internals, not a unit-test runner). The `git show`/`grep` command against `e2e/package.json` returns `"test": "playwright test"` (exit 0), confirming the Playwright claim directly from the manifest rather than inferring it. The repo-wide `git grep` for a `"jest"`/`"vitest"` manifest entry across every `package.json` returns no match (exit 1), confirming no Jest/Vitest unit-test runner exists anywhere in the repo. Neither `e2e/` nor `hooks/` is a product application source tree, and neither hosts a unit-test runner suited to the source PR's `.test.ts` suites. |
 | `docs/best-practices/stack/` precedent | `ls docs/best-practices/stack/` | Only `.gitkeep` and `supabase.md`; `supabase.md` is pure prose + illustrative TypeScript code blocks, not a runnable/tested file, confirming the doc-only pattern this plan follows. |
 | `STACK-SPECIFIC.md` precedent row | `sed -n '1,40p' docs/best-practices/STACK-SPECIFIC.md` | The "Best Practices by Technology" table already has a concrete `| Supabase | [stack/supabase.md](stack/supabase.md) |` row alongside placeholder rows, confirming new concrete rows are added directly to this shared template file rather than left for per-project setup only. |
 | Reference implementation is merged and proven | `gh pr view 41 --repo lhpaul/personal-finances` | MERGED. PR body includes a three-run lint transcript (fails on a planted literal at `apps/mobile/src/dev/DesignSystemGallery.tsx:76:34`, passes before/after) and a `grep -rn "no-literal-string"` showing zero `eslint-disable` usages. |
@@ -382,15 +382,23 @@ project with a configured i18n / catalogue convention** (see
      for d in docs/specs/developments/20260811002516_1441-i18n-lint-rule-port docs/testing/workflow; do
        [ -d "$d" ] || { echo "missing required directory: $d" >&2; exit 1; }
      done
+     list_file="$(mktemp)"
+     trap 'rm -f "$list_file"' EXIT
+     find docs/specs/developments/20260811002516_1441-i18n-lint-rule-port docs/testing/workflow -name "*.md" -print0 > "$list_file"
      md_files=()
      while IFS= read -r -d '' f; do
        md_files+=("$f")
-     done < <(find docs/specs/developments/20260811002516_1441-i18n-lint-rule-port docs/testing/workflow -name "*.md" -print0)
+     done < "$list_file"
      [ "${#md_files[@]}" -gt 0 ] || { echo "no markdown files found to lint" >&2; exit 1; }
      python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md "${md_files[@]}"
      ```
 
-     (Bash 3.2-compatible — uses process substitution, not the Bash-4-only
+     (Writes `find`'s NUL-delimited output to a temporary file and reads it
+     back, rather than piping through process substitution — `set -e` does
+     not propagate a `find` failure across a `<(...)` process-substitution
+     boundary, so a partial `find` failure would otherwise be masked and the
+     "non-empty file list" check could pass on a truncated list. Bash
+     3.2-compatible — uses a `while read` loop, not the Bash-4-only
      `mapfile`/`readarray` builtins, since this repository's shell
      conventions target Bash 3.2 as documented in
      `scripts/lint/workflow-shell-snippet-lint.py`'s `BASH4` check.)

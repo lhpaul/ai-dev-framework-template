@@ -140,13 +140,20 @@ i18n review overhead onto projects that do not use this pattern.
    for d in docs/specs/developments/20260811002516_1441-i18n-lint-rule-port docs/testing/workflow; do
      [ -d "$d" ] || { echo "missing required directory: $d" >&2; exit 1; }
    done
+   list_file="$(mktemp)"
+   trap 'rm -f "$list_file"' EXIT
+   find docs/specs/developments/20260811002516_1441-i18n-lint-rule-port docs/testing/workflow -name "*.md" -print0 > "$list_file"
    md_files=()
    while IFS= read -r -d '' f; do
      md_files+=("$f")
-   done < <(find docs/specs/developments/20260811002516_1441-i18n-lint-rule-port docs/testing/workflow -name "*.md" -print0)
+   done < "$list_file"
    [ "${#md_files[@]}" -gt 0 ] || { echo "no markdown files found to lint" >&2; exit 1; }
    python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md "${md_files[@]}"
    ```
+
+   (Writes `find`'s output to a temporary file so a partial `find` failure
+   cannot be masked by process substitution — see the implementation plan's
+   Implementation Order step 7 for the full rationale.)
 
 4. Confirm exit code 0.
 
