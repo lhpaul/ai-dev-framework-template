@@ -30,6 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`workflow-shell-snippet-lint.py` WS001 false-positives on non-shell fenced
+  code blocks** (#1468): `executable = language in {"bash", "sh", "shell",
+  "zsh"} or bool(SHELL_SIGNAL.search(content))` let the `SHELL_SIGNAL` content
+  heuristic override an explicit, non-shell language tag, so idiomatic
+  TypeScript/Python/SQL fences whose content happened to start a line with
+  `export`/`if`/`for`/`set` (etc.) were misclassified as executable shell and
+  flagged for a `workflow-shell-contract` marker they should never carry —
+  reproduced on `docs/best-practices/stack/supabase.md`'s pre-existing
+  `` ```typescript `` blocks in `--all` mode, and blocking PR #1467 (#1441) in
+  `--base-ref` (changed-lines) mode. An explicit language tag is now
+  authoritative: an explicit shell tag (`bash`/`sh`/`shell`/`zsh`) is always
+  executable, any other explicit tag is never executable regardless of
+  content, and only a genuinely ambiguous untagged fence still falls back to
+  `SHELL_SIGNAL`. Adds five permanent regression fixtures to
+  `scripts/lint/tests/test-workflow-shell-snippet-lint.sh` covering explicit
+  non-shell tags (`ts`, `typescript`, `python`, `sql`) with shell-signal
+  content (must pass) and an untagged fence with shell content (must still
+  fail).
 - **`retro-metrics.md` excluded from sync overwrites, with an approval-based
   bootstrap migration for inherited rows** (#1438):
   `docs/workflow/retro-metrics.md` and `docs/workflow/retro-metrics-platforms.md`
