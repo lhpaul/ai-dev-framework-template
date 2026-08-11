@@ -85,6 +85,8 @@ Any PR that adds or materially modifies an automated check, guard, lint rule, or
 
 See `REVIEW.md` → Code Review Checklist → Pass 2 → "PRs that add or modify an automated check, guard, lint rule, or CI job" for the reviewer-facing enforcement of this rule.
 
+For a worked instance of this rule — a regex-based key-extraction scanner, its full edge-case table, and a named dynamic-key concatenation gap (`t('x.' + k)`) that a naive first version missed and a fix closed with documented regression cases — see [`docs/best-practices/stack/i18n.md` § Key-extraction scanner and the dynamic-key pitfall](stack/i18n.md#key-extraction-scanner-and-the-dynamic-key-pitfall).
+
 ## Test Data and Seed Data
 
 - Tests that require data should use deterministic seed data, not random values
