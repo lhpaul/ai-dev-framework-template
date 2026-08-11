@@ -25,13 +25,16 @@ required).
 
 <!-- S: < 1 day | M: 1-3 days | L: 3+ days -->
 
-**Rationale**: Three new/modified scripts with new jq logic, a new PR-comment
-persistence format, a new verified-decision comment protocol, and updates to
-five workflow documents (91, 93, 95, `guardrails-enforcement.md`,
-`guardrails.md`) plus `REVIEW.md`. Every new check requires a planted-violation
-proof in both directions (fires / does not fire) across at least three new
-test files, following `REVIEW.md`'s Verification Discipline rule. This is
-materially larger than a single-file gate change.
+**Rationale**: Two new scripts (`security-advisory-classifier.sh`,
+`security-advisory-tracker.sh`) and two modified scripts
+(`run-epic-delegated-gate.sh`, `run-epic-audit-trail.sh`) — four scripts
+total — with new jq logic, a new PR-comment persistence format, a new
+verified-decision comment protocol, and updates to five workflow documents
+(91, 93, 95, `guardrails-enforcement.md`, `guardrails.md`) plus `REVIEW.md`.
+Every new check requires a planted-violation proof in both directions
+(fires / does not fire) across at least three new test files, following
+`REVIEW.md`'s Verification Discipline rule. This is materially larger than a
+single-file gate change.
 
 **Dependencies**: None. All referenced machinery (`run-epic-delegated-gate.sh`
 scope-optional `pr.inScope` handling from #1435, `run-epic-audit-trail.sh`'s
@@ -104,15 +107,22 @@ workflow decision-gate matrix" requirement for both the spec and this plan.
 ### New script: BR1 classifier (Stage 1)
 
 - [ ] `scripts/development-workflow/security-advisory-classifier.sh` (NEW):
-  - `classify --finding-text <text-or-@file> --file-path <path|"">` subcommand.
+  - `classify --finding-text <text-or-@file> --file-path <path|""> --diff-hunk <text-or-@file|"">`
+    subcommand. `--diff-hunk` is optional (defaults to `""`) and carries the
+    review comment's diff-hunk context when the caller has it (inline PR
+    review comments only — PR-level issue comments have no diff hunk and
+    pass `""`).
   - Part A (content-category test): five ordered, first-match regexes for
     categories (a)–(e) from BR1. Case-insensitive, applied to the finding
     text.
   - Part B (file-location test): an explicit 10-entry enforcement-surface
     allowlist (exact path match, no prefix/glob matching except the single
     `.github/workflows/*.yml` case), plus a workflow-YAML special case that
-    additionally requires the finding text or diff-hunk context to mention a
-    `permissions:` or `secrets:` YAML key.
+    additionally requires the finding text **or** `--diff-hunk` (when
+    non-empty) to mention a `permissions:` or `secrets:` YAML key — this
+    covers a finding comment that discusses the risk without quoting the
+    YAML itself, where the key only appears in the diff hunk CodeRabbit/
+    PR-Agent attach to the comment.
   - Output: `{securitySensitive: bool, matchedCategory: "a".."e"|null,
     matchedFile: <path>|null}`.
   - Conjunctive AND: `securitySensitive` is `true` only when both parts
@@ -121,29 +131,84 @@ workflow decision-gate matrix" requirement for both the spec and this plan.
 ### New script: BR7 reconciliation + tracking-comment persistence (Stage 2)
 
 - [ ] `scripts/development-workflow/security-advisory-tracker.sh` (NEW):
-  - `reconcile --prior <tracking-comment-json|"none"> --current <fresh-classified-findings-json> --head-sha <sha>`:
+  - `reconcile --prior <tracking-comment-json|"none"> --current <fresh-classified-findings-json> --head-sha <sha> --decision-events <verified-decision-events-json|"none">`:
     implements BR7's re-evaluation — matches prior entries to fresh findings
     by `(matchedCategory, matchedFile)`; entries with no fresh match exit
     tracking; entries whose `headSha` differs from the current head reset to
     `pending` with audit reason `superseded_by_new_commit`; entries whose
-    `headSha` matches the current head keep their existing status untouched.
-    Never emits a `stale` status — only the four persisted values from the
-    spec's Statuses table.
+    `headSha` matches the current head keep their existing status untouched,
+    **except** where `--decision-events` (see below) resolves them. Never
+    emits a `stale` status — only the four persisted values from the spec's
+    Statuses table.
+    - **Same-push collision handling**: when `--current` contains more than
+      one fresh finding sharing the same `(matchedCategory, matchedFile)`
+      key in a single call, `reconcile` does **not** collapse them into one
+      entry. It pairs multiple prior/fresh entries sharing a key in stable
+      order (first-listed prior entry to first-listed fresh entry for that
+      key, and so on); if the prior and fresh counts for a shared key
+      differ, unmatched fresh entries become new `pending` entries and
+      unmatched prior entries follow the existing no-match "exits tracking"
+      rule. Covered by an explicit fixture/test case (see Testing Strategy)
+      proving two same-category-same-file findings on one push are tracked
+      as two distinct entries, never silently merged or overwritten.
+    - **Why `(matchedCategory, matchedFile)` and not the `sec-<hash>` finding
+      id**: the finding id is partly derived from `commentIdOrUrl`
+      (`sec-<12-hex sha256 of platform|commentIdOrUrl|matchedCategory>`). If
+      a review platform posts a *new* comment id for what is conceptually
+      the same finding on a later push, matching strictly by finding id
+      across pushes would break BR7's cross-push reconciliation (the entry
+      would look like a brand-new finding every push instead of continuing
+      its existing status). `(matchedCategory, matchedFile)` is stable
+      across pushes by construction and is therefore the primary
+      cross-push key; the finding id remains useful only as the stable
+      per-entry identifier within a single reconciled snapshot (used by
+      `render`, `apply`, and `--decision-events` matching below), not as
+      the cross-push matching key.
+    - **`--decision-events`** (optional, default `"none"`): a JSON array of
+      already-verified decision events, each
+      `{findingId, decision: "human-accepted"|"human-rejected", decider,
+      decidedAt, rationale}` — produced by
+      `run-epic-delegated-gate.sh verify-security-advisory-decisions` (see
+      Stage 3a), the same verification `github_verified_security_advisory_decisions`
+      performs for Gate 5 evidence. For each reconciled entry that is
+      currently `pending` at `--head-sha`, if a decision event's
+      `findingId` matches that entry's finding id, `reconcile` transitions
+      the entry to the event's `decision` value and persists `decider`,
+      `decidedAt`, and `rationale` on the entry (the canonical
+      resolved-entry schema — see below). Entries that are not `pending`,
+      or with no matching decision event, are unaffected by this input.
+      This is what allows a verified human decision to actually persist
+      into the tracking-comment/audit record instead of only existing as an
+      in-memory Gate 5 evaluation result.
+  - **Canonical resolved-entry schema**: every reconciled entry with status
+    `fixed`, `human-accepted`, or `human-rejected` carries `id`, `category`,
+    `matchedFile`, `status`, `headSha`, and, when resolved by a human
+    decision, `decider`, `decidedAt`, and `rationale` (when resolved by a
+    fix, `fixCommit` instead of `decider`/`decidedAt`/`rationale`). These
+    exact field names are used consistently by `reconcile`'s output, the
+    `.securityAdvisories[]` Gate 5 evidence shape (Stage 3), and
+    `run-epic-audit-trail.sh`'s rendered audit section (Stage 3b) — there is
+    one schema, not three independently-named ones.
   - `render --input <reconciled-json>`: renders the
     `<!-- security-sensitive-advisory-findings -->` marker-comment body (one
-    row per tracked finding: id, category, file, status, decider/rationale
-    when resolved).
+    row per tracked finding: id, category, file, status, decider/decidedAt/
+    rationale when resolved by a human decision, fix commit when resolved by
+    a fix).
   - `apply --input <reconciled-json> --pr <pr-number>`: upserts the marker
     comment via `gh api` (find-by-marker-then-PATCH-or-POST, same shape as
-    `run-epic-audit-trail.sh`'s `apply-pr-disposition`).
+    `run-epic-audit-trail.sh`'s `apply-pr-disposition`). `apply` only
+    upserts the marker comment; it does not add or remove the
+    `security-advisory-decision-required` label (see Stage 4's Protocol 93
+    update for which component performs that label mutation).
 
 ### `scripts/development-workflow/run-epic-delegated-gate.sh` (Stage 3 — gate wiring)
 
 - [ ] Accept two new optional evidence fields: `.securityAdvisories[]`
   (reconciled tracker output — id, category, matchedFile, status, headSha,
-  fixCommit) and `.securityAdvisoryDecisionEvents[]` (raw candidate GitHub
-  comment refs, same `{id, type}` shape `.authorizationEvents[]` already
-  uses).
+  fixCommit, and, for human-resolved entries, decider, decidedAt, rationale —
+  the canonical resolved-entry schema defined in Stage 2 above) and
+  `.securityAdvisoryDecisionEvents[]` (raw candidate GitHub comment refs,
+  same `{id, type}` shape `.authorizationEvents[]` already uses).
 - [ ] New function `github_verified_security_advisory_decisions`, structurally
   parallel to the existing `github_verified_authorization_events` (same file,
   ~line 93): for each candidate event, fetch via `gh api`, verify
@@ -151,6 +216,20 @@ workflow decision-gate matrix" requirement for both the spec and this plan.
   `admin`-only), and the comment body exactly matches the finding's expected
   decision-comment text (finding id + PR + head SHA embedded, mirroring the
   existing `expected_authorization_text` exact-match approach at line 127).
+  Output shape: one verified-decision object per resolved event —
+  `{findingId, decision: "human-accepted"|"human-rejected", decider,
+  decidedAt, rationale}` — matching the canonical resolved-entry schema so
+  it can be fed directly into `security-advisory-tracker.sh reconcile
+  --decision-events`.
+- [ ] New subcommand `verify-security-advisory-decisions --input
+  <evidence-json>` on `run-epic-delegated-gate.sh` that runs only
+  `github_verified_security_advisory_decisions` against
+  `.securityAdvisoryDecisionEvents[]` in the given evidence file and prints
+  the resulting verified-decision array as JSON, without evaluating the
+  rest of the gate. This lets Protocol 93's Stage-4 disposition step (which
+  runs earlier than Gate 5, during the reviewer loop) reuse the exact same
+  verification logic to compute decisions for tracker persistence, instead
+  of duplicating the verification rules in a second place.
 - [ ] New reasons-cascade branch inside the **existing** normal-evaluation
   `else` block (the block that already runs whenever `.pr.inScope` is absent
   or `true`, and is skipped only by the pre-existing `scope_value_false`
@@ -192,7 +271,9 @@ workflow decision-gate matrix" requirement for both the spec and this plan.
   `render_pr_disposition`, inserted immediately after the existing "Advisory
   Decisions" section and visibly distinct from it (AC14): one row per
   `.securityAdvisories[]` entry — matched category, matched file, status,
-  decider/timestamp/rationale when resolved, fix commit SHA when fixed.
+  `decider`/`decidedAt`/`rationale` when resolved by a human decision, fix
+  commit SHA when resolved by a fix (the same canonical resolved-entry
+  schema field names used by `reconcile`'s output and Gate 5 evidence).
 - [ ] New `validate_security_advisories()` / `warn_security_advisories()`
   functions parallel to the existing `validate_advisories()` /
   `warn_per_finding_advisories()`: a `human-accepted` or `human-rejected`
@@ -225,20 +306,44 @@ workflow decision-gate matrix" requirement for both the spec and this plan.
   extraction mechanism produced it — `ADVISORY_LABELS` today is PR-Agent-only,
   but the existing disposition procedure at line 735 is already documented as
   applying "from any configured platform"), run
-  `security-advisory-classifier.sh classify` against the finding text and its
-  resolved file path (fetched via `gh api` on the finding's linked comment;
-  `path` is present for inline PR review comments, absent for PR-level issue
-  comments, in which case `--file-path ""` is passed and Part B always fails
-  by construction). When `securitySensitive: true`:
+  `security-advisory-classifier.sh classify` against the finding text, its
+  resolved file path, and (when available) its diff-hunk context, all fetched
+  via `gh api` on the finding's linked comment (`path` and `diff_hunk` are
+  present for inline PR review comments, absent for PR-level issue comments,
+  in which case `--file-path ""` and `--diff-hunk ""` are passed and Part B
+  always fails by construction). When `securitySensitive: true`:
   - The disposition menu at step 2 (line 745) is restricted to **Fixed** (cite
     commit) or **Pending Human Decision** — never **Accepted**, **Deferred**,
     or **Rejected** by the runner itself (BR5, AC4).
+  - Fetch this PR's candidate decision comments (any comment matching the
+    decision-recording template shape below, posted since the finding was
+    first tracked) and run `run-epic-delegated-gate.sh
+    verify-security-advisory-decisions` against them to compute any verified
+    decisions (reusing the exact same verification `run-epic-delegated-gate.sh`
+    applies for Gate 5, see Stage 3a).
   - Run `security-advisory-tracker.sh reconcile` against the PR's existing
-    `<!-- security-sensitive-advisory-findings -->` comment (BR7), then
-    `render` + `apply` to upsert it.
-  - Apply the `security-advisory-decision-required` label when any tracked
-    finding is `pending`; remove it only when zero tracked findings are
-    `pending` (never touch `human-checkpoint-required`, BR4/AC7).
+    `<!-- security-sensitive-advisory-findings -->` comment (BR7) and the
+    verified decisions just computed (`--decision-events`), so a verified
+    human decision is actually persisted into the tracking record — not only
+    evaluated in-memory later at Gate 5 — then `render` + `apply` to upsert
+    the marker comment.
+  - **Label mutation** (this step, not `security-advisory-tracker.sh
+    apply`, which only upserts the marker comment): after `reconcile`, call
+    `gh pr edit --add-label security-advisory-decision-required` when any
+    tracked finding's reconciled status is `pending`, or `gh pr edit
+    --remove-label security-advisory-decision-required` when zero tracked
+    findings are `pending` (never touch `human-checkpoint-required`,
+    BR4/AC7).
+  - **Decision-template notification**: when this reconciliation newly
+    produces (or re-produces, per BR7's `superseded_by_new_commit` case) at
+    least one `pending` entry, upsert (find-by-marker-then-PATCH-or-POST, not
+    duplicate) a separate PR comment marked
+    `<!-- security-sensitive-advisory-decision-template -->` containing the
+    exact expected decision-recording text (see Workflow Decision-Gate
+    Matrix delta table) for every currently `pending` finding, so a human
+    reviewer can copy it verbatim. This comment is removed (or left in place
+    with a "no findings pending" note — implementer's choice, document
+    whichever is chosen) once zero tracked findings are `pending`.
 - [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`:
   Step 7a/Gate-5-evidence-assembly guidance gets a short paragraph requiring
   `.securityAdvisories[]` / `.securityAdvisoryDecisionEvents[]` in the
@@ -295,10 +400,20 @@ manual/documentation-review smoke test (no UI — this is workflow tooling).
    PR-Agent's quote-escaping claim on PR #1467) — reconstructed as fixture
    finding text against their actual (non-enforcement-surface) files — return
    `securitySensitive: false`.
-3. AC3: fixture findings shaped like the PR #1431 findings (force semantics
-   without a lease; permissive remote URL parsing) against
-   `scripts/development-workflow/workflow-branch-push-guard.sh` return
-   `securitySensitive: true`.
+3. AC3: fixture findings shaped like the PR #1431 findings, targeted at
+   `scripts/development-workflow/workflow-branch-push-guard.sh`, return
+   `securitySensitive: true` with the stated `matchedCategory`:
+   - Force semantics without a lease, e.g. `"raw git push --force is used
+     here without a safety lease"` — expected `matchedCategory: "c"`.
+   - Permissive remote URL parsing, e.g. `"the remote URL parsing here is
+     too permissive and could let a spoofed remote bypass the push guard's
+     validation check"` — expected `matchedCategory: "e"` (matches the
+     category (e) `(bypass|weaken|disable|circumvent).*(guard|gate|
+     policy|check)` pattern via "bypass ... check"; this fixture text is
+     load-bearing — the finding must actually contain a bypass/weaken/
+     disable/circumvent keyword co-occurring with a guard/gate/policy/check
+     keyword, not just the phrase "permissive ... URL parsing" on its own,
+     which matches no category regex as written).
 4. AC4/AC5/BR5: gate test — a PR with one `pending` `.securityAdvisories[]`
    entry, `policy.mayMerge: true`, `mode: delegated`, and every other gate
    condition green still returns `decision == "human_required"` (not merely
@@ -319,7 +434,19 @@ manual/documentation-review smoke test (no UI — this is workflow tooling).
    block, `false` short-circuits to `not_applicable` exactly as the existing
    scope short-circuit already does for every other reason (no new behavior
    needed here — the test proves the *placement* inside the normal cascade is
-   correct).
+   correct). **Scope of this test vs. AC8's "identically for `/run-item`,
+   `/run-items`, and `/run-epic`" wording**: `run-epic-delegated-gate.sh` is
+   invocation-surface-agnostic by construction — it evaluates whatever
+   evidence JSON it is given, regardless of which surface assembled it — so
+   this `.pr.inScope` matrix fully proves the *gate's* AC8/AC9 behavior. What
+   it does not prove is that Protocol 91's and Protocol 95's documentation
+   actually instruct all three surfaces to assemble the same
+   `.securityAdvisories[]` / `.securityAdvisoryDecisionEvents[]` shape; that
+   is a documentation-consistency concern, not a fixture-test concern (this
+   repository has no existing pattern for testing "evidence-assembly
+   equivalence across invocation surfaces" as an automated bash fixture),
+   and is instead covered by Stage 5's cross-section consistency pass and
+   the smoke test's Step 10 (see below).
 8. AC10/AC11/BR6: `github_verified_security_advisory_decisions` tests —
    correct author + correct permission (`write` and `admin` both pass;
    `read`/`triage` do not) + exact finding/PR/head-SHA text match resolves;
@@ -330,7 +457,14 @@ manual/documentation-review smoke test (no UI — this is workflow tooling).
    `human-accepted` / `human-rejected` / `pending` all to `pending` with
    `superseded_by_new_commit`; new head SHA with the finding no longer
    matching (via a fresh `classify` call showing no match) drops the entry
-   from the reconciled output entirely, never carrying forward `pending`.
+   from the reconciled output entirely, never carrying forward `pending`;
+   `--decision-events` transitions a matching `pending` entry to
+   `human-accepted`/`human-rejected` with `decider`/`decidedAt`/`rationale`
+   persisted, and leaves non-`pending` entries and non-matching events
+   unaffected; two fresh findings sharing the same `(matchedCategory,
+   matchedFile)` key in one `--current` input are reconciled as two distinct
+   entries (stable-order pairing), never silently merged or overwriting one
+   another's status.
 10. AC14: `render_pr_disposition` output test — the "Security-Sensitive
     Advisory Findings" heading text never equals or is nested under the
     existing "Advisory Decisions" heading; both are present in the same
@@ -401,6 +535,13 @@ scanning ... over ... structured text" signal.
     `.github/workflows/deploy.yml`'s `on: push` trigger (no
     `permissions:`/`secrets:` context) does not match Part B; a finding about
     the same file's `permissions: contents: write` block does.
+  - `.github/workflows/*.yml` special case, diff-hunk-only match: a finding
+    whose `--finding-text` discusses the risk in prose only (e.g. "this job
+    grants broader access than it needs") and does **not** itself mention
+    `permissions:`/`secrets:`, but whose `--diff-hunk` contains a
+    `permissions: contents: write` line, matches Part B — proving the
+    `--finding-text`-OR-`--diff-hunk` check works when the YAML key appears
+    only in the diff-hunk context, not the finding text itself.
   - Empty/absent file path (PR-level issue comment, no inline `path`): Part B
     always fails by construction — asserted directly, not inferred.
 - **Unit test mapping**: `test-security-advisory-classifier.sh` — one
@@ -436,6 +577,10 @@ extend.
       table row.
 - [ ] `REVIEW.md` — new bullet under the guardrails-enforcement-behavior
       "Additional checks" block.
+- [ ] `CHANGELOG.md` — new `[Unreleased]` → `### Added` entry (see
+      Implementation Order, Stage 7, for the exact entry text). Listed here
+      for completeness with Stage 7; this is not "no other documentation
+      work" (see Stage 6 below).
 - [ ] `AGENTS.md` — no change needed. This feature does not add a new
       top-level workflow command, stage, or agent; it extends the existing
       Step 7/7a/Gate-4/Gate-5 machinery that `AGENTS.md` already references
@@ -449,7 +594,7 @@ extend.
 | -------------------------------------------------------------------------------------------- | ---------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Enforcement-surface allowlist goes stale as new guard/gate scripts are added later          | Medium     | Low    | The allowlist is a small, explicit, commented array (not auto-discovered) — out of scope for this PR to auto-maintain; a future issue can add auto-discovery if the list proves to lag in practice. |
 | `security-advisory-tracker.sh reconcile` mis-matches findings across a push that renames/moves the flagged file | Low        | Medium | `reconcile` matches on `(matchedCategory, matchedFile)`; a renamed file legitimately produces a "no longer matches" exit for the old path and a fresh `pending` entry for the new one — this is the BR7-correct outcome, not a bug, and is covered by an explicit reconcile test case. |
-| Human decision-comment template is easy to mistype, silently failing verification            | Medium     | Low    | Exact-text-match failure is fail-closed (finding stays `pending`, not silently resolved) — mirrors the existing authorization-text pattern's already-accepted UX tradeoff; the runner posts the exact expected template text in its notification comment for the human to copy. |
+| Human decision-comment template is easy to mistype, silently failing verification            | Medium     | Low    | Exact-text-match failure is fail-closed (finding stays `pending`, not silently resolved) — mirrors the existing authorization-text pattern's already-accepted UX tradeoff; the runner posts the exact expected template text in a dedicated `<!-- security-sensitive-advisory-decision-template -->` notification comment for the human to copy (see Stage 4's Protocol 93 update, "Decision-template notification" bullet, for the concrete upsert/update behavior). |
 | New Gate 5 branch could be mis-ordered relative to the existing scope short-circuit, silently reintroducing a `pr.inScope`-false no-op | Low | High | Implementation Order Step 6 requires an explicit test proving the branch lives inside the normal `else` cascade (AC8/AC9 test matrix), not a new top-level short-circuit. |
 
 ---
@@ -461,29 +606,51 @@ extend.
 ```bash
 # Illustrative — adapt during implementation.
 # scripts/development-workflow/security-advisory-classifier.sh classify (shape)
+
+# match_re distinguishes "no match" (grep exit 1) from a genuine command
+# error (grep exit >=2, e.g. a malformed pattern or an I/O failure) so a
+# `grep` failure is never silently treated as a normal non-match.
+match_re() {
+  local text="$1" pattern="$2" status
+  printf '%s' "$text" | grep -qiE "$pattern"
+  status=$?
+  if (( status >= 2 )); then
+    echo "classify: internal error: grep failed evaluating pattern" >&2
+    exit 1
+  fi
+  return "$status"
+}
+
 classify() {
   local finding_text="$1" file_path="$2"
   local matched_category=""
+  if [[ -z "$finding_text" ]]; then
+    echo "classify: --finding-text is required and must be non-empty" >&2
+    return 2
+  fi
+  # file_path may legitimately be "" (PR-level issue comments have no
+  # inline path) — Part B always fails by construction in that case, so no
+  # validation is required here beyond accepting an empty string.
   # Category (a) matches "auth ... bypass" and "bypass ... auth" order-
   # independently (see Parser-risk addendum, "Overlapping categories (a) vs
   # (e)") so it is tested and matched before the more generic category (e)
   # bypass/guard pattern below, regardless of which token appears first.
-  if printf '%s' "$finding_text" | grep -qiE 'auth(entication|orization)?.*(bypass|skip|spoof)|(bypass|skip|spoof).*auth(entication|orization)?'; then
+  if match_re "$finding_text" 'auth(entication|orization)?.*(bypass|skip|spoof)|(bypass|skip|spoof).*auth(entication|orization)?'; then
     matched_category="a"
-  elif printf '%s' "$finding_text" | grep -qiE '(secret|credential|token|password).*(expos|log|leak|plaintext)'; then
+  elif match_re "$finding_text" '(secret|credential|token|password).*(expos|log|leak|plaintext)'; then
     matched_category="b"
   # Category (c) requires BOTH an unsafe force/history-rewrite keyword AND the
   # absence of a "force-with-lease" (or equivalent safety-lease) phrase — BR1c
   # is explicitly "a force operation without a safety lease", so a finding
   # that itself states the operation is lease-protected must NOT match. POSIX
   # ERE has no negative lookahead, so this is a positive-match-AND-NOT-safe-
-  # phrase check across two grep calls, not a single regex.
-  elif printf '%s' "$finding_text" | grep -qiE '(force[- ]?push|--force\b|hard reset|history rewrite)' \
-    && ! printf '%s' "$finding_text" | grep -qiE '(force[- ]?with[- ]?lease|--force-with-lease)'; then
+  # phrase check across two `match_re` calls, not a single regex.
+  elif match_re "$finding_text" '(force[- ]?push|--force\b|hard reset|history rewrite)' \
+    && ! match_re "$finding_text" '(force[- ]?with[- ]?lease|--force-with-lease)'; then
     matched_category="c"
-  elif printf '%s' "$finding_text" | grep -qiE '(injection|unsanitized|eval\(|path.traversal)'; then
+  elif match_re "$finding_text" '(injection|unsanitized|eval\(|path.traversal)'; then
     matched_category="d"
-  elif printf '%s' "$finding_text" | grep -qiE '(bypass|weaken|disable|circumvent).*(guard|gate|policy|check)'; then
+  elif match_re "$finding_text" '(bypass|weaken|disable|circumvent).*(guard|gate|policy|check)'; then
     matched_category="e"
   fi
   # ... Part B (enforcement-surface allowlist + workflow-yml special case) ...
@@ -549,20 +716,40 @@ I record a human decision for security-sensitive advisory finding sec-4f2a9c1b0d
    concrete names)**: Update `93-automated-reviewer-loop-protocol.md`,
    `91-orchestrate-work-protocol.md`, `95-run-epic-protocol.md`,
    `guardrails-enforcement.md`, `guardrails.md`, and `REVIEW.md` per
-   Layer-by-Layer Changes above. Run
-   `npx markdownlint-cli2 "docs/workflow/development-workflow/**/*.md" "REVIEW.md"`
-   and fix any reported issues.
+   Layer-by-Layer Changes above. Run the full documented lint surface (per
+   this repo's `CLAUDE.md` "Common Commands"), not only the workflow-protocol
+   glob, and fix any reported issues:
+   - `npx markdownlint-cli2 "docs/workflow/development-workflow/**/*.md" "REVIEW.md" "docs/specs/developments/20260811131628_1432-security-advisory-human-decision/**/*.md" "docs/testing/workflow/1432-security-advisory-human-decision.smoke-test.md"`
+     (standard rules — this development's own plan/smoke-test files, plus
+     the six modified protocol/guardrails docs and `REVIEW.md`).
+   - `find docs/specs/developments docs/testing/workflow -name "*.md" -print0 | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md`
+     (heuristic rules — GLOB001/COUNT001).
+   - `shellcheck scripts/development-workflow/security-advisory-classifier.sh scripts/development-workflow/security-advisory-tracker.sh scripts/development-workflow/run-epic-delegated-gate.sh scripts/development-workflow/run-epic-audit-trail.sh`
+     (the two new scripts and the two modified scripts).
+   - `python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop`
+     (covers any new executable shell guidance blocks this feature's doc
+     changes introduce, e.g. in the Protocol 93 subsection).
 6. **Stage 5 — Cross-section consistency pass and full test run**: Re-read
    every occurrence of the label, stop-condition token, evidence field names,
    and the decision-comment template across all six modified/created
    documents and confirm identical spelling everywhere (this plan's
-   Workflow Decision-Gate Matrix delta table is the source of truth). Run all
-   new and existing `scripts/development-workflow/tests/test-*.sh` files
+   Workflow Decision-Gate Matrix delta table is the source of truth).
+   Explicitly confirm the new `91-orchestrate-work-protocol.md` and
+   `95-run-epic-protocol.md` paragraphs describe the exact same
+   `.securityAdvisories[]` / `.securityAdvisoryDecisionEvents[]` evidence
+   fields with identical wording, so the AC8 "identically for `/run-item`,
+   `/run-items`, and `/run-epic`" requirement is verifiably satisfied at the
+   documentation level (the gate-side fixture tests in Testing Strategy item
+   7 only prove the gate is surface-agnostic; this step proves the
+   documentation instructs every surface to feed it the same evidence). Run
+   all new and existing `scripts/development-workflow/tests/test-*.sh` files
    touched by this change and confirm they pass together, not only
-   individually (guards against cross-test global state leakage).
-7. **Stage 6 — Update project docs**: none required beyond the items already
-   listed in **Documentation Updates** above (all are already Stage 4/5
-   items).
+   individually (guards against cross-test global state leakage). Re-run the
+   full lint surface from Stage 4 after any doc edits made during this pass.
+7. **Stage 6 — Update project docs**: `AGENTS.md` needs no change (see
+   Documentation Updates above); `CHANGELOG.md` is updated in Stage 7 below,
+   not skipped — Stage 6 covers only the remaining "project docs" category
+   (`AGENTS.md`), which has no required change for this feature.
 8. **Stage 7 — CHANGELOG**: update `CHANGELOG.md` under `[Unreleased]` →
    `### Added` with:
 
