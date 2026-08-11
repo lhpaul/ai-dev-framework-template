@@ -244,9 +244,17 @@ for the documentation-consistency check that closes that gap.
    - A comment whose finding id, PR number, or head SHA does not match the
      current evidence (does not resolve).
    - A generic prior PR approval or unrelated comment (does not resolve).
+   - An otherwise-exact-text-match decision comment where `targetPullRequest
+     == false` (the comment was posted on a different PR) (does not
+     resolve).
+   - An otherwise-exact-text-match decision comment whose `createdAt`
+     predates the matching entry's `firstTrackedAt` (a pre-existing comment
+     from before the finding was ever tracked) (does not resolve).
 2. Confirm every negative case leaves the finding `pending`, never silently
    `human-accepted`/`human-rejected`, and confirm both positive cases
-   (`write` and `admin`) resolve to the decision recorded in the comment.
+   (`write` and `admin`) resolve to the decision recorded in the comment,
+   including the resolved event's `sourceEventId`/`sourceEventType` matching
+   the input candidate it was derived from.
 
 **Expected result**: Only a decision verifiably tied to the exact finding,
 PR, and current head commit — authored by a human with sufficient repository
@@ -262,7 +270,10 @@ permission — resolves a pending finding.
    prior entry's `headSha`), once where the finding still matches BR1 at the
    new head and once where it no longer matches.
 2. Confirm: still-matching → status resets to `pending` with a
-   `superseded_by_new_commit` audit reason (not a separate `stale` status);
+   `superseded_by_new_commit` audit reason (not a separate `stale` status),
+   and `fixCommit`/`decider`/`decidedAt`/`rationale` are all absent from the
+   reset entry (cleared, not carried forward from the prior head's
+   disposition), while `firstTrackedAt` is unchanged from the prior entry;
    no-longer-matching → the finding exits the reconciled output entirely,
    from every prior status including `pending`.
 3. Run `security-advisory-tracker.sh reconcile` fixture tests covering the
@@ -297,11 +308,15 @@ status or metadata, for any of the four persisted statuses.
    assert on the literal decider name, timestamp, and rationale text
    appearing in the rendered section.
 4. Run `run-epic-audit-trail.sh apply-pr-disposition` (or the equivalent
-   validation entry point) with a `human-accepted` entry and a
-   `human-rejected` entry that each omit `rationale`. Confirm both cases
-   hard-fail with `error_exit` (mirroring the existing "non-fixed advisory
-   decisions require rationale" rule), and that the process does not
-   silently render or persist a rationale-less resolved entry.
+   validation entry point) with, as separate fixture cases: a
+   `human-accepted` entry omitting `rationale`; a `human-accepted` entry
+   omitting `decider`; a `human-accepted` entry omitting `decidedAt`; a
+   `human-rejected` entry omitting `rationale`; and a `fixed` entry omitting
+   `fixCommit`. Confirm every one of the five cases hard-fails with
+   `error_exit` individually (mirroring, and stricter than, the existing
+   "non-fixed advisory decisions require rationale" rule), and that the
+   process does not silently render or persist an entry missing any of its
+   status-specific required fields.
 
 **Expected result**: A human or future retrospective can see security-
 sensitive findings and their disposition state at a glance, separate from

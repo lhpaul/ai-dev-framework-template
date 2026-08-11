@@ -32,9 +32,11 @@ total — with new jq logic, a new PR-comment persistence format, a new
 verified-decision comment protocol, and updates to five workflow documents
 (91, 93, 95, `guardrails-enforcement.md`, `guardrails.md`) plus `REVIEW.md`.
 Every new check requires a planted-violation proof in both directions
-(fires / does not fire) across at least three new test files, following
-`REVIEW.md`'s Verification Discipline rule. This is materially larger than a
-single-file gate change.
+(fires / does not fire) across four touched test files — two new
+(`test-security-advisory-classifier.sh`, `test-security-advisory-tracker.sh`)
+and two modified (`test-run-epic-delegated-gate.sh`,
+`test-run-epic-audit-trail.sh`) — following `REVIEW.md`'s Verification
+Discipline rule. This is materially larger than a single-file gate change.
 
 **Dependencies**: None. All referenced machinery (`run-epic-delegated-gate.sh`
 scope-optional `pr.inScope` handling from #1435, `run-epic-audit-trail.sh`'s
@@ -135,11 +137,16 @@ workflow decision-gate matrix" requirement for both the spec and this plan.
     implements BR7's re-evaluation — matches prior entries to fresh findings
     by `(matchedCategory, matchedFile)`; entries with no fresh match exit
     tracking; entries whose `headSha` differs from the current head reset to
-    `pending` with audit reason `superseded_by_new_commit`; entries whose
-    `headSha` matches the current head keep their existing status untouched,
-    **except** where `--decision-events` (see below) resolves them. Never
-    emits a `stale` status — only the four persisted values from the spec's
-    Statuses table.
+    `pending` with audit reason `superseded_by_new_commit` **and clear all
+    resolution-provenance fields** (`fixCommit`, `decider`, `decidedAt`,
+    `rationale`) — a `pending` entry never carries forward a prior head's
+    fix/decision metadata, since that provenance described a disposition at
+    a now-superseded head and would otherwise persist as stale, misleading
+    data in the tracking comment and audit output; entries whose `headSha`
+    matches the current head keep their existing status **and** their
+    existing resolution-provenance fields untouched, **except** where
+    `--decision-events` (see below) resolves them. Never emits a `stale`
+    status — only the four persisted values from the spec's Statuses table.
     - **Same-push collision handling**: when `--current` contains more than
       one fresh finding sharing the same `(matchedCategory, matchedFile)`
       key in a single call, `reconcile` does **not** collapse them into one
@@ -167,7 +174,14 @@ workflow decision-gate matrix" requirement for both the spec and this plan.
     - **`--decision-events`** (optional, default `"none"`): a JSON array of
       already-verified decision events, each
       `{findingId, decision: "human-accepted"|"human-rejected", decider,
-      decidedAt, rationale}` — produced by
+      decidedAt, rationale, sourceEventId, sourceEventType}` —
+      `sourceEventId`/`sourceEventType` mirror the raw `{id, type}` shape of
+      the `.securityAdvisoryDecisionEvents[]` candidate this verified event
+      was derived from, carried through unchanged by
+      `github_verified_security_advisory_decisions` (see Stage 3 below) so
+      `reconcile` can cite the exact source comment reference in a
+      duplicate/conflict warning rather than only the abstract `findingId`
+      — produced by
       `run-epic-delegated-gate.sh verify-security-advisory-decisions` (see
       Stage 3a), the same verification `github_verified_security_advisory_decisions`
       performs for Gate 5 evidence. For each reconciled entry that is
@@ -175,7 +189,9 @@ workflow decision-gate matrix" requirement for both the spec and this plan.
       `findingId` matches that entry's finding id, `reconcile` transitions
       the entry to the event's `decision` value and persists `decider`,
       `decidedAt`, and `rationale` on the entry (the canonical
-      resolved-entry schema — see below). Entries that are not `pending`,
+      resolved-entry schema — see below; `sourceEventId`/`sourceEventType`
+      are consumed only for warning text and are not themselves persisted
+      onto the resolved entry). Entries that are not `pending`,
       or with no matching decision event, are unaffected by this input.
       This is what allows a verified human decision to actually persist
       into the tracking-comment/audit record instead of only existing as an
@@ -186,22 +202,47 @@ workflow decision-gate matrix" requirement for both the spec and this plan.
       values agree or disagree — `reconcile` fails closed: it does not pick
       one arbitrarily or apply either, leaves the entry's status
       unconditionally `pending`, and emits a warning identifying the
-      duplicate `findingId` and the conflicting comment references, so the
+      duplicate `findingId` and each conflicting event's
+      `sourceEventId`/`sourceEventType`, so the
       ambiguity surfaces as a human-visible signal rather than becoming
       input-order-dependent. This is a hard rule regardless of upstream
       cause (e.g., two different humans posting conflicting decision
       comments) — `github_verified_security_advisory_decisions` passes
       through every verified event it finds; deduplication/conflict
       rejection is `reconcile`'s responsibility, not the gate's.
-  - **Canonical resolved-entry schema**: every reconciled entry with status
-    `fixed`, `human-accepted`, or `human-rejected` carries `id`, `category`,
-    `matchedFile`, `status`, `headSha`, and, when resolved by a human
-    decision, `decider`, `decidedAt`, and `rationale` (when resolved by a
-    fix, `fixCommit` instead of `decider`/`decidedAt`/`rationale`). These
-    exact field names are used consistently by `reconcile`'s output, the
-    `.securityAdvisories[]` Gate 5 evidence shape (Stage 3), and
-    `run-epic-audit-trail.sh`'s rendered audit section (Stage 3b) — there is
-    one schema, not three independently-named ones.
+    - **First-tracked boundary (decision-comment temporal validity)**: every
+      tracked entry additionally carries `firstTrackedAt` — an ISO-8601
+      timestamp set once, the first time `reconcile` creates the entry (a
+      fresh finding with no prior match), and never updated afterward
+      (including across a `superseded_by_new_commit` reset — the finding
+      itself, not its current disposition, is what was "first tracked").
+      `github_verified_security_advisory_decisions` (Stage 3) rejects a
+      candidate decision comment whose `createdAt` predates the matching
+      entry's `firstTrackedAt`: an exact-text match on finding id, PR
+      number, and head SHA is necessary but not sufficient, because a
+      comment authored before the finding existed cannot be a genuine human
+      decision about it (e.g., a coincidental prior comment whose text
+      happens to satisfy the template after a later finding reuses the same
+      finding id space — the `sec-<hash>` id format makes this astronomically
+      unlikely by content collision, but the temporal check is a cheap,
+      independent second guard with no reason not to include it). This
+      requires `.securityAdvisories[]` entries passed into Gate 5 evidence
+      to carry `firstTrackedAt` alongside the other canonical fields.
+  - **Canonical resolved-entry schema**: every tracked entry (`pending`,
+    `fixed`, `human-accepted`, or `human-rejected`) carries `id`, `category`,
+    `matchedFile`, `status`, `headSha`, and `firstTrackedAt`; a `fixed`,
+    `human-accepted`, or `human-rejected` entry additionally carries, when
+    resolved by a human decision, `decider`, `decidedAt`, and `rationale`
+    (when resolved by a fix, `fixCommit` instead of
+    `decider`/`decidedAt`/`rationale`). These exact field names are used
+    consistently by `reconcile`'s output, the `.securityAdvisories[]` Gate 5
+    evidence shape (Stage 3), and `run-epic-audit-trail.sh`'s rendered audit
+    section (Stage 3b) — there is one schema, not three independently-named
+    ones. Validation (Stage 3b) requires every status-specific field the
+    entry's status implies: `fixed` requires `fixCommit`; `human-accepted`
+    and `human-rejected` each require all three of `decider`, `decidedAt`,
+    and `rationale` — a `human-accepted`/`human-rejected` entry missing any
+    one of the three is invalid, not only a missing `rationale`.
   - `render --input <reconciled-json>`: renders the
     `<!-- security-sensitive-advisory-findings -->` marker-comment body (one
     row per tracked finding: id, category, file, status, decider/decidedAt/
@@ -218,21 +259,31 @@ workflow decision-gate matrix" requirement for both the spec and this plan.
 
 - [ ] Accept two new optional evidence fields: `.securityAdvisories[]`
   (reconciled tracker output — id, category, matchedFile, status, headSha,
-  fixCommit, and, for human-resolved entries, decider, decidedAt, rationale —
-  the canonical resolved-entry schema defined in Stage 2 above) and
-  `.securityAdvisoryDecisionEvents[]` (raw candidate GitHub comment refs,
-  same `{id, type}` shape `.authorizationEvents[]` already uses).
+  firstTrackedAt, fixCommit, and, for human-resolved entries, decider,
+  decidedAt, rationale — the canonical resolved-entry schema defined in
+  Stage 2 above) and `.securityAdvisoryDecisionEvents[]` (raw candidate
+  GitHub comment refs, same `{id, type}` shape `.authorizationEvents[]`
+  already uses).
 - [ ] New function `github_verified_security_advisory_decisions`, structurally
   parallel to the existing `github_verified_authorization_events` (same file,
   ~line 93): for each candidate event, fetch via `gh api`, verify
   `authorType == "User"`, `authorPermission` is `admin` or `write` (not
-  `admin`-only), and the comment body exactly matches the finding's expected
+  `admin`-only), `targetPullRequest == true` on the fetched comment
+  (mirroring `github_verified_authorization_events`'s existing check at the
+  same site — an exact decision-comment text match alone does not bind the
+  comment to the current PR; a comment posted on a different PR that
+  happens to satisfy the exact-text template must not resolve this PR's
+  finding), the comment's `createdAt` is not earlier than the matching
+  `.securityAdvisories[]` entry's `firstTrackedAt` (the temporal boundary —
+  see Stage 2), and the comment body exactly matches the finding's expected
   decision-comment text (finding id + PR + head SHA embedded, mirroring the
   existing `expected_authorization_text` exact-match approach at line 127).
   Output shape: one verified-decision object per resolved event —
   `{findingId, decision: "human-accepted"|"human-rejected", decider,
-  decidedAt, rationale}` — matching the canonical resolved-entry schema so
-  it can be fed directly into `security-advisory-tracker.sh reconcile
+  decidedAt, rationale, sourceEventId, sourceEventType}` — the canonical
+  resolved-entry fields plus the `sourceEventId`/`sourceEventType` pass-
+  through described in Stage 2's `--decision-events` contract — so it can be
+  fed directly into `security-advisory-tracker.sh reconcile
   --decision-events`.
 - [ ] New subcommand `verify-security-advisory-decisions --input
   <evidence-json>` on `run-epic-delegated-gate.sh` that runs only
@@ -289,9 +340,14 @@ workflow decision-gate matrix" requirement for both the spec and this plan.
   schema field names used by `reconcile`'s output and Gate 5 evidence).
 - [ ] New `validate_security_advisories()` / `warn_security_advisories()`
   functions parallel to the existing `validate_advisories()` /
-  `warn_per_finding_advisories()`: a `human-accepted` or `human-rejected`
-  entry without rationale is a hard `error_exit` (mirrors the existing
-  "non-fixed advisory decisions require rationale" rule at line 346).
+  `warn_per_finding_advisories()`, enforcing the canonical resolved-entry
+  schema's status-specific required fields (see Stage 2): a `fixed` entry
+  missing `fixCommit` is a hard `error_exit`; a `human-accepted` or
+  `human-rejected` entry missing any one of `decider`, `decidedAt`, or
+  `rationale` is a hard `error_exit` — not only a missing `rationale`
+  (mirrors, and is stricter than, the existing "non-fixed advisory decisions
+  require rationale" rule at line 346, since the security-advisory schema
+  has more required fields than the general advisory schema).
 - [ ] Add `"securityAdvisories"` to the `PR_DISPOSITION_KNOWN_KEYS` array
   (lines 18-22) — this array is not merely documentation: it is consumed at
   runtime by `warn_unknown_pr_disposition_keys()` (line 388, called from both
@@ -462,9 +518,13 @@ manual/documentation-review smoke test (no UI — this is workflow tooling).
    the smoke test's Step 10 (see below).
 8. AC10/AC11/BR6: `github_verified_security_advisory_decisions` tests —
    correct author + correct permission (`write` and `admin` both pass;
-   `read`/`triage` do not) + exact finding/PR/head-SHA text match resolves;
-   wrong head SHA, wrong finding id, unrelated comment body, or a `Bot`-typed
-   author does not resolve.
+   `read`/`triage` do not) + `targetPullRequest == true` + `createdAt` at or
+   after the entry's `firstTrackedAt` + exact finding/PR/head-SHA text match
+   resolves; wrong head SHA, wrong finding id, unrelated comment body, a
+   `Bot`-typed author, `targetPullRequest == false` (an otherwise-matching
+   comment posted on a different PR), or `createdAt` earlier than
+   `firstTrackedAt` (a pre-existing comment that coincidentally satisfies the
+   template text before the finding was ever tracked) does not resolve.
 9. AC12/AC13/BR7: tracker `reconcile` tests — same head SHA keeps status;
    new head SHA with the finding still matching resets `fixed` /
    `human-accepted` / `human-rejected` / `pending` all to `pending` with
@@ -482,8 +542,15 @@ manual/documentation-review smoke test (no UI — this is workflow tooling).
    (`human-accepted` + `human-accepted`) or conflict
    (`human-accepted` + `human-rejected`) — leave that entry `pending`
    (fail-closed) rather than applying either one, and `reconcile` emits a
-   duplicate-`findingId` warning identifying both source comment
-   references.
+   duplicate-`findingId` warning identifying both events' `sourceEventId`/
+   `sourceEventType`; a new-head-SHA reset that transitions a prior `fixed`/
+   `human-accepted`/`human-rejected` entry back to `pending` also clears
+   `fixCommit`/`decider`/`decidedAt`/`rationale` on that entry (none of the
+   four fields are present in the reconciled output afterward), while a
+   same-head-SHA reconciliation of the same statuses leaves those fields
+   untouched; `firstTrackedAt` is set once when an entry is first created and
+   is never changed by any later reconciliation, including a
+   `superseded_by_new_commit` reset.
 10. AC14: `render_pr_disposition` output test — the "Security-Sensitive
     Advisory Findings" heading text never equals or is nested under the
     existing "Advisory Decisions" heading; both are present in the same
