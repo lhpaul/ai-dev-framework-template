@@ -15,14 +15,15 @@
 
 ## Best Practices by Technology
 
-| Area      | File                                    |
-| --------- | --------------------------------------- |
-| Language  | `stack/[technology].md`                 |
-| Framework | `stack/[technology].md`                 |
-| Styling   | `stack/[technology].md` — if applicable |
-| Database  | `stack/[technology].md` — if applicable |
-| API       | `stack/[technology].md` — if applicable |
-| Supabase  | [stack/supabase.md](stack/supabase.md)  |
+| Area                         | File                                             |
+| ---------------------------- | ------------------------------------------------ |
+| Language                     | `stack/[technology].md`                          |
+| Framework                    | `stack/[technology].md`                          |
+| Styling                      | `stack/[technology].md` — if applicable          |
+| Database                     | `stack/[technology].md` — if applicable          |
+| API                          | `stack/[technology].md` — if applicable          |
+| Supabase                     | [stack/supabase.md](stack/supabase.md)           |
+| Internationalization (i18n)  | [stack/i18n.md](stack/i18n.md) — if applicable   |
 
 > **Setup agent**: Replace each `stack/[technology].md` above with actual links to the
 > files generated under `docs/best-practices/stack/`. Remove rows that don't apply.

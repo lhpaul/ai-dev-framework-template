@@ -322,6 +322,15 @@ Additional checks for **PRs that add or modify an automated check, guard, lint r
 - **Same-PR inclusion** (blocking): confirm the proof is part of this PR's evidence, not deferred to a follow-up PR or assumed from a prior similar change.
 - **Exemption**: pure refactors of already-proven validation logic, with no behavior change, are exempt from re-proof; the PR evidence should state the exemption rationale.
 
+Additional checks for **PRs that add or modify user-facing copy in a
+project with a configured i18n / catalogue convention** (see
+`docs/best-practices/stack/i18n.md`):
+
+- **Applicability gate**: this check applies only to a downstream project that has adopted an i18n / catalogue convention for user-facing copy. When a project has not adopted this convention, this check is not applicable; do not treat it as a blanket requirement for every PR in every repository.
+- **Enforcement is active** (blocking when applicable): confirm the project's no-hardcoded-string enforcement mechanism (a lint rule or equivalent machine check) is configured and currently enabled, not merely documented as a convention.
+- **Catalogue parity** (blocking when applicable): confirm every catalogue/locale file the project ships is updated together in this PR — no locale is left with a missing or stale key that another locale added.
+- **Planted-violation proof for enforcement changes**: when this PR adds or materially modifies the enforcement mechanism itself (the lint rule config, a custom key-extraction scanner, or equivalent), apply the "PRs that add or modify an automated check, guard, lint rule, or CI job" block above in full, including explicit coverage of any dynamic/non-literal key argument form the scanner is meant to reject — this block does not restate that requirement, it delegates to it.
+
 Additional checks for **PRs that add a feature (when a committed E2E suite exists)**:
 
 - **Applicability gate**: this check applies only when the repository has a committed, non-placeholder E2E/functional suite (i.e., `docs/testing/README.md` Section 2's "committed automated spec" path is filled in, and the repo's E2E CI job runs real tests rather than this template's placeholder). When no such suite exists yet, this check is not applicable; record the not-applicable rationale rather than silently skipping it.

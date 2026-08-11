@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sections, following the same reviewer/implementer-mirror pattern already used
   for Filter-Schema Canary Tests. Documentation-only change; see the PR
   description for the recursive proof this item's own rule was applied to.
+- **Port i18n no-literal-string doctrine and catalogue reference** (#1441):
+  adds `docs/best-practices/stack/i18n.md` with the portable no-hardcoded-string
+  doctrine, a React Native/i18next worked example, and the dynamic-key scanner
+  pitfall, plus a conditional `REVIEW.md` review-gate check.
 
 ### Fixed
 
