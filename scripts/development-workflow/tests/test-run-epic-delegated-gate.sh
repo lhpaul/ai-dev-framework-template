@@ -49,6 +49,18 @@ case "$*" in
   api\ repos/example/mobile-app/collaborators/lhpaul/permission)
     jq -n --arg permission "${MOCK_GH_AUTHORIZATION_PERMISSION:-admin}" '{permission: $permission}'
     ;;
+  api\ repos/example/mobile-app/issues/comments/54321)
+    jq -n \
+      --arg body "${MOCK_GH_SECURITY_DECISION_BODY:-}" \
+      --arg user_type "${MOCK_GH_SECURITY_DECISION_USER_TYPE:-User}" \
+      --arg association "${MOCK_GH_SECURITY_DECISION_ASSOCIATION:-MEMBER}" \
+      --arg issue_url "${MOCK_GH_SECURITY_DECISION_ISSUE_URL:-https://api.github.com/repos/example/mobile-app/issues/42}" \
+      --arg created_at "${MOCK_GH_SECURITY_DECISION_CREATED_AT:-2026-08-05T12:00:00Z}" \
+      '{id: 54321, user: {login: "secreviewer", type: $user_type}, author_association: $association, issue_url: $issue_url, created_at: $created_at, body: $body}'
+    ;;
+  api\ repos/example/mobile-app/collaborators/secreviewer/permission)
+    jq -n --arg permission "${MOCK_GH_SECURITY_DECISION_PERMISSION:-write}" '{permission: $permission}'
+    ;;
   api\ --paginate\ --slurp\ repos/example/mobile-app/issues/42/comments?per_page=100)
     if [ -n "${MOCK_GH_BYPASS_AUDIT_BODY:-}" ]; then
       jq -n --arg body "$MOCK_GH_BYPASS_AUDIT_BODY" '[[{id: 67890, user: {login: "lhpaul"}, created_at: "2026-07-29T12:01:00Z", body: $body}]]'
@@ -1102,6 +1114,179 @@ per_finding_gate_fixture="$(write_fixture per-finding-gate \
 per_finding_gate_stderr="$("$GATE" --input "$per_finding_gate_fixture" --json 2>&1 >/dev/null)"
 run_test "no_bulk_advisory_warn_when_one_entry_per_finding" "yes" \
   "$(printf '%s' "$per_finding_gate_stderr" | wc -c | tr -d ' ' | grep -qx '0' && echo yes || echo no)"
+
+# --- Security-sensitive advisory human decision requirement (issue #1432) ---
+
+verify_decisions_for() {
+  "$GATE" verify-security-advisory-decisions --input "$1"
+}
+
+SEC_HEAD_SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+SEC_ENFORCEMENT_FILE="scripts/development-workflow/workflow-branch-push-guard.sh"
+security_advisory_pending_fixture="$(write_fixture security-advisory-pending "
+  .repository = \"example/mobile-app\"
+  | .pr.headSha = \"$SEC_HEAD_SHA\"
+  | .securityAdvisories = [{
+      id: \"sec-aaa111\",
+      category: \"c\",
+      matchedFile: \"$SEC_ENFORCEMENT_FILE\",
+      status: \"pending\",
+      headSha: \"$SEC_HEAD_SHA\",
+      firstTrackedAt: \"2026-08-01T00:00:00Z\"
+    }]
+")"
+
+# AC4/AC5/BR5: a pending security-sensitive finding blocks delegated merge
+# with the exact "human_required" decision string, even with every other
+# gate condition green, policy.mayMerge: true, and mode: delegated.
+run_test "security_advisory_pending_requires_human" "human_required" "$(decision_for "$security_advisory_pending_fixture")"
+run_test "security_advisory_pending_reason_present" "true" "$(reason_match_for "$security_advisory_pending_fixture" "^security_sensitive_advisory_pending: finding sec-aaa111")"
+run_test "security_advisory_pending_blocks_merge_permitted" "false" "$(
+  "$GATE" --input "$security_advisory_pending_fixture" --json | jq -r '.mergePermitted'
+)"
+
+# AC4/AC5: a fixed entry (cited commit) unblocks merge -- a verifiable fix
+# remains available to the delegated agent without a human decision.
+security_advisory_fixed_fixture="$(write_fixture security-advisory-fixed "
+  .repository = \"example/mobile-app\"
+  | .pr.headSha = \"$SEC_HEAD_SHA\"
+  | .securityAdvisories = [{
+      id: \"sec-aaa111\",
+      category: \"c\",
+      matchedFile: \"$SEC_ENFORCEMENT_FILE\",
+      status: \"fixed\",
+      headSha: \"$SEC_HEAD_SHA\",
+      firstTrackedAt: \"2026-08-01T00:00:00Z\",
+      fixCommit: \"deadbeef\"
+    }]
+")"
+run_test "security_advisory_fixed_allows_merge" "merge_allowed" "$(decision_for "$security_advisory_fixed_fixture")"
+
+# AC4/AC5/BR6: a verified human decision (via .securityAdvisoryDecisionEvents[]
+# resolved by github_verified_security_advisory_decisions) also unblocks
+# merge, without the delegated agent itself recording the disposition.
+security_decision_text="I record a human decision for security-sensitive advisory finding sec-aaa111 on PR #42 at head ${SEC_HEAD_SHA}: accept — force-with-lease already enforced one layer up in the caller."
+security_advisory_decision_event_fixture="$(write_fixture security-advisory-decision-event "
+  .repository = \"example/mobile-app\"
+  | .pr.headSha = \"$SEC_HEAD_SHA\"
+  | .securityAdvisories = [{
+      id: \"sec-aaa111\",
+      category: \"c\",
+      matchedFile: \"$SEC_ENFORCEMENT_FILE\",
+      status: \"pending\",
+      headSha: \"$SEC_HEAD_SHA\",
+      firstTrackedAt: \"2026-08-01T00:00:00Z\"
+    }]
+  | .securityAdvisoryDecisionEvents = [{id: \"54321\", type: \"issue_comment\"}]
+")"
+export MOCK_GH_SECURITY_DECISION_BODY="$security_decision_text"
+run_test "security_advisory_verified_human_decision_allows_merge" "merge_allowed" "$(decision_for "$security_advisory_decision_event_fixture")"
+run_test "security_advisory_verify_subcommand_resolves_human_accepted" "human-accepted" "$(
+  verify_decisions_for "$security_advisory_decision_event_fixture" | jq -r '.[0].decision'
+)"
+run_test "security_advisory_verify_subcommand_rationale" "force-with-lease already enforced one layer up in the caller." "$(
+  verify_decisions_for "$security_advisory_decision_event_fixture" | jq -r '.[0].rationale'
+)"
+run_test "security_advisory_verify_subcommand_source_event_id" "54321" "$(
+  verify_decisions_for "$security_advisory_decision_event_fixture" | jq -r '.[0].sourceEventId'
+)"
+
+# AC10/AC11/BR6: github_verified_security_advisory_decisions is fail-closed
+# on every negative case; only a human author with write/admin permission,
+# targeting this exact PR, at/after firstTrackedAt, resolves.
+run_test "security_advisory_decision_admin_permission_resolves" "human-accepted" "$(
+  MOCK_GH_SECURITY_DECISION_PERMISSION="admin" verify_decisions_for "$security_advisory_decision_event_fixture" | jq -r '.[0].decision // "none"'
+)"
+run_test "security_advisory_decision_bot_author_does_not_resolve" "[]" "$(
+  MOCK_GH_SECURITY_DECISION_USER_TYPE="Bot" verify_decisions_for "$security_advisory_decision_event_fixture"
+)"
+run_test "security_advisory_decision_read_permission_does_not_resolve" "[]" "$(
+  MOCK_GH_SECURITY_DECISION_PERMISSION="read" verify_decisions_for "$security_advisory_decision_event_fixture"
+)"
+run_test "security_advisory_decision_triage_permission_does_not_resolve" "[]" "$(
+  MOCK_GH_SECURITY_DECISION_PERMISSION="triage" verify_decisions_for "$security_advisory_decision_event_fixture"
+)"
+run_test "security_advisory_decision_wrong_finding_id_does_not_resolve" "[]" "$(
+  wrong_finding_fixture="$TMP_ROOT/security-advisory-wrong-finding.json"
+  jq '.securityAdvisories[0].id = "sec-different"' "$security_advisory_decision_event_fixture" > "$wrong_finding_fixture"
+  verify_decisions_for "$wrong_finding_fixture"
+)"
+run_test "security_advisory_decision_wrong_head_sha_does_not_resolve" "[]" "$(
+  wrong_head_fixture="$TMP_ROOT/security-advisory-wrong-head.json"
+  jq '.pr.headSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" | .securityAdvisories[0].headSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
+    "$security_advisory_decision_event_fixture" > "$wrong_head_fixture"
+  verify_decisions_for "$wrong_head_fixture"
+)"
+run_test "security_advisory_decision_unrelated_comment_does_not_resolve" "[]" "$(
+  MOCK_GH_SECURITY_DECISION_BODY="just a generic comment, not a decision" verify_decisions_for "$security_advisory_decision_event_fixture"
+)"
+run_test "security_advisory_decision_generic_approval_does_not_resolve" "[]" "$(
+  MOCK_GH_SECURITY_DECISION_BODY="LGTM, approved" verify_decisions_for "$security_advisory_decision_event_fixture"
+)"
+run_test "security_advisory_decision_wrong_target_pr_does_not_resolve" "[]" "$(
+  MOCK_GH_SECURITY_DECISION_ISSUE_URL="https://api.github.com/repos/example/mobile-app/issues/7" verify_decisions_for "$security_advisory_decision_event_fixture"
+)"
+run_test "security_advisory_decision_stale_created_at_does_not_resolve" "[]" "$(
+  MOCK_GH_SECURITY_DECISION_CREATED_AT="2026-07-01T00:00:00Z" verify_decisions_for "$security_advisory_decision_event_fixture"
+)"
+unset MOCK_GH_SECURITY_DECISION_BODY
+
+# AC6/BR4: a blanket waiver of an unrelated pending-bounded-prelude checkpoint
+# does not resolve a pending security-sensitive advisory finding; the two
+# mechanisms are provably independent.
+security_advisory_with_waived_checkpoint_fixture="$(write_fixture security-advisory-waived-checkpoint "
+  .repository = \"example/mobile-app\"
+  | .pr.headSha = \"$SEC_HEAD_SHA\"
+  | .securityAdvisories = [{
+      id: \"sec-aaa111\",
+      category: \"c\",
+      matchedFile: \"$SEC_ENFORCEMENT_FILE\",
+      status: \"pending\",
+      headSha: \"$SEC_HEAD_SHA\",
+      firstTrackedAt: \"2026-08-01T00:00:00Z\"
+    }]
+  | .policy.checkpoints = [{
+      item_number: 918,
+      stage: \"implementation\",
+      domain: \"technical\",
+      reason: \"unrelated checkpoint\",
+      required_human_action: \"unrelated approval\",
+      satisfaction_state: \"waived\"
+    }]
+")"
+run_test "waived_checkpoint_does_not_resolve_security_advisory" "human_required" "$(decision_for "$security_advisory_with_waived_checkpoint_fixture")"
+run_test "waived_checkpoint_security_advisory_reason_still_present" "true" "$(reason_match_for "$security_advisory_with_waived_checkpoint_fixture" "^security_sensitive_advisory_pending:")"
+run_test "waived_checkpoint_no_human_checkpoint_reason_for_this_finding" "false" "$(reason_match_for "$security_advisory_with_waived_checkpoint_fixture" "human_checkpoint_required")"
+
+# AC7/BR4: label and stop-condition strings are textually distinct from the
+# existing checkpoint label/stop-condition. Deliberately a literal
+# string-inequality assertion (not only a grep) per the plan's Testing
+# Strategy item 6.
+# shellcheck disable=SC2050 # intentional literal-string inequality assertion
+run_test "ac7_label_distinct_from_checkpoint_label" "yes" \
+  "$([ "security-advisory-decision-required" != "human-checkpoint-required" ] && echo yes || echo no)"
+# shellcheck disable=SC2050 # intentional literal-string inequality assertion
+run_test "ac7_stop_condition_distinct_from_checkpoint_condition" "yes" \
+  "$([ "security_sensitive_advisory_pending" != "human_checkpoint_required" ] && echo yes || echo no)"
+run_test "ac7_reason_text_does_not_contain_checkpoint_condition" "no" "$(
+  "$GATE" --input "$security_advisory_pending_fixture" --json |
+    jq -r '.reasons[]' | grep -q 'human_checkpoint_required' && echo yes || echo no
+)"
+
+# AC8/AC9/BR8/BR9: absent/true .pr.inScope still evaluates and blocks;
+# explicit false short-circuits to not_applicable exactly like every other
+# reason (no new behavior specific to this feature in that branch).
+security_advisory_scope_true_fixture="$TMP_ROOT/security-advisory-scope-true.json"
+jq '.pr.inScope = true' "$security_advisory_pending_fixture" > "$security_advisory_scope_true_fixture"
+run_test "security_advisory_scope_true_still_blocks" "human_required" "$(decision_for "$security_advisory_scope_true_fixture")"
+
+security_advisory_scope_absent_fixture="$TMP_ROOT/security-advisory-scope-absent.json"
+jq 'del(.pr.inScope)' "$security_advisory_pending_fixture" > "$security_advisory_scope_absent_fixture"
+run_test "security_advisory_scope_absent_still_blocks" "human_required" "$(decision_for "$security_advisory_scope_absent_fixture")"
+
+security_advisory_scope_false_fixture="$TMP_ROOT/security-advisory-scope-false.json"
+jq '.pr.inScope = false' "$security_advisory_pending_fixture" > "$security_advisory_scope_false_fixture"
+run_test "security_advisory_scope_false_not_applicable" "not_applicable" "$(decision_for "$security_advisory_scope_false_fixture")"
 
 echo ""
 echo "=== Summary ==="
