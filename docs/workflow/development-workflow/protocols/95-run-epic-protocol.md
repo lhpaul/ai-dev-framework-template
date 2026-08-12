@@ -581,11 +581,18 @@ For each in-scope item:
      authority.
    - Assess each **non**-security-sensitive finding individually: decide fix
      or accept, and record the rationale
-   - Write one `advisories[]` entry per finding in the PR disposition input —
-     never a single catch-all entry covering multiple findings; write one
-     `securityAdvisories[]` entry (via `security-advisory-tracker.sh
-     reconcile`) per security-sensitive finding, kept in the visibly
-     distinct section described in Step 9 below
+   - **Array membership is mutually exclusive and status-independent**: a
+     security-sensitive finding — at every status, including `pending` and
+     `fixed` — belongs only in `securityAdvisories[]`, never in
+     `advisories[]`. Write one `advisories[]` entry per **non**-security-sensitive
+     finding (never a single catch-all entry covering multiple findings), and
+     one `securityAdvisories[]` entry (via `security-advisory-tracker.sh
+     reconcile`) per security-sensitive finding, kept in the visibly distinct
+     section described in Step 9 below. Duplicating a security-sensitive
+     finding into `advisories[]` as well is incorrect even when it is
+     `pending`: `run-epic-audit-trail.sh`'s `validate_advisories()` requires
+     every non-`fixed` `advisories[]` entry to carry a rationale, which a
+     genuinely still-pending security-sensitive finding has none of yet.
    - Assembled Gate 5 evidence must also include
      `.securityAdvisoryDecisionEvents[]` (raw candidate decision-comment
      references, verified via `run-epic-delegated-gate.sh

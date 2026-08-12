@@ -360,12 +360,23 @@ github_verified_security_advisory_decisions() {
     if ! author_permission="$(printf '%s\n' "$permission_response" | jq -r '.permission // ""' 2>/dev/null)"; then
       author_permission=""
     fi
+    # The firstTrackedAt temporal boundary is only meaningful when both
+    # timestamps are actual ISO-8601 UTC "Z" values: a lexical ">="
+    # comparison against an empty firstTrackedAt (a finding whose entry
+    # omitted or blanked the field) would be vacuously true for any
+    # non-empty createdAt, silently disabling the BR6 boundary entirely
+    # instead of rejecting the candidate for lacking a usable timestamp to
+    # compare against. Requiring both to match the fixed-width UTC format
+    # also keeps the lexical comparison itself valid -- it is only
+    # guaranteed correct for identical UTC "Z"-suffixed formats.
     if printf '%s\n' "$normalized" | jq -e \
       --argjson matched "$matched" \
       --arg permission "$author_permission" \
       '((.authorType // "") == "User")
        and (($permission) as $p | ($p == "admin" or $p == "write"))
        and (.targetPullRequest == true)
+       and (($matched.firstTrackedAt // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+       and ((.createdAt // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
        and ((.createdAt // "") >= ($matched.firstTrackedAt // ""))' >/dev/null; then
       # sourceEventType/sourceEventId reflect the raw candidate event's
       # {id, type} shape (the type as given on .securityAdvisoryDecisionEvents[],
@@ -743,14 +754,24 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   def verified_security_advisory_decisions:
     if ((.githubVerifiedSecurityAdvisoryDecisions // null) | type) == "array" then .githubVerifiedSecurityAdvisoryDecisions else [] end;
   # BR5: the status of a security-sensitive finding is treated as resolved
-  # here only via a fixed commit already recorded on the entry (status ==
-  # "fixed") or a verified human decision matched by exact finding id --
-  # never by the delegated agent unilaterally recording accepted/rejected
-  # itself, which is precisely why this reads
-  # .githubVerifiedSecurityAdvisoryDecisions (produced only by the BR6
-  # verification in github_verified_security_advisory_decisions) rather
-  # than trusting an unverified status value directly off the entry when
-  # that entry is still "pending".
+  # here only via (a) a matching verified human decision in $decisions (the
+  # BR6-verified output of github_verified_security_advisory_decisions,
+  # re-derived fresh on every gate call -- mirroring the existing
+  # reviewer-access-bypass pattern, which never trusts a persisted
+  # "authorized" flag either), or (b) status == "fixed" together with a
+  # non-empty fixCommit already recorded on the entry. Every other status
+  # value -- including an unrecognized string, or a "human-accepted" /
+  # "human-rejected" value that is not backed by a matching verified
+  # decision on THIS call, or a "fixed" entry missing fixCommit -- resolves
+  # to "pending" here, unconditionally. This intentionally does not trust an
+  # already-"human-accepted"/"human-rejected" status value on the entry by
+  # itself: nothing about that string, on its own, proves it went through
+  # BR6 verification, so trusting it directly would let a buggy or
+  # malicious evidence-assembly step bypass BR5 entirely. The caller must
+  # re-supply the same .securityAdvisoryDecisionEvents[] candidate
+  # references on every Gate 4/5 evaluation to keep an already-resolved
+  # finding unblocked (see the Gate-5-evidence-assembly paragraph in
+  # Protocol 91).
   # $decisions is threaded in explicitly (not read via the no-arg
   # verified_security_advisory_decisions def) because this function is
   # invoked from inside map(select(...)) below, where the implicit `.` of
@@ -761,8 +782,10 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   # regardless of any verified decision.
   def security_advisory_effective_status($entry; $decisions):
     ($decisions | map(select((.findingId // "") == ($entry.id // ""))) | .[0]) as $decision |
-    if (($entry.status // "pending") == "pending") and ($decision != null) then $decision.decision
-    else ($entry.status // "pending") end;
+    if ($decision != null) then $decision.decision
+    elif (($entry.status // "") == "fixed") and (($entry.fixCommit // "") | tostring | length > 0) then "fixed"
+    else "pending"
+    end;
   def pending_security_advisories($decisions):
     security_advisory_entries | map(select(security_advisory_effective_status(.; $decisions) == "pending"));
   # $prNumber is threaded in explicitly for the same reason $decisions is on

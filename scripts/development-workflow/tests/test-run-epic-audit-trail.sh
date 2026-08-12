@@ -496,6 +496,15 @@ run_fails_contains "apply_pr_disposition_rejects_missing_fixCommit" \
 calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
 run_test "apply_pr_disposition_missing_fixCommit_writes_no_comment" "$calls_before" "$calls_after"
 
+# An unrecognized status value must be rejected outright, never rendered as
+# though it were resolved evidence.
+unrecognized_status_fixture="$TMP_ROOT/security-advisory-unrecognized-status.json"
+jq '.securityAdvisories = [{"id":"sec-x","category":"a","matchedFile":"scripts/x.sh","status":"resolved-by-someone","headSha":"aaaa","firstTrackedAt":"2026-08-01T00:00:00Z"}]' \
+  "$pr_fixture" > "$unrecognized_status_fixture"
+run_fails_contains "render_rejects_unrecognized_security_advisory_status" \
+  "a securityAdvisories[] entry has a status outside pending, fixed, human-accepted, human-rejected" \
+  "$HELPER" render-pr-disposition --input "$unrecognized_status_fixture"
+
 legacy_policy_output="$("$HELPER" render-pr-disposition --input "$legacy_policy_fixture")"
 run_test "legacy_pr_disposition_policy_optional" "yes" "$(grep -q 'Not recorded' <<< "$legacy_policy_output" && echo yes || echo no)"
 

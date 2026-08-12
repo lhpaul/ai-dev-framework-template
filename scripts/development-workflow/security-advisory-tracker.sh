@@ -119,7 +119,15 @@ reconcile() {
     --argjson decisionEvents "$decision_events_json" \
     --arg headSha "$head_sha" \
     --arg now "$now" '
-    def keyof($e): (($e.category // "") | tostring) + "\u0000" + (($e.matchedFile // "") | tostring);
+    # Accepts both "category" (the canonical resolved-entry field name used
+    # by --prior/reconcile output) and "matchedCategory" (the field name
+    # security-advisory-classifier.sh classify actually emits) on --current
+    # entries, so a caller can pass classify output straight through without
+    # a separate rename step -- passing matchedCategory unchanged would
+    # otherwise silently key every entry on an empty category and break
+    # BR7 cross-push matching.
+    def entry_category($e): ($e.category // $e.matchedCategory // "");
+    def keyof($e): (entry_category($e) | tostring) + "\u0000" + (($e.matchedFile // "") | tostring);
 
     # Assigns a stable, order-preserving sequence number within each
     # (category, matchedFile) group so multiple findings sharing a key in
@@ -165,7 +173,7 @@ reconcile() {
         else
           {
             id: $c.id,
-            category: $p.category,
+            category: entry_category($p),
             matchedFile: $p.matchedFile,
             status: "pending",
             headSha: $headSha,
@@ -178,7 +186,7 @@ reconcile() {
       else
         {
           id: $c.id,
-          category: $c.category,
+          category: entry_category($c),
           matchedFile: $c.matchedFile,
           status: "pending",
           headSha: $headSha,

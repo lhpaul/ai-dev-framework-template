@@ -184,6 +184,16 @@ run_test "rename_produces_exactly_one_fresh_entry" "1" "$(printf '%s' "$rename_r
 run_test "rename_fresh_entry_is_new_path" "scripts/new-name.sh" "$(printf '%s' "$rename_result" | jq -r '.[0].matchedFile')"
 run_test "rename_fresh_entry_is_pending" "pending" "$(printf '%s' "$rename_result" | jq -r '.[0].status')"
 
+# --- Interop: --current accepts raw security-advisory-classifier.sh
+# `classify` output unchanged (matchedCategory, not category) without
+# breaking cross-push matching by key -- planted-violation proof: before
+# this fix, a --current entry with only matchedCategory keyed on an empty
+# category and rendered category:null in the reconciled output.
+current_classifier_shape="$(write_json current-classifier-shape '[{"id":"sec-aaa111","matchedCategory":"c","matchedFile":"scripts/x.sh"}]')"
+classifier_shape_result="$("$TRACKER" reconcile --prior none --current "$current_classifier_shape" --head-sha "$HEAD_A" --now "$NOW")"
+run_test "classifier_shape_current_normalizes_category" "c" "$(printf '%s' "$classifier_shape_result" | jq -r '.[0].category')"
+run_test "classifier_shape_current_keys_by_normalized_category" "1" "$(printf '%s' "$classifier_shape_result" | jq 'length')"
+
 # --- Decision events: resolve a matching pending entry ---
 prior_pending="$(write_json prior-pending '[{"id":"sec-one","category":"c","matchedFile":"scripts/x.sh","status":"pending","headSha":"'"$HEAD_A"'","firstTrackedAt":"2026-08-01T00:00:00Z"}]')"
 current_one="$(write_json current-one '[{"id":"sec-one","category":"c","matchedFile":"scripts/x.sh"}]')"

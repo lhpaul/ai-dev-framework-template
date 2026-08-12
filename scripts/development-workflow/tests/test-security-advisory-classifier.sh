@@ -60,9 +60,12 @@ echo "=== Security advisory classifier ==="
 
 # --- CLI surface ---
 run_fails_contains "requires_subcommand" "unknown subcommand" "$CLASSIFIER" bogus
-run_fails_contains "requires_finding_text" "--finding-text is required" "$CLASSIFIER" classify --file-path "x"
+run_fails_contains "requires_finding_text" "--finding-text or --finding-text-file is required" "$CLASSIFIER" classify --file-path "x"
 run_fails_contains "requires_file_path" "--file-path is required" "$CLASSIFIER" classify --finding-text "x"
 run_fails_contains "rejects_empty_finding_text" "--finding-text is required and must be non-empty" "$CLASSIFIER" classify --finding-text "" --file-path ""
+run_fails_contains "rejects_both_finding_text_forms" "mutually exclusive" "$CLASSIFIER" classify --finding-text "x" --finding-text-file "/dev/null" --file-path ""
+run_fails_contains "rejects_both_diff_hunk_forms" "mutually exclusive" "$CLASSIFIER" classify --finding-text "x" --file-path "" --diff-hunk "y" --diff-hunk-file "/dev/null"
+run_fails_contains "finding_text_file_rejects_missing_file" "referenced file not found" "$CLASSIFIER" classify --finding-text-file "/nonexistent/path" --file-path ""
 
 # --- AC1/BR1: match on only one part never classifies as security-sensitive ---
 run_test "part_a_only_not_sensitive" "false" \
@@ -158,12 +161,29 @@ run_test "matched_file_populated_on_match" "scripts/development-workflow/workflo
 run_test "matched_file_null_when_not_sensitive" "null" \
   "$(classify_file "this jq filter could be written more concisely" "scripts/development-workflow/run-epic-delegated-gate.sh")"
 
-# @file input form
+# --finding-text-file / --diff-hunk-file input form (distinct flags, not an
+# "@file" convention on --finding-text/--diff-hunk -- see the CRITICAL
+# planted-violation cases below for why that convention is unsafe).
 tmp_file="$(mktemp)"
 trap 'rm -f "$tmp_file"' EXIT
 printf 'raw git push --force is used here without a safety lease' > "$tmp_file"
-run_test "at_file_finding_text_input" "true" \
-  "$("$CLASSIFIER" classify --finding-text "@$tmp_file" --file-path "scripts/development-workflow/workflow-branch-push-guard.sh" | jq -r '.securitySensitive')"
+run_test "finding_text_file_input" "true" \
+  "$("$CLASSIFIER" classify --finding-text-file "$tmp_file" --file-path "scripts/development-workflow/workflow-branch-push-guard.sh" | jq -r '.securitySensitive')"
+
+tmp_diff_hunk_file="$(mktemp)"
+trap 'rm -f "$tmp_file" "$tmp_diff_hunk_file"' EXIT
+printf 'permissions: contents: write' > "$tmp_diff_hunk_file"
+run_test "diff_hunk_file_input" "true" \
+  "$("$CLASSIFIER" classify --finding-text "this job grants broader access than it needs and bypasses the least-privilege check" --file-path ".github/workflows/deploy.yml" --diff-hunk-file "$tmp_diff_hunk_file" | jq -r '.securitySensitive')"
+
+# CRITICAL planted-violation proof: --finding-text/--diff-hunk must always
+# be literal, never treated as a file reference. A real unified-diff hunk
+# header starts with "@@" (before this fix, "@@" was misread as an "@file"
+# reference and the classifier aborted with "referenced file not found").
+run_test "diff_hunk_real_at_at_header_is_literal" "true" \
+  "$("$CLASSIFIER" classify --finding-text "this job grants broader access than it needs and bypasses the least-privilege check" --file-path ".github/workflows/deploy.yml" --diff-hunk "@@ -12,7 +12,9 @@ permissions: contents: write" | jq -r '.securitySensitive')"
+run_test "finding_text_at_mention_is_literal" "false" \
+  "$("$CLASSIFIER" classify --finding-text "@octocat please review this jq filter" --file-path "scripts/development-workflow/run-epic-delegated-gate.sh" | jq -r '.securitySensitive')"
 
 # Category (d): injection risk
 run_test "category_d_injection" "d" \
@@ -172,6 +192,24 @@ run_test "category_d_injection" "d" \
 # Category (b): credential exposure
 run_test "category_b_credential_exposure" "b" \
   "$(classify_category "this logs the credential in plaintext" "scripts/development-workflow/workflow-branch-push-guard.sh")"
+
+# Planted-violation proof: a genuine internal `grep` failure (exit >=2) must
+# abort loudly (classify exits non-zero), never silently fall through to
+# `securitySensitive: false`. Shadows `grep` with a mock that always exits 2
+# to force the failure path deterministically.
+mock_bin_dir="$(mktemp -d)"
+trap 'rm -f "$tmp_file" "$tmp_diff_hunk_file"; rm -rf "$mock_bin_dir"' EXIT
+cat > "$mock_bin_dir/grep" <<'MOCK_GREP'
+#!/usr/bin/env bash
+exit 2
+MOCK_GREP
+chmod +x "$mock_bin_dir/grep"
+grep_failure_status=0
+grep_failure_output="$(PATH="$mock_bin_dir:$PATH" "$CLASSIFIER" classify --finding-text "raw git push --force is used here without a safety lease" --file-path "scripts/development-workflow/workflow-branch-push-guard.sh" 2>&1)" || grep_failure_status=$?
+run_test "grep_internal_failure_aborts_loudly" "yes" \
+  "$([ "$grep_failure_status" -ne 0 ] && grep -Fq 'internal error' <<< "$grep_failure_output" && echo yes || echo no)"
+run_test "grep_internal_failure_never_returns_false" "yes" \
+  "$(grep -Fq 'securitySensitive' <<< "$grep_failure_output" && echo no || echo yes)"
 
 echo ""
 echo "=== Summary ==="

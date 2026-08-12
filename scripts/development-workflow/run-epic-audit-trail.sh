@@ -409,7 +409,29 @@ warn_per_finding_advisories() {
 # rationale together), not partial evidence.
 validate_security_advisories() {
   local json="$1"
-  local invalid
+  local invalid unrecognized_status
+
+  # Reject any status outside the spec's four persisted values (see the
+  # Statuses table) before checking required fields below -- an
+  # unrecognized status value (or a value a compromised/buggy
+  # evidence-assembly step wrote directly, bypassing
+  # security-advisory-tracker.sh reconcile) must never silently pass
+  # through as though it were resolved evidence.
+  unrecognized_status="$(printf '%s\n' "$json" | jq -r '
+    (.securityAdvisories // [])
+    | map(select(((.status // "") | IN("pending", "fixed", "human-accepted", "human-rejected")) | not))
+    | length
+  ' 2>/dev/null)" || error_exit "failed to validate security advisory status values (jq parse error)"
+  if [ -z "$unrecognized_status" ]; then
+    error_exit "failed to validate security advisory status values (empty result)"
+  fi
+  case "$unrecognized_status" in
+    ''|*[!0-9]*) error_exit "failed to validate security advisory status values (invalid type)" ;;
+  esac
+  if [ "$unrecognized_status" -gt 0 ]; then
+    error_exit "a securityAdvisories[] entry has a status outside pending, fixed, human-accepted, human-rejected"
+  fi
+
   invalid="$(printf '%s\n' "$json" | jq -r '
     (.securityAdvisories // [])
     | map(select(
@@ -426,7 +448,9 @@ validate_security_advisories() {
   if [ -z "$invalid" ]; then
     error_exit "failed to validate security advisory entries (empty result)"
   fi
-  invalid="${invalid}" || error_exit "failed to validate security advisory entries (invalid type)"
+  case "$invalid" in
+    ''|*[!0-9]*) error_exit "failed to validate security advisory entries (invalid type)" ;;
+  esac
   if [ "$invalid" -gt 0 ]; then
     error_exit "a fixed security-sensitive advisory entry requires fixCommit, and a human-accepted/human-rejected entry requires decider, decidedAt, and rationale"
   fi

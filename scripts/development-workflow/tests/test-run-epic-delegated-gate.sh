@@ -1232,7 +1232,47 @@ run_test "security_advisory_decision_wrong_target_pr_does_not_resolve" "[]" "$(
 run_test "security_advisory_decision_stale_created_at_does_not_resolve" "[]" "$(
   MOCK_GH_SECURITY_DECISION_CREATED_AT="2026-07-01T00:00:00Z" verify_decisions_for "$security_advisory_decision_event_fixture"
 )"
+
+# Planted-violation proof: an entry with an empty/missing firstTrackedAt
+# must never resolve regardless of createdAt -- a lexical ">=" comparison
+# against "" is vacuously true for any non-empty createdAt, which would
+# silently disable the BR6 temporal boundary entirely instead of rejecting
+# the candidate for lacking a usable timestamp to compare against.
+empty_first_tracked_at_fixture="$TMP_ROOT/security-advisory-empty-first-tracked-at.json"
+jq '.securityAdvisories[0].firstTrackedAt = ""' "$security_advisory_decision_event_fixture" > "$empty_first_tracked_at_fixture"
+run_test "security_advisory_decision_empty_first_tracked_at_does_not_resolve" "[]" "$(
+  verify_decisions_for "$empty_first_tracked_at_fixture"
+)"
 unset MOCK_GH_SECURITY_DECISION_BODY
+
+# AC4/AC5/BR5 hardening: a persisted status of "human-accepted" not backed
+# by a matching verified decision on THIS gate call must still block
+# (fail-closed) -- the gate must never trust a raw status string alone as
+# proof of a verified human decision, since nothing about that string, on
+# its own, distinguishes a legitimate tracker-reconciled resolution from a
+# buggy or malicious evidence-assembly step bypassing BR5. Planted-violation
+# proof: before this fix, security_advisory_effective_status trusted any
+# non-"pending" status verbatim.
+untrusted_human_accepted_fixture="$TMP_ROOT/security-advisory-untrusted-human-accepted.json"
+jq '.securityAdvisories[0].status = "human-accepted"
+  | .securityAdvisories[0].decider = "lhpaul"
+  | .securityAdvisories[0].decidedAt = "2026-08-05T00:00:00Z"
+  | .securityAdvisories[0].rationale = "claimed accepted without verification"
+  | del(.securityAdvisoryDecisionEvents)' "$security_advisory_pending_fixture" > "$untrusted_human_accepted_fixture"
+run_test "untrusted_human_accepted_status_still_blocks" "human_required" "$(decision_for "$untrusted_human_accepted_fixture")"
+
+# AC4/AC5 hardening: a "fixed" status without a fixCommit must still block
+# (fail-closed) -- a status string alone is not evidence of an actual cited
+# commit.
+fixed_missing_fix_commit_fixture="$TMP_ROOT/security-advisory-fixed-missing-fix-commit.json"
+jq '.securityAdvisories[0].status = "fixed"' "$security_advisory_pending_fixture" > "$fixed_missing_fix_commit_fixture"
+run_test "fixed_status_missing_fix_commit_still_blocks" "human_required" "$(decision_for "$fixed_missing_fix_commit_fixture")"
+
+# Unrecognized status value must fail closed (treated as pending), not pass
+# through as though resolved.
+unrecognized_status_fixture="$TMP_ROOT/security-advisory-unrecognized-status.json"
+jq '.securityAdvisories[0].status = "resolved-by-someone"' "$security_advisory_pending_fixture" > "$unrecognized_status_fixture"
+run_test "unrecognized_status_still_blocks" "human_required" "$(decision_for "$unrecognized_status_fixture")"
 
 # AC6/BR4: a blanket waiver of an unrelated pending-bounded-prelude checkpoint
 # does not resolve a pending security-sensitive advisory finding; the two
