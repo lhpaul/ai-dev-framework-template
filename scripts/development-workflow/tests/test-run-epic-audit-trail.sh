@@ -424,6 +424,78 @@ run_test "escapes_pr_table_pipes" "yes" "$(grep -Fq 'haystack\\|triage' <<< "$pr
 run_test "normalizes_pr_table_newlines_tabs" "yes" "$(grep -Fq 'docs<br>sync' <<< "$pr_output" && grep -Fq 'documented<br>rationale with' <<< "$pr_output" && echo yes || echo no)"
 run_test "redacts_sensitive_values" "yes" "$(! grep -Eq 'ghp_FAKE_PLACEHOLDER|Authorization: dummy|Bearer dummy\\.value|/tmp/fake-placeholder' <<< "$pr_output" && grep -Fq 'Authorization: [REDACTED]' <<< "$pr_output" && grep -Fq 'Bearer [REDACTED]' <<< "$pr_output" && echo yes || echo no)"
 
+# --- Security-Sensitive Advisory Findings section (issue #1432, AC10/AC14) ---
+
+security_advisories_fixture="$TMP_ROOT/security-advisories.json"
+jq '.securityAdvisories = [
+  {"id": "sec-one", "category": "c", "matchedFile": "scripts/x.sh", "status": "pending", "headSha": "aaaa", "firstTrackedAt": "2026-08-01T00:00:00Z"},
+  {"id": "sec-two", "category": "a", "matchedFile": "scripts/y.sh", "status": "human-accepted", "headSha": "aaaa", "firstTrackedAt": "2026-08-01T00:00:00Z", "decider": "lhpaul", "decidedAt": "2026-08-12T01:00:00Z", "rationale": "low risk, isolated fallback path"},
+  {"id": "sec-three", "category": "b", "matchedFile": "scripts/z.sh", "status": "fixed", "headSha": "aaaa", "firstTrackedAt": "2026-08-01T00:00:00Z", "fixCommit": "deadbeefcafe"}
+]' "$pr_fixture" > "$security_advisories_fixture"
+security_advisories_output="$("$HELPER" render-pr-disposition --input "$security_advisories_fixture" 2>/dev/null)"
+run_test "renders_security_advisory_section_distinct_from_advisory_decisions" "yes" "$(
+  grep -q '### Security-Sensitive Advisory Findings' <<< "$security_advisories_output" &&
+    grep -q '### Advisory Decisions' <<< "$security_advisories_output" &&
+    [ "$(grep -c '^### Security-Sensitive Advisory Findings$' <<< "$security_advisories_output")" = "1" ] &&
+    echo yes || echo no
+)"
+run_test "renders_security_advisory_decider" "yes" "$(grep -Fq 'lhpaul' <<< "$security_advisories_output" && echo yes || echo no)"
+run_test "renders_security_advisory_decided_at" "yes" "$(grep -Fq '2026-08-12T01:00:00Z' <<< "$security_advisories_output" && echo yes || echo no)"
+run_test "renders_security_advisory_rationale" "yes" "$(grep -Fq 'low risk, isolated fallback path' <<< "$security_advisories_output" && echo yes || echo no)"
+run_test "renders_security_advisory_fix_commit" "yes" "$(grep -Fq 'deadbeefcafe' <<< "$security_advisories_output" && echo yes || echo no)"
+run_test "renders_security_advisory_pending_status" "yes" "$(grep -Fq '| sec-one | c | scripts/x.sh | pending' <<< "$security_advisories_output" && echo yes || echo no)"
+
+no_security_advisories_output="$("$HELPER" render-pr-disposition --input "$pr_fixture")"
+run_test "renders_security_advisory_section_none_when_absent" "yes" "$(
+  awk '/### Security-Sensitive Advisory Findings/,/### Verification Evidence/' <<< "$no_security_advisories_output" | grep -q '^None.$' && echo yes || echo no
+)"
+
+security_advisories_pending_stderr="$("$HELPER" render-pr-disposition --input "$security_advisories_fixture" 2>&1 >/dev/null)"
+run_test "warns_on_pending_security_advisory" "yes" "$(
+  grep -q 'security-sensitive advisory finding(s) still pending' <<< "$security_advisories_pending_stderr" && echo yes || echo no
+)"
+
+run_test "securityAdvisories_not_flagged_as_unknown_key" "no" "$(
+  "$HELPER" render-pr-disposition --input "$security_advisories_fixture" 2>&1 >/dev/null | grep -q 'securityAdvisories' && echo yes || echo no
+)"
+
+# AC10: seven status-specific required-field validation failures, each a
+# hard error_exit -- fixed missing fixCommit; human-accepted/human-rejected
+# each missing decider, decidedAt, or rationale individually.
+missing_field_fixture() {
+  local status="$1" field="$2"
+  local path="$TMP_ROOT/security-advisory-missing-${status}-${field}.json"
+  jq --arg status "$status" --arg field "$field" '
+    .securityAdvisories = [
+      ({id: "sec-x", category: "a", matchedFile: "scripts/x.sh", status: $status, headSha: "aaaa", firstTrackedAt: "2026-08-01T00:00:00Z"}
+       + (if $status == "fixed" then {fixCommit: "deadbeef"} else {decider: "lhpaul", decidedAt: "2026-08-12T01:00:00Z", rationale: "reviewed"} end))
+      | del(.[$field])
+    ]
+  ' "$pr_fixture" > "$path"
+  printf '%s\n' "$path"
+}
+
+for status in human-accepted human-rejected; do
+  for field in decider decidedAt rationale; do
+    fixture_path="$(missing_field_fixture "$status" "$field")"
+    run_fails_contains "render_rejects_${status}_missing_${field}" \
+      "a fixed security-sensitive advisory entry requires fixCommit, and a human-accepted/human-rejected entry requires decider, decidedAt, and rationale" \
+      "$HELPER" render-pr-disposition --input "$fixture_path"
+  done
+done
+fixed_missing_fixcommit_fixture="$(missing_field_fixture "fixed" "fixCommit")"
+run_fails_contains "render_rejects_fixed_missing_fixCommit" \
+  "a fixed security-sensitive advisory entry requires fixCommit, and a human-accepted/human-rejected entry requires decider, decidedAt, and rationale" \
+  "$HELPER" render-pr-disposition --input "$fixed_missing_fixcommit_fixture"
+
+# apply-pr-disposition must fail closed the same way, before ever posting.
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_missing_fixCommit" \
+  "a fixed security-sensitive advisory entry requires fixCommit, and a human-accepted/human-rejected entry requires decider, decidedAt, and rationale" \
+  "$HELPER" apply-pr-disposition --input "$fixed_missing_fixcommit_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_missing_fixCommit_writes_no_comment" "$calls_before" "$calls_after"
+
 legacy_policy_output="$("$HELPER" render-pr-disposition --input "$legacy_policy_fixture")"
 run_test "legacy_pr_disposition_policy_optional" "yes" "$(grep -q 'Not recorded' <<< "$legacy_policy_output" && echo yes || echo no)"
 
