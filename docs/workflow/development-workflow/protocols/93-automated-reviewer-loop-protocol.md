@@ -750,6 +750,8 @@ platform-agnostic disposition procedure documented below it.
    fails by construction for those.
 2. Run:
 
+   <!-- workflow-shell-contract: bash-zsh -->
+
    ```bash
    scripts/development-workflow/security-advisory-classifier.sh classify \
      --finding-text "<finding text>" --file-path "<path|empty>" --diff-hunk "<diff_hunk|empty>"
