@@ -44,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`render_pr_disposition` rejects invalid invocation and checkpoint policy
+  values** (#1461): explicit null checks prevent boolean `false` values from
+  being rendered as absent. The renderer now requires policy objects, and
+  regression tests cover render and apply paths.
 - **`workflow-shell-snippet-lint.py` WS001 false-positives on non-shell fenced
   code blocks** (#1468): `executable = language in {"bash", "sh", "shell",
   "zsh"} or bool(SHELL_SIGNAL.search(content))` let the `SHELL_SIGNAL` content
