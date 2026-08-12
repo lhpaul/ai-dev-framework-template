@@ -266,6 +266,7 @@ Additional checks for **PRs that add or modify guardrails enforcement behavior**
 - **Delegated merge/review/backlog-start/completion gates**: confirm the orchestration path (Protocol 90, 91, or 95) enforces each of these gates before the relevant decision point (opening a PR, making a review decision, merging, marking complete), not after.
 - **Audit recording**: when `audit.pr_disposition_record` or `audit.work_item_ledger_record` is required, confirm the stable audit markers (`<!-- run-epic:pr-disposition -->` and `<!-- run-epic:epic-ledger -->`) are used so reruns update rather than duplicate records.
 - **Conservative defaults declared**: the load+report step must state "conservative defaults in effect" when no `guardrails` section is present, and must enumerate each default value (mode=`manual`, `may_merge_pr: false`, `max_merge_risk: low`, backlog starts confirmation-gated, no audit requirements).
+- **Security-advisory carve-out (BR5)**: confirm the changed code or documented behavior never lets a delegated agent record `human-accepted` / `human-rejected` for a security-sensitive advisory finding — only a fixed commit or a verified human decision resolves it.
 
 Additional checks for **PRs that add or modify branch creation, PR creation, or nested/stage-agent dispatch behavior**:
 

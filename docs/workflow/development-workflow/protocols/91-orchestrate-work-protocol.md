@@ -2118,6 +2118,22 @@ is `true` in the effective guardrails, assemble the evidence object and run:
 ./scripts/development-workflow/run-epic-delegated-gate.sh --input <evidence-file>
 ```
 
+**Security-sensitive advisory evidence (BR8, BR9, AC8, AC9)**: the assembled
+evidence file must include `.securityAdvisories[]` (the reconciled tracker
+output from `security-advisory-tracker.sh reconcile`) and
+`.securityAdvisoryDecisionEvents[]` (raw candidate decision-comment
+references) identically whether the caller is `/run-item`, `/run-items`, or
+`/run-epic` — this requirement is not conditioned on a resolved `/run-epic`
+scope and is evaluated as part of the gate's normal reasons cascade, not a
+new short-circuit. When any `.securityAdvisories[]` entry's reconciled
+status is `pending`, `run-epic-delegated-gate.sh` returns `decision:
+"human_required"` with a `security_sensitive_advisory_pending` reason and
+blocks delegated merge regardless of `mode`, `may_merge_pr`, or unrelated
+checkpoint state (see the "Security-sensitive advisory classification"
+subsection of [`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md)
+for how that evidence is produced, and the `security-advisory-decision-required`
+label that mirrors it on the PR itself).
+
 Merge through the normal repository path only when the gate returns
 `merge_allowed` **and** every required-evidence check in section 3 Gate 5 of
 `guardrails-enforcement.md` passes. If the gate reports

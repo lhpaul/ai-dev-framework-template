@@ -157,6 +157,14 @@ review-and-fix behavior** — no second review loop:
   rerun validation + reviewer loop + CI, reassess.
 - Advisory findings → explicit per-finding fix-or-accept decision with recorded
   rationale.
+- **Security-sensitive advisory carve-out**: for an advisory finding
+  classified security-sensitive by
+  `scripts/development-workflow/security-advisory-classifier.sh`, the runner
+  never itself records an "accepted" or "rejected" disposition — regardless
+  of delegated review authority. Only a fixed commit (cited) or a status of
+  "pending" (awaiting a verified human accept/reject decision) is available.
+  See the "Security-sensitive advisory classification" subsection of
+  [`protocols/93-automated-reviewer-loop-protocol.md`](protocols/93-automated-reviewer-loop-protocol.md).
 - Restore readiness labels only after reviewer loop, CI, and unresolved threads
   are clean.
 
@@ -198,6 +206,16 @@ following are satisfied**:
 - Reviewer disposition is acceptable.
 - Required audit evidence is recorded.
 - Classified risk is at or below `stages.<stage>.max_merge_risk`.
+- No `.securityAdvisories[]` entry remains `pending` after reconciliation at
+  the current head SHA (`security_sensitive_advisory_pending`). **This
+  requirement is independent of `mode`, `stages.<stage>.may_merge_pr`, and
+  the satisfaction/waiver state of any unrelated bounded-prelude
+  checkpoint** — mirroring the exceptional-bypass callout below, no batch
+  approval or delegated authority substitutes for a fixed commit or a
+  verified human accept/reject decision on a security-sensitive finding.
+  Only a human, never the delegated agent, may record that a
+  security-sensitive finding's risk is accepted or that the finding is a
+  false positive.
 
 If the only remaining blocker is a verified access-restricted third-party
 reviewer check, the delegated gate does **not** return normal `merge_allowed`.
@@ -277,6 +295,7 @@ table is required for consistent stop reporting.
 | `high_risk_change` | The PR is classified above the configured `max_merge_risk` for the stage. |
 | `destructive_action` | The next action would delete branches, data, releases, or other non-recoverable artifacts. |
 | `human_checkpoint_required` | A declared stage-scoped human checkpoint for the PR's work item is still pending, or the PR still carries `human-checkpoint-required`. |
+| `security_sensitive_advisory_pending` | A security-sensitive advisory finding (per the classifier in `scripts/development-workflow/security-advisory-classifier.sh`) lacks a fixed commit or a verified human accept/reject decision at the PR's current head SHA. |
 | `graduation_approval_required` | A `develop-<slug>` -> `develop` graduation PR is the next merge candidate but explicit human graduation approval has not been recorded through `/graduate-development <slug>`. |
 | `missing_tracker_context` | A required tracker field (status, type, assignee, dependency link) is absent or unresolvable. |
 | `missing_required_secret_or_permission` | A required credential, GitHub permission, or access token is absent. |
