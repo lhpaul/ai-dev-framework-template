@@ -315,6 +315,15 @@ jq '.why_safe_to_merge = "a-string"' "$pr_fixture" > "$wrong_typed_why_safe_to_m
 # that specific falsy-boolean edge case.
 boolean_why_safe_to_merge_fixture="$TMP_ROOT/boolean-why-safe-to-merge.json"
 jq '.why_safe_to_merge = false' "$pr_fixture" > "$boolean_why_safe_to_merge_fixture"
+# Issue #1461: the same `(.field // null) == null` falsy-boolean-`false`
+# defect fixed above for .why_safe_to_merge also existed for .invocation_policy
+# and .checkpoint_policy, which used the identical `//`-based presence check.
+# boolean_invocation_policy_fixture and boolean_checkpoint_policy_fixture
+# exercise that same falsy-boolean edge case for those two sections.
+boolean_invocation_policy_fixture="$TMP_ROOT/boolean-invocation-policy.json"
+jq '.invocation_policy = false' "$pr_fixture" > "$boolean_invocation_policy_fixture"
+boolean_checkpoint_policy_fixture="$TMP_ROOT/boolean-checkpoint-policy.json"
+jq '.checkpoint_policy = false' "$pr_fixture" > "$boolean_checkpoint_policy_fixture"
 # Same issue's complementary ask: a strict-unknown-keys warning so a future
 # unconsumed top-level key degrades loudly (a warning, not silent data loss)
 # instead of repeating this exact defect.
@@ -806,6 +815,38 @@ run_test "apply_pr_disposition_boolean_why_safe_to_merge_writes_no_comment" "$ca
 run_fails_contains "render_pr_disposition_rejects_boolean_why_safe_to_merge" \
   "failed to render why-safe-to-merge detail" \
   "$HELPER" render-pr-disposition --input "$boolean_why_safe_to_merge_fixture"
+
+echo ""
+echo "=== Planted-violation regression: invocation_policy/checkpoint_policy boolean false must not be misclassified as absent (issue #1461) ==="
+# Same falsy-boolean defect class as boolean_why_safe_to_merge above: the
+# presence checks for .invocation_policy and .checkpoint_policy previously
+# used `(.field // null) == null` / `(.checkpoint_policy // .checkpointPolicy
+# // null) == null`, both of which treat a boolean `false` value the same as
+# an absent field, silently falling back to "Not recorded." instead of
+# rejecting the wrong type. The fix replaced both with explicit `== null`
+# presence checks plus explicit `type != "object"` rejection guards.
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_boolean_invocation_policy" \
+  "failed to render invocation policy detail" \
+  "$HELPER" apply-pr-disposition --input "$boolean_invocation_policy_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_boolean_invocation_policy_writes_no_comment" "$calls_before" "$calls_after"
+
+run_fails_contains "render_pr_disposition_rejects_boolean_invocation_policy" \
+  "failed to render invocation policy detail" \
+  "$HELPER" render-pr-disposition --input "$boolean_invocation_policy_fixture"
+
+calls_before="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_fails_contains "apply_pr_disposition_rejects_boolean_checkpoint_policy" \
+  "failed to render checkpoint policy detail" \
+  "$HELPER" apply-pr-disposition --input "$boolean_checkpoint_policy_fixture" --pr 10
+calls_after="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+run_test "apply_pr_disposition_boolean_checkpoint_policy_writes_no_comment" "$calls_before" "$calls_after"
+
+run_fails_contains "render_pr_disposition_rejects_boolean_checkpoint_policy" \
+  "failed to render checkpoint policy detail" \
+  "$HELPER" render-pr-disposition --input "$boolean_checkpoint_policy_fixture"
 
 echo ""
 echo "=== Summary ==="

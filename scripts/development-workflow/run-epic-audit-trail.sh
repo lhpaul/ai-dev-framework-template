@@ -212,79 +212,95 @@ render_pr_disposition() {
       printf '%s\n' "$rendered"
     fi
     printf '\n### Invocation Policy\n\n'
-    if [ "$(printf '%s\n' "$json" | jq 'if (.invocation_policy // null) == null then 0 else 1 end')" -eq 0 ]; then
+    if [ "$(printf '%s\n' "$json" | jq 'if .invocation_policy == null then 0 else 1 end')" -eq 0 ]; then
       printf 'Not recorded.\n'
     else
       rendered="$(printf '%s\n' "$json" | jq -r '
-        (.invocation_policy // {}) as $p |
-        "- Original command: `" + (($p.original_command // $p.originalCommand // "") | tostring) + "`",
-        "- Copy-paste equivalent: `" + (($p.copy_paste_command // $p.copyPasteCommand // "") | tostring) + "`",
-        "- Confirmation: " + (($p.confirmation // $p.confirmationReason // "not recorded") | tostring)
+        if (.invocation_policy | type) != "object" then
+          error("invocation_policy must be an object")
+        else
+          .invocation_policy as $p |
+          "- Original command: `" + (($p.original_command // $p.originalCommand // "") | tostring) + "`",
+          "- Copy-paste equivalent: `" + (($p.copy_paste_command // $p.copyPasteCommand // "") | tostring) + "`",
+          "- Confirmation: " + (($p.confirmation // $p.confirmationReason // "not recorded") | tostring)
+        end
       ')" || error_exit "failed to render invocation policy detail (jq error above)"
       printf '%s\n' "$rendered"
       printf '\n| Field | Recommended | Selected | Effective |\n'
       printf '| --- | --- | --- | --- |\n'
       rendered="$(printf '%s\n' "$json" | jq -r "$table_cell_filter"'
-        (.invocation_policy // {}) as $p |
-        ($p.recommended_policy // $p.recommendedPolicy // {}) as $r |
-        ($p.selected_policy // $p.selectedPolicy // {}) as $s |
-        ($p.effective_policy // $p.effectivePolicy // {}) as $e |
-        ["mayStartBacklog", "delegateReview", "mayMerge", "maxRisk", "base"][] as $field |
-        "| " + $field +
-        " | " + (($r[$field] // "") | cell) +
-        " | " + (($s[$field] // "") | cell) +
-        " | " + (($e[$field] // "") | cell) + " |"
+        if (.invocation_policy | type) != "object" then
+          error("invocation_policy must be an object")
+        else
+          .invocation_policy as $p |
+          ($p.recommended_policy // $p.recommendedPolicy // {}) as $r |
+          ($p.selected_policy // $p.selectedPolicy // {}) as $s |
+          ($p.effective_policy // $p.effectivePolicy // {}) as $e |
+          ["mayStartBacklog", "delegateReview", "mayMerge", "maxRisk", "base"][] as $field |
+          "| " + $field +
+          " | " + (($r[$field] // "") | cell) +
+          " | " + (($s[$field] // "") | cell) +
+          " | " + (($e[$field] // "") | cell) + " |"
+        end
       ')" || error_exit "failed to render invocation policy table (jq error above)"
       printf '%s\n' "$rendered"
     fi
     printf '\n### Checkpoint Policy\n\n'
-    if [ "$(printf '%s\n' "$json" | jq 'if (.checkpoint_policy // .checkpointPolicy // null) == null then 0 else 1 end')" -eq 0 ]; then
+    if [ "$(printf '%s\n' "$json" | jq 'if (.checkpoint_policy == null) and (.checkpointPolicy == null) then 0 else 1 end')" -eq 0 ]; then
       printf 'Not recorded.\n'
     else
       rendered="$(printf '%s\n' "$json" | jq -r "$checkpoint_stage_filter"'
-        (.checkpoint_policy // .checkpointPolicy // {}) as $cp |
-        (.item.number) as $itemNum |
-        (.pr.branch // "") as $branch |
-        ((.pr.stage // "") as $stage |
-          if ($branch | length) > 0 then stage_from_branch($branch)
-          elif ($stage | length) > 0 then $stage
-          else null end) as $prStage |
-        "- Field source: " + (($cp.field_source // $cp.fieldSource // "unknown") | tostring),
-        "- Pending applicable checkpoints: " + (
-          [($cp.effective // $cp.effectivePolicy // [])[]
-            | select(
-                if $prStage == null then
-                  (.satisfaction_state == "pending" and ((.item_number | tonumber) == ($itemNum | tonumber)))
-                else
-                  checkpoint_applies(.; ($itemNum | tostring); $prStage)
-                end
-              )] | length | tostring
-        )
+        (if .checkpoint_policy != null then .checkpoint_policy else .checkpointPolicy end) as $cp |
+        if ($cp | type) != "object" then
+          error("checkpoint_policy must be an object")
+        else
+          (.item.number) as $itemNum |
+          (.pr.branch // "") as $branch |
+          ((.pr.stage // "") as $stage |
+            if ($branch | length) > 0 then stage_from_branch($branch)
+            elif ($stage | length) > 0 then $stage
+            else null end) as $prStage |
+          "- Field source: " + (($cp.field_source // $cp.fieldSource // "unknown") | tostring),
+          "- Pending applicable checkpoints: " + (
+            [($cp.effective // $cp.effectivePolicy // [])[]
+              | select(
+                  if $prStage == null then
+                    (.satisfaction_state == "pending" and ((.item_number | tonumber) == ($itemNum | tonumber)))
+                  else
+                    checkpoint_applies(.; ($itemNum | tostring); $prStage)
+                  end
+                )] | length | tostring
+          )
+        end
       ')" || error_exit "failed to render checkpoint policy detail (jq error above)"
       printf '%s\n' "$rendered"
       printf '\n| Item | Stage | Domain | State | Reason | Required action |\n'
       printf '| --- | --- | --- | --- | --- | --- |\n'
       rendered="$(printf '%s\n' "$json" | jq -r "$table_cell_filter $checkpoint_stage_filter"'
-        (.checkpoint_policy // .checkpointPolicy // {}) as $cp |
-        (.item.number) as $itemNum |
-        (.pr.branch // "") as $branch |
-        ((.pr.stage // "") as $stage |
-          if ($branch | length) > 0 then stage_from_branch($branch)
-          elif ($stage | length) > 0 then $stage
-          else null end) as $prStage |
-        ($cp.effective // $cp.effectivePolicy // [])[]
-        | select((.item_number | tonumber) == ($itemNum | tonumber))
-        | select(
-            if $prStage == null then true
-            else checkpoint_applies(.; ($itemNum | tostring); $prStage) or (.satisfaction_state // "pending") != "pending"
-            end
-          ) |
-        "| #" + (.item_number | tostring) +
-        " | " + ((.stage // "") | cell) +
-        " | " + ((.domain // "") | cell) +
-        " | " + ((.satisfaction_state // "pending") | cell) +
-        " | " + ((.reason // "") | cell) +
-        " | " + ((.required_human_action // "") | cell) + " |"
+        (if .checkpoint_policy != null then .checkpoint_policy else .checkpointPolicy end) as $cp |
+        if ($cp | type) != "object" then
+          error("checkpoint_policy must be an object")
+        else
+          (.item.number) as $itemNum |
+          (.pr.branch // "") as $branch |
+          ((.pr.stage // "") as $stage |
+            if ($branch | length) > 0 then stage_from_branch($branch)
+            elif ($stage | length) > 0 then $stage
+            else null end) as $prStage |
+          ($cp.effective // $cp.effectivePolicy // [])[]
+          | select((.item_number | tonumber) == ($itemNum | tonumber))
+          | select(
+              if $prStage == null then true
+              else checkpoint_applies(.; ($itemNum | tostring); $prStage) or (.satisfaction_state // "pending") != "pending"
+              end
+            ) |
+          "| #" + (.item_number | tostring) +
+          " | " + ((.stage // "") | cell) +
+          " | " + ((.domain // "") | cell) +
+          " | " + ((.satisfaction_state // "pending") | cell) +
+          " | " + ((.reason // "") | cell) +
+          " | " + ((.required_human_action // "") | cell) + " |"
+        end
       ')" || error_exit "failed to render checkpoint policy table (jq error above)"
       printf '%s\n' "$rendered"
     fi

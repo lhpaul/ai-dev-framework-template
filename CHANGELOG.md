@@ -44,6 +44,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`render_pr_disposition`'s `invocation_policy`/`checkpoint_policy` presence
+  checks silently misclassified a boolean `false` value as absent** (#1461):
+  the same falsy-boolean defect fixed for `.why_safe_to_merge` in PR #1460
+  (#1436) — jq's `//` operator treats `false` as falsy, so
+  `(.invocation_policy // null) == null` and
+  `(.checkpoint_policy // .checkpointPolicy // null) == null` both silently
+  rendered "Not recorded." for an explicit boolean `false` value instead of
+  rejecting the wrong type. `scripts/development-workflow/run-epic-audit-trail.sh`'s
+  `render_pr_disposition()` now uses explicit `== null` presence checks plus
+  explicit `type != "object"` rejection guards for both sections, mirroring
+  the `why_safe_to_merge` pattern. Adds `boolean_invocation_policy_fixture`
+  and `boolean_checkpoint_policy_fixture` regression tests to
+  `scripts/development-workflow/tests/test-run-epic-audit-trail.sh`.
 - **`workflow-shell-snippet-lint.py` WS001 false-positives on non-shell fenced
   code blocks** (#1468): `executable = language in {"bash", "sh", "shell",
   "zsh"} or bool(SHELL_SIGNAL.search(content))` let the `SHELL_SIGNAL` content
