@@ -126,15 +126,23 @@ collision_result="$("$TRACKER" reconcile --prior none --current "$current_collis
 run_test "collision_two_distinct_entries" "2" "$(printf '%s' "$collision_result" | jq 'length')"
 run_test "collision_ids_distinct" "sec-one sec-two" "$(printf '%s' "$collision_result" | jq -r '[.[].id] | join(" ")')"
 
-# --- Same-head reconciliation: idempotent for all four prior statuses ---
-for status in pending fixed human-accepted human-rejected; do
-  extra_fields="{}"
+# Shared prior-entry fixture builder for the three same-head/new-head/exit
+# loops below: only the write_json label and assertions differ per loop, so
+# the status-based extra_fields case logic and jq program live in one
+# place, and $HEAD_A is passed via --arg rather than embedded interpolation.
+make_prior_entry() {
+  local status="$1" extra_fields="{}"
   case "$status" in
     fixed) extra_fields='{"fixCommit":"deadbeef"}' ;;
     human-accepted|human-rejected) extra_fields='{"decider":"lhpaul","decidedAt":"2026-08-01T00:00:00Z","rationale":"reviewed"}' ;;
   esac
-  prior_entry="$(jq -c -n --arg status "$status" --argjson extra "$extra_fields" \
-    '{id:"sec-aaa111",category:"c",matchedFile:"scripts/x.sh",status:$status,headSha:"'"$HEAD_A"'",firstTrackedAt:"2026-08-01T00:00:00Z"} + $extra')"
+  jq -c -n --arg status "$status" --arg headSha "$HEAD_A" --argjson extra "$extra_fields" \
+    '{id:"sec-aaa111",category:"c",matchedFile:"scripts/x.sh",status:$status,headSha:$headSha,firstTrackedAt:"2026-08-01T00:00:00Z"} + $extra'
+}
+
+# --- Same-head reconciliation: idempotent for all four prior statuses ---
+for status in pending fixed human-accepted human-rejected; do
+  prior_entry="$(make_prior_entry "$status")"
   prior_file="$(write_json "prior-same-head-$status" "[$prior_entry]")"
   same_head_result="$("$TRACKER" reconcile --prior "$prior_file" --current "$current_new" --head-sha "$HEAD_A" --now "$NOW")"
   run_test "same_head_${status}_unchanged" "$prior_entry" "$(printf '%s' "$same_head_result" | jq -c '.[0]')"
@@ -142,13 +150,7 @@ done
 
 # --- New-head reconciliation, still matches: reset to pending, cleared fields ---
 for status in pending fixed human-accepted human-rejected; do
-  extra_fields="{}"
-  case "$status" in
-    fixed) extra_fields='{"fixCommit":"deadbeef"}' ;;
-    human-accepted|human-rejected) extra_fields='{"decider":"lhpaul","decidedAt":"2026-08-01T00:00:00Z","rationale":"reviewed"}' ;;
-  esac
-  prior_entry="$(jq -c -n --arg status "$status" --argjson extra "$extra_fields" \
-    '{id:"sec-aaa111",category:"c",matchedFile:"scripts/x.sh",status:$status,headSha:"'"$HEAD_A"'",firstTrackedAt:"2026-08-01T00:00:00Z"} + $extra')"
+  prior_entry="$(make_prior_entry "$status")"
   prior_file="$(write_json "prior-new-head-$status" "[$prior_entry]")"
   new_head_result="$("$TRACKER" reconcile --prior "$prior_file" --current "$current_new" --head-sha "$HEAD_B" --now "$NOW")"
   run_test "new_head_${status}_resets_status" "pending" "$(printf '%s' "$new_head_result" | jq -r '.[0].status')"
@@ -164,13 +166,7 @@ done
 # --- New-head reconciliation, no longer matches: exits tracking entirely ---
 current_empty="$(write_json current-empty '[]')"
 for status in pending fixed human-accepted human-rejected; do
-  extra_fields="{}"
-  case "$status" in
-    fixed) extra_fields='{"fixCommit":"deadbeef"}' ;;
-    human-accepted|human-rejected) extra_fields='{"decider":"lhpaul","decidedAt":"2026-08-01T00:00:00Z","rationale":"reviewed"}' ;;
-  esac
-  prior_entry="$(jq -c -n --arg status "$status" --argjson extra "$extra_fields" \
-    '{id:"sec-aaa111",category:"c",matchedFile:"scripts/x.sh",status:$status,headSha:"'"$HEAD_A"'",firstTrackedAt:"2026-08-01T00:00:00Z"} + $extra')"
+  prior_entry="$(make_prior_entry "$status")"
   prior_file="$(write_json "prior-exit-$status" "[$prior_entry]")"
   exit_result="$("$TRACKER" reconcile --prior "$prior_file" --current "$current_empty" --head-sha "$HEAD_B" --now "$NOW")"
   run_test "no_longer_matching_${status}_exits_tracking" "0" "$(printf '%s' "$exit_result" | jq 'length')"

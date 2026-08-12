@@ -43,16 +43,27 @@ run_fails_contains() {
   fi
 }
 
+# Each helper builds the classifier invocation as an explicit array (rather
+# than relying on `${3:+--diff-hunk "$3"}`'s unquoted expansion, which is
+# correct here only because $3 happens not to need word-splitting) so
+# appending the optional --diff-hunk pair only when $3 is set is
+# unambiguous regardless of what $3 contains.
 classify_sensitive() {
-  "$CLASSIFIER" classify --finding-text "$1" --file-path "$2" ${3:+--diff-hunk "$3"} | jq -r '.securitySensitive'
+  local -a args=(classify --finding-text "$1" --file-path "$2")
+  if [ -n "${3:-}" ]; then args+=(--diff-hunk "$3"); fi
+  "$CLASSIFIER" "${args[@]}" | jq -r '.securitySensitive'
 }
 
 classify_category() {
-  "$CLASSIFIER" classify --finding-text "$1" --file-path "$2" ${3:+--diff-hunk "$3"} | jq -r '.matchedCategory'
+  local -a args=(classify --finding-text "$1" --file-path "$2")
+  if [ -n "${3:-}" ]; then args+=(--diff-hunk "$3"); fi
+  "$CLASSIFIER" "${args[@]}" | jq -r '.matchedCategory'
 }
 
 classify_file() {
-  "$CLASSIFIER" classify --finding-text "$1" --file-path "$2" ${3:+--diff-hunk "$3"} | jq -r '.matchedFile'
+  local -a args=(classify --finding-text "$1" --file-path "$2")
+  if [ -n "${3:-}" ]; then args+=(--diff-hunk "$3"); fi
+  "$CLASSIFIER" "${args[@]}" | jq -r '.matchedFile'
 }
 
 echo ""
