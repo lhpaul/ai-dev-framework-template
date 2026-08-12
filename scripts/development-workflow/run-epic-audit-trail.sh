@@ -18,7 +18,8 @@ REVIEWER_ACCESS_BYPASS_MARKER="<!-- reviewer-access-bypass -->"
 PR_DISPOSITION_KNOWN_KEYS='[
   "scope_source", "item", "pr", "reviewer", "risk", "merge_authority",
   "final_decision", "advisories", "invocation_policy", "checkpoint_policy",
-  "checkpointPolicy", "verification", "protocol_deviations", "why_safe_to_merge"
+  "checkpointPolicy", "verification", "protocol_deviations", "why_safe_to_merge",
+  "securityAdvisories"
 ]'
 
 usage() {
@@ -301,6 +302,24 @@ render_pr_disposition() {
         " | " + ((.rationale // "") | cell) + " |"
       '
     fi
+    printf '\n### Security-Sensitive Advisory Findings\n\n'
+    if [ "$(printf '%s\n' "$json" | jq '(.securityAdvisories // []) | length')" -eq 0 ]; then
+      printf 'None.\n'
+    else
+      printf '| ID | Category | File | Status | Decider | Decided At | Rationale | Fix Commit |\n'
+      printf '| --- | --- | --- | --- | --- | --- | --- | --- |\n'
+      printf '%s\n' "$json" | jq -r "$table_cell_filter"'
+        (.securityAdvisories // [])[] |
+        "| " + ((.id // "") | cell) +
+        " | " + ((.category // "") | cell) +
+        " | " + ((.matchedFile // "") | cell) +
+        " | " + ((.status // "") | cell) +
+        " | " + ((.decider // "") | cell) +
+        " | " + ((.decidedAt // "") | cell) +
+        " | " + ((.rationale // "") | cell) +
+        " | " + ((.fixCommit // "") | cell) + " |"
+      '
+    fi
     printf '\n### Verification Evidence\n\n'
     rendered="$(printf '%s\n' "$json" | jq -r '
       (.verification // {}) as $v |
@@ -375,6 +394,86 @@ warn_per_finding_advisories() {
       printf 'WARN: %d advisory entry/entries contain generic bulk-acceptance rationale; per-finding rationale is required by protocol\n' \
         "$bulk_rationale" >&2
     fi
+  fi
+}
+
+# Parallel to validate_advisories() above, but for .securityAdvisories[]:
+# enforces the canonical resolved-entry schema's status-specific required
+# fields (see the implementation plan's Stage 2). Stricter than
+# validate_advisories(): a fixed entry missing fixCommit is a hard error, and
+# a human-accepted/human-rejected entry missing any one of decider,
+# decidedAt, or rationale is a hard error -- not only a missing rationale --
+# because BR5/AC4 require the delegated agent to never itself record
+# accepted/rejected, so a resolved entry claiming that status must always
+# carry full, verifiable provenance (decider identity, timestamp, and
+# rationale together), not partial evidence.
+validate_security_advisories() {
+  local json="$1"
+  local invalid unrecognized_status
+
+  # Reject any status outside the spec's four persisted values (see the
+  # Statuses table) before checking required fields below -- an
+  # unrecognized status value (or a value a compromised/buggy
+  # evidence-assembly step wrote directly, bypassing
+  # security-advisory-tracker.sh reconcile) must never silently pass
+  # through as though it were resolved evidence.
+  unrecognized_status="$(printf '%s\n' "$json" | jq -r '
+    (.securityAdvisories // [])
+    | map(select(((.status // "") | IN("pending", "fixed", "human-accepted", "human-rejected")) | not))
+    | length
+  ' 2>/dev/null)" || error_exit "failed to validate security advisory status values (jq parse error)"
+  if [ -z "$unrecognized_status" ]; then
+    error_exit "failed to validate security advisory status values (empty result)"
+  fi
+  case "$unrecognized_status" in
+    ''|*[!0-9]*) error_exit "failed to validate security advisory status values (invalid type)" ;;
+  esac
+  if [ "$unrecognized_status" -gt 0 ]; then
+    error_exit "a securityAdvisories[] entry has a status outside pending, fixed, human-accepted, human-rejected"
+  fi
+
+  invalid="$(printf '%s\n' "$json" | jq -r '
+    (.securityAdvisories // [])
+    | map(select(
+        ((.status // "") == "fixed" and ((.fixCommit // "") | tostring | gsub("\\s"; "") | length == 0))
+        or
+        ((.status // "") | IN("human-accepted", "human-rejected")) and (
+          ((.decider // "") | tostring | gsub("\\s"; "") | length == 0)
+          or ((.decidedAt // "") | tostring | gsub("\\s"; "") | length == 0)
+          or ((.rationale // "") | tostring | gsub("\\s"; "") | length == 0)
+        )
+      ))
+    | length
+  ' 2>/dev/null)" || error_exit "failed to validate security advisory entries (jq parse error)"
+  if [ -z "$invalid" ]; then
+    error_exit "failed to validate security advisory entries (empty result)"
+  fi
+  case "$invalid" in
+    ''|*[!0-9]*) error_exit "failed to validate security advisory entries (invalid type)" ;;
+  esac
+  if [ "$invalid" -gt 0 ]; then
+    error_exit "a fixed security-sensitive advisory entry requires fixCommit, and a human-accepted/human-rejected entry requires decider, decidedAt, and rationale"
+  fi
+}
+
+# Parallel to warn_per_finding_advisories() above: non-fatal signal for a
+# stale/pending security-sensitive finding that never received a fix or a
+# verified human decision, so a reviewer of the rendered audit comment
+# notices before treating the PR as ready.
+warn_security_advisories() {
+  local json="$1"
+  local pending_count
+  pending_count="$(printf '%s\n' "$json" | jq -r '
+    (.securityAdvisories // [])
+    | map(select((.status // "pending") == "pending"))
+    | length
+  ' 2>/dev/null)" || error_exit "failed to check pending security advisory entries (jq parse error)"
+  if [ -z "$pending_count" ]; then
+    error_exit "failed to check pending security advisory entries (empty result)"
+  fi
+  if [ "$pending_count" -gt 0 ]; then
+    printf 'WARN: %d security-sensitive advisory finding(s) still pending a fix or verified human accept/reject decision\n' \
+      "$pending_count" >&2
   fi
 }
 
@@ -631,7 +730,9 @@ input_json="$(load_input_json "$input_file")"
 case "$command" in
   render-pr-disposition)
     validate_advisories "$input_json"
+    validate_security_advisories "$input_json"
     warn_per_finding_advisories "$input_json"
+    warn_security_advisories "$input_json"
     warn_unknown_pr_disposition_keys "$input_json"
     render_pr_disposition "$input_json"
     ;;
@@ -640,7 +741,9 @@ case "$command" in
       error_exit "--pr must be a positive integer"
     fi
     validate_advisories "$input_json"
+    validate_security_advisories "$input_json"
     warn_per_finding_advisories "$input_json"
+    warn_security_advisories "$input_json"
     warn_unknown_pr_disposition_keys "$input_json"
     body="$(render_pr_disposition "$input_json")" || error_exit "failed to render PR disposition (see error above)"
     apply_comment "$pr_number" "$PR_MARKER" "$body"

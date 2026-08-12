@@ -730,6 +730,87 @@ advisory dispositions in the post-clean summary flow defined below.
 
 ---
 
+### Security-sensitive advisory classification (mandatory before disposition)
+
+Before recording any disposition for an advisory finding (see "Advisory
+finding dispositions (post-clean)" below), classify it against
+`scripts/development-workflow/security-advisory-classifier.sh`. This applies
+to every advisory finding regardless of which platform or extraction
+mechanism produced it — `ADVISORY_LABELS` is PR-Agent-only today, but this
+classification step applies platform-agnostically, matching the
+platform-agnostic disposition procedure documented below it.
+
+**Procedure**:
+
+1. For each advisory finding, fetch its linked comment via `gh api` to get
+   the finding text, its resolved file `path`, and, when present, its
+   `diff_hunk`. `path`/`diff_hunk` are present for inline PR review comments
+   and absent for PR-level issue comments — in the latter case pass
+   `--file-path ""` and `--diff-hunk ""`; Part B of the classifier always
+   fails by construction for those.
+2. Run:
+
+   <!-- workflow-shell-contract: bash-zsh -->
+
+   ```bash
+   scripts/development-workflow/security-advisory-classifier.sh classify \
+     --finding-text "<finding text>" --file-path "<path|empty>" --diff-hunk "<diff_hunk|empty>"
+   ```
+
+3. When `securitySensitive: true`, the finding is **security-sensitive**
+   (BR1) and the following apply instead of the normal disposition menu:
+   - **Disposition menu restriction (BR5, AC4)**: only **Fixed** (cite the
+     resulting commit) or **Pending Human Decision** are available. The
+     runner never itself records **Accepted**, **Deferred**, or **Rejected**
+     for a security-sensitive finding.
+   - **Compute verified human decisions**: fetch this PR's candidate
+     decision comments (any comment posted since the finding was first
+     tracked matching the decision-recording template shape below) and run
+     `run-epic-delegated-gate.sh verify-security-advisory-decisions --input
+     <evidence-json>` against them — this reuses the exact same BR6
+     verification Gate 5 applies, so verification logic exists in one place.
+   - **Reconcile and persist**: run `security-advisory-tracker.sh reconcile`
+     against the PR's existing `<!-- security-sensitive-advisory-findings -->`
+     tracking comment (BR7) and the verified decisions just computed
+     (`--decision-events`), then `render` + `apply` to upsert the marker
+     comment — this is what makes a verified human decision actually persist
+     into the tracking record, not only exist as an in-memory Gate 5
+     evaluation.
+   - **Label mutation**: after `reconcile`, run `gh pr edit --add-label
+     security-advisory-decision-required` when any tracked finding's
+     reconciled status is `pending`, or `gh pr edit --remove-label
+     security-advisory-decision-required` when zero tracked findings are
+     `pending`. `security-advisory-tracker.sh apply` only upserts the marker
+     comment; it never touches this label, and this step never touches
+     `human-checkpoint-required` (BR4, AC7) — the two labels are unrelated.
+   - **Decision-template notification**: when reconciliation newly produces
+     (or re-produces, per BR7's `superseded_by_new_commit` case) at least one
+     `pending` entry, upsert (find-by-marker-then-PATCH-or-POST, not
+     duplicate) a PR comment marked
+     `<!-- security-sensitive-advisory-decision-template -->` containing the
+     exact expected decision-recording text for every currently `pending`
+     finding, so a human reviewer can copy it verbatim:
+
+     ```text
+     I record a human decision for security-sensitive advisory finding <finding-id> on PR #<pr> at head <head-sha>: <accept|reject> — <rationale>
+     ```
+
+     This comment is left in place with a "no findings pending" note once
+     zero tracked findings are `pending` (it is not deleted).
+4. When `securitySensitive: false`, the finding follows the existing
+   general advisory fix/accept/rationale disposition path unchanged (see
+   below).
+
+**Why this is distinct from the checkpoint lifecycle (BR4)**: the
+`security-advisory-decision-required` label and the
+`security_sensitive_advisory_pending` stop condition never read, write, or
+otherwise participate in the `human-checkpoint-required` /
+`human_checkpoint_required` pending/satisfied/waived lifecycle. A blanket
+checkpoint waiver recorded earlier in a run — even one covering this same
+PR's item — has no effect on a pending security-sensitive advisory finding,
+because the finding is discovered later during this loop, after any earlier
+waiver was recorded.
+
 ### Advisory finding dispositions (post-clean)
 
 When `pr-review-loop.sh` exits `clean` and the output contains a non-empty `ADVISORY_LABELS` value (advisory findings from any configured platform), the runner must document the disposition of each advisory finding and update the summary comment before marking the PR ready. This closes the gap between "we saw this finding" and "here is why it was or was not addressed."

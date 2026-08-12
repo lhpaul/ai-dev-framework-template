@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Require human decision for security-sensitive advisory findings**
+  (#1432): a narrow, conjunctive (content-category AND
+  file-location) classifier flags advisory findings that describe an
+  auth bypass, secret/credential exposure, an unsafe git operation, an
+  injection risk, or a workflow-guardrail bypass on the workflow's own
+  enforcement-surface files. A security-sensitive finding blocks
+  delegated merge (new `security_sensitive_advisory_pending` stop
+  condition, `security-advisory-decision-required` label) until it is
+  fixed with a cited commit or resolved by a verified human decision —
+  never by the delegated agent itself, and never by an unrelated
+  checkpoint waiver. Re-evaluated against the exact head SHA on every
+  push, matching the existing reviewer-access-bypass authorization
+  pattern. Applies identically to `/run-item`, `/run-items`, and
+  `/run-epic`.
 - **`REVIEW.md` requires planted-violation proofs and an E2E fixture contract** (#1443):
   two quality disciplines that proved decisive in downstream framework-hardening
   runs — new checks must prove they catch a real planted violation, and feature

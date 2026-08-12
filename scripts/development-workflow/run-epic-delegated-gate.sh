@@ -10,6 +10,7 @@ usage() {
   cat <<'EOF'
 Usage:
   ./scripts/development-workflow/run-epic-delegated-gate.sh --input <file> [--policy <file>] [--repo-root <path>] [--product-repo <name>] [--json]
+  ./scripts/development-workflow/run-epic-delegated-gate.sh verify-security-advisory-decisions --input <file>
 
 Evaluates whether a delegated /run-epic candidate PR may proceed to the
 repository merge protocol. The gate is read-only: it does not run reviewers,
@@ -19,8 +20,23 @@ issues, or delete branches.
 When --repo-root and --product-repo are supplied (or productRepo.name is present
 in the evidence file), workflow_hub product repository ci_policy is loaded from
 the resolver and applied when the evidence file omits ciPolicy/ci_policy.
+
+verify-security-advisory-decisions runs only
+github_verified_security_advisory_decisions against
+.securityAdvisoryDecisionEvents[] in the given evidence file and prints the
+resulting verified-decision array as JSON, without evaluating the rest of
+the gate. Lets Protocol 93's disposition step reuse the exact same
+verification logic Gate 5 applies.
 EOF
 }
+
+command=""
+case "${1:-}" in
+  verify-security-advisory-decisions)
+    command="$1"
+    shift
+    ;;
+esac
 
 input_file=""
 policy_file=""
@@ -208,6 +224,181 @@ github_verified_authorization_events() {
   printf '%s\n' "$verified"
 }
 
+# github_verified_security_advisory_decisions is structurally parallel to
+# github_verified_authorization_events above, but verifies a *set* of
+# candidate decision comments against a *set* of tracked
+# .securityAdvisories[] findings (rather than a single authorization
+# comment against one expected text), because a PR can carry multiple
+# security-sensitive findings pending independent human decisions. For each
+# candidate event, fetches the comment, then checks its body against every
+# tracked finding's expected decision-comment template (BR6/AC11): author
+# must be a human ("User") with admin or write repository permission (not
+# admin-only -- a security-advisory accept/reject is not an admin merge
+# override), the comment must target this exact PR
+# (mirrors github_verified_authorization_events's targetPullRequest check
+# at the same site -- an exact-text match alone does not bind the comment
+# to the current PR), and the comment's createdAt must not be earlier than
+# the matching finding's firstTrackedAt (BR6's "current head commit"
+# temporal boundary -- see Stage 2 of the implementation plan; a comment
+# authored before the finding was ever tracked cannot be a genuine decision
+# about it). Output: one verified-decision object per resolved event,
+# {findingId, decision, decider, decidedAt, rationale, sourceEventId,
+# sourceEventType} -- ready to feed into
+# `security-advisory-tracker.sh reconcile --decision-events`.
+github_verified_security_advisory_decisions() {
+  local state="$1"
+  local candidates repo pr_number head_sha advisories_json
+  candidates="$(printf '%s\n' "$state" | jq -c '
+    def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
+    def event_id($event): trim_text($event.databaseId // $event.database_id // $event.commentId // $event.comment_id // $event.reviewId // $event.review_id // $event.id);
+    def event_kind($event): trim_text($event.type // $event.eventType // $event.event_type);
+    {
+      repo: trim_text(.repository // .githubRepo // .github_repo // .repo // .productRepo.githubRepo // .productRepo.github_repo),
+      prNumber: (.pr.number // null),
+      headSha: ((.pr.headSha // .pr.head_sha // .pr.headRefOid // "") | tostring),
+      events: ((.securityAdvisoryDecisionEvents // []) | map({id: event_id(.), type: event_kind(.)})),
+      advisories: ((.securityAdvisories // []) | map({id: trim_text(.id), firstTrackedAt: trim_text(.firstTrackedAt)}) | map(select((.id | length) > 0)))
+    }
+  ' 2>/dev/null)" || {
+    printf '[]\n'
+    return 0
+  }
+  repo="$(printf '%s\n' "$candidates" | jq -r '.repo // ""')"
+  pr_number="$(printf '%s\n' "$candidates" | jq -r '.prNumber // ""')"
+  head_sha="$(printf '%s\n' "$candidates" | jq -r '.headSha // ""')"
+  advisories_json="$(printf '%s\n' "$candidates" | jq -c '.advisories // []')"
+
+  if [ -z "$repo" ]; then
+    repo="$(repo_slug 2>/dev/null || true)"
+  fi
+  if ! workflow_is_valid_github_repo_slug "$repo"; then
+    printf '[]\n'
+    return 0
+  fi
+  if ! [[ "$pr_number" =~ ^[0-9]+$ && "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '[]\n'
+    return 0
+  fi
+  if [ "$(printf '%s\n' "$advisories_json" | jq 'length')" -eq 0 ]; then
+    printf '[]\n'
+    return 0
+  fi
+
+  local verified='[]'
+  local event id type endpoint fetched normalized permission_response author_permission matched normalized_item
+  while IFS= read -r event; do
+    [ -n "$event" ] || continue
+    id="$(printf '%s\n' "$event" | jq -r '.id // ""')"
+    type="$(printf '%s\n' "$event" | jq -r '.type // ""' | tr '[:upper:]' '[:lower:]')"
+    if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+      continue
+    fi
+    case "$type" in
+      comment|issue_comment)
+        endpoint="repos/${repo}/issues/comments/${id}"
+        ;;
+      review|pull_request_review)
+        endpoint="repos/${repo}/pulls/${pr_number}/reviews/${id}"
+        ;;
+      pull_request_review_comment|review_comment)
+        endpoint="repos/${repo}/pulls/comments/${id}"
+        ;;
+      *)
+        continue
+        ;;
+    esac
+    if ! fetched="$(gh api "$endpoint" 2>/dev/null)"; then
+      continue
+    fi
+    [ -n "$fetched" ] || continue
+    if ! normalized="$(printf '%s\n' "$fetched" | jq -c --arg type "$type" --arg pr_number "$pr_number" '
+      def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
+      def url_targets_pr($url; $segment):
+        ($url // "" | tostring | test("/" + $segment + "/" + $pr_number + "($|[?#])"));
+      {
+        source: "github",
+        type: $type,
+        id: ((.id // "") | tostring),
+        author: (.user.login // ""),
+        authorType: (.user.type // ""),
+        authorAssociation: (.author_association // ""),
+        createdAt: (.created_at // .submitted_at // ""),
+        body: (.body // "" | gsub("^\\s+|\\s+$"; "")),
+        targetPullRequest: (
+          if ($type | IN("comment", "issue_comment")) then url_targets_pr(.issue_url; "issues")
+          elif ($type | IN("review", "pull_request_review")) then url_targets_pr(.pull_request_url; "pulls")
+          elif ($type | IN("pull_request_review_comment", "review_comment")) then url_targets_pr(.pull_request_url; "pulls")
+          else false end
+        )
+      }
+    ' 2>/dev/null)"; then
+      continue
+    fi
+    [ -n "$normalized" ] || continue
+    if ! matched="$(printf '%s\n' "$normalized" | jq -c --argjson advisories "$advisories_json" --arg pr "$pr_number" --arg head "$head_sha" '
+      (.body // "") as $body |
+      [
+        $advisories[] | . as $entry |
+        (("I record a human decision for security-sensitive advisory finding " + $entry.id + " on PR #" + $pr + " at head " + $head + ": ") ) as $prefix |
+        (
+          if ($body | startswith($prefix + "accept — ")) then
+            {findingId: $entry.id, decision: "human-accepted", rationale: $body[($prefix + "accept — " | length):], firstTrackedAt: $entry.firstTrackedAt}
+          elif ($body | startswith($prefix + "reject — ")) then
+            {findingId: $entry.id, decision: "human-rejected", rationale: $body[($prefix + "reject — " | length):], firstTrackedAt: $entry.firstTrackedAt}
+          else null end
+        )
+      ] | map(select(. != null and ((.rationale // "") | length) > 0)) | (.[0] // null)
+    ' 2>/dev/null)"; then
+      continue
+    fi
+    if [ -z "$matched" ] || [ "$matched" = "null" ]; then
+      continue
+    fi
+    if ! permission_response="$(gh api "repos/${repo}/collaborators/$(printf '%s\n' "$normalized" | jq -r '.author')/permission" 2>/dev/null)"; then
+      permission_response=""
+    fi
+    if ! author_permission="$(printf '%s\n' "$permission_response" | jq -r '.permission // ""' 2>/dev/null)"; then
+      author_permission=""
+    fi
+    # The firstTrackedAt temporal boundary is only meaningful when both
+    # timestamps are actual ISO-8601 UTC "Z" values: a lexical ">="
+    # comparison against an empty firstTrackedAt (a finding whose entry
+    # omitted or blanked the field) would be vacuously true for any
+    # non-empty createdAt, silently disabling the BR6 boundary entirely
+    # instead of rejecting the candidate for lacking a usable timestamp to
+    # compare against. Requiring both to match the fixed-width UTC format
+    # also keeps the lexical comparison itself valid -- it is only
+    # guaranteed correct for identical UTC "Z"-suffixed formats.
+    if printf '%s\n' "$normalized" | jq -e \
+      --argjson matched "$matched" \
+      --arg permission "$author_permission" \
+      '((.authorType // "") == "User")
+       and (($permission) as $p | ($p == "admin" or $p == "write"))
+       and (.targetPullRequest == true)
+       and (($matched.firstTrackedAt // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+       and ((.createdAt // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+       and ((.createdAt // "") >= ($matched.firstTrackedAt // ""))' >/dev/null; then
+      # sourceEventType/sourceEventId reflect the raw candidate event's
+      # {id, type} shape (the type as given on .securityAdvisoryDecisionEvents[],
+      # not the normalized/lower-cased fetch-endpoint type) so they can be
+      # carried straight back through security-advisory-tracker.sh's
+      # --decision-events contract unchanged.
+      normalized_item="$(printf '%s\n' "$normalized" | jq -c --argjson matched "$matched" --arg sourceType "$type" '{
+        findingId: $matched.findingId,
+        decision: $matched.decision,
+        decider: .author,
+        decidedAt: .createdAt,
+        rationale: $matched.rationale,
+        sourceEventId: .id,
+        sourceEventType: $sourceType
+      }' 2>/dev/null)" || continue
+      verified="$(jq -c --argjson item "$normalized_item" '. + [$item]' <<< "$verified")"
+    fi
+  done < <(printf '%s\n' "$candidates" | jq -c '.events[]?')
+
+  printf '%s\n' "$verified"
+}
+
 github_verified_bypass_audit() {
   local state="$1"
   local audit_candidate repo pr_number head_sha fingerprint
@@ -335,6 +526,11 @@ fi
 
 state_json="$(load_input_json "$input_file")"
 
+if [ "$command" = "verify-security-advisory-decisions" ]; then
+  github_verified_security_advisory_decisions "$state_json"
+  exit 0
+fi
+
 if [ -n "$policy_file" ]; then
   policy_json="$(load_input_json "$policy_file")"
   state_json="$(printf '%s\n' "$state_json" | jq --argjson policy "$policy_json" '.policy = $policy' 2>/dev/null)" || error_exit "failed to merge policy into state (jq parse error)"
@@ -425,6 +621,8 @@ verified_authorization_events="$(github_verified_authorization_events "$state_js
 state_json="$(printf '%s\n' "$state_json" | jq --argjson events "$verified_authorization_events" '.githubVerifiedAuthorizationEvents = $events' 2>/dev/null)" || error_exit "failed to attach verified authorization events"
 verified_bypass_audit="$(github_verified_bypass_audit "$state_json")"
 state_json="$(printf '%s\n' "$state_json" | jq --argjson audit "$verified_bypass_audit" '.githubVerifiedBypassAudit = $audit' 2>/dev/null)" || error_exit "failed to attach verified bypass audit"
+verified_security_advisory_decisions="$(github_verified_security_advisory_decisions "$state_json")"
+state_json="$(printf '%s\n' "$state_json" | jq --argjson decisions "$verified_security_advisory_decisions" '.githubVerifiedSecurityAdvisoryDecisions = $decisions' 2>/dev/null)" || error_exit "failed to attach verified security advisory decisions"
 
 decision_json="$(printf '%s\n' "$state_json" | jq '
   def policy: if (.policy | type) == "object" then .policy else {} end;
@@ -542,6 +740,69 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     (advisory_entries) as $advisories |
     (advisory_count > 0 and ($advisories | length) < advisory_count)
     or ($advisories | any(advisory_missing_disposition(.) or accepted_advisory_missing_rationale(.)));
+  # BR8/BR9: this is part of the normal reasons cascade of the gate (the
+  # shared "else" block below, entered whenever .pr.inScope is absent or true), not
+  # a new short-circuit -- so it evaluates on every /run-item, /run-items,
+  # and /run-epic invocation surface identically, with no additional
+  # scope-wiring required. BR4: this does not read, write, or call any of
+  # the checkpoint_list / pending_checkpoints / checkpoint_reason /
+  # invalid_checkpoint_states functions above -- it is a fully independent
+  # path using its own reason string and its own
+  # security-advisory-decision-required label reference (see Protocol 93).
+  def security_advisory_entries:
+    if ((.securityAdvisories // null) | type) == "array" then .securityAdvisories else [] end;
+  def verified_security_advisory_decisions:
+    if ((.githubVerifiedSecurityAdvisoryDecisions // null) | type) == "array" then .githubVerifiedSecurityAdvisoryDecisions else [] end;
+  # BR5: the status of a security-sensitive finding is treated as resolved
+  # here only via (a) a matching verified human decision in $decisions (the
+  # BR6-verified output of github_verified_security_advisory_decisions,
+  # re-derived fresh on every gate call -- mirroring the existing
+  # reviewer-access-bypass pattern, which never trusts a persisted
+  # "authorized" flag either), or (b) status == "fixed" together with a
+  # non-empty fixCommit already recorded on the entry. Every other status
+  # value -- including an unrecognized string, or a "human-accepted" /
+  # "human-rejected" value that is not backed by a matching verified
+  # decision on THIS call, or a "fixed" entry missing fixCommit -- resolves
+  # to "pending" here, unconditionally. This intentionally does not trust an
+  # already-"human-accepted"/"human-rejected" status value on the entry by
+  # itself: nothing about that string, on its own, proves it went through
+  # BR6 verification, so trusting it directly would let a buggy or
+  # malicious evidence-assembly step bypass BR5 entirely. The caller must
+  # re-supply the same .securityAdvisoryDecisionEvents[] candidate
+  # references on every Gate 4/5 evaluation to keep an already-resolved
+  # finding unblocked (see the Gate-5-evidence-assembly paragraph in
+  # Protocol 91).
+  # $decisions is threaded in explicitly (not read via the no-arg
+  # verified_security_advisory_decisions def) because this function is
+  # invoked from inside map(select(...)) below, where the implicit `.` of
+  # jq is each individual security-advisory entry, not the top-level
+  # evidence state -- a no-arg def reading `.githubVerifiedSecurityAdvisoryDecisions`
+  # at that call site would silently read it off the entry object instead
+  # (always null there) and every finding would appear permanently pending
+  # regardless of any verified decision.
+  def security_advisory_effective_status($entry; $decisions):
+    ($decisions | map(select((.findingId // "") == ($entry.id // ""))) | .[0]) as $decision |
+    if ($decision != null) then $decision.decision
+    elif (($entry.status // "") == "fixed") and (($entry.fixCommit // "") | tostring | length > 0) then "fixed"
+    else "pending"
+    end;
+  def pending_security_advisories($decisions):
+    security_advisory_entries | map(select(security_advisory_effective_status(.; $decisions) == "pending"));
+  # $prNumber is threaded in explicitly for the same reason $decisions is on
+  # security_advisory_effective_status above (this def is invoked from
+  # inside map(...), where the implicit `.` of jq is each individual entry,
+  # not the top-level evidence state that carries .pr.number). Embedding the
+  # PR number in the reason text mirrors the existing named-stop contract
+  # already used by the graduation_approval_required and
+  # human_checkpoint_required reason strings (guardrails-enforcement.md
+  # section 4, plus the REVIEW.md Named-stop contract check: every stop
+  # message names the exact stop condition string, the affected work item,
+  # and the concrete human action).
+  def security_advisory_reason($entry; $prNumber):
+    "security_sensitive_advisory_pending: finding " + ($entry.id // "unknown") +
+    " (" + ($entry.category // "unknown") + " @ " + ($entry.matchedFile // "unknown") + ")" +
+    " on PR #" + (($prNumber // "unknown") | tostring) +
+    " requires a fixed commit or a verified human accept/reject decision at head " + ($entry.headSha // "unknown");
   def ci_status_checks:
     (reviewer_check_keys) as $reviewerKeys |
     (.statusChecks // [])
@@ -770,6 +1031,12 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   (if advisory_evidence_incomplete
    then add_reason($reasons; "reviewer advisories require per-finding fix or acceptance rationale")
    else $reasons end) as $reasons |
+  (verified_security_advisory_decisions) as $verifiedSecurityAdvisoryDecisions |
+  (pending_security_advisories($verifiedSecurityAdvisoryDecisions)) as $pendingSecurityAdvisories |
+  (.pr.number) as $prNumberForSecurityAdvisories |
+  (if ($pendingSecurityAdvisories | length) > 0
+   then $reasons + ($pendingSecurityAdvisories | map(security_advisory_reason(.; $prNumberForSecurityAdvisories)))
+   else $reasons end) as $reasons |
   (if (ci_policy == "none") and (risk_merge_permitted != true) and risk_ci_only_blockers
    then $reasons
    elif risk_merge_permitted != true
@@ -790,7 +1057,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
       elif ($reviewerAccessClassification | IN("access_restricted", "authorization_required", "authorization_stale", "audit_required")) then "human_required"
       elif $count == 0 then "merge_allowed"
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "fix_required"
-      elif ($reasons | any(test("authority|risk gate|needs-setup|Backlog|human_checkpoint_required|human-checkpoint|graduation_approval_required"))) then "human_required"
+      elif ($reasons | any(test("authority|risk gate|needs-setup|Backlog|human_checkpoint_required|human-checkpoint|graduation_approval_required|security_sensitive_advisory_pending"))) then "human_required"
       else "blocked"
       end
     ),
@@ -805,6 +1072,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "remove readiness labels, fix, rerun validation, reviewer loop, CI loop, and this gate"
       elif ($reasons | any(test("human_checkpoint_required|human-checkpoint"))) then "stop for the named human checkpoint action, record satisfied or waived evidence, sync labels, and rerun this gate"
       elif ($reasons | any(test("graduation_approval_required"))) then "stop for explicit graduation approval via /graduate-development before mutating"
+      elif ($reasons | any(test("security_sensitive_advisory_pending"))) then "record a fixed commit or obtain a verified human accept/reject decision for each pending security-sensitive advisory finding (never a delegated-agent-recorded acceptance/rejection), then rerun this gate"
       elif ($reasons | any(test("authority|risk gate|needs-setup|Backlog"))) then "stop for human authority or setup before mutating"
       else "block until required state is available"
       end
