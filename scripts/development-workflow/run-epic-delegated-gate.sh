@@ -765,9 +765,20 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     else ($entry.status // "pending") end;
   def pending_security_advisories($decisions):
     security_advisory_entries | map(select(security_advisory_effective_status(.; $decisions) == "pending"));
-  def security_advisory_reason($entry):
+  # $prNumber is threaded in explicitly for the same reason $decisions is on
+  # security_advisory_effective_status above (this def is invoked from
+  # inside map(...), where the implicit `.` of jq is each individual entry,
+  # not the top-level evidence state that carries .pr.number). Embedding the
+  # PR number in the reason text mirrors the existing named-stop contract
+  # already used by the graduation_approval_required and
+  # human_checkpoint_required reason strings (guardrails-enforcement.md
+  # section 4, plus the REVIEW.md Named-stop contract check: every stop
+  # message names the exact stop condition string, the affected work item,
+  # and the concrete human action).
+  def security_advisory_reason($entry; $prNumber):
     "security_sensitive_advisory_pending: finding " + ($entry.id // "unknown") +
     " (" + ($entry.category // "unknown") + " @ " + ($entry.matchedFile // "unknown") + ")" +
+    " on PR #" + (($prNumber // "unknown") | tostring) +
     " requires a fixed commit or a verified human accept/reject decision at head " + ($entry.headSha // "unknown");
   def ci_status_checks:
     (reviewer_check_keys) as $reviewerKeys |
@@ -999,8 +1010,9 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
    else $reasons end) as $reasons |
   (verified_security_advisory_decisions) as $verifiedSecurityAdvisoryDecisions |
   (pending_security_advisories($verifiedSecurityAdvisoryDecisions)) as $pendingSecurityAdvisories |
+  (.pr.number) as $prNumberForSecurityAdvisories |
   (if ($pendingSecurityAdvisories | length) > 0
-   then $reasons + ($pendingSecurityAdvisories | map(security_advisory_reason(.)))
+   then $reasons + ($pendingSecurityAdvisories | map(security_advisory_reason(.; $prNumberForSecurityAdvisories)))
    else $reasons end) as $reasons |
   (if (ci_policy == "none") and (risk_merge_permitted != true) and risk_ci_only_blockers
    then $reasons

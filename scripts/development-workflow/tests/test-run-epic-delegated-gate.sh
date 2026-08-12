@@ -1144,6 +1144,9 @@ run_test "security_advisory_pending_reason_present" "true" "$(reason_match_for "
 run_test "security_advisory_pending_blocks_merge_permitted" "false" "$(
   "$GATE" --input "$security_advisory_pending_fixture" --json | jq -r '.mergePermitted'
 )"
+# Named-stop contract (REVIEW.md): the reason names the exact stop
+# condition string, the affected PR, and the concrete human action.
+run_test "security_advisory_pending_reason_names_pr" "true" "$(reason_match_for "$security_advisory_pending_fixture" "on PR #42 requires")"
 
 # AC4/AC5: a fixed entry (cited commit) unblocks merge -- a verifiable fix
 # remains available to the delegated agent without a human decision.
