@@ -90,33 +90,46 @@ gh_api_read() {
     return $?
   fi
 
-  local output_file status_file pid elapsed status
+  local output_file pid elapsed status process_group
   output_file="$(mktemp)" || return 1
-  status_file="$(mktemp)" || {
-    rm -f "$output_file"
-    return 1
-  }
-  (
-    set +e
-    gh api "$@" >"$output_file"
-    printf '%s\n' "$?" >"$status_file"
-  ) &
+  process_group=0
+  if command -v setsid >/dev/null 2>&1; then
+    setsid gh api "$@" >"$output_file" &
+    process_group=1
+  else
+    gh api "$@" >"$output_file" &
+  fi
   pid=$!
   elapsed=0
   while kill -0 "$pid" 2>/dev/null; do
     if [ "$elapsed" -ge "$timeout_seconds" ]; then
-      kill "$pid" 2>/dev/null || true
+      if [ "$process_group" -eq 1 ]; then
+        kill -TERM "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+      else
+        kill "$pid" 2>/dev/null || true
+      fi
+      sleep 1
+      if kill -0 "$pid" 2>/dev/null; then
+        if [ "$process_group" -eq 1 ]; then
+          kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+        else
+          kill -KILL "$pid" 2>/dev/null || true
+        fi
+      fi
       wait "$pid" 2>/dev/null || true
-      rm -f "$output_file" "$status_file"
+      rm -f "$output_file"
       return 124
     fi
     sleep 1
     elapsed=$((elapsed + 1))
   done
-  wait "$pid" 2>/dev/null || true
-  status="$(cat "$status_file" 2>/dev/null || printf '1')"
+  status=0
+  wait "$pid" || status=$?
   cat "$output_file"
-  rm -f "$output_file" "$status_file"
+  rm -f "$output_file"
+  if ! [[ "$status" =~ ^[0-9]+$ ]]; then
+    status=1
+  fi
   return "$status"
 }
 
