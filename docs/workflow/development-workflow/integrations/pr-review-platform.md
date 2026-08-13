@@ -6,6 +6,9 @@ Platform-specific setup lives in each platform's own integration doc. See:
 
 - [`integrations/bugbot.md`](bugbot.md)
 - [`integrations/claude-code-action.md`](claude-code-action.md)
+- `codex-github`: configured in `.ai-dev-workflow.yaml`, described in the
+  [Workflow Configuration](../README.md#workflow-configuration), and executed
+  by `scripts/development-workflow/codex-github-reviewer.sh`
 - [`integrations/coderabbit.md`](coderabbit.md) for both `coderabbit` and
   `coderabbit-cli`
 - [`integrations/greptile.md`](greptile.md)

@@ -100,9 +100,9 @@ To enable CodeRabbit as a Step 7 automated PR reviewer platform:
 The `coderabbit` App platform remains separate from `coderabbit-cli`. It uses
 the `coderabbitai[bot]` review/comment evidence path described below.
 
-This template repository uses this mode for ready-phase PR review: CodeRabbit
-auto-review is enabled for non-draft PRs targeting `develop`, and
-`.ai-dev-workflow.yaml` lists `coderabbit` under `review.on_ready.github`.
+CodeRabbit is an opt-in reviewer in this template repository. To use it for
+ready-phase PR review, enable CodeRabbit auto-review for non-draft PRs targeting
+`develop` and list `coderabbit` under `review.on_ready.github`.
 
 ---
 
