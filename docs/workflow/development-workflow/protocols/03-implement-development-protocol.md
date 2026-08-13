@@ -944,7 +944,7 @@ Step 1.2 — Confirm all automated-reviewer threads are resolved:
 ```bash
 # Must return empty output. Any line of output means unresolved bot threads exist — do not apply ready-for-regression.
 CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
-CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%[bot]}"
+CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
 
 gh api graphql -f query='
   query($owner:String!, $repo:String!, $number:Int!) {
@@ -1546,7 +1546,7 @@ Step 1.2 — Confirm all automated-reviewer threads are resolved:
 ```bash
 # Must return empty output. Any line of output means unresolved bot threads exist — do not apply ready-for-regression.
 CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
-CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%[bot]}"
+CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
 
 gh api graphql -f query='
   query($owner:String!, $repo:String!, $number:Int!) {

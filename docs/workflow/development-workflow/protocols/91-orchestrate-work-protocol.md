@@ -2815,7 +2815,7 @@ For the `reviewThreads` resolution check, `gh pr view --json` does not expose `r
 
 ```bash
 CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
-CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%[bot]}"
+CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
 
 gh api graphql -f query='
   query($owner:String!, $repo:String!, $number:Int!) {
