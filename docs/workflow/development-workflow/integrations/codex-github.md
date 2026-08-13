@@ -15,12 +15,14 @@ Before a repository keeps `codex-github` in `review.on_ready.github`, verify:
    reviews.
 3. The default trigger phrase works for the repository:
 
-   ```bash
+   ```text
    @codex review
    ```
 
 4. The bot login returned by GraphQL matches the default expected by the
    reviewer, or `CODEX_GITHUB_BOT_LOGIN` is set accordingly:
+
+   <!-- workflow-shell-contract: bash-zsh -->
 
    ```bash
    CODEX_GITHUB_BOT_LOGIN=chatgpt-codex-connector[bot]
@@ -52,6 +54,8 @@ integration is installed.
 ## Verification
 
 Use a disposable or already-open PR and run:
+
+<!-- workflow-shell-contract: bash-zsh -->
 
 ```bash
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> \

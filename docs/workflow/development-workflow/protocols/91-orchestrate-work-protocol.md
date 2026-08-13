@@ -2813,6 +2813,8 @@ gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comme
 
 For the `reviewThreads` resolution check, `gh pr view --json` does not expose `reviewThreads`; use the GraphQL API directly. **This query is mandatory — do not skip it or rely on self-tracked thread state:**
 
+<!-- workflow-shell-contract: bash-zsh -->
+
 ```bash
 CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
 CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"

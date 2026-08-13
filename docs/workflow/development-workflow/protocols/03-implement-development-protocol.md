@@ -941,6 +941,8 @@ Skip this check only when no review platforms are configured and the reviewer lo
 
 Step 1.2 — Confirm all automated-reviewer threads are resolved:
 
+<!-- workflow-shell-contract: bash-zsh -->
+
 ```bash
 # Must return empty output. Any line of output means unresolved bot threads exist — do not apply ready-for-regression.
 CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
@@ -1543,6 +1545,8 @@ Pass condition: output is `1` or higher. **`pr-review-loop.sh` posts this commen
 Skip this check only when no review platforms are configured and the reviewer loop result was `skipped`.
 
 Step 1.2 — Confirm all automated-reviewer threads are resolved:
+
+<!-- workflow-shell-contract: bash-zsh -->
 
 ```bash
 # Must return empty output. Any line of output means unresolved bot threads exist — do not apply ready-for-regression.
