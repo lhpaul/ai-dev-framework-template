@@ -674,29 +674,80 @@ find_marker_comment_id() {
   local repo comments
 
   repo="$(repo_slug)"
-  if ! comments="$(gh api --paginate --slurp "repos/${repo}/issues/${target}/comments?per_page=100" 2>/dev/null)"; then
+  if ! comments="$(gh_api_bounded --paginate --slurp "repos/${repo}/issues/${target}/comments?per_page=100" 2>/dev/null)"; then
     error_exit "failed to read comments for issue/PR #$target"
   fi
   printf '%s\n' "$comments" |
     jq -r --arg marker "$marker" '[.[][]? | select((.body // "") | contains($marker))][0].id // empty'
 }
 
+patch_marker_comment() {
+  local repo="$1"
+  local comment_id="$2"
+  local target="$3"
+  local payload="$4"
+  local output status
+
+  status=0
+  output="$(gh_api_bounded -X PATCH "repos/${repo}/issues/comments/${comment_id}" --input "$payload" 2>&1 >/dev/null)" || status=$?
+  if [ "$status" -eq 124 ]; then
+    error_exit "timed out updating marker comment ${comment_id} for issue/PR #$target"
+  fi
+  if [ "$status" -ne 0 ]; then
+    error_exit "failed to update marker comment ${comment_id} for issue/PR #$target: $output"
+  fi
+}
+
+post_marker_comment() {
+  local repo="$1"
+  local target="$2"
+  local payload="$3"
+  local output status
+
+  status=0
+  output="$(gh_api_bounded -X POST "repos/${repo}/issues/${target}/comments" --input "$payload" 2>&1 >/dev/null)" || status=$?
+  if [ "$status" -eq 124 ]; then
+    error_exit "timed out creating marker comment for issue/PR #$target"
+  fi
+  if [ "$status" -ne 0 ]; then
+    error_exit "failed to create marker comment for issue/PR #$target: $output"
+  fi
+}
+
 apply_comment() {
   local target="$1"
   local marker="$2"
   local body="$3"
-  local repo comment_id
+  local repo comment_id payload
 
   require_gh
   repo="$(repo_slug)"
   comment_id="$(find_marker_comment_id "$target" "$marker")"
+  payload="$(mktemp)" || error_exit "failed to create comment payload"
   if [ -n "$comment_id" ]; then
-    jq -n --arg body "$body" '{body: $body}' |
-      gh api -X PATCH "repos/${repo}/issues/comments/${comment_id}" --input - >/dev/null
+    if ! jq -n --arg body "$body" '{body: $body}' >"$payload"; then
+      rm -f "$payload"
+      error_exit "failed to write marker comment payload"
+    fi
+    patch_marker_comment "$repo" "$comment_id" "$target" "$payload"
+    rm -f "$payload"
     printf 'UPDATED_COMMENT_ID=%s\n' "$comment_id"
   else
-    jq -n --arg body "$body" '{body: $body}' |
-      gh api -X POST "repos/${repo}/issues/${target}/comments" --input - >/dev/null
+    rm -f "$payload"
+    comment_id="$(find_marker_comment_id "$target" "$marker")"
+    payload="$(mktemp)" || error_exit "failed to create comment payload"
+    if ! jq -n --arg body "$body" '{body: $body}' >"$payload"; then
+      rm -f "$payload"
+      error_exit "failed to write marker comment payload"
+    fi
+    if [ -n "$comment_id" ]; then
+      patch_marker_comment "$repo" "$comment_id" "$target" "$payload"
+      rm -f "$payload"
+      printf 'UPDATED_COMMENT_ID=%s\n' "$comment_id"
+      return 0
+    fi
+    post_marker_comment "$repo" "$target" "$payload"
+    rm -f "$payload"
     printf 'CREATED_COMMENT=1\n'
   fi
 }

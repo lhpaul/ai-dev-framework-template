@@ -169,7 +169,7 @@ github_verified_authorization_events() {
         continue
         ;;
     esac
-    if ! fetched="$(gh api "$endpoint" 2>/dev/null)"; then
+    if ! fetched="$(gh_api_bounded "$endpoint" 2>/dev/null)"; then
       continue
     fi
     [ -n "$fetched" ] || continue
@@ -197,7 +197,7 @@ github_verified_authorization_events() {
       continue
     fi
     [ -n "$normalized" ] || continue
-    if ! permission_response="$(gh api "repos/${repo}/collaborators/${authorized_by}/permission" 2>/dev/null)"; then
+    if ! permission_response="$(gh_api_bounded "repos/${repo}/collaborators/${authorized_by}/permission" 2>/dev/null)"; then
       permission_response=""
     fi
     if ! author_permission="$(printf '%s\n' "$permission_response" | jq -r '.permission // ""' 2>/dev/null)"; then
@@ -307,7 +307,7 @@ github_verified_security_advisory_decisions() {
         continue
         ;;
     esac
-    if ! fetched="$(gh api "$endpoint" 2>/dev/null)"; then
+    if ! fetched="$(gh_api_bounded "$endpoint" 2>/dev/null)"; then
       continue
     fi
     [ -n "$fetched" ] || continue
@@ -354,7 +354,7 @@ github_verified_security_advisory_decisions() {
     if [ -z "$matched" ] || [ "$matched" = "null" ]; then
       continue
     fi
-    if ! permission_response="$(gh api "repos/${repo}/collaborators/$(printf '%s\n' "$normalized" | jq -r '.author')/permission" 2>/dev/null)"; then
+    if ! permission_response="$(gh_api_bounded "repos/${repo}/collaborators/$(printf '%s\n' "$normalized" | jq -r '.author')/permission" 2>/dev/null)"; then
       permission_response=""
     fi
     if ! author_permission="$(printf '%s\n' "$permission_response" | jq -r '.permission // ""' 2>/dev/null)"; then
@@ -434,7 +434,7 @@ github_verified_bypass_audit() {
   fi
 
   local comments
-  if ! comments="$(gh api --paginate --slurp "repos/${repo}/issues/${pr_number}/comments?per_page=100" 2>/dev/null)"; then
+  if ! comments="$(gh_api_bounded --paginate --slurp "repos/${repo}/issues/${pr_number}/comments?per_page=100" 2>/dev/null)"; then
     comments=""
   fi
   if [ -z "$comments" ]; then

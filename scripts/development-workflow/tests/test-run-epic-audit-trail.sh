@@ -33,6 +33,20 @@ case "$*" in
       printf 'list failed\n' >&2
       exit 1
     fi
+    if [ "${MOCK_COMMENT_MODE:-missing}" = "race" ]; then
+      count_file="${MOCK_GH_RACE_COUNT_FILE:?}"
+      count="$(cat "$count_file" 2>/dev/null || printf '0')"
+      count=$((count + 1))
+      printf '%s\n' "$count" > "$count_file"
+      if [ "$count" -ge 2 ]; then
+        cat <<'JSON'
+[[{"id":222,"body":"<!-- run-epic:pr-disposition -->\ncreated elsewhere"}]]
+JSON
+      else
+        printf '[]\n'
+      fi
+      exit 0
+    fi
     if [ "${MOCK_COMMENT_MODE:-missing}" = "existing" ] || [ "${MOCK_COMMENT_MODE:-missing}" = "patch-fail" ]; then
       cat <<'JSON'
 [[{"id":111,"body":"unrelated"}],[{"id":123,"body":"<!-- run-epic:pr-disposition -->\nold"}]]
@@ -63,36 +77,33 @@ JSON
       printf '[]\n'
     fi
     ;;
-  api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/123\ --input\ -)
-    cat >/dev/null || true
+  api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/123\ --input\ *)
     if [ "${MOCK_COMMENT_MODE:-missing}" = "patch-fail" ]; then
       printf 'patch failed\n' >&2
       exit 1
     fi
     printf '{"id":123}\n'
     ;;
-  api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/456\ --input\ -)
-    cat >/dev/null || true
+  api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/222\ --input\ *)
+    printf '{"id":222}\n'
+    ;;
+  api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/456\ --input\ *)
     printf '{"id":456}\n'
     ;;
-  api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/789\ --input\ -)
-    cat >/dev/null || true
+  api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/789\ --input\ *)
     printf '{"id":789}\n'
     ;;
-  api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/10/comments\ --input\ -)
-    cat >/dev/null || true
+  api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/10/comments\ --input\ *)
     if [ "${MOCK_COMMENT_MODE:-missing}" = "post-fail" ]; then
       printf 'post failed\n' >&2
       exit 1
     fi
     printf '{"id":124}\n'
     ;;
-  api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/900/comments\ --input\ -)
-    cat >/dev/null || true
+  api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/900/comments\ --input\ *)
     printf '{"id":457}\n'
     ;;
-  api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/42/comments\ --input\ -)
-    cat >/dev/null || true
+  api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/42/comments\ --input\ *)
     printf '{"id":790}\n'
     ;;
   *)
@@ -548,8 +559,14 @@ run_test "updates_existing_pr_disposition_comment" "UPDATED_COMMENT_ID=123" "$up
 run_test "finds_marker_on_later_page" "yes" "$(grep -q 'PATCH repos/lhpaul/ai-dev-framework-template/issues/comments/123' "$CALL_LOG" && echo yes || echo no)"
 run_test "no_duplicate_pr_comments" "1" "$(grep -c 'POST repos/lhpaul/ai-dev-framework-template/issues/10/comments' "$CALL_LOG")"
 run_fails_contains "comment_list_failure_errors" "failed to read comments" env MOCK_COMMENT_MODE=list-fail "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10
-run_fails_contains "comment_post_failure_errors" "post failed" env MOCK_COMMENT_MODE=post-fail "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10
-run_fails_contains "comment_patch_failure_errors" "patch failed" env MOCK_COMMENT_MODE=patch-fail "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10
+run_fails_contains "comment_post_failure_errors" "failed to create marker comment" env MOCK_COMMENT_MODE=post-fail "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10
+run_fails_contains "comment_patch_failure_errors" "failed to update marker comment" env MOCK_COMMENT_MODE=patch-fail "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10
+race_count_file="$TMP_ROOT/audit-race-count"
+printf '0\n' > "$race_count_file"
+post_count_before_race="$(grep -c 'POST repos/lhpaul/ai-dev-framework-template/issues/10/comments' "$CALL_LOG")"
+race_output="$(MOCK_COMMENT_MODE=race MOCK_GH_RACE_COUNT_FILE="$race_count_file" "$HELPER" apply-pr-disposition --input "$pr_fixture" --pr 10)"
+run_test "comment_race_rechecks_and_updates" "UPDATED_COMMENT_ID=222" "$race_output"
+run_test "comment_race_avoids_duplicate_post" "$post_count_before_race" "$(grep -c 'POST repos/lhpaul/ai-dev-framework-template/issues/10/comments' "$CALL_LOG")"
 
 # CodeRabbit finding on this PR: the unknown-key warning was only exercised
 # via render-pr-disposition above. Confirm the apply-pr-disposition path
@@ -595,7 +612,7 @@ run_test "ledger_root_checkpoints_scoped_by_item" "yes" "$(grep -Fq 'Checkpoints
 ledger_update_output="$(MOCK_COMMENT_MODE=existing "$HELPER" apply-epic-ledger --input "$ledger_fixture" --epic 900)"
 run_test "updates_existing_epic_ledger_comment" "UPDATED_COMMENT_ID=456" "$ledger_update_output"
 
-run_test "uses_json_input_for_comments" "yes" "$(grep -q -- '--input -' "$CALL_LOG" && echo yes || echo no)"
+run_test "uses_file_backed_json_input_for_comments" "no" "$(grep -q -- '--input -' "$CALL_LOG" && echo yes || echo no)"
 
 bypass_output="$("$HELPER" render-reviewer-access-bypass --input "$bypass_fixture")"
 run_test "renders_reviewer_access_bypass_marker" "yes" "$(grep -q '<!-- reviewer-access-bypass -->' <<< "$bypass_output" && echo yes || echo no)"

@@ -23,6 +23,9 @@ cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
 case "$*" in
   api\ repos/example/mobile-app/issues/comments/12345)
+    if [ "${MOCK_GH_AUTHORIZATION_SLEEP:-0}" -gt 0 ]; then
+      sleep "$MOCK_GH_AUTHORIZATION_SLEEP"
+    fi
     jq -n \
       --arg body "${MOCK_GH_AUTHORIZATION_BODY:-}" \
       --arg user_type "${MOCK_GH_AUTHORIZATION_USER_TYPE:-User}" \
@@ -50,6 +53,9 @@ case "$*" in
     jq -n --arg permission "${MOCK_GH_AUTHORIZATION_PERMISSION:-admin}" '{permission: $permission}'
     ;;
   api\ repos/example/mobile-app/issues/comments/54321)
+    if [ "${MOCK_GH_SECURITY_DECISION_SLEEP:-0}" -gt 0 ]; then
+      sleep "$MOCK_GH_SECURITY_DECISION_SLEEP"
+    fi
     jq -n \
       --arg body "${MOCK_GH_SECURITY_DECISION_BODY:-}" \
       --arg user_type "${MOCK_GH_SECURITY_DECISION_USER_TYPE:-User}" \
@@ -62,6 +68,9 @@ case "$*" in
     jq -n --arg permission "${MOCK_GH_SECURITY_DECISION_PERMISSION:-write}" '{permission: $permission}'
     ;;
   api\ --paginate\ --slurp\ repos/example/mobile-app/issues/42/comments?per_page=100)
+    if [ "${MOCK_GH_BYPASS_AUDIT_SLEEP:-0}" -gt 0 ]; then
+      sleep "$MOCK_GH_BYPASS_AUDIT_SLEEP"
+    fi
     if [ -n "${MOCK_GH_BYPASS_AUDIT_BODY:-}" ]; then
       jq -n --arg body "$MOCK_GH_BYPASS_AUDIT_BODY" '[[{id: 67890, user: {login: "lhpaul"}, created_at: "2026-07-29T12:01:00Z", body: $body}]]'
     else
@@ -733,6 +742,14 @@ run_test "reviewer_access_unavailable_trusted_authorization_event_blocks_bypass"
   "$GATE" --input "$mismatched_trusted_authorization_event_fixture" --json |
     jq -r '.decision + ":" + .reviewerAccess.classification + ":" + (.exceptionalAdminMergePermitted|tostring)'
 )"
+run_test "reviewer_access_authorization_event_timeout_blocks_bypass" "human_required:authorization_required:false" "$(
+  WORKFLOW_GH_API_TIMEOUT_SECONDS=1 MOCK_GH_AUTHORIZATION_SLEEP=2 "$GATE" --input "$exceptional_authorized_fixture" --json |
+    jq -r '.decision + ":" + .reviewerAccess.classification + ":" + (.exceptionalAdminMergePermitted|tostring)'
+)"
+run_test "reviewer_access_bypass_audit_timeout_blocks_bypass" "human_required:audit_required:false:false" "$(
+  WORKFLOW_GH_API_TIMEOUT_SECONDS=1 MOCK_GH_BYPASS_AUDIT_SLEEP=2 "$GATE" --input "$exceptional_authorized_fixture" --json |
+    jq -r '.decision + ":" + .reviewerAccess.classification + ":" + (.exceptionalAdminMergePermitted|tostring) + ":" + ((.reviewerAccess.bypassAudit.present // false)|tostring)'
+)"
 
 negative_authorization_comment_fixture="$TMP_ROOT/access-negative-authorization-comment.json"
 jq '.' "$exceptional_authorized_fixture" > "$negative_authorization_comment_fixture"
@@ -1228,6 +1245,9 @@ run_test "security_advisory_decision_generic_approval_does_not_resolve" "[]" "$(
 )"
 run_test "security_advisory_decision_wrong_target_pr_does_not_resolve" "[]" "$(
   MOCK_GH_SECURITY_DECISION_ISSUE_URL="https://api.github.com/repos/example/mobile-app/issues/7" verify_decisions_for "$security_advisory_decision_event_fixture"
+)"
+run_test "security_advisory_decision_timeout_does_not_resolve" "[]" "$(
+  WORKFLOW_GH_API_TIMEOUT_SECONDS=1 MOCK_GH_SECURITY_DECISION_SLEEP=2 verify_decisions_for "$security_advisory_decision_event_fixture"
 )"
 run_test "security_advisory_decision_stale_created_at_does_not_resolve" "[]" "$(
   MOCK_GH_SECURITY_DECISION_CREATED_AT="2026-07-01T00:00:00Z" verify_decisions_for "$security_advisory_decision_event_fixture"
