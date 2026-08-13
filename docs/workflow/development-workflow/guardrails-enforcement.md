@@ -157,6 +157,14 @@ review-and-fix behavior** — no second review loop:
   rerun validation + reviewer loop + CI, reassess.
 - Advisory findings → explicit per-finding fix-or-accept decision with recorded
   rationale.
+- **Security-sensitive advisory carve-out**: for an advisory finding
+  classified security-sensitive by
+  `scripts/development-workflow/security-advisory-classifier.sh`, the runner
+  never itself records an "accepted" or "rejected" disposition — regardless
+  of delegated review authority. Only a fixed commit (cited) or a status of
+  "pending" (awaiting a verified human accept/reject decision) is available.
+  See the "Security-sensitive advisory classification" subsection of
+  [`protocols/93-automated-reviewer-loop-protocol.md`](protocols/93-automated-reviewer-loop-protocol.md).
 - Restore readiness labels only after reviewer loop, CI, and unresolved threads
   are clean.
 
@@ -175,6 +183,15 @@ and run the existing helpers:
 ./scripts/development-workflow/run-epic-delegated-gate.sh --input <evidence-file>
 ```
 
+The evidence file's `pr.inScope` field is meaningful only when the runner has
+a resolved `/run-epic` scope to check the candidate PR against. Protocol 90 and
+91 callers assembling evidence for a `/run-items` or `/run-item` PR that has no
+resolved epic scope should **omit** `pr.inScope` entirely — the gate skips the
+scope check when the field is absent rather than defaulting to out-of-scope.
+Only set `pr.inScope: false` when scope resolution genuinely excluded the
+candidate PR; the gate then short-circuits with `decision: "not_applicable"`
+instead of piling the mismatch in among unrelated reasons.
+
 Merge through the repository-approved merge path **only when all of the
 following are satisfied**:
 
@@ -189,6 +206,16 @@ following are satisfied**:
 - Reviewer disposition is acceptable.
 - Required audit evidence is recorded.
 - Classified risk is at or below `stages.<stage>.max_merge_risk`.
+- No `.securityAdvisories[]` entry remains `pending` after reconciliation at
+  the current head SHA (`security_sensitive_advisory_pending`). **This
+  requirement is independent of `mode`, `stages.<stage>.may_merge_pr`, and
+  the satisfaction/waiver state of any unrelated bounded-prelude
+  checkpoint** — mirroring the exceptional-bypass callout below, no batch
+  approval or delegated authority substitutes for a fixed commit or a
+  verified human accept/reject decision on a security-sensitive finding.
+  Only a human, never the delegated agent, may record that a
+  security-sensitive finding's risk is accepted or that the finding is a
+  false positive.
 
 If the only remaining blocker is a verified access-restricted third-party
 reviewer check, the delegated gate does **not** return normal `merge_allowed`.
@@ -198,9 +225,15 @@ runner has current CI/reviewer/check evidence, App-access remediation evidence,
 a named human authorization for the exact PR, head SHA, and evidence
 fingerprint, and a verified pre-attempt `<!-- reviewer-access-bypass -->` audit
 record. Only then may the gate return `exceptional_bypass_authorized`, which
-authorizes exactly one named `gh pr merge <pr> --admin` attempt. Delegated mode,
-`may_merge_pr`, batch approval, risk tolerance, or satisfied unrelated
-checkpoints never substitute for that authorization.
+authorizes exactly one named command:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```text
+gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>
+```
+
+Delegated mode, `may_merge_pr`, batch approval, risk tolerance, or satisfied
+unrelated checkpoints never substitute for that authorization.
 
 **Medium-risk merged decisions** require a complete "why safe to merge"
 explanation covering scope, tests, reviewer outcome, CI outcome, and
@@ -262,6 +295,7 @@ table is required for consistent stop reporting.
 | `high_risk_change` | The PR is classified above the configured `max_merge_risk` for the stage. |
 | `destructive_action` | The next action would delete branches, data, releases, or other non-recoverable artifacts. |
 | `human_checkpoint_required` | A declared stage-scoped human checkpoint for the PR's work item is still pending, or the PR still carries `human-checkpoint-required`. |
+| `security_sensitive_advisory_pending` | A security-sensitive advisory finding (per the classifier in `scripts/development-workflow/security-advisory-classifier.sh`) lacks a fixed commit or a verified human accept/reject decision at the PR's current head SHA. |
 | `graduation_approval_required` | A `develop-<slug>` -> `develop` graduation PR is the next merge candidate but explicit human graduation approval has not been recorded through `/graduate-development <slug>`. |
 | `missing_tracker_context` | A required tracker field (status, type, assignee, dependency link) is absent or unresolvable. |
 | `missing_required_secret_or_permission` | A required credential, GitHub permission, or access token is absent. |

@@ -83,9 +83,8 @@ When the delegated merge gate returns `merge_allowed`, continue through merge,
 branch cleanup, `post-merge-cleanup.sh`, and live tracker verification before
 reporting the item terminal.
 When the gate returns `exceptional_bypass_authorized`, do not treat it as normal
-delegated merge authority; require the separate named PR/SHA/fingerprint
-authorization and pre-attempt `reviewer-access-bypass` audit marker before one
-exact human-authorized `gh pr merge <pr> --admin` attempt.
+delegated merge authority; follow the canonical exceptional-bypass policy in
+`docs/workflow/development-workflow/guardrails-enforcement.md` Gate 5.
 Treat merge authority explicitly: `merge_granted` means readiness is
 intermediate and the runner continues through merge; `merge_denied` means the
 ready PR stops as `ready_human_merge` and no merge command is run. A
@@ -130,6 +129,8 @@ That document is the single source of truth for this supporting role. Key respon
   `--require-review-threads true` (helper defaults are false). A `discrepancy` or
   `unavailable_required` result is non-terminal and must return to the relevant
   Protocol 91 gate.
+
+**Foreground loop execution — never background-and-yield**: Protocol 91 Step 7 and Step 8 define the mandatory foreground-execution rule for `pr-review-loop.sh` and `pr-ci-loop.sh` (run each to completion in-turn; never background one and end your turn to wait for it). That rule applies to every dispatch this agent makes exactly as written there.
 
 **Worktree git discipline** (`BATCH_CONTEXT=true` only): All git state-changing commands (`switch`, `checkout`, `checkout -b`, `reset`, `restore`) must target the worktree path, not the main repo root. Never `cd` out of the worktree into the main repo root and then run branch-switching commands. Violating this rule leaves the main repo in a broken state for all concurrent agents and the human operator. Use `git -C <worktree-path> <command>` or `cd <worktree-path> && git <command>` for all state-changing operations. Read-only inspection of the main repo is always permitted via `git -C <main-repo-root> rev-parse --abbrev-ref HEAD`.
 

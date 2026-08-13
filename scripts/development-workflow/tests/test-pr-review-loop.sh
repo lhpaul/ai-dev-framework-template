@@ -2275,6 +2275,104 @@ run_test "codex_trigger_idempotency_paginated_single_object" "1" \
   "$(printf '%s\n' "$_codex_paginated_selected_trigger" | wc -l | tr -d ' ')"
 unset _codex_trigger_comments _codex_selected_trigger _codex_paginated_trigger_comments _codex_paginated_selected_trigger
 
+_codex_usage_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_usage_comment_mock_dir/gh" <<'CODEX_USAGE_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcusage1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":101,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":201,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_USAGE_COMMENT_GH
+chmod +x "$_codex_usage_comment_mock_dir/gh"
+
+_codex_usage_comment_output=""
+_codex_usage_comment_exit=0
+PATH="$_codex_usage_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_usage_comment_mock_dir/output.txt" 2>&1 || _codex_usage_comment_exit=$?
+_codex_usage_comment_output="$(cat "$_codex_usage_comment_mock_dir/output.txt")"
+run_test "codex_usage_limit_comment_exit_unavailable" "3" "$_codex_usage_comment_exit"
+run_test "codex_usage_limit_comment_verdict" \
+  "VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached" \
+  "$(printf '%s\n' "$_codex_usage_comment_output" | grep "^VERDICT:")"
+run_test "codex_usage_limit_comment_reason" "REASON=codex-github-usage-limit" \
+  "$(printf '%s\n' "$_codex_usage_comment_output" | grep "^REASON=")"
+run_test "codex_usage_limit_comment_comment_count" "COMMENT_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_comment_output" | grep "^COMMENT_COUNT=")"
+run_test "codex_usage_limit_comment_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_comment_output" | grep "^BLOCKING_COUNT=")"
+run_test "codex_usage_limit_comment_suggestion_count" "SUGGESTION_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_comment_output" | grep "^SUGGESTION_COUNT=")"
+rm -rf "$_codex_usage_comment_mock_dir"
+unset _codex_usage_comment_mock_dir _codex_usage_comment_output _codex_usage_comment_exit
+
+_codex_usage_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_usage_review_mock_dir/gh" <<'CODEX_USAGE_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcreview1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":102,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex review capacity exhausted. Please rerun after quota reset."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_USAGE_REVIEW_GH
+chmod +x "$_codex_usage_review_mock_dir/gh"
+
+_codex_usage_review_output=""
+_codex_usage_review_exit=0
+PATH="$_codex_usage_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_usage_review_mock_dir/output.txt" 2>&1 || _codex_usage_review_exit=$?
+_codex_usage_review_output="$(cat "$_codex_usage_review_mock_dir/output.txt")"
+run_test "codex_usage_limit_review_exit_unavailable" "3" "$_codex_usage_review_exit"
+run_test "codex_usage_limit_review_verdict" \
+  "VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached" \
+  "$(printf '%s\n' "$_codex_usage_review_output" | grep "^VERDICT:")"
+run_test "codex_usage_limit_review_reason" "REASON=codex-github-usage-limit" \
+  "$(printf '%s\n' "$_codex_usage_review_output" | grep "^REASON=")"
+run_test "codex_usage_limit_review_comment_count" "COMMENT_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_review_output" | grep "^COMMENT_COUNT=")"
+run_test "codex_usage_limit_review_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_review_output" | grep "^BLOCKING_COUNT=")"
+run_test "codex_usage_limit_review_suggestion_count" "SUGGESTION_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_review_output" | grep "^SUGGESTION_COUNT=")"
+rm -rf "$_codex_usage_review_mock_dir"
+unset _codex_usage_review_mock_dir _codex_usage_review_output _codex_usage_review_exit
+
 _unlock_pr="80213$$"
 _unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
 rm -rf "$_unlock_lock_dir"
@@ -2330,6 +2428,50 @@ run_test "codex_thread_check_failure_reason" "REASON=thread-check-failed" \
   "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
 run_test "codex_thread_check_failure_exit_code" "2" "$actual_exit"
 unset _codex_overrides actual_output actual_exit
+
+_codex_usage_loop_tmp="$(mktemp -d)"
+mkdir -p "$_codex_usage_loop_tmp/scripts/development-workflow"
+cat > "$_codex_usage_loop_tmp/scripts/development-workflow/codex-github-reviewer.sh" <<'CODEX_USAGE_LOOP_REVIEWER'
+#!/usr/bin/env bash
+printf 'VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached\n'
+printf 'REASON=codex-github-usage-limit\n'
+printf 'COMMENT_COUNT=0\n'
+printf 'BLOCKING_COUNT=0\n'
+printf 'SUGGESTION_COUNT=0\n'
+exit 3
+CODEX_USAGE_LOOP_REVIEWER
+chmod +x "$_codex_usage_loop_tmp/scripts/development-workflow/codex-github-reviewer.sh"
+_codex_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+  workflow_repo_root() { printf "%s\n" "$_codex_usage_loop_tmp"; }
+  check_unresolved_threads() { printf "0\n"; return 0; }
+'
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_codex_overrides"
+  _ec=0
+  run_codex_github_review "42" "fix/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "codex_usage_limit_loop_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "codex_usage_limit_loop_reason" "REASON=codex-github-usage-limit" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "codex_usage_limit_loop_platform" "PLATFORM=codex-github" \
+  "$(printf '%s\n' "$actual_output" | grep "^PLATFORM=")"
+run_test "codex_usage_limit_loop_comment_zero" "COMMENT_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^COMMENT_COUNT=")"
+run_test "codex_usage_limit_loop_blocking_zero" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "codex_usage_limit_loop_suggestion_zero" "SUGGESTION_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^SUGGESTION_COUNT=")"
+run_test "codex_usage_limit_loop_exit_code" "2" "$actual_exit"
+rm -rf "$_codex_usage_loop_tmp"
+unset _codex_usage_loop_tmp _codex_overrides actual_output actual_exit
 
 _post_summary_source="$(awk '/^_post_review_summary\(\)/,/^}$/' \
   "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
@@ -4068,6 +4210,229 @@ run_test "pr_agent_workflow_synchronize_trigger" "1" \
   "$(grep_count_or_zero "types:.*synchronize" "$REPO_ROOT/.github/workflows/pr-agent.yml")"
 run_test "pr_agent_workflow_exact_review_command" "1" \
   "$(grep_count_or_zero "github.event.comment.body == '/review'" "$REPO_ROOT/.github/workflows/pr-agent.yml")"
+
+# ---------------------------------------------------------------------------
+# Area: coderabbit_success_status_count (issue #1437)
+#
+# Verifies the shared helper used by both coderabbit_status_success_fallback
+# call sites in run_coderabbit_review rejects a `success` commit status whose
+# description indicates the review was rate-limited / did not actually run,
+# while still counting a genuine success status as clean evidence. Uses the
+# same MOCK_GH_OUTPUT single-array pattern as Area 2 (check_unreplied_rest_comments):
+# --paginate | jq -s flattens via .[].[] so a single JSON array is sufficient.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area: coderabbit_success_status_count (issue #1437) ==="
+
+unset MOCK_GH_POST_EXIT MOCK_GH_POST_OUTPUT MOCK_GH_CALL_LOG MOCK_GH_EXIT
+
+# CONTROL: genuine success status with a normal description — must count as 1.
+# This is the "still reports clean for a genuine success description" direction.
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","description":"Review completed: 0 findings","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_genuine_success" "1" "$actual"
+
+# PLANTED VIOLATION: success status whose description is CodeRabbit's confirmed
+# rate-limit banner text — must NOT count (0), proving the false-clean hole from
+# issue #1437 is closed. Before this fix, checking .state alone would have
+# returned 1 here (false clean).
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","description":"Review limit reached. Next review available in: 43 minutes","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_rate_limited_description_rejected" "0" "$actual"
+
+# Rate-limit description with different casing and hyphen separator — regex is
+# the same test("rate.?limit"; "i") pattern already used elsewhere in this script.
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","description":"RATE-LIMIT: try again later","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_rate_limit_hyphen_case_insensitive" "0" "$actual"
+
+# Each alternative in the "rate.?limit|review limit|next review available"
+# regex must independently reject on its own — tested in isolation so a future
+# accidental removal of one alternative is caught even if the other two still
+# pass. "review limit" alone (no "rate limit" or "next review available" text).
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","description":"Review limit exceeded for this repository","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_review_limit_phrase_alone_rejected" "0" "$actual"
+
+# "next review available" alone (no "rate limit" or "review limit" text).
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","description":"Please retry — next review available shortly","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_next_review_available_phrase_alone_rejected" "0" "$actual"
+
+# Non-success state is never counted regardless of description.
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"pending","description":"Reviewing...","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_pending_not_counted" "0" "$actual"
+
+# Missing/null description on a genuine success status must still count (no
+# regression for the common case where CodeRabbit sets no description at all).
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_missing_description_still_counts" "1" "$actual"
+
+# Dedup by context: an older genuine success is superseded by a newer
+# rate-limited success on the same context — only the latest (rejected) entry
+# should be considered, so the count must be 0.
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","description":"Review completed: 0 findings","updated_at":"2026-08-10T00:00:00Z"},{"context":"coderabbit/review","state":"success","description":"Review limit reached. Next review available in: 10 minutes","updated_at":"2026-08-10T00:05:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_dedup_latest_rate_limited" "0" "$actual"
+
+# Dedup by context: an older rate-limited success is superseded by a newer
+# genuine success on the same context — the count must be 1.
+export MOCK_GH_OUTPUT='[{"context":"coderabbit/review","state":"success","description":"Review limit reached. Next review available in: 10 minutes","updated_at":"2026-08-10T00:00:00Z"},{"context":"coderabbit/review","state":"success","description":"Review completed: 0 findings","updated_at":"2026-08-10T00:05:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_dedup_latest_genuine" "1" "$actual"
+
+# Non-coderabbit context is ignored entirely.
+export MOCK_GH_OUTPUT='[{"context":"ci/build","state":"success","description":"rate limit exceeded","updated_at":"2026-08-10T00:00:00Z"}]'
+actual="$(coderabbit_success_status_count "owner/repo" "abc123")"
+run_test "coderabbit_success_status_count_non_coderabbit_context_ignored" "0" "$actual"
+
+# Argument validation: empty repo or head_sha must short-circuit before the
+# `gh api` call (asserted via MOCK_GH_CALL_LOG — the mock's default fallback
+# returns "[]"/exit 0 for ANY input, so checking only the return value/exit
+# code would pass even without the guard; the call-log assertion is what
+# actually proves the guard prevents the API call) and must safely return "0"
+# rather than propagating a nonzero exit status, since both call sites assign
+# this function's output via `var="$(coderabbit_success_status_count ...)"`
+# under `set -euo pipefail`, where a nonzero return would abort the whole
+# reviewer-loop script instead of falling through to the normal "no success
+# status found" path.
+unset MOCK_GH_OUTPUT
+_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log"
+actual="$(coderabbit_success_status_count "" "abc123")"
+actual_exit=$?
+run_test "coderabbit_success_status_count_empty_repo_returns_zero" "0" "$actual"
+run_test "coderabbit_success_status_count_empty_repo_exit_zero" "0" "$actual_exit"
+run_test "coderabbit_success_status_count_empty_repo_no_api_call" "" "$(cat "$_call_log")"
+rm -f "$_call_log"
+unset MOCK_GH_CALL_LOG
+
+_call_log="$(mktemp)"
+export MOCK_GH_CALL_LOG="$_call_log"
+actual="$(coderabbit_success_status_count "owner/repo" "")"
+actual_exit=$?
+run_test "coderabbit_success_status_count_empty_head_sha_returns_zero" "0" "$actual"
+run_test "coderabbit_success_status_count_empty_head_sha_exit_zero" "0" "$actual_exit"
+run_test "coderabbit_success_status_count_empty_head_sha_no_api_call" "" "$(cat "$_call_log")"
+rm -f "$_call_log"
+unset MOCK_GH_CALL_LOG
+
+# ---------------------------------------------------------------------------
+# Area: coderabbit_no_trigger_timeout_default (issue #1433)
+#
+# Verifies the computed default for the CodeRabbit silent-non-trigger fallback
+# timeout (scripts/development-workflow/pr-review-loop.sh lines 3989-4004).
+# Prior behavior: a fixed 600 s default, decoupled from --max-wait. Two bugs
+# this fixes: (1) latency — 600 s of pure idle wait before the proactive
+# "@coderabbitai review" nudge on the common default max_wait=1200 invocation;
+# (2) correctness — on short-max_wait invocations (e.g. the 180 s doc-branch
+# default) elapsed could never reach 600 before the outer max_wait exit, so
+# the silent-non-trigger safety net could never fire at all.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area: coderabbit_no_trigger_timeout_default (issue #1433) ==="
+
+# CONTROL / latency fix: the common default invocation (max_wait=1200, the
+# hardcoded default in main()) must now yield 180 — a 420 s (7 min) reduction
+# from the old fixed 600 s default. half_max_wait=600 does not cap the 180 s
+# hardcoded default, so the hardcoded value wins.
+actual="$(coderabbit_no_trigger_timeout_default 1200)"
+run_test "no_trigger_timeout_default_common_max_wait_1200" "180" "$actual"
+
+# PLANTED VIOLATION / correctness fix: doc-branch default max_wait=180. Under
+# the OLD fixed-600 default, elapsed could never reach 600 before the loop's
+# own "elapsed >= max_wait" (180) exit fires first — the silent-non-trigger
+# retrigger block (pr-review-loop.sh ~line 4315,
+# `coderabbit_no_trigger_retriggers < ... && elapsed >= coderabbit_no_trigger_timeout`)
+# would be permanently unreachable on these branches. The half-max_wait cap
+# (line 3996) must produce 90 (half of 180, below the 180 hardcoded default)
+# so the fallback has room to fire with a full max_wait/2 remaining for a
+# subsequent poll cycle. Reverting the cap (deleting lines 3994-3999, leaving
+# only the hardcoded 180 default) makes this assertion fail — 180 is not < 180
+# under `--max-wait 180`, so the retrigger could never fire before timeout;
+# this was manually verified during implementation (see PR description) and
+# is the concrete regression this test guards against.
+actual="$(coderabbit_no_trigger_timeout_default 180)"
+run_test "no_trigger_timeout_default_doc_branch_max_wait_180_capped" "90" "$actual"
+
+# Large-diff invocation (max_wait=2400): half is 1200, well above the 180
+# hardcoded default, so the cap must NOT kick in — the hardcoded default wins.
+actual="$(coderabbit_no_trigger_timeout_default 2400)"
+run_test "no_trigger_timeout_default_large_diff_max_wait_2400_uncapped" "180" "$actual"
+
+# Floor: a pathologically small max_wait (40) yields half_max_wait=20, below
+# the 30 s floor (line 4000-4002) — the floor must win over the smaller capped
+# value so at least one nudge attempt has a usable window.
+actual="$(coderabbit_no_trigger_timeout_default 40)"
+run_test "no_trigger_timeout_default_floor_applies_below_30" "30" "$actual"
+
+# Boundary: max_wait=360 -> half=180, exactly equal to the hardcoded default.
+# The cap only applies when half_max_wait is STRICTLY less than the hardcoded
+# default (line 3996 uses `-lt`), so at the boundary the hardcoded default
+# must still be the result (not fall through to some other branch).
+actual="$(coderabbit_no_trigger_timeout_default 360)"
+run_test "no_trigger_timeout_default_boundary_max_wait_360" "180" "$actual"
+
+# Invalid/empty max_wait must safely fall back to the hardcoded default
+# instead of crashing on arithmetic with a non-numeric value.
+actual="$(coderabbit_no_trigger_timeout_default "")"
+run_test "no_trigger_timeout_default_empty_max_wait_fallback" "180" "$actual"
+
+actual="$(coderabbit_no_trigger_timeout_default "not-a-number")"
+run_test "no_trigger_timeout_default_non_numeric_max_wait_fallback" "180" "$actual"
+
+# Zero max_wait must not attempt a division-relevant cap and must fall back to
+# the hardcoded default (guarded by `-gt 0` on line 3994).
+actual="$(coderabbit_no_trigger_timeout_default 0)"
+run_test "no_trigger_timeout_default_zero_max_wait_fallback" "180" "$actual"
+
+# Leading-zero decimal input (CodeRabbit finding on PR #1458): "080" passes
+# the ^[0-9]+$ digit-only regex guard but, without base-10 normalization, bash
+# arithmetic expansion parses a leading-zero literal as octal — and "080" is
+# not a valid octal literal (8 is not an octal digit), so `$((080 / 2))`
+# errors with "value too great for base" and aborts the script under
+# `set -euo pipefail`. The `10#$max_wait` prefix forces base-10 interpretation
+# so this must safely compute 40 (half of 80) instead of erroring.
+actual="$(coderabbit_no_trigger_timeout_default 080)"
+run_test "no_trigger_timeout_default_leading_zero_max_wait_normalized_base10" "40" "$actual"
+
+# ---------------------------------------------------------------------------
+# Area: coderabbit_resolve_no_trigger_timeout (issue #1433, CodeRabbit finding
+# on PR #1458) — exercises the actual production override-resolution path
+# used by run_coderabbit_review, not just the underlying default-computation
+# helper tested above.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area: coderabbit_resolve_no_trigger_timeout (issue #1433) ==="
+
+# No override set: must fall through to coderabbit_no_trigger_timeout_default.
+unset CODERABBIT_NO_TRIGGER_TIMEOUT
+actual="$(coderabbit_resolve_no_trigger_timeout 180)"
+run_test "no_trigger_resolve_no_override_uses_computed_default" "90" "$actual"
+
+# An explicit override larger than the computed default for the given
+# max_wait must be honored as-is (uncapped) rather than silently reduced —
+# same pattern already used by CODERABBIT_RATE_LIMIT_WAIT / _MAX_RETRIES.
+export CODERABBIT_NO_TRIGGER_TIMEOUT=900
+actual="$(coderabbit_resolve_no_trigger_timeout 180)"
+run_test "no_trigger_resolve_explicit_override_honored_uncapped" "900" "$actual"
+unset CODERABBIT_NO_TRIGGER_TIMEOUT
+
+# An invalid explicit override (non-numeric) must fall back to the computed
+# default (with a WARN to stderr, not asserted here) rather than propagating
+# a bad value or crashing the script.
+export CODERABBIT_NO_TRIGGER_TIMEOUT="not-a-number"
+actual="$(coderabbit_resolve_no_trigger_timeout 180 2>/dev/null)"
+run_test "no_trigger_resolve_invalid_override_falls_back_to_default" "90" "$actual"
+unset CODERABBIT_NO_TRIGGER_TIMEOUT
+
+# A zero explicit override (fails the `-le 0` guard) must also fall back.
+export CODERABBIT_NO_TRIGGER_TIMEOUT=0
+actual="$(coderabbit_resolve_no_trigger_timeout 1200 2>/dev/null)"
+run_test "no_trigger_resolve_zero_override_falls_back_to_default" "180" "$actual"
+unset CODERABBIT_NO_TRIGGER_TIMEOUT
 
 # ---------------------------------------------------------------------------
 # Summary

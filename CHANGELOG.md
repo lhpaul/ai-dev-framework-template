@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-08-13
+
+### Added
+
+- **Security-sensitive advisory findings require human decisions** (#1432):
+  delegated merge now blocks on workflow-surface advisory findings involving
+  auth bypasses, secret exposure, unsafe git operations, injection risk, or
+  workflow guardrail bypasses until a verified human decision or cited fix is
+  recorded.
+- **Review discipline now requires planted-violation proofs and E2E fixture
+  coverage** (#1443): `REVIEW.md` and testing guidance now require new guards,
+  lint rules, checks, or CI jobs to prove they catch a planted violation, and
+  feature PRs to extend real E2E fixtures when a repository has one.
+- **Portable i18n no-literal-string guidance** (#1441): add the stack-specific
+  i18n doctrine, a React Native/i18next example, dynamic-key scanner guidance,
+  and a conditional review-gate check.
+
+### Fixed
+
+- **Run-epic marker comments are safer under API latency and concurrency**
+  (#1474): targeted GitHub API calls now use bounded timeouts, structured
+  marker-comment mutation failures, and a final duplicate check before posting.
+- **PR disposition audit rendering rejects invalid policy evidence** (#1461):
+  invalid invocation and checkpoint policy values, including boolean `false`,
+  now fail instead of being rendered as absent.
+- **Shell snippet lint respects explicit non-shell code fences** (#1468):
+  TypeScript, Python, SQL, and other explicitly tagged non-shell fences no
+  longer trigger WS001 because their contents happen to resemble shell.
+- **Project-specific retro metrics are protected from template sync overwrites**
+  (#1438): retro metrics files are now carved out of the sync manifest, with
+  an approval-based bootstrap cleanup path for inherited template rows.
+- **CodeRabbit reviewer-loop fallbacks are faster and more accurate**
+  (#1433, #1437): silent-review fallback timing now scales with `--max-wait`,
+  and successful CodeRabbit statuses with review-limit descriptions no longer
+  count as completed review evidence.
+- **Workflow runners may not park on backgrounded review or CI loops** (#1434):
+  protocols, agents, and Codex command surfaces now require foreground
+  `pr-review-loop.sh` and `pr-ci-loop.sh` execution.
+- **Post-merge QA scope discovery is tracker-aware**: configured tracker
+  post-merge items on `develop` are preferred, integration-branch QA semantics
+  stay explicit, and provider-backed tracker IDs can seed the read-only scope
+  helper.
+- **Template sync review hardening was backported**: safeguards now cover batch
+  merge metadata, reviewed-head pinning, delegated epic merge evidence,
+  reviewer-loop blockers, reviewer bypass authorization, PR-bound cleanup, and
+  workflow branch push-lock cleanup.
+- **Run-epic audit rendering fails loudly on malformed evidence** (#1430):
+  required-field and optional-section guards now report wrong-typed values
+  reliably in both render and apply paths.
+- **PR disposition audit comments include merge-safety evidence** (#1436):
+  `why_safe_to_merge` is now rendered, invalid values fail loudly, and unknown
+  top-level disposition keys emit warnings instead of being silently dropped.
+- **Delegated gate input validation avoids false `human_required` verdicts**
+  (#1435): missing or wrong-typed PR identity fields now error before
+  evaluation, and explicit out-of-scope PRs produce a distinct
+  `not_applicable` decision.
+
 ## [0.41.0] - 2026-08-02
 
 ### Changed
@@ -1347,7 +1404,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.38.0...v0.39.0

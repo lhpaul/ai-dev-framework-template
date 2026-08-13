@@ -745,6 +745,7 @@ run_codex_github_review() {
   local repo
   local reviewer_script
   local script_exit=0
+  local script_output=""
   local thread_check_output=""
   local thread_check_status=0
   local unresolved_count=0
@@ -805,11 +806,11 @@ run_codex_github_review() {
     effective_poll_interval="$max_wait"
   fi
   set +e
-  "$reviewer_script" "$pr_number" "$owner" "$repo_name" \
+  script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" \
     --bot-login "$bot_login" \
     --poll-interval "$effective_poll_interval" \
     --max-wait "$max_wait" \
-    --max-retriggers "$max_retriggers" >/dev/null 2>&1
+    --max-retriggers "$max_retriggers" 2>&1)"
   script_exit=$?
   set -e
 
@@ -847,13 +848,30 @@ run_codex_github_review() {
       print_kv SUGGESTION_COUNT 0
       return 1
       ;;
-    *)
+    3)
       print_kv RESULT escalate
-      print_kv REASON timeout
+      print_kv REASON codex-github-usage-limit
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+      ;;
+    *)
+      local codex_reason
+      codex_reason="$(kv_value_default REASON "$script_output" timeout)"
+      print_kv RESULT escalate
+      print_kv REASON "$codex_reason"
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
       return 2
       ;;
   esac
@@ -2356,14 +2374,14 @@ run_coderabbit_cli_review() {
 
   : "$poll_interval"
   require_gh
-  cd_workflow_repo_root
+  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/coderabbit-cli-reviewer.sh"
+  review_repo_root="${repo_root:-$(workflow_repo_root)}"
+  cd "$review_repo_root"
 
   local owner repo_name repo
   repo="$(repo_slug)"
   owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
   repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
-
-  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/coderabbit-cli-reviewer.sh"
 
   local coderabbit_cli_stderr_file
   local coderabbit_cli_config_file="${AI_DEV_WORKFLOW_CONFIG_FILE:-${config_file:-}}"
@@ -2372,9 +2390,9 @@ run_coderabbit_cli_review() {
 
   set +e
   if [ -n "$coderabbit_cli_config_file" ] && [ -f "$coderabbit_cli_config_file" ]; then
-    script_output="$(AI_DEV_WORKFLOW_CONFIG_FILE="$coderabbit_cli_config_file" "$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" 2>"$coderabbit_cli_stderr_file")"
+    script_output="$(AI_DEV_WORKFLOW_CONFIG_FILE="$coderabbit_cli_config_file" "$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" --repo-root "$review_repo_root" 2>"$coderabbit_cli_stderr_file")"
   else
-    script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" 2>"$coderabbit_cli_stderr_file")"
+    script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" --repo-root "$review_repo_root" 2>"$coderabbit_cli_stderr_file")"
   fi
   script_exit=$?
   set -e
@@ -2413,6 +2431,11 @@ run_coderabbit_cli_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT "$blocking_count"
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      for index in $(seq 1 "$blocking_count"); do
+        print_kv "BLOCKING_${index}_PATH" "$(kv_value_default "BLOCKING_${index}_PATH" "$script_output" "")"
+        print_kv "BLOCKING_${index}_LINE" "$(kv_value_default "BLOCKING_${index}_LINE" "$script_output" "")"
+        print_kv "BLOCKING_${index}_BODY" "$(kv_value_default "BLOCKING_${index}_BODY" "$script_output" "")"
+      done
       return 1
       ;;
     2)
@@ -3892,6 +3915,160 @@ coderabbit_thread_gate_clean() {
   return 0
 }
 
+# Returns the count of CodeRabbit commit statuses for $head_sha on $repo that
+# are genuinely successful — i.e., context matches "coderabbit" (case
+# insensitive), the latest status per context has state == "success", AND the
+# status description does not match a rate-limit / not-actually-reviewed
+# pattern.
+#
+# Background (issue #1437): CodeRabbit can set a `success` commit status for
+# branch-protection compatibility while its description explicitly states the
+# review did not actually run. The confirmed real-world text (observed on
+# lhpaul/personal-finances PR #33) is "Review limit reached ... Next review
+# available in: N minutes" — note this does NOT contain the substring "rate
+# limit", so matching only the existing test("rate.?limit"; "i") comment-marker
+# regex used elsewhere in this script would miss it. The pattern below matches
+# both: the generic "rate limit" phrasing (kept for consistency with the
+# existing comment-marker regex, in case CodeRabbit also uses that wording in
+# a status description) AND the confirmed "review limit" / "next review
+# available" banner wording. Checking .state alone treats either case as a
+# completed clean review — a false clean. Both coderabbit_status_success_fallback
+# call sites in run_coderabbit_review use this helper so the description guard
+# is applied identically at both sites.
+#
+# Deduplicates by context (keeping the latest entry per context via
+# max_by(.updated_at)) before checking state/description, so a superseded
+# status is not counted — same dedup pattern used before this fix existed.
+coderabbit_success_status_count() {
+  local repo="$1" head_sha="$2"
+  # Validate arguments before the API call: a missing repo or head_sha would
+  # otherwise build an invalid endpoint and fail inside the pipeline with an
+  # unstructured shell error. Print "0" and return 0 (rather than a nonzero
+  # exit) because both call sites assign this function's output directly via
+  # `var="$(coderabbit_success_status_count ...)"` under `set -e` — a nonzero
+  # return there aborts the entire reviewer-loop script immediately instead of
+  # letting the caller's normal "no success status found" path run. Treating
+  # invalid arguments as "no genuine success status found" is the same safe
+  # default the rest of this function already falls back to on API failure.
+  if [ -z "$repo" ] || [ -z "$head_sha" ]; then
+    echo "ERROR: coderabbit_success_status_count requires non-empty repo and head_sha arguments (got repo='${repo:-}' head_sha='${head_sha:-}')" >&2
+    printf '%s\n' 0
+    return 0
+  fi
+  gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
+    | jq -s '[.[].[] | select(
+              (.context // "" | ascii_downcase | test("coderabbit"))
+            )]
+            | group_by(.context) | map(max_by(.updated_at))
+            | map(select(
+                .state == "success"
+                and ((.description // "")
+                     | test("rate.?limit|review limit|next review available"; "i")
+                     | not)
+              ))
+            | length'
+}
+
+# coderabbit_no_trigger_timeout_default <max_wait>
+#
+# Computes the default silent-non-trigger fallback timeout (issue #1433):
+# how long run_coderabbit_review waits with zero CodeRabbit activity before
+# proactively posting "@coderabbitai review" (see the "Auto-retrigger: detect
+# CodeRabbit silent non-trigger after push" block below).
+#
+# Background: the previous fixed default was 600 s, decoupled from max_wait.
+# Two problems: (1) on the common default invocation (max_wait=1200 s), it
+# burned up to 10 minutes of pure idle wait before nudging CodeRabbit — the
+# exact "waited out CodeRabbit auto-trigger timeouts" latency reported in
+# #1433 from the #1429/#1431 retrospective; (2) on short-max_wait
+# invocations (e.g. the 180 s spec/*  and implementation-plan/* doc-branch
+# default — see the "Branch-type-aware default timeout" section in --help),
+# elapsed could never reach 600 before the outer max_wait timeout exits the
+# loop, so the silent-non-trigger safety net never had a chance to fire at
+# all on those branches.
+#
+# Fix: default to 180 s — the same already-vetted "give CodeRabbit time,
+# then nudge" cadence CODERABBIT_RATE_LIMIT_WAIT already uses elsewhere in
+# this script for the analogous rate-limit retry path.
+#
+# Effective-timeout rule (piecewise, by max_wait):
+#   - max_wait >= 360 s: effective = 180 s (the hardcoded default; the half-
+#     max_wait cap below does not bind).
+#   - 60 s <= max_wait < 360 s: effective = floor(max_wait / 2) (the cap
+#     binds and is always < max_wait, so a subsequent poll cycle is
+#     guaranteed to have room before the outer max_wait timeout).
+#   - max_wait < 60 s: effective = max(30, floor(max_wait / 2)) — the 30 s
+#     floor takes precedence over the halved cap in this range. For
+#     max_wait <= ~30 s this can leave little or no room before the outer
+#     timeout (the floor exists only so a pathologically small max_wait
+#     still gets one nudge attempt rather than a zero-second window). This
+#     repo never configures --max-wait below 180 s (the doc-branch default;
+#     see PR_REVIEW_LOOP_DOC_MAX_WAIT in --help), so this range is a
+#     defensive edge case, not a realistic operating point.
+#
+# This is purely a *timing* change: it does not touch, weaken, or bypass the
+# coderabbit_success_status_count description guard (#1437) that prevents a
+# rate-limited "success" commit status from being treated as a real clean
+# review — that check runs unconditionally on whatever HEAD SHA state exists
+# when it is reached, regardless of how quickly this function got there.
+#
+# Only used to compute the *default* — an explicit CODERABBIT_NO_TRIGGER_TIMEOUT
+# env var override is honored as-is (uncapped) by the caller, matching how
+# other env-var overrides in this script are treated.
+coderabbit_no_trigger_timeout_default() {
+  local max_wait="${1:-0}"
+  local hardcoded_default=180
+  local floor=30
+  local effective="$hardcoded_default"
+  if [[ "$max_wait" =~ ^[0-9]+$ ]] && [ "$((10#$max_wait))" -gt 0 ]; then
+    # Force base-10 interpretation with the `10#` prefix: a caller-supplied
+    # value with a leading zero (e.g. "080") passes the ^[0-9]+$ digit check
+    # above but is otherwise parsed as octal by bash arithmetic expansion,
+    # and "080" is not a valid octal literal (8 is not an octal digit) —
+    # `$((080 / 2))` errors with "value too great for base" and aborts the
+    # script under `set -euo pipefail`. See the
+    # no_trigger_timeout_default_leading_zero_max_wait_normalized_base10 test.
+    local half_max_wait
+    half_max_wait=$((10#$max_wait / 2))
+    if [ "$half_max_wait" -lt "$effective" ]; then
+      effective="$half_max_wait"
+    fi
+  fi
+  if [ "$effective" -lt "$floor" ]; then
+    effective="$floor"
+  fi
+  printf '%s\n' "$effective"
+}
+
+# coderabbit_resolve_no_trigger_timeout <max_wait>
+#
+# Resolves the effective CODERABBIT_NO_TRIGGER_TIMEOUT for a given max_wait:
+# honors an explicit CODERABBIT_NO_TRIGGER_TIMEOUT env var override (uncapped)
+# when it is set and a valid positive integer, printing a WARN to stderr and
+# falling back to coderabbit_no_trigger_timeout_default(<max_wait>) when it is
+# set but invalid, or computing that default directly when it is unset.
+#
+# Extracted as its own function (rather than inlined in run_coderabbit_review)
+# specifically so tests can exercise the production override-resolution path
+# directly — including the env var precedence and validation-failure fallback
+# — without needing to drive run_coderabbit_review's full polling loop.
+coderabbit_resolve_no_trigger_timeout() {
+  local max_wait="$1"
+  local override="${CODERABBIT_NO_TRIGGER_TIMEOUT:-}"
+  if [ -z "$override" ]; then
+    coderabbit_no_trigger_timeout_default "$max_wait"
+    return 0
+  fi
+  if ! [[ "$override" =~ ^[0-9]+$ ]] || [ "$((10#$override))" -le 0 ]; then
+    local fallback
+    fallback="$(coderabbit_no_trigger_timeout_default "$max_wait")"
+    echo "WARN: CODERABBIT_NO_TRIGGER_TIMEOUT must be a positive integer; defaulting to ${fallback}" >&2
+    printf '%s\n' "$fallback"
+    return 0
+  fi
+  printf '%s\n' "$override"
+}
+
 run_coderabbit_review() {
   local pr_number="$1"
   local branch_name="$2"
@@ -4089,7 +4266,12 @@ run_coderabbit_review() {
   local coderabbit_rate_limit_retries=0
   local coderabbit_rate_limit_max_retries="${CODERABBIT_RATE_LIMIT_MAX_RETRIES:-2}"
   local coderabbit_rate_limit_wait="${CODERABBIT_RATE_LIMIT_WAIT:-180}"
-  local coderabbit_no_trigger_timeout="${CODERABBIT_NO_TRIGGER_TIMEOUT:-600}"
+  # See coderabbit_resolve_no_trigger_timeout / coderabbit_no_trigger_timeout_default
+  # (issue #1433) for why the default is computed from max_wait rather than a
+  # fixed constant, and for env var override / validation-fallback handling
+  # (including the WARN-and-fallback path for an invalid explicit override).
+  local coderabbit_no_trigger_timeout
+  coderabbit_no_trigger_timeout="$(coderabbit_resolve_no_trigger_timeout "$max_wait")"
   local coderabbit_no_trigger_retriggers=0
   if ! [[ "$coderabbit_rate_limit_max_retries" =~ ^[0-9]+$ ]]; then
     echo "WARN: CODERABBIT_RATE_LIMIT_MAX_RETRIES must be a non-negative integer; defaulting to 2" >&2
@@ -4098,10 +4280,6 @@ run_coderabbit_review() {
   if ! [[ "$coderabbit_rate_limit_wait" =~ ^[0-9]+$ ]] || [ "$coderabbit_rate_limit_wait" -le 0 ]; then
     echo "WARN: CODERABBIT_RATE_LIMIT_WAIT must be a positive integer; defaulting to 180" >&2
     coderabbit_rate_limit_wait=180
-  fi
-  if ! [[ "$coderabbit_no_trigger_timeout" =~ ^[0-9]+$ ]] || [ "$coderabbit_no_trigger_timeout" -le 0 ]; then
-    echo "WARN: CODERABBIT_NO_TRIGGER_TIMEOUT must be a positive integer; defaulting to 600" >&2
-    coderabbit_no_trigger_timeout=600
   fi
 
   while :; do
@@ -4192,10 +4370,12 @@ run_coderabbit_review() {
     # CodeRabbit sometimes does not auto-trigger after a push commit: no review
     # appears, no "Reviews paused" comment, and no rate-limit comment — CodeRabbit
     # simply stays silent. When no activity has been seen after
-    # CODERABBIT_NO_TRIGGER_TIMEOUT seconds (default 600 s), post
-    # "@coderabbitai review" to force a fresh review. Uses
-    # CODERABBIT_RATE_LIMIT_MAX_RETRIES as the combined retrigger cap so callers
-    # have a single knob for total retrigger attempts across both mechanisms.
+    # CODERABBIT_NO_TRIGGER_TIMEOUT seconds (default: see
+    # coderabbit_no_trigger_timeout_default — 180 s, capped at half of
+    # max_wait; issue #1433), post "@coderabbitai review" to force a fresh
+    # review. Uses CODERABBIT_RATE_LIMIT_MAX_RETRIES as the combined retrigger
+    # cap so callers have a single knob for total retrigger attempts across
+    # both mechanisms.
     if [ "$coderabbit_any_activity" -eq 0 ] \
         && [ "$coderabbit_retrigger_attempted" -eq 0 ] \
         && [ "$coderabbit_no_trigger_retriggers" -lt "$coderabbit_rate_limit_max_retries" ] \
@@ -4254,20 +4434,14 @@ run_coderabbit_review() {
         coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
         echo "INFO: CodeRabbit rate limit detected (retry $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — checking for SUCCESS commit status before waiting" >&2
         # --- Early SUCCESS check before retry wait ---
-        # Check whether CodeRabbit already posted a SUCCESS commit status for the current
-        # HEAD SHA. This happens when CodeRabbit signals the result via a commit status
-        # during a rate-limit window on a parallel batch. If found, skip the retry wait
-        # entirely and treat the PR as clean via coderabbit_status_success_fallback.
+        # Check whether CodeRabbit already posted a genuine SUCCESS commit status for
+        # the current HEAD SHA (state == "success" AND description is not a rate-limit
+        # message — see coderabbit_success_status_count / issue #1437). This happens
+        # when CodeRabbit signals the result via a commit status during a rate-limit
+        # window on a parallel batch. If found, skip the retry wait entirely and treat
+        # the PR as clean via coderabbit_status_success_fallback.
         local coderabbit_early_success_count
-        coderabbit_early_success_count="$(
-          gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
-            | jq -s '[.[].[] | select(
-                    (.context // "" | ascii_downcase | test("coderabbit"))
-                  )]
-                  | group_by(.context) | map(max_by(.updated_at))
-                  | map(select(.state == "success"))
-                  | length'
-        )"
+        coderabbit_early_success_count="$(coderabbit_success_status_count "$repo" "$head_sha")"
         if [ "${coderabbit_early_success_count:-0}" -gt 0 ]; then
           # SUCCESS status can appear while older CodeRabbit review threads stay unresolved
           # on the PR. Do not short-circuit to clean until GraphQL thread audit passes —
@@ -4321,26 +4495,16 @@ run_coderabbit_review() {
       if [ "$coderabbit_any_activity" -eq 0 ]; then
         # --- SUCCESS commit-status fallback ---
         # Before running stale-findings recovery or escalating, check whether CodeRabbit
-        # already posted a SUCCESS commit-status context for the current HEAD SHA. This
-        # happens during rate-limit windows on parallel batches: CodeRabbit signals the
-        # result via a commit status rather than an inline review comment. If found, treat
-        # the PR as clean and return immediately without scanning for stale findings.
-        # Context name is matched case-insensitively to guard against future renames.
-        local coderabbit_success_status_count
-        # Deduplicate by context (keep latest entry per context) before checking state,
-        # so a superseded status (e.g., an old success followed by a failure on the same
-        # context) is not counted. This matches the deduplication pattern used by the
-        # Devin adapter above.
-        coderabbit_success_status_count="$(
-          gh api "repos/$repo/commits/$head_sha/statuses" --paginate \
-            | jq -s '[.[].[] | select(
-                    (.context // "" | ascii_downcase | test("coderabbit"))
-                  )]
-                  | group_by(.context) | map(max_by(.updated_at))
-                  | map(select(.state == "success"))
-                  | length'
-        )"
-        if [ "${coderabbit_success_status_count:-0}" -gt 0 ]; then
+        # already posted a genuine SUCCESS commit-status context for the current HEAD SHA
+        # (state == "success" AND description is not a rate-limit message — see
+        # coderabbit_success_status_count / issue #1437). This happens during rate-limit
+        # windows on parallel batches: CodeRabbit signals the result via a commit status
+        # rather than an inline review comment. If found, treat the PR as clean and return
+        # immediately without scanning for stale findings. Context name is matched
+        # case-insensitively to guard against future renames.
+        local coderabbit_success_status_result_count
+        coderabbit_success_status_result_count="$(coderabbit_success_status_count "$repo" "$head_sha")"
+        if [ "${coderabbit_success_status_result_count:-0}" -gt 0 ]; then
           # SUCCESS status can appear while older CodeRabbit review threads stay unresolved
           # on the PR. Do not short-circuit to clean until GraphQL thread audit passes.
           # Wait before the audit: CodeRabbit may set SUCCESS while still posting inline

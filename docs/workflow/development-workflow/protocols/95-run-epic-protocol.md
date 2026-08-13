@@ -569,10 +569,39 @@ For each in-scope item:
      `bash scripts/development-workflow/haystack-reviewer.sh <pr_number> <owner> <repo>`
      (owner/repo can be resolved from the git remote or
      `WORKFLOW_TARGET_GITHUB_REPO`)
-   - Assess each finding individually: decide fix or accept, and record the
-     rationale
-   - Write one `advisories[]` entry per finding in the PR disposition input —
-     never a single catch-all entry covering multiple findings
+   - **First, classify each finding** against
+     `scripts/development-workflow/security-advisory-classifier.sh` (see
+     "Security-sensitive advisory classification" in
+     [`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md)).
+     **BR5 carve-out**: for a finding classified security-sensitive, the
+     runner never itself records an "accepted" or "rejected" disposition —
+     only "fixed" (with a cited commit) or "pending" (awaiting a verified
+     human decision) are available. This applies regardless of `mode:
+     delegated`, `may_merge_pr: true`, or any other granted delegated review
+     authority.
+   - Assess each **non**-security-sensitive finding individually: decide fix
+     or accept, and record the rationale
+   - **Array membership is mutually exclusive and status-independent**: a
+     security-sensitive finding — at every status, including `pending` and
+     `fixed` — belongs only in `securityAdvisories[]`, never in
+     `advisories[]`. Write one `advisories[]` entry per **non**-security-sensitive
+     finding (never a single catch-all entry covering multiple findings), and
+     one `securityAdvisories[]` entry (via `security-advisory-tracker.sh
+     reconcile`) per security-sensitive finding, kept in the visibly distinct
+     section described in Step 9 below. Duplicating a security-sensitive
+     finding into `advisories[]` as well is incorrect even when it is
+     `pending`: `run-epic-audit-trail.sh`'s `validate_advisories()` requires
+     every non-`fixed` `advisories[]` entry to carry a rationale, which a
+     genuinely still-pending security-sensitive finding has none of yet.
+   - Assembled Gate 5 evidence must also include
+     `.securityAdvisoryDecisionEvents[]` (raw candidate decision-comment
+     references, verified via `run-epic-delegated-gate.sh
+     verify-security-advisory-decisions`) alongside `.securityAdvisories[]`
+     — the same two fields, described identically, that
+     [`91-orchestrate-work-protocol.md`](91-orchestrate-work-protocol.md)'s
+     Step 8 guidance requires for `/run-item` and `/run-items`, so coverage
+     of this requirement (BR8, AC8) does not depend on the invocation
+     surface
 6. Restore readiness labels only after reviewer-loop, CI-loop, unresolved
    threads, and final readiness checks are clean.
 
@@ -598,6 +627,13 @@ Required behavior:
   authority, original command, recommended policy, selected policy, effective
   policy, copy-paste equivalent command, final decision, verification evidence,
   and protocol deviations.
+- Include every tracked security-sensitive advisory finding
+  (`securityAdvisories[]`): matched content category, matched
+  file/mechanism, current disposition state, and — when resolved — the
+  fixed commit SHA or the decider identity, timestamp, and rationale of the
+  verified human decision. This renders in a section visibly distinct from
+  the general "Advisory Decisions" section (see `run-epic-audit-trail.sh`'s
+  "Security-Sensitive Advisory Findings" section).
 - Redact secrets, credentials, tokens, and local-only paths before rendering or
   applying comments.
 
@@ -643,18 +679,26 @@ Before merge:
     in-scope child PRs, not to integration-branch graduation. A graduation PR
     without this approval must stop with `graduation_approval_required` and be
     resumed through `/graduate-development <slug>`.
-13. Run `run-epic-delegated-gate.sh` against the assembled evidence.
+14. Confirm no `.securityAdvisories[]` entry remains `pending` after
+    reconciliation at the current head SHA. A pending security-sensitive
+    advisory finding blocks delegated merge (`security_sensitive_advisory_pending`)
+    regardless of `mode`, `may_merge_pr`, or unrelated checkpoint state
+    (BR5) — only a fixed commit or a verified human accept/reject decision
+    resolves it.
+15. Run `run-epic-delegated-gate.sh` against the assembled evidence.
 
 Proceed to the normal repository merge protocol only when the delegated gate
 reports `merge_allowed`. If the gate reports `exceptional_bypass_authorized`,
-execute only the named human-authorized `gh pr merge <pr> --admin` attempt after
-verifying the current PR/SHA/fingerprint authorization and pre-attempt
-`reviewer-access-bypass` audit record, then verify live PR state and update that
+follow the canonical exceptional-bypass policy in
+[`guardrails-enforcement.md`](../guardrails-enforcement.md) Gate 5, then verify live PR state and update that
 same audit record with the result. If the gate reports `fix_required`, remove
 readiness labels, fix, rerun validation/reviewer/CI, and return to Step 8. If it
 reports `human_required`, stop for human authority, setup, access remediation,
 or risk tolerance. If it reports `blocked`, stop until required state is
-available.
+available. If it reports `not_applicable`, treat the candidate PR as
+`out_of_scope` per this step's closing note — it is never merged by this
+protocol. See [`guardrails-enforcement.md`](../guardrails-enforcement.md) Gate 5
+for the `pr.inScope` field contract this decision is derived from.
 
 If an in-scope child PR stops at readiness during a merge-granted run without a
 named blocker from this step, report `policy_inconsistent` in the PR
@@ -677,8 +721,9 @@ When all gates permit merge:
    merges, use the cleanup helper after merge verification. In `workflow_hub`
    mode, pass `--repo <product-repo>` for product-owned implementation branches:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
-   ./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> <merged-branch>
+   ./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> --pr <merged-pr-number> <merged-branch>
    ```
 
    For scoped batch merges, follow Protocol 94 so every merged PR runs its

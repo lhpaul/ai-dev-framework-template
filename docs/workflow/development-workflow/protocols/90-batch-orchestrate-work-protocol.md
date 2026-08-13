@@ -1372,12 +1372,13 @@ gh pr list --state all --head <branch> --json number,state --jq '.[0] | .number'
 
 1. List every stale / orphaned branch with its category, lifecycle, merged PR context, and a suggested cleanup command:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    # Category A — stale local workflow branch (upstream PR merged):
    git branch -D <branch>
 
    # Category A — remote implementation branch still present after merge:
-   ./scripts/development-workflow/post-merge-cleanup.sh --base <base> <branch>
+   ./scripts/development-workflow/post-merge-cleanup.sh --base <base> --pr <merged-pr-number> <branch>
 
    # Category B — orphaned worktree-agent branch (no remote, no PR):
    git branch -D <branch>

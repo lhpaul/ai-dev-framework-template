@@ -18,10 +18,13 @@ exactly. `/merged-qa-tester` is a compatibility alias with identical behavior.
 
 ## Scope helper
 
+<!-- workflow-shell-contract: bash-zsh -->
+
 ```bash
 ./scripts/development-workflow/post-merge-qa-scope.sh \
   --base <develop|develop-slug> \
-  [--epic <n>] [--issues <csv>] [--recent-merged-prs <n>] \
+  [--epic <n>] [--issues <csv>] [--tracker-items <csv>] \
+  [--recent-merged-prs <n>] \
   --json
 ```
 

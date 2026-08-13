@@ -10,6 +10,7 @@ usage() {
   cat <<'EOF'
 Usage:
   ./scripts/development-workflow/run-epic-delegated-gate.sh --input <file> [--policy <file>] [--repo-root <path>] [--product-repo <name>] [--json]
+  ./scripts/development-workflow/run-epic-delegated-gate.sh verify-security-advisory-decisions --input <file>
 
 Evaluates whether a delegated /run-epic candidate PR may proceed to the
 repository merge protocol. The gate is read-only: it does not run reviewers,
@@ -19,8 +20,23 @@ issues, or delete branches.
 When --repo-root and --product-repo are supplied (or productRepo.name is present
 in the evidence file), workflow_hub product repository ci_policy is loaded from
 the resolver and applied when the evidence file omits ciPolicy/ci_policy.
+
+verify-security-advisory-decisions runs only
+github_verified_security_advisory_decisions against
+.securityAdvisoryDecisionEvents[] in the given evidence file and prints the
+resulting verified-decision array as JSON, without evaluating the rest of
+the gate. Lets Protocol 93's disposition step reuse the exact same
+verification logic Gate 5 applies.
 EOF
 }
+
+command=""
+case "${1:-}" in
+  verify-security-advisory-decisions)
+    command="$1"
+    shift
+    ;;
+esac
 
 input_file=""
 policy_file=""
@@ -56,6 +72,413 @@ load_input_json() {
     error_exit "input file is not valid JSON: $file"
   fi
   printf '%s\n' "$raw"
+}
+
+github_authorization_event_candidates() {
+  printf '%s\n' "$1" | jq -c '
+    def authorization_events:
+      if ((.authorizationEvents // null) | type) == "array" then .authorizationEvents
+      elif ((.reviewerAccessAuthorizationEvents // null) | type) == "array" then .reviewerAccessAuthorizationEvents
+      elif ((.reviewer_access_authorization_events // null) | type) == "array" then .reviewer_access_authorization_events
+      elif ((.trustedAuthorizationEvents // null) | type) == "array" then .trustedAuthorizationEvents
+      else [] end;
+    def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
+    def authorization: (.authorization // .reviewerAccessAuthorization // .reviewer_access_authorization // {});
+    def authorization_by: trim_text(authorization.authorizedBy // authorization.authorized_by);
+    def authorization_at: trim_text(authorization.authorizedAt // authorization.authorized_at);
+    def authorization_text: trim_text(authorization.authorizationText // authorization.authorization_text);
+    def pr_head_sha: ((.pr.headSha // .pr.head_sha // .pr.headRefOid // "") | tostring);
+    def event_id($event): trim_text($event.databaseId // $event.database_id // $event.commentId // $event.comment_id // $event.reviewId // $event.review_id // $event.id);
+    def event_kind($event): trim_text($event.type // $event.eventType // $event.event_type);
+    {
+      repo: trim_text(.repository // .githubRepo // .github_repo // .repo // .productRepo.githubRepo // .productRepo.github_repo),
+      prNumber: (.pr.number // null),
+      headSha: pr_head_sha,
+      evidenceFingerprint: (.computedEvidenceFingerprint // ""),
+      authorizedBy: authorization_by,
+      authorizedAt: authorization_at,
+      authorizationText: authorization_text,
+      events: (authorization_events | map({
+        id: event_id(.),
+        type: event_kind(.)
+      }))
+    }
+  '
+}
+
+github_verified_authorization_events() {
+  local state="$1"
+  local candidates repo pr_number head_sha fingerprint authorized_by authorized_at authorization_text
+  candidates="$(github_authorization_event_candidates "$state" 2>/dev/null)" || {
+    printf '[]\n'
+    return 0
+  }
+  repo="$(printf '%s\n' "$candidates" | jq -r '.repo // ""')"
+  pr_number="$(printf '%s\n' "$candidates" | jq -r '.prNumber // ""')"
+  head_sha="$(printf '%s\n' "$candidates" | jq -r '.headSha // ""')"
+  fingerprint="$(printf '%s\n' "$candidates" | jq -r '.evidenceFingerprint // ""')"
+  authorized_by="$(printf '%s\n' "$candidates" | jq -r '.authorizedBy // ""')"
+  authorized_at="$(printf '%s\n' "$candidates" | jq -r '.authorizedAt // ""')"
+  authorization_text="$(printf '%s\n' "$candidates" | jq -r '.authorizationText // ""')"
+
+  if [ -z "$repo" ]; then
+    repo="$(repo_slug 2>/dev/null || true)"
+  fi
+  if ! workflow_is_valid_github_repo_slug "$repo"; then
+    printf '[]\n'
+    return 0
+  fi
+  if ! [[ "$pr_number" =~ ^[0-9]+$ && "$head_sha" =~ ^[0-9a-f]{40}$ && "$fingerprint" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    printf '[]\n'
+    return 0
+  fi
+  if ! [[ "$authorized_by" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ && "$authorized_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+    printf '[]\n'
+    return 0
+  fi
+  if [ -z "$authorization_text" ]; then
+    printf '[]\n'
+    return 0
+  fi
+  local expected_authorization_text="I authorize gh pr merge ${pr_number} --admin --match-head-commit ${head_sha} for PR #${pr_number} at head ${head_sha} with evidence fingerprint ${fingerprint}"
+  if [ "$authorization_text" != "$expected_authorization_text" ]; then
+    printf '[]\n'
+    return 0
+  fi
+
+  local verified='[]'
+  local event id type endpoint fetched normalized permission_response author_permission
+  while IFS= read -r event; do
+    [ -n "$event" ] || continue
+    id="$(printf '%s\n' "$event" | jq -r '.id // ""')"
+    type="$(printf '%s\n' "$event" | jq -r '.type // ""' | tr '[:upper:]' '[:lower:]')"
+    if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+      continue
+    fi
+    case "$type" in
+      comment|issue_comment)
+        endpoint="repos/${repo}/issues/comments/${id}"
+        ;;
+      review|pull_request_review)
+        endpoint="repos/${repo}/pulls/${pr_number}/reviews/${id}"
+        ;;
+      pull_request_review_comment|review_comment)
+        endpoint="repos/${repo}/pulls/comments/${id}"
+        ;;
+      *)
+        continue
+        ;;
+    esac
+    if ! fetched="$(gh_api_bounded "$endpoint" 2>/dev/null)"; then
+      continue
+    fi
+    [ -n "$fetched" ] || continue
+    if ! normalized="$(printf '%s\n' "$fetched" | jq -c --arg type "$type" --arg pr_number "$pr_number" '
+      def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
+      def url_targets_pr($url; $segment):
+        ($url // "" | tostring | test("/" + $segment + "/" + $pr_number + "($|[?#])"));
+      {
+        source: "github",
+        type: $type,
+        id: ((.id // "") | tostring),
+        author: (.user.login // ""),
+        authorType: (.user.type // ""),
+        authorAssociation: (.author_association // ""),
+        createdAt: (.created_at // .submitted_at // ""),
+        body: (.body // ""),
+        targetPullRequest: (
+          if ($type | IN("comment", "issue_comment")) then url_targets_pr(.issue_url; "issues")
+          elif ($type | IN("review", "pull_request_review")) then url_targets_pr(.pull_request_url; "pulls")
+          elif ($type | IN("pull_request_review_comment", "review_comment")) then url_targets_pr(.pull_request_url; "pulls")
+          else false end
+        )
+      }
+    ' 2>/dev/null)"; then
+      continue
+    fi
+    [ -n "$normalized" ] || continue
+    if ! permission_response="$(gh_api_bounded "repos/${repo}/collaborators/${authorized_by}/permission" 2>/dev/null)"; then
+      permission_response=""
+    fi
+    if ! author_permission="$(printf '%s\n' "$permission_response" | jq -r '.permission // ""' 2>/dev/null)"; then
+      author_permission=""
+    fi
+    if ! normalized="$(printf '%s\n' "$normalized" | jq -c --arg permission "$author_permission" '.authorPermission = $permission' 2>/dev/null)"; then
+      continue
+    fi
+    [ -n "$normalized" ] || continue
+    if printf '%s\n' "$normalized" | jq -e \
+      --arg author "$authorized_by" \
+      --arg created "$authorized_at" \
+      --arg expected "$expected_authorization_text" \
+      '.author == $author
+       and .createdAt == $created
+       and ((.authorType // "") == "User")
+       and ((.authorPermission // "") == "admin")
+       and (.targetPullRequest == true)
+       and ((.body | gsub("^\\s+|\\s+$"; "")) == $expected)' >/dev/null; then
+      verified="$(jq -c --argjson item "$normalized" '. + [$item]' <<< "$verified")"
+    fi
+  done < <(printf '%s\n' "$candidates" | jq -c '.events[]?')
+
+  printf '%s\n' "$verified"
+}
+
+# github_verified_security_advisory_decisions is structurally parallel to
+# github_verified_authorization_events above, but verifies a *set* of
+# candidate decision comments against a *set* of tracked
+# .securityAdvisories[] findings (rather than a single authorization
+# comment against one expected text), because a PR can carry multiple
+# security-sensitive findings pending independent human decisions. For each
+# candidate event, fetches the comment, then checks its body against every
+# tracked finding's expected decision-comment template (BR6/AC11): author
+# must be a human ("User") with admin or write repository permission (not
+# admin-only -- a security-advisory accept/reject is not an admin merge
+# override), the comment must target this exact PR
+# (mirrors github_verified_authorization_events's targetPullRequest check
+# at the same site -- an exact-text match alone does not bind the comment
+# to the current PR), and the comment's createdAt must not be earlier than
+# the matching finding's firstTrackedAt (BR6's "current head commit"
+# temporal boundary -- see Stage 2 of the implementation plan; a comment
+# authored before the finding was ever tracked cannot be a genuine decision
+# about it). Output: one verified-decision object per resolved event,
+# {findingId, decision, decider, decidedAt, rationale, sourceEventId,
+# sourceEventType} -- ready to feed into
+# `security-advisory-tracker.sh reconcile --decision-events`.
+github_verified_security_advisory_decisions() {
+  local state="$1"
+  local candidates repo pr_number head_sha advisories_json
+  candidates="$(printf '%s\n' "$state" | jq -c '
+    def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
+    def event_id($event): trim_text($event.databaseId // $event.database_id // $event.commentId // $event.comment_id // $event.reviewId // $event.review_id // $event.id);
+    def event_kind($event): trim_text($event.type // $event.eventType // $event.event_type);
+    {
+      repo: trim_text(.repository // .githubRepo // .github_repo // .repo // .productRepo.githubRepo // .productRepo.github_repo),
+      prNumber: (.pr.number // null),
+      headSha: ((.pr.headSha // .pr.head_sha // .pr.headRefOid // "") | tostring),
+      events: ((.securityAdvisoryDecisionEvents // []) | map({id: event_id(.), type: event_kind(.)})),
+      advisories: ((.securityAdvisories // []) | map({id: trim_text(.id), firstTrackedAt: trim_text(.firstTrackedAt)}) | map(select((.id | length) > 0)))
+    }
+  ' 2>/dev/null)" || {
+    printf '[]\n'
+    return 0
+  }
+  repo="$(printf '%s\n' "$candidates" | jq -r '.repo // ""')"
+  pr_number="$(printf '%s\n' "$candidates" | jq -r '.prNumber // ""')"
+  head_sha="$(printf '%s\n' "$candidates" | jq -r '.headSha // ""')"
+  advisories_json="$(printf '%s\n' "$candidates" | jq -c '.advisories // []')"
+
+  if [ -z "$repo" ]; then
+    repo="$(repo_slug 2>/dev/null || true)"
+  fi
+  if ! workflow_is_valid_github_repo_slug "$repo"; then
+    printf '[]\n'
+    return 0
+  fi
+  if ! [[ "$pr_number" =~ ^[0-9]+$ && "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '[]\n'
+    return 0
+  fi
+  if [ "$(printf '%s\n' "$advisories_json" | jq 'length')" -eq 0 ]; then
+    printf '[]\n'
+    return 0
+  fi
+
+  local verified='[]'
+  local event id type endpoint fetched normalized permission_response author_permission matched normalized_item
+  while IFS= read -r event; do
+    [ -n "$event" ] || continue
+    id="$(printf '%s\n' "$event" | jq -r '.id // ""')"
+    type="$(printf '%s\n' "$event" | jq -r '.type // ""' | tr '[:upper:]' '[:lower:]')"
+    if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+      continue
+    fi
+    case "$type" in
+      comment|issue_comment)
+        endpoint="repos/${repo}/issues/comments/${id}"
+        ;;
+      review|pull_request_review)
+        endpoint="repos/${repo}/pulls/${pr_number}/reviews/${id}"
+        ;;
+      pull_request_review_comment|review_comment)
+        endpoint="repos/${repo}/pulls/comments/${id}"
+        ;;
+      *)
+        continue
+        ;;
+    esac
+    if ! fetched="$(gh_api_bounded "$endpoint" 2>/dev/null)"; then
+      continue
+    fi
+    [ -n "$fetched" ] || continue
+    if ! normalized="$(printf '%s\n' "$fetched" | jq -c --arg type "$type" --arg pr_number "$pr_number" '
+      def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
+      def url_targets_pr($url; $segment):
+        ($url // "" | tostring | test("/" + $segment + "/" + $pr_number + "($|[?#])"));
+      {
+        source: "github",
+        type: $type,
+        id: ((.id // "") | tostring),
+        author: (.user.login // ""),
+        authorType: (.user.type // ""),
+        authorAssociation: (.author_association // ""),
+        createdAt: (.created_at // .submitted_at // ""),
+        body: (.body // "" | gsub("^\\s+|\\s+$"; "")),
+        targetPullRequest: (
+          if ($type | IN("comment", "issue_comment")) then url_targets_pr(.issue_url; "issues")
+          elif ($type | IN("review", "pull_request_review")) then url_targets_pr(.pull_request_url; "pulls")
+          elif ($type | IN("pull_request_review_comment", "review_comment")) then url_targets_pr(.pull_request_url; "pulls")
+          else false end
+        )
+      }
+    ' 2>/dev/null)"; then
+      continue
+    fi
+    [ -n "$normalized" ] || continue
+    if ! matched="$(printf '%s\n' "$normalized" | jq -c --argjson advisories "$advisories_json" --arg pr "$pr_number" --arg head "$head_sha" '
+      (.body // "") as $body |
+      [
+        $advisories[] | . as $entry |
+        (("I record a human decision for security-sensitive advisory finding " + $entry.id + " on PR #" + $pr + " at head " + $head + ": ") ) as $prefix |
+        (
+          if ($body | startswith($prefix + "accept — ")) then
+            {findingId: $entry.id, decision: "human-accepted", rationale: $body[($prefix + "accept — " | length):], firstTrackedAt: $entry.firstTrackedAt}
+          elif ($body | startswith($prefix + "reject — ")) then
+            {findingId: $entry.id, decision: "human-rejected", rationale: $body[($prefix + "reject — " | length):], firstTrackedAt: $entry.firstTrackedAt}
+          else null end
+        )
+      ] | map(select(. != null and ((.rationale // "") | length) > 0)) | (.[0] // null)
+    ' 2>/dev/null)"; then
+      continue
+    fi
+    if [ -z "$matched" ] || [ "$matched" = "null" ]; then
+      continue
+    fi
+    if ! permission_response="$(gh_api_bounded "repos/${repo}/collaborators/$(printf '%s\n' "$normalized" | jq -r '.author')/permission" 2>/dev/null)"; then
+      permission_response=""
+    fi
+    if ! author_permission="$(printf '%s\n' "$permission_response" | jq -r '.permission // ""' 2>/dev/null)"; then
+      author_permission=""
+    fi
+    # The firstTrackedAt temporal boundary is only meaningful when both
+    # timestamps are actual ISO-8601 UTC "Z" values: a lexical ">="
+    # comparison against an empty firstTrackedAt (a finding whose entry
+    # omitted or blanked the field) would be vacuously true for any
+    # non-empty createdAt, silently disabling the BR6 boundary entirely
+    # instead of rejecting the candidate for lacking a usable timestamp to
+    # compare against. Requiring both to match the fixed-width UTC format
+    # also keeps the lexical comparison itself valid -- it is only
+    # guaranteed correct for identical UTC "Z"-suffixed formats.
+    if printf '%s\n' "$normalized" | jq -e \
+      --argjson matched "$matched" \
+      --arg permission "$author_permission" \
+      '((.authorType // "") == "User")
+       and (($permission) as $p | ($p == "admin" or $p == "write"))
+       and (.targetPullRequest == true)
+       and (($matched.firstTrackedAt // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+       and ((.createdAt // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+       and ((.createdAt // "") >= ($matched.firstTrackedAt // ""))' >/dev/null; then
+      # sourceEventType/sourceEventId reflect the raw candidate event's
+      # {id, type} shape (the type as given on .securityAdvisoryDecisionEvents[],
+      # not the normalized/lower-cased fetch-endpoint type) so they can be
+      # carried straight back through security-advisory-tracker.sh's
+      # --decision-events contract unchanged.
+      normalized_item="$(printf '%s\n' "$normalized" | jq -c --argjson matched "$matched" --arg sourceType "$type" '{
+        findingId: $matched.findingId,
+        decision: $matched.decision,
+        decider: .author,
+        decidedAt: .createdAt,
+        rationale: $matched.rationale,
+        sourceEventId: .id,
+        sourceEventType: $sourceType
+      }' 2>/dev/null)" || continue
+      verified="$(jq -c --argjson item "$normalized_item" '. + [$item]' <<< "$verified")"
+    fi
+  done < <(printf '%s\n' "$candidates" | jq -c '.events[]?')
+
+  printf '%s\n' "$verified"
+}
+
+github_verified_bypass_audit() {
+  local state="$1"
+  local audit_candidate repo pr_number head_sha fingerprint
+  audit_candidate="$(printf '%s\n' "$state" | jq -c '
+    def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
+    def bypass_audit: (.bypassAudit // .bypass_audit // {});
+    {
+      repo: trim_text(.repository // .githubRepo // .github_repo // .repo // .productRepo.githubRepo // .productRepo.github_repo),
+      prNumber: (.pr.number // null),
+      headSha: ((.pr.headSha // .pr.head_sha // .pr.headRefOid // "") | tostring),
+      evidenceFingerprint: (.computedEvidenceFingerprint // ""),
+      state: trim_text(bypass_audit.state),
+      commentId: trim_text(bypass_audit.commentId // bypass_audit.comment_id)
+    }
+  ' 2>/dev/null)" || {
+    printf '{"present":false}\n'
+    return 0
+  }
+  repo="$(printf '%s\n' "$audit_candidate" | jq -r '.repo // ""')"
+  pr_number="$(printf '%s\n' "$audit_candidate" | jq -r '.prNumber // ""')"
+  head_sha="$(printf '%s\n' "$audit_candidate" | jq -r '.headSha // ""')"
+  fingerprint="$(printf '%s\n' "$audit_candidate" | jq -r '.evidenceFingerprint // ""')"
+  if [ -z "$repo" ]; then
+    repo="$(repo_slug 2>/dev/null || true)"
+  fi
+  if ! workflow_is_valid_github_repo_slug "$repo"; then
+    printf '{"present":false}\n'
+    return 0
+  fi
+  if ! [[ "$pr_number" =~ ^[0-9]+$ && "$head_sha" =~ ^[0-9a-f]{40}$ && "$fingerprint" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    printf '{"present":false}\n'
+    return 0
+  fi
+
+  local comments
+  if ! comments="$(gh_api_bounded --paginate --slurp "repos/${repo}/issues/${pr_number}/comments?per_page=100" 2>/dev/null)"; then
+    comments=""
+  fi
+  if [ -z "$comments" ]; then
+    printf '{"present":false}\n'
+    return 0
+  fi
+  printf '%s\n' "$comments" | jq -c \
+    --arg marker '<!-- reviewer-access-bypass -->' \
+    --arg state 'authorized_pending_attempt' \
+    --arg pr "#${pr_number}" \
+    --arg head "$head_sha" \
+    --arg fp "$fingerprint" \
+    --arg action "gh pr merge ${pr_number} --admin --match-head-commit ${head_sha}" '
+    def audit_lines:
+      (.body // "" | split("\n") | map(gsub("\r$"; "")));
+    def audit_section:
+      audit_lines as $lines
+      | ($lines | index("## Reviewer Access Bypass Audit")) as $heading
+      | if $heading == null then {}
+        else ($heading + 2) as $start
+        | {
+            state: ($lines[$start] // ""),
+            pr: ($lines[$start + 4] // ""),
+            head: ($lines[$start + 5] // ""),
+            fingerprint: ($lines[$start + 6] // ""),
+            action: ($lines[$start + 7] // ""),
+            terminator: ($lines[$start + 8] // "")
+          }
+        end;
+    [.[][]? | select((.body // "") | contains($marker)) | audit_section as $audit | {
+      present: true,
+      commentId: ((.id // "") | tostring),
+      state: $state,
+      evidenceFingerprint: $fp,
+      body: (.body // "")
+    } | select(
+      ($audit.state == "- State: " + $state)
+      and ($audit.pr == "- PR: " + $pr)
+      and ($audit.head == "- Head SHA: `" + $head + "`")
+      and ($audit.fingerprint == "- Evidence fingerprint: `" + $fp + "`")
+      and ($audit.action == "- Proposed action: `" + $action + "`")
+      and ($audit.terminator == "")
+    )][0] // {present:false}
+  ' 2>/dev/null || printf '{"present":false}\n'
 }
 
 while [ "$#" -gt 0 ]; do
@@ -103,6 +526,11 @@ fi
 
 state_json="$(load_input_json "$input_file")"
 
+if [ "$command" = "verify-security-advisory-decisions" ]; then
+  github_verified_security_advisory_decisions "$state_json"
+  exit 0
+fi
+
 if [ -n "$policy_file" ]; then
   policy_json="$(load_input_json "$policy_file")"
   state_json="$(printf '%s\n' "$state_json" | jq --argjson policy "$policy_json" '.policy = $policy' 2>/dev/null)" || error_exit "failed to merge policy into state (jq parse error)"
@@ -113,6 +541,54 @@ fi
 
 effective_root="${repo_root:-$(workflow_repo_root)}"
 state_json="$(workflow_merge_ci_policy_into_json "$state_json" "$effective_root" "$product_repo")"
+
+# Refuse to evaluate reasons against an incompletely populated .pr object. A
+# caller-side evidence-assembly failure that leaves .pr.number/.headRefName/
+# .baseRefName unpopulated is indistinguishable, field-by-field, from a real
+# blocker once the reasons cascade below applies its per-field worst-case
+# defaults — that conflation is what produces a misleading pile of false
+# blockers instead of a clear, actionable error. These three fields are the
+# minimal PR identity every live `gh pr view` read always populates, so their
+# absence is a reliable, low-false-positive signal of missing/failed evidence
+# assembly rather than a legitimate "field intentionally omitted" case (unlike
+# optional fields such as labels, mergeStateStatus, or auditDispositionPresent,
+# which existing callers legitimately omit and expect worst-case defaulting
+# for).
+pr_identity_gaps="$(printf '%s\n' "$state_json" | jq -r '
+  def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
+  def valid_positive_int($value):
+    if ($value | type) != "number" then false
+    else ($value == ($value | floor)) and ($value > 0)
+    end;
+  def valid_nonblank_string($value):
+    if ($value | type) != "string" then false
+    else (trim_text($value) | length) > 0
+    end;
+  (if (.pr | type) != "object" then ["pr"]
+   else
+     [
+       (if (valid_positive_int(.pr.number) | not) then "pr.number" else empty end),
+       (if (valid_nonblank_string(.pr.headRefName) | not) then "pr.headRefName" else empty end),
+       (if (valid_nonblank_string(.pr.baseRefName) | not) then "pr.baseRefName" else empty end)
+     ]
+   end) | join(", ")
+' 2>/dev/null)" || error_exit "failed to validate evidence .pr object (jq parse error)"
+
+if [ -n "$pr_identity_gaps" ]; then
+  error_exit "evidence file's .pr object is missing required identity field(s): ${pr_identity_gaps}. A missing or malformed PR identity field (pr.number must be a positive integer; pr.headRefName/pr.baseRefName must be non-blank strings) cannot be distinguished from a genuine blocker, so this gate refuses to evaluate reasons against incomplete input instead of defaulting every unpopulated field to its worst-case interpretation. Populate .pr.number, .pr.headRefName, and .pr.baseRefName from a live PR read before calling this gate."
+fi
+
+# .pr.inScope is optional (see the scope short-circuit below), but when
+# present it must be a literal boolean. A non-boolean value (null, a string
+# such as "false", a number, or an object) is caller-side evidence-assembly
+# noise, not a real scope determination -- silently coercing it via jq's `//`
+# truthiness would (depending on the value) either wrongly skip the scope
+# check or wrongly trigger the not_applicable short-circuit for a PR whose
+# scope was never actually resolved to false.
+if printf '%s\n' "$state_json" | jq -e '(.pr | type) == "object" and (.pr | has("inScope")) and ((.pr.inScope | type) != "boolean")' >/dev/null 2>&1; then
+  pr_scope_type="$(printf '%s\n' "$state_json" | jq -r '.pr.inScope | type' 2>/dev/null)"
+  error_exit "evidence file's .pr.inScope field is present but not a boolean (got type: ${pr_scope_type:-unknown}). Omit .pr.inScope entirely when there is no resolved /run-epic scope to check the candidate PR against, or set it to the literal boolean true or false."
+fi
 
 material_evidence_json="$(printf '%s\n' "$state_json" | jq -cS '
   def reviewer_checks:
@@ -141,6 +617,12 @@ material_evidence_json="$(printf '%s\n' "$state_json" | jq -cS '
 ' 2>/dev/null)" || error_exit "failed to assemble material evidence fingerprint input"
 material_fingerprint="$(printf '%s' "$material_evidence_json" | openssl dgst -sha256 -r | awk '{print $1}')"
 state_json="$(printf '%s\n' "$state_json" | jq --arg fp "sha256:${material_fingerprint}" '.computedEvidenceFingerprint = $fp' 2>/dev/null)" || error_exit "failed to attach material evidence fingerprint"
+verified_authorization_events="$(github_verified_authorization_events "$state_json")"
+state_json="$(printf '%s\n' "$state_json" | jq --argjson events "$verified_authorization_events" '.githubVerifiedAuthorizationEvents = $events' 2>/dev/null)" || error_exit "failed to attach verified authorization events"
+verified_bypass_audit="$(github_verified_bypass_audit "$state_json")"
+state_json="$(printf '%s\n' "$state_json" | jq --argjson audit "$verified_bypass_audit" '.githubVerifiedBypassAudit = $audit' 2>/dev/null)" || error_exit "failed to attach verified bypass audit"
+verified_security_advisory_decisions="$(github_verified_security_advisory_decisions "$state_json")"
+state_json="$(printf '%s\n' "$state_json" | jq --argjson decisions "$verified_security_advisory_decisions" '.githubVerifiedSecurityAdvisoryDecisions = $decisions' 2>/dev/null)" || error_exit "failed to attach verified security advisory decisions"
 
 decision_json="$(printf '%s\n' "$state_json" | jq '
   def policy: if (.policy | type) == "object" then .policy else {} end;
@@ -187,10 +669,15 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     else [] end;
   def item_number:
     (.item.number // .item.issue_number // .item.issueNumber // null);
+  def checkpoint_state($cp):
+    (($cp.satisfaction_state // "pending") | tostring | gsub("^\\s+|\\s+$"; "") | ascii_downcase);
+  def invalid_checkpoint_states:
+    checkpoint_list
+    | map(select((checkpoint_state(.) | IN("pending", "satisfied", "waived")) | not));
   def checkpoint_applies($cp; $item; $prStage):
     ($item != null)
     and (($cp.item_number | tonumber) == ($item | tonumber))
-    and (($cp.satisfaction_state // "pending") == "pending")
+    and (checkpoint_state($cp) == "pending")
     and (stage_rank($cp.stage) > 0)
     and (stage_rank($cp.stage) <= stage_rank($prStage));
   def pending_checkpoints:
@@ -217,6 +704,10 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     else [] end;
   def reviewer_check_name($check):
     ($check.name // $check.context // $check.workflowName // $check.provider // "unknown");
+  def reviewer_check_key($check):
+    if ($check.__typename // "") == "StatusContext" then reviewer_check_name($check)
+    else (($check.workflowName // $check.workflow // $check.provider // "") + "\u0000" + reviewer_check_name($check))
+    end;
   def reviewer_check_non_green($check):
     (($check.conclusion // "") | ascii_downcase) as $conclusion |
     (($check.status // "") | ascii_downcase) as $status |
@@ -230,12 +721,92 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     end;
   def non_green_reviewer_checks:
     reviewer_checks | map(select(reviewer_check_non_green(.)));
-  def reviewer_check_names:
-    reviewer_checks | map(reviewer_check_name(.));
+  def reviewer_check_keys:
+    reviewer_checks | map(reviewer_check_key(.));
+  def advisory_entries:
+    if ((.advisories // null) | type) == "array" then .advisories
+    elif ((.reviewer.advisories // null) | type) == "array" then .reviewer.advisories
+    else [] end;
+  def advisory_count:
+    ((.reviewer.advisoryCount // .reviewer.advisory_count // 0) | tonumber);
+  def accepted_advisory_missing_rationale($advisory):
+    (($advisory.decision // $advisory.disposition // $advisory.status // "") | ascii_downcase) as $decision |
+    (($advisory.rationale // $advisory.reason // $advisory.mitigation // "") | tostring | gsub("^\\s+|\\s+$"; "") | length) as $rationale_length |
+    ($decision | test("accept")) and ($rationale_length == 0);
+  def advisory_missing_disposition($advisory):
+    (($advisory.decision // $advisory.disposition // $advisory.status // "") | ascii_downcase) as $decision |
+    (($decision | IN("fixed", "accepted")) | not);
+  def advisory_evidence_incomplete:
+    (advisory_entries) as $advisories |
+    (advisory_count > 0 and ($advisories | length) < advisory_count)
+    or ($advisories | any(advisory_missing_disposition(.) or accepted_advisory_missing_rationale(.)));
+  # BR8/BR9: this is part of the normal reasons cascade of the gate (the
+  # shared "else" block below, entered whenever .pr.inScope is absent or true), not
+  # a new short-circuit -- so it evaluates on every /run-item, /run-items,
+  # and /run-epic invocation surface identically, with no additional
+  # scope-wiring required. BR4: this does not read, write, or call any of
+  # the checkpoint_list / pending_checkpoints / checkpoint_reason /
+  # invalid_checkpoint_states functions above -- it is a fully independent
+  # path using its own reason string and its own
+  # security-advisory-decision-required label reference (see Protocol 93).
+  def security_advisory_entries:
+    if ((.securityAdvisories // null) | type) == "array" then .securityAdvisories else [] end;
+  def verified_security_advisory_decisions:
+    if ((.githubVerifiedSecurityAdvisoryDecisions // null) | type) == "array" then .githubVerifiedSecurityAdvisoryDecisions else [] end;
+  # BR5: the status of a security-sensitive finding is treated as resolved
+  # here only via (a) a matching verified human decision in $decisions (the
+  # BR6-verified output of github_verified_security_advisory_decisions,
+  # re-derived fresh on every gate call -- mirroring the existing
+  # reviewer-access-bypass pattern, which never trusts a persisted
+  # "authorized" flag either), or (b) status == "fixed" together with a
+  # non-empty fixCommit already recorded on the entry. Every other status
+  # value -- including an unrecognized string, or a "human-accepted" /
+  # "human-rejected" value that is not backed by a matching verified
+  # decision on THIS call, or a "fixed" entry missing fixCommit -- resolves
+  # to "pending" here, unconditionally. This intentionally does not trust an
+  # already-"human-accepted"/"human-rejected" status value on the entry by
+  # itself: nothing about that string, on its own, proves it went through
+  # BR6 verification, so trusting it directly would let a buggy or
+  # malicious evidence-assembly step bypass BR5 entirely. The caller must
+  # re-supply the same .securityAdvisoryDecisionEvents[] candidate
+  # references on every Gate 4/5 evaluation to keep an already-resolved
+  # finding unblocked (see the Gate-5-evidence-assembly paragraph in
+  # Protocol 91).
+  # $decisions is threaded in explicitly (not read via the no-arg
+  # verified_security_advisory_decisions def) because this function is
+  # invoked from inside map(select(...)) below, where the implicit `.` of
+  # jq is each individual security-advisory entry, not the top-level
+  # evidence state -- a no-arg def reading `.githubVerifiedSecurityAdvisoryDecisions`
+  # at that call site would silently read it off the entry object instead
+  # (always null there) and every finding would appear permanently pending
+  # regardless of any verified decision.
+  def security_advisory_effective_status($entry; $decisions):
+    ($decisions | map(select((.findingId // "") == ($entry.id // ""))) | .[0]) as $decision |
+    if ($decision != null) then $decision.decision
+    elif (($entry.status // "") == "fixed") and (($entry.fixCommit // "") | tostring | length > 0) then "fixed"
+    else "pending"
+    end;
+  def pending_security_advisories($decisions):
+    security_advisory_entries | map(select(security_advisory_effective_status(.; $decisions) == "pending"));
+  # $prNumber is threaded in explicitly for the same reason $decisions is on
+  # security_advisory_effective_status above (this def is invoked from
+  # inside map(...), where the implicit `.` of jq is each individual entry,
+  # not the top-level evidence state that carries .pr.number). Embedding the
+  # PR number in the reason text mirrors the existing named-stop contract
+  # already used by the graduation_approval_required and
+  # human_checkpoint_required reason strings (guardrails-enforcement.md
+  # section 4, plus the REVIEW.md Named-stop contract check: every stop
+  # message names the exact stop condition string, the affected work item,
+  # and the concrete human action).
+  def security_advisory_reason($entry; $prNumber):
+    "security_sensitive_advisory_pending: finding " + ($entry.id // "unknown") +
+    " (" + ($entry.category // "unknown") + " @ " + ($entry.matchedFile // "unknown") + ")" +
+    " on PR #" + (($prNumber // "unknown") | tostring) +
+    " requires a fixed commit or a verified human accept/reject decision at head " + ($entry.headSha // "unknown");
   def ci_status_checks:
-    (reviewer_check_names) as $reviewerNames |
+    (reviewer_check_keys) as $reviewerKeys |
     (.statusChecks // [])
-    | map(. as $check | select(($reviewerNames | index(reviewer_check_name($check)) | not)));
+    | map(. as $check | select(($reviewerKeys | index(reviewer_check_key($check)) | not)));
   def current_ci_blocker:
     if ci_policy == "none" then
       false
@@ -270,7 +841,48 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     and (access_obj.cannotUnblockInTime // access_obj.cannot_unblock_in_time // false) == true
     and ((access_obj.bypassReason // access_obj.bypass_reason // "") | tostring | length) > 0;
   def authorization: (.authorization // .reviewerAccessAuthorization // .reviewer_access_authorization // {});
-  def bypass_audit: (.bypassAudit // .bypass_audit // {});
+  def trim_text($value): ($value // "" | tostring | gsub("^\\s+|\\s+$"; ""));
+  def authorization_by: trim_text(authorization.authorizedBy // authorization.authorized_by);
+  def authorization_at: trim_text(authorization.authorizedAt // authorization.authorized_at);
+  def authorization_text: trim_text(authorization.authorizationText // authorization.authorization_text);
+  def named_authorization_present:
+    (authorization_by | test("^[A-Za-z0-9][A-Za-z0-9-]{0,38}$"))
+    and (authorization_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+    and (authorization_text | length) > 0;
+  def pr_head_sha: ((.pr.headSha // .pr.head_sha // .pr.headRefOid // "") | tostring);
+  def valid_pr_head_sha: (pr_head_sha | test("^[0-9a-f]{40}$"));
+  def authorization_events:
+    if ((.githubVerifiedAuthorizationEvents // null) | type) == "array" then .githubVerifiedAuthorizationEvents
+    else [] end;
+  def event_author($event):
+    trim_text(
+      if (($event.author // null) | type) == "object" then
+        ($event.author.login // $event.author.name // "")
+      else
+        ($event.author // $event.login // $event.authorLogin // $event.author_login)
+      end
+    );
+  def trusted_author($event):
+    (trim_text($event.authorType // $event.author_type) == "User")
+    and (trim_text($event.authorPermission // $event.author_permission) == "admin");
+  def target_pr_verified($event):
+    ($event.targetPullRequest // $event.target_pull_request // false) == true;
+  def trusted_authorization_event_present:
+    (authorization_by) as $authorization_by |
+    (authorization_at) as $authorization_at |
+    (authorization_text) as $authorization_text |
+    authorization_events
+    | any(. as $event |
+        ((trim_text($event.source // $event.provider) | ascii_downcase) == "github")
+        and ((trim_text($event.type // $event.eventType // $event.event_type) | ascii_downcase)
+          | IN("comment", "issue_comment", "pull_request_review", "review", "pull_request_review_comment", "review_comment"))
+        and (event_author($event) == $authorization_by)
+        and trusted_author($event)
+        and target_pr_verified($event)
+        and (trim_text($event.createdAt // $event.created_at // $event.submittedAt // $event.submitted_at) == $authorization_at)
+        and (trim_text($event.body // $event.text // $event.authorizationText // $event.authorization_text) == $authorization_text)
+      );
+  def bypass_audit: (.githubVerifiedBypassAudit // {});
   def reviewer_blocks:
     ((.reviewer.blockingCount // .reviewer.blocking_count // 0) | tonumber) > 0
     or ((.reviewer.status // "") | test("needs_fixes|failed|blocked"));
@@ -283,10 +895,13 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     elif (($blockedChecks | length) == 0) then "not_applicable"
     elif (access_denial_verified | not) then "insufficient_evidence"
     elif (remediation_ready | not) then "access_restricted"
+    elif (valid_pr_head_sha | not) then "insufficient_evidence"
     elif ((authorization.pullRequest // authorization.pull_request // null) == null) then "authorization_required"
+    elif (named_authorization_present | not) then "authorization_required"
     elif (((authorization.pullRequest // authorization.pull_request) | tostring) != ((.pr.number // "") | tostring)
-       or ((authorization.headSha // authorization.head_sha // "") != (.pr.headSha // .pr.head_sha // .pr.headRefOid // ""))
+       or ((authorization.headSha // authorization.head_sha // "") != pr_head_sha)
        or ((authorization.evidenceFingerprint // authorization.evidence_fingerprint // "") != $fingerprint)) then "authorization_stale"
+    elif (trusted_authorization_event_present | not) then "authorization_required"
     elif ((bypass_audit.present // false) != true
        or ((bypass_audit.evidenceFingerprint // bypass_audit.evidence_fingerprint // "") != $fingerprint)
        or ((bypass_audit.state // "") != "authorized_pending_attempt")) then "audit_required"
@@ -303,13 +918,13 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
         elif $classification == "authorization_required" then "obtain fresh named human authorization for the exact PR, head SHA, and evidence fingerprint"
         elif $classification == "authorization_stale" then "refresh evidence and obtain a new named authorization"
         elif $classification == "audit_required" then "write and verify the pre-attempt reviewer access-bypass audit record"
-        elif $classification == "exceptional_bypass_authorized" then "execute exactly the named gh pr merge --admin action once, then verify and update audit"
+        elif $classification == "exceptional_bypass_authorized" then "execute exactly the named gh pr merge --admin --match-head-commit action once, then verify and update audit"
         elif $classification == "insufficient_evidence" then "refresh reviewer check and provider access-denial evidence"
         elif $classification == "ci_blocker" then "fix or complete CI before considering reviewer access restriction"
         elif $classification == "review_blocker" then "fix reviewer findings before considering reviewer access restriction"
         else "not applicable" end
       ),
-      proposedAction: (if $classification == "exceptional_bypass_authorized" then "gh pr merge " + ((.pr.number // "") | tostring) + " --admin" else "" end)
+      proposedAction: (if $classification == "exceptional_bypass_authorized" then "gh pr merge " + ((.pr.number // "") | tostring) + " --admin --match-head-commit " + pr_head_sha else "" end)
     };
   def add_reason($reasons; $reason): $reasons + [$reason];
   def reason_count($reasons): $reasons | length;
@@ -318,9 +933,45 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     and pr_mergeable_ok
     and (($reasons | length) > 0)
     and ($reasons | all(. == "PR merge state is not CLEAN"));
+  def scope_field_present: (.pr | type) == "object" and (.pr | has("inScope"));
+  # A literal boolean check, not truthiness: the bash preflight above already
+  # rejects a present non-boolean .pr.inScope before this jq program runs, but
+  # this definition stays independently correct (no `// false` defaulting) so
+  # it cannot mis-decide even if that upstream guard is ever bypassed.
+  def scope_value_false: (.pr.inScope | type) == "boolean" and (.pr.inScope == false);
 
   . as $state |
+  if (scope_field_present and scope_value_false) then
+  {
+    decision: "not_applicable",
+    mergePermitted: false,
+    exceptionalAdminMergePermitted: false,
+    reasons: ["candidate PR is not in the resolved run-epic scope"],
+    reviewerAccess: {
+      classification: "not_applicable",
+      pullRequest: (.pr.number // null),
+      headSha: pr_head_sha,
+      evidenceFingerprint: (.computedEvidenceFingerprint // ""),
+      blockedReviewerChecks: [],
+      primaryAction: "not applicable",
+      proposedAction: ""
+    },
+    nextAction: "not applicable: candidate PR is not in the resolved run-epic scope; no action is required from this gate for this PR",
+    pr: {
+      number: (.pr.number // null),
+      headRefName: (.pr.headRefName // ""),
+      baseRefName: (.pr.baseRefName // "")
+    },
+    policy: policy,
+    readOnlyGuarantee: "No reviewer-loop runs, CI polling, label edits, tracker updates, comments, merges, issue closure, or branch deletion were performed."
+  }
+  else
+  (
   [] as $reasons |
+  (invalid_checkpoint_states) as $invalidCheckpointStates |
+  (if ($invalidCheckpointStates | length) > 0
+   then add_reason($reasons; "human_checkpoint_required: invalid checkpoint satisfaction_state; expected pending, satisfied, or waived")
+   else $reasons end) as $reasons |
   (if (policy.delegateReview // false) != true
    then add_reason($reasons; "delegated review authority is missing")
    else $reasons end) as $reasons |
@@ -332,9 +983,6 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
    else $reasons end) as $reasons |
   (if (.item.status // "") == "Backlog" and ((policy.mayStartBacklog // false) != true)
    then add_reason($reasons; "Backlog item cannot start without explicit may-start-backlog authority")
-   else $reasons end) as $reasons |
-  (if (.pr.inScope // false) != true
-   then add_reason($reasons; "candidate PR is not in the resolved run-epic scope")
    else $reasons end) as $reasons |
   (if (if (.pr | has("isDraft")) then .pr.isDraft else true end) == true
    then add_reason($reasons; "PR is still draft")
@@ -380,6 +1028,15 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   (if ((.reviewer.acceptedAdvisoriesWithoutRationale // 0) | tonumber) > 0
    then add_reason($reasons; "accepted advisories require rationale")
    else $reasons end) as $reasons |
+  (if advisory_evidence_incomplete
+   then add_reason($reasons; "reviewer advisories require per-finding fix or acceptance rationale")
+   else $reasons end) as $reasons |
+  (verified_security_advisory_decisions) as $verifiedSecurityAdvisoryDecisions |
+  (pending_security_advisories($verifiedSecurityAdvisoryDecisions)) as $pendingSecurityAdvisories |
+  (.pr.number) as $prNumberForSecurityAdvisories |
+  (if ($pendingSecurityAdvisories | length) > 0
+   then $reasons + ($pendingSecurityAdvisories | map(security_advisory_reason(.; $prNumberForSecurityAdvisories)))
+   else $reasons end) as $reasons |
   (if (ci_policy == "none") and (risk_merge_permitted != true) and risk_ci_only_blockers
    then $reasons
    elif risk_merge_permitted != true
@@ -400,7 +1057,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
       elif ($reviewerAccessClassification | IN("access_restricted", "authorization_required", "authorization_stale", "audit_required")) then "human_required"
       elif $count == 0 then "merge_allowed"
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "fix_required"
-      elif ($reasons | any(test("authority|risk gate|needs-setup|not in the resolved|Backlog|human_checkpoint_required|human-checkpoint|graduation_approval_required"))) then "human_required"
+      elif ($reasons | any(test("authority|risk gate|needs-setup|Backlog|human_checkpoint_required|human-checkpoint|graduation_approval_required|security_sensitive_advisory_pending"))) then "human_required"
       else "blocked"
       end
     ),
@@ -415,7 +1072,8 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "remove readiness labels, fix, rerun validation, reviewer loop, CI loop, and this gate"
       elif ($reasons | any(test("human_checkpoint_required|human-checkpoint"))) then "stop for the named human checkpoint action, record satisfied or waived evidence, sync labels, and rerun this gate"
       elif ($reasons | any(test("graduation_approval_required"))) then "stop for explicit graduation approval via /graduate-development before mutating"
-      elif ($reasons | any(test("authority|risk gate|needs-setup|not in the resolved|Backlog"))) then "stop for human authority or setup before mutating"
+      elif ($reasons | any(test("security_sensitive_advisory_pending"))) then "record a fixed commit or obtain a verified human accept/reject decision for each pending security-sensitive advisory finding (never a delegated-agent-recorded acceptance/rejection), then rerun this gate"
+      elif ($reasons | any(test("authority|risk gate|needs-setup|Backlog"))) then "stop for human authority or setup before mutating"
       else "block until required state is available"
       end
     ),
@@ -427,6 +1085,8 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     policy: policy,
     readOnlyGuarantee: "No reviewer-loop runs, CI polling, label edits, tracker updates, comments, merges, issue closure, or branch deletion were performed."
   }
+  )
+  end
 ' 2>/dev/null)" || error_exit "failed to evaluate delegated gate decision (jq parse error)"
 
 if [ -z "$decision_json" ]; then

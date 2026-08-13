@@ -47,6 +47,11 @@ run_fixture portable_for fail $'<!-- workflow-shell-contract: bash-zsh -->\n```s
 run_fixture portable_set fail $'<!-- workflow-shell-contract: bash-zsh -->\n```shell\nset -- $pair\n```'
 run_fixture portable_pass pass $'<!-- workflow-shell-contract: bash-zsh -->\n```shell\nwhile IFS= read -r item; do echo "$item"; done <<EOF\na\nEOF\n```'
 run_fixture typed_non_shell_boundary pass $'```text\nstatus only\n```\n\ngit status is referenced in prose, not a snippet.\n\n<!-- workflow-shell-contract: bash-zsh -->\n```bash\necho hello\n```'
+run_fixture explicit_ts_tag_ignores_shell_signal pass $'```ts\nexport const DEFAULT_LOCALE = \'es\';\n\nexport function toLocale(code: string | null): string {\n  if (code === null) return DEFAULT_LOCALE;\n  return code;\n}\n```'
+run_fixture explicit_typescript_tag_ignores_shell_signal pass $'```typescript\nexport function run(): void {\n  if (true) {\n    console.log("ok");\n  }\n}\n```'
+run_fixture explicit_python_tag_ignores_shell_signal pass $'```python\nimport os\n\nif __name__ == "__main__":\n    export = os.environ.get("X")\n```'
+run_fixture explicit_sql_tag_ignores_shell_signal pass $'```sql\nfor x in (1, 2, 3) loop\n  set y = x;\nend loop;\n```'
+run_fixture untagged_shell_signal_still_flagged fail $'```\ngit status\n```'
 
 contract_doc="docs/workflow/snippet-contract-only.md"
 contract_diff="$TMP_DIR/contract-only.diff"

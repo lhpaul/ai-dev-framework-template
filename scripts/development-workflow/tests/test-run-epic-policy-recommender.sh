@@ -548,6 +548,10 @@ invalid_waived_file="$TMP_ROOT/invalid-waived.json"
 printf '%s\n' '[{"item_number": 200, "stage": "plan", "domain": "technical", "satisfaction_state": "waived"}]' > "$invalid_waived_file"
 run_fails_contains "rejects_waived_without_rationale" "waived checkpoints require waiver_rationale" "$HELPER" --scope "$schema_fixture" --original-command x --checkpoints-file "$invalid_waived_file" --json
 
+invalid_state_file="$TMP_ROOT/invalid-state-checkpoints.json"
+printf '%s\n' '[{"item_number": 200, "stage": "plan", "domain": "technical", "satisfaction_state": "pendng"}]' > "$invalid_state_file"
+run_fails_contains "rejects_unknown_checkpoint_satisfaction_state" "checkpoint satisfaction_state must be one of: pending, satisfied, waived" "$HELPER" --scope "$schema_fixture" --original-command x --checkpoints-file "$invalid_state_file" --json
+
 empty_checkpoints_file="$TMP_ROOT/empty-checkpoints.json"
 printf '%s\n' '[]' > "$empty_checkpoints_file"
 empty_override_output="$("$HELPER" --scope "$schema_fixture" --original-command "\$run-epic --items 200" --checkpoints-file "$empty_checkpoints_file" --json)"

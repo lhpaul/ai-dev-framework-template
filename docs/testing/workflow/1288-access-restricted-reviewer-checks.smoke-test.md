@@ -144,7 +144,8 @@ guesses.
 2. Confirm the fixture records that access remediation was attempted, cannot
    unblock in the required timeframe, and includes a non-empty bypass reason.
 3. Confirm it presents the evidence fingerprint and exact proposed
-   `gh pr merge <pr> --admin` action but remains `human_required`.
+   `gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` action
+   but remains `human_required`.
 4. Set only ordinary delegated/epic/batch merge policy fields in the fixture.
 5. Confirm they do not change the result to exceptional authorization.
 6. Supply a current named authorization fixture but omit the pre-attempt audit.

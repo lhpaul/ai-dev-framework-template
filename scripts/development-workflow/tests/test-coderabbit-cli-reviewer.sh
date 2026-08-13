@@ -19,10 +19,12 @@ OUTPUT_FILE="$(mktemp)"
 EXIT_FILE="$(mktemp)"
 POLICY_CONFIG_FILE="$(mktemp)"
 LOCAL_CONFIG_ROOT="$(mktemp -d)"
+VALID_REPO_ROOT="$(mktemp -d)"
+MISMATCH_REPO_ROOT="$(mktemp -d)"
 
 cleanup() {
   local status=$?
-  rm -rf "$MOCK_BIN" "$NO_CLI_BIN" "$LOCAL_CONFIG_ROOT"
+  rm -rf "$MOCK_BIN" "$NO_CLI_BIN" "$LOCAL_CONFIG_ROOT" "$VALID_REPO_ROOT" "$MISMATCH_REPO_ROOT"
   rm -f "$CALL_LOG" "$OUTPUT_FILE" "$EXIT_FILE" "$POLICY_CONFIG_FILE"
   exit "$status"
 }
@@ -54,8 +56,13 @@ install_gh_mock() {
   cat > "$1/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
 case "$*" in
-  *"pr view 123"*"--json baseRefName,headRefName"*)
-    printf '{"baseRefName":"main","headRefName":"feature/test"}\n'
+  *"pr view 123"*"--json baseRefName,headRefName,headRefOid"*)
+    if [ -n "${MOCK_PR_HEAD_SHA:-}" ]; then
+      mock_head_sha="$MOCK_PR_HEAD_SHA"
+    elif ! mock_head_sha="$(git rev-parse HEAD 2>/dev/null)"; then
+      mock_head_sha=""
+    fi
+    printf '{"baseRefName":"main","headRefName":"feature/test","headRefOid":"%s"}\n' "$mock_head_sha"
     exit 0
     ;;
   *)
@@ -116,6 +123,17 @@ run_reviewer() {
   printf '%s\n' "$status" > "$EXIT_FILE"
 }
 
+init_repo_root_fixture() {
+  local target="$1" origin_url="$2"
+  git -C "$target" init -q
+  git -C "$target" config user.email "test@example.com"
+  git -C "$target" config user.name "Test User"
+  printf 'fixture\n' > "$target/README.md"
+  git -C "$target" add README.md
+  git -C "$target" commit -q -m "test fixture"
+  git -C "$target" remote add origin "$origin_url"
+}
+
 line_for() {
   local key="$1"
   grep "^${key}=" "$OUTPUT_FILE" | head -n 1 || true
@@ -125,6 +143,9 @@ exit_code() {
   cat "$EXIT_FILE"
 }
 
+init_repo_root_fixture "$VALID_REPO_ROOT" "git@github.com:owner/repo.git"
+init_repo_root_fixture "$MISMATCH_REPO_ROOT" "git@github.com:other/repo.git"
+
 reset_mocks
 set_mock_stdout '{"findings":[]}'
 run_reviewer "$MOCK_BIN:$PATH"
@@ -133,11 +154,40 @@ run_test "clean_empty_findings_comments" "COMMENT_COUNT=0" "$(line_for COMMENT_C
 run_test "clean_empty_findings_exit" "0" "$(exit_code)"
 
 reset_mocks
-set_mock_stdout '{"findings":[{"severity":"Critical","message":"fix this"}]}'
+set_mock_stdout '{"findings":[]}'
+MOCK_PR_HEAD_SHA="0000000000000000000000000000000000000000"
+export MOCK_PR_HEAD_SHA
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+unset MOCK_PR_HEAD_SHA
+run_test "repo_root_head_mismatch_escalates" "RESULT=escalate" "$(line_for RESULT)"
+run_test "repo_root_head_mismatch_reason" "REASON=checkout_head_mismatch" "$(line_for REASON)"
+run_test "repo_root_head_mismatch_exit" "2" "$(exit_code)"
+
+reset_mocks
+set_mock_stdout '{"findings":[]}'
+MOCK_PR_HEAD_SHA="$(git -C "$MISMATCH_REPO_ROOT" rev-parse HEAD)"
+export MOCK_PR_HEAD_SHA
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$MISMATCH_REPO_ROOT"
+unset MOCK_PR_HEAD_SHA
+run_test "repo_root_origin_mismatch_escalates" "RESULT=escalate" "$(line_for RESULT)"
+run_test "repo_root_origin_mismatch_reason" "REASON=repo_root_mismatch" "$(line_for REASON)"
+run_test "repo_root_origin_mismatch_exit" "2" "$(exit_code)"
+
+reset_mocks
+set_mock_stdout '{"findings":[{"severity":"Critical","path":"scripts/example.sh","line":42,"message":"fix this"}]}'
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "blocking_finding_result" "RESULT=needs_fixes" "$(line_for RESULT)"
 run_test "blocking_finding_count" "BLOCKING_COUNT=1" "$(line_for BLOCKING_COUNT)"
+run_test "blocking_finding_path" "BLOCKING_1_PATH=scripts/example.sh" "$(line_for BLOCKING_1_PATH)"
+run_test "blocking_finding_line" "BLOCKING_1_LINE=42" "$(line_for BLOCKING_1_LINE)"
+run_test "blocking_finding_body" "BLOCKING_1_BODY=fix this" "$(line_for BLOCKING_1_BODY)"
 run_test "blocking_finding_exit" "1" "$(exit_code)"
+
+reset_mocks
+set_mock_stdout '{"findings":[{"severity":"Critical","path":"scripts/example.sh\nINJECTED=1","line":"42\nALSO=1","message":"fix this"}]}'
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "blocking_finding_path_escaped" "BLOCKING_1_PATH=scripts/example.sh\\nINJECTED=1" "$(line_for BLOCKING_1_PATH)"
+run_test "blocking_finding_line_escaped" "BLOCKING_1_LINE=42\\nALSO=1" "$(line_for BLOCKING_1_LINE)"
 
 reset_mocks
 set_mock_stdout '{"type":"finding","finding":{"severity":"High","message":"fix this"}}
@@ -145,6 +195,13 @@ set_mock_stdout '{"type":"finding","finding":{"severity":"High","message":"fix t
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "ndjson_blocking_finding_result" "RESULT=needs_fixes" "$(line_for RESULT)"
 run_test "ndjson_blocking_finding_count" "BLOCKING_COUNT=1" "$(line_for BLOCKING_COUNT)"
+
+reset_mocks
+set_mock_stdout '{"type":"finding","finding":{"severity":"High","path":"scripts/example.sh","line":7,"message":"fix single event"}}'
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "single_event_blocking_finding_result" "RESULT=needs_fixes" "$(line_for RESULT)"
+run_test "single_event_blocking_finding_count" "BLOCKING_COUNT=1" "$(line_for BLOCKING_COUNT)"
+run_test "single_event_blocking_finding_path" "BLOCKING_1_PATH=scripts/example.sh" "$(line_for BLOCKING_1_PATH)"
 
 reset_mocks
 set_mock_stdout '{"type":"status","message":"review started"}
