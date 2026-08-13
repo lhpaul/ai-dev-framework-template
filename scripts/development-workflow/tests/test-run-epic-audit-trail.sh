@@ -78,7 +78,6 @@ JSON
     fi
     ;;
   api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/123\ --input\ *)
-    cat >/dev/null || true
     if [ "${MOCK_COMMENT_MODE:-missing}" = "patch-fail" ]; then
       printf 'patch failed\n' >&2
       exit 1
@@ -86,19 +85,15 @@ JSON
     printf '{"id":123}\n'
     ;;
   api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/222\ --input\ *)
-    cat >/dev/null || true
     printf '{"id":222}\n'
     ;;
   api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/456\ --input\ *)
-    cat >/dev/null || true
     printf '{"id":456}\n'
     ;;
   api\ -X\ PATCH\ repos/lhpaul/ai-dev-framework-template/issues/comments/789\ --input\ *)
-    cat >/dev/null || true
     printf '{"id":789}\n'
     ;;
   api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/10/comments\ --input\ *)
-    cat >/dev/null || true
     if [ "${MOCK_COMMENT_MODE:-missing}" = "post-fail" ]; then
       printf 'post failed\n' >&2
       exit 1
@@ -106,11 +101,9 @@ JSON
     printf '{"id":124}\n'
     ;;
   api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/900/comments\ --input\ *)
-    cat >/dev/null || true
     printf '{"id":457}\n'
     ;;
   api\ -X\ POST\ repos/lhpaul/ai-dev-framework-template/issues/42/comments\ --input\ *)
-    cat >/dev/null || true
     printf '{"id":790}\n'
     ;;
   *)

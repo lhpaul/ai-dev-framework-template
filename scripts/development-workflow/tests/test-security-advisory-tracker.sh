@@ -52,7 +52,6 @@ JSON
     fi
     ;;
   api\ -X\ PATCH\ repos/example/mobile-app/issues/comments/321\ --input\ *)
-    cat >/dev/null || true
     if [ "${MOCK_COMMENT_MODE:-missing}" = "patch-fail" ]; then
       printf 'patch failed\n' >&2
       exit 1
@@ -60,11 +59,9 @@ JSON
     printf '{"id":321}\n'
     ;;
   api\ -X\ PATCH\ repos/example/mobile-app/issues/comments/654\ --input\ *)
-    cat >/dev/null || true
     printf '{"id":654}\n'
     ;;
   api\ -X\ POST\ repos/example/mobile-app/issues/42/comments\ --input\ *)
-    cat >/dev/null || true
     if [ "${MOCK_COMMENT_MODE:-missing}" = "post-fail" ]; then
       printf 'post failed\n' >&2
       exit 1
@@ -280,9 +277,10 @@ run_test "apply_updates_when_marker_exists" "UPDATED_COMMENT_ID=321" "$apply_upd
 
 race_count_file="$TMP_ROOT/security-race-count"
 printf '0\n' > "$race_count_file"
+post_count_before_race="$(grep -c 'POST repos/example/mobile-app/issues/42/comments' "$CALL_LOG")"
 apply_race_output="$(MOCK_COMMENT_MODE=race MOCK_GH_RACE_COUNT_FILE="$race_count_file" "$TRACKER" apply --input "$apply_input" --pr 42)"
 run_test "apply_race_rechecks_and_updates" "UPDATED_COMMENT_ID=654" "$apply_race_output"
-run_test "apply_race_avoids_duplicate_post" "1" "$(grep -c 'POST repos/example/mobile-app/issues/42/comments' "$CALL_LOG")"
+run_test "apply_race_avoids_duplicate_post" "$post_count_before_race" "$(grep -c 'POST repos/example/mobile-app/issues/42/comments' "$CALL_LOG")"
 run_fails_contains "apply_list_failure_errors" "failed to read comments" env MOCK_COMMENT_MODE=list-fail "$TRACKER" apply --input "$apply_input" --pr 42
 run_fails_contains "apply_post_failure_errors" "failed to create marker comment" env MOCK_COMMENT_MODE=post-fail "$TRACKER" apply --input "$apply_input" --pr 42
 run_fails_contains "apply_patch_failure_errors" "failed to update marker comment" env MOCK_COMMENT_MODE=patch-fail "$TRACKER" apply --input "$apply_input" --pr 42
