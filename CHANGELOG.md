@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Codex GitHub as the default ready-phase reviewer**: `review.on_ready.github`
+  now defaults to `codex-github` instead of the CodeRabbit GitHub App. CodeRabbit
+  remains supported as an explicit opt-in reviewer, but is no longer a default
+  readiness gate because vendor rate limits/spending caps can block otherwise
+  clean PRs.
 - **Security-sensitive advisory findings require human decisions** (#1432):
   delegated merge now blocks on workflow-surface advisory findings involving
   auth bypasses, secret exposure, unsafe git operations, injection risk, or

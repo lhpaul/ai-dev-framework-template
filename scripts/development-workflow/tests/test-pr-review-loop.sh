@@ -2210,6 +2210,110 @@ export MOCK_GH_OUTPUT='{
 run_test "codex_thread_audit_all_outdated_clean" "0" \
   "$(check_unresolved_threads "42" "owner/repo" "chatgpt-codex-connector")"
 unset MOCK_GH_OUTPUT
+
+manual_readiness_audit_count() {
+  jq --arg codex_bot "chatgpt-codex-connector" '[.data.repository.pullRequest.reviewThreads.nodes[]
+        | select(.isResolved == false)
+        | select((.isOutdated // false) == false)
+        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps",$codex_bot] | index($a) != null)
+        | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)] | length'
+}
+
+_manual_audit_fixture='{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviewThreads": {
+          "nodes": [
+            {
+              "id": "active-codex",
+              "isResolved": false,
+              "isOutdated": false,
+              "comments": {
+                "nodes": [
+                  {
+                    "author": {"login": "chatgpt-codex-connector"},
+                    "body": "active Codex finding"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "outdated-codex",
+              "isResolved": false,
+              "isOutdated": true,
+              "comments": {
+                "nodes": [
+                  {
+                    "author": {"login": "chatgpt-codex-connector"},
+                    "body": "stale Codex finding"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "addressed-coderabbit",
+              "isResolved": false,
+              "isOutdated": false,
+              "comments": {
+                "nodes": [
+                  {
+                    "author": {"login": "coderabbitai"},
+                    "body": "✅ Addressed in latest commit"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}'
+run_test "manual_readiness_audit_active_codex_blocks" "1" \
+  "$(printf '%s\n' "$_manual_audit_fixture" | manual_readiness_audit_count)"
+
+_manual_audit_fixture_outdated_only='{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviewThreads": {
+          "nodes": [
+            {
+              "id": "outdated-codex",
+              "isResolved": false,
+              "isOutdated": true,
+              "comments": {
+                "nodes": [
+                  {
+                    "author": {"login": "chatgpt-codex-connector"},
+                    "body": "stale Codex finding"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}'
+run_test "manual_readiness_audit_outdated_codex_passes" "0" \
+  "$(printf '%s\n' "$_manual_audit_fixture_outdated_only" | manual_readiness_audit_count)"
+
+_docs_is_outdated_field_count="$(grep -h 'nodes { isResolved isOutdated comments(first: 1)' \
+  "$REPO_ROOT/docs/workflow/development-workflow/protocols/03-implement-development-protocol.md" \
+  "$REPO_ROOT/docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md" \
+  | wc -l | tr -d ' ')"
+run_test "manual_readiness_audit_docs_request_is_outdated" "5" "$_docs_is_outdated_field_count"
+
+_docs_is_outdated_filter_count="$(grep -h 'select((.isOutdated // false) == false)' \
+  "$REPO_ROOT/docs/workflow/development-workflow/protocols/03-implement-development-protocol.md" \
+  "$REPO_ROOT/docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md" \
+  | wc -l | tr -d ' ')"
+run_test "manual_readiness_audit_docs_filter_outdated" "5" "$_docs_is_outdated_filter_count"
+unset _manual_audit_fixture _manual_audit_fixture_outdated_only _docs_is_outdated_field_count _docs_is_outdated_filter_count
+
 if grep -q "Codex acknowledgement detected; waiting for thumbs-up reaction or inline review comments" \
     "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh"; then
   _codex_ack_wait_signal="yes"

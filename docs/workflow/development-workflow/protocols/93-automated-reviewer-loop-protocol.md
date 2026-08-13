@@ -54,7 +54,8 @@ gate. Run `review.on_draft.github` first, then let `pr-review-loop.sh` convert
 the PR at the ready-phase boundary before dispatching `review.on_ready.github`.
 Protocol 91 Step 7a is the source of truth for the reviewer-to-draft-restriction
 mapping; see its "Draft-state pre-check" section for the full table. For
-CodeRabbit specifically, check `.coderabbit.yaml`:
+CodeRabbit specifically, when it is explicitly configured as an opt-in reviewer,
+check `.coderabbit.yaml`:
 
 ```bash
 grep -E '^\s*drafts:\s*false' .coderabbit.yaml

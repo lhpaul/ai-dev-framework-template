@@ -52,7 +52,11 @@ review:
     # Ordered list of GitHub/App/CLI reviewers that run only after draft gates
     # are clean and the PR has been converted with `gh pr ready`.
     github:
-      - coderabbit
+      - codex-github
+  #
+  # CodeRabbit remains supported as an opt-in reviewer (`coderabbit` for the
+  # GitHub App, `coderabbit-cli` for the local CLI), but it is not a default
+  # gate because vendor rate limits/spending caps can block otherwise-clean PRs.
   #
   # CodeRabbit CLI platform options (local CLI reviewer; place "coderabbit-cli"
   # in on_draft.github or on_ready.github to opt in; independent from the
@@ -60,6 +64,7 @@ review:
   #   rate_limit_policy: warn      # warn|strict; default warn
   #
   # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
+  #   Setup/verification guide: docs/workflow/development-workflow/integrations/codex-github.md
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
   #   CODEX_GITHUB_BOT_LOGIN       — GitHub login of the Codex bot account
   #                                  (default: "chatgpt-codex-connector[bot]"; verify from GitHub App settings)
