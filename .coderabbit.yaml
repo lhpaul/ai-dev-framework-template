@@ -3,11 +3,11 @@
 # This file controls CodeRabbit's behavior for this repository.
 # Docs: https://docs.coderabbit.ai/reference/configuration
 #
-# This repository is configured for GitHub App PR reviewer mode:
-# - auto PR reviews are enabled for non-draft PRs targeting develop
-# - pr-review-loop.sh treats "coderabbit" in review.on_ready.github as the
-#   durable ready-phase reviewer signal
-# - draft PR reviews remain disabled so the workflow's draft gates run first
+# CodeRabbit is disabled by default so repository review policy remains
+# explicit in .ai-dev-workflow.yaml. To opt in to CodeRabbit GitHub App review:
+# - set reviews.auto_review.enabled to true
+# - add "coderabbit" to review.on_draft.github or review.on_ready.github
+# - keep drafts false unless the repository intentionally wants draft PR review
 
 reviews:
   tools:
@@ -15,7 +15,7 @@ reviews:
       enabled: true
       timeout_ms: 600000
   auto_review:
-    enabled: true
+    enabled: false
     drafts: false
     auto_pause_after_reviewed_commits: 1
     base_branches:

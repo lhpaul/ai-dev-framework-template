@@ -93,16 +93,17 @@ found no issues."
 
 To enable CodeRabbit as a Step 7 automated PR reviewer platform:
 
-1. Set `reviews.auto_review.enabled: true` in `.coderabbit.yaml`
-2. Add `coderabbit` to `review.on_draft.github` or `review.on_ready.github` in `.ai-dev-workflow.yaml`
-3. Install the CodeRabbit GitHub App on the repository
+1. Install the CodeRabbit GitHub App on the repository.
+2. Set `reviews.auto_review.enabled: true` in `.coderabbit.yaml`.
+3. Add `coderabbit` to `review.on_draft.github` or `review.on_ready.github` in `.ai-dev-workflow.yaml`.
 
 The `coderabbit` App platform remains separate from `coderabbit-cli`. It uses
 the `coderabbitai[bot]` review/comment evidence path described below.
 
-CodeRabbit is an opt-in reviewer in this template repository. To use it for
-ready-phase PR review, enable CodeRabbit auto-review for non-draft PRs targeting
-`develop` and list `coderabbit` under `review.on_ready.github`.
+CodeRabbit is an opt-in reviewer in this template repository. Auto-review is
+disabled in the template default so the App does not review every PR or consume
+review quota unless the repository explicitly opts in with both configuration
+changes above.
 
 ---
 
@@ -173,7 +174,7 @@ If either check fails, `coderabbit` is classified as `unreachable`. The configur
 
 ### 1. Install the CodeRabbit GitHub App
 
-Go to [coderabbit.ai](https://www.coderabbit.ai) and install the GitHub App on your repository. Enable auto-review so CodeRabbit automatically reviews PRs when code is pushed.
+Go to [coderabbit.ai](https://www.coderabbit.ai) and install the GitHub App on your repository.
 
 ### 2. Enable auto-review in `.coderabbit.yaml`
 
@@ -192,9 +193,9 @@ review:
       - coderabbit
 ```
 
-### 4. Verify Auto-Review Is Active
+### 4. Verify Auto-Review Is Active and Configured in the Workflow
 
-Push a commit to an open PR and confirm that CodeRabbit posts review comments. The bot posts as `coderabbitai[bot]`.
+Push a commit to an open PR and confirm that CodeRabbit posts review comments. The bot posts as `coderabbitai[bot]`. CodeRabbit should also be listed in `.ai-dev-workflow.yaml`; otherwise the App may post findings that the workflow loop does not wait for.
 
 ---
 
