@@ -28,6 +28,7 @@
 #   1 — NEEDS_REVISION (bot responded with blocking findings)
 #   2 — TIMED_OUT  (no bot response within max-wait; treat as unavailable under
 #                   configured internal_reviewers_unavailable_policy)
+#   3 — UNAVAILABLE (bot responded with review-capacity/quota exhaustion)
 #
 # Verdict parsing (three-path, blocking markers checked first per safe-fail):
 #   1. Blocking markers present → NEEDS_REVISION (exit 1)
@@ -226,6 +227,23 @@ codex_inline_review_comment_count_since() {
     return 3
   fi
   rm -f "$review_comment_tmpfile"
+}
+
+codex_response_is_usage_limit() {
+  local response="$1"
+  printf '%s\n' "$response" | grep -qiE "(reached[[:space:]]+your[[:space:]]+codex[[:space:]]+usage[[:space:]]+limits?|usage[[:space:]]+limits?[[:space:]]+for[[:space:]]+code[[:space:]]+reviews?|codex[[:space:]]+(review[[:space:]]+)?(usage[[:space:]]+limit|quota|capacity)|review[[:space:]]+capacity[[:space:]]+(exhausted|unavailable|limited)|quota[[:space:]]+(exceeded|exhausted|limit))"
+}
+
+codex_return_usage_limit() {
+  echo "VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached"
+  echo "REASON=codex-github-usage-limit"
+  echo "COMMENT_COUNT=0"
+  echo "BLOCKING_COUNT=0"
+  echo "SUGGESTION_COUNT=0"
+  echo "---BEGIN BOT RESPONSE---"
+  echo "$1"
+  echo "---END BOT RESPONSE---"
+  exit 3
 }
 
 # ── Idempotency guard (BR-10) ─────────────────────────────────────────────────
@@ -433,7 +451,9 @@ while true; do
     # "no blocking issues". This avoids false positives without line-level filtering
     # (which would risk missing a genuine marker on the same line as a negation).
 
-    if echo "$BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
+    if codex_response_is_usage_limit "$BOT_RESPONSE"; then
+      codex_return_usage_limit "$BOT_RESPONSE"
+    elif echo "$BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
       echo "VERDICT: NEEDS_REVISION"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
@@ -585,7 +605,9 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
   echo "INFO: async-arrival bot response detected during grace period"
 
   # Apply the same three-path verdict parsing as the main poll loop.
-  if echo "$ASYNC_BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
+  if codex_response_is_usage_limit "$ASYNC_BOT_RESPONSE"; then
+    codex_return_usage_limit "$ASYNC_BOT_RESPONSE"
+  elif echo "$ASYNC_BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
     echo "VERDICT: NEEDS_REVISION"
     echo "---BEGIN BOT RESPONSE---"
     echo "$ASYNC_BOT_RESPONSE"

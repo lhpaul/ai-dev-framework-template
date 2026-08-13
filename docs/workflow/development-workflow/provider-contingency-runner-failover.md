@@ -24,6 +24,26 @@ Related docs:
 
 **Do not:** Manually apply `ready-for-human-review` or remove `needs-fixes` without completing the reviewer loop.
 
+### Codex GitHub App Review Quota
+
+When `pr-review-loop.sh` runs the `codex-github` platform and the Codex GitHub
+App replies with a review-capacity message such as “You have reached your Codex
+usage limits for code reviews,” the loop reports:
+
+```text
+RESULT=escalate
+REASON=codex-github-usage-limit
+PLATFORM=codex-github
+COMMENT_COUNT=0
+BLOCKING_COUNT=0
+SUGGESTION_COUNT=0
+```
+
+This is reviewer unavailability, not a code-review finding. Do not dispatch a
+fixer agent and do not label the PR `needs-fixes` solely for this result. Wait
+for quota reset or add review capacity, then rerun the reviewer loop against the
+same PR head.
+
 ---
 
 ## Failure mode 2: Stream timeout or API error
