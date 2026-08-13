@@ -86,10 +86,11 @@ review:
     # - claude-code-action
   on_ready:
     github:
-    # haystack: Haystack triage CLI reviewer. Requires `haystack` CLI installed
-    # and authenticated via `haystack setup`. No GitHub App required.
-    # See integrations/haystack-triage.md for setup instructions.
-      - haystack
+      - codex-github
+    # CodeRabbit remains supported as an opt-in reviewer, but is intentionally
+    # not a default ready-phase gate because vendor rate limits/spending caps
+    # can block otherwise-clean PRs.
+    # - coderabbit
     # coderabbit-cli: CodeRabbit CLI reviewer. Requires `cr` or `coderabbit`
     # installed and authenticated locally. No GitHub App required. Missing CLI
     # or auth emits RESULT=skipped, not clean review evidence.

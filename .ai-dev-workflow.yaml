@@ -52,7 +52,11 @@ review:
     # Ordered list of GitHub/App/CLI reviewers that run only after draft gates
     # are clean and the PR has been converted with `gh pr ready`.
     github:
-      - coderabbit
+      - codex-github
+  #
+  # CodeRabbit remains supported as an opt-in reviewer (`coderabbit` for the
+  # GitHub App, `coderabbit-cli` for the local CLI), but it is not a default
+  # gate because vendor rate limits/spending caps can block otherwise-clean PRs.
   #
   # CodeRabbit CLI platform options (local CLI reviewer; place "coderabbit-cli"
   # in on_draft.github or on_ready.github to opt in; independent from the
