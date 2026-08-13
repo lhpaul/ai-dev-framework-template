@@ -231,7 +231,7 @@ codex_inline_review_comment_count_since() {
 
 codex_response_is_usage_limit() {
   local response="$1"
-  printf '%s\n' "$response" | grep -qiE "(reached[[:space:]]+your[[:space:]]+codex[[:space:]]+usage[[:space:]]+limits?|usage[[:space:]]+limits?[[:space:]]+for[[:space:]]+code[[:space:]]+reviews?|codex[[:space:]]+(review[[:space:]]+)?(usage[[:space:]]+limit|quota|capacity)|review[[:space:]]+capacity[[:space:]]+(exhausted|unavailable|limited)|quota[[:space:]]+(exceeded|exhausted|limit))"
+  printf '%s\n' "$response" | grep -qiE "(reached[[:space:]]+your[[:space:]]+codex[[:space:]]+usage[[:space:]]+limits?|codex[[:space:]]+usage[[:space:]]+limits?[[:space:]]+for[[:space:]]+code[[:space:]]+reviews?|codex[[:space:]]+(github[[:space:]]+app[[:space:]]+)?(review[[:space:]]+)?(usage[[:space:]]+limit|quota|capacity)|codex[[:space:]]+review[[:space:]]+capacity[[:space:]]+(exhausted|unavailable|limited))"
 }
 
 codex_return_usage_limit() {

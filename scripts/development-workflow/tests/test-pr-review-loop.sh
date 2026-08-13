@@ -2310,6 +2310,12 @@ _codex_usage_comment_output="$(cat "$_codex_usage_comment_mock_dir/output.txt")"
 run_test "codex_usage_limit_comment_exit_unavailable" "3" "$_codex_usage_comment_exit"
 run_test "codex_usage_limit_comment_reason" "REASON=codex-github-usage-limit" \
   "$(printf '%s\n' "$_codex_usage_comment_output" | grep "^REASON=")"
+run_test "codex_usage_limit_comment_comment_count" "COMMENT_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_comment_output" | grep "^COMMENT_COUNT=")"
+run_test "codex_usage_limit_comment_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_comment_output" | grep "^BLOCKING_COUNT=")"
+run_test "codex_usage_limit_comment_suggestion_count" "SUGGESTION_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_comment_output" | grep "^SUGGESTION_COUNT=")"
 rm -rf "$_codex_usage_comment_mock_dir"
 unset _codex_usage_comment_mock_dir _codex_usage_comment_output _codex_usage_comment_exit
 
@@ -2348,6 +2354,12 @@ _codex_usage_review_output="$(cat "$_codex_usage_review_mock_dir/output.txt")"
 run_test "codex_usage_limit_review_exit_unavailable" "3" "$_codex_usage_review_exit"
 run_test "codex_usage_limit_review_reason" "REASON=codex-github-usage-limit" \
   "$(printf '%s\n' "$_codex_usage_review_output" | grep "^REASON=")"
+run_test "codex_usage_limit_review_comment_count" "COMMENT_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_review_output" | grep "^COMMENT_COUNT=")"
+run_test "codex_usage_limit_review_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_review_output" | grep "^BLOCKING_COUNT=")"
+run_test "codex_usage_limit_review_suggestion_count" "SUGGESTION_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_review_output" | grep "^SUGGESTION_COUNT=")"
 rm -rf "$_codex_usage_review_mock_dir"
 unset _codex_usage_review_mock_dir _codex_usage_review_output _codex_usage_review_exit
 
@@ -2439,8 +2451,14 @@ run_test "codex_usage_limit_loop_result" "RESULT=escalate" \
   "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
 run_test "codex_usage_limit_loop_reason" "REASON=codex-github-usage-limit" \
   "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "codex_usage_limit_loop_platform" "PLATFORM=codex-github" \
+  "$(printf '%s\n' "$actual_output" | grep "^PLATFORM=")"
+run_test "codex_usage_limit_loop_comment_zero" "COMMENT_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^COMMENT_COUNT=")"
 run_test "codex_usage_limit_loop_blocking_zero" "BLOCKING_COUNT=0" \
   "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "codex_usage_limit_loop_suggestion_zero" "SUGGESTION_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^SUGGESTION_COUNT=")"
 run_test "codex_usage_limit_loop_exit_code" "2" "$actual_exit"
 rm -rf "$_codex_usage_loop_tmp"
 unset _codex_usage_loop_tmp _codex_overrides actual_output actual_exit
