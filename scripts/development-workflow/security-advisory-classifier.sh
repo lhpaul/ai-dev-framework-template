@@ -109,7 +109,7 @@ classify_category() {
   if [ "$status" -ge 2 ]; then return 3; fi
   if [ "$status" -eq 0 ]; then printf 'a'; return 0; fi
 
-  match_re "$finding_text" '(secret|credential|token|password).*(expos|log|leak|plaintext)' && status=0 || status=$?
+  match_re "$finding_text" '(secret|credential|token|password).*(expos|log|leak|plaintext)|(expos|log|leak|plaintext).*(secret|credential|token|password)' && status=0 || status=$?
   if [ "$status" -ge 2 ]; then return 3; fi
   if [ "$status" -eq 0 ]; then printf 'b'; return 0; fi
 
@@ -119,19 +119,22 @@ classify_category() {
   # finding that itself states the operation is lease-protected must NOT
   # match. POSIX ERE has no negative lookahead, so this is a positive-match-
   # AND-NOT-safe-phrase check across two match_re calls, not a single regex.
-  match_re "$finding_text" '(force[- ]?push|--force\b|hard reset|history rewrite)' && status=0 || status=$?
+  match_re "$finding_text" '(force[- ]?push|push[[:space:]]+(-f|--force)([^[:alnum:]_-]|$)|--force([^[:alnum:]_-]|$)|git[[:space:]]+reset[[:space:]]+--hard|reset[[:space:]]+--hard|hard reset|history rewrite)' && status=0 || status=$?
   if [ "$status" -ge 2 ]; then return 3; fi
   if [ "$status" -eq 0 ]; then
     match_re "$finding_text" '(force[- ]?with[- ]?lease|--force-with-lease|with (a |an |the )?(safety[- ]?)?lease)' && status=0 || status=$?
     if [ "$status" -ge 2 ]; then return 3; fi
     if [ "$status" -eq 1 ]; then printf 'c'; return 0; fi
+    match_re "$finding_text" '(push[[:space:]]+(-f|--force)([^[:alnum:]_-]|$)|git[[:space:]]+reset[[:space:]]+--hard|reset[[:space:]]+--hard|hard reset|history rewrite)' && status=0 || status=$?
+    if [ "$status" -ge 2 ]; then return 3; fi
+    if [ "$status" -eq 0 ]; then printf 'c'; return 0; fi
   fi
 
   match_re "$finding_text" '(injection|unsanitized|eval\(|path.traversal)' && status=0 || status=$?
   if [ "$status" -ge 2 ]; then return 3; fi
   if [ "$status" -eq 0 ]; then printf 'd'; return 0; fi
 
-  match_re "$finding_text" '(bypass|weaken|disable|circumvent).*(guard|gate|policy|check)' && status=0 || status=$?
+  match_re "$finding_text" '(bypass|weaken|disable|circumvent).*(guard|gate|policy|check)|(guard|gate|policy|check).*(bypass|weaken|disable|circumvent|bypassed|disabled|weakened|circumvented)' && status=0 || status=$?
   if [ "$status" -ge 2 ]; then return 3; fi
   if [ "$status" -eq 0 ]; then printf 'e'; return 0; fi
 

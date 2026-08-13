@@ -47,6 +47,12 @@ case "$*" in
   repo\ view\ --json\ nameWithOwner\ --jq\ .nameWithOwner)
     printf 'lhpaul/ai-dev-framework-template\n'
     ;;
+  repo\ view\ --json\ owner\ --jq\ .owner.login)
+    printf 'lhpaul\n'
+    ;;
+  repo\ view\ --json\ name\ --jq\ .name)
+    printf 'ai-dev-framework-template\n'
+    ;;
   issue\ edit*|pr\ create*|pr\ merge*|project\ item-edit*|project\ item-add*)
     printf 'mutating gh command was called: gh %s\n' "$*" >&2
     exit 99
@@ -73,6 +79,7 @@ JSON
           105) status="Backlog" ;;
           106) status="Backlog" ;;
           125) status="Plan Ready" ;;
+          126) status="" ;;
           *) status="Backlog" ;;
         esac
         jq -n --arg status "$status" --arg type "$type" '{
@@ -146,20 +153,21 @@ JSON
       109) state="CLOSED"; state_reason="NOT_PLANNED"; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
       110) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
       111) body='Blocked by #108'; labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
-	      113) labels_json='[{"name":"integration-branch:foo"}]' ;;
-	      114) labels_json='[]' ;;
-	      115) labels_json='[]' ;;
-	      116) labels_json='[{"name":"integration-branch:stale"}]' ;;
-	      117) labels_json='[{"name":"integration-branch:valid-shared"}]' ;;
-	      118) labels_json='[{"name":"integration-branch:valid-shared"}]' ;;
-	      119) labels_json='[{"name":"integration-branch:alpha"}]' ;;
-	      120) labels_json='[{"name":"integration-branch:beta"}]' ;;
-	      121) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
-	      122) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
-	      123) labels_json='[{"name":"integration-branch:stale"}]' ;;
-	      124) labels_json='[]' ;;
-	      125) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
-	    esac
+      113) labels_json='[{"name":"integration-branch:foo"}]' ;;
+      114) labels_json='[]' ;;
+      115) labels_json='[]' ;;
+      116) labels_json='[{"name":"integration-branch:stale"}]' ;;
+      117) labels_json='[{"name":"integration-branch:valid-shared"}]' ;;
+      118) labels_json='[{"name":"integration-branch:valid-shared"}]' ;;
+      119) labels_json='[{"name":"integration-branch:alpha"}]' ;;
+      120) labels_json='[{"name":"integration-branch:beta"}]' ;;
+      121) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
+      122) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
+      123) labels_json='[{"name":"integration-branch:stale"}]' ;;
+      124) labels_json='[]' ;;
+      125) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
+      126) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
+    esac
     jq -n \
       --argjson number "$issue_number" \
       --arg title "$title" \
@@ -180,20 +188,21 @@ JSON
       101|102|103|104|107|109|110|111) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
       105) labels_json='[{"name":"integration-branch:alpha"}]' ;;
       106) labels_json='[{"name":"integration-branch:beta"}]' ;;
-	      113) labels_json='[{"name":"integration-branch:foo"}]' ;;
-	      114) labels_json='[]' ;;
-	      115) labels_json='[]' ;;
-	      116) labels_json='[{"name":"integration-branch:stale"}]' ;;
-	      117) labels_json='[{"name":"integration-branch:valid-shared"}]' ;;
-	      118) labels_json='[{"name":"integration-branch:valid-shared"}]' ;;
-	      119) labels_json='[{"name":"integration-branch:alpha"}]' ;;
-	      120) labels_json='[{"name":"integration-branch:beta"}]' ;;
-	      121) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
-	      122) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
-	      123) labels_json='[{"name":"integration-branch:stale"}]' ;;
-	      124) labels_json='[]' ;;
-	      125) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
-	    esac
+      113) labels_json='[{"name":"integration-branch:foo"}]' ;;
+      114) labels_json='[]' ;;
+      115) labels_json='[]' ;;
+      116) labels_json='[{"name":"integration-branch:stale"}]' ;;
+      117) labels_json='[{"name":"integration-branch:valid-shared"}]' ;;
+      118) labels_json='[{"name":"integration-branch:valid-shared"}]' ;;
+      119) labels_json='[{"name":"integration-branch:alpha"}]' ;;
+      120) labels_json='[{"name":"integration-branch:beta"}]' ;;
+      121) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
+      122) labels_json='[{"name":"integration-branch:remote-failure"}]' ;;
+      123) labels_json='[{"name":"integration-branch:stale"}]' ;;
+      124) labels_json='[]' ;;
+      125) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
+      126) labels_json='[{"name":"integration-branch:delegated-epic-orchestration"}]' ;;
+    esac
     jq -n --argjson labels "$labels_json" '{labels:$labels}'
     ;;
   issue\ view\ *\ --json\ number,title,state)
@@ -527,6 +536,12 @@ unauthorized_backlog_output="$(run_json --items 101 --may-start-backlog false)"
 run_test "continuation_unauthorized_backlog" "needs_resolution" "$(printf '%s\n' "$unauthorized_backlog_output" | jq -r '.continuation.outcome')"
 run_test "continuation_unauthorized_backlog_affected" "101" "$(printf '%s\n' "$unauthorized_backlog_output" | jq -r '.continuation.affectedItems | join(",")')"
 run_test "continuation_unauthorized_backlog_condition" "missing_tracker_context" "$(printf '%s\n' "$unauthorized_backlog_output" | jq -r '.continuation.stopCondition')"
+
+unknown_status_output="$(run_json --items 126 --may-start-backlog false)"
+run_test "unknown_status_is_ambiguous" "ambiguous" "$(printf '%s\n' "$unknown_status_output" | jq -r '.items[0].group')"
+run_test "unknown_status_reason" "tracker status missing or unrecognized" "$(printf '%s\n' "$unknown_status_output" | jq -r '.items[0].ambiguityReason')"
+run_test "unknown_status_blocks_continuation" "missing_tracker_context" "$(printf '%s\n' "$unknown_status_output" | jq -r '.continuation.stopCondition')"
+
 run_test "json_read_only_guarantee" "yes" "$(
   printf '%s\n' "$items_output" | jq -e '.readOnlyGuarantee | test("No tracker status")' >/dev/null && echo yes || echo no
 )"

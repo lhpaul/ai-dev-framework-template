@@ -464,9 +464,27 @@ normalize_checks_state() {
   ' 2>/dev/null
 }
 
+list_contains_number() {
+  local csv="$1"
+  local needle="$2"
+  local token
+  [ -n "$needle" ] || return 1
+  csv="${csv},"
+  while [ -n "$csv" ]; do
+    token="${csv%%,*}"
+    csv="${csv#*,}"
+    token="$(printf '%s' "$token" | tr -d '[:space:]')"
+    if [ "$token" = "$needle" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 classify_recheck_json() {
   local json="$1"
   local bound_exhausted="$2"
+  local pr_num="${3:-}"
 
   local state is_draft base_ref merge_state checks_state labels_type checks_type
   state="$(printf '%s\n' "$json" | jq -r '.state // ""' 2>/dev/null)" || return 1
@@ -491,7 +509,8 @@ classify_recheck_json() {
     printf 'merge_blocked|false|hold|draft_pr|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
     return 0
   fi
-  if ! printf '%s\n' "$json" | jq -e '.labels[].name | select(. == "ready-for-human-review")' >/dev/null 2>&1; then
+  if ! printf '%s\n' "$json" | jq -e '.labels[].name | select(. == "ready-for-human-review")' >/dev/null 2>&1 &&
+     ! list_contains_number "${BATCH_MERGE_APPROVED_UNREADY_PRS:-}" "$pr_num"; then
     printf 'merge_blocked|false|hold|label_gate_failed|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
     return 0
   fi
@@ -684,7 +703,7 @@ cmd_recheck_remaining() {
       else
         bound_exhausted=""
       fi
-      classification_line="$(classify_recheck_json "$json" "$bound_exhausted")" || {
+      classification_line="$(classify_recheck_json "$json" "$bound_exhausted" "$pr_num")" || {
         emit_recheck_record "error" "$pr_num" "$original_index" "$after_merged_pr" "null" "null" "null" "null" "helper_failed" "false" "$attempt" "$deadline_seconds" "error" "malformed_response"
         exit 2
       }

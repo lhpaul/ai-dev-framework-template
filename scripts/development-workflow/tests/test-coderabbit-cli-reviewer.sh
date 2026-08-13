@@ -16,6 +16,7 @@ MOCK_BIN="$(mktemp -d)"
 NO_CLI_BIN="$(mktemp -d)"
 CALL_LOG="$(mktemp)"
 OUTPUT_FILE="$(mktemp)"
+STDERR_FILE="$(mktemp)"
 EXIT_FILE="$(mktemp)"
 POLICY_CONFIG_FILE="$(mktemp)"
 LOCAL_CONFIG_ROOT="$(mktemp -d)"
@@ -25,7 +26,7 @@ MISMATCH_REPO_ROOT="$(mktemp -d)"
 cleanup() {
   local status=$?
   rm -rf "$MOCK_BIN" "$NO_CLI_BIN" "$LOCAL_CONFIG_ROOT" "$VALID_REPO_ROOT" "$MISMATCH_REPO_ROOT"
-  rm -f "$CALL_LOG" "$OUTPUT_FILE" "$EXIT_FILE" "$POLICY_CONFIG_FILE"
+  rm -f "$CALL_LOG" "$OUTPUT_FILE" "$STDERR_FILE" "$EXIT_FILE" "$POLICY_CONFIG_FILE"
   exit "$status"
 }
 trap cleanup EXIT
@@ -57,6 +58,9 @@ install_gh_mock() {
 #!/usr/bin/env bash
 case "$*" in
   *"pr view 123"*"--json baseRefName,headRefName,headRefOid"*)
+    if [ "${MOCK_GH_PR_VIEW_FAIL:-0}" = "1" ]; then
+      exit 1
+    fi
     if [ -n "${MOCK_PR_HEAD_SHA:-}" ]; then
       mock_head_sha="$MOCK_PR_HEAD_SHA"
     elif ! mock_head_sha="$(git rev-parse HEAD 2>/dev/null)"; then
@@ -93,9 +97,10 @@ MOCK_CLI
 }
 
 reset_mocks() {
-  rm -f "$CALL_LOG" "$OUTPUT_FILE" "$EXIT_FILE"
+  rm -f "$CALL_LOG" "$OUTPUT_FILE" "$STDERR_FILE" "$EXIT_FILE"
   CALL_LOG="$(mktemp)"
   OUTPUT_FILE="$(mktemp)"
+  STDERR_FILE="$(mktemp)"
   EXIT_FILE="$(mktemp)"
   rm -f "$MOCK_BIN/cr" "$MOCK_BIN/coderabbit" "$MOCK_BIN/gh"
   install_gh_mock "$MOCK_BIN"
@@ -103,6 +108,7 @@ reset_mocks() {
   install_cli_mock coderabbit
   export MOCK_CALL_LOG
   unset MOCK_CODERABBIT_STDOUT MOCK_CODERABBIT_STDERR MOCK_CODERABBIT_EXIT MOCK_CODERABBIT_SLEEP
+  unset MOCK_GH_PR_VIEW_FAIL
   unset CODERABBIT_CLI_RATE_LIMIT_POLICY CODERABBIT_CLI_REVIEW_TIMEOUT
   unset AI_DEV_WORKFLOW_CONFIG_FILE
   unset WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT
@@ -117,7 +123,7 @@ run_reviewer() {
   local path_value="$1"
   shift
   set +e
-  PATH="$path_value" "$REVIEWER" 123 owner repo "$@" >"$OUTPUT_FILE" 2>/dev/null
+  PATH="$path_value" "$REVIEWER" 123 owner repo "$@" >"$OUTPUT_FILE" 2>"$STDERR_FILE"
   local status=$?
   set -e
   printf '%s\n' "$status" > "$EXIT_FILE"
@@ -172,6 +178,28 @@ unset MOCK_PR_HEAD_SHA
 run_test "repo_root_origin_mismatch_escalates" "RESULT=escalate" "$(line_for RESULT)"
 run_test "repo_root_origin_mismatch_reason" "REASON=repo_root_mismatch" "$(line_for REASON)"
 run_test "repo_root_origin_mismatch_exit" "2" "$(exit_code)"
+
+reset_mocks
+set_mock_stdout '{"findings":[]}'
+MOCK_GH_PR_VIEW_FAIL=1
+export MOCK_GH_PR_VIEW_FAIL
+run_reviewer "$MOCK_BIN:$PATH"
+unset MOCK_GH_PR_VIEW_FAIL
+run_test "base_branch_unavailable_escalates" "RESULT=escalate" "$(line_for RESULT)"
+run_test "base_branch_unavailable_reason" "REASON=base_branch_unavailable" "$(line_for REASON)"
+run_test "base_branch_unavailable_exit" "2" "$(exit_code)"
+
+credential_repo_root="$(mktemp -d)"
+init_repo_root_fixture "$credential_repo_root" "https://secret-token@github.com/other/repo.git"
+reset_mocks
+set_mock_stdout '{"findings":[]}'
+MOCK_PR_HEAD_SHA="$(git -C "$credential_repo_root" rev-parse HEAD)"
+export MOCK_PR_HEAD_SHA
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$credential_repo_root"
+unset MOCK_PR_HEAD_SHA
+run_test "repo_root_credential_mismatch_escalates" "RESULT=escalate" "$(line_for RESULT)"
+run_test "repo_root_credential_mismatch_redacts_token" "no" "$(grep -Fq 'secret-token' "$STDERR_FILE" && echo yes || echo no)"
+rm -rf "$credential_repo_root"
 
 reset_mocks
 set_mock_stdout '{"findings":[{"severity":"Critical","path":"scripts/example.sh","line":42,"message":"fix this"}]}'

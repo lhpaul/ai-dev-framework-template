@@ -184,13 +184,20 @@ esac
 BASE_BRANCH=""
 HEAD_BRANCH=""
 HEAD_SHA=""
+GH_AVAILABLE=0
 if command -v gh >/dev/null 2>&1; then
+  GH_AVAILABLE=1
   pr_json=""
   if pr_json="$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json baseRefName,headRefName,headRefOid 2>/dev/null)"; then
     BASE_BRANCH="$(printf '%s\n' "$pr_json" | jq -r '.baseRefName // empty' 2>/dev/null || true)"
     HEAD_BRANCH="$(printf '%s\n' "$pr_json" | jq -r '.headRefName // empty' 2>/dev/null || true)"
     HEAD_SHA="$(printf '%s\n' "$pr_json" | jq -r '.headRefOid // empty' 2>/dev/null || true)"
   fi
+fi
+if [ -z "$BASE_BRANCH" ] && [ "$GH_AVAILABLE" -eq 1 ]; then
+  echo "ERROR: could not resolve pull request base branch for #$PR_NUMBER" >&2
+  print_result escalate 0 0 0 base_branch_unavailable "base_branch_unavailable"
+  exit 2
 fi
 BASE_BRANCH="${BASE_BRANCH:-develop}"
 
@@ -202,8 +209,21 @@ normalize_github_remote_slug() {
   slug="${slug#ssh://git@github.com/}"
   slug="${slug#https://github.com/}"
   slug="${slug#http://github.com/}"
+  slug="${slug#https://*@github.com/}"
+  slug="${slug#http://*@github.com/}"
   slug="${slug%.git}"
   printf '%s\n' "$slug"
+}
+
+redact_github_remote_slug() {
+  local raw="$1"
+  local slug
+  slug="$(normalize_github_remote_slug "$raw")"
+  if [[ "$slug" == http://* || "$slug" == https://* || "$slug" == *"@"* ]]; then
+    printf '<redacted-remote>\n'
+  else
+    printf '%s\n' "$slug"
+  fi
 }
 
 if [ -n "$REPO_ROOT" ]; then
@@ -222,7 +242,7 @@ if [ -n "$REPO_ROOT" ]; then
   fi
   repo_root_slug="$(normalize_github_remote_slug "$repo_root_origin")"
   if [ "$repo_root_slug" != "$OWNER/$REPO" ]; then
-    echo "ERROR: --repo-root origin does not match expected repository ($repo_root_slug != $OWNER/$REPO)" >&2
+    echo "ERROR: --repo-root origin does not match expected repository ($(redact_github_remote_slug "$repo_root_origin") != $OWNER/$REPO)" >&2
     print_result escalate 0 0 0 repo_root_mismatch "repo_root_mismatch"
     exit 2
   fi
