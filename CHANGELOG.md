@@ -7,216 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-08-13
+
 ### Added
 
-- **Require human decision for security-sensitive advisory findings**
-  (#1432): a narrow, conjunctive (content-category AND
-  file-location) classifier flags advisory findings that describe an
-  auth bypass, secret/credential exposure, an unsafe git operation, an
-  injection risk, or a workflow-guardrail bypass on the workflow's own
-  enforcement-surface files. A security-sensitive finding blocks
-  delegated merge (new `security_sensitive_advisory_pending` stop
-  condition, `security-advisory-decision-required` label) until it is
-  fixed with a cited commit or resolved by a verified human decision —
-  never by the delegated agent itself, and never by an unrelated
-  checkpoint waiver. Re-evaluated against the exact head SHA on every
-  push, matching the existing reviewer-access-bypass authorization
-  pattern. Applies identically to `/run-item`, `/run-items`, and
-  `/run-epic`.
-- **`REVIEW.md` requires planted-violation proofs and an E2E fixture contract** (#1443):
-  two quality disciplines that proved decisive in downstream framework-hardening
-  runs — new checks must prove they catch a real planted violation, and feature
-  PRs must extend the E2E fixture with their edge cases — lived only in prompts
-  and memory, not in the review contract. `REVIEW.md` now states both as
-  `Verification Discipline` core rules and wires them into the `Code Review
-  Checklist` → Pass 2 as enforceable "Additional checks" blocks (planted-violation
-  proof for any new/modified check, guard, lint rule, or CI job; fixture
-  extension gated on a repository actually having a committed, non-placeholder
-  E2E suite). `docs/best-practices/3-testing.md` gets the mirrored
-  implementer-facing "Planted-Violation Proofs" and "E2E Fixture Contract"
-  sections, following the same reviewer/implementer-mirror pattern already used
-  for Filter-Schema Canary Tests. Documentation-only change; see the PR
-  description for the recursive proof this item's own rule was applied to.
-- **Port i18n no-literal-string doctrine and catalogue reference** (#1441):
-  adds `docs/best-practices/stack/i18n.md` with the portable no-hardcoded-string
-  doctrine, a React Native/i18next worked example, and the dynamic-key scanner
-  pitfall, plus a conditional `REVIEW.md` review-gate check.
+- **Security-sensitive advisory findings require human decisions** (#1432):
+  delegated merge now blocks on workflow-surface advisory findings involving
+  auth bypasses, secret exposure, unsafe git operations, injection risk, or
+  workflow guardrail bypasses until a verified human decision or cited fix is
+  recorded.
+- **Review discipline now requires planted-violation proofs and E2E fixture
+  coverage** (#1443): `REVIEW.md` and testing guidance now require new guards,
+  lint rules, checks, or CI jobs to prove they catch a planted violation, and
+  feature PRs to extend real E2E fixtures when a repository has one.
+- **Portable i18n no-literal-string guidance** (#1441): add the stack-specific
+  i18n doctrine, a React Native/i18next example, dynamic-key scanner guidance,
+  and a conditional review-gate check.
 
 ### Fixed
 
-- **Bound `gh api` calls and harden marker comment upserts in run-epic helpers**
-  (#1474): `run-epic-delegated-gate.sh`, `run-epic-audit-trail.sh`, and
-  `security-advisory-tracker.sh` now wrap targeted GitHub API calls with a
-  bounded timeout, report structured marker-comment mutation failures, and
-  re-check for an existing marker immediately before posting to avoid duplicate
-  comments during concurrent runs.
-- **`render_pr_disposition` rejects invalid invocation and checkpoint policy
-  values** (#1461): explicit null checks prevent boolean `false` values from
-  being rendered as absent. The renderer now requires policy objects, and
-  regression tests cover render and apply paths.
-- **`workflow-shell-snippet-lint.py` WS001 false-positives on non-shell fenced
-  code blocks** (#1468): `executable = language in {"bash", "sh", "shell",
-  "zsh"} or bool(SHELL_SIGNAL.search(content))` let the `SHELL_SIGNAL` content
-  heuristic override an explicit, non-shell language tag, so idiomatic
-  TypeScript/Python/SQL fences whose content happened to start a line with
-  `export`/`if`/`for`/`set` (etc.) were misclassified as executable shell and
-  flagged for a `workflow-shell-contract` marker they should never carry —
-  reproduced on `docs/best-practices/stack/supabase.md`'s pre-existing
-  `` ```typescript `` blocks in `--all` mode, and blocking PR #1467 (#1441) in
-  `--base-ref` (changed-lines) mode. An explicit language tag is now
-  authoritative: an explicit shell tag (`bash`/`sh`/`shell`/`zsh`) is always
-  executable, any other explicit tag is never executable regardless of
-  content, and only a genuinely ambiguous untagged fence still falls back to
-  `SHELL_SIGNAL`. Adds five permanent regression fixtures to
-  `scripts/lint/tests/test-workflow-shell-snippet-lint.sh` covering explicit
-  non-shell tags (`ts`, `typescript`, `python`, `sql`) with shell-signal
-  content (must pass) and an untagged fence with shell content (must still
-  fail).
-- **`retro-metrics.md` excluded from sync overwrites, with an approval-based
-  bootstrap migration for inherited rows** (#1438):
-  `docs/workflow/retro-metrics.md` and `docs/workflow/retro-metrics-platforms.md`
-  were caught by the `docs/workflow/` `always_sync` glob in
-  `sync-manifest.yaml`, so downstream projects (which still receive this
-  template repository's own batch/retrospective history verbatim on initial
-  bootstrap — a literal file copy, not something `/sync-template` controls)
-  risked having their own accumulated history overwritten by the template's
-  rows on a subsequent `/sync-template` run. `sync-manifest.yaml` now carves
-  both files out as explicit `project_specific` entries that take precedence
-  over the enclosing glob (mirrored into the three `sync-template`
-  skill/command copies), and `docs/workflow/setup/protocol.md` adds Step 10.5
-  to detect any inherited rows during project bootstrap and, only with
-  explicit human approval (the human may decline), archive and reset them —
-  skipped entirely in the template repository itself
-  (`template.is_template: true`). A migration note in `sync-manifest.yaml`
-  covers already-bootstrapped downstream projects on their next sync.
-- **Reduce CodeRabbit fallback latency in reviewer loop** (#1433):
-  `pr-review-loop.sh`'s silent-non-trigger fallback previously waited a fixed
-  600 s `CODERABBIT_NO_TRIGGER_TIMEOUT` default regardless of `--max-wait`,
-  burning up to 10 minutes of idle wait before proactively nudging CodeRabbit
-  — the latency reported in the #1429/#1431 retrospective — and could never
-  fire at all on short-`--max-wait` invocations. Replaced with a computed
-  default (`coderabbit_no_trigger_timeout_default`, extracted alongside a new
-  `coderabbit_resolve_no_trigger_timeout` override-resolution helper) that
-  scales with `--max-wait`; a timing change only, it does not affect the
-  `coderabbit_success_status_count` description guard from #1437. See the
-  "CodeRabbit silence patterns" section in
-  [`93-automated-reviewer-loop-protocol.md`](docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md#coderabbit-silence-patterns)
-  for the full effective-timeout table.
-- **CodeRabbit success-status fallback ignored the description field** (#1437):
-  Both `coderabbit_status_success_fallback` call sites in `pr-review-loop.sh`
-  now reject a `success` CodeRabbit commit status whose description matches a
-  rate-limit or "review limit" not-actually-reviewed pattern (e.g. CodeRabbit's
-  confirmed "Review limit reached ... Next review available in: N minutes"
-  banner) via a new shared `coderabbit_success_status_count` helper, instead of
-  treating any `success` state as evidence a review completed. Closes the
-  false-clean risk left open by the existing thread-gate settle-wait
-  mitigation, which only audits existing threads and passes trivially when
-  CodeRabbit never actually reviewed the PR.
-- **Runners parking on backgrounded Step 7/8 loops** (#1434): Prohibit
-  backgrounding `pr-review-loop.sh` / `pr-ci-loop.sh` and ending the turn to
-  wait for them — the completion notification goes to the dispatcher, not the
-  runner, so doing so parks the runner permanently and indistinguishably from
-  a dead one. Applied to Protocol 91 (Step 7 and Step 8), Protocol 93, the
-  `automated-reviewer-loop` and `item-orchestrator` agents (Claude Code and
-  Cursor), the matching `workflow-reviewer-loop` and
-  `workflow-item-orchestrator` Codex skills, and the `/run-reviewer-loop`
-  command surfaces (Claude Code and Cursor).
-- **Post-merge QA scope discovery**: Prefer configured tracker post-merge items
-  on `develop`, keep integration-branch QA semantics explicit, and allow
-  provider-backed tracker IDs to seed the read-only scope helper.
-- **Template sync review hardening**: Backport reviewer-discovered safeguards
-  for batch merge metadata, reviewed-head pinning, delegated epic merge
-  evidence, reviewer-loop blockers, reviewer bypass authorization, PR-bound
-  cleanup, and workflow branch push-lock cleanup.
-- **`run-epic-audit-trail.sh` required-field guard inert in `apply-*` modes**
-  (#1430): `render_pr_disposition` and `render_reviewer_access_bypass` could
-  post an incomplete audit comment and exit 0 when a required field was
-  wrong-typed (e.g. `.item` a string instead of an object). Bash's `set -e`
-  does not abort a function whose commands run inside a context where -e is
-  already ignored — which a nested command substitution is — so the guard's
-  `jq` computation crashed silently, `$missing` read empty, and
-  `apply-pr-disposition` / `apply-reviewer-access-bypass` posted a blank or
-  partial record while reporting success. Every dotted field lookup in both
-  guards is now wrapped in `try ... catch null` so a wrong-typed value is
-  reported as missing (not a jq crash), the guard's own jq exit status is
-  captured explicitly via `||` instead of relying on `-e` propagation, and
-  all three `apply-*` call sites (`apply-pr-disposition`, `apply-epic-ledger`,
-  `apply-reviewer-access-bypass`) now propagate a render failure with
-  `|| error_exit` as defense in depth. `render_epic_ledger`'s guard was
-  audited and confirmed already safe in both call contexts (it uses a
-  directly-tested `if ! jq -e ...; then error_exit; fi`, not the
-  assign-then-test pattern) and was left unchanged. A deeper instance of the
-  same defect class (found by CodeRabbit on this PR) affected the *optional*
-  `invocation_policy`, `checkpoint_policy`, and `verification` sections of
-  `render_pr_disposition`, which are not covered by the required-field guard:
-  a wrong-typed value crashed jq mid-render inside the `{ ... } | redact_text`
-  body pipe, and because that block runs as a non-last pipeline stage — in
-  its own subshell — execution continued past the crash and the function
-  still returned exit 0 with a silently degraded section. Each of the five
-  risky jq captures in those sections now calls `error_exit` immediately on
-  failure (a deferred flag would not survive the subshell boundary). Review
-  of that fix found the same defect class also unpatched in the *optional*
-  `protocol_deviations` section (no upstream validator, unlike `.advisories`,
-  which `validate_advisories` already protects before `render_pr_disposition`
-  is ever called); its jq capture now uses the same `error_exit`-at-point-of-
-  failure guard, with matching planted-violation regression tests for both
-  the `apply-*` and direct `render-*` paths.
-- **`why_safe_to_merge` evidence silently dropped from the PR disposition audit
-  comment** (#1436): `run-epic-risk-classifier.sh` requires a complete
-  `.why_safe_to_merge` block (`scope`, `tests`, `reviewer_outcome`,
-  `ci_outcome`, `rollback_or_cleanup_risk`) before it will assign `medium`
-  risk, but `render_pr_disposition` — the only function that renders the
-  durable audit comment — never referenced `.why_safe_to_merge` anywhere in
-  its jq programs. Because the renderer is jq-based, an unconsumed top-level
-  key like `why_safe_to_merge` was silently dropped instead of raising an
-  error or warning, so a caller could pass the classifier's full output
-  (including a complete `why_safe_to_merge` block) into `apply-pr-disposition`
-  and the merge justification required for the risk decision would never
-  appear in the posted comment. Added a "Why Safe to Merge" section to
-  `render_pr_disposition`, mirroring the "Risk Reasons" section's rendering
-  pattern and using the same `error_exit`-at-point-of-failure guard shape as
-  the other optional sections (`invocation_policy`, `checkpoint_policy`,
-  `verification`, `protocol_deviations`) established by #1430, so a
-  wrong-typed `.why_safe_to_merge` value fails loudly instead of crashing
-  mid-render. As a complementary defense-in-depth measure (this issue's
-  proposed option 2), added `warn_unknown_pr_disposition_keys`, which emits a
-  non-fatal `WARN` to stderr for any top-level PR-disposition input key not in
-  a maintained allowlist, so a future unconsumed field degrades visibly
-  instead of repeating this exact silent-drop defect. A non-object
-  `.why_safe_to_merge` value (including `false`) is rejected as invalid
-  evidence rather than silently rendered as absent.
-- **`run-epic-delegated-gate.sh` degraded to worst-case `human_required` on
-  incomplete input instead of erroring** (#1435): an evidence file whose `.pr`
-  object was never populated (e.g. `.pr.number: null`, empty
-  `.pr.headRefName`/`.pr.baseRefName`) previously fell through to every
-  per-field worst-case default at once — reproduced against real evidence as
-  an 8-reason `human_required` verdict, at least 5 of the reasons factually
-  false for the PR at evaluation time. The gate now validates `.pr.number`,
-  `.pr.headRefName`, and `.pr.baseRefName` — the three identity fields every
-  live `gh pr view` read always populates — before evaluating any reason, and
-  refuses with a clear `ERROR:` naming the missing field(s) instead of
-  defaulting each one independently. Separately, `.pr.inScope` — meaningful
-  only for a resolved `/run-epic` scope — now short-circuits to a distinct
-  `not_applicable` decision with a single reason when explicitly `false`
-  (previously buried among unrelated defaulted reasons under
-  `human_required`), and is skipped entirely (no reason added) when the key is
-  absent, so `/run-items`/`/run-item` Gate 5 callers with no resolved epic
-  scope no longer need to hand-assemble `pr.inScope: true` to get a usable
-  evaluation. Other optional `.pr`/`.reviewer`/`.risk`/`.policy` fields keep
-  their existing per-field worst-case defaulting, which is intentional and
-  covered by pre-existing tests (e.g. `missing_risk_gate_requires_human`).
-  Both new validations are type-strict, not just presence checks (CodeRabbit
-  review on this PR): `.pr.number` must be a positive integer (a string like
-  `"42"`, `0`, a negative number, or a non-integer all fail identity
-  validation the same as a missing value), `.pr.headRefName`/`.pr.baseRefName`
-  must be non-blank strings (a coerced-via-`tostring` number/array/object no
-  longer passes), and a present `.pr.inScope` must be a literal boolean —
-  `null`, a string, a number, or an object now errors explicitly instead of
-  being coerced by jq's `//` truthiness into an incorrect scope decision.
-  Updated `docs/workflow/development-workflow/protocols/95-run-epic-protocol.md`
-  and `docs/workflow/development-workflow/guardrails-enforcement.md` (Gate 5)
-  to document the new `not_applicable` decision and the omit-`pr.inScope`
-  guidance for non-run-epic callers.
+- **Run-epic marker comments are safer under API latency and concurrency**
+  (#1474): targeted GitHub API calls now use bounded timeouts, structured
+  marker-comment mutation failures, and a final duplicate check before posting.
+- **PR disposition audit rendering rejects invalid policy evidence** (#1461):
+  invalid invocation and checkpoint policy values, including boolean `false`,
+  now fail instead of being rendered as absent.
+- **Shell snippet lint respects explicit non-shell code fences** (#1468):
+  TypeScript, Python, SQL, and other explicitly tagged non-shell fences no
+  longer trigger WS001 because their contents happen to resemble shell.
+- **Project-specific retro metrics are protected from template sync overwrites**
+  (#1438): retro metrics files are now carved out of the sync manifest, with
+  an approval-based bootstrap cleanup path for inherited template rows.
+- **CodeRabbit reviewer-loop fallbacks are faster and more accurate**
+  (#1433, #1437): silent-review fallback timing now scales with `--max-wait`,
+  and successful CodeRabbit statuses with review-limit descriptions no longer
+  count as completed review evidence.
+- **Workflow runners may not park on backgrounded review or CI loops** (#1434):
+  protocols, agents, and Codex command surfaces now require foreground
+  `pr-review-loop.sh` and `pr-ci-loop.sh` execution.
+- **Post-merge QA scope discovery is tracker-aware**: configured tracker
+  post-merge items on `develop` are preferred, integration-branch QA semantics
+  stay explicit, and provider-backed tracker IDs can seed the read-only scope
+  helper.
+- **Template sync review hardening was backported**: safeguards now cover batch
+  merge metadata, reviewed-head pinning, delegated epic merge evidence,
+  reviewer-loop blockers, reviewer bypass authorization, PR-bound cleanup, and
+  workflow branch push-lock cleanup.
+- **Run-epic audit rendering fails loudly on malformed evidence** (#1430):
+  required-field and optional-section guards now report wrong-typed values
+  reliably in both render and apply paths.
+- **PR disposition audit comments include merge-safety evidence** (#1436):
+  `why_safe_to_merge` is now rendered, invalid values fail loudly, and unknown
+  top-level disposition keys emit warnings instead of being silently dropped.
+- **Delegated gate input validation avoids false `human_required` verdicts**
+  (#1435): missing or wrong-typed PR identity fields now error before
+  evaluation, and explicit out-of-scope PRs produce a distinct
+  `not_applicable` decision.
 
 ## [0.41.0] - 2026-08-02
 
@@ -1558,7 +1404,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.38.0...v0.39.0
