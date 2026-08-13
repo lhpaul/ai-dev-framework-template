@@ -21,11 +21,28 @@ trap cleanup EXIT
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
+
+mock_sleep_if_requested() {
+  local var_name="$1"
+  local value="${!var_name:-0}"
+
+  case "$value" in
+    ''|*[!0-9]*)
+      printf 'ERROR: %s must be a non-negative integer\n' "$var_name" >&2
+      exit 65
+      ;;
+  esac
+  if [ "$value" -gt 0 ]; then
+    sleep "$value" || {
+      printf 'ERROR: sleep failed for %s=%s\n' "$var_name" "$value" >&2
+      exit 1
+    }
+  fi
+}
+
 case "$*" in
   api\ repos/example/mobile-app/issues/comments/12345)
-    if [ "${MOCK_GH_AUTHORIZATION_SLEEP:-0}" -gt 0 ]; then
-      sleep "$MOCK_GH_AUTHORIZATION_SLEEP"
-    fi
+    mock_sleep_if_requested MOCK_GH_AUTHORIZATION_SLEEP
     jq -n \
       --arg body "${MOCK_GH_AUTHORIZATION_BODY:-}" \
       --arg user_type "${MOCK_GH_AUTHORIZATION_USER_TYPE:-User}" \
@@ -53,9 +70,7 @@ case "$*" in
     jq -n --arg permission "${MOCK_GH_AUTHORIZATION_PERMISSION:-admin}" '{permission: $permission}'
     ;;
   api\ repos/example/mobile-app/issues/comments/54321)
-    if [ "${MOCK_GH_SECURITY_DECISION_SLEEP:-0}" -gt 0 ]; then
-      sleep "$MOCK_GH_SECURITY_DECISION_SLEEP"
-    fi
+    mock_sleep_if_requested MOCK_GH_SECURITY_DECISION_SLEEP
     jq -n \
       --arg body "${MOCK_GH_SECURITY_DECISION_BODY:-}" \
       --arg user_type "${MOCK_GH_SECURITY_DECISION_USER_TYPE:-User}" \
@@ -68,9 +83,7 @@ case "$*" in
     jq -n --arg permission "${MOCK_GH_SECURITY_DECISION_PERMISSION:-write}" '{permission: $permission}'
     ;;
   api\ --paginate\ --slurp\ repos/example/mobile-app/issues/42/comments?per_page=100)
-    if [ "${MOCK_GH_BYPASS_AUDIT_SLEEP:-0}" -gt 0 ]; then
-      sleep "$MOCK_GH_BYPASS_AUDIT_SLEEP"
-    fi
+    mock_sleep_if_requested MOCK_GH_BYPASS_AUDIT_SLEEP
     if [ -n "${MOCK_GH_BYPASS_AUDIT_BODY:-}" ]; then
       jq -n --arg body "$MOCK_GH_BYPASS_AUDIT_BODY" '[[{id: 67890, user: {login: "lhpaul"}, created_at: "2026-07-29T12:01:00Z", body: $body}]]'
     else
