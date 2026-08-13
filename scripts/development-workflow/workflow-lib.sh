@@ -115,8 +115,17 @@ gh_api_bounded() {
   local timeout_seconds
   timeout_seconds="$(gh_api_timeout_seconds)"
   if command -v timeout >/dev/null 2>&1; then
-    timeout "$timeout_seconds" gh api "$@"
-    return $?
+    local status
+    status=0
+    if timeout --help 2>&1 | grep -q -- '--kill-after'; then
+      timeout --kill-after=1 "$timeout_seconds" gh api "$@" || status=$?
+    else
+      timeout "$timeout_seconds" gh api "$@" || status=$?
+    fi
+    if [ "$status" -eq 137 ]; then
+      return 124
+    fi
+    return "$status"
   fi
 
   local output_file pid elapsed status process_group
