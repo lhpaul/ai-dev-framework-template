@@ -23,7 +23,15 @@ cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
 
 mock_sleep_if_requested() {
-  local var_name="$1"
+  local var_name="${1-}"
+  case "$var_name" in
+    [a-zA-Z_][a-zA-Z0-9_]*)
+      ;;
+    *)
+      printf 'ERROR: mock_sleep_if_requested requires an environment variable name\n' >&2
+      exit 64
+      ;;
+  esac
   local value="${!var_name:-0}"
 
   case "$value" in
