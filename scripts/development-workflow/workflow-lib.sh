@@ -103,6 +103,65 @@ repo_slug() {
   gh repo view --json nameWithOwner --jq '.nameWithOwner'
 }
 
+gh_api_timeout_seconds() {
+  local value="${WORKFLOW_GH_API_TIMEOUT_SECONDS:-30}"
+  if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+    value=30
+  fi
+  printf '%s\n' "$value"
+}
+
+gh_api_bounded() {
+  local timeout_seconds
+  timeout_seconds="$(gh_api_timeout_seconds)"
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$timeout_seconds" gh api "$@"
+    return $?
+  fi
+
+  local output_file pid elapsed status process_group
+  output_file="$(mktemp)" || return 1
+  process_group=0
+  if command -v setsid >/dev/null 2>&1; then
+    setsid gh api "$@" >"$output_file" &
+    process_group=1
+  else
+    gh api "$@" >"$output_file" &
+  fi
+  pid=$!
+  elapsed=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$elapsed" -ge "$timeout_seconds" ]; then
+      if [ "$process_group" -eq 1 ]; then
+        kill -TERM "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+      else
+        kill "$pid" 2>/dev/null || true
+      fi
+      sleep 1
+      if kill -0 "$pid" 2>/dev/null; then
+        if [ "$process_group" -eq 1 ]; then
+          kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+        else
+          kill -KILL "$pid" 2>/dev/null || true
+        fi
+      fi
+      wait "$pid" 2>/dev/null || true
+      rm -f "$output_file"
+      return 124
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  status=0
+  wait "$pid" || status=$?
+  cat "$output_file"
+  rm -f "$output_file"
+  if ! [[ "$status" =~ ^[0-9]+$ ]]; then
+    status=1
+  fi
+  return "$status"
+}
+
 workflow_context_value() {
   local key="$1"
   local context="${2:-}"
