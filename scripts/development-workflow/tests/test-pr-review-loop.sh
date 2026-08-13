@@ -2275,6 +2275,104 @@ run_test "codex_trigger_idempotency_paginated_single_object" "1" \
   "$(printf '%s\n' "$_codex_paginated_selected_trigger" | wc -l | tr -d ' ')"
 unset _codex_trigger_comments _codex_selected_trigger _codex_paginated_trigger_comments _codex_paginated_selected_trigger
 
+_codex_usage_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_usage_comment_mock_dir/gh" <<'CODEX_USAGE_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcusage1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":101,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":201,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_USAGE_COMMENT_GH
+chmod +x "$_codex_usage_comment_mock_dir/gh"
+
+_codex_usage_comment_output=""
+_codex_usage_comment_exit=0
+PATH="$_codex_usage_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_usage_comment_mock_dir/output.txt" 2>&1 || _codex_usage_comment_exit=$?
+_codex_usage_comment_output="$(cat "$_codex_usage_comment_mock_dir/output.txt")"
+run_test "codex_usage_limit_comment_exit_unavailable" "3" "$_codex_usage_comment_exit"
+run_test "codex_usage_limit_comment_verdict" \
+  "VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached" \
+  "$(printf '%s\n' "$_codex_usage_comment_output" | grep "^VERDICT:")"
+run_test "codex_usage_limit_comment_reason" "REASON=codex-github-usage-limit" \
+  "$(printf '%s\n' "$_codex_usage_comment_output" | grep "^REASON=")"
+run_test "codex_usage_limit_comment_comment_count" "COMMENT_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_comment_output" | grep "^COMMENT_COUNT=")"
+run_test "codex_usage_limit_comment_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_comment_output" | grep "^BLOCKING_COUNT=")"
+run_test "codex_usage_limit_comment_suggestion_count" "SUGGESTION_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_comment_output" | grep "^SUGGESTION_COUNT=")"
+rm -rf "$_codex_usage_comment_mock_dir"
+unset _codex_usage_comment_mock_dir _codex_usage_comment_output _codex_usage_comment_exit
+
+_codex_usage_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_usage_review_mock_dir/gh" <<'CODEX_USAGE_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcreview1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":102,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex review capacity exhausted. Please rerun after quota reset."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_USAGE_REVIEW_GH
+chmod +x "$_codex_usage_review_mock_dir/gh"
+
+_codex_usage_review_output=""
+_codex_usage_review_exit=0
+PATH="$_codex_usage_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_usage_review_mock_dir/output.txt" 2>&1 || _codex_usage_review_exit=$?
+_codex_usage_review_output="$(cat "$_codex_usage_review_mock_dir/output.txt")"
+run_test "codex_usage_limit_review_exit_unavailable" "3" "$_codex_usage_review_exit"
+run_test "codex_usage_limit_review_verdict" \
+  "VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached" \
+  "$(printf '%s\n' "$_codex_usage_review_output" | grep "^VERDICT:")"
+run_test "codex_usage_limit_review_reason" "REASON=codex-github-usage-limit" \
+  "$(printf '%s\n' "$_codex_usage_review_output" | grep "^REASON=")"
+run_test "codex_usage_limit_review_comment_count" "COMMENT_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_review_output" | grep "^COMMENT_COUNT=")"
+run_test "codex_usage_limit_review_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_review_output" | grep "^BLOCKING_COUNT=")"
+run_test "codex_usage_limit_review_suggestion_count" "SUGGESTION_COUNT=0" \
+  "$(printf '%s\n' "$_codex_usage_review_output" | grep "^SUGGESTION_COUNT=")"
+rm -rf "$_codex_usage_review_mock_dir"
+unset _codex_usage_review_mock_dir _codex_usage_review_output _codex_usage_review_exit
+
 _unlock_pr="80213$$"
 _unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
 rm -rf "$_unlock_lock_dir"
@@ -2330,6 +2428,50 @@ run_test "codex_thread_check_failure_reason" "REASON=thread-check-failed" \
   "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
 run_test "codex_thread_check_failure_exit_code" "2" "$actual_exit"
 unset _codex_overrides actual_output actual_exit
+
+_codex_usage_loop_tmp="$(mktemp -d)"
+mkdir -p "$_codex_usage_loop_tmp/scripts/development-workflow"
+cat > "$_codex_usage_loop_tmp/scripts/development-workflow/codex-github-reviewer.sh" <<'CODEX_USAGE_LOOP_REVIEWER'
+#!/usr/bin/env bash
+printf 'VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached\n'
+printf 'REASON=codex-github-usage-limit\n'
+printf 'COMMENT_COUNT=0\n'
+printf 'BLOCKING_COUNT=0\n'
+printf 'SUGGESTION_COUNT=0\n'
+exit 3
+CODEX_USAGE_LOOP_REVIEWER
+chmod +x "$_codex_usage_loop_tmp/scripts/development-workflow/codex-github-reviewer.sh"
+_codex_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+  workflow_repo_root() { printf "%s\n" "$_codex_usage_loop_tmp"; }
+  check_unresolved_threads() { printf "0\n"; return 0; }
+'
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_codex_overrides"
+  _ec=0
+  run_codex_github_review "42" "fix/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "codex_usage_limit_loop_result" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "codex_usage_limit_loop_reason" "REASON=codex-github-usage-limit" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "codex_usage_limit_loop_platform" "PLATFORM=codex-github" \
+  "$(printf '%s\n' "$actual_output" | grep "^PLATFORM=")"
+run_test "codex_usage_limit_loop_comment_zero" "COMMENT_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^COMMENT_COUNT=")"
+run_test "codex_usage_limit_loop_blocking_zero" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^BLOCKING_COUNT=")"
+run_test "codex_usage_limit_loop_suggestion_zero" "SUGGESTION_COUNT=0" \
+  "$(printf '%s\n' "$actual_output" | grep "^SUGGESTION_COUNT=")"
+run_test "codex_usage_limit_loop_exit_code" "2" "$actual_exit"
+rm -rf "$_codex_usage_loop_tmp"
+unset _codex_usage_loop_tmp _codex_overrides actual_output actual_exit
 
 _post_summary_source="$(awk '/^_post_review_summary\(\)/,/^}$/' \
   "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"

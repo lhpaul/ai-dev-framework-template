@@ -745,6 +745,7 @@ run_codex_github_review() {
   local repo
   local reviewer_script
   local script_exit=0
+  local script_output=""
   local thread_check_output=""
   local thread_check_status=0
   local unresolved_count=0
@@ -805,11 +806,11 @@ run_codex_github_review() {
     effective_poll_interval="$max_wait"
   fi
   set +e
-  "$reviewer_script" "$pr_number" "$owner" "$repo_name" \
+  script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" \
     --bot-login "$bot_login" \
     --poll-interval "$effective_poll_interval" \
     --max-wait "$max_wait" \
-    --max-retriggers "$max_retriggers" >/dev/null 2>&1
+    --max-retriggers "$max_retriggers" 2>&1)"
   script_exit=$?
   set -e
 
@@ -847,13 +848,30 @@ run_codex_github_review() {
       print_kv SUGGESTION_COUNT 0
       return 1
       ;;
-    *)
+    3)
       print_kv RESULT escalate
-      print_kv REASON timeout
+      print_kv REASON codex-github-usage-limit
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      return 2
+      ;;
+    *)
+      local codex_reason
+      codex_reason="$(kv_value_default REASON "$script_output" timeout)"
+      print_kv RESULT escalate
+      print_kv REASON "$codex_reason"
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
       return 2
       ;;
   esac
