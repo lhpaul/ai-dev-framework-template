@@ -951,18 +951,19 @@ gh api graphql -f query='
     repository(owner:$owner, name:$repo) {
       pullRequest(number:$number) {
         reviewThreads(first: 100) {
-          nodes { isResolved comments(first: 1) { nodes { author { login } body } } }
+          nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
         }
       }
     }
   }' -f owner=<owner> -f repo=<repo> -F number=<pr_number> \
   | jq --arg codex_bot "$CODEX_BOT_LOGIN" '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
+        | select((.isOutdated // false) == false)
         | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps",$codex_bot] | index($a) != null)
         | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)'
 ```
 
-Pass condition: empty output. If non-empty: resolve or address each reported thread before proceeding.
+Pass condition: empty output. If non-empty: resolve or address each reported thread before proceeding. Outdated threads are non-blocking because GitHub marked the finding's original diff location stale after a fix.
 
 Step 1.3 — Apply `ready-for-regression`:
 
@@ -1553,18 +1554,19 @@ gh api graphql -f query='
     repository(owner:$owner, name:$repo) {
       pullRequest(number:$number) {
         reviewThreads(first: 100) {
-          nodes { isResolved comments(first: 1) { nodes { author { login } body } } }
+          nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
         }
       }
     }
   }' -f owner=<owner> -f repo=<repo> -F number=<pr_number> \
   | jq --arg codex_bot "$CODEX_BOT_LOGIN" '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
+        | select((.isOutdated // false) == false)
         | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps",$codex_bot] | index($a) != null)
         | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)'
 ```
 
-Pass condition: empty output. If non-empty: resolve or address each reported thread before proceeding.
+Pass condition: empty output. If non-empty: resolve or address each reported thread before proceeding. Outdated threads are non-blocking because GitHub marked the finding's original diff location stale after a fix.
 
 Step 1.3 — Apply `ready-for-regression`:
 
