@@ -2310,6 +2310,9 @@ PATH="$_codex_usage_comment_mock_dir:$PATH" \
   >"$_codex_usage_comment_mock_dir/output.txt" 2>&1 || _codex_usage_comment_exit=$?
 _codex_usage_comment_output="$(cat "$_codex_usage_comment_mock_dir/output.txt")"
 run_test "codex_usage_limit_comment_exit_unavailable" "3" "$_codex_usage_comment_exit"
+run_test "codex_usage_limit_comment_verdict" \
+  "VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached" \
+  "$(printf '%s\n' "$_codex_usage_comment_output" | grep "^VERDICT:")"
 run_test "codex_usage_limit_comment_reason" "REASON=codex-github-usage-limit" \
   "$(printf '%s\n' "$_codex_usage_comment_output" | grep "^REASON=")"
 run_test "codex_usage_limit_comment_comment_count" "COMMENT_COUNT=0" \
@@ -2356,6 +2359,9 @@ PATH="$_codex_usage_review_mock_dir:$PATH" \
   >"$_codex_usage_review_mock_dir/output.txt" 2>&1 || _codex_usage_review_exit=$?
 _codex_usage_review_output="$(cat "$_codex_usage_review_mock_dir/output.txt")"
 run_test "codex_usage_limit_review_exit_unavailable" "3" "$_codex_usage_review_exit"
+run_test "codex_usage_limit_review_verdict" \
+  "VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached" \
+  "$(printf '%s\n' "$_codex_usage_review_output" | grep "^VERDICT:")"
 run_test "codex_usage_limit_review_reason" "REASON=codex-github-usage-limit" \
   "$(printf '%s\n' "$_codex_usage_review_output" | grep "^REASON=")"
 run_test "codex_usage_limit_review_comment_count" "COMMENT_COUNT=0" \
