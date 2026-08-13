@@ -74,6 +74,52 @@ load_input_json() {
   printf '%s\n' "$raw"
 }
 
+gh_api_timeout_seconds() {
+  local value="${WORKFLOW_GH_API_TIMEOUT_SECONDS:-30}"
+  if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+    value=30
+  fi
+  printf '%s\n' "$value"
+}
+
+gh_api_read() {
+  local timeout_seconds
+  timeout_seconds="$(gh_api_timeout_seconds)"
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$timeout_seconds" gh api "$@"
+    return $?
+  fi
+
+  local output_file status_file pid elapsed status
+  output_file="$(mktemp)" || return 1
+  status_file="$(mktemp)" || {
+    rm -f "$output_file"
+    return 1
+  }
+  (
+    set +e
+    gh api "$@" >"$output_file"
+    printf '%s\n' "$?" >"$status_file"
+  ) &
+  pid=$!
+  elapsed=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$elapsed" -ge "$timeout_seconds" ]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      rm -f "$output_file" "$status_file"
+      return 124
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  wait "$pid" 2>/dev/null || true
+  status="$(cat "$status_file" 2>/dev/null || printf '1')"
+  cat "$output_file"
+  rm -f "$output_file" "$status_file"
+  return "$status"
+}
+
 github_authorization_event_candidates() {
   printf '%s\n' "$1" | jq -c '
     def authorization_events:
@@ -169,7 +215,7 @@ github_verified_authorization_events() {
         continue
         ;;
     esac
-    if ! fetched="$(gh api "$endpoint" 2>/dev/null)"; then
+    if ! fetched="$(gh_api_read "$endpoint" 2>/dev/null)"; then
       continue
     fi
     [ -n "$fetched" ] || continue
@@ -197,7 +243,7 @@ github_verified_authorization_events() {
       continue
     fi
     [ -n "$normalized" ] || continue
-    if ! permission_response="$(gh api "repos/${repo}/collaborators/${authorized_by}/permission" 2>/dev/null)"; then
+    if ! permission_response="$(gh_api_read "repos/${repo}/collaborators/${authorized_by}/permission" 2>/dev/null)"; then
       permission_response=""
     fi
     if ! author_permission="$(printf '%s\n' "$permission_response" | jq -r '.permission // ""' 2>/dev/null)"; then
@@ -307,7 +353,7 @@ github_verified_security_advisory_decisions() {
         continue
         ;;
     esac
-    if ! fetched="$(gh api "$endpoint" 2>/dev/null)"; then
+    if ! fetched="$(gh_api_read "$endpoint" 2>/dev/null)"; then
       continue
     fi
     [ -n "$fetched" ] || continue
@@ -354,7 +400,7 @@ github_verified_security_advisory_decisions() {
     if [ -z "$matched" ] || [ "$matched" = "null" ]; then
       continue
     fi
-    if ! permission_response="$(gh api "repos/${repo}/collaborators/$(printf '%s\n' "$normalized" | jq -r '.author')/permission" 2>/dev/null)"; then
+    if ! permission_response="$(gh_api_read "repos/${repo}/collaborators/$(printf '%s\n' "$normalized" | jq -r '.author')/permission" 2>/dev/null)"; then
       permission_response=""
     fi
     if ! author_permission="$(printf '%s\n' "$permission_response" | jq -r '.permission // ""' 2>/dev/null)"; then
@@ -434,7 +480,7 @@ github_verified_bypass_audit() {
   fi
 
   local comments
-  if ! comments="$(gh api --paginate --slurp "repos/${repo}/issues/${pr_number}/comments?per_page=100" 2>/dev/null)"; then
+  if ! comments="$(gh_api_read --paginate --slurp "repos/${repo}/issues/${pr_number}/comments?per_page=100" 2>/dev/null)"; then
     comments=""
   fi
   if [ -z "$comments" ]; then

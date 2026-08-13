@@ -44,6 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Bound `gh api` calls and harden marker comment upserts in run-epic helpers**
+  (#1474): `run-epic-delegated-gate.sh`, `run-epic-audit-trail.sh`, and
+  `security-advisory-tracker.sh` now wrap targeted GitHub API calls with a
+  bounded timeout, report structured marker-comment mutation failures, and
+  re-check for an existing marker immediately before posting to avoid duplicate
+  comments during concurrent runs.
 - **`render_pr_disposition` rejects invalid invocation and checkpoint policy
   values** (#1461): explicit null checks prevent boolean `false` values from
   being rendered as absent. The renderer now requires policy objects, and

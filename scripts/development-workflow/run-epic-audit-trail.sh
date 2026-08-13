@@ -78,6 +78,52 @@ load_input_json() {
   jq -c '.' "$file" 2>/dev/null || error_exit "input file is not valid JSON: $file"
 }
 
+gh_api_timeout_seconds() {
+  local value="${WORKFLOW_GH_API_TIMEOUT_SECONDS:-30}"
+  if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+    value=30
+  fi
+  printf '%s\n' "$value"
+}
+
+gh_api_bounded() {
+  local timeout_seconds
+  timeout_seconds="$(gh_api_timeout_seconds)"
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$timeout_seconds" gh api "$@"
+    return $?
+  fi
+
+  local output_file status_file pid elapsed status
+  output_file="$(mktemp)" || return 1
+  status_file="$(mktemp)" || {
+    rm -f "$output_file"
+    return 1
+  }
+  (
+    set +e
+    gh api "$@" >"$output_file"
+    printf '%s\n' "$?" >"$status_file"
+  ) &
+  pid=$!
+  elapsed=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$elapsed" -ge "$timeout_seconds" ]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      rm -f "$output_file" "$status_file"
+      return 124
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  wait "$pid" 2>/dev/null || true
+  status="$(cat "$status_file" 2>/dev/null || printf '1')"
+  cat "$output_file"
+  rm -f "$output_file" "$status_file"
+  return "$status"
+}
+
 redact_text() {
   sed -E \
     -e 's#gh[pousr]_[A-Za-z0-9_]+#[REDACTED_TOKEN]#g' \
@@ -674,7 +720,7 @@ find_marker_comment_id() {
   local repo comments
 
   repo="$(repo_slug)"
-  if ! comments="$(gh api --paginate --slurp "repos/${repo}/issues/${target}/comments?per_page=100" 2>/dev/null)"; then
+  if ! comments="$(gh_api_bounded --paginate --slurp "repos/${repo}/issues/${target}/comments?per_page=100" 2>/dev/null)"; then
     error_exit "failed to read comments for issue/PR #$target"
   fi
   printf '%s\n' "$comments" |
@@ -685,18 +731,48 @@ apply_comment() {
   local target="$1"
   local marker="$2"
   local body="$3"
-  local repo comment_id
+  local repo comment_id payload output status
 
   require_gh
   repo="$(repo_slug)"
   comment_id="$(find_marker_comment_id "$target" "$marker")"
+  payload="$(mktemp)" || error_exit "failed to create comment payload"
+  jq -n --arg body "$body" '{body: $body}' >"$payload"
   if [ -n "$comment_id" ]; then
-    jq -n --arg body "$body" '{body: $body}' |
-      gh api -X PATCH "repos/${repo}/issues/comments/${comment_id}" --input - >/dev/null
+    status=0
+    output="$(gh_api_bounded -X PATCH "repos/${repo}/issues/comments/${comment_id}" --input "$payload" 2>&1 >/dev/null)" || status=$?
+    rm -f "$payload"
+    if [ "$status" -eq 124 ]; then
+      error_exit "timed out updating marker comment ${comment_id} for issue/PR #$target"
+    fi
+    if [ "$status" -ne 0 ]; then
+      error_exit "failed to update marker comment ${comment_id} for issue/PR #$target: $output"
+    fi
     printf 'UPDATED_COMMENT_ID=%s\n' "$comment_id"
   else
-    jq -n --arg body "$body" '{body: $body}' |
-      gh api -X POST "repos/${repo}/issues/${target}/comments" --input - >/dev/null
+    comment_id="$(find_marker_comment_id "$target" "$marker")"
+    if [ -n "$comment_id" ]; then
+      status=0
+      output="$(gh_api_bounded -X PATCH "repos/${repo}/issues/comments/${comment_id}" --input "$payload" 2>&1 >/dev/null)" || status=$?
+      rm -f "$payload"
+      if [ "$status" -eq 124 ]; then
+        error_exit "timed out updating marker comment ${comment_id} for issue/PR #$target"
+      fi
+      if [ "$status" -ne 0 ]; then
+        error_exit "failed to update marker comment ${comment_id} for issue/PR #$target: $output"
+      fi
+      printf 'UPDATED_COMMENT_ID=%s\n' "$comment_id"
+      return 0
+    fi
+    status=0
+    output="$(gh_api_bounded -X POST "repos/${repo}/issues/${target}/comments" --input "$payload" 2>&1 >/dev/null)" || status=$?
+    rm -f "$payload"
+    if [ "$status" -eq 124 ]; then
+      error_exit "timed out creating marker comment for issue/PR #$target"
+    fi
+    if [ "$status" -ne 0 ]; then
+      error_exit "failed to create marker comment for issue/PR #$target: $output"
+    fi
     printf 'CREATED_COMMENT=1\n'
   fi
 }

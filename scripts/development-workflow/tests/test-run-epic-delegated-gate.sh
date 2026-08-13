@@ -50,6 +50,9 @@ case "$*" in
     jq -n --arg permission "${MOCK_GH_AUTHORIZATION_PERMISSION:-admin}" '{permission: $permission}'
     ;;
   api\ repos/example/mobile-app/issues/comments/54321)
+    if [ "${MOCK_GH_SECURITY_DECISION_SLEEP:-0}" -gt 0 ]; then
+      sleep "$MOCK_GH_SECURITY_DECISION_SLEEP"
+    fi
     jq -n \
       --arg body "${MOCK_GH_SECURITY_DECISION_BODY:-}" \
       --arg user_type "${MOCK_GH_SECURITY_DECISION_USER_TYPE:-User}" \
@@ -1228,6 +1231,9 @@ run_test "security_advisory_decision_generic_approval_does_not_resolve" "[]" "$(
 )"
 run_test "security_advisory_decision_wrong_target_pr_does_not_resolve" "[]" "$(
   MOCK_GH_SECURITY_DECISION_ISSUE_URL="https://api.github.com/repos/example/mobile-app/issues/7" verify_decisions_for "$security_advisory_decision_event_fixture"
+)"
+run_test "security_advisory_decision_timeout_does_not_resolve" "[]" "$(
+  WORKFLOW_GH_API_TIMEOUT_SECONDS=1 MOCK_GH_SECURITY_DECISION_SLEEP=2 verify_decisions_for "$security_advisory_decision_event_fixture"
 )"
 run_test "security_advisory_decision_stale_created_at_does_not_resolve" "[]" "$(
   MOCK_GH_SECURITY_DECISION_CREATED_AT="2026-07-01T00:00:00Z" verify_decisions_for "$security_advisory_decision_event_fixture"
