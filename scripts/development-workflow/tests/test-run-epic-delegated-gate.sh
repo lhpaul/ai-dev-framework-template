@@ -25,9 +25,7 @@ printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
 mock_sleep_if_requested() {
   local var_name="${1-}"
   case "$var_name" in
-    [a-zA-Z_][a-zA-Z0-9_]*)
-      ;;
-    *)
+    ''|[!a-zA-Z_]*|*[!a-zA-Z0-9_]*)
       printf 'ERROR: mock_sleep_if_requested requires an environment variable name\n' >&2
       exit 64
       ;;
@@ -49,6 +47,9 @@ mock_sleep_if_requested() {
 }
 
 case "$*" in
+  mock-sleep-test)
+    mock_sleep_if_requested "${MOCK_GH_SLEEP_VAR_NAME:-}"
+    ;;
   api\ repos/example/mobile-app/issues/comments/12345)
     mock_sleep_if_requested MOCK_GH_AUTHORIZATION_SLEEP
     jq -n \
@@ -233,6 +234,8 @@ printf ' \n\t\n' > "$whitespace_file"
 echo ""
 echo "=== Run epic delegated gate ==="
 
+run_fails_contains "mock_sleep_rejects_invalid_suffix" "requires an environment variable name" \
+  env MOCK_GH_SLEEP_VAR_NAME=MOCK_SLEEP-NAME "$MOCK_BIN/gh" mock-sleep-test
 run_fails_contains "requires_input" "--input is required" "$GATE"
 run_fails_contains "rejects_pr_mode" "Unknown option: --pr" "$GATE" --pr 42
 run_fails_contains "rejects_missing_fixture" "input file not found" "$GATE" --input "$missing_file"
