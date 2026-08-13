@@ -2295,7 +2295,9 @@ case "$*" in
     printf '[{"id":201,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."}]\n'
     exit 0 ;;
   *)
-    printf '[]\n'; exit 0 ;;
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
 esac
 CODEX_USAGE_COMMENT_GH
 chmod +x "$_codex_usage_comment_mock_dir/gh"
@@ -2339,7 +2341,9 @@ case "$*" in
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *)
-    printf '[]\n'; exit 0 ;;
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
 esac
 CODEX_USAGE_REVIEW_GH
 chmod +x "$_codex_usage_review_mock_dir/gh"
