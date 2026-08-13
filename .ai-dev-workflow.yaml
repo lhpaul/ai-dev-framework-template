@@ -64,6 +64,7 @@ review:
   #   rate_limit_policy: warn      # warn|strict; default warn
   #
   # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
+  #   Setup/verification guide: docs/workflow/development-workflow/integrations/codex-github.md
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
   #   CODEX_GITHUB_BOT_LOGIN       — GitHub login of the Codex bot account
   #                                  (default: "chatgpt-codex-connector[bot]"; verify from GitHub App settings)
