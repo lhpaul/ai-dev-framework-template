@@ -477,7 +477,7 @@ while true; do
     > "$REVIEW_TMPFILE" 2>"$REVIEW_STDERR"; then
     REVIEW_BODY=$(jq -r '.body // empty' "$REVIEW_TMPFILE" | head -c 5000)
     REVIEW_TIME=$(jq -r '.created_at // empty' "$REVIEW_TMPFILE")
-    if [ -n "$REVIEW_BODY" ] && codex_response_time_should_replace "$REVIEW_TIME" "$BOT_RESPONSE_TIME"; then
+    if [ -n "$REVIEW_BODY" ] && { [ "$BOT_RESPONSE_SOURCE" != "review" ] || codex_response_time_should_replace "$REVIEW_TIME" "$BOT_RESPONSE_TIME"; }; then
       BOT_RESPONSE="$REVIEW_BODY"
       BOT_RESPONSE_TIME="$REVIEW_TIME"
       BOT_RESPONSE_SOURCE="review"
@@ -655,6 +655,7 @@ sleep "$POLL_INTERVAL"
 # Single grace poll: check both PR comments and PR reviews
 ASYNC_BOT_RESPONSE=""
 ASYNC_BOT_RESPONSE_SOURCE=""
+ASYNC_BOT_RESPONSE_TIME=""
 
 if ! ASYNC_INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
   echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments during async grace period (treated as unavailable)"
@@ -682,9 +683,10 @@ ASYNC_POLL_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
   2>/dev/null \
   | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
-      '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | last | .body // empty' \
+      '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | last | {created_at:(.created_at // ""), body:(.body // "")}' \
 	  > "$ASYNC_POLL_TMPFILE" 2>/dev/null; then
-	  ASYNC_BOT_RESPONSE=$(head -c 10000 "$ASYNC_POLL_TMPFILE")
+	  ASYNC_BOT_RESPONSE=$(jq -r '.body // empty' "$ASYNC_POLL_TMPFILE" | head -c 10000)
+	  ASYNC_BOT_RESPONSE_TIME=$(jq -r '.created_at // empty' "$ASYNC_POLL_TMPFILE")
 	  if [ -n "$ASYNC_BOT_RESPONSE" ]; then
 	    ASYNC_BOT_RESPONSE_SOURCE="comment"
 	    if codex_response_reviews_current_head "$ASYNC_BOT_RESPONSE"; then
@@ -699,11 +701,13 @@ ASYNC_REVIEW_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
   2>/dev/null \
   | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | .body // empty' \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | {created_at:(.submitted_at // ""), body:(.body // "")}' \
   > "$ASYNC_REVIEW_TMPFILE" 2>/dev/null; then
-  ASYNC_REVIEW_BODY=$(head -c 5000 "$ASYNC_REVIEW_TMPFILE")
-	  if [ -n "$ASYNC_REVIEW_BODY" ]; then
+  ASYNC_REVIEW_BODY=$(jq -r '.body // empty' "$ASYNC_REVIEW_TMPFILE" | head -c 5000)
+  ASYNC_REVIEW_TIME=$(jq -r '.created_at // empty' "$ASYNC_REVIEW_TMPFILE")
+	  if [ -n "$ASYNC_REVIEW_BODY" ] && { [ "$ASYNC_BOT_RESPONSE_SOURCE" != "review" ] || codex_response_time_should_replace "$ASYNC_REVIEW_TIME" "$ASYNC_BOT_RESPONSE_TIME"; }; then
 	    ASYNC_BOT_RESPONSE="$ASYNC_REVIEW_BODY"
+	    ASYNC_BOT_RESPONSE_TIME="$ASYNC_REVIEW_TIME"
 	    ASYNC_BOT_RESPONSE_SOURCE="review"
     echo "INFO: async-arrival bot response detected via PR reviews endpoint"
   fi
@@ -753,13 +757,15 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
 	    fi
 	    ASYNC_FINAL_BOT_RESPONSE=""
 	    ASYNC_FINAL_BOT_RESPONSE_SOURCE=""
+	    ASYNC_FINAL_BOT_RESPONSE_TIME=""
 	    ASYNC_FINAL_POLL_TMPFILE=$(mktemp)
     if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
       2>/dev/null \
       | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
-          '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | last | .body // empty' \
+          '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | last | {created_at:(.created_at // ""), body:(.body // "")}' \
 	      > "$ASYNC_FINAL_POLL_TMPFILE" 2>/dev/null; then
-	      ASYNC_FINAL_BOT_RESPONSE=$(head -c 10000 "$ASYNC_FINAL_POLL_TMPFILE")
+	      ASYNC_FINAL_BOT_RESPONSE=$(jq -r '.body // empty' "$ASYNC_FINAL_POLL_TMPFILE" | head -c 10000)
+	      ASYNC_FINAL_BOT_RESPONSE_TIME=$(jq -r '.created_at // empty' "$ASYNC_FINAL_POLL_TMPFILE")
 	      if [ -n "$ASYNC_FINAL_BOT_RESPONSE" ]; then
 	        ASYNC_FINAL_BOT_RESPONSE_SOURCE="comment"
 	        if codex_response_reviews_current_head "$ASYNC_FINAL_BOT_RESPONSE"; then
@@ -774,12 +780,14 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
       2>/dev/null \
       | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | .body // empty' \
+          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | {created_at:(.submitted_at // ""), body:(.body // "")}' \
       > "$ASYNC_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
-      ASYNC_FINAL_REVIEW_BODY=$(head -c 5000 "$ASYNC_FINAL_REVIEW_TMPFILE")
-	      if [ -n "$ASYNC_FINAL_REVIEW_BODY" ]; then
-	        ASYNC_FINAL_BOT_RESPONSE="$ASYNC_FINAL_REVIEW_BODY"
-	        ASYNC_FINAL_BOT_RESPONSE_SOURCE="review"
+      ASYNC_FINAL_REVIEW_BODY=$(jq -r '.body // empty' "$ASYNC_FINAL_REVIEW_TMPFILE" | head -c 5000)
+      ASYNC_FINAL_REVIEW_TIME=$(jq -r '.created_at // empty' "$ASYNC_FINAL_REVIEW_TMPFILE")
+		      if [ -n "$ASYNC_FINAL_REVIEW_BODY" ] && { [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" != "review" ] || codex_response_time_should_replace "$ASYNC_FINAL_REVIEW_TIME" "$ASYNC_FINAL_BOT_RESPONSE_TIME"; }; then
+		        ASYNC_FINAL_BOT_RESPONSE="$ASYNC_FINAL_REVIEW_BODY"
+		        ASYNC_FINAL_BOT_RESPONSE_TIME="$ASYNC_FINAL_REVIEW_TIME"
+		        ASYNC_FINAL_BOT_RESPONSE_SOURCE="review"
         echo "INFO: final async bot response detected via PR reviews endpoint"
       fi
     else
@@ -863,13 +871,15 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
 
   ASYNC_REACTION_FINAL_BOT_RESPONSE=""
   ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE=""
+  ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME=""
   ASYNC_REACTION_FINAL_POLL_TMPFILE=$(mktemp)
   if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
     2>/dev/null \
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
-        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | last | .body // empty' \
+        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | last | {created_at:(.created_at // ""), body:(.body // "")}' \
     > "$ASYNC_REACTION_FINAL_POLL_TMPFILE" 2>/dev/null; then
-    ASYNC_REACTION_FINAL_BOT_RESPONSE=$(head -c 10000 "$ASYNC_REACTION_FINAL_POLL_TMPFILE")
+    ASYNC_REACTION_FINAL_BOT_RESPONSE=$(jq -r '.body // empty' "$ASYNC_REACTION_FINAL_POLL_TMPFILE" | head -c 10000)
+    ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME=$(jq -r '.created_at // empty' "$ASYNC_REACTION_FINAL_POLL_TMPFILE")
     if [ -n "$ASYNC_REACTION_FINAL_BOT_RESPONSE" ]; then
       ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE="comment"
       if codex_response_reviews_current_head "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
@@ -884,11 +894,13 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>/dev/null \
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | .body // empty' \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | {created_at:(.submitted_at // ""), body:(.body // "")}' \
     > "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
-    ASYNC_REACTION_FINAL_REVIEW_BODY=$(head -c 5000 "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE")
-    if [ -n "$ASYNC_REACTION_FINAL_REVIEW_BODY" ]; then
+    ASYNC_REACTION_FINAL_REVIEW_BODY=$(jq -r '.body // empty' "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE" | head -c 5000)
+    ASYNC_REACTION_FINAL_REVIEW_TIME=$(jq -r '.created_at // empty' "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE")
+    if [ -n "$ASYNC_REACTION_FINAL_REVIEW_BODY" ] && { [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" != "review" ] || codex_response_time_should_replace "$ASYNC_REACTION_FINAL_REVIEW_TIME" "$ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME"; }; then
       ASYNC_REACTION_FINAL_BOT_RESPONSE="$ASYNC_REACTION_FINAL_REVIEW_BODY"
+      ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME="$ASYNC_REACTION_FINAL_REVIEW_TIME"
       ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE="review"
       echo "INFO: final async reaction bot response detected via PR reviews endpoint"
     fi

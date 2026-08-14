@@ -2682,6 +2682,65 @@ run_test "codex_newer_root_blocks_old_review_verdict" "VERDICT: NEEDS_REVISION" 
 rm -rf "$_codex_newer_root_blocks_old_review_mock_dir"
 unset _codex_newer_root_blocks_old_review_mock_dir _codex_newer_root_blocks_old_review_output _codex_newer_root_blocks_old_review_exit
 
+_codex_async_newer_root_blocks_old_review_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_async_newer_root_blocks_old_review_mock_dir/comment_calls"
+printf '0\n' > "$_codex_async_newer_root_blocks_old_review_mock_dir/review_calls"
+cat > "$_codex_async_newer_root_blocks_old_review_mock_dir/gh" <<'CODEX_ASYNC_NEWER_ROOT_BLOCKS_OLD_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'deaf12341234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":125,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    calls_file="$(dirname "$0")/review_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -ge 2 ]; then
+      printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deaf12341234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -ge 2 ]; then
+      printf '[{"id":225,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: newer async root finding.\\n\\n**Reviewed commit:** `deaf1234`"}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ASYNC_NEWER_ROOT_BLOCKS_OLD_REVIEW_GH
+chmod +x "$_codex_async_newer_root_blocks_old_review_mock_dir/gh"
+
+_codex_async_newer_root_blocks_old_review_output=""
+_codex_async_newer_root_blocks_old_review_exit=0
+PATH="$_codex_async_newer_root_blocks_old_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_async_newer_root_blocks_old_review_mock_dir/output.txt" 2>&1 || _codex_async_newer_root_blocks_old_review_exit=$?
+_codex_async_newer_root_blocks_old_review_output="$(cat "$_codex_async_newer_root_blocks_old_review_mock_dir/output.txt")"
+run_test "codex_async_newer_root_blocks_old_review_exit_needs_revision" "1" "$_codex_async_newer_root_blocks_old_review_exit"
+run_test "codex_async_newer_root_blocks_old_review_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_async_newer_root_blocks_old_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_async_newer_root_blocks_old_review_mock_dir"
+unset _codex_async_newer_root_blocks_old_review_mock_dir _codex_async_newer_root_blocks_old_review_output _codex_async_newer_root_blocks_old_review_exit
+
 _codex_reaction_with_review_mock_dir="$(mktemp -d)"
 cat > "$_codex_reaction_with_review_mock_dir/gh" <<'CODEX_REACTION_WITH_REVIEW_GH'
 #!/usr/bin/env bash
