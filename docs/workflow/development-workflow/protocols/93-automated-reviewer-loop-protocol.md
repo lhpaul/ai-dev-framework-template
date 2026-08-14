@@ -125,7 +125,12 @@ are not SHA-pinned clean evidence; use them only for acknowledgement,
 usage-limit, and setup-failure detection.
 Likewise, a Codex response asking the operator to create a cloud environment for
 the repo is setup failure evidence; do not use the empty review/comment from
-that path as a clean result.
+that path as a clean result. This recorded environment error cannot be
+silently overridden by a later thumbs-up reaction or by review/comment
+evidence that is not strictly newer than it — but a genuinely fresh,
+strictly newer current-head review (e.g. after the operator creates the
+environment mid-poll) is allowed to supersede it, matching the newest-wins
+rule applied to every other evidence type.
 
 When both a SHA-pinned root comment and a submitted review qualify as terminal
 evidence, the strictly newer one wins. On an exact timestamp tie (GitHub

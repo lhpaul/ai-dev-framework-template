@@ -26,10 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   closed (`TIMED_OUT`) instead of silently falling through to a clean
   submitted review; the final acknowledgement re-poll now preserves a
   recorded environment-setup error over a thumbs-up reaction, matching the
-  post-reaction re-poll's existing behavior; and all four `APPROVED` exit
-  sites (main poll loop, async-arrival grace, async-final,
-  async-reaction-final) now check a previously recorded environment-setup
-  error before exiting clean, instead of only some of them.
+  post-reaction re-poll's existing behavior; all four `APPROVED` exit sites
+  (main poll loop, async-arrival grace, async-final, async-reaction-final)
+  now check a previously recorded environment-setup error before exiting
+  clean, instead of only some of them, and now also allow a genuinely fresh
+  (strictly newer) current-head review to supersede a now-stale recorded
+  environment error rather than blocking recovery indefinitely within the
+  same invocation; and the timestamp tie-break helper now treats a response
+  containing both a blocking marker and an approval phrase as blocking
+  first, matching the verdict classifier's own blocking-first priority,
+  instead of misclassifying it as a clean approval.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

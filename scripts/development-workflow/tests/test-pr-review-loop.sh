@@ -3279,13 +3279,18 @@ unset _codex_ack_repoll_env_then_reaction_mock_dir _codex_ack_repoll_env_then_re
 
 # Reproduces PR-Agent advisory finding on PR #1490 (main-loop env-error
 # override): the main poll loop recorded an environment setup error on its
-# first iteration (SEEN_ENVIRONMENT_ERROR=1) but a later iteration's clean
-# submitted review still exited APPROVED without checking that flag,
-# silently discarding the recorded environment failure. Sequence: iteration
-# 1 finds an environment-setup root comment -> iteration 2 finds no new
-# comment but a clean current-head review -> expect
-# codex-github-environment-missing, not APPROVED. Covers all four APPROVED
-# exit sites' shared guard, exercised here via the main poll loop.
+# first iteration (SEEN_ENVIRONMENT_ERROR=1) but a later iteration's
+# same-timestamp-or-older submitted review still exited APPROVED without
+# checking that flag, silently discarding the recorded environment failure.
+# Sequence: iteration 1 finds an environment-setup root comment -> iteration
+# 2 finds no new comment but a clean current-head review AT THE SAME
+# TIMESTAMP as the recorded environment error -> expect
+# codex-github-environment-missing, not APPROVED (ties favor the non-clean
+# evidence, per codex_response_requires_attention's tie-break principle).
+# Covers all four APPROVED exit sites' shared guard, exercised here via the
+# main poll loop. A strictly NEWER review is expected to supersede the
+# stale environment error instead — see
+# codex_main_loop_env_then_newer_review_supersedes below.
 _codex_main_loop_env_then_review_mock_dir="$(mktemp -d)"
 printf '0\n' > "$_codex_main_loop_env_then_review_mock_dir/comment_calls"
 printf '0\n' > "$_codex_main_loop_env_then_review_mock_dir/review_calls"
@@ -3308,7 +3313,7 @@ case "$*" in
     calls=$((calls + 1))
     printf '%s\n' "$calls" > "$calls_file"
     if [ "$calls" -ge 2 ]; then
-      printf '[{"submitted_at":"2026-01-01T00:00:03Z","commit_id":"mainloopenv1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+      printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"mainloopenv1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
     else
       printf '[]\n'
     fi
@@ -3344,6 +3349,123 @@ run_test "codex_main_loop_env_then_review_reason" "REASON=codex-github-environme
   "$(printf '%s\n' "$_codex_main_loop_env_then_review_output" | grep "^REASON=")"
 rm -rf "$_codex_main_loop_env_then_review_mock_dir"
 unset _codex_main_loop_env_then_review_mock_dir _codex_main_loop_env_then_review_output _codex_main_loop_env_then_review_exit
+
+# Reproduces Codex finding on PR #1490 (P2, comment id 3787679406): the
+# environment-error guard must not be permanently sticky — a genuinely
+# fresh (strictly newer timestamp) current-head approved review must
+# supersede a now-stale recorded environment error, so an operator fixing
+# the Codex cloud environment mid-poll can recover within the same
+# invocation. Sequence identical to codex_main_loop_env_then_review above,
+# except the review's submitted_at is strictly newer than the env-error
+# comment's created_at -> expect APPROVED, not environment-missing.
+_codex_main_loop_env_then_newer_review_supersedes_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_main_loop_env_then_newer_review_supersedes_mock_dir/comment_calls"
+printf '0\n' > "$_codex_main_loop_env_then_newer_review_supersedes_mock_dir/review_calls"
+cat > "$_codex_main_loop_env_then_newer_review_supersedes_mock_dir/gh" <<'CODEX_MAIN_LOOP_ENV_THEN_NEWER_REVIEW_SUPERSEDES_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'newerreview1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":132,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    calls_file="$(dirname "$0")/review_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -ge 2 ]; then
+      printf '[{"submitted_at":"2026-01-01T00:00:03Z","commit_id":"newerreview1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -eq 2 ]; then
+      printf '[{"id":230,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MAIN_LOOP_ENV_THEN_NEWER_REVIEW_SUPERSEDES_GH
+chmod +x "$_codex_main_loop_env_then_newer_review_supersedes_mock_dir/gh"
+
+_codex_main_loop_env_then_newer_review_supersedes_output=""
+_codex_main_loop_env_then_newer_review_supersedes_exit=0
+PATH="$_codex_main_loop_env_then_newer_review_supersedes_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 2 --max-retriggers 0 \
+  >"$_codex_main_loop_env_then_newer_review_supersedes_mock_dir/output.txt" 2>&1 || _codex_main_loop_env_then_newer_review_supersedes_exit=$?
+_codex_main_loop_env_then_newer_review_supersedes_output="$(cat "$_codex_main_loop_env_then_newer_review_supersedes_mock_dir/output.txt")"
+run_test "codex_main_loop_env_then_newer_review_supersedes_exit_clean" "0" "$_codex_main_loop_env_then_newer_review_supersedes_exit"
+run_test "codex_main_loop_env_then_newer_review_supersedes_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_main_loop_env_then_newer_review_supersedes_output" | grep "^VERDICT:")"
+rm -rf "$_codex_main_loop_env_then_newer_review_supersedes_mock_dir"
+unset _codex_main_loop_env_then_newer_review_supersedes_mock_dir _codex_main_loop_env_then_newer_review_supersedes_output _codex_main_loop_env_then_newer_review_supersedes_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3787679402): the
+# codex_response_requires_attention tie-break helper (added in the prior
+# cycle to fix unrecognized-format ties) checked only the approval pattern,
+# so a mixed response containing BOTH an approval phrase and a blocking
+# marker (e.g. "No blocking issues found. Must fix ...") was misclassified
+# as a clean approval and lost the tie-break to a clean root comment,
+# producing APPROVED instead of the classifier's blocking-first
+# NEEDS_REVISION. Root comment is a clean approval; tied review body
+# contains both an approval phrase and a blocking marker.
+_codex_tied_mixed_blocking_review_wins_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_mixed_blocking_review_wins_mock_dir/gh" <<'CODEX_TIED_MIXED_BLOCKING_REVIEW_WINS_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'deadb00d12345678\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":133,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deadb00d12345678","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. Must fix the typo on line 4."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":234,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `deadb00d1234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_MIXED_BLOCKING_REVIEW_WINS_GH
+chmod +x "$_codex_tied_mixed_blocking_review_wins_mock_dir/gh"
+
+_codex_tied_mixed_blocking_review_wins_output=""
+_codex_tied_mixed_blocking_review_wins_exit=0
+PATH="$_codex_tied_mixed_blocking_review_wins_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_mixed_blocking_review_wins_mock_dir/output.txt" 2>&1 || _codex_tied_mixed_blocking_review_wins_exit=$?
+_codex_tied_mixed_blocking_review_wins_output="$(cat "$_codex_tied_mixed_blocking_review_wins_mock_dir/output.txt")"
+run_test "codex_tied_mixed_blocking_review_wins_exit_needs_revision" "1" "$_codex_tied_mixed_blocking_review_wins_exit"
+run_test "codex_tied_mixed_blocking_review_wins_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_tied_mixed_blocking_review_wins_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_mixed_blocking_review_wins_mock_dir"
+unset _codex_tied_mixed_blocking_review_wins_mock_dir _codex_tied_mixed_blocking_review_wins_output _codex_tied_mixed_blocking_review_wins_exit
 
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'

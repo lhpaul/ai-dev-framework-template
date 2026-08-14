@@ -101,7 +101,13 @@ Codex may also respond to `@codex review` with a setup message such as
 `To use Codex here, create an environment for this repo`. That is an unavailable
 review path, not a clean result. Create the Codex cloud environment or remove
 `codex-github` from the configured reviewer list until the integration can
-produce current-head review evidence.
+produce current-head review evidence. Within a single invocation's poll
+window, a recorded environment-setup error cannot be silently overridden by
+a later thumbs-up reaction or by review/comment evidence that is not
+strictly newer than the recorded error — but a genuinely fresh, strictly
+newer current-head review (e.g. after an operator creates the environment
+mid-poll) is allowed to supersede it, following the same newest-wins rule
+applied to every other evidence type.
 
 ## Troubleshooting
 

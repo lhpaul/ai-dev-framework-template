@@ -269,12 +269,15 @@ codex_response_is_approved() {
 # True when a response is NOT the clean-approval path — i.e. it is either
 # explicitly blocking or an unrecognized format that the documented verdict
 # classifier safe-fails to NEEDS_REVISION (see "Verdict parsing" header
-# comment). Used by the tie-break below so an unrecognized-format response
-# is treated with the same tie-break priority as an explicitly blocking one,
-# not silently outranked by a clean approval on a timestamp tie.
+# comment). Blocking is checked FIRST, matching the classifier's blocking-
+# first priority: a response containing both an approval phrase and a
+# blocking marker (e.g. "No blocking issues found. Must fix ...") is
+# blocking, not approved. Used by the tie-break below so neither an
+# unrecognized-format response nor a mixed blocking+approval response is
+# silently outranked by a clean approval on a timestamp tie.
 codex_response_requires_attention() {
   local body="$1"
-  ! codex_response_is_approved "$body"
+  codex_response_is_blocking "$body" || ! codex_response_is_approved "$body"
 }
 
 # Decides whether CANDIDATE terminal ("review"-sourced) evidence should
@@ -538,6 +541,15 @@ CONSECUTIVE_API_FAILURES=0
 MAX_CONSECUTIVE_FAILURES=3
 SEEN_ENVIRONMENT_ERROR=0
 SEEN_ENVIRONMENT_RESPONSE=""
+# Timestamp the environment-error evidence was observed at (the same
+# COMBINED_TIME the response was classified from). Compared against fresh
+# terminal evidence's own timestamp at each APPROVED exit site so a
+# strictly newer clean review (e.g. after an operator fixes the Codex cloud
+# environment mid-poll) can supersede a now-stale recorded failure, while a
+# same-or-older approval still cannot silently override it — the same
+# newest-wins-with-ties-favoring-non-clean rule applied to every other
+# evidence type in this script.
+SEEN_ENVIRONMENT_TIME=""
 SEEN_APPROVAL_REACTION=0
 # Outer retrigger loop. TOTAL_ELAPSED tracks the full shared wait budget.
 # TRIGGER_TIME is updated to the retrigger comment's timestamp after each
@@ -673,6 +685,7 @@ while true; do
     elif [ "$BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$BOT_RESPONSE"; then
       SEEN_ENVIRONMENT_ERROR=1
       SEEN_ENVIRONMENT_RESPONSE="$BOT_RESPONSE"
+      SEEN_ENVIRONMENT_TIME="$COMBINED_TIME"
       echo "INFO: Codex environment setup response detected; waiting for fresh current-head review evidence"
       continue
     elif [ "$BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$BOT_RESPONSE"; then
@@ -682,7 +695,7 @@ while true; do
       echo "---END BOT RESPONSE---"
       exit 1
     elif [ "$BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$BOT_RESPONSE"; then
-      if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ]; then
+      if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ] && ! [ "$COMBINED_TIME" \> "$SEEN_ENVIRONMENT_TIME" ]; then
         codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
       fi
       echo "VERDICT: APPROVED"
@@ -856,6 +869,7 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
   elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_BOT_RESPONSE"; then
     SEEN_ENVIRONMENT_ERROR=1
     SEEN_ENVIRONMENT_RESPONSE="$ASYNC_BOT_RESPONSE"
+    SEEN_ENVIRONMENT_TIME="$COMBINED_TIME"
     echo "INFO: async-arrival Codex environment setup response detected without fresh review evidence"
   elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_BOT_RESPONSE"; then
     echo "VERDICT: NEEDS_REVISION"
@@ -864,7 +878,7 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     echo "---END BOT RESPONSE---"
     exit 1
   elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_BOT_RESPONSE"; then
-    if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ]; then
+    if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ] && ! [ "$COMBINED_TIME" \> "$SEEN_ENVIRONMENT_TIME" ]; then
       codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
     fi
     echo "VERDICT: APPROVED"
@@ -935,6 +949,7 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
       elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_FINAL_BOT_RESPONSE"; then
         SEEN_ENVIRONMENT_ERROR=1
         SEEN_ENVIRONMENT_RESPONSE="$ASYNC_FINAL_BOT_RESPONSE"
+        SEEN_ENVIRONMENT_TIME="$COMBINED_TIME"
         echo "INFO: final async Codex environment setup response detected without fresh review evidence"
       elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_FINAL_BOT_RESPONSE"; then
         echo "VERDICT: NEEDS_REVISION"
@@ -943,7 +958,7 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
         echo "---END BOT RESPONSE---"
         exit 1
       elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_FINAL_BOT_RESPONSE"; then
-        if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ]; then
+        if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ] && ! [ "$COMBINED_TIME" \> "$SEEN_ENVIRONMENT_TIME" ]; then
           codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
         fi
         echo "VERDICT: APPROVED"
@@ -1053,6 +1068,7 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
     elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
       SEEN_ENVIRONMENT_ERROR=1
       SEEN_ENVIRONMENT_RESPONSE="$ASYNC_REACTION_FINAL_BOT_RESPONSE"
+      SEEN_ENVIRONMENT_TIME="$COMBINED_TIME"
       echo "INFO: final async reaction Codex environment setup response detected without fresh review evidence"
     elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
       echo "VERDICT: NEEDS_REVISION"
@@ -1061,7 +1077,7 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
       echo "---END BOT RESPONSE---"
       exit 1
     elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
-      if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ]; then
+      if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ] && ! [ "$COMBINED_TIME" \> "$SEEN_ENVIRONMENT_TIME" ]; then
         codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
       fi
       echo "VERDICT: APPROVED"
