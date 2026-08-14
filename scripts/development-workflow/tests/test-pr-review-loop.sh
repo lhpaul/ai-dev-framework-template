@@ -2598,6 +2598,47 @@ run_test "codex_reaction_with_current_review_approved" "VERDICT: APPROVED" \
 rm -rf "$_codex_reaction_with_review_mock_dir"
 unset _codex_reaction_with_review_mock_dir _codex_reaction_with_review_output _codex_reaction_with_review_exit
 
+_codex_latest_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_latest_review_mock_dir/gh" <<'CODEX_LATEST_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abclatestre1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":111,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abclatestre1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: old finding."}]\n'
+    printf '[{"submitted_at":"2026-01-01T00:00:02Z","commit_id":"abclatestre1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_LATEST_REVIEW_GH
+chmod +x "$_codex_latest_review_mock_dir/gh"
+
+_codex_latest_review_output=""
+_codex_latest_review_exit=0
+PATH="$_codex_latest_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_latest_review_mock_dir/output.txt" 2>&1 || _codex_latest_review_exit=$?
+_codex_latest_review_output="$(cat "$_codex_latest_review_mock_dir/output.txt")"
+run_test "codex_latest_current_review_exit_clean" "0" "$_codex_latest_review_exit"
+run_test "codex_latest_current_review_approved" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_latest_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_latest_review_mock_dir"
+unset _codex_latest_review_mock_dir _codex_latest_review_output _codex_latest_review_exit
+
 _codex_stale_review_mock_dir="$(mktemp -d)"
 cat > "$_codex_stale_review_mock_dir/gh" <<'CODEX_STALE_REVIEW_GH'
 #!/usr/bin/env bash

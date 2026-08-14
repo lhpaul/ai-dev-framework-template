@@ -446,8 +446,8 @@ while true; do
   REVIEW_TMPFILE=$(mktemp)
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>/dev/null \
-    | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-        '.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time and ((.commit_id // "") | startswith($sha))) | .body' \
+    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | .body // empty' \
     > "$REVIEW_TMPFILE" 2>/dev/null; then
     REVIEW_BODY=$(head -c 5000 "$REVIEW_TMPFILE")
     if [ -n "$REVIEW_BODY" ]; then
@@ -649,8 +649,8 @@ rm -f "$ASYNC_POLL_TMPFILE"
 ASYNC_REVIEW_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
   2>/dev/null \
-  | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-      '.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time and ((.commit_id // "") | startswith($sha))) | .body' \
+  | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | .body // empty' \
   > "$ASYNC_REVIEW_TMPFILE" 2>/dev/null; then
   ASYNC_REVIEW_BODY=$(head -c 5000 "$ASYNC_REVIEW_TMPFILE")
   if [ -n "$ASYNC_REVIEW_BODY" ]; then
@@ -711,8 +711,8 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     ASYNC_FINAL_REVIEW_TMPFILE=$(mktemp)
     if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
       2>/dev/null \
-      | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-          '.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time and ((.commit_id // "") | startswith($sha))) | .body' \
+      | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
+          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | .body // empty' \
       > "$ASYNC_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
       ASYNC_FINAL_REVIEW_BODY=$(head -c 5000 "$ASYNC_FINAL_REVIEW_TMPFILE")
       if [ -n "$ASYNC_FINAL_REVIEW_BODY" ]; then
