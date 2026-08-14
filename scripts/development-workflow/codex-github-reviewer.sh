@@ -315,6 +315,14 @@ codex_select_terminal_evidence() {
 # the latest comment prevents a later ancillary comment (e.g. a thumbs-up
 # acknowledgement or a "waiting" note) from silently discarding an earlier
 # SHA-pinned blocking root comment.
+#
+# An environment-setup-error comment is treated as the priority ancillary
+# signal once seen: a later PLAIN comment (e.g. an acknowledgement) does not
+# overwrite it, so an actionable setup failure is not silently lost to a
+# no-information comment that happens to arrive later in the same fetch
+# (fresh evidence from PR #1490 finding 3787786945). A LATER environment-
+# error comment still updates it, keeping the most recent one.
+#
 # Sets: COMMENT_TERMINAL_BODY, COMMENT_TERMINAL_TIME, COMMENT_LATEST_BODY,
 # COMMENT_LATEST_TIME.
 codex_scan_comment_evidence() {
@@ -323,13 +331,19 @@ codex_scan_comment_evidence() {
   COMMENT_TERMINAL_TIME=""
   COMMENT_LATEST_BODY=""
   COMMENT_LATEST_TIME=""
-  local line created_at body
+  local comment_latest_is_env_error=0
+  local line created_at body is_env_error
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     created_at=$(printf '%s' "$line" | jq -r '.created_at // empty')  # workflow-shell-guard: allow SH003 - $line is a compact JSON object already validated parseable by the preceding jq -sc call; empty is a normal absent-field case, not a failure
     body=$(printf '%s' "$line" | jq -r '.body // empty')  # workflow-shell-guard: allow SH003 - same pre-validated $line as above; empty body is not a failure
-    COMMENT_LATEST_BODY="$body"
-    COMMENT_LATEST_TIME="$created_at"
+    is_env_error=0
+    codex_response_is_environment_error "$body" && is_env_error=1
+    if [ "$comment_latest_is_env_error" -eq 0 ] || [ "$is_env_error" -eq 1 ]; then
+      COMMENT_LATEST_BODY="$body"
+      COMMENT_LATEST_TIME="$created_at"
+      comment_latest_is_env_error="$is_env_error"
+    fi
     if codex_response_reviews_current_head "$body"; then
       COMMENT_TERMINAL_BODY="$body"
       COMMENT_TERMINAL_TIME="$created_at"
@@ -340,11 +354,15 @@ codex_scan_comment_evidence() {
 # Combines comment-sourced evidence (terminal SHA-pinned root comment vs.
 # latest ancillary comment, from codex_scan_comment_evidence) with
 # review-sourced evidence (from the pulls/{PR}/reviews endpoint) into a
-# single winning result, applying not-a-clean-approval-first tie-breaking
-# (codex_select_terminal_evidence) so a genuine submitted review only
-# supersedes a SHA-pinned terminal root comment when it is strictly newer, or
-# tied and itself not a clean approval (blocking or unrecognized format)
-# while the comment is.
+# single winning result. A SHA-pinned terminal comment applies the existing
+# not-a-clean-approval-first tie-break (codex_select_terminal_evidence) so a
+# genuine submitted review only supersedes it when strictly newer, or tied
+# and itself not a clean approval. A bare ancillary comment (acknowledgement,
+# "waiting" note) carries no information and is always outranked by a
+# genuine review regardless of timing. An ancillary comment that is
+# specifically a recorded environment-setup error is treated as actionable
+# evidence, not noise: it uses the same tie-break as SHA-pinned evidence, so
+# only a strictly newer review can supersede it.
 # Sets: COMBINED_BODY, COMBINED_TIME, COMBINED_SOURCE ("review", "comment",
 # or "" if no evidence at all). LABEL is used only for INFO logging.
 codex_combine_terminal_evidence() {
@@ -369,18 +387,36 @@ codex_combine_terminal_evidence() {
   fi
 
   if [ -n "$review_body" ]; then
-    if [ "$COMBINED_SOURCE" != "review" ]; then
-      # No terminal comment evidence yet: a genuine submitted review always
-      # outranks ancillary/absent comment evidence.
+    if [ "$COMBINED_SOURCE" = "review" ]; then
+      # SHA-pinned terminal comment already present: existing tie-break.
+      if codex_select_terminal_evidence "$COMBINED_BODY" "$COMBINED_TIME" "$review_body" "$review_time"; then
+        COMBINED_BODY="$review_body"
+        COMBINED_TIME="$review_time"
+        COMBINED_SOURCE="review"
+        echo "INFO: $label detected via PR reviews endpoint (supersedes SHA-pinned comment)"
+      fi
+    elif [ "$COMBINED_SOURCE" = "comment" ] && codex_response_is_environment_error "$COMBINED_BODY"; then
+      # Ancillary evidence is specifically a recorded environment-setup
+      # error. Unlike a bare acknowledgement, this IS actionable evidence,
+      # so a review must not silently discard it regardless of timing — only
+      # a strictly newer review may supersede it (fresh evidence from PR
+      # #1490 finding 3787786943).
+      if codex_select_terminal_evidence "$COMBINED_BODY" "$COMBINED_TIME" "$review_body" "$review_time"; then
+        COMBINED_BODY="$review_body"
+        COMBINED_TIME="$review_time"
+        COMBINED_SOURCE="review"
+        echo "INFO: $label detected via PR reviews endpoint (supersedes environment-setup error)"
+      else
+        echo "INFO: $label environment-setup error retained over non-newer review evidence"
+      fi
+    else
+      # No terminal comment evidence, and any ancillary comment present is
+      # not an environment-setup error (e.g. a bare acknowledgement): a
+      # genuine submitted review always outranks it regardless of timing.
       COMBINED_BODY="$review_body"
       COMBINED_TIME="$review_time"
       COMBINED_SOURCE="review"
       echo "INFO: $label detected via PR reviews endpoint"
-    elif codex_select_terminal_evidence "$COMBINED_BODY" "$COMBINED_TIME" "$review_body" "$review_time"; then
-      COMBINED_BODY="$review_body"
-      COMBINED_TIME="$review_time"
-      COMBINED_SOURCE="review"
-      echo "INFO: $label detected via PR reviews endpoint (supersedes SHA-pinned comment)"
     fi
   fi
 }
@@ -608,7 +644,12 @@ while true; do
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
         '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | {created_at:(.submitted_at // ""), body:(.body // "")}' \
     > "$REVIEW_TMPFILE" 2>"$REVIEW_STDERR"; then
-    REVIEW_BODY=$(jq -r '.body // empty' "$REVIEW_TMPFILE" | head -c 5000)  # workflow-shell-guard: allow SH003 - reads a tmpfile already validated as parseable JSON by the preceding gh|jq call; empty body means no evidence yet, not a failure, and is checked downstream via [ -n ]
+    # Truncation happens inside jq (codepoint slice), not via a piped `head`,
+    # so a long body cannot trigger SIGPIPE on jq under `set -o pipefail`
+    # (an external `| head -c N` pipe closes early on long output, and the
+    # writer's resulting SIGPIPE would otherwise abort the whole script
+    # before any VERDICT line is emitted).
+    REVIEW_BODY=$(jq -r '(.body // empty) | .[0:5000]' "$REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads a tmpfile already validated as parseable JSON by the preceding gh|jq call; empty body means no evidence yet, not a failure, and is checked downstream via [ -n ]
     REVIEW_TIME=$(jq -r '.created_at // empty' "$REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads the same pre-validated tmpfile as the body extraction above; empty time is not a failure
   else
     REVIEW_ERR=$(cat "$REVIEW_STDERR")
@@ -842,7 +883,9 @@ if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
   | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
       '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | {created_at:(.submitted_at // ""), body:(.body // "")}' \
   > "$ASYNC_REVIEW_TMPFILE" 2>/dev/null; then
-  ASYNC_REVIEW_BODY=$(jq -r '.body // empty' "$ASYNC_REVIEW_TMPFILE" | head -c 5000)  # workflow-shell-guard: allow SH003 - reads a tmpfile already validated as parseable JSON by the preceding gh|jq call; empty body means no evidence yet, not a failure, and is checked downstream via [ -n ]
+  # Truncation happens inside jq (codepoint slice) to avoid SIGPIPE on jq
+  # under `set -o pipefail` (see rationale above the main-loop equivalent).
+  ASYNC_REVIEW_BODY=$(jq -r '(.body // empty) | .[0:5000]' "$ASYNC_REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads a tmpfile already validated as parseable JSON by the preceding gh|jq call; empty body means no evidence yet, not a failure, and is checked downstream via [ -n ]
   ASYNC_REVIEW_TIME=$(jq -r '.created_at // empty' "$ASYNC_REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads the same pre-validated tmpfile as the body extraction above; empty time is not a failure
 else
   rm -f "$ASYNC_REVIEW_TMPFILE"
@@ -924,7 +967,10 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
       | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
           '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | {created_at:(.submitted_at // ""), body:(.body // "")}' \
       > "$ASYNC_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
-      ASYNC_FINAL_REVIEW_BODY=$(jq -r '.body // empty' "$ASYNC_FINAL_REVIEW_TMPFILE" | head -c 5000)  # workflow-shell-guard: allow SH003 - reads a tmpfile already validated as parseable JSON by the preceding gh|jq call; empty body means no evidence yet, not a failure, and is checked downstream via [ -n ]
+      # Truncation happens inside jq (codepoint slice) to avoid SIGPIPE on
+      # jq under `set -o pipefail` (see rationale above the main-loop
+      # equivalent).
+      ASYNC_FINAL_REVIEW_BODY=$(jq -r '(.body // empty) | .[0:5000]' "$ASYNC_FINAL_REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads a tmpfile already validated as parseable JSON by the preceding gh|jq call; empty body means no evidence yet, not a failure, and is checked downstream via [ -n ]
       ASYNC_FINAL_REVIEW_TIME=$(jq -r '.created_at // empty' "$ASYNC_FINAL_REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads the same pre-validated tmpfile as the body extraction above; empty time is not a failure
     else
       rm -f "$ASYNC_FINAL_REVIEW_TMPFILE"
@@ -1044,7 +1090,9 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
         '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | {created_at:(.submitted_at // ""), body:(.body // "")}' \
     > "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
-    ASYNC_REACTION_FINAL_REVIEW_BODY=$(jq -r '.body // empty' "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE" | head -c 5000)  # workflow-shell-guard: allow SH003 - reads a tmpfile already validated as parseable JSON by the preceding gh|jq call; empty body means no evidence yet, not a failure, and is checked downstream via [ -n ]
+    # Truncation happens inside jq (codepoint slice) to avoid SIGPIPE on jq
+    # under `set -o pipefail` (see rationale above the main-loop equivalent).
+    ASYNC_REACTION_FINAL_REVIEW_BODY=$(jq -r '(.body // empty) | .[0:5000]' "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads a tmpfile already validated as parseable JSON by the preceding gh|jq call; empty body means no evidence yet, not a failure, and is checked downstream via [ -n ]
     ASYNC_REACTION_FINAL_REVIEW_TIME=$(jq -r '.created_at // empty' "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads the same pre-validated tmpfile as the body extraction above; empty time is not a failure
   else
     rm -f "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE"

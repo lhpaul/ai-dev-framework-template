@@ -32,10 +32,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clean, instead of only some of them, and now also allow a genuinely fresh
   (strictly newer) current-head review to supersede a now-stale recorded
   environment error rather than blocking recovery indefinitely within the
-  same invocation; and the timestamp tie-break helper now treats a response
+  same invocation; the timestamp tie-break helper now treats a response
   containing both a blocking marker and an approval phrase as blocking
   first, matching the verdict classifier's own blocking-first priority,
-  instead of misclassifying it as a clean approval.
+  instead of misclassifying it as a clean approval; a submitted review body
+  large enough to exceed a pipe buffer no longer crashes the script with
+  `SIGPIPE`/exit 141 under `pipefail` — truncation now happens inside `jq`
+  (codepoint slice) instead of via a piped `head`; a clean review and a
+  strictly newer environment-setup-error comment observed in the same poll
+  no longer resolve to a silent `APPROVED` — the setup error is retained
+  unless the review is itself strictly newer; and an environment-setup-error
+  comment is no longer silently discarded by a later plain acknowledgement
+  observed in the same comments fetch.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

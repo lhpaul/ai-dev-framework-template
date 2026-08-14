@@ -130,7 +130,11 @@ silently overridden by a later thumbs-up reaction or by review/comment
 evidence that is not strictly newer than it — but a genuinely fresh,
 strictly newer current-head review (e.g. after the operator creates the
 environment mid-poll) is allowed to supersede it, matching the newest-wins
-rule applied to every other evidence type.
+rule applied to every other evidence type. This applies within a single
+poll as well as across polls: an environment-setup error is not silently
+discarded by a same-fetch or later plain acknowledgement, since a bare
+acknowledgement carries no information and is never treated as competing
+evidence.
 
 When both a SHA-pinned root comment and a submitted review qualify as terminal
 evidence, the strictly newer one wins. On an exact timestamp tie (GitHub

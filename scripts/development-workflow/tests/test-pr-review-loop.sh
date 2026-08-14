@@ -3467,6 +3467,153 @@ run_test "codex_tied_mixed_blocking_review_wins_verdict" "VERDICT: NEEDS_REVISIO
 rm -rf "$_codex_tied_mixed_blocking_review_wins_mock_dir"
 unset _codex_tied_mixed_blocking_review_wins_mock_dir _codex_tied_mixed_blocking_review_wins_output _codex_tied_mixed_blocking_review_wins_exit
 
+# Reproduces Codex finding on PR #1490 (P1, comment id 3787786942): a
+# submitted review body that exceeds a pipe buffer's capacity (well within
+# GitHub's ~64KB per-comment limit) causes `jq ... | head -c 5000` to SIGPIPE
+# jq once `head` closes its read end after 5000 bytes; under `set -euo
+# pipefail` this aborts the whole script with exit 141 before any VERDICT
+# line is emitted. Truncation now happens inside jq (codepoint slice)
+# instead of via a piped `head`, eliminating the SIGPIPE entirely. Body is
+# built via jq's own string-repeat operator (200000 chars) rather than a
+# large literal in this file or a python3 dependency.
+_codex_long_review_body_no_sigpipe_mock_dir="$(mktemp -d)"
+cat > "$_codex_long_review_body_no_sigpipe_mock_dir/gh" <<'CODEX_LONG_REVIEW_BODY_NO_SIGPIPE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'longbody1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":140,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"longbody1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("No blocking issues found. " + ("x" * 200000))}]'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_LONG_REVIEW_BODY_NO_SIGPIPE_GH
+chmod +x "$_codex_long_review_body_no_sigpipe_mock_dir/gh"
+
+_codex_long_review_body_no_sigpipe_output=""
+_codex_long_review_body_no_sigpipe_exit=0
+PATH="$_codex_long_review_body_no_sigpipe_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_long_review_body_no_sigpipe_mock_dir/output.txt" 2>&1 || _codex_long_review_body_no_sigpipe_exit=$?
+_codex_long_review_body_no_sigpipe_output="$(cat "$_codex_long_review_body_no_sigpipe_mock_dir/output.txt")"
+run_test "codex_long_review_body_no_sigpipe_exit_clean" "0" "$_codex_long_review_body_no_sigpipe_exit"
+run_test "codex_long_review_body_no_sigpipe_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_long_review_body_no_sigpipe_output" | grep "^VERDICT:")"
+rm -rf "$_codex_long_review_body_no_sigpipe_mock_dir"
+unset _codex_long_review_body_no_sigpipe_mock_dir _codex_long_review_body_no_sigpipe_output _codex_long_review_body_no_sigpipe_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3787786943): within a
+# single poll, a clean submitted review at T1 and a newer environment-setup
+# root comment at T2 were combined by unconditionally preferring the review
+# (since it wasn't competing against a SHA-pinned terminal comment), so the
+# newer setup failure never had a chance to be recorded as
+# SEEN_ENVIRONMENT_ERROR and the run returned APPROVED. Root comment (env
+# error) is strictly newer than the review in this fixture -> expect
+# codex-github-environment-missing, not APPROVED.
+_codex_same_poll_newer_env_error_wins_mock_dir="$(mktemp -d)"
+cat > "$_codex_same_poll_newer_env_error_wins_mock_dir/gh" <<'CODEX_SAME_POLL_NEWER_ENV_ERROR_WINS_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'samepoll1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":141,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"samepoll1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":242,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_SAME_POLL_NEWER_ENV_ERROR_WINS_GH
+chmod +x "$_codex_same_poll_newer_env_error_wins_mock_dir/gh"
+
+_codex_same_poll_newer_env_error_wins_output=""
+_codex_same_poll_newer_env_error_wins_exit=0
+PATH="$_codex_same_poll_newer_env_error_wins_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_same_poll_newer_env_error_wins_mock_dir/output.txt" 2>&1 || _codex_same_poll_newer_env_error_wins_exit=$?
+_codex_same_poll_newer_env_error_wins_output="$(cat "$_codex_same_poll_newer_env_error_wins_mock_dir/output.txt")"
+run_test "codex_same_poll_newer_env_error_wins_exit_unavailable" "2" "$_codex_same_poll_newer_env_error_wins_exit"
+run_test "codex_same_poll_newer_env_error_wins_reason" "REASON=codex-github-environment-missing" \
+  "$(printf '%s\n' "$_codex_same_poll_newer_env_error_wins_output" | grep "^REASON=")"
+rm -rf "$_codex_same_poll_newer_env_error_wins_mock_dir"
+unset _codex_same_poll_newer_env_error_wins_mock_dir _codex_same_poll_newer_env_error_wins_output _codex_same_poll_newer_env_error_wins_exit
+
+# Reproduces Codex finding on PR #1490 (P2, comment id 3787786945): when the
+# same comments fetch contains an environment-setup error at T1 followed by
+# a plain acknowledgement at T2, codex_scan_comment_evidence previously kept
+# only the LATEST comment overall (the acknowledgement), losing the
+# actionable setup-error text. Combined with a thumbs-up reaction, this
+# produced codex-github-reaction-without-review instead of
+# codex-github-environment-missing. Async-arrival grace path: env-error at
+# T1 and acknowledgement at T2 both appear in the same async-arrival poll's
+# comment fetch, plus a thumbs-up reaction on the trigger comment.
+_codex_env_error_survives_later_ack_mock_dir="$(mktemp -d)"
+cat > "$_codex_env_error_survives_later_ack_mock_dir/gh" <<'CODEX_ENV_ERROR_SURVIVES_LATER_ACK_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'ackenverr1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":142,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[{"content":"+1","user":{"login":"chatgpt-codex-connector[bot]"}}]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":243,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."},{"id":244,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"If Codex has suggestions, it will comment; otherwise it will react with \xf0\x9f\x91\x8d on this comment."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ENV_ERROR_SURVIVES_LATER_ACK_GH
+chmod +x "$_codex_env_error_survives_later_ack_mock_dir/gh"
+
+_codex_env_error_survives_later_ack_output=""
+_codex_env_error_survives_later_ack_exit=0
+PATH="$_codex_env_error_survives_later_ack_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_env_error_survives_later_ack_mock_dir/output.txt" 2>&1 || _codex_env_error_survives_later_ack_exit=$?
+_codex_env_error_survives_later_ack_output="$(cat "$_codex_env_error_survives_later_ack_mock_dir/output.txt")"
+run_test "codex_env_error_survives_later_ack_exit_unavailable" "2" "$_codex_env_error_survives_later_ack_exit"
+run_test "codex_env_error_survives_later_ack_reason" "REASON=codex-github-environment-missing" \
+  "$(printf '%s\n' "$_codex_env_error_survives_later_ack_output" | grep "^REASON=")"
+rm -rf "$_codex_env_error_survives_later_ack_mock_dir"
+unset _codex_env_error_survives_later_ack_mock_dir _codex_env_error_survives_later_ack_output _codex_env_error_survives_later_ack_exit
+
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
 #!/usr/bin/env bash
