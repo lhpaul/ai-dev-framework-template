@@ -114,12 +114,15 @@ platform as clean after Codex publishes evidence tied to the current PR head:
 
 - a submitted Codex GitHub review whose `commit_id` matches the current
   `headRefOid`, or
+- a Codex-authored root PR comment with a `Reviewed commit` marker matching the
+  current `headRefOid`, or
 - current-head Codex inline review comments, treated as findings.
 
 A thumbs-up reaction on the trigger comment is an acknowledgement only. It is
 not SHA-pinned review evidence and must be treated as unavailable, not clean.
-Codex-authored root PR comments are not SHA-pinned clean evidence; use them only
-for acknowledgement, usage-limit, and setup-failure detection.
+Codex-authored root PR comments without a current-head `Reviewed commit` marker
+are not SHA-pinned clean evidence; use them only for acknowledgement,
+usage-limit, and setup-failure detection.
 Likewise, a Codex response asking the operator to create a cloud environment for
 the repo is setup failure evidence; do not use the empty review/comment from
 that path as a clean result.

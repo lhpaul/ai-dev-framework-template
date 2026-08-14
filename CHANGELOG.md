@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Codex GitHub terminal evidence**: `codex-github-reviewer.sh` no longer
   treats a thumbs-up reaction on the trigger comment as a clean review result,
   ignores submitted Codex reviews that are not pinned to the current PR head,
-  rejects root PR comments as clean evidence because they are not SHA-pinned, and
-  reports missing Codex cloud environments as unavailable instead of clean.
+  accepts only root PR comments that include a current-head `Reviewed commit`
+  marker as terminal evidence, and reports missing Codex cloud environments as
+  unavailable instead of clean.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

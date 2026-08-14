@@ -2641,6 +2641,47 @@ run_test "codex_stale_root_review_comment_not_approved" "no" "$_codex_stale_root
 rm -rf "$_codex_stale_root_review_comment_mock_dir"
 unset _codex_stale_root_review_comment_mock_dir _codex_stale_root_review_comment_output _codex_stale_root_review_comment_exit _codex_stale_root_review_comment_approved
 
+_codex_newer_root_blocks_old_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_newer_root_blocks_old_review_mock_dir/gh" <<'CODEX_NEWER_ROOT_BLOCKS_OLD_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'feed12341234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":123,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"feed12341234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":223,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: newer root finding.\\n\\n**Reviewed commit:** `feed1234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NEWER_ROOT_BLOCKS_OLD_REVIEW_GH
+chmod +x "$_codex_newer_root_blocks_old_review_mock_dir/gh"
+
+_codex_newer_root_blocks_old_review_output=""
+_codex_newer_root_blocks_old_review_exit=0
+PATH="$_codex_newer_root_blocks_old_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_newer_root_blocks_old_review_mock_dir/output.txt" 2>&1 || _codex_newer_root_blocks_old_review_exit=$?
+_codex_newer_root_blocks_old_review_output="$(cat "$_codex_newer_root_blocks_old_review_mock_dir/output.txt")"
+run_test "codex_newer_root_blocks_old_review_exit_needs_revision" "1" "$_codex_newer_root_blocks_old_review_exit"
+run_test "codex_newer_root_blocks_old_review_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_newer_root_blocks_old_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_newer_root_blocks_old_review_mock_dir"
+unset _codex_newer_root_blocks_old_review_mock_dir _codex_newer_root_blocks_old_review_output _codex_newer_root_blocks_old_review_exit
+
 _codex_reaction_with_review_mock_dir="$(mktemp -d)"
 cat > "$_codex_reaction_with_review_mock_dir/gh" <<'CODEX_REACTION_WITH_REVIEW_GH'
 #!/usr/bin/env bash
@@ -2779,6 +2820,46 @@ run_test "codex_async_reaction_then_late_review_approved" "VERDICT: APPROVED" \
   "$(printf '%s\n' "$_codex_async_reaction_then_review_output" | grep "^VERDICT:")"
 rm -rf "$_codex_async_reaction_then_review_mock_dir"
 unset _codex_async_reaction_then_review_mock_dir _codex_async_reaction_then_review_output _codex_async_reaction_then_review_exit
+
+_codex_async_reaction_environment_mock_dir="$(mktemp -d)"
+cat > "$_codex_async_reaction_environment_mock_dir/gh" <<'CODEX_ASYNC_REACTION_ENVIRONMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abc789aa1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":124,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[{"content":"+1","user":{"login":"chatgpt-codex-connector[bot]"}}]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":224,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ASYNC_REACTION_ENVIRONMENT_GH
+chmod +x "$_codex_async_reaction_environment_mock_dir/gh"
+
+_codex_async_reaction_environment_output=""
+_codex_async_reaction_environment_exit=0
+PATH="$_codex_async_reaction_environment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_async_reaction_environment_mock_dir/output.txt" 2>&1 || _codex_async_reaction_environment_exit=$?
+_codex_async_reaction_environment_output="$(cat "$_codex_async_reaction_environment_mock_dir/output.txt")"
+run_test "codex_async_reaction_environment_exit_unavailable" "2" "$_codex_async_reaction_environment_exit"
+run_test "codex_async_reaction_environment_reason" "REASON=codex-github-environment-missing" \
+  "$(printf '%s\n' "$_codex_async_reaction_environment_output" | grep "^REASON=")"
+rm -rf "$_codex_async_reaction_environment_mock_dir"
+unset _codex_async_reaction_environment_mock_dir _codex_async_reaction_environment_output _codex_async_reaction_environment_exit
 
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'

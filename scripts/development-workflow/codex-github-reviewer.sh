@@ -40,9 +40,10 @@
 #   2. Approval signals present → APPROVED (exit 0)
 #      Signals (case-insensitive): "approved", "lgtm", "looks good",
 #      "didn't find any major issues", or "no blocking issues" from a
-#      submitted review pinned to the current head. Codex root PR comments and
-#      thumbs-up reactions are acknowledgements only; they are not SHA-pinned
-#      review evidence and must not approve the PR by themselves.
+#      submitted review pinned to the current head, or a root PR comment that
+#      names the current head in a Reviewed commit marker. Other Codex root PR
+#      comments and thumbs-up reactions are acknowledgements only; they are not
+#      SHA-pinned review evidence and must not approve the PR by themselves.
 #   3. Neither found (unrecognized format) → safe-fails to NEEDS_REVISION (exit 1)
 #
 # Response source detection (two sources polled each cycle):
@@ -248,6 +249,12 @@ codex_response_reviews_current_head() {
   [ -n "$reviewed_sha" ] && printf '%s\n' "$CURRENT_SHA" | grep -qi "^$reviewed_sha"
 }
 
+codex_response_time_should_replace() {
+  local candidate_time="$1"
+  local current_time="$2"
+  [ -z "$current_time" ] || [ "$candidate_time" = "$current_time" ] || [ "$candidate_time" \> "$current_time" ]
+}
+
 codex_return_usage_limit() {
   echo "VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached"
   echo "REASON=codex-github-usage-limit"
@@ -427,13 +434,15 @@ while true; do
   POLL_STDERR=$(mktemp)
   POLL_TMPFILE=$(mktemp)
   BOT_RESPONSE_SOURCE=""
+  BOT_RESPONSE_TIME=""
   if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
     2>"$POLL_STDERR" \
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
-        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | last | .body // empty' \
+        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | last | {created_at:(.created_at // ""), body:(.body // "")}' \
     > "$POLL_TMPFILE"; then
 	    # Truncate after successful API call — no SIGPIPE risk here
-	    BOT_RESPONSE=$(head -c 10000 "$POLL_TMPFILE")
+	    BOT_RESPONSE=$(jq -r '.body // empty' "$POLL_TMPFILE" | head -c 10000)
+	    BOT_RESPONSE_TIME=$(jq -r '.created_at // empty' "$POLL_TMPFILE")
 	    if [ -n "$BOT_RESPONSE" ]; then
 	      BOT_RESPONSE_SOURCE="comment"
 	      if codex_response_reviews_current_head "$BOT_RESPONSE"; then
@@ -464,11 +473,13 @@ while true; do
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>"$REVIEW_STDERR" \
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | .body // empty' \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | {created_at:(.submitted_at // ""), body:(.body // "")}' \
     > "$REVIEW_TMPFILE" 2>"$REVIEW_STDERR"; then
-    REVIEW_BODY=$(head -c 5000 "$REVIEW_TMPFILE")
-    if [ -n "$REVIEW_BODY" ]; then
+    REVIEW_BODY=$(jq -r '.body // empty' "$REVIEW_TMPFILE" | head -c 5000)
+    REVIEW_TIME=$(jq -r '.created_at // empty' "$REVIEW_TMPFILE")
+    if [ -n "$REVIEW_BODY" ] && codex_response_time_should_replace "$REVIEW_TIME" "$BOT_RESPONSE_TIME"; then
       BOT_RESPONSE="$REVIEW_BODY"
+      BOT_RESPONSE_TIME="$REVIEW_TIME"
       BOT_RESPONSE_SOURCE="review"
       echo "INFO: bot response detected via PR reviews endpoint"
     fi
@@ -516,8 +527,9 @@ while true; do
     # 2. Explicit approval signals present → APPROVED (exit 0)   [checked second]
     #    Approval signals: "approved", "lgtm", "looks good",
     #    "didn't find any major issues", or "no blocking issues" from a
-    #    submitted review pinned to the current head. A Codex root PR comment or
-    #    thumbs-up reaction is not SHA-pinned and is unavailable, not clean.
+    #    submitted review pinned to the current head, or a root PR comment that
+    #    names the current head in a Reviewed commit marker. Other Codex root PR
+    #    comments and thumbs-up reactions are unavailable, not clean.
     #
     # 3. Neither found (unrecognized response format) → NEEDS_REVISION (exit 1)
     #    Safe-fail: default to NEEDS_REVISION when the format is unrecognized to
@@ -916,6 +928,9 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
       echo "---END BOT RESPONSE---"
       exit 1
     fi
+  fi
+  if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ]; then
+    codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
   fi
   codex_return_reaction_without_review
 fi
