@@ -225,11 +225,14 @@ redact_github_remote_slug() {
       ;;
   esac
   slug="$(normalize_github_remote_slug "$raw")"
-  if [[ "$slug" == http://* || "$slug" == https://* || "$slug" == *"@"* ]]; then
-    printf '<redacted-remote>\n'
-  else
-    printf '%s\n' "$slug"
-  fi
+  case "$slug" in
+    http://*|https://*|*@*)
+      printf '<redacted-remote>\n'
+      ;;
+    *)
+      printf '%s\n' "$slug"
+      ;;
+  esac
 }
 
 if [ -n "$REPO_ROOT" ]; then

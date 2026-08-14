@@ -523,9 +523,6 @@ github_verified_security_advisory_fixes() {
     if [ "$fix_oid" != "$head_oid" ]; then
       continue
     fi
-    if ! git -C "$repo_root" merge-base --is-ancestor "$fix_oid" "$head_oid" >/dev/null 2>&1; then
-      continue
-    fi
     verified="$(printf '%s\n' "$verified" | jq --arg id "$id" '. + [$id]')"
   done <<< "$rows"
 
