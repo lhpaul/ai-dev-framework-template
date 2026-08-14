@@ -5385,6 +5385,29 @@ doc_branch_default_poll_interval() {
   printf '%s\n' "$interval"
 }
 
+codex_github_default_max_wait() {
+  local configured="${CODEX_GITHUB_MAX_WAIT:-1800}"
+  if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
+    echo "WARN: CODEX_GITHUB_MAX_WAIT must be a positive integer; defaulting to 1800" >&2
+    configured=1800
+  fi
+  printf '%s\n' "$configured"
+}
+
+codex_github_default_poll_interval() {
+  local configured="${CODEX_GITHUB_POLL_INTERVAL:-60}"
+  local max_wait="$1"
+  if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
+    echo "WARN: CODEX_GITHUB_POLL_INTERVAL must be a positive integer; defaulting to 60" >&2
+    configured=60
+  fi
+  if [ "$configured" -ge "$max_wait" ]; then
+    configured=$((max_wait / 2))
+    [ "$configured" -lt 1 ] && configured=1
+  fi
+  printf '%s\n' "$configured"
+}
+
 REVIEWER_LOOP_HISTORY_SCHEMA="reviewer_loop_history.v1"
 REVIEWER_LOOP_HISTORY_MARKER="<!-- reviewer-loop-history:v1 -->"
 
@@ -6140,6 +6163,16 @@ if [ "$max_wait_explicit" -eq 0 ]; then
       fi
       ;;
   esac
+fi
+
+if array_contains_value "codex-github" "${platforms[@]:-}" ||
+   array_contains_value "codex-github" "${phase_after_clean_platforms[@]:-}"; then
+  if [ "$max_wait_explicit" -eq 0 ]; then
+    max_wait="$(codex_github_default_max_wait)"
+  fi
+  if [ "$poll_interval_explicit" -eq 0 ]; then
+    poll_interval="$(codex_github_default_poll_interval "$max_wait")"
+  fi
 fi
 
 # Large-diff poll-window extension.

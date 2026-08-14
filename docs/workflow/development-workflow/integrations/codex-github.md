@@ -62,7 +62,8 @@ Use a disposable or already-open PR and run:
   --platform pr-agent,codex-github \
   --ready-phase codex-github \
   --post-final-summary \
-  --max-wait 600
+  --max-wait 1800 \
+  --poll-interval 60
 ```
 
 Expected successful evidence:

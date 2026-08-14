@@ -739,17 +739,6 @@ cmd_recheck_remaining() {
         break
       fi
 
-      if list_contains_number "$approved_unready_prs" "$pr_num" &&
-         printf '%s\n' "$json" | jq -e '.labels[].name | select(. == "ready-for-human-review")' >/dev/null 2>&1; then
-        local ready_base_ref ready_head_ref ready_merge_state ready_checks_state
-        ready_base_ref="$(printf '%s\n' "$json" | jq -r '.baseRefName // "null"' 2>/dev/null)" || ready_base_ref="null"
-        ready_head_ref="$(printf '%s\n' "$json" | jq -r '.headRefName // "null"' 2>/dev/null)" || ready_head_ref="null"
-        ready_merge_state="$(printf '%s\n' "$json" | jq -r '.mergeStateStatus // "UNKNOWN"' 2>/dev/null)" || ready_merge_state="UNKNOWN"
-        ready_checks_state="$(normalize_checks_state "$json")" || ready_checks_state="unknown"
-        emit_recheck_record "error" "$pr_num" "$original_index" "$after_merged_pr" "$ready_base_ref" "$ready_head_ref" "$ready_merge_state" "$ready_checks_state" "helper_failed" "false" "$attempt" "$deadline_seconds" "error" "approved_unready_pr_is_ready"
-        exit 2
-      fi
-
       if [ "$attempt" -ge "$attempts_limit" ]; then
         bound_exhausted="retry_attempts_exhausted"
       else
