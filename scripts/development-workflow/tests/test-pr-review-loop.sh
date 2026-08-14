@@ -2572,7 +2572,7 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
-    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abcreviewok1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    printf '[{"submitted_at":"2026-01-01T00:00:00Z","commit_id":"abcreviewok1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
     exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":206,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"If Codex has suggestions, it will comment; otherwise it will react with thumbs up."}]\n'

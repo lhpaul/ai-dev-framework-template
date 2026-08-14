@@ -220,7 +220,7 @@ codex_inline_review_comment_count_since() {
   review_comment_tmpfile=$(mktemp)
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate \
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$trigger_time" --arg sha "$CURRENT_SHA" \
-      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .created_at > $trigger_time and ((.commit_id // "") | startswith($sha)))] | length' \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .created_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | length' \
     > "$review_comment_tmpfile"; then
     cat "$review_comment_tmpfile"
   else
@@ -354,8 +354,9 @@ if [ -z "$TRIGGER_TIME" ]; then
   echo "INFO: posting trigger comment to PR #$PR_NUMBER..."
   # Use gh api --method POST to capture the GitHub-server-assigned created_at
   # timestamp. Using 'date -u' here would risk clock skew between the local
-  # machine and GitHub's API server, causing bot responses to be silently
-  # filtered out during polling (created_at > TRIGGER_TIME would be false).
+  # machine and GitHub's API server. Poll filters use >= because GitHub
+  # timestamps are second-resolution and bot responses can share the trigger
+  # second.
   # Guard with 'if !' to emit TIMED_OUT (exit 2) on failure instead of letting
   # set -e exit with code 1 (NEEDS_REVISION) without a VERDICT line.
   if ! TRIGGER_RESPONSE=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" \
@@ -421,7 +422,7 @@ while true; do
   if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
     2>"$POLL_STDERR" \
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
-        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time)] | sort_by(.created_at) | last | .body // empty' \
+        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at >= $trigger_time)] | sort_by(.created_at) | last | .body // empty' \
     > "$POLL_TMPFILE"; then
 	    # Truncate after successful API call — no SIGPIPE risk here
 	    BOT_RESPONSE=$(head -c 10000 "$POLL_TMPFILE")
@@ -451,7 +452,7 @@ while true; do
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>"$REVIEW_STDERR" \
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | .body // empty' \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | .body // empty' \
     > "$REVIEW_TMPFILE" 2>"$REVIEW_STDERR"; then
     REVIEW_BODY=$(head -c 5000 "$REVIEW_TMPFILE")
     if [ -n "$REVIEW_BODY" ]; then
@@ -655,7 +656,7 @@ ASYNC_POLL_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
   2>/dev/null \
   | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
-      '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time)] | sort_by(.created_at) | last | .body // empty' \
+      '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at >= $trigger_time)] | sort_by(.created_at) | last | .body // empty' \
 	  > "$ASYNC_POLL_TMPFILE" 2>/dev/null; then
 	  ASYNC_BOT_RESPONSE=$(head -c 10000 "$ASYNC_POLL_TMPFILE")
 	  if [ -n "$ASYNC_BOT_RESPONSE" ]; then
@@ -668,7 +669,7 @@ ASYNC_REVIEW_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
   2>/dev/null \
   | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | .body // empty' \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | .body // empty' \
   > "$ASYNC_REVIEW_TMPFILE" 2>/dev/null; then
   ASYNC_REVIEW_BODY=$(head -c 5000 "$ASYNC_REVIEW_TMPFILE")
 	  if [ -n "$ASYNC_REVIEW_BODY" ]; then
@@ -726,7 +727,7 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
       2>/dev/null \
       | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
-          '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time)] | sort_by(.created_at) | last | .body // empty' \
+          '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at >= $trigger_time)] | sort_by(.created_at) | last | .body // empty' \
 	      > "$ASYNC_FINAL_POLL_TMPFILE" 2>/dev/null; then
 	      ASYNC_FINAL_BOT_RESPONSE=$(head -c 10000 "$ASYNC_FINAL_POLL_TMPFILE")
 	      if [ -n "$ASYNC_FINAL_BOT_RESPONSE" ]; then
@@ -739,7 +740,7 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
       2>/dev/null \
       | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | .body // empty' \
+          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | .body // empty' \
       > "$ASYNC_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
       ASYNC_FINAL_REVIEW_BODY=$(head -c 5000 "$ASYNC_FINAL_REVIEW_TMPFILE")
 	      if [ -n "$ASYNC_FINAL_REVIEW_BODY" ]; then
