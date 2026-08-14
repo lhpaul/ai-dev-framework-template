@@ -103,7 +103,8 @@ Usage:
 bash ./scripts/development-workflow/batch-merge.sh recheck-remaining \
   --prs 101,102,103 \
   --after-merged-pr 101 \
-  --base develop
+  --base develop \
+  --approved-unready-prs "$APPROVED_UNREADY_PRS"
 ```
 
 Protocol 94 is the source of truth for frozen scope, record schema, retry

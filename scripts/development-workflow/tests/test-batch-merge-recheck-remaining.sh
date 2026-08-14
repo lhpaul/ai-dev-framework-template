@@ -244,9 +244,18 @@ unready_blocked_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merg
 run_test "unready_without_exception_blocks" "label_gate_failed" "$(json_field "$unready_blocked_output" 102 reason)"
 
 rm -f "$MOCK_GH_STATE_DIR"/*.count
-unready_approved_output="$(BATCH_MERGE_APPROVED_UNREADY_PRS=102 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
+unready_approved_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --approved-unready-prs 102)"
 run_test "unready_with_exception_continues" "clean" "$(json_field "$unready_approved_output" 102 classification)"
 run_test "unready_with_exception_reason" "refreshed_clean" "$(json_field "$unready_approved_output" 102 reason)"
+
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+unready_approved_env_output="$(BATCH_MERGE_APPROVED_UNREADY_PRS=102 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
+run_test "unready_env_exception_remains_compatible" "clean" "$(json_field "$unready_approved_env_output" 102 classification)"
+
+set +e
+bad_approved_unready_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --approved-unready-prs 103)"
+set -e
+run_test "approved_unready_must_be_in_frozen_list" "approved_unready_pr_not_in_frozen_list" "$(json_field "$bad_approved_unready_output" null reason)"
 
 export MOCK_SCENARIO=
 rm -f "$MOCK_GH_STATE_DIR"/*.count

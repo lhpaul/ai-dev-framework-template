@@ -89,7 +89,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage:
   batch-merge.sh [--base <branch>] discover [--include-checkpointed] [--prs <num1,num2,...>]
-  batch-merge.sh recheck-remaining --prs <num1,num2,...> --after-merged-pr <number> --base <branch>
+  batch-merge.sh recheck-remaining --prs <num1,num2,...> --after-merged-pr <number> --base <branch> [--approved-unready-prs <num1,num2,...>]
   batch-merge.sh [--base <branch>] merge --pr <number> --expected-head-sha <sha>
   batch-merge.sh [--base <branch>] delete-branch --pr <number>
 
@@ -485,6 +485,7 @@ classify_recheck_json() {
   local json="$1"
   local bound_exhausted="$2"
   local pr_num="${3:-}"
+  local approved_unready_prs="${4:-}"
 
   local state is_draft base_ref merge_state checks_state labels_type checks_type
   state="$(printf '%s\n' "$json" | jq -r '.state // ""' 2>/dev/null)" || return 1
@@ -510,7 +511,7 @@ classify_recheck_json() {
     return 0
   fi
   if ! printf '%s\n' "$json" | jq -e '.labels[].name | select(. == "ready-for-human-review")' >/dev/null 2>&1 &&
-     ! list_contains_number "${BATCH_MERGE_APPROVED_UNREADY_PRS:-}" "$pr_num"; then
+     ! list_contains_number "$approved_unready_prs" "$pr_num"; then
     printf 'merge_blocked|false|hold|label_gate_failed|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
     return 0
   fi
@@ -561,6 +562,7 @@ classify_recheck_json() {
 cmd_recheck_remaining() {
   local explicit_prs=""
   local after_merged_pr=""
+  local approved_unready_prs="${BATCH_MERGE_APPROVED_UNREADY_PRS:-}"
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -586,6 +588,14 @@ cmd_recheck_remaining() {
           exit 2
         }
         TARGET_BASE="$2"
+        shift 2
+        ;;
+      --approved-unready-prs)
+        [ $# -ge 2 ] || {
+          emit_recheck_error "${after_merged_pr:-null}" "null" "invalid_approved_unready_prs"
+          exit 2
+        }
+        approved_unready_prs="$2"
         shift 2
         ;;
       *)
@@ -622,14 +632,23 @@ cmd_recheck_remaining() {
       exit 2
       ;;
   esac
+  if [ -n "$approved_unready_prs" ]; then
+    case "$approved_unready_prs" in
+      ,*|*,|*,,*)
+        emit_recheck_error "$after_merged_pr" "$deadline_seconds" "invalid_approved_unready_prs"
+        exit 2
+        ;;
+    esac
+  fi
 
   require_gh
 
-  local pr_file seen_file
+  local pr_file seen_file approved_seen_file
   pr_file="$(mktemp)"
   seen_file="$(mktemp)"
+  approved_seen_file="$(mktemp)"
   # shellcheck disable=SC2064
-  trap "rm -f '$pr_file' '$seen_file'" EXIT INT TERM
+  trap "rm -f '$pr_file' '$seen_file' '$approved_seen_file'" EXIT INT TERM
 
   local raw pr_id index=0
   IFS=',' read -r -a _recheck_tokens <<< "$explicit_prs"
@@ -649,6 +668,28 @@ cmd_recheck_remaining() {
     printf '%s\t%s\n' "$index" "$pr_id" >> "$pr_file"
     index=$((index + 1))
   done
+
+  if [ -n "$approved_unready_prs" ]; then
+    IFS=',' read -r -a _approved_unready_tokens <<< "$approved_unready_prs"
+    for raw in "${_approved_unready_tokens[@]}"; do
+      pr_id="${raw#\#}"
+      case "$pr_id" in
+        ''|*[!0-9]*)
+          emit_recheck_error "$after_merged_pr" "$deadline_seconds" "invalid_approved_unready_prs"
+          exit 2
+          ;;
+      esac
+      if grep -qx "$pr_id" "$approved_seen_file"; then
+        emit_recheck_error "$after_merged_pr" "$deadline_seconds" "invalid_approved_unready_prs"
+        exit 2
+      fi
+      if ! grep -qx "$pr_id" "$seen_file"; then
+        emit_recheck_error "$after_merged_pr" "$deadline_seconds" "approved_unready_pr_not_in_frozen_list"
+        exit 2
+      fi
+      printf '%s\n' "$pr_id" >> "$approved_seen_file"
+    done
+  fi
 
   if ! grep -qx "$after_merged_pr" "$seen_file"; then
     emit_recheck_error "$after_merged_pr" "$deadline_seconds" "after_merged_pr_not_in_frozen_list"
@@ -703,7 +744,7 @@ cmd_recheck_remaining() {
       else
         bound_exhausted=""
       fi
-      classification_line="$(classify_recheck_json "$json" "$bound_exhausted" "$pr_num")" || {
+      classification_line="$(classify_recheck_json "$json" "$bound_exhausted" "$pr_num" "$approved_unready_prs")" || {
         emit_recheck_record "error" "$pr_num" "$original_index" "$after_merged_pr" "null" "null" "null" "null" "helper_failed" "false" "$attempt" "$deadline_seconds" "error" "malformed_response"
         exit 2
       }

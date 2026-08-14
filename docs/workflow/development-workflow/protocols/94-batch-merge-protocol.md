@@ -97,6 +97,8 @@ For each candidate PR:
    > - Type **skip** to exclude it from this run (outcome: `skipped_not_ready`).
 
    Record the human's decision. If the human does not respond or exits, treat as **skip**.
+   Keep a comma-separated `APPROVED_UNREADY_PRS` list containing every unready PR
+   the human explicitly included. If none were included, keep it empty.
 
 3. Do not silently skip or silently include an unready PR. The human must explicitly decide.
 
@@ -339,8 +341,13 @@ After a clean or resolved merge, in order:
    bash ./scripts/development-workflow/batch-merge.sh recheck-remaining \
      --prs <comma-separated-approved-pr-list> \
      --after-merged-pr <number> \
-     --base "$BASE_BRANCH"
+     --base "$BASE_BRANCH" \
+     --approved-unready-prs "$APPROVED_UNREADY_PRS"
    ```
+
+   `APPROVED_UNREADY_PRS` must be the same explicit include list recorded in
+   Step 2, not recomputed from current labels. The helper validates that every
+   approved-unready PR is still part of the frozen approved PR list.
 
    Treat the recheck output as an admission gate before attempting another
    merge or reporting readiness:
@@ -532,7 +539,7 @@ When called from the Portfolio Orchestrator (Protocol 90), the same flow applies
 
 - The orchestrator passes the PR list discovered from the batch.
 - The merge plan is printed for visibility at Step 3, then execution proceeds immediately.
-- The orchestrator must NOT skip or auto-approve the readiness gate (Step 2) for any unready PR.
+- The orchestrator must NOT skip or auto-approve the readiness gate (Step 2) for any unready PR. It must pass the Step 2 `APPROVED_UNREADY_PRS` value to every `recheck-remaining --approved-unready-prs` call.
 - Non-trivial conflicts still require human resolution at Step 4.3.
 
 The orchestrator should include the batch-merge summary in its overall `Step 6: Notify Humans` output.
