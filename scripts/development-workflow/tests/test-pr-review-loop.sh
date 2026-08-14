@@ -2731,6 +2731,55 @@ run_test "codex_reaction_then_late_review_approved" "VERDICT: APPROVED" \
 rm -rf "$_codex_reaction_then_review_mock_dir"
 unset _codex_reaction_then_review_mock_dir _codex_reaction_then_review_output _codex_reaction_then_review_exit
 
+_codex_async_reaction_then_review_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_async_reaction_then_review_mock_dir/review_calls"
+cat > "$_codex_async_reaction_then_review_mock_dir/gh" <<'CODEX_ASYNC_REACTION_THEN_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abc456aa1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":122,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[{"content":"+1","user":{"login":"chatgpt-codex-connector[bot]"}}]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    calls_file="$(dirname "$0")/review_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -ge 3 ]; then
+      printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abc456aa1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ASYNC_REACTION_THEN_REVIEW_GH
+chmod +x "$_codex_async_reaction_then_review_mock_dir/gh"
+
+_codex_async_reaction_then_review_output=""
+_codex_async_reaction_then_review_exit=0
+PATH="$_codex_async_reaction_then_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_async_reaction_then_review_mock_dir/output.txt" 2>&1 || _codex_async_reaction_then_review_exit=$?
+_codex_async_reaction_then_review_output="$(cat "$_codex_async_reaction_then_review_mock_dir/output.txt")"
+run_test "codex_async_reaction_then_late_review_exit_clean" "0" "$_codex_async_reaction_then_review_exit"
+run_test "codex_async_reaction_then_late_review_approved" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_async_reaction_then_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_async_reaction_then_review_mock_dir"
+unset _codex_async_reaction_then_review_mock_dir _codex_async_reaction_then_review_output _codex_async_reaction_then_review_exit
+
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
 #!/usr/bin/env bash

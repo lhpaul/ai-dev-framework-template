@@ -836,6 +836,87 @@ fi
 
 if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
   echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID during async grace period"
+  echo "INFO: waiting ${POLL_INTERVAL}s for final Codex review evidence after async reaction..."
+  sleep "$POLL_INTERVAL"
+  if ! ASYNC_INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
+    echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments after async reaction (treated as unavailable)"
+    exit 2
+  fi
+  if [ "$ASYNC_INLINE_REVIEW_COMMENT_COUNT" -gt 0 ]; then
+    codex_require_current_head
+    echo "VERDICT: NEEDS_REVISION"
+    echo "INFO: detected $ASYNC_INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) after async reaction"
+    exit 1
+  fi
+
+  ASYNC_REACTION_FINAL_BOT_RESPONSE=""
+  ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE=""
+  ASYNC_REACTION_FINAL_POLL_TMPFILE=$(mktemp)
+  if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
+    2>/dev/null \
+    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
+        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | last | .body // empty' \
+    > "$ASYNC_REACTION_FINAL_POLL_TMPFILE" 2>/dev/null; then
+    ASYNC_REACTION_FINAL_BOT_RESPONSE=$(head -c 10000 "$ASYNC_REACTION_FINAL_POLL_TMPFILE")
+    if [ -n "$ASYNC_REACTION_FINAL_BOT_RESPONSE" ]; then
+      ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE="comment"
+      if codex_response_reviews_current_head "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
+        ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE="review"
+        echo "INFO: final async reaction bot response detected via SHA-pinned PR comment"
+      fi
+    fi
+  fi
+  rm -f "$ASYNC_REACTION_FINAL_POLL_TMPFILE"
+
+  ASYNC_REACTION_FINAL_REVIEW_TMPFILE=$(mktemp)
+  if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
+    2>/dev/null \
+    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | .body // empty' \
+    > "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
+    ASYNC_REACTION_FINAL_REVIEW_BODY=$(head -c 5000 "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE")
+    if [ -n "$ASYNC_REACTION_FINAL_REVIEW_BODY" ]; then
+      ASYNC_REACTION_FINAL_BOT_RESPONSE="$ASYNC_REACTION_FINAL_REVIEW_BODY"
+      ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE="review"
+      echo "INFO: final async reaction bot response detected via PR reviews endpoint"
+    fi
+  else
+    rm -f "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE"
+    echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews after async reaction (treated as unavailable)"
+    exit 2
+  fi
+  rm -f "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE"
+
+  if [ -n "$ASYNC_REACTION_FINAL_BOT_RESPONSE" ]; then
+    codex_require_current_head
+    if codex_response_is_usage_limit "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
+      codex_return_usage_limit "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
+    elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
+      SEEN_ENVIRONMENT_ERROR=1
+      SEEN_ENVIRONMENT_RESPONSE="$ASYNC_REACTION_FINAL_BOT_RESPONSE"
+      echo "INFO: final async reaction Codex environment setup response detected without fresh review evidence"
+    elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
+      echo "VERDICT: NEEDS_REVISION"
+      echo "---BEGIN BOT RESPONSE---"
+      echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
+      echo "---END BOT RESPONSE---"
+      exit 1
+    elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)"; then
+      echo "VERDICT: APPROVED"
+      echo "---BEGIN BOT RESPONSE---"
+      echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
+      echo "---END BOT RESPONSE---"
+      exit 0
+    elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "comment" ]; then
+      echo "INFO: final async reaction Codex root comment is not SHA-pinned terminal evidence"
+    elif ! echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE" | grep -qi "If Codex has suggestions, it will comment; otherwise it will react with"; then
+      echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
+      echo "---BEGIN BOT RESPONSE---"
+      echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
+      echo "---END BOT RESPONSE---"
+      exit 1
+    fi
+  fi
   codex_return_reaction_without_review
 fi
 
