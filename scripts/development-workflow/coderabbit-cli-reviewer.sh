@@ -218,6 +218,12 @@ normalize_github_remote_slug() {
 redact_github_remote_slug() {
   local raw="$1"
   local slug
+  case "$raw" in
+    http://*@github.com/*|https://*@github.com/*)
+      printf '<redacted-remote>\n'
+      return 0
+      ;;
+  esac
   slug="$(normalize_github_remote_slug "$raw")"
   if [[ "$slug" == http://* || "$slug" == https://* || "$slug" == *"@"* ]]; then
     printf '<redacted-remote>\n'

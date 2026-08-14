@@ -201,6 +201,18 @@ run_test "repo_root_credential_mismatch_escalates" "RESULT=escalate" "$(line_for
 run_test "repo_root_credential_mismatch_redacts_token" "no" "$(grep -Fq 'secret-token' "$STDERR_FILE" && echo yes || echo no)"
 rm -rf "$credential_repo_root"
 
+credential_userinfo_repo_root="$(mktemp -d)"
+init_repo_root_fixture "$credential_userinfo_repo_root" "https://user:secret-token@github.com/other/repo.git"
+reset_mocks
+set_mock_stdout '{"findings":[]}'
+MOCK_PR_HEAD_SHA="$(git -C "$credential_userinfo_repo_root" rev-parse HEAD)"
+export MOCK_PR_HEAD_SHA
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$credential_userinfo_repo_root"
+unset MOCK_PR_HEAD_SHA
+run_test "repo_root_userinfo_credential_mismatch_escalates" "RESULT=escalate" "$(line_for RESULT)"
+run_test "repo_root_userinfo_credential_mismatch_redacts_token" "no" "$(grep -Fq 'secret-token' "$STDERR_FILE" && echo yes || echo no)"
+rm -rf "$credential_userinfo_repo_root"
+
 reset_mocks
 set_mock_stdout '{"findings":[{"severity":"Critical","path":"scripts/example.sh","line":42,"message":"fix this"}]}'
 run_reviewer "$MOCK_BIN:$PATH"
