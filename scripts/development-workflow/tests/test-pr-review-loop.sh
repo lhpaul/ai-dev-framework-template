@@ -2557,6 +2557,46 @@ run_test "codex_reaction_only_reason" "REASON=codex-github-reaction-without-revi
 rm -rf "$_codex_reaction_mock_dir"
 unset _codex_reaction_mock_dir _codex_reaction_output _codex_reaction_exit
 
+_codex_reaction_with_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_reaction_with_review_mock_dir/gh" <<'CODEX_REACTION_WITH_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcreviewok1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":106,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[{"content":"+1","user":{"login":"chatgpt-codex-connector[bot]"}}]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abcreviewok1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_REACTION_WITH_REVIEW_GH
+chmod +x "$_codex_reaction_with_review_mock_dir/gh"
+
+_codex_reaction_with_review_output=""
+_codex_reaction_with_review_exit=0
+PATH="$_codex_reaction_with_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_reaction_with_review_mock_dir/output.txt" 2>&1 || _codex_reaction_with_review_exit=$?
+_codex_reaction_with_review_output="$(cat "$_codex_reaction_with_review_mock_dir/output.txt")"
+run_test "codex_reaction_with_current_review_exit_clean" "0" "$_codex_reaction_with_review_exit"
+run_test "codex_reaction_with_current_review_approved" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_reaction_with_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_reaction_with_review_mock_dir"
+unset _codex_reaction_with_review_mock_dir _codex_reaction_with_review_output _codex_reaction_with_review_exit
+
 _codex_stale_review_mock_dir="$(mktemp -d)"
 cat > "$_codex_stale_review_mock_dir/gh" <<'CODEX_STALE_REVIEW_GH'
 #!/usr/bin/env bash
@@ -2600,6 +2640,56 @@ fi
 run_test "codex_stale_review_not_approved" "no" "$_codex_stale_review_approved"
 rm -rf "$_codex_stale_review_mock_dir"
 unset _codex_stale_review_mock_dir _codex_stale_review_output _codex_stale_review_exit _codex_stale_review_approved
+
+_codex_head_changed_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_head_changed_mock_dir/head_calls"
+cat > "$_codex_head_changed_mock_dir/gh" <<'CODEX_HEAD_CHANGED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    calls_file="$(dirname "$0")/head_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -eq 1 ]; then
+      printf 'abcheadold1234567890\n'
+    else
+      printf 'abcheadnew1234567890\n'
+    fi
+    exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":107,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abcheadold1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_HEAD_CHANGED_GH
+chmod +x "$_codex_head_changed_mock_dir/gh"
+
+_codex_head_changed_output=""
+_codex_head_changed_exit=0
+PATH="$_codex_head_changed_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_head_changed_mock_dir/output.txt" 2>&1 || _codex_head_changed_exit=$?
+_codex_head_changed_output="$(cat "$_codex_head_changed_mock_dir/output.txt")"
+run_test "codex_head_changed_exit_unavailable" "2" "$_codex_head_changed_exit"
+run_test "codex_head_changed_reason" "REASON=codex-github-head-changed" \
+  "$(printf '%s\n' "$_codex_head_changed_output" | grep "^REASON=")"
+rm -rf "$_codex_head_changed_mock_dir"
+unset _codex_head_changed_mock_dir _codex_head_changed_output _codex_head_changed_exit
 
 _codex_environment_mock_dir="$(mktemp -d)"
 cat > "$_codex_environment_mock_dir/gh" <<'CODEX_ENVIRONMENT_GH'

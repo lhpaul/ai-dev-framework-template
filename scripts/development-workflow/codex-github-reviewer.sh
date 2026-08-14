@@ -275,6 +275,36 @@ codex_return_reaction_without_review() {
   exit 2
 }
 
+codex_return_head_changed() {
+  echo "VERDICT: TIMED_OUT — PR head changed while waiting for Codex review evidence (treated as unavailable)"
+  echo "REASON=codex-github-head-changed"
+  echo "COMMENT_COUNT=0"
+  echo "BLOCKING_COUNT=0"
+  echo "SUGGESTION_COUNT=0"
+  exit 2
+}
+
+codex_require_current_head() {
+  local latest_sha
+  if ! latest_sha=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | head -c 100); then
+    echo "ERROR: could not revalidate PR #$PR_NUMBER HEAD SHA" >&2
+    echo "VERDICT: TIMED_OUT — could not revalidate PR HEAD SHA (treated as unavailable)"
+    echo "REASON=codex-github-head-unavailable"
+    exit 2
+  fi
+  latest_sha=$(printf '%s' "$latest_sha" | cut -c1-12)
+  if [ -z "$latest_sha" ]; then
+    echo "ERROR: could not revalidate PR #$PR_NUMBER HEAD SHA (empty result)" >&2
+    echo "VERDICT: TIMED_OUT — could not revalidate PR HEAD SHA (treated as unavailable)"
+    echo "REASON=codex-github-head-unavailable"
+    exit 2
+  fi
+  if [ "$latest_sha" != "$CURRENT_SHA" ]; then
+    echo "INFO: PR head changed during Codex polling (started at $CURRENT_SHA, now $latest_sha)"
+    codex_return_head_changed
+  fi
+}
+
 # ── Idempotency guard (BR-10) ─────────────────────────────────────────────────
 # Check whether a trigger comment for the current commit SHA already exists.
 # We look for a comment body containing BOTH the trigger phrase AND the SHA to
@@ -432,6 +462,7 @@ while true; do
     exit 2
   fi
   if [ "$INLINE_REVIEW_COMMENT_COUNT" -gt 0 ]; then
+    codex_require_current_head
     echo "VERDICT: NEEDS_REVISION"
     echo "INFO: detected $INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) after trigger"
     exit 1
@@ -441,13 +472,9 @@ while true; do
     echo "VERDICT: TIMED_OUT — failed to fetch Codex trigger reactions (treated as unavailable)"
     exit 2
   fi
-  if [ "$APPROVAL_REACTION_COUNT" -gt 0 ]; then
-    echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID"
-    codex_return_reaction_without_review
-  fi
-
   if [ -n "$BOT_RESPONSE" ]; then
     echo "INFO: bot response detected"
+    codex_require_current_head
 
     # ── Verdict parsing ───────────────────────────────────────────────────────
     # Three-path classification (per spec BR-4 and implementation plan risk table).
@@ -506,6 +533,11 @@ while true; do
       echo "---END BOT RESPONSE---"
       exit 1
     fi
+  fi
+
+  if [ "$APPROVAL_REACTION_COUNT" -gt 0 ]; then
+    echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID"
+    codex_return_reaction_without_review
   fi
   done  # end inner poll loop
 
@@ -584,6 +616,7 @@ if ! ASYNC_INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since
   exit 2
 fi
 if [ "$ASYNC_INLINE_REVIEW_COMMENT_COUNT" -gt 0 ]; then
+  codex_require_current_head
   echo "VERDICT: NEEDS_REVISION"
   echo "INFO: detected $ASYNC_INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) during async grace period"
   exit 1
@@ -600,11 +633,6 @@ if [ -n "$ASYNC_TRIGGER_COMMENT_ID" ]; then
   fi
   ASYNC_APPROVAL_REACTION_COUNT=$((ASYNC_APPROVAL_REACTION_COUNT + ASYNC_EXTRA_APPROVAL_REACTION_COUNT))
 fi
-if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
-  echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID during async grace period"
-  codex_return_reaction_without_review
-fi
-
 ASYNC_POLL_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
   2>/dev/null \
@@ -633,6 +661,7 @@ fi
 
 if [ -n "$ASYNC_BOT_RESPONSE" ]; then
   echo "INFO: async-arrival bot response detected during grace period"
+  codex_require_current_head
 
   # Apply the same three-path verdict parsing as the main poll loop.
   if codex_response_is_usage_limit "$ASYNC_BOT_RESPONSE"; then
@@ -660,6 +689,7 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
       exit 2
     fi
     if [ "$ASYNC_INLINE_REVIEW_COMMENT_COUNT" -gt 0 ]; then
+      codex_require_current_head
       echo "VERDICT: NEEDS_REVISION"
       echo "INFO: detected $ASYNC_INLINE_REVIEW_COMMENT_COUNT Codex inline review comment(s) after async acknowledgement"
       exit 1
@@ -686,6 +716,11 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     echo "---END BOT RESPONSE---"
     exit 1
   fi
+fi
+
+if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
+  echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID during async grace period"
+  codex_return_reaction_without_review
 fi
 
 echo "INFO: no bot response during async grace period"
