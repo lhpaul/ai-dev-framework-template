@@ -2557,6 +2557,90 @@ run_test "codex_reaction_only_reason" "REASON=codex-github-reaction-without-revi
 rm -rf "$_codex_reaction_mock_dir"
 unset _codex_reaction_mock_dir _codex_reaction_output _codex_reaction_exit
 
+_codex_clean_root_review_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_clean_root_review_comment_mock_dir/gh" <<'CODEX_CLEAN_ROOT_REVIEW_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcdefab1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":118,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":218,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `abcdefab12`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_CLEAN_ROOT_REVIEW_COMMENT_GH
+chmod +x "$_codex_clean_root_review_comment_mock_dir/gh"
+
+_codex_clean_root_review_comment_output=""
+_codex_clean_root_review_comment_exit=0
+PATH="$_codex_clean_root_review_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_clean_root_review_comment_mock_dir/output.txt" 2>&1 || _codex_clean_root_review_comment_exit=$?
+_codex_clean_root_review_comment_output="$(cat "$_codex_clean_root_review_comment_mock_dir/output.txt")"
+run_test "codex_clean_root_review_comment_exit_clean" "0" "$_codex_clean_root_review_comment_exit"
+run_test "codex_clean_root_review_comment_approved" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_clean_root_review_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_clean_root_review_comment_mock_dir"
+unset _codex_clean_root_review_comment_mock_dir _codex_clean_root_review_comment_output _codex_clean_root_review_comment_exit
+
+_codex_stale_root_review_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_stale_root_review_comment_mock_dir/gh" <<'CODEX_STALE_ROOT_REVIEW_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abc123aa1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":119,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":219,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `def456bb12`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_STALE_ROOT_REVIEW_COMMENT_GH
+chmod +x "$_codex_stale_root_review_comment_mock_dir/gh"
+
+_codex_stale_root_review_comment_output=""
+_codex_stale_root_review_comment_exit=0
+PATH="$_codex_stale_root_review_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_stale_root_review_comment_mock_dir/output.txt" 2>&1 || _codex_stale_root_review_comment_exit=$?
+_codex_stale_root_review_comment_output="$(cat "$_codex_stale_root_review_comment_mock_dir/output.txt")"
+run_test "codex_stale_root_review_comment_exit_unavailable" "2" "$_codex_stale_root_review_comment_exit"
+if printf '%s\n' "$_codex_stale_root_review_comment_output" | grep -q "^VERDICT: APPROVED"; then
+  _codex_stale_root_review_comment_approved="yes"
+else
+  _codex_stale_root_review_comment_approved="no"
+fi
+run_test "codex_stale_root_review_comment_not_approved" "no" "$_codex_stale_root_review_comment_approved"
+rm -rf "$_codex_stale_root_review_comment_mock_dir"
+unset _codex_stale_root_review_comment_mock_dir _codex_stale_root_review_comment_output _codex_stale_root_review_comment_exit _codex_stale_root_review_comment_approved
+
 _codex_reaction_with_review_mock_dir="$(mktemp -d)"
 cat > "$_codex_reaction_with_review_mock_dir/gh" <<'CODEX_REACTION_WITH_REVIEW_GH'
 #!/usr/bin/env bash

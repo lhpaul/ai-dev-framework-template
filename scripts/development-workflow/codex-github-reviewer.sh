@@ -241,6 +241,13 @@ codex_response_is_environment_error() {
   printf '%s\n' "$response" | grep -qiE "to[[:space:]]+use[[:space:]]+codex[[:space:]]+here,[[:space:]]+create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo"
 }
 
+codex_response_reviews_current_head() {
+  local response="$1"
+  local reviewed_sha
+  reviewed_sha=$(printf '%s\n' "$response" | sed -n 's/.*Reviewed commit:[^`]*`\([0-9a-fA-F]\{7,40\}\)`.*/\1/p' | tail -n 1)
+  [ -n "$reviewed_sha" ] && printf '%s\n' "$CURRENT_SHA" | grep -qi "^$reviewed_sha"
+}
+
 codex_return_usage_limit() {
   echo "VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached"
   echo "REASON=codex-github-usage-limit"
@@ -429,6 +436,10 @@ while true; do
 	    BOT_RESPONSE=$(head -c 10000 "$POLL_TMPFILE")
 	    if [ -n "$BOT_RESPONSE" ]; then
 	      BOT_RESPONSE_SOURCE="comment"
+	      if codex_response_reviews_current_head "$BOT_RESPONSE"; then
+	        BOT_RESPONSE_SOURCE="review"
+	        echo "INFO: bot response detected via SHA-pinned PR comment"
+	      fi
 	    fi
     rm -f "$POLL_STDERR" "$POLL_TMPFILE"
     CONSECUTIVE_API_FAILURES=0
@@ -664,6 +675,10 @@ if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
 	  ASYNC_BOT_RESPONSE=$(head -c 10000 "$ASYNC_POLL_TMPFILE")
 	  if [ -n "$ASYNC_BOT_RESPONSE" ]; then
 	    ASYNC_BOT_RESPONSE_SOURCE="comment"
+	    if codex_response_reviews_current_head "$ASYNC_BOT_RESPONSE"; then
+	      ASYNC_BOT_RESPONSE_SOURCE="review"
+	      echo "INFO: async-arrival bot response detected via SHA-pinned PR comment"
+	    fi
 	  fi
 fi
 rm -f "$ASYNC_POLL_TMPFILE"
@@ -735,6 +750,10 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
 	      ASYNC_FINAL_BOT_RESPONSE=$(head -c 10000 "$ASYNC_FINAL_POLL_TMPFILE")
 	      if [ -n "$ASYNC_FINAL_BOT_RESPONSE" ]; then
 	        ASYNC_FINAL_BOT_RESPONSE_SOURCE="comment"
+	        if codex_response_reviews_current_head "$ASYNC_FINAL_BOT_RESPONSE"; then
+	          ASYNC_FINAL_BOT_RESPONSE_SOURCE="review"
+	          echo "INFO: final async bot response detected via SHA-pinned PR comment"
+	        fi
 	      fi
 	    fi
     rm -f "$ASYNC_FINAL_POLL_TMPFILE"
