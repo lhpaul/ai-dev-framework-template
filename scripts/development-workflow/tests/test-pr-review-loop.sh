@@ -591,7 +591,27 @@ _codex_poll_output="$(codex_github_default_poll_interval 1800 2>/dev/null)"
 run_test "codex_github_invalid_env_falls_back_max_wait" "1800" "$_codex_timeout_output"
 run_test "codex_github_invalid_env_falls_back_poll_interval" "60" "$_codex_poll_output"
 
-unset CODEX_GITHUB_MAX_WAIT CODEX_GITHUB_POLL_INTERVAL _codex_timeout_output _codex_poll_output
+declare -a platforms=("pr-agent" "codex-github")
+declare -a phase_after_clean_platforms=()
+if codex_github_defaults_should_apply; then
+  _codex_defaults_apply_active="yes"
+else
+  _codex_defaults_apply_active="no"
+fi
+run_test "codex_github_defaults_apply_active_platform" "yes" "$_codex_defaults_apply_active"
+
+declare -a platforms=("pr-agent")
+declare -a phase_after_clean_platforms=("codex-github")
+if codex_github_defaults_should_apply; then
+  _codex_defaults_apply_telemetry="yes"
+else
+  _codex_defaults_apply_telemetry="no"
+fi
+run_test "codex_github_defaults_ignore_telemetry_only_platform" "no" "$_codex_defaults_apply_telemetry"
+
+platforms=()
+phase_after_clean_platforms=()
+unset CODEX_GITHUB_MAX_WAIT CODEX_GITHUB_POLL_INTERVAL _codex_timeout_output _codex_poll_output _codex_defaults_apply_active _codex_defaults_apply_telemetry
 
 # ---------------------------------------------------------------------------
 # Area 1: normalize_platform_verdict

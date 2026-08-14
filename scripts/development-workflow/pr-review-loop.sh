@@ -5408,6 +5408,10 @@ codex_github_default_poll_interval() {
   printf '%s\n' "$configured"
 }
 
+codex_github_defaults_should_apply() {
+  array_contains_value "codex-github" "${platforms[@]:-}"
+}
+
 REVIEWER_LOOP_HISTORY_SCHEMA="reviewer_loop_history.v1"
 REVIEWER_LOOP_HISTORY_MARKER="<!-- reviewer-loop-history:v1 -->"
 
@@ -6165,8 +6169,7 @@ if [ "$max_wait_explicit" -eq 0 ]; then
   esac
 fi
 
-if array_contains_value "codex-github" "${platforms[@]:-}" ||
-   array_contains_value "codex-github" "${phase_after_clean_platforms[@]:-}"; then
+if codex_github_defaults_should_apply; then
   if [ "$max_wait_explicit" -eq 0 ]; then
     max_wait="$(codex_github_default_max_wait)"
   fi
