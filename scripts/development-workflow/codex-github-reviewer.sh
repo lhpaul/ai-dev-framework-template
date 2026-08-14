@@ -397,6 +397,7 @@ CONSECUTIVE_API_FAILURES=0
 MAX_CONSECUTIVE_FAILURES=3
 SEEN_ENVIRONMENT_ERROR=0
 SEEN_ENVIRONMENT_RESPONSE=""
+SEEN_APPROVAL_REACTION=0
 # Outer retrigger loop. TOTAL_ELAPSED tracks the full shared wait budget.
 # TRIGGER_TIME is updated to the retrigger comment's timestamp after each
 # retrigger post, scoping the next inner poll to responses after that point.
@@ -555,7 +556,9 @@ while true; do
 
   if [ "$APPROVAL_REACTION_COUNT" -gt 0 ]; then
     echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID"
-    codex_return_reaction_without_review
+    echo "INFO: waiting for current-head review evidence before treating reaction as terminal"
+    SEEN_APPROVAL_REACTION=1
+    continue
   fi
   done  # end inner poll loop
 
@@ -819,6 +822,10 @@ fi
 
 if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ]; then
   codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
+fi
+
+if [ "$SEEN_APPROVAL_REACTION" -eq 1 ]; then
+  codex_return_reaction_without_review
 fi
 
 echo "INFO: no bot response during async grace period"
