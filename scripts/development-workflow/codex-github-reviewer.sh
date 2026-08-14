@@ -239,7 +239,7 @@ codex_response_is_usage_limit() {
 
 codex_response_is_environment_error() {
   local response="$1"
-  printf '%s\n' "$response" | grep -qiE "(to[[:space:]]+use[[:space:]]+codex[[:space:]]+here,[[:space:]]+create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo|create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo)"
+  printf '%s\n' "$response" | grep -qiE "to[[:space:]]+use[[:space:]]+codex[[:space:]]+here,[[:space:]]+create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo"
 }
 
 codex_return_usage_limit() {

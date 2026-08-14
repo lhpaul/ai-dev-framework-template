@@ -2899,6 +2899,46 @@ run_test "codex_cloud_environment_finding_verdict" "VERDICT: NEEDS_REVISION" \
 rm -rf "$_codex_cloud_environment_finding_mock_dir"
 unset _codex_cloud_environment_finding_mock_dir _codex_cloud_environment_finding_output _codex_cloud_environment_finding_exit
 
+_codex_environment_phrase_finding_mock_dir="$(mktemp -d)"
+cat > "$_codex_environment_phrase_finding_mock_dir/gh" <<'CODEX_ENVIRONMENT_PHRASE_FINDING_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcenvphrase1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":114,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abcenvphrase1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Must fix docs that tell users to create an environment for this repo."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ENVIRONMENT_PHRASE_FINDING_GH
+chmod +x "$_codex_environment_phrase_finding_mock_dir/gh"
+
+_codex_environment_phrase_finding_output=""
+_codex_environment_phrase_finding_exit=0
+PATH="$_codex_environment_phrase_finding_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_environment_phrase_finding_mock_dir/output.txt" 2>&1 || _codex_environment_phrase_finding_exit=$?
+_codex_environment_phrase_finding_output="$(cat "$_codex_environment_phrase_finding_mock_dir/output.txt")"
+run_test "codex_environment_phrase_finding_exit_needs_revision" "1" "$_codex_environment_phrase_finding_exit"
+run_test "codex_environment_phrase_finding_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_environment_phrase_finding_output" | grep "^VERDICT:")"
+rm -rf "$_codex_environment_phrase_finding_mock_dir"
+unset _codex_environment_phrase_finding_mock_dir _codex_environment_phrase_finding_output _codex_environment_phrase_finding_exit
+
 _codex_final_ack_clean_comment_mock_dir="$(mktemp -d)"
 printf '0\n' > "$_codex_final_ack_clean_comment_mock_dir/comment_calls"
 cat > "$_codex_final_ack_clean_comment_mock_dir/gh" <<'CODEX_FINAL_ACK_CLEAN_COMMENT_GH'
