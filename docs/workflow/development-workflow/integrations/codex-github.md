@@ -7,10 +7,10 @@ for Codex review evidence on the current head commit.
 
 The reviewer requires terminal evidence that can be tied to the current PR head:
 a submitted GitHub review whose `commit_id` matches the current `headRefOid`, or
-a Codex-authored PR comment after the SHA-tagged trigger that contains an
-explicit clean verdict. A thumbs-up reaction on the trigger comment is only an
-acknowledgement; it is not SHA-pinned review evidence and does not make the PR
-clean by itself.
+current-head inline review comments. Codex-authored root PR comments are used for
+acknowledgement, usage-limit, and setup-failure detection only; they are not
+SHA-pinned clean evidence. A thumbs-up reaction on the trigger comment is only
+an acknowledgement and does not make the PR clean by itself.
 
 ## Prerequisites
 

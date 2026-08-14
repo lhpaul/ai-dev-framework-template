@@ -2355,7 +2355,7 @@ _docs_is_outdated_filter_count="$(grep -h 'select((.isOutdated // false) == fals
 run_test "manual_readiness_audit_docs_filter_outdated" "5" "$_docs_is_outdated_filter_count"
 unset _manual_audit_fixture _manual_audit_fixture_outdated_only _docs_is_outdated_field_count _docs_is_outdated_filter_count
 
-if grep -q "Codex acknowledgement detected; waiting for current-head review, clean comment, or inline review comments" \
+if grep -q "Codex acknowledgement detected; waiting for current-head review or inline review comments" \
     "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh"; then
   _codex_ack_wait_signal="yes"
 else
@@ -2853,11 +2853,15 @@ PATH="$_codex_environment_then_clean_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_environment_then_clean_comment_mock_dir/output.txt" 2>&1 || _codex_environment_then_clean_comment_exit=$?
 _codex_environment_then_clean_comment_output="$(cat "$_codex_environment_then_clean_comment_mock_dir/output.txt")"
-run_test "codex_environment_then_clean_comment_exit_clean" "0" "$_codex_environment_then_clean_comment_exit"
-run_test "codex_environment_then_clean_comment_approved" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_environment_then_clean_comment_output" | grep "^VERDICT:")"
+run_test "codex_environment_then_clean_comment_exit_unavailable" "2" "$_codex_environment_then_clean_comment_exit"
+if printf '%s\n' "$_codex_environment_then_clean_comment_output" | grep -q "^VERDICT: APPROVED"; then
+  _codex_environment_then_clean_comment_approved="yes"
+else
+  _codex_environment_then_clean_comment_approved="no"
+fi
+run_test "codex_environment_then_clean_comment_not_approved" "no" "$_codex_environment_then_clean_comment_approved"
 rm -rf "$_codex_environment_then_clean_comment_mock_dir"
-unset _codex_environment_then_clean_comment_mock_dir _codex_environment_then_clean_comment_output _codex_environment_then_clean_comment_exit
+unset _codex_environment_then_clean_comment_mock_dir _codex_environment_then_clean_comment_output _codex_environment_then_clean_comment_exit _codex_environment_then_clean_comment_approved
 
 _codex_cloud_environment_finding_mock_dir="$(mktemp -d)"
 cat > "$_codex_cloud_environment_finding_mock_dir/gh" <<'CODEX_CLOUD_ENVIRONMENT_FINDING_GH'
@@ -2982,11 +2986,15 @@ PATH="$_codex_final_ack_clean_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_final_ack_clean_comment_mock_dir/output.txt" 2>&1 || _codex_final_ack_clean_comment_exit=$?
 _codex_final_ack_clean_comment_output="$(cat "$_codex_final_ack_clean_comment_mock_dir/output.txt")"
-run_test "codex_final_ack_clean_comment_exit_clean" "0" "$_codex_final_ack_clean_comment_exit"
-run_test "codex_final_ack_clean_comment_approved" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_final_ack_clean_comment_output" | grep "^VERDICT:")"
+run_test "codex_final_ack_clean_comment_exit_unavailable" "2" "$_codex_final_ack_clean_comment_exit"
+if printf '%s\n' "$_codex_final_ack_clean_comment_output" | grep -q "^VERDICT: APPROVED"; then
+  _codex_final_ack_clean_comment_approved="yes"
+else
+  _codex_final_ack_clean_comment_approved="no"
+fi
+run_test "codex_final_ack_clean_comment_not_approved" "no" "$_codex_final_ack_clean_comment_approved"
 rm -rf "$_codex_final_ack_clean_comment_mock_dir"
-unset _codex_final_ack_clean_comment_mock_dir _codex_final_ack_clean_comment_output _codex_final_ack_clean_comment_exit
+unset _codex_final_ack_clean_comment_mock_dir _codex_final_ack_clean_comment_output _codex_final_ack_clean_comment_exit _codex_final_ack_clean_comment_approved
 
 _codex_environment_mock_dir="$(mktemp -d)"
 cat > "$_codex_environment_mock_dir/gh" <<'CODEX_ENVIRONMENT_GH'
