@@ -316,6 +316,13 @@ completed_status() {
   esac
 }
 
+recognized_tracker_status() {
+  case "$1" in
+    Backlog|Writing\ Spec|Spec\ in\ Review|Spec\ Ready|Writing\ Plan|Plan\ in\ Review|Plan\ Ready|In\ Development|Development\ in\ Review|Merged|Released|Cancelled) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 labels_csv() {
   jq -r '[.labels[].name] | join(",")'
 }
@@ -720,6 +727,9 @@ enrich_item() {
   elif [ "$status" = "Cancelled" ] || { [ "$state" = "CLOSED" ] && [ "$state_reason" != "COMPLETED" ]; }; then
     group="ambiguous"
     ambiguity_reason="issue closed or cancelled without completed state"
+  elif ! recognized_tracker_status "$status"; then
+    group="ambiguous"
+    ambiguity_reason="tracker status missing or unrecognized"
   elif [ "$open_review_count" -gt 0 ] \
     || [ "$status" = "Spec in Review" ] \
     || [ "$status" = "Plan in Review" ] \
@@ -917,8 +927,8 @@ summary_json="$(jq -n \
           or (
             .group == "eligible"
             and (
-              (.status // "") != "Backlog"
-              or $summary.policy.mayStartBacklog
+              ((.status // "") | IN("Writing Spec", "Spec Ready", "Writing Plan", "Plan Ready", "In Development"))
+              or ((.status // "") == "Backlog" and $summary.policy.mayStartBacklog)
             )
           )
         ))

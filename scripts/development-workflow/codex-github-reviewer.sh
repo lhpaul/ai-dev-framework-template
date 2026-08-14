@@ -16,9 +16,9 @@
 #                               Default: "chatgpt-codex-connector[bot]"
 #                               Also overridable via CODEX_GITHUB_BOT_LOGIN env var.
 #                               Verify the actual bot login from your GitHub App settings.
-#   --poll-interval  <seconds>   Seconds between polling attempts. Default: 30
+#   --poll-interval  <seconds>   Seconds between polling attempts. Default: 60
 #   --max-wait       <seconds>   Maximum total wait time for bot response across
-#                                all attempts. Default: 600
+#                                all attempts. Default: 1800
 #   --max-retriggers <count>     How many times to re-post the trigger after a timeout
 #                                before giving up. Default: 1 (so up to 2 attempts total).
 #                                Set to 0 to disable retriggering.
@@ -99,8 +99,8 @@ esac
 # Defaults (overridable by flags or env vars)
 TRIGGER_PHRASE="${CODEX_GITHUB_TRIGGER_PHRASE:-@codex review}"
 BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
-POLL_INTERVAL=30
-MAX_WAIT=600
+POLL_INTERVAL=60
+MAX_WAIT=1800
 MAX_RETRIGGERS=1
 
 while [ $# -gt 0 ]; do

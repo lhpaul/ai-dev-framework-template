@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 GATE="$REPO_ROOT/scripts/development-workflow/run-epic-delegated-gate.sh"
+REAL_GIT_PATH="$(command -v git)"
 
 TMP_ROOT="$(mktemp -d)"
 MOCK_BIN="$TMP_ROOT/bin"
@@ -114,6 +115,28 @@ case "$*" in
 esac
 MOCK_GH
 chmod +x "$MOCK_BIN/gh"
+cat > "$MOCK_BIN/git" <<'MOCK_GIT'
+#!/usr/bin/env bash
+case "$*" in
+  *rev-parse\ --verify\ deadbeef*commit*)
+    printf 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n'
+    ;;
+  *rev-parse\ --verify\ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa*commit*)
+    printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
+    ;;
+  *merge-base\ --is-ancestor\ deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+    exit 0
+    ;;
+  *merge-base\ --is-ancestor\ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+    exit 0
+    ;;
+  *)
+    exec "$REAL_GIT_PATH" "$@"
+    ;;
+esac
+MOCK_GIT
+chmod +x "$MOCK_BIN/git"
+export REAL_GIT_PATH
 export PATH="$MOCK_BIN:$PATH"
 export MOCK_GH_CALL_LOG="$CALL_LOG"
 
@@ -1201,10 +1224,25 @@ security_advisory_fixed_fixture="$(write_fixture security-advisory-fixed "
       status: \"fixed\",
       headSha: \"$SEC_HEAD_SHA\",
       firstTrackedAt: \"2026-08-01T00:00:00Z\",
-      fixCommit: \"deadbeef\"
+      fixCommit: \"$SEC_HEAD_SHA\"
     }]
 ")"
 run_test "security_advisory_fixed_allows_merge" "merge_allowed" "$(decision_for "$security_advisory_fixed_fixture")"
+
+fixed_stale_head_fixture="$TMP_ROOT/security-advisory-fixed-stale-head.json"
+jq '.pr.headSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
+  "$security_advisory_fixed_fixture" > "$fixed_stale_head_fixture"
+run_test "fixed_status_stale_head_still_blocks" "human_required" "$(decision_for "$fixed_stale_head_fixture")"
+
+fixed_invalid_fix_commit_fixture="$TMP_ROOT/security-advisory-fixed-invalid-fix-commit.json"
+jq '.securityAdvisories[0].fixCommit = "not-a-sha"' \
+  "$security_advisory_fixed_fixture" > "$fixed_invalid_fix_commit_fixture"
+run_test "fixed_status_invalid_fix_commit_still_blocks" "human_required" "$(decision_for "$fixed_invalid_fix_commit_fixture")"
+
+fixed_unverified_fix_commit_fixture="$TMP_ROOT/security-advisory-fixed-unverified-fix-commit.json"
+jq '.securityAdvisories[0].fixCommit = "cafebabe"' \
+  "$security_advisory_fixed_fixture" > "$fixed_unverified_fix_commit_fixture"
+run_test "fixed_status_unverified_fix_commit_still_blocks" "human_required" "$(decision_for "$fixed_unverified_fix_commit_fixture")"
 
 # AC4/AC5/BR6: a verified human decision (via .securityAdvisoryDecisionEvents[]
 # resolved by github_verified_security_advisory_decisions) also unblocks

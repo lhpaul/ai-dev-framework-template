@@ -63,15 +63,17 @@ review:
   # "coderabbit" GitHub App platform):
   #   rate_limit_policy: warn      # warn|strict; default warn
   #
-  # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
+  # Configurable codex-github options (set via env vars or script flags to pr-review-loop.sh / codex-github-reviewer.sh):
   #   Setup/verification guide: docs/workflow/development-workflow/integrations/codex-github.md
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
   #   CODEX_GITHUB_BOT_LOGIN       — GitHub login of the Codex bot account
   #                                  (default: "chatgpt-codex-connector[bot]"; verify from GitHub App settings)
+  #   CODEX_GITHUB_POLL_INTERVAL   — default polling interval for codex-github via pr-review-loop.sh (default: 60)
+  #   CODEX_GITHUB_MAX_WAIT        — default maximum wait for codex-github via pr-review-loop.sh (default: 1800)
   #
   # Additional options available as script flags to codex-github-reviewer.sh (passed via pr-review-loop.sh):
-  #   --poll-interval <seconds>    — polling interval while waiting for bot response (default: 30)
-  #   --max-wait      <seconds>    — maximum total wait time for bot response (default: 300)
+  #   --poll-interval <seconds>    — polling interval while waiting for bot response
+  #   --max-wait      <seconds>    — maximum total wait time for bot response
   #
   # Copilot platform options:
   #   Prerequisites: an active GitHub Copilot seat or the Copilot for Pull Requests feature

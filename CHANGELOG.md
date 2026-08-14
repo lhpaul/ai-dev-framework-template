@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Workflow sync hardening backports**: delegated epic resolution now fails
+  closed on unknown tracker statuses, security-advisory fix evidence is verified
+  against the current PR head, CodeRabbit CLI review evidence fails closed when
+  PR metadata cannot be resolved, and batch merge rechecks preserve explicit
+  approvals for unready PRs.
+
 ## [0.42.0] - 2026-08-13
 
 ### Added

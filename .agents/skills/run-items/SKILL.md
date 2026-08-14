@@ -112,7 +112,7 @@ proposal step.
    `batch-merge.sh discover --prs <comma-separated-in-scope-prs>` and continue
    through merge, cleanup, post-sibling-merge `recheck-remaining` calls, and
    tracker reconciliation. Keep the explicit PR list frozen for every
-   `batch-merge.sh recheck-remaining --prs <comma-separated-in-scope-prs> --after-merged-pr <number> --base <target-base>`
+   `batch-merge.sh recheck-remaining --prs <comma-separated-in-scope-prs> --after-merged-pr <number> --base <target-base> --approved-unready-prs <human-included-unready-prs>`
    invocation; apply Protocol 94 Step 4.2 as the source of truth for
    post-recheck admission semantics. Report refreshed held PRs as
    `merge_blocked` and read-only observations as `out_of_scope`. Delegated

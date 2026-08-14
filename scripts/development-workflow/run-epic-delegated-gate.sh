@@ -481,6 +481,54 @@ github_verified_bypass_audit() {
   ' 2>/dev/null || printf '{"present":false}\n'
 }
 
+github_verified_security_advisory_fixes() {
+  local state_json="$1"
+  local repo_root="$2"
+  local rows id entry_head fix_commit pr_head fix_oid head_oid verified
+
+  rows="$(printf '%s\n' "$state_json" | jq -r '
+    (.pr.headSha // .pr.head_sha // .pr.headRefOid // "" | tostring) as $prHead |
+    (.securityAdvisories // [])
+    | map(select((.status // "") == "fixed"))
+    | .[]
+    | [
+        (.id // ""),
+        (.headSha // .head_sha // ""),
+        (.fixCommit // ""),
+        $prHead
+      ]
+    | @tsv
+  ' 2>/dev/null)" || {
+    printf '[]\n'
+    return 0
+  }
+
+  verified="[]"
+  while IFS=$'\t' read -r id entry_head fix_commit pr_head; do
+    [ -n "$id" ] || continue
+    [ -n "$entry_head" ] || continue
+    [ "$entry_head" = "$pr_head" ] || continue
+    case "$fix_commit" in
+      ''|*[!0-9a-fA-F]*) continue ;;
+    esac
+    if [ "${#fix_commit}" -lt 7 ] || [ "${#fix_commit}" -gt 40 ]; then
+      continue
+    fi
+    if ! fix_oid="$(git -C "$repo_root" rev-parse --verify "${fix_commit}^{commit}" 2>/dev/null)"; then
+      continue
+    fi
+    if ! head_oid="$(git -C "$repo_root" rev-parse --verify "${pr_head}^{commit}" 2>/dev/null)"; then
+      continue
+    fi
+    if [ "$fix_oid" != "$head_oid" ]; then
+      continue
+    fi
+    verified="$(printf '%s\n' "$verified" | jq --arg id "$id" '. + [$id]')"
+  done <<< "$rows"
+
+  printf '%s\n' "$verified"
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --input)
@@ -623,6 +671,8 @@ verified_bypass_audit="$(github_verified_bypass_audit "$state_json")"
 state_json="$(printf '%s\n' "$state_json" | jq --argjson audit "$verified_bypass_audit" '.githubVerifiedBypassAudit = $audit' 2>/dev/null)" || error_exit "failed to attach verified bypass audit"
 verified_security_advisory_decisions="$(github_verified_security_advisory_decisions "$state_json")"
 state_json="$(printf '%s\n' "$state_json" | jq --argjson decisions "$verified_security_advisory_decisions" '.githubVerifiedSecurityAdvisoryDecisions = $decisions' 2>/dev/null)" || error_exit "failed to attach verified security advisory decisions"
+verified_security_advisory_fixes="$(github_verified_security_advisory_fixes "$state_json" "$effective_root")"
+state_json="$(printf '%s\n' "$state_json" | jq --argjson fixes "$verified_security_advisory_fixes" '.githubVerifiedSecurityAdvisoryFixes = $fixes' 2>/dev/null)" || error_exit "failed to attach verified security advisory fixes"
 
 decision_json="$(printf '%s\n' "$state_json" | jq '
   def policy: if (.policy | type) == "object" then .policy else {} end;
@@ -753,13 +803,15 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     if ((.securityAdvisories // null) | type) == "array" then .securityAdvisories else [] end;
   def verified_security_advisory_decisions:
     if ((.githubVerifiedSecurityAdvisoryDecisions // null) | type) == "array" then .githubVerifiedSecurityAdvisoryDecisions else [] end;
+  def verified_security_advisory_fixes:
+    if ((.githubVerifiedSecurityAdvisoryFixes // null) | type) == "array" then .githubVerifiedSecurityAdvisoryFixes else [] end;
   # BR5: the status of a security-sensitive finding is treated as resolved
   # here only via (a) a matching verified human decision in $decisions (the
   # BR6-verified output of github_verified_security_advisory_decisions,
   # re-derived fresh on every gate call -- mirroring the existing
   # reviewer-access-bypass pattern, which never trusts a persisted
-  # "authorized" flag either), or (b) status == "fixed" together with a
-  # non-empty fixCommit already recorded on the entry. Every other status
+  # "authorized" flag either), or (b) status == "fixed" together with a valid
+  # fixCommit already recorded on the entry for the current PR head. Every other status
   # value -- including an unrecognized string, or a "human-accepted" /
   # "human-rejected" value that is not backed by a matching verified
   # decision on THIS call, or a "fixed" entry missing fixCommit -- resolves
@@ -780,14 +832,19 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   # at that call site would silently read it off the entry object instead
   # (always null there) and every finding would appear permanently pending
   # regardless of any verified decision.
-  def security_advisory_effective_status($entry; $decisions):
+  def valid_security_advisory_fix($entry; $fixes; $headSha):
+    ((($entry.headSha // $entry.head_sha // "") | tostring) == $headSha)
+    and ($fixes | index($entry.id // "") != null);
+  def security_advisory_effective_status($entry; $decisions; $fixes; $headSha):
     ($decisions | map(select((.findingId // "") == ($entry.id // ""))) | .[0]) as $decision |
     if ($decision != null) then $decision.decision
-    elif (($entry.status // "") == "fixed") and (($entry.fixCommit // "") | tostring | length > 0) then "fixed"
+    elif (($entry.status // "") == "fixed" and valid_security_advisory_fix($entry; $fixes; $headSha)) then "fixed"
     else "pending"
     end;
   def pending_security_advisories($decisions):
-    security_advisory_entries | map(select(security_advisory_effective_status(.; $decisions) == "pending"));
+    (verified_security_advisory_fixes) as $fixes |
+    (.pr.headSha // .pr.head_sha // .pr.headRefOid // "" | tostring) as $headSha |
+    security_advisory_entries | map(select(security_advisory_effective_status(.; $decisions; $fixes; $headSha) == "pending"));
   # $prNumber is threaded in explicitly for the same reason $decisions is on
   # security_advisory_effective_status above (this def is invoked from
   # inside map(...), where the implicit `.` of jq is each individual entry,

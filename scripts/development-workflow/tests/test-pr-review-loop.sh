@@ -572,6 +572,47 @@ run_test "doc_branch_poll_interval_greater_clamps" "10" "$(doc_branch_default_po
 
 unset PR_REVIEW_LOOP_DOC_MAX_WAIT _doc_timeout_output
 
+unset CODEX_GITHUB_MAX_WAIT CODEX_GITHUB_POLL_INTERVAL
+run_test "codex_github_default_max_wait" "1800" "$(codex_github_default_max_wait)"
+run_test "codex_github_default_poll_interval" "60" "$(codex_github_default_poll_interval 1800)"
+run_test "codex_github_poll_interval_clamps_to_budget" "15" "$(codex_github_default_poll_interval 30)"
+
+CODEX_GITHUB_MAX_WAIT=2400
+CODEX_GITHUB_POLL_INTERVAL=90
+export CODEX_GITHUB_MAX_WAIT CODEX_GITHUB_POLL_INTERVAL
+run_test "codex_github_env_override_max_wait" "2400" "$(codex_github_default_max_wait)"
+run_test "codex_github_env_override_poll_interval" "90" "$(codex_github_default_poll_interval 2400)"
+
+CODEX_GITHUB_MAX_WAIT=bad
+CODEX_GITHUB_POLL_INTERVAL=bad
+export CODEX_GITHUB_MAX_WAIT CODEX_GITHUB_POLL_INTERVAL
+_codex_timeout_output="$(codex_github_default_max_wait 2>/dev/null)"
+_codex_poll_output="$(codex_github_default_poll_interval 1800 2>/dev/null)"
+run_test "codex_github_invalid_env_falls_back_max_wait" "1800" "$_codex_timeout_output"
+run_test "codex_github_invalid_env_falls_back_poll_interval" "60" "$_codex_poll_output"
+
+declare -a platforms=("pr-agent" "codex-github")
+declare -a phase_after_clean_platforms=()
+if codex_github_defaults_should_apply; then
+  _codex_defaults_apply_active="yes"
+else
+  _codex_defaults_apply_active="no"
+fi
+run_test "codex_github_defaults_apply_active_platform" "yes" "$_codex_defaults_apply_active"
+
+declare -a platforms=("pr-agent")
+declare -a phase_after_clean_platforms=("codex-github")
+if codex_github_defaults_should_apply; then
+  _codex_defaults_apply_telemetry="yes"
+else
+  _codex_defaults_apply_telemetry="no"
+fi
+run_test "codex_github_defaults_ignore_telemetry_only_platform" "no" "$_codex_defaults_apply_telemetry"
+
+platforms=()
+phase_after_clean_platforms=()
+unset CODEX_GITHUB_MAX_WAIT CODEX_GITHUB_POLL_INTERVAL _codex_timeout_output _codex_poll_output _codex_defaults_apply_active _codex_defaults_apply_telemetry
+
 # ---------------------------------------------------------------------------
 # Area 1: normalize_platform_verdict
 # ---------------------------------------------------------------------------
