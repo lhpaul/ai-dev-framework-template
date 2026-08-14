@@ -127,6 +127,21 @@ Likewise, a Codex response asking the operator to create a cloud environment for
 the repo is setup failure evidence; do not use the empty review/comment from
 that path as a clean result.
 
+When both a SHA-pinned root comment and a submitted review qualify as terminal
+evidence, the strictly newer one wins. On an exact timestamp tie (GitHub
+timestamps are second-resolution), blocking evidence must win regardless of
+which side supplied it — a clean submitted review tied with a blocking root
+comment (or vice versa) must resolve to blocking, not to whichever side
+happens to be evaluated first. Selecting the terminal root comment must also
+be independent of the latest root comment overall: a later non-terminal
+acknowledgement or setup-error comment must never discard an earlier
+SHA-pinned blocking root comment.
+
+Root comments are a terminal evidence source, so a failed fetch of Codex root
+PR comments (including during the async grace-period poll) must be treated as
+unavailable and must not let a clean submitted review be accepted before the
+root comments are known. Fail closed, not open.
+
 **Scope note**: This pre-flight checks `review.on_draft.github` and
 `review.on_ready.github` (external reviewers used by Protocol 93 / Step 7). The
 internal reviewer gate in Protocol 91 Step 7a separately checks

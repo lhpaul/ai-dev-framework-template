@@ -14,7 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ignores submitted Codex reviews that are not pinned to the current PR head,
   accepts only root PR comments that include a current-head `Reviewed commit`
   marker as terminal evidence, and reports missing Codex cloud environments as
-  unavailable instead of clean.
+  unavailable instead of clean. Timestamp ties between a SHA-pinned root
+  comment and a submitted review now resolve in favor of blocking evidence
+  regardless of which side supplied it; the terminal root comment is selected
+  independently of the latest (possibly non-terminal) root comment so a later
+  acknowledgement can no longer discard an earlier blocking one; and a failed
+  root-comments fetch during the async grace period, the post-acknowledgement
+  re-poll, and the post-reaction re-poll now fails closed (`TIMED_OUT`)
+  instead of silently falling through to a clean submitted review.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

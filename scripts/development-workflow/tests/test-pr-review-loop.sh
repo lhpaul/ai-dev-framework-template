@@ -2763,6 +2763,98 @@ run_test "codex_tied_root_blocks_review_verdict" "VERDICT: NEEDS_REVISION" \
 rm -rf "$_codex_tied_root_blocks_review_mock_dir"
 unset _codex_tied_root_blocks_review_mock_dir _codex_tied_root_blocks_review_output _codex_tied_root_blocks_review_exit
 
+# Reverse of codex_tied_root_blocks_review: this time the SHA-pinned root
+# comment is CLEAN and the submitted review (same timestamp) is BLOCKING. The
+# tie-break must be symmetric (blocking wins on ties regardless of which
+# source supplied it), so this must also resolve to NEEDS_REVISION.
+_codex_tied_review_blocks_root_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_review_blocks_root_mock_dir/gh" <<'CODEX_TIED_REVIEW_BLOCKS_ROOT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'beefcafe1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":129,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"beefcafe1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: tied review finding."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":229,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `beefcafe1234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_REVIEW_BLOCKS_ROOT_GH
+chmod +x "$_codex_tied_review_blocks_root_mock_dir/gh"
+
+_codex_tied_review_blocks_root_output=""
+_codex_tied_review_blocks_root_exit=0
+PATH="$_codex_tied_review_blocks_root_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_review_blocks_root_mock_dir/output.txt" 2>&1 || _codex_tied_review_blocks_root_exit=$?
+_codex_tied_review_blocks_root_output="$(cat "$_codex_tied_review_blocks_root_mock_dir/output.txt")"
+run_test "codex_tied_review_blocks_root_exit_needs_revision" "1" "$_codex_tied_review_blocks_root_exit"
+run_test "codex_tied_review_blocks_root_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_tied_review_blocks_root_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_review_blocks_root_mock_dir"
+unset _codex_tied_review_blocks_root_mock_dir _codex_tied_review_blocks_root_output _codex_tied_review_blocks_root_exit
+
+# A clean submitted review arrives first, then a SHA-pinned BLOCKING root
+# comment, then a newer non-terminal acknowledgement comment. Greedily
+# selecting the latest root comment overall (the ack) would discard the
+# blocking root comment and let the earlier clean review win by default. The
+# terminal SHA-pinned comment must be selected independently of the latest
+# ancillary comment.
+_codex_ack_does_not_erase_blocking_root_mock_dir="$(mktemp -d)"
+cat > "$_codex_ack_does_not_erase_blocking_root_mock_dir/gh" <<'CODEX_ACK_DOES_NOT_ERASE_BLOCKING_ROOT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'dead12341234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":130,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"dead12341234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":231,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: root finding before ack.\\n\\n**Reviewed commit:** `dead12341234`"},{"id":232,"created_at":"2026-01-01T00:00:03Z","user":{"login":"chatgpt-codex-connector"},"body":"If Codex has suggestions, it will comment; otherwise it will react with thumbs up."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ACK_DOES_NOT_ERASE_BLOCKING_ROOT_GH
+chmod +x "$_codex_ack_does_not_erase_blocking_root_mock_dir/gh"
+
+_codex_ack_does_not_erase_blocking_root_output=""
+_codex_ack_does_not_erase_blocking_root_exit=0
+PATH="$_codex_ack_does_not_erase_blocking_root_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_ack_does_not_erase_blocking_root_mock_dir/output.txt" 2>&1 || _codex_ack_does_not_erase_blocking_root_exit=$?
+_codex_ack_does_not_erase_blocking_root_output="$(cat "$_codex_ack_does_not_erase_blocking_root_mock_dir/output.txt")"
+run_test "codex_ack_does_not_erase_blocking_root_exit_needs_revision" "1" "$_codex_ack_does_not_erase_blocking_root_exit"
+run_test "codex_ack_does_not_erase_blocking_root_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_ack_does_not_erase_blocking_root_output" | grep "^VERDICT:")"
+rm -rf "$_codex_ack_does_not_erase_blocking_root_mock_dir"
+unset _codex_ack_does_not_erase_blocking_root_mock_dir _codex_ack_does_not_erase_blocking_root_output _codex_ack_does_not_erase_blocking_root_exit
+
 _codex_async_newer_root_blocks_old_review_mock_dir="$(mktemp -d)"
 printf '0\n' > "$_codex_async_newer_root_blocks_old_review_mock_dir/comment_calls"
 printf '0\n' > "$_codex_async_newer_root_blocks_old_review_mock_dir/review_calls"
@@ -2821,6 +2913,79 @@ run_test "codex_async_newer_root_blocks_old_review_verdict" "VERDICT: NEEDS_REVI
   "$(printf '%s\n' "$_codex_async_newer_root_blocks_old_review_output" | grep "^VERDICT:")"
 rm -rf "$_codex_async_newer_root_blocks_old_review_mock_dir"
 unset _codex_async_newer_root_blocks_old_review_mock_dir _codex_async_newer_root_blocks_old_review_output _codex_async_newer_root_blocks_old_review_exit
+
+# Root comments are a terminal evidence source. If the root-comments fetch
+# fails specifically during the async grace period while the reviews fetch
+# succeeds with a clean review, the failure must be treated as unavailable
+# (fail closed) rather than silently falling through to accept the clean
+# review as if no root evidence existed (fail open). Sequence: idempotency
+# check (call 1, empty) and main-loop poll (call 2, empty) succeed normally;
+# the async-grace root-comments fetch (call 3) fails.
+_codex_async_root_fetch_failure_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_async_root_fetch_failure_mock_dir/comment_calls"
+printf '0\n' > "$_codex_async_root_fetch_failure_mock_dir/review_calls"
+cat > "$_codex_async_root_fetch_failure_mock_dir/gh" <<'CODEX_ASYNC_ROOT_FETCH_FAILURE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'fade12341234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":128,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    calls_file="$(dirname "$0")/review_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -ge 2 ]; then
+      printf '[{"submitted_at":"2026-01-01T00:00:05Z","commit_id":"fade12341234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -ge 3 ]; then
+      echo "simulated transient API failure" >&2
+      exit 1
+    fi
+    printf '[]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ASYNC_ROOT_FETCH_FAILURE_GH
+chmod +x "$_codex_async_root_fetch_failure_mock_dir/gh"
+
+_codex_async_root_fetch_failure_output=""
+_codex_async_root_fetch_failure_exit=0
+PATH="$_codex_async_root_fetch_failure_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_async_root_fetch_failure_mock_dir/output.txt" 2>&1 || _codex_async_root_fetch_failure_exit=$?
+_codex_async_root_fetch_failure_output="$(cat "$_codex_async_root_fetch_failure_mock_dir/output.txt")"
+run_test "codex_async_root_fetch_failure_exit_unavailable" "2" "$_codex_async_root_fetch_failure_exit"
+run_test "codex_async_root_fetch_failure_verdict" \
+  "VERDICT: TIMED_OUT — failed to fetch Codex root comments during async grace period (treated as unavailable)" \
+  "$(printf '%s\n' "$_codex_async_root_fetch_failure_output" | grep "^VERDICT:")"
+if printf '%s\n' "$_codex_async_root_fetch_failure_output" | grep -q "^VERDICT: APPROVED"; then
+  _codex_async_root_fetch_failure_approved="yes"
+else
+  _codex_async_root_fetch_failure_approved="no"
+fi
+run_test "codex_async_root_fetch_failure_not_approved" "no" "$_codex_async_root_fetch_failure_approved"
+rm -rf "$_codex_async_root_fetch_failure_mock_dir"
+unset _codex_async_root_fetch_failure_mock_dir _codex_async_root_fetch_failure_output _codex_async_root_fetch_failure_exit _codex_async_root_fetch_failure_approved
 
 _codex_reaction_with_review_mock_dir="$(mktemp -d)"
 cat > "$_codex_reaction_with_review_mock_dir/gh" <<'CODEX_REACTION_WITH_REVIEW_GH'

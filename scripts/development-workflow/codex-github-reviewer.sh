@@ -249,10 +249,123 @@ codex_response_reviews_current_head() {
   [ -n "$reviewed_sha" ] && { printf '%s\n' "$CURRENT_SHA" | grep -qi "^$reviewed_sha" || printf '%s\n' "$reviewed_sha" | grep -qi "^$CURRENT_SHA"; }
 }
 
-codex_response_time_should_replace() {
-  local candidate_time="$1"
-  local current_time="$2"
-  [ -z "$current_time" ] || [ "$candidate_time" \> "$current_time" ]
+# Blocking/approval marker patterns, centralized so every classification site
+# (main poll, async grace, async-final, async-reaction-final) uses the exact
+# same rules. See "Verdict parsing" header comment for the rationale behind
+# each marker.
+CODEX_BLOCKING_PATTERN='(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)'
+CODEX_APPROVAL_PATTERN='(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)'
+
+codex_response_is_blocking() {
+  local body="$1"
+  printf '%s\n' "$body" | grep -qiE "$CODEX_BLOCKING_PATTERN"
+}
+
+codex_response_is_approved() {
+  local body="$1"
+  printf '%s\n' "$body" | grep -qiE "$CODEX_APPROVAL_PATTERN"
+}
+
+# Decides whether CANDIDATE terminal ("review"-sourced) evidence should
+# replace CURRENT terminal evidence. A strictly later candidate always wins.
+# GitHub timestamps are second-resolution, so ties are possible; on an exact
+# tie, blocking evidence must never be discarded in favor of clean/ancillary
+# evidence, regardless of which side (submitted review vs SHA-pinned root
+# comment) supplied it. This makes the tie-break symmetric: if the candidate
+# is blocking and the current evidence is not, the candidate wins; if the
+# current evidence is blocking and the candidate is not, the current evidence
+# is kept.
+codex_select_terminal_evidence() {
+  local current_body="$1" current_time="$2"
+  local candidate_body="$3" candidate_time="$4"
+  [ -z "$current_time" ] && return 0
+  if [ "$candidate_time" \> "$current_time" ]; then
+    return 0
+  fi
+  if [ "$candidate_time" = "$current_time" ]; then
+    if codex_response_is_blocking "$candidate_body" && ! codex_response_is_blocking "$current_body"; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+# Scans a JSON-lines file (one compact object per line, in ascending
+# created_at/id order — as produced by the comment-poll jq queries below) of
+# bot-authored root PR comments and separates SHA-pinned TERMINAL evidence
+# (a "Reviewed commit" marker naming the current head) from the latest
+# comment overall (ancillary: acknowledgement, environment-setup error, or
+# other non-terminal text). Selecting the terminal comment independently from
+# the latest comment prevents a later ancillary comment (e.g. a thumbs-up
+# acknowledgement or a "waiting" note) from silently discarding an earlier
+# SHA-pinned blocking root comment.
+# Sets: COMMENT_TERMINAL_BODY, COMMENT_TERMINAL_TIME, COMMENT_LATEST_BODY,
+# COMMENT_LATEST_TIME.
+codex_scan_comment_evidence() {
+  local comments_file="$1"
+  COMMENT_TERMINAL_BODY=""
+  COMMENT_TERMINAL_TIME=""
+  COMMENT_LATEST_BODY=""
+  COMMENT_LATEST_TIME=""
+  local line created_at body
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    created_at=$(printf '%s' "$line" | jq -r '.created_at // empty')  # workflow-shell-guard: allow SH003 - $line is a compact JSON object already validated parseable by the preceding jq -sc call; empty is a normal absent-field case, not a failure
+    body=$(printf '%s' "$line" | jq -r '.body // empty')  # workflow-shell-guard: allow SH003 - same pre-validated $line as above; empty body is not a failure
+    COMMENT_LATEST_BODY="$body"
+    COMMENT_LATEST_TIME="$created_at"
+    if codex_response_reviews_current_head "$body"; then
+      COMMENT_TERMINAL_BODY="$body"
+      COMMENT_TERMINAL_TIME="$created_at"
+    fi
+  done < "$comments_file"
+}
+
+# Combines comment-sourced evidence (terminal SHA-pinned root comment vs.
+# latest ancillary comment, from codex_scan_comment_evidence) with
+# review-sourced evidence (from the pulls/{PR}/reviews endpoint) into a
+# single winning result, applying blocking-first tie-breaking
+# (codex_select_terminal_evidence) so a genuine submitted review only
+# supersedes a SHA-pinned terminal root comment when it is strictly newer, or
+# tied and itself blocking while the comment is not.
+# Sets: COMBINED_BODY, COMBINED_TIME, COMBINED_SOURCE ("review", "comment",
+# or "" if no evidence at all). LABEL is used only for INFO logging.
+codex_combine_terminal_evidence() {
+  local label="$1"
+  local comment_terminal_body="$2" comment_terminal_time="$3"
+  local comment_latest_body="$4" comment_latest_time="$5"
+  local review_body="$6" review_time="$7"
+
+  COMBINED_BODY=""
+  COMBINED_TIME=""
+  COMBINED_SOURCE=""
+
+  if [ -n "$comment_terminal_body" ]; then
+    COMBINED_BODY="$comment_terminal_body"
+    COMBINED_TIME="$comment_terminal_time"
+    COMBINED_SOURCE="review"
+    echo "INFO: $label detected via SHA-pinned PR comment"
+  elif [ -n "$comment_latest_body" ]; then
+    COMBINED_BODY="$comment_latest_body"
+    COMBINED_TIME="$comment_latest_time"
+    COMBINED_SOURCE="comment"
+  fi
+
+  if [ -n "$review_body" ]; then
+    if [ "$COMBINED_SOURCE" != "review" ]; then
+      # No terminal comment evidence yet: a genuine submitted review always
+      # outranks ancillary/absent comment evidence.
+      COMBINED_BODY="$review_body"
+      COMBINED_TIME="$review_time"
+      COMBINED_SOURCE="review"
+      echo "INFO: $label detected via PR reviews endpoint"
+    elif codex_select_terminal_evidence "$COMBINED_BODY" "$COMBINED_TIME" "$review_body" "$review_time"; then
+      COMBINED_BODY="$review_body"
+      COMBINED_TIME="$review_time"
+      COMBINED_SOURCE="review"
+      echo "INFO: $label detected via PR reviews endpoint (supersedes SHA-pinned comment)"
+    fi
+  fi
 }
 
 codex_return_usage_limit() {
@@ -433,23 +546,17 @@ while true; do
   # contains jq-special characters (e.g., double quote, backslash).
   POLL_STDERR=$(mktemp)
   POLL_TMPFILE=$(mktemp)
+  BOT_RESPONSE=""
   BOT_RESPONSE_SOURCE=""
-  BOT_RESPONSE_TIME=""
   if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
     2>"$POLL_STDERR" \
-    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
-        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | last | {created_at:(.created_at // ""), body:(.body // "")}' \
+    | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
+        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // "")}' \
     > "$POLL_TMPFILE"; then
-	    # Truncate after successful API call — no SIGPIPE risk here
-	    BOT_RESPONSE=$(jq -r '.body // empty' "$POLL_TMPFILE" | head -c 10000)
-	    BOT_RESPONSE_TIME=$(jq -r '.created_at // empty' "$POLL_TMPFILE")
-	    if [ -n "$BOT_RESPONSE" ]; then
-	      BOT_RESPONSE_SOURCE="comment"
-	      if codex_response_reviews_current_head "$BOT_RESPONSE"; then
-	        BOT_RESPONSE_SOURCE="review"
-	        echo "INFO: bot response detected via SHA-pinned PR comment"
-	      fi
-	    fi
+    # Scan ALL matching root comments (not just the latest) so a SHA-pinned
+    # terminal comment (Reviewed commit marker) is not discarded in favor of
+    # a later ancillary comment (e.g. an acknowledgement).
+    codex_scan_comment_evidence "$POLL_TMPFILE"
     rm -f "$POLL_STDERR" "$POLL_TMPFILE"
     CONSECUTIVE_API_FAILURES=0
   else
@@ -475,14 +582,8 @@ while true; do
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
         '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | {created_at:(.submitted_at // ""), body:(.body // "")}' \
     > "$REVIEW_TMPFILE" 2>"$REVIEW_STDERR"; then
-    REVIEW_BODY=$(jq -r '.body // empty' "$REVIEW_TMPFILE" | head -c 5000)
-    REVIEW_TIME=$(jq -r '.created_at // empty' "$REVIEW_TMPFILE")
-    if [ -n "$REVIEW_BODY" ] && { [ "$BOT_RESPONSE_SOURCE" != "review" ] || codex_response_time_should_replace "$REVIEW_TIME" "$BOT_RESPONSE_TIME"; }; then
-      BOT_RESPONSE="$REVIEW_BODY"
-      BOT_RESPONSE_TIME="$REVIEW_TIME"
-      BOT_RESPONSE_SOURCE="review"
-      echo "INFO: bot response detected via PR reviews endpoint"
-    fi
+    REVIEW_BODY=$(jq -r '.body // empty' "$REVIEW_TMPFILE" | head -c 5000)  # workflow-shell-guard: allow SH003 - reads a tmpfile already validated as parseable JSON by the preceding gh|jq call; empty body means no evidence yet, not a failure, and is checked downstream via [ -n ]
+    REVIEW_TIME=$(jq -r '.created_at // empty' "$REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads the same pre-validated tmpfile as the body extraction above; empty time is not a failure
   else
     REVIEW_ERR=$(cat "$REVIEW_STDERR")
     rm -f "$REVIEW_STDERR" "$REVIEW_TMPFILE"
@@ -491,6 +592,16 @@ while true; do
     exit 2
   fi
   rm -f "$REVIEW_STDERR" "$REVIEW_TMPFILE"
+
+  codex_combine_terminal_evidence "bot response" \
+    "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
+    "$COMMENT_LATEST_BODY" "$COMMENT_LATEST_TIME" \
+    "$REVIEW_BODY" "$REVIEW_TIME"
+  BOT_RESPONSE="$COMBINED_BODY"
+  BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
+  # Truncate here (post-combine) — mirrors the prior per-source truncation but
+  # applies uniformly regardless of which source won.
+  BOT_RESPONSE=$(printf '%s' "$BOT_RESPONSE" | head -c 10000)
 
   if ! INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
     echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments (treated as unavailable)"
@@ -550,13 +661,13 @@ while true; do
       SEEN_ENVIRONMENT_RESPONSE="$BOT_RESPONSE"
       echo "INFO: Codex environment setup response detected; waiting for fresh current-head review evidence"
       continue
-    elif [ "$BOT_RESPONSE_SOURCE" = "review" ] && echo "$BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
+    elif [ "$BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$BOT_RESPONSE"; then
       echo "VERDICT: NEEDS_REVISION"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 1
-    elif [ "$BOT_RESPONSE_SOURCE" = "review" ] && echo "$BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)"; then
+    elif [ "$BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$BOT_RESPONSE"; then
       echo "VERDICT: APPROVED"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
@@ -655,7 +766,6 @@ sleep "$POLL_INTERVAL"
 # Single grace poll: check both PR comments and PR reviews
 ASYNC_BOT_RESPONSE=""
 ASYNC_BOT_RESPONSE_SOURCE=""
-ASYNC_BOT_RESPONSE_TIME=""
 
 if ! ASYNC_INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
   echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments during async grace period (treated as unavailable)"
@@ -682,20 +792,19 @@ fi
 ASYNC_POLL_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
   2>/dev/null \
-  | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
-      '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | last | {created_at:(.created_at // ""), body:(.body // "")}' \
-	  > "$ASYNC_POLL_TMPFILE" 2>/dev/null; then
-	  ASYNC_BOT_RESPONSE=$(jq -r '.body // empty' "$ASYNC_POLL_TMPFILE" | head -c 10000)
-	  ASYNC_BOT_RESPONSE_TIME=$(jq -r '.created_at // empty' "$ASYNC_POLL_TMPFILE")
-	  if [ -n "$ASYNC_BOT_RESPONSE" ]; then
-	    ASYNC_BOT_RESPONSE_SOURCE="comment"
-	    if codex_response_reviews_current_head "$ASYNC_BOT_RESPONSE"; then
-	      ASYNC_BOT_RESPONSE_SOURCE="review"
-	      echo "INFO: async-arrival bot response detected via SHA-pinned PR comment"
-	    fi
-	  fi
+  | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
+      '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // "")}' \
+  > "$ASYNC_POLL_TMPFILE" 2>/dev/null; then
+  codex_scan_comment_evidence "$ASYNC_POLL_TMPFILE"
+  rm -f "$ASYNC_POLL_TMPFILE"
+else
+  rm -f "$ASYNC_POLL_TMPFILE"
+  # Root comments are a terminal evidence source: a failed fetch here must be
+  # treated as unavailable BEFORE any clean review evidence from the reviews
+  # endpoint is accepted below (Finding #3 — fail closed, not fail open).
+  echo "VERDICT: TIMED_OUT — failed to fetch Codex root comments during async grace period (treated as unavailable)"
+  exit 2
 fi
-rm -f "$ASYNC_POLL_TMPFILE"
 
 ASYNC_REVIEW_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
@@ -703,20 +812,22 @@ if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
   | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
       '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | {created_at:(.submitted_at // ""), body:(.body // "")}' \
   > "$ASYNC_REVIEW_TMPFILE" 2>/dev/null; then
-  ASYNC_REVIEW_BODY=$(jq -r '.body // empty' "$ASYNC_REVIEW_TMPFILE" | head -c 5000)
-  ASYNC_REVIEW_TIME=$(jq -r '.created_at // empty' "$ASYNC_REVIEW_TMPFILE")
-	  if [ -n "$ASYNC_REVIEW_BODY" ] && { [ "$ASYNC_BOT_RESPONSE_SOURCE" != "review" ] || codex_response_time_should_replace "$ASYNC_REVIEW_TIME" "$ASYNC_BOT_RESPONSE_TIME"; }; then
-	    ASYNC_BOT_RESPONSE="$ASYNC_REVIEW_BODY"
-	    ASYNC_BOT_RESPONSE_TIME="$ASYNC_REVIEW_TIME"
-	    ASYNC_BOT_RESPONSE_SOURCE="review"
-    echo "INFO: async-arrival bot response detected via PR reviews endpoint"
-  fi
+  ASYNC_REVIEW_BODY=$(jq -r '.body // empty' "$ASYNC_REVIEW_TMPFILE" | head -c 5000)  # workflow-shell-guard: allow SH003 - reads a tmpfile already validated as parseable JSON by the preceding gh|jq call; empty body means no evidence yet, not a failure, and is checked downstream via [ -n ]
+  ASYNC_REVIEW_TIME=$(jq -r '.created_at // empty' "$ASYNC_REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads the same pre-validated tmpfile as the body extraction above; empty time is not a failure
 else
   rm -f "$ASYNC_REVIEW_TMPFILE"
   echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews during async grace period (treated as unavailable)"
   exit 2
 fi
 rm -f "$ASYNC_REVIEW_TMPFILE"
+
+codex_combine_terminal_evidence "async-arrival bot response" \
+  "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
+  "$COMMENT_LATEST_BODY" "$COMMENT_LATEST_TIME" \
+  "$ASYNC_REVIEW_BODY" "$ASYNC_REVIEW_TIME"
+ASYNC_BOT_RESPONSE="$COMBINED_BODY"
+ASYNC_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
+ASYNC_BOT_RESPONSE=$(printf '%s' "$ASYNC_BOT_RESPONSE" | head -c 10000)
 
 if [ -n "$ASYNC_BOT_RESPONSE" ]; then
   echo "INFO: async-arrival bot response detected during grace period"
@@ -729,13 +840,13 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     SEEN_ENVIRONMENT_ERROR=1
     SEEN_ENVIRONMENT_RESPONSE="$ASYNC_BOT_RESPONSE"
     echo "INFO: async-arrival Codex environment setup response detected without fresh review evidence"
-  elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && echo "$ASYNC_BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
+  elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_BOT_RESPONSE"; then
     echo "VERDICT: NEEDS_REVISION"
     echo "---BEGIN BOT RESPONSE---"
     echo "$ASYNC_BOT_RESPONSE"
     echo "---END BOT RESPONSE---"
     exit 1
-  elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && echo "$ASYNC_BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)"; then
+  elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_BOT_RESPONSE"; then
     echo "VERDICT: APPROVED"
     echo "---BEGIN BOT RESPONSE---"
     echo "$ASYNC_BOT_RESPONSE"
@@ -757,24 +868,21 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
 	    fi
 	    ASYNC_FINAL_BOT_RESPONSE=""
 	    ASYNC_FINAL_BOT_RESPONSE_SOURCE=""
-	    ASYNC_FINAL_BOT_RESPONSE_TIME=""
 	    ASYNC_FINAL_POLL_TMPFILE=$(mktemp)
     if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
       2>/dev/null \
-      | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
-          '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | last | {created_at:(.created_at // ""), body:(.body // "")}' \
-	      > "$ASYNC_FINAL_POLL_TMPFILE" 2>/dev/null; then
-	      ASYNC_FINAL_BOT_RESPONSE=$(jq -r '.body // empty' "$ASYNC_FINAL_POLL_TMPFILE" | head -c 10000)
-	      ASYNC_FINAL_BOT_RESPONSE_TIME=$(jq -r '.created_at // empty' "$ASYNC_FINAL_POLL_TMPFILE")
-	      if [ -n "$ASYNC_FINAL_BOT_RESPONSE" ]; then
-	        ASYNC_FINAL_BOT_RESPONSE_SOURCE="comment"
-	        if codex_response_reviews_current_head "$ASYNC_FINAL_BOT_RESPONSE"; then
-	          ASYNC_FINAL_BOT_RESPONSE_SOURCE="review"
-	          echo "INFO: final async bot response detected via SHA-pinned PR comment"
-	        fi
-	      fi
-	    fi
-    rm -f "$ASYNC_FINAL_POLL_TMPFILE"
+      | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
+          '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // "")}' \
+      > "$ASYNC_FINAL_POLL_TMPFILE" 2>/dev/null; then
+      codex_scan_comment_evidence "$ASYNC_FINAL_POLL_TMPFILE"
+      rm -f "$ASYNC_FINAL_POLL_TMPFILE"
+    else
+      rm -f "$ASYNC_FINAL_POLL_TMPFILE"
+      # Fail closed (Finding #3): a failed root-comment fetch must not let a
+      # clean review from the reviews endpoint be accepted below.
+      echo "VERDICT: TIMED_OUT — failed to fetch Codex root comments after async acknowledgement (treated as unavailable)"
+      exit 2
+    fi
 
     ASYNC_FINAL_REVIEW_TMPFILE=$(mktemp)
     if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
@@ -782,20 +890,22 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
       | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
           '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | {created_at:(.submitted_at // ""), body:(.body // "")}' \
       > "$ASYNC_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
-      ASYNC_FINAL_REVIEW_BODY=$(jq -r '.body // empty' "$ASYNC_FINAL_REVIEW_TMPFILE" | head -c 5000)
-      ASYNC_FINAL_REVIEW_TIME=$(jq -r '.created_at // empty' "$ASYNC_FINAL_REVIEW_TMPFILE")
-		      if [ -n "$ASYNC_FINAL_REVIEW_BODY" ] && { [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" != "review" ] || codex_response_time_should_replace "$ASYNC_FINAL_REVIEW_TIME" "$ASYNC_FINAL_BOT_RESPONSE_TIME"; }; then
-		        ASYNC_FINAL_BOT_RESPONSE="$ASYNC_FINAL_REVIEW_BODY"
-		        ASYNC_FINAL_BOT_RESPONSE_TIME="$ASYNC_FINAL_REVIEW_TIME"
-		        ASYNC_FINAL_BOT_RESPONSE_SOURCE="review"
-        echo "INFO: final async bot response detected via PR reviews endpoint"
-      fi
+      ASYNC_FINAL_REVIEW_BODY=$(jq -r '.body // empty' "$ASYNC_FINAL_REVIEW_TMPFILE" | head -c 5000)  # workflow-shell-guard: allow SH003 - reads a tmpfile already validated as parseable JSON by the preceding gh|jq call; empty body means no evidence yet, not a failure, and is checked downstream via [ -n ]
+      ASYNC_FINAL_REVIEW_TIME=$(jq -r '.created_at // empty' "$ASYNC_FINAL_REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads the same pre-validated tmpfile as the body extraction above; empty time is not a failure
     else
       rm -f "$ASYNC_FINAL_REVIEW_TMPFILE"
       echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews after async acknowledgement (treated as unavailable)"
       exit 2
     fi
     rm -f "$ASYNC_FINAL_REVIEW_TMPFILE"
+
+    codex_combine_terminal_evidence "final async bot response" \
+      "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
+      "$COMMENT_LATEST_BODY" "$COMMENT_LATEST_TIME" \
+      "$ASYNC_FINAL_REVIEW_BODY" "$ASYNC_FINAL_REVIEW_TIME"
+    ASYNC_FINAL_BOT_RESPONSE="$COMBINED_BODY"
+    ASYNC_FINAL_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
+    ASYNC_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_FINAL_BOT_RESPONSE" | head -c 10000)
 
     if [ -n "$ASYNC_FINAL_BOT_RESPONSE" ]; then
       echo "INFO: final async bot response detected after acknowledgement wait"
@@ -806,13 +916,13 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
         SEEN_ENVIRONMENT_ERROR=1
         SEEN_ENVIRONMENT_RESPONSE="$ASYNC_FINAL_BOT_RESPONSE"
         echo "INFO: final async Codex environment setup response detected without fresh review evidence"
-      elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && echo "$ASYNC_FINAL_BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
+      elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_FINAL_BOT_RESPONSE"; then
         echo "VERDICT: NEEDS_REVISION"
         echo "---BEGIN BOT RESPONSE---"
         echo "$ASYNC_FINAL_BOT_RESPONSE"
         echo "---END BOT RESPONSE---"
         exit 1
-      elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && echo "$ASYNC_FINAL_BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)"; then
+      elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_FINAL_BOT_RESPONSE"; then
         echo "VERDICT: APPROVED"
         echo "---BEGIN BOT RESPONSE---"
         echo "$ASYNC_FINAL_BOT_RESPONSE"
@@ -871,24 +981,21 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
 
   ASYNC_REACTION_FINAL_BOT_RESPONSE=""
   ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE=""
-  ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME=""
   ASYNC_REACTION_FINAL_POLL_TMPFILE=$(mktemp)
   if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
     2>/dev/null \
-    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
-        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | last | {created_at:(.created_at // ""), body:(.body // "")}' \
+    | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg trigger_comment_id "$TRIGGER_COMMENT_ID" \
+        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time or (.created_at == $trigger_time and ((.id // 0 | tostring | tonumber) > ($trigger_comment_id | tonumber))))] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // "")}' \
     > "$ASYNC_REACTION_FINAL_POLL_TMPFILE" 2>/dev/null; then
-    ASYNC_REACTION_FINAL_BOT_RESPONSE=$(jq -r '.body // empty' "$ASYNC_REACTION_FINAL_POLL_TMPFILE" | head -c 10000)
-    ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME=$(jq -r '.created_at // empty' "$ASYNC_REACTION_FINAL_POLL_TMPFILE")
-    if [ -n "$ASYNC_REACTION_FINAL_BOT_RESPONSE" ]; then
-      ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE="comment"
-      if codex_response_reviews_current_head "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
-        ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE="review"
-        echo "INFO: final async reaction bot response detected via SHA-pinned PR comment"
-      fi
-    fi
+    codex_scan_comment_evidence "$ASYNC_REACTION_FINAL_POLL_TMPFILE"
+    rm -f "$ASYNC_REACTION_FINAL_POLL_TMPFILE"
+  else
+    rm -f "$ASYNC_REACTION_FINAL_POLL_TMPFILE"
+    # Fail closed (Finding #3): a failed root-comment fetch must not let a
+    # clean review from the reviews endpoint be accepted below.
+    echo "VERDICT: TIMED_OUT — failed to fetch Codex root comments after async reaction (treated as unavailable)"
+    exit 2
   fi
-  rm -f "$ASYNC_REACTION_FINAL_POLL_TMPFILE"
 
   ASYNC_REACTION_FINAL_REVIEW_TMPFILE=$(mktemp)
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
@@ -896,20 +1003,22 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
         '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | {created_at:(.submitted_at // ""), body:(.body // "")}' \
     > "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
-    ASYNC_REACTION_FINAL_REVIEW_BODY=$(jq -r '.body // empty' "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE" | head -c 5000)
-    ASYNC_REACTION_FINAL_REVIEW_TIME=$(jq -r '.created_at // empty' "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE")
-    if [ -n "$ASYNC_REACTION_FINAL_REVIEW_BODY" ] && { [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" != "review" ] || codex_response_time_should_replace "$ASYNC_REACTION_FINAL_REVIEW_TIME" "$ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME"; }; then
-      ASYNC_REACTION_FINAL_BOT_RESPONSE="$ASYNC_REACTION_FINAL_REVIEW_BODY"
-      ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME="$ASYNC_REACTION_FINAL_REVIEW_TIME"
-      ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE="review"
-      echo "INFO: final async reaction bot response detected via PR reviews endpoint"
-    fi
+    ASYNC_REACTION_FINAL_REVIEW_BODY=$(jq -r '.body // empty' "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE" | head -c 5000)  # workflow-shell-guard: allow SH003 - reads a tmpfile already validated as parseable JSON by the preceding gh|jq call; empty body means no evidence yet, not a failure, and is checked downstream via [ -n ]
+    ASYNC_REACTION_FINAL_REVIEW_TIME=$(jq -r '.created_at // empty' "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads the same pre-validated tmpfile as the body extraction above; empty time is not a failure
   else
     rm -f "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE"
     echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews after async reaction (treated as unavailable)"
     exit 2
   fi
   rm -f "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE"
+
+  codex_combine_terminal_evidence "final async reaction bot response" \
+    "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
+    "$COMMENT_LATEST_BODY" "$COMMENT_LATEST_TIME" \
+    "$ASYNC_REACTION_FINAL_REVIEW_BODY" "$ASYNC_REACTION_FINAL_REVIEW_TIME"
+  ASYNC_REACTION_FINAL_BOT_RESPONSE="$COMBINED_BODY"
+  ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
+  ASYNC_REACTION_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_REACTION_FINAL_BOT_RESPONSE" | head -c 10000)
 
   if [ -n "$ASYNC_REACTION_FINAL_BOT_RESPONSE" ]; then
     codex_require_current_head
@@ -919,13 +1028,13 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
       SEEN_ENVIRONMENT_ERROR=1
       SEEN_ENVIRONMENT_RESPONSE="$ASYNC_REACTION_FINAL_BOT_RESPONSE"
       echo "INFO: final async reaction Codex environment setup response detected without fresh review evidence"
-    elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
+    elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
       echo "VERDICT: NEEDS_REVISION"
       echo "---BEGIN BOT RESPONSE---"
       echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 1
-    elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE" | grep -qiE "(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)"; then
+    elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
       echo "VERDICT: APPROVED"
       echo "---BEGIN BOT RESPONSE---"
       echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"

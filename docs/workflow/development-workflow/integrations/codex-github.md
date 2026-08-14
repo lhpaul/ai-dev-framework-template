@@ -13,6 +13,14 @@ otherwise they are used for acknowledgement, usage-limit, and setup-failure
 detection only. A thumbs-up reaction on the trigger comment is only an
 acknowledgement and does not make the PR clean by itself.
 
+When the SHA-pinned root comment and a submitted review are both terminal
+evidence, the strictly newer one wins; on an exact timestamp tie, blocking
+evidence always wins regardless of which side supplied it, and a later
+non-terminal (ancillary) root comment never discards an earlier SHA-pinned
+blocking one. A failed fetch of Codex root PR comments — including during the
+async grace-period poll — is treated as unavailable, not as absence of
+evidence, so it cannot be silently overridden by a clean submitted review.
+
 ## Prerequisites
 
 Before a repository keeps `codex-github` in `review.on_ready.github`, verify:
