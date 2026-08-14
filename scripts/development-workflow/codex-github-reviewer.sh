@@ -520,7 +520,7 @@ while true; do
 
     if codex_response_is_usage_limit "$BOT_RESPONSE"; then
       codex_return_usage_limit "$BOT_RESPONSE"
-    elif codex_response_is_environment_error "$BOT_RESPONSE"; then
+    elif [ "$BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$BOT_RESPONSE"; then
       SEEN_ENVIRONMENT_ERROR=1
       SEEN_ENVIRONMENT_RESPONSE="$BOT_RESPONSE"
       echo "INFO: Codex environment setup response detected; waiting for fresh current-head review evidence"
@@ -690,7 +690,7 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
   # Apply the same three-path verdict parsing as the main poll loop.
   if codex_response_is_usage_limit "$ASYNC_BOT_RESPONSE"; then
     codex_return_usage_limit "$ASYNC_BOT_RESPONSE"
-  elif codex_response_is_environment_error "$ASYNC_BOT_RESPONSE"; then
+  elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_BOT_RESPONSE"; then
     SEEN_ENVIRONMENT_ERROR=1
     SEEN_ENVIRONMENT_RESPONSE="$ASYNC_BOT_RESPONSE"
     echo "INFO: async-arrival Codex environment setup response detected without fresh review evidence"
@@ -759,7 +759,7 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
       codex_require_current_head
       if codex_response_is_usage_limit "$ASYNC_FINAL_BOT_RESPONSE"; then
         codex_return_usage_limit "$ASYNC_FINAL_BOT_RESPONSE"
-      elif codex_response_is_environment_error "$ASYNC_FINAL_BOT_RESPONSE"; then
+      elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_FINAL_BOT_RESPONSE"; then
         SEEN_ENVIRONMENT_ERROR=1
         SEEN_ENVIRONMENT_RESPONSE="$ASYNC_FINAL_BOT_RESPONSE"
         echo "INFO: final async Codex environment setup response detected without fresh review evidence"
