@@ -3116,6 +3116,47 @@ run_test "codex_environment_missing_reason" "REASON=codex-github-environment-mis
 rm -rf "$_codex_environment_mock_dir"
 unset _codex_environment_mock_dir _codex_environment_output _codex_environment_exit
 
+_codex_same_second_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_same_second_root_comment_mock_dir/gh" <<'CODEX_SAME_SECOND_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcsamesecond1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":120,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":119,"created_at":"2026-01-01T00:00:00Z","user":{"login":"chatgpt-codex-connector"},"body":"Older same-second setup response."}]\n'
+    printf '[{"id":121,"created_at":"2026-01-01T00:00:00Z","user":{"login":"chatgpt-codex-connector"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_SAME_SECOND_ROOT_COMMENT_GH
+chmod +x "$_codex_same_second_root_comment_mock_dir/gh"
+
+_codex_same_second_root_comment_output=""
+_codex_same_second_root_comment_exit=0
+PATH="$_codex_same_second_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_same_second_root_comment_mock_dir/output.txt" 2>&1 || _codex_same_second_root_comment_exit=$?
+_codex_same_second_root_comment_output="$(cat "$_codex_same_second_root_comment_mock_dir/output.txt")"
+run_test "codex_same_second_root_comment_exit_unavailable" "2" "$_codex_same_second_root_comment_exit"
+run_test "codex_same_second_root_comment_reason" "REASON=codex-github-environment-missing" \
+  "$(printf '%s\n' "$_codex_same_second_root_comment_output" | grep "^REASON=")"
+rm -rf "$_codex_same_second_root_comment_mock_dir"
+unset _codex_same_second_root_comment_mock_dir _codex_same_second_root_comment_output _codex_same_second_root_comment_exit
+
 _unlock_pr="80213$$"
 _unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
 rm -rf "$_unlock_lock_dir"
