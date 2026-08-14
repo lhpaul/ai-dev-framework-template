@@ -2597,6 +2597,46 @@ run_test "codex_clean_root_review_comment_approved" "VERDICT: APPROVED" \
 rm -rf "$_codex_clean_root_review_comment_mock_dir"
 unset _codex_clean_root_review_comment_mock_dir _codex_clean_root_review_comment_output _codex_clean_root_review_comment_exit
 
+_codex_full_root_review_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_full_root_review_comment_mock_dir/gh" <<'CODEX_FULL_ROOT_REVIEW_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcabcabcabc1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":126,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":226,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `abcabcabcabc1234567890`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_FULL_ROOT_REVIEW_COMMENT_GH
+chmod +x "$_codex_full_root_review_comment_mock_dir/gh"
+
+_codex_full_root_review_comment_output=""
+_codex_full_root_review_comment_exit=0
+PATH="$_codex_full_root_review_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_full_root_review_comment_mock_dir/output.txt" 2>&1 || _codex_full_root_review_comment_exit=$?
+_codex_full_root_review_comment_output="$(cat "$_codex_full_root_review_comment_mock_dir/output.txt")"
+run_test "codex_full_root_review_comment_exit_clean" "0" "$_codex_full_root_review_comment_exit"
+run_test "codex_full_root_review_comment_approved" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_full_root_review_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_full_root_review_comment_mock_dir"
+unset _codex_full_root_review_comment_mock_dir _codex_full_root_review_comment_output _codex_full_root_review_comment_exit
+
 _codex_stale_root_review_comment_mock_dir="$(mktemp -d)"
 cat > "$_codex_stale_root_review_comment_mock_dir/gh" <<'CODEX_STALE_ROOT_REVIEW_COMMENT_GH'
 #!/usr/bin/env bash
@@ -2681,6 +2721,47 @@ run_test "codex_newer_root_blocks_old_review_verdict" "VERDICT: NEEDS_REVISION" 
   "$(printf '%s\n' "$_codex_newer_root_blocks_old_review_output" | grep "^VERDICT:")"
 rm -rf "$_codex_newer_root_blocks_old_review_mock_dir"
 unset _codex_newer_root_blocks_old_review_mock_dir _codex_newer_root_blocks_old_review_output _codex_newer_root_blocks_old_review_exit
+
+_codex_tied_root_blocks_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_root_blocks_review_mock_dir/gh" <<'CODEX_TIED_ROOT_BLOCKS_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'cafe12341234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":127,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"cafe12341234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":227,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: tied root finding.\\n\\n**Reviewed commit:** `cafe1234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_ROOT_BLOCKS_REVIEW_GH
+chmod +x "$_codex_tied_root_blocks_review_mock_dir/gh"
+
+_codex_tied_root_blocks_review_output=""
+_codex_tied_root_blocks_review_exit=0
+PATH="$_codex_tied_root_blocks_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_root_blocks_review_mock_dir/output.txt" 2>&1 || _codex_tied_root_blocks_review_exit=$?
+_codex_tied_root_blocks_review_output="$(cat "$_codex_tied_root_blocks_review_mock_dir/output.txt")"
+run_test "codex_tied_root_blocks_review_exit_needs_revision" "1" "$_codex_tied_root_blocks_review_exit"
+run_test "codex_tied_root_blocks_review_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_tied_root_blocks_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_root_blocks_review_mock_dir"
+unset _codex_tied_root_blocks_review_mock_dir _codex_tied_root_blocks_review_output _codex_tied_root_blocks_review_exit
 
 _codex_async_newer_root_blocks_old_review_mock_dir="$(mktemp -d)"
 printf '0\n' > "$_codex_async_newer_root_blocks_old_review_mock_dir/comment_calls"

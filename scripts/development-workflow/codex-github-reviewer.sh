@@ -246,13 +246,13 @@ codex_response_reviews_current_head() {
   local response="$1"
   local reviewed_sha
   reviewed_sha=$(printf '%s\n' "$response" | sed -n 's/.*Reviewed commit:[^`]*`\([0-9a-fA-F]\{7,40\}\)`.*/\1/p' | tail -n 1)
-  [ -n "$reviewed_sha" ] && printf '%s\n' "$CURRENT_SHA" | grep -qi "^$reviewed_sha"
+  [ -n "$reviewed_sha" ] && { printf '%s\n' "$CURRENT_SHA" | grep -qi "^$reviewed_sha" || printf '%s\n' "$reviewed_sha" | grep -qi "^$CURRENT_SHA"; }
 }
 
 codex_response_time_should_replace() {
   local candidate_time="$1"
   local current_time="$2"
-  [ -z "$current_time" ] || [ "$candidate_time" = "$current_time" ] || [ "$candidate_time" \> "$current_time" ]
+  [ -z "$current_time" ] || [ "$candidate_time" \> "$current_time" ]
 }
 
 codex_return_usage_limit() {
