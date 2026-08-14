@@ -2598,6 +2598,46 @@ run_test "codex_reaction_with_current_review_approved" "VERDICT: APPROVED" \
 rm -rf "$_codex_reaction_with_review_mock_dir"
 unset _codex_reaction_with_review_mock_dir _codex_reaction_with_review_output _codex_reaction_with_review_exit
 
+_codex_review_query_failure_mock_dir="$(mktemp -d)"
+cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcreviewfail1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":115,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf 'reviews unavailable\n' >&2
+    exit 1 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_REVIEW_QUERY_FAILURE_GH
+chmod +x "$_codex_review_query_failure_mock_dir/gh"
+
+_codex_review_query_failure_output=""
+_codex_review_query_failure_exit=0
+PATH="$_codex_review_query_failure_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_review_query_failure_mock_dir/output.txt" 2>&1 || _codex_review_query_failure_exit=$?
+_codex_review_query_failure_output="$(cat "$_codex_review_query_failure_mock_dir/output.txt")"
+run_test "codex_review_query_failure_exit_unavailable" "2" "$_codex_review_query_failure_exit"
+run_test "codex_review_query_failure_verdict" "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews (treated as unavailable)" \
+  "$(printf '%s\n' "$_codex_review_query_failure_output" | grep "^VERDICT:")"
+rm -rf "$_codex_review_query_failure_mock_dir"
+unset _codex_review_query_failure_mock_dir _codex_review_query_failure_output _codex_review_query_failure_exit
+
 _codex_latest_review_mock_dir="$(mktemp -d)"
 cat > "$_codex_latest_review_mock_dir/gh" <<'CODEX_LATEST_REVIEW_GH'
 #!/usr/bin/env bash

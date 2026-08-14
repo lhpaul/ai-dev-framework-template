@@ -446,20 +446,27 @@ while true; do
   # Also check PR reviews — Codex posts findings as a GitHub Review object
   # (via pulls/{PR}/reviews), not as a plain PR comment. Combining both sources
   # ensures we detect findings immediately instead of waiting for a timeout.
+  REVIEW_STDERR=$(mktemp)
   REVIEW_TMPFILE=$(mktemp)
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
-    2>/dev/null \
+    2>"$REVIEW_STDERR" \
     | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
         '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | .body // empty' \
-    > "$REVIEW_TMPFILE" 2>/dev/null; then
+    > "$REVIEW_TMPFILE" 2>"$REVIEW_STDERR"; then
     REVIEW_BODY=$(head -c 5000 "$REVIEW_TMPFILE")
     if [ -n "$REVIEW_BODY" ]; then
       BOT_RESPONSE="$REVIEW_BODY"
       BOT_RESPONSE_SOURCE="review"
       echo "INFO: bot response detected via PR reviews endpoint"
     fi
+  else
+    REVIEW_ERR=$(cat "$REVIEW_STDERR")
+    rm -f "$REVIEW_STDERR" "$REVIEW_TMPFILE"
+    echo "WARNING: failed to fetch or parse Codex PR reviews: $REVIEW_ERR" >&2
+    echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews (treated as unavailable)"
+    exit 2
   fi
-  rm -f "$REVIEW_TMPFILE"
+  rm -f "$REVIEW_STDERR" "$REVIEW_TMPFILE"
 
   if ! INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
     echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments (treated as unavailable)"
@@ -667,8 +674,12 @@ if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
 	  if [ -n "$ASYNC_REVIEW_BODY" ]; then
 	    ASYNC_BOT_RESPONSE="$ASYNC_REVIEW_BODY"
 	    ASYNC_BOT_RESPONSE_SOURCE="review"
-	    echo "INFO: async-arrival bot response detected via PR reviews endpoint"
-	  fi
+    echo "INFO: async-arrival bot response detected via PR reviews endpoint"
+  fi
+else
+  rm -f "$ASYNC_REVIEW_TMPFILE"
+  echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews during async grace period (treated as unavailable)"
+  exit 2
 fi
 rm -f "$ASYNC_REVIEW_TMPFILE"
 
@@ -734,8 +745,12 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
 	      if [ -n "$ASYNC_FINAL_REVIEW_BODY" ]; then
 	        ASYNC_FINAL_BOT_RESPONSE="$ASYNC_FINAL_REVIEW_BODY"
 	        ASYNC_FINAL_BOT_RESPONSE_SOURCE="review"
-	        echo "INFO: final async bot response detected via PR reviews endpoint"
-	      fi
+        echo "INFO: final async bot response detected via PR reviews endpoint"
+      fi
+    else
+      rm -f "$ASYNC_FINAL_REVIEW_TMPFILE"
+      echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews after async acknowledgement (treated as unavailable)"
+      exit 2
     fi
     rm -f "$ASYNC_FINAL_REVIEW_TMPFILE"
 
