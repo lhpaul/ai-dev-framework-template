@@ -14,12 +14,15 @@ detection only. A thumbs-up reaction on the trigger comment is only an
 acknowledgement and does not make the PR clean by itself.
 
 When the SHA-pinned root comment and a submitted review are both terminal
-evidence, the strictly newer one wins; on an exact timestamp tie, blocking
-evidence always wins regardless of which side supplied it, and a later
-non-terminal (ancillary) root comment never discards an earlier SHA-pinned
-blocking one. A failed fetch of Codex root PR comments — including during the
-async grace-period poll — is treated as unavailable, not as absence of
-evidence, so it cannot be silently overridden by a clean submitted review.
+evidence, the strictly newer one wins; on an exact timestamp tie, any
+response that is not a clean approval — blocking or unrecognized format,
+either of which the verdict classifier would not exit `APPROVED` for —
+always wins over an approved one, regardless of which side supplied it, and
+a later non-terminal (ancillary) root comment never discards an earlier
+SHA-pinned blocking one. A failed fetch of Codex root PR comments — including
+during the async grace-period poll — is treated as unavailable, not as
+absence of evidence, so it cannot be silently overridden by a clean
+submitted review.
 
 ## Prerequisites
 

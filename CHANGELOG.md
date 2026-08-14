@@ -15,16 +15,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   accepts only root PR comments that include a current-head `Reviewed commit`
   marker as terminal evidence, and reports missing Codex cloud environments as
   unavailable instead of clean. Timestamp ties between a SHA-pinned root
-  comment and a submitted review now resolve in favor of blocking evidence
-  regardless of which side supplied it; the terminal root comment is selected
-  independently of the latest (possibly non-terminal) root comment so a later
-  acknowledgement can no longer discard an earlier blocking one; a failed
-  root-comments fetch during the async grace period, the post-acknowledgement
-  re-poll, and the post-reaction re-poll now fails closed (`TIMED_OUT`)
-  instead of silently falling through to a clean submitted review; and the
-  final acknowledgement re-poll now preserves a recorded environment-setup
-  error over a thumbs-up reaction, matching the post-reaction re-poll's
-  existing behavior.
+  comment and a submitted review now resolve away from a clean approval
+  regardless of which side supplied it — covering both explicitly blocking
+  evidence and an unrecognized-format response that the verdict classifier
+  would otherwise safe-fail to `NEEDS_REVISION`; the terminal root comment is
+  selected independently of the latest (possibly non-terminal) root comment
+  so a later acknowledgement can no longer discard an earlier blocking one; a
+  failed root-comments fetch during the async grace period, the
+  post-acknowledgement re-poll, and the post-reaction re-poll now fails
+  closed (`TIMED_OUT`) instead of silently falling through to a clean
+  submitted review; the final acknowledgement re-poll now preserves a
+  recorded environment-setup error over a thumbs-up reaction, matching the
+  post-reaction re-poll's existing behavior; and all four `APPROVED` exit
+  sites (main poll loop, async-arrival grace, async-final,
+  async-reaction-final) now check a previously recorded environment-setup
+  error before exiting clean, instead of only some of them.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

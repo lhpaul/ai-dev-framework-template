@@ -129,9 +129,12 @@ that path as a clean result.
 
 When both a SHA-pinned root comment and a submitted review qualify as terminal
 evidence, the strictly newer one wins. On an exact timestamp tie (GitHub
-timestamps are second-resolution), blocking evidence must win regardless of
-which side supplied it — a clean submitted review tied with a blocking root
-comment (or vice versa) must resolve to blocking, not to whichever side
+timestamps are second-resolution), any response that is not a clean approval
+must win regardless of which side supplied it — this covers both explicitly
+blocking evidence and an unrecognized-format response (which the verdict
+classifier would otherwise safe-fail to `NEEDS_REVISION`); a clean submitted
+review tied with a blocking or unrecognized-format root comment (or vice
+versa) must resolve away from the clean approval, not to whichever side
 happens to be evaluated first. Selecting the terminal root comment must also
 be independent of the latest root comment overall: a later non-terminal
 acknowledgement or setup-error comment must never discard an earlier

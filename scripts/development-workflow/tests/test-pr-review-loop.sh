@@ -2808,6 +2808,54 @@ run_test "codex_tied_review_blocks_root_verdict" "VERDICT: NEEDS_REVISION" \
 rm -rf "$_codex_tied_review_blocks_root_mock_dir"
 unset _codex_tied_review_blocks_root_mock_dir _codex_tied_review_blocks_root_output _codex_tied_review_blocks_root_exit
 
+# Reproduces Codex finding on PR #1490 (P1, comment id 3787623071): the
+# terminal-evidence tie-break only checked codex_response_is_blocking, so an
+# unrecognized-format submitted review tied with a clean SHA-pinned root
+# comment lost the tie-break and the clean root comment won, returning
+# APPROVED instead of the documented safe-fail NEEDS_REVISION for
+# unrecognized responses. Root comment is a clean approval; tied review body
+# matches neither the blocking nor approval pattern.
+_codex_tied_unrecognized_review_safe_fails_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_unrecognized_review_safe_fails_mock_dir/gh" <<'CODEX_TIED_UNRECOGNIZED_REVIEW_SAFE_FAILS_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'deadfeed1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":131,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deadfeed1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Some ambiguous status update with no recognized marker."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":231,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `deadfeed1234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_UNRECOGNIZED_REVIEW_SAFE_FAILS_GH
+chmod +x "$_codex_tied_unrecognized_review_safe_fails_mock_dir/gh"
+
+_codex_tied_unrecognized_review_safe_fails_output=""
+_codex_tied_unrecognized_review_safe_fails_exit=0
+PATH="$_codex_tied_unrecognized_review_safe_fails_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_unrecognized_review_safe_fails_mock_dir/output.txt" 2>&1 || _codex_tied_unrecognized_review_safe_fails_exit=$?
+_codex_tied_unrecognized_review_safe_fails_output="$(cat "$_codex_tied_unrecognized_review_safe_fails_mock_dir/output.txt")"
+run_test "codex_tied_unrecognized_review_safe_fails_exit_needs_revision" "1" "$_codex_tied_unrecognized_review_safe_fails_exit"
+run_test "codex_tied_unrecognized_review_safe_fails_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_tied_unrecognized_review_safe_fails_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_unrecognized_review_safe_fails_mock_dir"
+unset _codex_tied_unrecognized_review_safe_fails_mock_dir _codex_tied_unrecognized_review_safe_fails_output _codex_tied_unrecognized_review_safe_fails_exit
+
 # A clean submitted review arrives first, then a SHA-pinned BLOCKING root
 # comment, then a newer non-terminal acknowledgement comment. Greedily
 # selecting the latest root comment overall (the ack) would discard the

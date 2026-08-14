@@ -266,15 +266,28 @@ codex_response_is_approved() {
   printf '%s\n' "$body" | grep -qiE "$CODEX_APPROVAL_PATTERN"
 }
 
+# True when a response is NOT the clean-approval path — i.e. it is either
+# explicitly blocking or an unrecognized format that the documented verdict
+# classifier safe-fails to NEEDS_REVISION (see "Verdict parsing" header
+# comment). Used by the tie-break below so an unrecognized-format response
+# is treated with the same tie-break priority as an explicitly blocking one,
+# not silently outranked by a clean approval on a timestamp tie.
+codex_response_requires_attention() {
+  local body="$1"
+  ! codex_response_is_approved "$body"
+}
+
 # Decides whether CANDIDATE terminal ("review"-sourced) evidence should
 # replace CURRENT terminal evidence. A strictly later candidate always wins.
 # GitHub timestamps are second-resolution, so ties are possible; on an exact
-# tie, blocking evidence must never be discarded in favor of clean/ancillary
-# evidence, regardless of which side (submitted review vs SHA-pinned root
-# comment) supplied it. This makes the tie-break symmetric: if the candidate
-# is blocking and the current evidence is not, the candidate wins; if the
-# current evidence is blocking and the candidate is not, the current evidence
-# is kept.
+# tie, evidence that is not a clean approval (blocking OR unrecognized
+# format — anything the verdict classifier would not exit APPROVED for)
+# must never be discarded in favor of an approved response, regardless of
+# which side (submitted review vs SHA-pinned root comment) supplied it. This
+# makes the tie-break symmetric: if the candidate requires attention and the
+# current evidence is a clean approval, the candidate wins; if the current
+# evidence requires attention and the candidate is a clean approval, the
+# current evidence is kept.
 codex_select_terminal_evidence() {
   local current_body="$1" current_time="$2"
   local candidate_body="$3" candidate_time="$4"
@@ -283,7 +296,7 @@ codex_select_terminal_evidence() {
     return 0
   fi
   if [ "$candidate_time" = "$current_time" ]; then
-    if codex_response_is_blocking "$candidate_body" && ! codex_response_is_blocking "$current_body"; then
+    if codex_response_requires_attention "$candidate_body" && ! codex_response_requires_attention "$current_body"; then
       return 0
     fi
   fi
@@ -324,10 +337,11 @@ codex_scan_comment_evidence() {
 # Combines comment-sourced evidence (terminal SHA-pinned root comment vs.
 # latest ancillary comment, from codex_scan_comment_evidence) with
 # review-sourced evidence (from the pulls/{PR}/reviews endpoint) into a
-# single winning result, applying blocking-first tie-breaking
+# single winning result, applying not-a-clean-approval-first tie-breaking
 # (codex_select_terminal_evidence) so a genuine submitted review only
 # supersedes a SHA-pinned terminal root comment when it is strictly newer, or
-# tied and itself blocking while the comment is not.
+# tied and itself not a clean approval (blocking or unrecognized format)
+# while the comment is.
 # Sets: COMBINED_BODY, COMBINED_TIME, COMBINED_SOURCE ("review", "comment",
 # or "" if no evidence at all). LABEL is used only for INFO logging.
 codex_combine_terminal_evidence() {
