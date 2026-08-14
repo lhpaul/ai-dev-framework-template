@@ -252,6 +252,15 @@ rm -f "$MOCK_GH_STATE_DIR"/*.count
 unready_approved_env_output="$(BATCH_MERGE_APPROVED_UNREADY_PRS=102 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
 run_test "unready_env_exception_remains_compatible" "clean" "$(json_field "$unready_approved_env_output" 102 classification)"
 
+export MOCK_SCENARIO=
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+set +e
+ready_approved_unready_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --approved-unready-prs 102)"
+ready_approved_unready_status=$?
+set -e
+run_test "approved_unready_rejects_ready_pr_status" "2" "$ready_approved_unready_status"
+run_test "approved_unready_rejects_ready_pr_reason" "approved_unready_pr_is_ready" "$(json_field "$ready_approved_unready_output" 102 reason)"
+
 set +e
 bad_approved_unready_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --approved-unready-prs 103)"
 set -e
