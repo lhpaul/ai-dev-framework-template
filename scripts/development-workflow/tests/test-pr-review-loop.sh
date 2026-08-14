@@ -3229,6 +3229,74 @@ run_test "codex_ack_repoll_env_then_reaction_reason" "REASON=codex-github-enviro
 rm -rf "$_codex_ack_repoll_env_then_reaction_mock_dir"
 unset _codex_ack_repoll_env_then_reaction_mock_dir _codex_ack_repoll_env_then_reaction_output _codex_ack_repoll_env_then_reaction_exit
 
+# Reproduces PR-Agent advisory finding on PR #1490 (main-loop env-error
+# override): the main poll loop recorded an environment setup error on its
+# first iteration (SEEN_ENVIRONMENT_ERROR=1) but a later iteration's clean
+# submitted review still exited APPROVED without checking that flag,
+# silently discarding the recorded environment failure. Sequence: iteration
+# 1 finds an environment-setup root comment -> iteration 2 finds no new
+# comment but a clean current-head review -> expect
+# codex-github-environment-missing, not APPROVED. Covers all four APPROVED
+# exit sites' shared guard, exercised here via the main poll loop.
+_codex_main_loop_env_then_review_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_main_loop_env_then_review_mock_dir/comment_calls"
+printf '0\n' > "$_codex_main_loop_env_then_review_mock_dir/review_calls"
+cat > "$_codex_main_loop_env_then_review_mock_dir/gh" <<'CODEX_MAIN_LOOP_ENV_THEN_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'mainloopenv1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":130,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    calls_file="$(dirname "$0")/review_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -ge 2 ]; then
+      printf '[{"submitted_at":"2026-01-01T00:00:03Z","commit_id":"mainloopenv1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -eq 2 ]; then
+      printf '[{"id":230,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MAIN_LOOP_ENV_THEN_REVIEW_GH
+chmod +x "$_codex_main_loop_env_then_review_mock_dir/gh"
+
+_codex_main_loop_env_then_review_output=""
+_codex_main_loop_env_then_review_exit=0
+PATH="$_codex_main_loop_env_then_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 2 --max-retriggers 0 \
+  >"$_codex_main_loop_env_then_review_mock_dir/output.txt" 2>&1 || _codex_main_loop_env_then_review_exit=$?
+_codex_main_loop_env_then_review_output="$(cat "$_codex_main_loop_env_then_review_mock_dir/output.txt")"
+run_test "codex_main_loop_env_then_review_exit_unavailable" "2" "$_codex_main_loop_env_then_review_exit"
+run_test "codex_main_loop_env_then_review_reason" "REASON=codex-github-environment-missing" \
+  "$(printf '%s\n' "$_codex_main_loop_env_then_review_output" | grep "^REASON=")"
+rm -rf "$_codex_main_loop_env_then_review_mock_dir"
+unset _codex_main_loop_env_then_review_mock_dir _codex_main_loop_env_then_review_output _codex_main_loop_env_then_review_exit
+
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
 #!/usr/bin/env bash

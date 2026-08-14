@@ -668,6 +668,9 @@ while true; do
       echo "---END BOT RESPONSE---"
       exit 1
     elif [ "$BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$BOT_RESPONSE"; then
+      if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ]; then
+        codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
+      fi
       echo "VERDICT: APPROVED"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
@@ -847,6 +850,9 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     echo "---END BOT RESPONSE---"
     exit 1
   elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_BOT_RESPONSE"; then
+    if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ]; then
+      codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
+    fi
     echo "VERDICT: APPROVED"
     echo "---BEGIN BOT RESPONSE---"
     echo "$ASYNC_BOT_RESPONSE"
@@ -923,6 +929,9 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
         echo "---END BOT RESPONSE---"
         exit 1
       elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_FINAL_BOT_RESPONSE"; then
+        if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ]; then
+          codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
+        fi
         echo "VERDICT: APPROVED"
         echo "---BEGIN BOT RESPONSE---"
         echo "$ASYNC_FINAL_BOT_RESPONSE"
@@ -1038,6 +1047,9 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
       echo "---END BOT RESPONSE---"
       exit 1
     elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
+      if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ]; then
+        codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
+      fi
       echo "VERDICT: APPROVED"
       echo "---BEGIN BOT RESPONSE---"
       echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
