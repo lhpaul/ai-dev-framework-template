@@ -2575,7 +2575,8 @@ case "$*" in
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abcreviewok1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
     exit 0 ;;
   *"issues/"*"/comments"*)
-    printf '[]\n'; exit 0 ;;
+    printf '[{"id":206,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"If Codex has suggestions, it will comment; otherwise it will react with thumbs up."}]\n'
+    exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
     printf 'ARGS=%q\n' "$*" >&2
@@ -2690,6 +2691,47 @@ run_test "codex_head_changed_reason" "REASON=codex-github-head-changed" \
   "$(printf '%s\n' "$_codex_head_changed_output" | grep "^REASON=")"
 rm -rf "$_codex_head_changed_mock_dir"
 unset _codex_head_changed_mock_dir _codex_head_changed_output _codex_head_changed_exit
+
+_codex_environment_with_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_environment_with_review_mock_dir/gh" <<'CODEX_ENVIRONMENT_WITH_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcenvok1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":108,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:02Z","commit_id":"abcenvok1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":207,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ENVIRONMENT_WITH_REVIEW_GH
+chmod +x "$_codex_environment_with_review_mock_dir/gh"
+
+_codex_environment_with_review_output=""
+_codex_environment_with_review_exit=0
+PATH="$_codex_environment_with_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_environment_with_review_mock_dir/output.txt" 2>&1 || _codex_environment_with_review_exit=$?
+_codex_environment_with_review_output="$(cat "$_codex_environment_with_review_mock_dir/output.txt")"
+run_test "codex_environment_with_current_review_exit_clean" "0" "$_codex_environment_with_review_exit"
+run_test "codex_environment_with_current_review_approved" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_environment_with_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_environment_with_review_mock_dir"
+unset _codex_environment_with_review_mock_dir _codex_environment_with_review_output _codex_environment_with_review_exit
 
 _codex_environment_mock_dir="$(mktemp -d)"
 cat > "$_codex_environment_mock_dir/gh" <<'CODEX_ENVIRONMENT_GH'

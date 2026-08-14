@@ -395,6 +395,8 @@ echo "INFO: MAX_WAIT=${MAX_WAIT}s total; up to $((MAX_RETRIGGERS + 1)) attempt(s
 RETRIGGER_COUNT=0
 CONSECUTIVE_API_FAILURES=0
 MAX_CONSECUTIVE_FAILURES=3
+SEEN_ENVIRONMENT_ERROR=0
+SEEN_ENVIRONMENT_RESPONSE=""
 # Outer retrigger loop. TOTAL_ELAPSED tracks the full shared wait budget.
 # TRIGGER_TIME is updated to the retrigger comment's timestamp after each
 # retrigger post, scoping the next inner poll to responses after that point.
@@ -441,21 +443,19 @@ while true; do
   # Also check PR reviews — Codex posts findings as a GitHub Review object
   # (via pulls/{PR}/reviews), not as a plain PR comment. Combining both sources
   # ensures we detect findings immediately instead of waiting for a timeout.
-  if [ -z "$BOT_RESPONSE" ]; then
-    REVIEW_TMPFILE=$(mktemp)
-    if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
-      2>/dev/null \
-      | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-          '.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time and ((.commit_id // "") | startswith($sha))) | .body' \
-      > "$REVIEW_TMPFILE" 2>/dev/null; then
-      REVIEW_BODY=$(head -c 5000 "$REVIEW_TMPFILE")
-      if [ -n "$REVIEW_BODY" ]; then
-        BOT_RESPONSE="$REVIEW_BODY"
-        echo "INFO: bot response detected via PR reviews endpoint"
-      fi
+  REVIEW_TMPFILE=$(mktemp)
+  if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
+    2>/dev/null \
+    | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
+        '.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time and ((.commit_id // "") | startswith($sha))) | .body' \
+    > "$REVIEW_TMPFILE" 2>/dev/null; then
+    REVIEW_BODY=$(head -c 5000 "$REVIEW_TMPFILE")
+    if [ -n "$REVIEW_BODY" ]; then
+      BOT_RESPONSE="$REVIEW_BODY"
+      echo "INFO: bot response detected via PR reviews endpoint"
     fi
-    rm -f "$REVIEW_TMPFILE"
   fi
+  rm -f "$REVIEW_TMPFILE"
 
   if ! INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
     echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments (treated as unavailable)"
@@ -510,7 +510,10 @@ while true; do
     if codex_response_is_usage_limit "$BOT_RESPONSE"; then
       codex_return_usage_limit "$BOT_RESPONSE"
     elif codex_response_is_environment_error "$BOT_RESPONSE"; then
-      codex_return_environment_error "$BOT_RESPONSE"
+      SEEN_ENVIRONMENT_ERROR=1
+      SEEN_ENVIRONMENT_RESPONSE="$BOT_RESPONSE"
+      echo "INFO: Codex environment setup response detected; waiting for fresh current-head review evidence"
+      continue
     elif echo "$BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
       echo "VERDICT: NEEDS_REVISION"
       echo "---BEGIN BOT RESPONSE---"
@@ -643,21 +646,19 @@ if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
 fi
 rm -f "$ASYNC_POLL_TMPFILE"
 
-if [ -z "$ASYNC_BOT_RESPONSE" ]; then
-  ASYNC_REVIEW_TMPFILE=$(mktemp)
-  if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
-    2>/dev/null \
-    | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-        '.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time and ((.commit_id // "") | startswith($sha))) | .body' \
-    > "$ASYNC_REVIEW_TMPFILE" 2>/dev/null; then
-    ASYNC_REVIEW_BODY=$(head -c 5000 "$ASYNC_REVIEW_TMPFILE")
-    if [ -n "$ASYNC_REVIEW_BODY" ]; then
-      ASYNC_BOT_RESPONSE="$ASYNC_REVIEW_BODY"
-      echo "INFO: async-arrival bot response detected via PR reviews endpoint"
-    fi
+ASYNC_REVIEW_TMPFILE=$(mktemp)
+if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
+  2>/dev/null \
+  | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
+      '.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time and ((.commit_id // "") | startswith($sha))) | .body' \
+  > "$ASYNC_REVIEW_TMPFILE" 2>/dev/null; then
+  ASYNC_REVIEW_BODY=$(head -c 5000 "$ASYNC_REVIEW_TMPFILE")
+  if [ -n "$ASYNC_REVIEW_BODY" ]; then
+    ASYNC_BOT_RESPONSE="$ASYNC_REVIEW_BODY"
+    echo "INFO: async-arrival bot response detected via PR reviews endpoint"
   fi
-  rm -f "$ASYNC_REVIEW_TMPFILE"
 fi
+rm -f "$ASYNC_REVIEW_TMPFILE"
 
 if [ -n "$ASYNC_BOT_RESPONSE" ]; then
   echo "INFO: async-arrival bot response detected during grace period"
@@ -667,7 +668,9 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
   if codex_response_is_usage_limit "$ASYNC_BOT_RESPONSE"; then
     codex_return_usage_limit "$ASYNC_BOT_RESPONSE"
   elif codex_response_is_environment_error "$ASYNC_BOT_RESPONSE"; then
-    codex_return_environment_error "$ASYNC_BOT_RESPONSE"
+    SEEN_ENVIRONMENT_ERROR=1
+    SEEN_ENVIRONMENT_RESPONSE="$ASYNC_BOT_RESPONSE"
+    echo "INFO: async-arrival Codex environment setup response detected without fresh review evidence"
   elif echo "$ASYNC_BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
     echo "VERDICT: NEEDS_REVISION"
     echo "---BEGIN BOT RESPONSE---"
@@ -721,6 +724,10 @@ fi
 if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
   echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID during async grace period"
   codex_return_reaction_without_review
+fi
+
+if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ]; then
+  codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
 fi
 
 echo "INFO: no bot response during async grace period"
