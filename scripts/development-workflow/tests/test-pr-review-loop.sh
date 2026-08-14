@@ -2642,6 +2642,50 @@ run_test "codex_stale_review_not_approved" "no" "$_codex_stale_review_approved"
 rm -rf "$_codex_stale_review_mock_dir"
 unset _codex_stale_review_mock_dir _codex_stale_review_output _codex_stale_review_exit _codex_stale_review_approved
 
+_codex_stale_inline_mock_dir="$(mktemp -d)"
+cat > "$_codex_stale_inline_mock_dir/gh" <<'CODEX_STALE_INLINE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcinline1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":112,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[{"created_at":"2026-01-01T00:00:01Z","commit_id":"oldinline1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issue on old head."}]\n'
+    exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_STALE_INLINE_GH
+chmod +x "$_codex_stale_inline_mock_dir/gh"
+
+_codex_stale_inline_output=""
+_codex_stale_inline_exit=0
+PATH="$_codex_stale_inline_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_stale_inline_mock_dir/output.txt" 2>&1 || _codex_stale_inline_exit=$?
+_codex_stale_inline_output="$(cat "$_codex_stale_inline_mock_dir/output.txt")"
+run_test "codex_stale_inline_exit_unavailable" "2" "$_codex_stale_inline_exit"
+if printf '%s\n' "$_codex_stale_inline_output" | grep -q "^VERDICT: NEEDS_REVISION"; then
+  _codex_stale_inline_needs_revision="yes"
+else
+  _codex_stale_inline_needs_revision="no"
+fi
+run_test "codex_stale_inline_not_needs_revision" "no" "$_codex_stale_inline_needs_revision"
+rm -rf "$_codex_stale_inline_mock_dir"
+unset _codex_stale_inline_mock_dir _codex_stale_inline_output _codex_stale_inline_exit _codex_stale_inline_needs_revision
+
 _codex_head_changed_mock_dir="$(mktemp -d)"
 printf '0\n' > "$_codex_head_changed_mock_dir/head_calls"
 cat > "$_codex_head_changed_mock_dir/gh" <<'CODEX_HEAD_CHANGED_GH'
@@ -2750,7 +2794,8 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    printf '[{"id":208,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"To use Codex here, create an environment for this repo."},{"id":209,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector"},"body":"No blocking issues found."}]\n'
+    printf '[{"id":208,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    printf '[{"id":209,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector"},"body":"No blocking issues found."}]\n'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
@@ -2772,6 +2817,46 @@ run_test "codex_environment_then_clean_comment_approved" "VERDICT: APPROVED" \
   "$(printf '%s\n' "$_codex_environment_then_clean_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_environment_then_clean_comment_mock_dir"
 unset _codex_environment_then_clean_comment_mock_dir _codex_environment_then_clean_comment_output _codex_environment_then_clean_comment_exit
+
+_codex_cloud_environment_finding_mock_dir="$(mktemp -d)"
+cat > "$_codex_cloud_environment_finding_mock_dir/gh" <<'CODEX_CLOUD_ENVIRONMENT_FINDING_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abccloudfinding1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":113,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abccloudfinding1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: the Codex cloud environment is missing required secrets."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_CLOUD_ENVIRONMENT_FINDING_GH
+chmod +x "$_codex_cloud_environment_finding_mock_dir/gh"
+
+_codex_cloud_environment_finding_output=""
+_codex_cloud_environment_finding_exit=0
+PATH="$_codex_cloud_environment_finding_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_cloud_environment_finding_mock_dir/output.txt" 2>&1 || _codex_cloud_environment_finding_exit=$?
+_codex_cloud_environment_finding_output="$(cat "$_codex_cloud_environment_finding_mock_dir/output.txt")"
+run_test "codex_cloud_environment_finding_exit_needs_revision" "1" "$_codex_cloud_environment_finding_exit"
+run_test "codex_cloud_environment_finding_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_cloud_environment_finding_output" | grep "^VERDICT:")"
+rm -rf "$_codex_cloud_environment_finding_mock_dir"
+unset _codex_cloud_environment_finding_mock_dir _codex_cloud_environment_finding_output _codex_cloud_environment_finding_exit
 
 _codex_final_ack_clean_comment_mock_dir="$(mktemp -d)"
 printf '0\n' > "$_codex_final_ack_clean_comment_mock_dir/comment_calls"

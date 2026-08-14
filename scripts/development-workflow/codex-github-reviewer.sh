@@ -220,8 +220,8 @@ codex_inline_review_comment_count_since() {
   local review_comment_tmpfile
   review_comment_tmpfile=$(mktemp)
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate \
-    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$trigger_time" \
-      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .created_at > $trigger_time)] | length' \
+    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$trigger_time" --arg sha "$CURRENT_SHA" \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .created_at > $trigger_time and ((.commit_id // "") | startswith($sha)))] | length' \
     > "$review_comment_tmpfile"; then
     cat "$review_comment_tmpfile"
   else
@@ -239,7 +239,7 @@ codex_response_is_usage_limit() {
 
 codex_response_is_environment_error() {
   local response="$1"
-  printf '%s\n' "$response" | grep -qiE "(to[[:space:]]+use[[:space:]]+codex[[:space:]]+here,[[:space:]]+create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo|create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo|codex[[:space:]]+cloud[[:space:]]+environment)"
+  printf '%s\n' "$response" | grep -qiE "(to[[:space:]]+use[[:space:]]+codex[[:space:]]+here,[[:space:]]+create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo|create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo)"
 }
 
 codex_return_usage_limit() {
@@ -420,8 +420,8 @@ while true; do
   POLL_TMPFILE=$(mktemp)
   if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
     2>"$POLL_STDERR" \
-    | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
-        '[.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time)] | sort_by(.created_at) | last | .body // empty' \
+    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
+        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time)] | sort_by(.created_at) | last | .body // empty' \
     > "$POLL_TMPFILE"; then
     # Truncate after successful API call — no SIGPIPE risk here
     BOT_RESPONSE=$(head -c 10000 "$POLL_TMPFILE")
@@ -639,8 +639,8 @@ fi
 ASYNC_POLL_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
   2>/dev/null \
-  | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
-      '[.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time)] | sort_by(.created_at) | last | .body // empty' \
+  | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
+      '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time)] | sort_by(.created_at) | last | .body // empty' \
   > "$ASYNC_POLL_TMPFILE" 2>/dev/null; then
   ASYNC_BOT_RESPONSE=$(head -c 10000 "$ASYNC_POLL_TMPFILE")
 fi
@@ -701,8 +701,8 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     ASYNC_FINAL_POLL_TMPFILE=$(mktemp)
     if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
       2>/dev/null \
-      | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
-          '[.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time)] | sort_by(.created_at) | last | .body // empty' \
+      | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
+          '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain) | select(.created_at > $trigger_time)] | sort_by(.created_at) | last | .body // empty' \
       > "$ASYNC_FINAL_POLL_TMPFILE" 2>/dev/null; then
       ASYNC_FINAL_BOT_RESPONSE=$(head -c 10000 "$ASYNC_FINAL_POLL_TMPFILE")
     fi
