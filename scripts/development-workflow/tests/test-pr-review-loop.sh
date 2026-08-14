@@ -3166,6 +3166,69 @@ run_test "codex_async_reaction_environment_reason" "REASON=codex-github-environm
 rm -rf "$_codex_async_reaction_environment_mock_dir"
 unset _codex_async_reaction_environment_mock_dir _codex_async_reaction_environment_output _codex_async_reaction_environment_exit
 
+# Reproduces Codex finding 3786691880-followup (P2, comment id 3787460055):
+# the final acknowledgement re-poll must preserve a recorded environment
+# setup error instead of returning reaction-without-review when a thumbs-up
+# reaction is also present. Sequence: initial async-grace poll finds the
+# acknowledgement comment (no review, no reaction yet) -> sleeps -> final
+# re-poll finds an environment-setup comment (sets SEEN_ENVIRONMENT_ERROR)
+# -> trigger reactions endpoint reports a thumbs-up -> expect
+# codex-github-environment-missing, not codex-github-reaction-without-review.
+_codex_ack_repoll_env_then_reaction_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_ack_repoll_env_then_reaction_mock_dir/comment_calls"
+cat > "$_codex_ack_repoll_env_then_reaction_mock_dir/gh" <<'CODEX_ACK_REPOLL_ENV_THEN_REACTION_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'ackrepoll1234567890a\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":126,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[{"content":"+1","user":{"login":"chatgpt-codex-connector[bot]"}}]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    # Calls 1-2 are the pre-trigger dedup check and the main poll-loop's
+    # bot-response check; both must stay empty so execution falls through
+    # to the async-arrival grace poll (call 3) and its final re-poll
+    # (call 4+).
+    if [ "$calls" -ge 4 ]; then
+      printf '[{"id":227,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    elif [ "$calls" -eq 3 ]; then
+      printf '[{"id":226,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"If Codex has suggestions, it will comment; otherwise it will react with 👍 on this comment."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ACK_REPOLL_ENV_THEN_REACTION_GH
+chmod +x "$_codex_ack_repoll_env_then_reaction_mock_dir/gh"
+
+_codex_ack_repoll_env_then_reaction_output=""
+_codex_ack_repoll_env_then_reaction_exit=0
+PATH="$_codex_ack_repoll_env_then_reaction_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_ack_repoll_env_then_reaction_mock_dir/output.txt" 2>&1 || _codex_ack_repoll_env_then_reaction_exit=$?
+_codex_ack_repoll_env_then_reaction_output="$(cat "$_codex_ack_repoll_env_then_reaction_mock_dir/output.txt")"
+run_test "codex_ack_repoll_env_then_reaction_exit_unavailable" "2" "$_codex_ack_repoll_env_then_reaction_exit"
+run_test "codex_ack_repoll_env_then_reaction_reason" "REASON=codex-github-environment-missing" \
+  "$(printf '%s\n' "$_codex_ack_repoll_env_then_reaction_output" | grep "^REASON=")"
+rm -rf "$_codex_ack_repoll_env_then_reaction_mock_dir"
+unset _codex_ack_repoll_env_then_reaction_mock_dir _codex_ack_repoll_env_then_reaction_output _codex_ack_repoll_env_then_reaction_exit
+
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
 #!/usr/bin/env bash

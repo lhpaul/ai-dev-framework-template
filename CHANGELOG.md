@@ -18,10 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comment and a submitted review now resolve in favor of blocking evidence
   regardless of which side supplied it; the terminal root comment is selected
   independently of the latest (possibly non-terminal) root comment so a later
-  acknowledgement can no longer discard an earlier blocking one; and a failed
+  acknowledgement can no longer discard an earlier blocking one; a failed
   root-comments fetch during the async grace period, the post-acknowledgement
   re-poll, and the post-reaction re-poll now fails closed (`TIMED_OUT`)
-  instead of silently falling through to a clean submitted review.
+  instead of silently falling through to a clean submitted review; and the
+  final acknowledgement re-poll now preserves a recorded environment-setup
+  error over a thumbs-up reaction, matching the post-reaction re-poll's
+  existing behavior.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

@@ -951,6 +951,9 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     fi
     if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
       echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID after async acknowledgement"
+      if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ]; then
+        codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
+      fi
       codex_return_reaction_without_review
     fi
   elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "comment" ]; then
