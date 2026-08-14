@@ -5,6 +5,13 @@ It is triggered by `scripts/development-workflow/codex-github-reviewer.sh`,
 which posts the configured Codex trigger phrase to the pull request and waits
 for Codex review evidence on the current head commit.
 
+The reviewer requires terminal evidence that can be tied to the current PR head:
+a submitted GitHub review whose `commit_id` matches the current `headRefOid`, or
+a Codex-authored PR comment after the SHA-tagged trigger that contains an
+explicit clean verdict. A thumbs-up reaction on the trigger comment is only an
+acknowledgement; it is not SHA-pinned review evidence and does not make the PR
+clean by itself.
+
 ## Prerequisites
 
 Before a repository keeps `codex-github` in `review.on_ready.github`, verify:
@@ -78,12 +85,21 @@ If the result is `needs_fixes`, address the reported review threads and rerun
 the reviewer loop. If the result is `escalate` or `skipped` with an availability
 reason, treat that as integration setup evidence rather than a clean review.
 
+Codex may also respond to `@codex review` with a setup message such as
+`To use Codex here, create an environment for this repo`. That is an unavailable
+review path, not a clean result. Create the Codex cloud environment or remove
+`codex-github` from the configured reviewer list until the integration can
+produce current-head review evidence.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Action |
 | --- | --- | --- |
 | The loop waits until timeout after posting `@codex review` | Codex GitHub is not installed, not enabled for the repository, or the account cannot run reviews | Install/enable the integration, confirm account access, then rerun the loop |
+| Codex leaves only a thumbs-up reaction on the trigger comment | Codex acknowledged the trigger but did not publish SHA-pinned review evidence | Treat the run as unavailable; do not mark the PR clean from the reaction alone |
+| Codex says to create an environment for this repo | Manual trigger path is missing a Codex cloud environment | Create the environment or remove `codex-github` from the reviewer list until it is available |
 | Codex review threads remain open after a fix commit | GitHub did not auto-resolve a fixed thread | Verify the current head addresses the finding, then resolve the thread or rerun review if unsure |
+| Codex submitted a review for an older commit | Review arrived for a stale head SHA | Push or retrigger only if needed, then wait for a submitted review whose `commit_id` matches the current head |
 | Thread authors do not match the default bot login | Repository uses a different Codex bot identity | Set `CODEX_GITHUB_BOT_LOGIN` to the observed bot login |
 | Old threads are still visible but marked outdated | GitHub marked the original diff location stale after the fix | Outdated threads are non-blocking in workflow readiness audits |
 

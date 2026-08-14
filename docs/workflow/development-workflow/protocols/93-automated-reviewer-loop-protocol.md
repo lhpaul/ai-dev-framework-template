@@ -107,6 +107,22 @@ CLI review found no issues.
 Strict CLI rate-limit policy returns `RESULT=escalate` with
 `REASON=rate_limited`. Treat that like any other platform escalation.
 
+#### Codex GitHub terminal evidence
+
+When `codex-github` is configured, `pr-review-loop.sh` must only treat the
+platform as clean after Codex publishes evidence tied to the current PR head:
+
+- a Codex-authored PR comment after the SHA-tagged trigger with an explicit
+  clean verdict, or
+- a submitted Codex GitHub review whose `commit_id` matches the current
+  `headRefOid`.
+
+A thumbs-up reaction on the trigger comment is an acknowledgement only. It is
+not SHA-pinned review evidence and must be treated as unavailable, not clean.
+Likewise, a Codex response asking the operator to create a cloud environment for
+the repo is setup failure evidence; do not use the empty review/comment from
+that path as a clean result.
+
 **Scope note**: This pre-flight checks `review.on_draft.github` and
 `review.on_ready.github` (external reviewers used by Protocol 93 / Step 7). The
 internal reviewer gate in Protocol 91 Step 7a separately checks

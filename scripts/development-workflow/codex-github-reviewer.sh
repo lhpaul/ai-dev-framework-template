@@ -39,8 +39,10 @@
 #      "no blocking issues found"; bare "blocking" excluded (too broad).
 #   2. Approval signals present → APPROVED (exit 0)
 #      Signals (case-insensitive): "approved", "lgtm", "looks good",
-#      "didn't find any major issues", "no blocking issues", or a Codex
-#      thumbs-up reaction on the trigger comment
+#      "didn't find any major issues", or "no blocking issues" from a
+#      current-head comment or submitted review. A Codex thumbs-up reaction on
+#      the trigger comment is an acknowledgement only; it is not SHA-pinned
+#      review evidence and must not approve the PR by itself.
 #   3. Neither found (unrecognized format) → safe-fails to NEEDS_REVISION (exit 1)
 #
 # Response source detection (two sources polled each cycle):
@@ -48,9 +50,10 @@
 #     BOT_LOGIN_PLAIN (login without [bot] suffix). Codex posts "clean" results
 #     here from the non-[bot] account (e.g. "chatgpt-codex-connector").
 #   - pulls/{PR}/reviews   — GitHub Review objects; matches both logins. Codex
-#     posts findings here from the [bot]-suffixed account. Polled as fallback
-#     when no PR comment is found; review body safe-fails to NEEDS_REVISION,
-#     which causes pr-review-loop.sh to count unresolved inline threads.
+#     posts findings here from the [bot]-suffixed account. Only submitted
+#     reviews whose commit_id starts with the current head SHA are considered.
+#     The review body safe-fails to NEEDS_REVISION, which causes
+#     pr-review-loop.sh to count unresolved inline threads.
 #
 # Idempotency (BR-10):
 #   Before posting a trigger comment, the script queries existing PR comments
@@ -234,6 +237,11 @@ codex_response_is_usage_limit() {
   printf '%s\n' "$response" | grep -qiE "(reached[[:space:]]+your[[:space:]]+codex[[:space:]]+usage[[:space:]]+limits?|codex[[:space:]]+usage[[:space:]]+limits?[[:space:]]+for[[:space:]]+code[[:space:]]+reviews?|codex[[:space:]]+(github[[:space:]]+app[[:space:]]+)?(review[[:space:]]+)?(usage[[:space:]]+limit|quota|capacity)|codex[[:space:]]+review[[:space:]]+capacity[[:space:]]+(exhausted|unavailable|limited))"
 }
 
+codex_response_is_environment_error() {
+  local response="$1"
+  printf '%s\n' "$response" | grep -qiE "(to[[:space:]]+use[[:space:]]+codex[[:space:]]+here,[[:space:]]+create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo|create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo|codex[[:space:]]+cloud[[:space:]]+environment)"
+}
+
 codex_return_usage_limit() {
   echo "VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached"
   echo "REASON=codex-github-usage-limit"
@@ -244,6 +252,27 @@ codex_return_usage_limit() {
   echo "$1"
   echo "---END BOT RESPONSE---"
   exit 3
+}
+
+codex_return_environment_error() {
+  echo "VERDICT: TIMED_OUT — Codex GitHub review environment missing (treated as unavailable)"
+  echo "REASON=codex-github-environment-missing"
+  echo "COMMENT_COUNT=0"
+  echo "BLOCKING_COUNT=0"
+  echo "SUGGESTION_COUNT=0"
+  echo "---BEGIN BOT RESPONSE---"
+  echo "$1"
+  echo "---END BOT RESPONSE---"
+  exit 2
+}
+
+codex_return_reaction_without_review() {
+  echo "VERDICT: TIMED_OUT — Codex thumbs-up reaction is not SHA-pinned review evidence (treated as unavailable)"
+  echo "REASON=codex-github-reaction-without-review"
+  echo "COMMENT_COUNT=0"
+  echo "BLOCKING_COUNT=0"
+  echo "SUGGESTION_COUNT=0"
+  exit 2
 }
 
 # ── Idempotency guard (BR-10) ─────────────────────────────────────────────────
@@ -386,8 +415,8 @@ while true; do
     REVIEW_TMPFILE=$(mktemp)
     if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
       2>/dev/null \
-      | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
-          '.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time) | .body' \
+      | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
+          '.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time and ((.commit_id // "") | startswith($sha))) | .body' \
       > "$REVIEW_TMPFILE" 2>/dev/null; then
       REVIEW_BODY=$(head -c 5000 "$REVIEW_TMPFILE")
       if [ -n "$REVIEW_BODY" ]; then
@@ -413,9 +442,8 @@ while true; do
     exit 2
   fi
   if [ "$APPROVAL_REACTION_COUNT" -gt 0 ]; then
-    echo "VERDICT: APPROVED"
     echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID"
-    exit 0
+    codex_return_reaction_without_review
   fi
 
   if [ -n "$BOT_RESPONSE" ]; then
@@ -436,8 +464,9 @@ while true; do
     #
     # 2. Explicit approval signals present → APPROVED (exit 0)   [checked second]
     #    Approval signals: "approved", "lgtm", "looks good",
-    #    "didn't find any major issues", "no blocking issues", or a Codex
-    #    thumbs-up reaction on the trigger comment (checked above).
+    #    "didn't find any major issues", or "no blocking issues" from a
+    #    current-head comment or submitted review. A Codex thumbs-up reaction on
+    #    the trigger comment is not SHA-pinned and is unavailable, not clean.
     #
     # 3. Neither found (unrecognized response format) → NEEDS_REVISION (exit 1)
     #    Safe-fail: default to NEEDS_REVISION when the format is unrecognized to
@@ -453,6 +482,8 @@ while true; do
 
     if codex_response_is_usage_limit "$BOT_RESPONSE"; then
       codex_return_usage_limit "$BOT_RESPONSE"
+    elif codex_response_is_environment_error "$BOT_RESPONSE"; then
+      codex_return_environment_error "$BOT_RESPONSE"
     elif echo "$BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
       echo "VERDICT: NEEDS_REVISION"
       echo "---BEGIN BOT RESPONSE---"
@@ -466,7 +497,7 @@ while true; do
       echo "---END BOT RESPONSE---"
       exit 0
     elif echo "$BOT_RESPONSE" | grep -qi "If Codex has suggestions, it will comment; otherwise it will react with"; then
-      echo "INFO: Codex acknowledgement detected; waiting for thumbs-up reaction or inline review comments"
+      echo "INFO: Codex acknowledgement detected; waiting for current-head review, clean comment, or inline review comments"
       continue
     else
       echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
@@ -570,9 +601,8 @@ if [ -n "$ASYNC_TRIGGER_COMMENT_ID" ]; then
   ASYNC_APPROVAL_REACTION_COUNT=$((ASYNC_APPROVAL_REACTION_COUNT + ASYNC_EXTRA_APPROVAL_REACTION_COUNT))
 fi
 if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
-  echo "VERDICT: APPROVED"
   echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID during async grace period"
-  exit 0
+  codex_return_reaction_without_review
 fi
 
 ASYNC_POLL_TMPFILE=$(mktemp)
@@ -589,8 +619,8 @@ if [ -z "$ASYNC_BOT_RESPONSE" ]; then
   ASYNC_REVIEW_TMPFILE=$(mktemp)
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>/dev/null \
-    | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" \
-        '.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time) | .body' \
+    | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
+        '.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at > $trigger_time and ((.commit_id // "") | startswith($sha))) | .body' \
     > "$ASYNC_REVIEW_TMPFILE" 2>/dev/null; then
     ASYNC_REVIEW_BODY=$(head -c 5000 "$ASYNC_REVIEW_TMPFILE")
     if [ -n "$ASYNC_REVIEW_BODY" ]; then
@@ -607,6 +637,8 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
   # Apply the same three-path verdict parsing as the main poll loop.
   if codex_response_is_usage_limit "$ASYNC_BOT_RESPONSE"; then
     codex_return_usage_limit "$ASYNC_BOT_RESPONSE"
+  elif codex_response_is_environment_error "$ASYNC_BOT_RESPONSE"; then
+    codex_return_environment_error "$ASYNC_BOT_RESPONSE"
   elif echo "$ASYNC_BOT_RESPONSE" | grep -qiE "(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)"; then
     echo "VERDICT: NEEDS_REVISION"
     echo "---BEGIN BOT RESPONSE---"
@@ -620,7 +652,7 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     echo "---END BOT RESPONSE---"
     exit 0
   elif echo "$ASYNC_BOT_RESPONSE" | grep -qi "If Codex has suggestions, it will comment; otherwise it will react with"; then
-    echo "INFO: async-arrival Codex acknowledgement detected without approval reaction or inline comments"
+    echo "INFO: async-arrival Codex acknowledgement detected without current-head review, clean comment, or inline comments"
     echo "INFO: waiting ${POLL_INTERVAL}s for final Codex async signal..."
     sleep "$POLL_INTERVAL"
     if ! ASYNC_INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
@@ -644,9 +676,8 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
       ASYNC_APPROVAL_REACTION_COUNT=$((ASYNC_APPROVAL_REACTION_COUNT + ASYNC_EXTRA_APPROVAL_REACTION_COUNT))
     fi
     if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
-      echo "VERDICT: APPROVED"
       echo "INFO: detected Codex thumbs-up reaction on trigger comment $TRIGGER_COMMENT_ID after async acknowledgement"
-      exit 0
+      codex_return_reaction_without_review
     fi
   else
     echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"

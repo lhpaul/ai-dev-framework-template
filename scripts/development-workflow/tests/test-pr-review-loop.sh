@@ -2355,7 +2355,7 @@ _docs_is_outdated_filter_count="$(grep -h 'select((.isOutdated // false) == fals
 run_test "manual_readiness_audit_docs_filter_outdated" "5" "$_docs_is_outdated_filter_count"
 unset _manual_audit_fixture _manual_audit_fixture_outdated_only _docs_is_outdated_field_count _docs_is_outdated_filter_count
 
-if grep -q "Codex acknowledgement detected; waiting for thumbs-up reaction or inline review comments" \
+if grep -q "Codex acknowledgement detected; waiting for current-head review, clean comment, or inline review comments" \
     "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh"; then
   _codex_ack_wait_signal="yes"
 else
@@ -2484,7 +2484,7 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
-    printf '[{"submitted_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex review capacity exhausted. Please rerun after quota reset."}]\n'
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abcreview1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex review capacity exhausted. Please rerun after quota reset."}]\n'
     exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
@@ -2517,6 +2517,129 @@ run_test "codex_usage_limit_review_suggestion_count" "SUGGESTION_COUNT=0" \
   "$(printf '%s\n' "$_codex_usage_review_output" | grep "^SUGGESTION_COUNT=")"
 rm -rf "$_codex_usage_review_mock_dir"
 unset _codex_usage_review_mock_dir _codex_usage_review_output _codex_usage_review_exit
+
+_codex_reaction_mock_dir="$(mktemp -d)"
+cat > "$_codex_reaction_mock_dir/gh" <<'CODEX_REACTION_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcreact1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":103,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[{"content":"+1","user":{"login":"chatgpt-codex-connector[bot]"}}]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_REACTION_GH
+chmod +x "$_codex_reaction_mock_dir/gh"
+
+_codex_reaction_output=""
+_codex_reaction_exit=0
+PATH="$_codex_reaction_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_reaction_mock_dir/output.txt" 2>&1 || _codex_reaction_exit=$?
+_codex_reaction_output="$(cat "$_codex_reaction_mock_dir/output.txt")"
+run_test "codex_reaction_only_exit_unavailable" "2" "$_codex_reaction_exit"
+run_test "codex_reaction_only_reason" "REASON=codex-github-reaction-without-review" \
+  "$(printf '%s\n' "$_codex_reaction_output" | grep "^REASON=")"
+rm -rf "$_codex_reaction_mock_dir"
+unset _codex_reaction_mock_dir _codex_reaction_output _codex_reaction_exit
+
+_codex_stale_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_stale_review_mock_dir/gh" <<'CODEX_STALE_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcstale1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":104,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"oldstale1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_STALE_REVIEW_GH
+chmod +x "$_codex_stale_review_mock_dir/gh"
+
+_codex_stale_review_output=""
+_codex_stale_review_exit=0
+PATH="$_codex_stale_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_stale_review_mock_dir/output.txt" 2>&1 || _codex_stale_review_exit=$?
+_codex_stale_review_output="$(cat "$_codex_stale_review_mock_dir/output.txt")"
+run_test "codex_stale_review_exit_unavailable" "2" "$_codex_stale_review_exit"
+if printf '%s\n' "$_codex_stale_review_output" | grep -q "^VERDICT: APPROVED"; then
+  _codex_stale_review_approved="yes"
+else
+  _codex_stale_review_approved="no"
+fi
+run_test "codex_stale_review_not_approved" "no" "$_codex_stale_review_approved"
+rm -rf "$_codex_stale_review_mock_dir"
+unset _codex_stale_review_mock_dir _codex_stale_review_output _codex_stale_review_exit _codex_stale_review_approved
+
+_codex_environment_mock_dir="$(mktemp -d)"
+cat > "$_codex_environment_mock_dir/gh" <<'CODEX_ENVIRONMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcenv1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":105,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":205,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ENVIRONMENT_GH
+chmod +x "$_codex_environment_mock_dir/gh"
+
+_codex_environment_output=""
+_codex_environment_exit=0
+PATH="$_codex_environment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_environment_mock_dir/output.txt" 2>&1 || _codex_environment_exit=$?
+_codex_environment_output="$(cat "$_codex_environment_mock_dir/output.txt")"
+run_test "codex_environment_missing_exit_unavailable" "2" "$_codex_environment_exit"
+run_test "codex_environment_missing_reason" "REASON=codex-github-environment-missing" \
+  "$(printf '%s\n' "$_codex_environment_output" | grep "^REASON=")"
+rm -rf "$_codex_environment_mock_dir"
+unset _codex_environment_mock_dir _codex_environment_output _codex_environment_exit
 
 _unlock_pr="80213$$"
 _unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
