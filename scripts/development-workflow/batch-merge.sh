@@ -469,11 +469,13 @@ list_contains_number() {
   local needle="$2"
   local token
   [ -n "$needle" ] || return 1
+  needle="${needle#\#}"
   csv="${csv},"
   while [ -n "$csv" ]; do
     token="${csv%%,*}"
     csv="${csv#*,}"
     token="$(printf '%s' "$token" | tr -d '[:space:]')"
+    token="${token#\#}"
     if [ "$token" = "$needle" ]; then
       return 0
     fi

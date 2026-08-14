@@ -249,6 +249,11 @@ run_test "unready_with_exception_continues" "clean" "$(json_field "$unready_appr
 run_test "unready_with_exception_reason" "refreshed_clean" "$(json_field "$unready_approved_output" 102 reason)"
 
 rm -f "$MOCK_GH_STATE_DIR"/*.count
+unready_hash_approved_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --approved-unready-prs '#102')"
+run_test "unready_with_hash_exception_continues" "clean" "$(json_field "$unready_hash_approved_output" 102 classification)"
+run_test "unready_with_hash_exception_reason" "refreshed_clean" "$(json_field "$unready_hash_approved_output" 102 reason)"
+
+rm -f "$MOCK_GH_STATE_DIR"/*.count
 unready_approved_env_output="$(BATCH_MERGE_APPROVED_UNREADY_PRS=102 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop)"
 run_test "unready_env_exception_remains_compatible" "clean" "$(json_field "$unready_approved_env_output" 102 classification)"
 
