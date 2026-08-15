@@ -227,7 +227,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   semantics: a usage-limit notice wins unconditionally over non-blocking
   terminal/review evidence (no newest-wins comparison at all, since
   detecting it terminates the invocation immediately by design), while an
-  environment-setup error keeps the existing newest-wins comparison.
+  environment-setup error keeps the existing newest-wins comparison. That
+  fix only protected usage-limit precedence INSIDE
+  `codex_combine_terminal_evidence`, but `codex_scan_comment_evidence`'s
+  upstream tracking could already discard a usage-limit comment in favor
+  of a LATER environment-error comment within the SAME fetch, before
+  `codex_combine_terminal_evidence` was ever reached — both set
+  `is_actionable=1`, so the unconditional overwrite let the later
+  setup-error body silently replace the quota body. `codex_scan_comment_
+  evidence` now tracks whether the currently-held ancillary comment is
+  specifically a usage-limit notice, and once one is tracked, only
+  another usage-limit notice may replace it.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

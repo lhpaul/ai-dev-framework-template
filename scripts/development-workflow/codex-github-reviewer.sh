@@ -488,7 +488,18 @@ codex_scan_comment_evidence() {
   # combine path, not this separate ancillary-override check).
   COMMENT_LATEST_IS_TERMINAL=0
   local comment_latest_is_actionable=0
-  local line created_at body is_actionable is_terminal
+  # Tracks whether the CURRENTLY tracked ancillary comment is specifically
+  # a usage-limit notice (as opposed to a merely-actionable environment-
+  # error). Once a usage-limit notice is tracked, only ANOTHER usage-limit
+  # notice may replace it — a later environment-setup error in the same
+  # fetch must never silently discard it, since codex_combine_terminal_
+  # evidence's immediate-termination handling for usage-limit only
+  # protects it there, after this scan has already produced its single
+  # COMMENT_LATEST_BODY; discarding it here means that downstream
+  # protection never gets a chance to apply (fresh evidence from PR #1490
+  # finding 3790092216, a followup to 3790062091/3789928786/3789992794).
+  local comment_latest_is_usage_limit=0
+  local line created_at body is_actionable is_terminal is_usage_limit should_update
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     created_at=$(printf '%s' "$line" | jq -r '.created_at // empty')  # workflow-shell-guard: allow SH003 - $line is a compact JSON object already validated parseable by the preceding jq -sc call; empty is a normal absent-field case, not a failure
@@ -496,16 +507,27 @@ codex_scan_comment_evidence() {
     is_terminal=0
     codex_response_reviews_current_head "$body" && is_terminal=1
     is_actionable=0
+    is_usage_limit=0
     if [ "$is_terminal" -eq 0 ]; then
-      if codex_response_is_environment_error "$body" || codex_response_is_usage_limit "$body"; then
+      codex_response_is_usage_limit "$body" && is_usage_limit=1
+      if [ "$is_usage_limit" -eq 1 ] || codex_response_is_environment_error "$body"; then
         is_actionable=1
       fi
     fi
-    if [ "$comment_latest_is_actionable" -eq 0 ] || [ "$is_actionable" -eq 1 ]; then
+    should_update=0
+    if [ "$comment_latest_is_actionable" -eq 0 ]; then
+      should_update=1
+    elif [ "$comment_latest_is_usage_limit" -eq 1 ]; then
+      [ "$is_usage_limit" -eq 1 ] && should_update=1
+    elif [ "$is_actionable" -eq 1 ]; then
+      should_update=1
+    fi
+    if [ "$should_update" -eq 1 ]; then
       COMMENT_LATEST_BODY="$body"
       COMMENT_LATEST_TIME="$created_at"
       COMMENT_LATEST_IS_TERMINAL="$is_terminal"
       comment_latest_is_actionable="$is_actionable"
+      comment_latest_is_usage_limit="$is_usage_limit"
     fi
     if [ "$is_terminal" -eq 1 ]; then
       # Apply the same not-a-clean-approval-first tie-break used for

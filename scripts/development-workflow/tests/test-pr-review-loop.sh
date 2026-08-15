@@ -5085,6 +5085,56 @@ run_test "codex_usage_limit_beats_same_fetch_newer_review_verdict" "VERDICT: UNA
 rm -rf "$_codex_usage_limit_beats_same_fetch_newer_review_mock_dir"
 unset _codex_usage_limit_beats_same_fetch_newer_review_mock_dir _codex_usage_limit_beats_same_fetch_newer_review_output _codex_usage_limit_beats_same_fetch_newer_review_exit
 
+# Followup to codex_usage_limit_beats_same_fetch_newer_review: the earlier
+# fix only protected usage-limit precedence INSIDE
+# codex_combine_terminal_evidence, but codex_scan_comment_evidence's
+# upstream tracking could already discard a usage-limit comment in favor
+# of a LATER environment-error comment within the SAME fetch, before
+# combine_terminal_evidence is ever reached — both set is_actionable=1,
+# so the unconditional overwrite let the later setup-error body replace
+# the quota body (fresh evidence from PR #1490 finding 3790092216).
+# Fixture: an ancillary usage-limit comment at T1 followed by an
+# ancillary environment-error comment at T2 > T1, in the same fetch.
+_codex_usage_limit_survives_later_env_error_same_fetch_mock_dir="$(mktemp -d)"
+cat > "$_codex_usage_limit_survives_later_env_error_same_fetch_mock_dir/gh" <<'CODEX_USAGE_LIMIT_SURVIVES_LATER_ENV_ERROR_SAME_FETCH_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01111234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":280,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":281,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."},{"id":282,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_USAGE_LIMIT_SURVIVES_LATER_ENV_ERROR_SAME_FETCH_GH
+chmod +x "$_codex_usage_limit_survives_later_env_error_same_fetch_mock_dir/gh"
+
+_codex_usage_limit_survives_later_env_error_same_fetch_output=""
+_codex_usage_limit_survives_later_env_error_same_fetch_exit=0
+PATH="$_codex_usage_limit_survives_later_env_error_same_fetch_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_usage_limit_survives_later_env_error_same_fetch_mock_dir/output.txt" 2>&1 || _codex_usage_limit_survives_later_env_error_same_fetch_exit=$?
+_codex_usage_limit_survives_later_env_error_same_fetch_output="$(cat "$_codex_usage_limit_survives_later_env_error_same_fetch_mock_dir/output.txt")"
+run_test "codex_usage_limit_survives_later_env_error_same_fetch_exit_unavailable" "3" "$_codex_usage_limit_survives_later_env_error_same_fetch_exit"
+run_test "codex_usage_limit_survives_later_env_error_same_fetch_verdict" "VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached" \
+  "$(printf '%s\n' "$_codex_usage_limit_survives_later_env_error_same_fetch_output" | grep "^VERDICT:")"
+rm -rf "$_codex_usage_limit_survives_later_env_error_same_fetch_mock_dir"
+unset _codex_usage_limit_survives_later_env_error_same_fetch_mock_dir _codex_usage_limit_survives_later_env_error_same_fetch_output _codex_usage_limit_survives_later_env_error_same_fetch_exit
+
 # codex_response_priority ranked an ancillary environment-setup-error
 # comment at the same "unrecognized format" tier (2) as a genuine but
 # unrecognized-format submitted review, instead of at the lower
