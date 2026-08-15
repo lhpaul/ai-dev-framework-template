@@ -4304,6 +4304,58 @@ run_test "codex_tied_usage_limit_with_approval_phrase_verdict" "VERDICT: UNAVAIL
 rm -rf "$_codex_tied_usage_limit_with_approval_phrase_mock_dir"
 unset _codex_tied_usage_limit_with_approval_phrase_mock_dir _codex_tied_usage_limit_with_approval_phrase_output _codex_tied_usage_limit_with_approval_phrase_exit
 
+# Reproduces Codex finding on PR #1490 (P1, comment id 3789597796): the
+# binary requires-attention distinction put usage-limit and unrecognized-
+# format responses into the same generic "attention" tier, so scanning
+# stopped at whichever one was seen first — a usage-limit response
+# (matching an approval phrase too) returned before a genuinely
+# unrecognized-format response silently retained the usage-limit response,
+# emitting UNAVAILABLE instead of the documented unrecognized-response
+# NEEDS_REVISION safe-fail. A permissive unavailable policy could
+# therefore hide a potentially rejecting response. codex_response_priority
+# now ranks unrecognized-format (2) above usage-limit (1) explicitly.
+# Fixture: usage-limit+approval-phrase review first in the array,
+# genuinely unrecognized-format review second, both tied.
+_codex_tied_usage_limit_then_unrecognized_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_usage_limit_then_unrecognized_mock_dir/gh" <<'CODEX_TIED_USAGE_LIMIT_THEN_UNRECOGNIZED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'a1a1a1a1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":240,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"a1a1a1a1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues could be evaluated because you have reached your Codex usage limits."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"a1a1a1a1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Something ambiguous happened here."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_USAGE_LIMIT_THEN_UNRECOGNIZED_GH
+chmod +x "$_codex_tied_usage_limit_then_unrecognized_mock_dir/gh"
+
+_codex_tied_usage_limit_then_unrecognized_output=""
+_codex_tied_usage_limit_then_unrecognized_exit=0
+PATH="$_codex_tied_usage_limit_then_unrecognized_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_usage_limit_then_unrecognized_mock_dir/output.txt" 2>&1 || _codex_tied_usage_limit_then_unrecognized_exit=$?
+_codex_tied_usage_limit_then_unrecognized_output="$(cat "$_codex_tied_usage_limit_then_unrecognized_mock_dir/output.txt")"
+run_test "codex_tied_usage_limit_then_unrecognized_exit" "1" "$_codex_tied_usage_limit_then_unrecognized_exit"
+run_test "codex_tied_usage_limit_then_unrecognized_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_tied_usage_limit_then_unrecognized_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_usage_limit_then_unrecognized_mock_dir"
+unset _codex_tied_usage_limit_then_unrecognized_mock_dir _codex_tied_usage_limit_then_unrecognized_output _codex_tied_usage_limit_then_unrecognized_exit
+
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
 #!/usr/bin/env bash

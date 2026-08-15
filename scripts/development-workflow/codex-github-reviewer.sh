@@ -266,45 +266,57 @@ codex_response_is_approved() {
   printf '%s\n' "$body" | grep -qiE "$CODEX_APPROVAL_PATTERN"
 }
 
-# True when a response is NOT the clean-approval path — i.e. it is
-# explicitly blocking, a usage-limit notice, or an unrecognized format
-# that the documented verdict classifier safe-fails to NEEDS_REVISION
-# (see "Verdict parsing" header comment). Blocking and usage-limit are
-# checked FIRST, matching the classifier's own priority: a response
-# containing both an approval phrase and a blocking marker (e.g. "No
-# blocking issues found. Must fix ...") is blocking, not approved, and a
-# response containing both an approval phrase and usage-limit wording
-# (e.g. "No blocking issues could be evaluated because you have reached
-# your Codex usage limits") is a usage-limit notice, not approved (fresh
-# evidence from PR #1490 finding 3789555934 — the earlier mixed-
-# blocking-and-approval fix checked only blocking, leaving the analogous
-# mixed-usage-limit-and-approval case unguarded). Used by the tie-break
-# below so neither an unrecognized-format response, a mixed
-# blocking+approval response, nor a mixed usage-limit+approval response
-# is silently outranked by a clean approval on a timestamp tie.
-codex_response_requires_attention() {
+# Ranks a response into one of four priority tiers, highest wins on a
+# timestamp tie (see codex_select_terminal_evidence and
+# codex_select_review_evidence below). Checked in this exact order so a
+# response matching multiple patterns resolves to its most severe tier:
+#
+#   3 — blocking: an actual finding. Must never be hidden regardless of
+#       what else the response says (e.g. "No blocking issues found.
+#       Must fix ..." is blocking, not approved).
+#   2 — unrecognized format: neither blocking, usage-limit, nor approved.
+#       The documented verdict classifier safe-fails this to
+#       NEEDS_REVISION (see "Verdict parsing" header comment) because it
+#       could be a disguised rejection in an unexpected format. Ranked
+#       ABOVE usage-limit: a permissive unavailable-policy consumer could
+#       treat a usage-limit UNAVAILABLE more leniently than an explicit
+#       NEEDS_REVISION, so an ambiguous response must not be silently
+#       demoted behind a mere availability notice (fresh evidence from PR
+#       #1490 finding 3789597796).
+#   1 — usage-limit: Codex hit its review quota. A response containing
+#       both an approval phrase and usage-limit wording (e.g. "No
+#       blocking issues could be evaluated because you have reached your
+#       Codex usage limits") is a usage-limit notice, not approved (fresh
+#       evidence from PR #1490 finding 3789555934).
+#   0 — clean approval: the only tier that produces APPROVED.
+#
+# A single binary requires-attention flag is not enough: two tied
+# responses that are BOTH "not a clean approval" (e.g. a usage-limit root
+# comment and a blocking submitted review, or a usage-limit response and
+# an unrecognized-format response) need their own internal ranking, not
+# just a tie that keeps whichever was evaluated first (fresh evidence
+# from PR #1490 finding 3789521036).
+codex_response_priority() {
   local body="$1"
-  codex_response_is_blocking "$body" || codex_response_is_usage_limit "$body" || ! codex_response_is_approved "$body"
+  if codex_response_is_blocking "$body"; then
+    printf '3\n'
+  elif codex_response_is_usage_limit "$body"; then
+    printf '1\n'
+  elif codex_response_is_approved "$body"; then
+    printf '0\n'
+  else
+    printf '2\n'
+  fi
 }
 
 # Decides whether CANDIDATE terminal ("review"-sourced) evidence should
-# replace CURRENT terminal evidence. A strictly later candidate always wins.
-# GitHub timestamps are second-resolution, so ties are possible; on an exact
-# tie, evidence is ranked in three tiers — blocking > other-attention-
-# requiring (e.g. unrecognized format, a usage-limit notice) > clean
-# approval — and the higher tier wins regardless of which side (submitted
-# review vs SHA-pinned root comment) supplied it. Checking only the binary
-# requires-attention distinction is not enough: two tied responses that are
-# BOTH "requires attention" (e.g. a usage-limit root comment and a blocking
-# submitted review) would keep whichever was CURRENT even when the
-# candidate is strictly more severe (blocking), silently discarding an
-# actionable finding behind an unavailable verdict (fresh evidence from PR
-# #1490 finding 3789521036 — the prior fix addressed only
-# codex_select_review_evidence's own review-vs-review scan, leaving this
-# shared cross-source selector, used for terminal-comment-vs-terminal-
-# comment and terminal-vs-review ties, unchanged). Blocking is checked
-# first; only if neither side is blocking does the requires-attention tier
-# decide the tie.
+# replace CURRENT terminal evidence. A strictly later candidate always
+# wins. GitHub timestamps are second-resolution, so ties are possible; on
+# an exact tie, the strictly higher-priority response wins
+# (codex_response_priority) regardless of which side (submitted review vs
+# SHA-pinned root comment) supplied it, and regardless of which side is
+# CURRENT vs. candidate. A tie in priority keeps CURRENT (arbitrary but
+# stable — both sides are equivalent for verdict purposes at that tier).
 codex_select_terminal_evidence() {
   local current_body="$1" current_time="$2"
   local candidate_body="$3" candidate_time="$4"
@@ -313,10 +325,10 @@ codex_select_terminal_evidence() {
     return 0
   fi
   if [ "$candidate_time" = "$current_time" ]; then
-    if codex_response_is_blocking "$candidate_body" && ! codex_response_is_blocking "$current_body"; then
-      return 0
-    fi
-    if codex_response_requires_attention "$candidate_body" && ! codex_response_requires_attention "$current_body"; then
+    local candidate_priority current_priority
+    candidate_priority=$(codex_response_priority "$candidate_body")
+    current_priority=$(codex_response_priority "$current_body")
+    if [ "$candidate_priority" -gt "$current_priority" ]; then
       return 0
     fi
   fi
@@ -400,59 +412,40 @@ codex_scan_comment_evidence() {
 # every review sharing the max timestamp rather than collapsing to one via
 # `sort_by | last`). GitHub timestamps are second-resolution, so multiple
 # reviews genuinely CAN tie; picking an arbitrary one by array order could
-# silently discard a blocking review in favor of a clean one submitted in
-# the same second (fresh evidence from PR #1490 finding 3788008326). Among
-# tied reviews, a BLOCKING one always wins outright over any other
-# non-clean type (e.g. a usage-limit response) — scanning stops at the
-# first "requires attention" match without this priority let a tied
-# usage-limit response returned before a blocking one silently discard
-# the blocker, emitting UNAVAILABLE instead of NEEDS_REVISION (fresh
-# evidence from PR #1490 finding 3789477520). If no tied review is
-# blocking, the first one requiring attention (unrecognized format, e.g.
-# usage-limit text) is used; if none require attention, every tied review
-# is a clean approval and any one is equivalent, so the first is used.
+# silently discard a more severe response in favor of a less severe one
+# submitted in the same second (fresh evidence from PR #1490 findings
+# 3788008326, 3789477520, and 3789597796). Tracks the highest-priority
+# tied review via codex_response_priority (blocking > unrecognized format
+# > usage-limit > clean approval) rather than stopping at the first match
+# for a single binary tier — a scan that only distinguishes "requires
+# attention" from "clean" cannot correctly rank two tied responses that
+# are both "requires attention" but at different severities.
 # Sets: SELECTED_REVIEW_BODY, SELECTED_REVIEW_TIME.
 codex_select_review_evidence() {
   local reviews_file="$1"
   SELECTED_REVIEW_BODY=""
   SELECTED_REVIEW_TIME=""
-  # Presence is tracked via explicit found-flags, not by checking whether
-  # the candidate/blocking/attention body strings are non-empty — a
-  # winning review's body can legitimately be empty (see
+  # Presence is tracked via an explicit found-flag, not by checking
+  # whether the selected body string is non-empty — a winning review's
+  # body can legitimately be empty (see
   # codex_combine_terminal_evidence's review_time-based presence check
   # above), so inferring "not yet found" from string emptiness would
   # reintroduce that exact bug here.
-  local have_default=0 have_blocking=0 have_attention=0
-  local blocking_body="" blocking_time=""
-  local attention_body="" attention_time=""
-  local line created_at body
+  local have_selection=0
+  local best_priority=-1
+  local line created_at body priority
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     created_at=$(printf '%s' "$line" | jq -r '.created_at // empty')  # workflow-shell-guard: allow SH003 - $line is a compact JSON object already validated parseable by the preceding jq -sc call; empty is a normal absent-field case, not a failure
     body=$(printf '%s' "$line" | jq -r '.body // empty')  # workflow-shell-guard: allow SH003 - same pre-validated $line as above; empty body is not a failure
-    if [ "$have_default" -eq 0 ]; then
+    priority=$(codex_response_priority "$body")
+    if [ "$have_selection" -eq 0 ] || [ "$priority" -gt "$best_priority" ]; then
       SELECTED_REVIEW_BODY="$body"
       SELECTED_REVIEW_TIME="$created_at"
-      have_default=1
-    fi
-    if [ "$have_blocking" -eq 0 ] && codex_response_is_blocking "$body"; then
-      blocking_body="$body"
-      blocking_time="$created_at"
-      have_blocking=1
-    fi
-    if [ "$have_attention" -eq 0 ] && codex_response_requires_attention "$body"; then
-      attention_body="$body"
-      attention_time="$created_at"
-      have_attention=1
+      best_priority="$priority"
+      have_selection=1
     fi
   done < "$reviews_file"
-  if [ "$have_blocking" -eq 1 ]; then
-    SELECTED_REVIEW_BODY="$blocking_body"
-    SELECTED_REVIEW_TIME="$blocking_time"
-  elif [ "$have_attention" -eq 1 ]; then
-    SELECTED_REVIEW_BODY="$attention_body"
-    SELECTED_REVIEW_TIME="$attention_time"
-  fi
 }
 
 # Combines comment-sourced evidence (terminal SHA-pinned root comment vs.
@@ -503,9 +496,9 @@ codex_combine_terminal_evidence() {
   # review-poll jq queries' filter, but its body CAN legitimately be
   # empty. Checking review_body would treat an empty-bodied tied review
   # as absent, letting a clean terminal comment win the tie-break by
-  # default even though codex_response_requires_attention correctly
-  # classifies an empty body as an unrecognized response requiring
-  # attention (fresh evidence from PR #1490 finding 3788118857).
+  # default even though codex_response_priority correctly ranks an empty
+  # body as an unrecognized response (priority 2) requiring attention
+  # (fresh evidence from PR #1490 finding 3788118857).
   if [ -n "$review_time" ]; then
     if [ "$COMBINED_SOURCE" = "review" ]; then
       if codex_select_terminal_evidence "$COMBINED_BODY" "$COMBINED_TIME" "$review_body" "$review_time"; then

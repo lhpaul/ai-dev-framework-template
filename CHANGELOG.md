@@ -92,12 +92,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   distinction, so two tied responses that are both "requires attention"
   (e.g. a usage-limit root comment and a blocking submitted review, or two
   tied root comments) no longer keep whichever was evaluated first when
-  one side is strictly more severe; and a usage-limit response that ALSO
+  one side is strictly more severe; a usage-limit response that ALSO
   contains an approval phrase (e.g. "No blocking issues could be evaluated
   because you have reached your Codex usage limits") is no longer
-  misclassified as a clean approval by the tie-break — the requires-
-  attention classifier now checks usage-limit alongside blocking before
-  falling back to the approval check.
+  misclassified as a clean approval by the tie-break; and the previously
+  binary "requires attention" tie-break is replaced by a four-tier numeric
+  priority (`codex_response_priority`: blocking > unrecognized format >
+  usage-limit > clean approval), so two tied responses that were both
+  merely "requires attention" (e.g. a usage-limit notice and a genuinely
+  unrecognized-format response) are now ranked correctly against each
+  other instead of the scan keeping whichever was evaluated first.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
