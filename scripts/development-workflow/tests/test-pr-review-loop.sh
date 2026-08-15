@@ -4107,6 +4107,55 @@ run_test "codex_bodyless_tied_review_needs_revision_verdict" "VERDICT: NEEDS_REV
 rm -rf "$_codex_bodyless_tied_review_needs_revision_mock_dir"
 unset _codex_bodyless_tied_review_needs_revision_mock_dir _codex_bodyless_tied_review_needs_revision_output _codex_bodyless_tied_review_needs_revision_exit
 
+# Reproduces Codex finding on PR #1490 (P1, comment id 3789477520):
+# codex_select_review_evidence's scan stopped at the FIRST tied review
+# that merely "requires attention" (which includes non-blocking types
+# like usage-limit text), so a usage-limit review returned before a
+# blocking review in the same tied timestamp silently discarded the
+# blocker and the script emitted UNAVAILABLE instead of NEEDS_REVISION.
+# Blocking is now scanned and prioritized independently of other
+# attention-requiring types. Fixture: usage-limit review first in the
+# array, blocking review second, both tied at the same timestamp.
+_codex_tied_reviews_blocking_beats_usage_limit_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir/gh" <<'CODEX_TIED_REVIEWS_BLOCKING_BEATS_USAGE_LIMIT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'deadc0de1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":210,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deadc0de1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deadc0de1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the null check."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_REVIEWS_BLOCKING_BEATS_USAGE_LIMIT_GH
+chmod +x "$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir/gh"
+
+_codex_tied_reviews_blocking_beats_usage_limit_output=""
+_codex_tied_reviews_blocking_beats_usage_limit_exit=0
+PATH="$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir/output.txt" 2>&1 || _codex_tied_reviews_blocking_beats_usage_limit_exit=$?
+_codex_tied_reviews_blocking_beats_usage_limit_output="$(cat "$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir/output.txt")"
+run_test "codex_tied_reviews_blocking_beats_usage_limit_exit_needs_revision" "1" "$_codex_tied_reviews_blocking_beats_usage_limit_exit"
+run_test "codex_tied_reviews_blocking_beats_usage_limit_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_tied_reviews_blocking_beats_usage_limit_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir"
+unset _codex_tied_reviews_blocking_beats_usage_limit_mock_dir _codex_tied_reviews_blocking_beats_usage_limit_output _codex_tied_reviews_blocking_beats_usage_limit_exit
+
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
 #!/usr/bin/env bash

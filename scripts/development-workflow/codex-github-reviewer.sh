@@ -384,30 +384,58 @@ codex_scan_comment_evidence() {
 # `sort_by | last`). GitHub timestamps are second-resolution, so multiple
 # reviews genuinely CAN tie; picking an arbitrary one by array order could
 # silently discard a blocking review in favor of a clean one submitted in
-# the same second (fresh evidence from PR #1490 finding 3788008326). Picks
-# the first tied review that requires attention (blocking or unrecognized
-# format); if none do, every tied review is a clean approval and any one is
-# equivalent, so the first is used.
+# the same second (fresh evidence from PR #1490 finding 3788008326). Among
+# tied reviews, a BLOCKING one always wins outright over any other
+# non-clean type (e.g. a usage-limit response) — scanning stops at the
+# first "requires attention" match without this priority let a tied
+# usage-limit response returned before a blocking one silently discard
+# the blocker, emitting UNAVAILABLE instead of NEEDS_REVISION (fresh
+# evidence from PR #1490 finding 3789477520). If no tied review is
+# blocking, the first one requiring attention (unrecognized format, e.g.
+# usage-limit text) is used; if none require attention, every tied review
+# is a clean approval and any one is equivalent, so the first is used.
 # Sets: SELECTED_REVIEW_BODY, SELECTED_REVIEW_TIME.
 codex_select_review_evidence() {
   local reviews_file="$1"
   SELECTED_REVIEW_BODY=""
   SELECTED_REVIEW_TIME=""
+  # Presence is tracked via explicit found-flags, not by checking whether
+  # the candidate/blocking/attention body strings are non-empty — a
+  # winning review's body can legitimately be empty (see
+  # codex_combine_terminal_evidence's review_time-based presence check
+  # above), so inferring "not yet found" from string emptiness would
+  # reintroduce that exact bug here.
+  local have_default=0 have_blocking=0 have_attention=0
+  local blocking_body="" blocking_time=""
+  local attention_body="" attention_time=""
   local line created_at body
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     created_at=$(printf '%s' "$line" | jq -r '.created_at // empty')  # workflow-shell-guard: allow SH003 - $line is a compact JSON object already validated parseable by the preceding jq -sc call; empty is a normal absent-field case, not a failure
     body=$(printf '%s' "$line" | jq -r '.body // empty')  # workflow-shell-guard: allow SH003 - same pre-validated $line as above; empty body is not a failure
-    if [ -z "$SELECTED_REVIEW_BODY" ]; then
+    if [ "$have_default" -eq 0 ]; then
       SELECTED_REVIEW_BODY="$body"
       SELECTED_REVIEW_TIME="$created_at"
+      have_default=1
     fi
-    if codex_response_requires_attention "$body"; then
-      SELECTED_REVIEW_BODY="$body"
-      SELECTED_REVIEW_TIME="$created_at"
-      break
+    if [ "$have_blocking" -eq 0 ] && codex_response_is_blocking "$body"; then
+      blocking_body="$body"
+      blocking_time="$created_at"
+      have_blocking=1
+    fi
+    if [ "$have_attention" -eq 0 ] && codex_response_requires_attention "$body"; then
+      attention_body="$body"
+      attention_time="$created_at"
+      have_attention=1
     fi
   done < "$reviews_file"
+  if [ "$have_blocking" -eq 1 ]; then
+    SELECTED_REVIEW_BODY="$blocking_body"
+    SELECTED_REVIEW_TIME="$blocking_time"
+  elif [ "$have_attention" -eq 1 ]; then
+    SELECTED_REVIEW_BODY="$attention_body"
+    SELECTED_REVIEW_TIME="$attention_time"
+  fi
 }
 
 # Combines comment-sourced evidence (terminal SHA-pinned root comment vs.

@@ -81,7 +81,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   into verdict parsing is now gated on the winning evidence's timestamp
   instead of its body content, so a bodyless-but-selected review reaches
   the documented unrecognized-response safe-fail (`NEEDS_REVISION`)
-  instead of falling through to `TIMED_OUT`.
+  instead of falling through to `TIMED_OUT`; and among tied current-head
+  reviews, a blocking one now always wins outright over any other
+  non-clean type (e.g. a usage-limit response) instead of the scan
+  stopping at whichever "requires attention" response was returned first,
+  so a usage-limit review returned before a tied blocking review no longer
+  silently discards the blocker.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
