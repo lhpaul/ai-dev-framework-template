@@ -4987,6 +4987,104 @@ run_test "codex_terminal_comment_quotes_env_error_not_ancillary_verdict" "VERDIC
 rm -rf "$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir"
 unset _codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir _codex_terminal_comment_quotes_env_error_not_ancillary_output _codex_terminal_comment_quotes_env_error_not_ancillary_exit
 
+# Positive control for the reverse-order negation alternative that was
+# added for finding 3790023141 and then REMOVED for being over-broad: it
+# matched ANY later negation word in the same sentence regardless of what
+# it actually negated, so a genuinely clean response like "Looks good
+# overall; tests were not run." (the "not" refers to the unrelated "tests
+# were not run" clause, not to the approval) was incorrectly flagged as
+# negated and returned NEEDS_REVISION instead of APPROVED (fresh evidence
+# from PR #1490 finding 3790062089).
+_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir/gh" <<'CODEX_UNRELATED_LATER_NEGATION_STAYS_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade00ff1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":276,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":277,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Looks good overall; tests were not run.\\n\\n**Reviewed commit:** `facade00ff`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_UNRELATED_LATER_NEGATION_STAYS_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir/gh"
+
+_codex_unrelated_later_negation_stays_approved_root_comment_output=""
+_codex_unrelated_later_negation_stays_approved_root_comment_exit=0
+PATH="$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_unrelated_later_negation_stays_approved_root_comment_exit=$?
+_codex_unrelated_later_negation_stays_approved_root_comment_output="$(cat "$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_unrelated_later_negation_stays_approved_root_comment_exit_clean" "0" "$_codex_unrelated_later_negation_stays_approved_root_comment_exit"
+run_test "codex_unrelated_later_negation_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_unrelated_later_negation_stays_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir"
+unset _codex_unrelated_later_negation_stays_approved_root_comment_mock_dir _codex_unrelated_later_negation_stays_approved_root_comment_output _codex_unrelated_later_negation_stays_approved_root_comment_exit
+
+# codex_combine_terminal_evidence previously applied the SAME newest-wins
+# comparison to a usage-limit ancillary comment as it does to an
+# environment-setup error, so a clean current-head review returned in the
+# SAME fetch as (and strictly newer than) a usage-limit notice let the
+# review win, and the quota body never reached codex_return_usage_limit —
+# contradicting the documented immediate-termination contract for
+# usage-limit (fresh evidence from PR #1490 finding 3790062091). Fixture:
+# an ancillary (non-terminal) usage-limit comment at T1 and a clean
+# current-head review at T2 > T1, both in the same poll fetch.
+_codex_usage_limit_beats_same_fetch_newer_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_usage_limit_beats_same_fetch_newer_review_mock_dir/gh" <<'CODEX_USAGE_LIMIT_BEATS_SAME_FETCH_NEWER_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":278,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:02Z","commit_id":"facade01001234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":279,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_USAGE_LIMIT_BEATS_SAME_FETCH_NEWER_REVIEW_GH
+chmod +x "$_codex_usage_limit_beats_same_fetch_newer_review_mock_dir/gh"
+
+_codex_usage_limit_beats_same_fetch_newer_review_output=""
+_codex_usage_limit_beats_same_fetch_newer_review_exit=0
+PATH="$_codex_usage_limit_beats_same_fetch_newer_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_usage_limit_beats_same_fetch_newer_review_mock_dir/output.txt" 2>&1 || _codex_usage_limit_beats_same_fetch_newer_review_exit=$?
+_codex_usage_limit_beats_same_fetch_newer_review_output="$(cat "$_codex_usage_limit_beats_same_fetch_newer_review_mock_dir/output.txt")"
+run_test "codex_usage_limit_beats_same_fetch_newer_review_exit_unavailable" "3" "$_codex_usage_limit_beats_same_fetch_newer_review_exit"
+run_test "codex_usage_limit_beats_same_fetch_newer_review_verdict" "VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached" \
+  "$(printf '%s\n' "$_codex_usage_limit_beats_same_fetch_newer_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_usage_limit_beats_same_fetch_newer_review_mock_dir"
+unset _codex_usage_limit_beats_same_fetch_newer_review_mock_dir _codex_usage_limit_beats_same_fetch_newer_review_output _codex_usage_limit_beats_same_fetch_newer_review_exit
+
 # codex_response_priority ranked an ancillary environment-setup-error
 # comment at the same "unrecognized format" tier (2) as a genuine but
 # unrecognized-format submitted review, instead of at the lower

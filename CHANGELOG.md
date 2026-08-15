@@ -208,7 +208,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `codex-github-environment-missing` — a case the existing "terminal
   comment never routed through the environment-error classifier"
   guarantee did not cover, since it only applied to the terminal-vs-review
-  combine path, not this separate ancillary-override check.
+  combine path, not this separate ancillary-override check. The reverse
+  alternation order added above ("looks good ... cannot approve") turned
+  out to be over-broad in practice: it matched ANY later negation word in
+  the same sentence regardless of what it actually negated, so a
+  genuinely clean response like "Looks good overall; tests were not run."
+  was incorrectly flagged as negated. It has been removed — the
+  forward-only match plus the bare-verb addition already covers the
+  original "cannot approve" case without this false-positive class.
+  Separately, `codex_combine_terminal_evidence` previously applied the
+  same newest-wins comparison to a usage-limit ancillary comment as it
+  does to an environment-setup error, so a clean current-head review
+  returned in the SAME poll fetch as (and strictly newer than) a
+  usage-limit notice let the review win, and the quota body never reached
+  `codex_return_usage_limit` — contradicting the documented immediate-
+  termination contract for usage-limit. Usage-limit and environment-error
+  are now handled as two separate checks with their own retention
+  semantics: a usage-limit notice wins unconditionally over non-blocking
+  terminal/review evidence (no newest-wins comparison at all, since
+  detecting it terminates the invocation immediately by design), while an
+  environment-setup error keeps the existing newest-wins comparison.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

@@ -326,19 +326,25 @@ CODEX_APPROVAL_PATTERN='(\bapproved\b|\blgtm\b|\blooks[[:space:]]+good\b|didn.t 
 # word (e.g. "The variable name is not great. No blocking issues found."
 # still classifies as approved).
 #
-# Two more gaps surfaced once the pattern was unbounded (PR #1490 finding
-# 3790023141): (a) the target alternation had "approved" but not the bare
-# verb "approve", so "I cannot approve this change" wasn't recognized;
-# (b) the pattern only checked negation-THEN-approval order, so an
-# approval phrase appearing BEFORE the negation in the same sentence
-# ("This looks good at first glance, but I cannot approve this change")
-# wasn't caught, since "looks good" preceded "cannot" rather than
-# following it. Both alternation orders are now checked (approval-word
-# ... negation-word, in addition to negation-word ... approval-word), and
-# the target list includes the bare verb.
+# The target alternation had "approved" but not the bare verb "approve",
+# so "I cannot approve this change" wasn't recognized (PR #1490 finding
+# 3790023141). This is a forward negation-THEN-approval match: "cannot"
+# precedes "approve" in that sentence, so adding the bare verb to the
+# target list is sufficient on its own — no reverse-order (approval-word
+# ... negation-word) alternative is needed. An earlier version of this
+# fix DID add a reverse-order alternative, reasoning that "looks good"
+# preceded "cannot" in the same example; that reverse check was over-
+# broad in practice — it matched ANY later negation word in the same
+# sentence regardless of what the negation actually referred to, so a
+# genuinely clean response like "Looks good overall; tests were not run."
+# (the negation refers to the unrelated "tests were not run" clause, not
+# to the approval) was incorrectly flagged as negated (PR #1490 finding
+# 3790062089). The reverse-order alternative has been removed; the
+# forward-only match plus the bare-verb addition covers the original
+# "cannot approve" case without this false-positive class.
 CODEX_NEGATED_APPROVAL_TARGET_WORDS='(approve[ds]?|lgtm|look(s|ing)?[[:space:]]+good|no[[:space:]]+blocking[[:space:]]+issues?|didn.t find[[:space:]]+any major[[:space:]]+issues)'
 CODEX_NEGATION_WORDS='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|never)'
-CODEX_NEGATED_APPROVAL_PATTERN="(${CODEX_NEGATION_WORDS}[^.!?]*${CODEX_NEGATED_APPROVAL_TARGET_WORDS}|${CODEX_NEGATED_APPROVAL_TARGET_WORDS}[^.!?]*${CODEX_NEGATION_WORDS})"
+CODEX_NEGATED_APPROVAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?]*${CODEX_NEGATED_APPROVAL_TARGET_WORDS}"
 
 codex_response_is_blocking() {
   local body="$1"
@@ -655,20 +661,49 @@ codex_combine_terminal_evidence() {
   # that guarantee only applies to the terminal-vs-review combine path
   # above, not this separate ancillary-override check (fresh evidence from
   # PR #1490 finding 3790023143).
-  if [ "$comment_latest_is_terminal" -eq 0 ] && [ -n "$comment_latest_body" ] && { codex_response_is_environment_error "$comment_latest_body" || codex_response_is_usage_limit "$comment_latest_body"; }; then
+  # Usage-limit and environment-error are handled as two SEPARATE checks,
+  # not one shared condition, because they have different retention
+  # semantics (documented in docs/workflow/development-workflow/
+  # integrations/codex-github.md and protocols/93-automated-reviewer-loop-
+  # protocol.md): an environment-setup error is retained through the poll
+  # window and can be superseded by strictly newer terminal/review
+  # evidence, but a usage-limit notice terminates the invocation
+  # IMMEDIATELY upon detection (codex_return_usage_limit exits before any
+  # further polling can happen) and is never superseded — including by a
+  # clean review returned in the SAME fetch. The previous shared
+  # newest-wins comparison let a same-fetch review that happened to have a
+  # later timestamp silently discard the usage-limit notice before it ever
+  # reached codex_return_usage_limit, contradicting the documented
+  # immediate-termination contract (fresh evidence from PR #1490 finding
+  # 3790062091, a followup to 3789928786/3789992794).
+  if [ "$comment_latest_is_terminal" -eq 0 ] && [ -n "$comment_latest_body" ] && codex_response_is_usage_limit "$comment_latest_body"; then
     if [ -n "$COMBINED_SOURCE" ] && codex_response_is_blocking "$COMBINED_BODY"; then
       # Blocking terminal/review evidence always wins outright — it is
-      # never discarded by an environment-setup error or a usage-limit
-      # notice, regardless of timing, so an actionable finding can never be
-      # hidden behind an "unavailable" verdict (fresh evidence from PR
-      # #1490 finding 3787943162; Protocol 93 requires blocking evidence to
-      # never be silently discarded).
+      # never discarded by a usage-limit notice, regardless of timing, so
+      # an actionable finding can never be hidden behind an "unavailable"
+      # verdict (fresh evidence from PR #1490 finding 3787943162; Protocol
+      # 93 requires blocking evidence to never be silently discarded).
+      :
+    else
+      COMBINED_BODY="$comment_latest_body"
+      COMBINED_TIME="$comment_latest_time"
+      COMBINED_SOURCE="comment"
+      echo "INFO: $label usage-limit notice takes immediate precedence over terminal/review evidence, including same-fetch evidence"
+    fi
+  elif [ "$comment_latest_is_terminal" -eq 0 ] && [ -n "$comment_latest_body" ] && codex_response_is_environment_error "$comment_latest_body"; then
+    if [ -n "$COMBINED_SOURCE" ] && codex_response_is_blocking "$COMBINED_BODY"; then
+      # Blocking terminal/review evidence always wins outright — it is
+      # never discarded by an environment-setup error, regardless of
+      # timing, so an actionable finding can never be hidden behind an
+      # "unavailable" verdict (fresh evidence from PR #1490 finding
+      # 3787943162; Protocol 93 requires blocking evidence to never be
+      # silently discarded).
       :
     elif [ -z "$COMBINED_TIME" ] || ! codex_select_terminal_evidence "$comment_latest_body" "$comment_latest_time" "$COMBINED_BODY" "$COMBINED_TIME"; then
       COMBINED_BODY="$comment_latest_body"
       COMBINED_TIME="$comment_latest_time"
       COMBINED_SOURCE="comment"
-      echo "INFO: $label environment-setup error or usage-limit notice retained over non-newer terminal/review evidence"
+      echo "INFO: $label environment-setup error retained over non-newer terminal/review evidence"
     fi
   fi
 }
