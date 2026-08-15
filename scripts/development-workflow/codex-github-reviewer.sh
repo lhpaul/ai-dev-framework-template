@@ -354,15 +354,22 @@ codex_scan_comment_evidence() {
 # Combines comment-sourced evidence (terminal SHA-pinned root comment vs.
 # latest ancillary comment, from codex_scan_comment_evidence) with
 # review-sourced evidence (from the pulls/{PR}/reviews endpoint) into a
-# single winning result. A SHA-pinned terminal comment applies the existing
-# not-a-clean-approval-first tie-break (codex_select_terminal_evidence) so a
-# genuine submitted review only supersedes it when strictly newer, or tied
-# and itself not a clean approval. A bare ancillary comment (acknowledgement,
-# "waiting" note) carries no information and is always outranked by a
-# genuine review regardless of timing. An ancillary comment that is
-# specifically a recorded environment-setup error is treated as actionable
-# evidence, not noise: it uses the same tie-break as SHA-pinned evidence, so
-# only a strictly newer review can supersede it.
+# single winning result. A SHA-pinned terminal comment and a genuine
+# submitted review apply the not-a-clean-approval-first tie-break
+# (codex_select_terminal_evidence): the strictly newer one wins, or on a
+# tie the one that is not a clean approval wins.
+#
+# An ancillary comment that is specifically a recorded environment-setup
+# error is treated as actionable evidence in its own right, not noise, and
+# is checked independently of whichever of (terminal comment, review) won
+# above — a SHA-pinned terminal comment or a review must not silently
+# discard a same-or-newer environment-setup error just because it competed
+# with a different evidence type (fresh evidence from PR #1490 finding
+# 3787868727: the terminal-comment branch previously never considered the
+# environment error at all). Only strictly newer terminal/review evidence
+# supersedes it. A bare non-error ancillary comment (acknowledgement,
+# "waiting" note) carries no information and never competes with anything.
+#
 # Sets: COMBINED_BODY, COMBINED_TIME, COMBINED_SOURCE ("review", "comment",
 # or "" if no evidence at all). LABEL is used only for INFO logging.
 codex_combine_terminal_evidence() {
@@ -380,43 +387,40 @@ codex_combine_terminal_evidence() {
     COMBINED_TIME="$comment_terminal_time"
     COMBINED_SOURCE="review"
     echo "INFO: $label detected via SHA-pinned PR comment"
-  elif [ -n "$comment_latest_body" ]; then
-    COMBINED_BODY="$comment_latest_body"
-    COMBINED_TIME="$comment_latest_time"
-    COMBINED_SOURCE="comment"
   fi
 
   if [ -n "$review_body" ]; then
     if [ "$COMBINED_SOURCE" = "review" ]; then
-      # SHA-pinned terminal comment already present: existing tie-break.
       if codex_select_terminal_evidence "$COMBINED_BODY" "$COMBINED_TIME" "$review_body" "$review_time"; then
         COMBINED_BODY="$review_body"
         COMBINED_TIME="$review_time"
         COMBINED_SOURCE="review"
         echo "INFO: $label detected via PR reviews endpoint (supersedes SHA-pinned comment)"
       fi
-    elif [ "$COMBINED_SOURCE" = "comment" ] && codex_response_is_environment_error "$COMBINED_BODY"; then
-      # Ancillary evidence is specifically a recorded environment-setup
-      # error. Unlike a bare acknowledgement, this IS actionable evidence,
-      # so a review must not silently discard it regardless of timing — only
-      # a strictly newer review may supersede it (fresh evidence from PR
-      # #1490 finding 3787786943).
-      if codex_select_terminal_evidence "$COMBINED_BODY" "$COMBINED_TIME" "$review_body" "$review_time"; then
-        COMBINED_BODY="$review_body"
-        COMBINED_TIME="$review_time"
-        COMBINED_SOURCE="review"
-        echo "INFO: $label detected via PR reviews endpoint (supersedes environment-setup error)"
-      else
-        echo "INFO: $label environment-setup error retained over non-newer review evidence"
-      fi
     else
-      # No terminal comment evidence, and any ancillary comment present is
-      # not an environment-setup error (e.g. a bare acknowledgement): a
-      # genuine submitted review always outranks it regardless of timing.
       COMBINED_BODY="$review_body"
       COMBINED_TIME="$review_time"
       COMBINED_SOURCE="review"
       echo "INFO: $label detected via PR reviews endpoint"
+    fi
+  fi
+
+  if [ -z "$COMBINED_SOURCE" ] && [ -n "$comment_latest_body" ]; then
+    # Neither a SHA-pinned terminal comment nor a review produced any
+    # evidence: fall back to the latest bare ancillary comment (may be an
+    # environment-setup error, an acknowledgement, or other non-terminal
+    # text) so the outer verdict classifier still has something to inspect.
+    COMBINED_BODY="$comment_latest_body"
+    COMBINED_TIME="$comment_latest_time"
+    COMBINED_SOURCE="comment"
+  fi
+
+  if [ -n "$comment_latest_body" ] && codex_response_is_environment_error "$comment_latest_body"; then
+    if [ -z "$COMBINED_TIME" ] || ! codex_select_terminal_evidence "$comment_latest_body" "$comment_latest_time" "$COMBINED_BODY" "$COMBINED_TIME"; then
+      COMBINED_BODY="$comment_latest_body"
+      COMBINED_TIME="$comment_latest_time"
+      COMBINED_SOURCE="comment"
+      echo "INFO: $label environment-setup error retained over non-newer terminal/review evidence"
     fi
   fi
 }
@@ -667,8 +671,15 @@ while true; do
   BOT_RESPONSE="$COMBINED_BODY"
   BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
   # Truncate here (post-combine) — mirrors the prior per-source truncation but
-  # applies uniformly regardless of which source won.
-  BOT_RESPONSE=$(printf '%s' "$BOT_RESPONSE" | head -c 10000)
+  # applies uniformly regardless of which source won. Root-comment-sourced
+  # bodies are not truncated at scan time (unlike review bodies, which are
+  # already sliced to 5000 chars inside jq), so a body near GitHub's
+  # per-comment size limit could still exceed a pipe buffer here. `jq -Rs`
+  # slurps its entire stdin before producing any output, so the writer
+  # (printf) is always fully drained and can never receive SIGPIPE, unlike
+  # a piped `head -c N` which can close early on long input (fresh evidence
+  # from PR #1490 finding 3787868733).
+  BOT_RESPONSE=$(printf '%s' "$BOT_RESPONSE" | jq -Rrs '.[0:10000]')
 
   if ! INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
     echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments (treated as unavailable)"
@@ -900,7 +911,10 @@ codex_combine_terminal_evidence "async-arrival bot response" \
   "$ASYNC_REVIEW_BODY" "$ASYNC_REVIEW_TIME"
 ASYNC_BOT_RESPONSE="$COMBINED_BODY"
 ASYNC_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
-ASYNC_BOT_RESPONSE=$(printf '%s' "$ASYNC_BOT_RESPONSE" | head -c 10000)
+# `jq -Rs` slurps its entire stdin before producing output, avoiding
+# SIGPIPE on long root-comment-sourced bodies (see rationale above the
+# main-loop equivalent).
+ASYNC_BOT_RESPONSE=$(printf '%s' "$ASYNC_BOT_RESPONSE" | jq -Rrs '.[0:10000]')
 
 if [ -n "$ASYNC_BOT_RESPONSE" ]; then
   echo "INFO: async-arrival bot response detected during grace period"
@@ -985,7 +999,10 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
       "$ASYNC_FINAL_REVIEW_BODY" "$ASYNC_FINAL_REVIEW_TIME"
     ASYNC_FINAL_BOT_RESPONSE="$COMBINED_BODY"
     ASYNC_FINAL_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
-    ASYNC_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_FINAL_BOT_RESPONSE" | head -c 10000)
+    # `jq -Rs` slurps its entire stdin before producing output, avoiding
+    # SIGPIPE on long root-comment-sourced bodies (see rationale above the
+    # main-loop equivalent).
+    ASYNC_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_FINAL_BOT_RESPONSE" | jq -Rrs '.[0:10000]')
 
     if [ -n "$ASYNC_FINAL_BOT_RESPONSE" ]; then
       echo "INFO: final async bot response detected after acknowledgement wait"
@@ -1107,7 +1124,10 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
     "$ASYNC_REACTION_FINAL_REVIEW_BODY" "$ASYNC_REACTION_FINAL_REVIEW_TIME"
   ASYNC_REACTION_FINAL_BOT_RESPONSE="$COMBINED_BODY"
   ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
-  ASYNC_REACTION_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_REACTION_FINAL_BOT_RESPONSE" | head -c 10000)
+  # `jq -Rs` slurps its entire stdin before producing output, avoiding
+  # SIGPIPE on long root-comment-sourced bodies (see rationale above the
+  # main-loop equivalent).
+  ASYNC_REACTION_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_REACTION_FINAL_BOT_RESPONSE" | jq -Rrs '.[0:10000]')
 
   if [ -n "$ASYNC_REACTION_FINAL_BOT_RESPONSE" ]; then
     codex_require_current_head

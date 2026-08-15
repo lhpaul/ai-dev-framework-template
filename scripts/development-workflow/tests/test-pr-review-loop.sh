@@ -3614,6 +3614,103 @@ run_test "codex_env_error_survives_later_ack_reason" "REASON=codex-github-enviro
 rm -rf "$_codex_env_error_survives_later_ack_mock_dir"
 unset _codex_env_error_survives_later_ack_mock_dir _codex_env_error_survives_later_ack_output _codex_env_error_survives_later_ack_exit
 
+# Reproduces Codex finding on PR #1490 (P1, comment id 3787868727): a clean
+# SHA-pinned terminal root comment at T1 and a strictly newer
+# environment-setup-error comment at T2, both present in the same comments
+# fetch. codex_combine_terminal_evidence previously chose the terminal
+# comment unconditionally whenever no submitted review was present,
+# discarding the newer environment error entirely (that branch never
+# considered it). No review from the reviews endpoint -> expect
+# codex-github-environment-missing, not APPROVED.
+_codex_terminal_comment_vs_newer_env_error_mock_dir="$(mktemp -d)"
+cat > "$_codex_terminal_comment_vs_newer_env_error_mock_dir/gh" <<'CODEX_TERMINAL_COMMENT_VS_NEWER_ENV_ERROR_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'deadf00d12345678\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":150,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":250,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `deadf00d1234`"},{"id":251,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TERMINAL_COMMENT_VS_NEWER_ENV_ERROR_GH
+chmod +x "$_codex_terminal_comment_vs_newer_env_error_mock_dir/gh"
+
+_codex_terminal_comment_vs_newer_env_error_output=""
+_codex_terminal_comment_vs_newer_env_error_exit=0
+PATH="$_codex_terminal_comment_vs_newer_env_error_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_terminal_comment_vs_newer_env_error_mock_dir/output.txt" 2>&1 || _codex_terminal_comment_vs_newer_env_error_exit=$?
+_codex_terminal_comment_vs_newer_env_error_output="$(cat "$_codex_terminal_comment_vs_newer_env_error_mock_dir/output.txt")"
+run_test "codex_terminal_comment_vs_newer_env_error_exit_unavailable" "2" "$_codex_terminal_comment_vs_newer_env_error_exit"
+run_test "codex_terminal_comment_vs_newer_env_error_reason" "REASON=codex-github-environment-missing" \
+  "$(printf '%s\n' "$_codex_terminal_comment_vs_newer_env_error_output" | grep "^REASON=")"
+rm -rf "$_codex_terminal_comment_vs_newer_env_error_mock_dir"
+unset _codex_terminal_comment_vs_newer_env_error_mock_dir _codex_terminal_comment_vs_newer_env_error_output _codex_terminal_comment_vs_newer_env_error_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3787868733): only
+# submitted review bodies were sliced inside jq; a SHA-pinned root-comment
+# body large enough to exceed a pipe buffer's capacity (well within
+# GitHub's ~64KB per-comment limit) still passed through
+# `printf | head -c 10000` in the main loop and all 3 async paths,
+# triggering the same SIGPIPE/exit-141 crash under `set -euo pipefail`.
+# All 4 sites now truncate via `jq -Rrs '.[0:10000]'`, which slurps its
+# entire stdin before producing output so the writer can never receive
+# SIGPIPE regardless of input size.
+_codex_long_root_comment_no_sigpipe_mock_dir="$(mktemp -d)"
+cat > "$_codex_long_root_comment_no_sigpipe_mock_dir/gh" <<'CODEX_LONG_ROOT_COMMENT_NO_SIGPIPE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'deadf00d12345678\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":151,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:260,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'"'"'t find any major issues.\n\n" + ("x" * 200000) + "\n\n**Reviewed commit:** `deadf00d1234`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_LONG_ROOT_COMMENT_NO_SIGPIPE_GH
+chmod +x "$_codex_long_root_comment_no_sigpipe_mock_dir/gh"
+
+_codex_long_root_comment_no_sigpipe_output=""
+_codex_long_root_comment_no_sigpipe_exit=0
+PATH="$_codex_long_root_comment_no_sigpipe_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_long_root_comment_no_sigpipe_mock_dir/output.txt" 2>&1 || _codex_long_root_comment_no_sigpipe_exit=$?
+_codex_long_root_comment_no_sigpipe_output="$(cat "$_codex_long_root_comment_no_sigpipe_mock_dir/output.txt")"
+run_test "codex_long_root_comment_no_sigpipe_exit_clean" "0" "$_codex_long_root_comment_no_sigpipe_exit"
+run_test "codex_long_root_comment_no_sigpipe_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_long_root_comment_no_sigpipe_output" | grep "^VERDICT:")"
+rm -rf "$_codex_long_root_comment_no_sigpipe_mock_dir"
+unset _codex_long_root_comment_no_sigpipe_mock_dir _codex_long_root_comment_no_sigpipe_output _codex_long_root_comment_no_sigpipe_exit
+
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
 #!/usr/bin/env bash

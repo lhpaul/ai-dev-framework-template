@@ -43,7 +43,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer resolve to a silent `APPROVED` — the setup error is retained
   unless the review is itself strictly newer; and an environment-setup-error
   comment is no longer silently discarded by a later plain acknowledgement
-  observed in the same comments fetch.
+  observed in the same comments fetch; a clean SHA-pinned terminal root
+  comment and a strictly newer environment-setup-error comment in the same
+  fetch no longer resolve to a silent `APPROVED` — environment-error
+  checking is now a final, independent step applied to whichever of
+  (terminal comment, review) won, instead of only being reachable from the
+  review-vs-ancillary-comment branch; and root-comment-sourced bodies (not
+  truncated at scan time, unlike review bodies) are now also truncated via
+  `jq -Rrs` instead of a piped `head`, closing the same `SIGPIPE` crash path
+  for a root comment body large enough to exceed a pipe buffer.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
