@@ -175,7 +175,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pass since only the third alternative was narrowed then — so a clean
   review discussing the phrase in a docs context was itself misclassified
   as a usage-limit notice; it now requires an exhaustion word after "code
-  reviews" too.
+  reviews" too; and `CODEX_NEGATED_APPROVAL_PATTERN`'s bounded `{0,3}`
+  filler-word window (added to handle "not YET approved") was itself
+  proven insufficient — a response with 5 intervening words between the
+  negation and approval word exceeded the bound and was still classified
+  APPROVED. Replaced with an unbounded same-sentence scope (`[^.!?]*`
+  between the negation and approval words): this closes the whole class
+  of "negation not immediately adjacent to approval word" gap at once
+  (this was the fourth round of narrowly-scoped fixes to this same
+  pattern — space-separated, concatenated-prefix, Markdown-wrapped,
+  bounded-window — each of which Codex found the next edge of), while a
+  sentence terminator between them still correctly prevents an unrelated
+  later sentence's approval phrase from being treated as negated by an
+  earlier sentence's negation word. Also corrected the same *retention*
+  vs *priority* rule ambiguity as the integrations-doc fix above in
+  `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`,
+  which had not yet been updated when the integrations doc was fixed.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

@@ -137,8 +137,12 @@ can never be hidden behind an "unavailable" verdict. Likewise, a SHA-pinned
 terminal comment is never classified as an environment-setup error even if
 its finding text happens to quote the setup sentence verbatim — terminal
 evidence is never routed through the environment-error classifier. A
-usage-limit notice follows the same retention and priority rules as an
-environment-setup error throughout this section. This applies within a
+usage-limit notice follows the same PRIORITY rules as an environment-setup
+error for ranking purposes, but NOT the same RETENTION rule: unlike an
+environment-setup error, a usage-limit notice terminates the invocation
+immediately upon detection (exit code 3), rather than being retained
+through the rest of the poll window for a later, strictly newer review to
+potentially supersede it. This applies within a
 single poll as well as across polls: an environment-setup
 error is not silently discarded by a same-fetch or later plain
 acknowledgement, since a bare

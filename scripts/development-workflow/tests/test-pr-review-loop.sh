@@ -4797,6 +4797,98 @@ run_test "codex_usage_limit_code_reviews_phrase_mention_verdict" "VERDICT: APPRO
 rm -rf "$_codex_usage_limit_code_reviews_phrase_mention_mock_dir"
 unset _codex_usage_limit_code_reviews_phrase_mention_mock_dir _codex_usage_limit_code_reviews_phrase_mention_output _codex_usage_limit_code_reviews_phrase_mention_exit
 
+# CODEX_NEGATED_APPROVAL_PATTERN's bounded {0,3} filler-word window (added
+# for finding 3789904716) was itself proven insufficient: 5 intervening
+# words exceed the bound, so the negation went undetected while the
+# approval alternative still matched (fresh evidence from PR #1490
+# finding 3789992792). Replaced with an unbounded same-sentence scope
+# ([^.!?]*) — this is the reviewer's own stated remediation ("avoid
+# relying on a bounded filler-word count").
+_codex_negation_beyond_bounded_window_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_negation_beyond_bounded_window_root_comment_mock_dir/gh" <<'CODEX_NEGATION_BEYOND_BOUNDED_WINDOW_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade00bb1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":268,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":269,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"I cannot confidently confirm that there are no blocking issues.\\n\\n**Reviewed commit:** `facade00bb`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NEGATION_BEYOND_BOUNDED_WINDOW_ROOT_COMMENT_GH
+chmod +x "$_codex_negation_beyond_bounded_window_root_comment_mock_dir/gh"
+
+_codex_negation_beyond_bounded_window_root_comment_output=""
+_codex_negation_beyond_bounded_window_root_comment_exit=0
+PATH="$_codex_negation_beyond_bounded_window_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_negation_beyond_bounded_window_root_comment_mock_dir/output.txt" 2>&1 || _codex_negation_beyond_bounded_window_root_comment_exit=$?
+_codex_negation_beyond_bounded_window_root_comment_output="$(cat "$_codex_negation_beyond_bounded_window_root_comment_mock_dir/output.txt")"
+run_test "codex_negation_beyond_bounded_window_root_comment_exit_needs_revision" "1" "$_codex_negation_beyond_bounded_window_root_comment_exit"
+run_test "codex_negation_beyond_bounded_window_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_negation_beyond_bounded_window_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_negation_beyond_bounded_window_root_comment_mock_dir"
+unset _codex_negation_beyond_bounded_window_root_comment_mock_dir _codex_negation_beyond_bounded_window_root_comment_output _codex_negation_beyond_bounded_window_root_comment_exit
+
+# Positive control for the unbounded [^.!?]* negation scope above: a
+# negation word in one sentence must NOT suppress a clean approval phrase
+# in a later, unrelated sentence — the sentence-terminator exclusion in
+# the character class is what keeps the unbounded window from
+# over-matching across sentence boundaries.
+_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir/gh" <<'CODEX_NEGATION_PRIOR_SENTENCE_DOES_NOT_LEAK_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade00cc1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":270,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":271,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"The variable name is not great. No blocking issues found.\\n\\n**Reviewed commit:** `facade00cc`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NEGATION_PRIOR_SENTENCE_DOES_NOT_LEAK_ROOT_COMMENT_GH
+chmod +x "$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir/gh"
+
+_codex_negation_prior_sentence_does_not_leak_root_comment_output=""
+_codex_negation_prior_sentence_does_not_leak_root_comment_exit=0
+PATH="$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir/output.txt" 2>&1 || _codex_negation_prior_sentence_does_not_leak_root_comment_exit=$?
+_codex_negation_prior_sentence_does_not_leak_root_comment_output="$(cat "$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir/output.txt")"
+run_test "codex_negation_prior_sentence_does_not_leak_root_comment_exit_clean" "0" "$_codex_negation_prior_sentence_does_not_leak_root_comment_exit"
+run_test "codex_negation_prior_sentence_does_not_leak_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_negation_prior_sentence_does_not_leak_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir"
+unset _codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir _codex_negation_prior_sentence_does_not_leak_root_comment_output _codex_negation_prior_sentence_does_not_leak_root_comment_exit
+
 # codex_response_priority ranked an ancillary environment-setup-error
 # comment at the same "unrecognized format" tier (2) as a genuine but
 # unrecognized-format submitted review, instead of at the lower

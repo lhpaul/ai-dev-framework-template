@@ -295,42 +295,37 @@ CODEX_BLOCKING_PATTERN='(changes[[:space:]]+requested|blocking[[:space:]]+issues
 # mode.
 CODEX_APPROVAL_PATTERN='(\bapproved\b|\blgtm\b|\blooks[[:space:]]+good\b|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)'
 # Negated forms of the approval phrases above. CODEX_APPROVAL_PATTERN's
-# "approved"/"lgtm"/"looks good" alternatives are unbounded substring
-# matches, so a rejecting response like "This change is not approved"
-# matched them unconditionally and was classified APPROVED instead of
-# falling through to the documented unrecognized-format safe-fail (fresh
-# evidence from PR #1490 finding 3789722818). Checked BEFORE the positive
-# approval pattern in codex_response_is_approved so a negated approval
-# phrase can never be reported as approved. This handles SPACE-separated
-# negations ("not approved"); CODEX_APPROVAL_PATTERN's \b boundaries above
-# separately handle CONCATENATED negation prefixes ("unapproved"). The
-# optional [*_~]{0,3} groups between the negation word and the approval
-# word tolerate Markdown emphasis markers wedged between them (e.g. "This
-# change is **not** approved" — GitHub renders **not** as bold, but the
-# raw text has "**" directly between "not" and the following space, which
-# broke the plain [[:space:]]+ adjacency this pattern originally required;
-# fresh evidence from PR #1490 finding 3789878264, a followup to
-# 3789851555/3789722818). The optional ([[:space:]]+[*_~]{0,3}[[:alpha:]'-]{1,20}[*_~]{0,3}){0,3}
-# group tolerates up to 3 intervening qualifier words between the
-# negation and the approval word (e.g. "not YET approved", "not FULLY
-# approved YET"), since a rigid negation-immediately-adjacent-to-approval
-# requirement is a losing enumeration game against arbitrary English
-# phrasing — every prior round of this fix (space-separated, concatenated
-# prefix, Markdown-wrapped) narrowed one specific adjacency assumption and
-# Codex found the next one; allowing a bounded window of filler words
-# generalizes past this specific class of gap instead of special-casing
-# it again (fresh evidence from PR #1490 finding 3789904716, a followup to
-# 3789878264/3789851555/3789722818). The target alternation now also
-# covers "no blocking issues"/"didn't find any major issues", not just
-# "approved"/"lgtm"/"looks good": those are approval SIGNALS in
-# CODEX_APPROVAL_PATTERN too, but were left unguarded by this negation
-# check, so a hedged/uncertain response like "I cannot confirm there are
-# no blocking issues" still matched CODEX_APPROVAL_PATTERN's "no blocking
-# issues" alternative and was classified APPROVED (fresh evidence from PR
-# #1490 finding 3789958775). The existing filler-word tolerance already
-# generalizes to this case ("cannot" + "confirm there are" (3 filler
-# words) + "no blocking issues") without further changes.
-CODEX_NEGATED_APPROVAL_PATTERN='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|never)[*_~]{0,3}([[:space:]]+[*_~]{0,3}[[:alpha:]'"'"'-]{1,20}[*_~]{0,3}){0,3}[[:space:]]+[*_~]{0,3}(be[[:space:]]+)?[*_~]{0,3}(approved|lgtm|look(s|ing)?[[:space:]]+good|no[[:space:]]+blocking[[:space:]]+issues?|didn.t find[[:space:]]+any major[[:space:]]+issues)'
+# alternatives are unbounded substring matches, so a rejecting response
+# like "This change is not approved" matched them unconditionally and was
+# classified APPROVED instead of falling through to the documented
+# unrecognized-format safe-fail. Checked BEFORE the positive approval
+# pattern in codex_response_is_approved so a negated approval phrase can
+# never be reported as approved.
+#
+# This went through several rounds of narrowly-scoped fixes (PR #1490
+# findings 3789722818, 3789851555, 3789878264, 3789904716, 3789958775):
+# require a negation word directly adjacent to the approval word, then
+# tolerate a concatenated prefix ("unapproved"), then Markdown emphasis
+# markers wedged in the middle ("**not** approved"), then a BOUNDED
+# window of up to 3 intervening qualifier words ("not YET approved").
+# Each fix narrowed one specific adjacency assumption and Codex found the
+# next one, up to and including the bounded-window fix itself: 5
+# intervening words ("I cannot confidently confirm that there are no
+# blocking issues") exceeded the {0,3} bound (fresh evidence from PR
+# #1490 finding 3789992792) — the reviewer's own stated remediation was
+# "avoid relying on a bounded filler-word count".
+#
+# [^.!?]* (any character except a sentence terminator, UNBOUNDED) between
+# the negation word and the approval word closes this whole class of gap
+# at once: it matches a negation and an approval word co-occurring
+# anywhere within the same sentence, regardless of how much text sits
+# between them or how it's formatted (Markdown markers included, since
+# they aren't excluded by the character class), while a period/!/?
+# between them correctly prevents an unrelated LATER sentence's approval
+# phrase from being treated as negated by an EARLIER sentence's negation
+# word (e.g. "The variable name is not great. No blocking issues found."
+# still classifies as approved).
+CODEX_NEGATED_APPROVAL_PATTERN='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|never)[^.!?]*(approved|lgtm|look(s|ing)?[[:space:]]+good|no[[:space:]]+blocking[[:space:]]+issues?|didn.t find[[:space:]]+any major[[:space:]]+issues)'
 
 codex_response_is_blocking() {
   local body="$1"
