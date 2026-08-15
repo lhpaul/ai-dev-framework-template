@@ -86,7 +86,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-clean type (e.g. a usage-limit response) instead of the scan
   stopping at whichever "requires attention" response was returned first,
   so a usage-limit review returned before a tied blocking review no longer
-  silently discards the blocker.
+  silently discards the blocker; and the shared terminal-evidence tie-break
+  (used for terminal-comment-vs-review and terminal-comment-vs-terminal-
+  comment ties) now checks blocking before the binary requires-attention
+  distinction, so two tied responses that are both "requires attention"
+  (e.g. a usage-limit root comment and a blocking submitted review, or two
+  tied root comments) no longer keep whichever was evaluated first when
+  one side is strictly more severe.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

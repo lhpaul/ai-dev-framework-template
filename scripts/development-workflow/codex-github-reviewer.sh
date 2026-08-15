@@ -283,14 +283,21 @@ codex_response_requires_attention() {
 # Decides whether CANDIDATE terminal ("review"-sourced) evidence should
 # replace CURRENT terminal evidence. A strictly later candidate always wins.
 # GitHub timestamps are second-resolution, so ties are possible; on an exact
-# tie, evidence that is not a clean approval (blocking OR unrecognized
-# format — anything the verdict classifier would not exit APPROVED for)
-# must never be discarded in favor of an approved response, regardless of
-# which side (submitted review vs SHA-pinned root comment) supplied it. This
-# makes the tie-break symmetric: if the candidate requires attention and the
-# current evidence is a clean approval, the candidate wins; if the current
-# evidence requires attention and the candidate is a clean approval, the
-# current evidence is kept.
+# tie, evidence is ranked in three tiers — blocking > other-attention-
+# requiring (e.g. unrecognized format, a usage-limit notice) > clean
+# approval — and the higher tier wins regardless of which side (submitted
+# review vs SHA-pinned root comment) supplied it. Checking only the binary
+# requires-attention distinction is not enough: two tied responses that are
+# BOTH "requires attention" (e.g. a usage-limit root comment and a blocking
+# submitted review) would keep whichever was CURRENT even when the
+# candidate is strictly more severe (blocking), silently discarding an
+# actionable finding behind an unavailable verdict (fresh evidence from PR
+# #1490 finding 3789521036 — the prior fix addressed only
+# codex_select_review_evidence's own review-vs-review scan, leaving this
+# shared cross-source selector, used for terminal-comment-vs-terminal-
+# comment and terminal-vs-review ties, unchanged). Blocking is checked
+# first; only if neither side is blocking does the requires-attention tier
+# decide the tie.
 codex_select_terminal_evidence() {
   local current_body="$1" current_time="$2"
   local candidate_body="$3" candidate_time="$4"
@@ -299,6 +306,9 @@ codex_select_terminal_evidence() {
     return 0
   fi
   if [ "$candidate_time" = "$current_time" ]; then
+    if codex_response_is_blocking "$candidate_body" && ! codex_response_is_blocking "$current_body"; then
+      return 0
+    fi
     if codex_response_requires_attention "$candidate_body" && ! codex_response_requires_attention "$current_body"; then
       return 0
     fi

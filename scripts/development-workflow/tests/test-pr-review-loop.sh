@@ -4156,6 +4156,103 @@ run_test "codex_tied_reviews_blocking_beats_usage_limit_verdict" "VERDICT: NEEDS
 rm -rf "$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir"
 unset _codex_tied_reviews_blocking_beats_usage_limit_mock_dir _codex_tied_reviews_blocking_beats_usage_limit_output _codex_tied_reviews_blocking_beats_usage_limit_exit
 
+# Reproduces Codex finding on PR #1490 (P1, comment id 3789521036): the
+# shared codex_select_terminal_evidence tie-break only checked the binary
+# requires-attention distinction, so two tied responses that are BOTH
+# "requires attention" (a usage-limit root comment and a blocking
+# submitted review) kept whichever was CURRENT even when the candidate was
+# strictly more severe (blocking). The prior d149 fix addressed only
+# codex_select_review_evidence's own review-vs-review scan; this shared
+# selector (used for terminal-comment-vs-review and terminal-comment-vs-
+# terminal-comment ties) now checks blocking first. Fixture: a SHA-pinned
+# terminal root comment reporting a usage limit, tied with a submitted
+# blocking review, no acknowledgement.
+_codex_terminal_usage_limit_vs_blocking_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_terminal_usage_limit_vs_blocking_review_mock_dir/gh" <<'CODEX_TERMINAL_USAGE_LIMIT_VS_BLOCKING_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":220,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade001234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the null check."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":320,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews.\\n\\n**Reviewed commit:** `facade001234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TERMINAL_USAGE_LIMIT_VS_BLOCKING_REVIEW_GH
+chmod +x "$_codex_terminal_usage_limit_vs_blocking_review_mock_dir/gh"
+
+_codex_terminal_usage_limit_vs_blocking_review_output=""
+_codex_terminal_usage_limit_vs_blocking_review_exit=0
+PATH="$_codex_terminal_usage_limit_vs_blocking_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_terminal_usage_limit_vs_blocking_review_mock_dir/output.txt" 2>&1 || _codex_terminal_usage_limit_vs_blocking_review_exit=$?
+_codex_terminal_usage_limit_vs_blocking_review_output="$(cat "$_codex_terminal_usage_limit_vs_blocking_review_mock_dir/output.txt")"
+run_test "codex_terminal_usage_limit_vs_blocking_review_exit_needs_revision" "1" "$_codex_terminal_usage_limit_vs_blocking_review_exit"
+run_test "codex_terminal_usage_limit_vs_blocking_review_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_terminal_usage_limit_vs_blocking_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_terminal_usage_limit_vs_blocking_review_mock_dir"
+unset _codex_terminal_usage_limit_vs_blocking_review_mock_dir _codex_terminal_usage_limit_vs_blocking_review_output _codex_terminal_usage_limit_vs_blocking_review_exit
+
+# Same finding (3789521036), second reproduction scenario explicitly
+# called out in the finding text: "the same loss occurs between two tied
+# root responses". Two SHA-pinned terminal root comments tied at the same
+# timestamp — one reporting a usage limit, one blocking — no submitted
+# review at all.
+_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir="$(mktemp -d)"
+cat > "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir/gh" <<'CODEX_TWO_TIED_TERMINAL_COMMENTS_USAGE_LIMIT_VS_BLOCKING_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'ba5eba1112345678\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":221,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":330,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews.\\n\\n**Reviewed commit:** `ba5eba111234`"},{"id":331,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the null check.\\n\\n**Reviewed commit:** `ba5eba111234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TWO_TIED_TERMINAL_COMMENTS_USAGE_LIMIT_VS_BLOCKING_GH
+chmod +x "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir/gh"
+
+_codex_two_tied_terminal_comments_usage_limit_vs_blocking_output=""
+_codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit=0
+PATH="$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir/output.txt" 2>&1 || _codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit=$?
+_codex_two_tied_terminal_comments_usage_limit_vs_blocking_output="$(cat "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir/output.txt")"
+run_test "codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit_needs_revision" "1" "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit"
+run_test "codex_two_tied_terminal_comments_usage_limit_vs_blocking_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_output" | grep "^VERDICT:")"
+rm -rf "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir"
+unset _codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir _codex_two_tied_terminal_comments_usage_limit_vs_blocking_output _codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit
+
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
 #!/usr/bin/env bash
