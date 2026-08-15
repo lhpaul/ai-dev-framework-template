@@ -131,7 +131,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unrecognized-format tier, so a setup-error comment tied at the same
   timestamp as a genuine but unrecognized-format review can no longer win
   the tie-break and replace the review's safe-fail NEEDS_REVISION with an
-  UNAVAILABLE-style `codex-github-environment-missing` verdict.
+  UNAVAILABLE-style `codex-github-environment-missing` verdict; and
+  `CODEX_APPROVAL_PATTERN`'s positive alternatives now require `\b` word
+  boundaries, since the negated-approval fix above only catches
+  SPACE-separated negations ("not approved") — a CONCATENATED negation
+  prefix like "unapproved" or "disapproved" still matched the bare
+  "approved" substring and was reported as APPROVED.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

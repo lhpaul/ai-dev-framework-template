@@ -264,7 +264,19 @@ codex_response_reviews_current_head() {
 # same rules. See "Verdict parsing" header comment for the rationale behind
 # each marker.
 CODEX_BLOCKING_PATTERN='(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)'
-CODEX_APPROVAL_PATTERN='(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)'
+# \b word boundaries around the positive approval words: without them,
+# "approved" as a bare substring matched inside prefixed negative forms
+# like "unapproved" or "disapproved" (no space/word-break before
+# "approved" in either), so a current-head response saying "This change
+# remains unapproved" was still classified APPROVED instead of falling
+# through to the documented safe-fail (fresh evidence from PR #1490
+# finding 3789851555 — a followup to finding 3789722818, whose fix only
+# handled SPACE-separated negations like "not approved"; \b closes the
+# concatenated-negation-prefix gap that a space-only negation check
+# cannot). Verified portable across BSD grep (macOS default), GNU grep,
+# and ugrep — all treat \b as a GNU-style word-boundary extension in -E
+# mode.
+CODEX_APPROVAL_PATTERN='(\bapproved\b|\blgtm\b|\blooks[[:space:]]+good\b|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)'
 # Negated forms of the approval phrases above. CODEX_APPROVAL_PATTERN's
 # "approved"/"lgtm"/"looks good" alternatives are unbounded substring
 # matches, so a rejecting response like "This change is not approved"
@@ -272,7 +284,9 @@ CODEX_APPROVAL_PATTERN='(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space
 # falling through to the documented unrecognized-format safe-fail (fresh
 # evidence from PR #1490 finding 3789722818). Checked BEFORE the positive
 # approval pattern in codex_response_is_approved so a negated approval
-# phrase can never be reported as approved.
+# phrase can never be reported as approved. This handles SPACE-separated
+# negations ("not approved"); CODEX_APPROVAL_PATTERN's \b boundaries above
+# separately handle CONCATENATED negation prefixes ("unapproved").
 CODEX_NEGATED_APPROVAL_PATTERN='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|never)[[:space:]]+(be[[:space:]]+)?(approved|lgtm|look(s|ing)?[[:space:]]+good)'
 
 codex_response_is_blocking() {
