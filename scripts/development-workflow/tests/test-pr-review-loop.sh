@@ -4406,6 +4406,56 @@ run_test "codex_long_root_review_blocker_past_cutoff_verdict" "VERDICT: NEEDS_RE
 rm -rf "$_codex_long_root_review_blocker_past_cutoff_mock_dir"
 unset _codex_long_root_review_blocker_past_cutoff_mock_dir _codex_long_root_review_blocker_past_cutoff_output _codex_long_root_review_blocker_past_cutoff_exit
 
+# Same class of bug as codex_long_root_review_blocker_past_cutoff, but one
+# layer further upstream: the reviews-endpoint jq QUERY itself used to slice
+# the body to 5000 chars (`.[0:5000]`) before the result ever reached
+# BOT_RESPONSE_FULL, so a submitted review with an approval phrase before
+# the cutoff and a blocking marker past it was misclassified as APPROVED
+# even though the shell-level classify-full/truncate-only-for-display fix
+# was already in place (fresh evidence from PR #1490 finding 3789679344).
+# Fixture: a single submitted review whose body is a clean "no blocking
+# issues found" phrase followed by 5000+ chars of padding and then a
+# blocking marker.
+_codex_long_review_blocker_past_query_cutoff_mock_dir="$(mktemp -d)"
+cat > "$_codex_long_review_blocker_past_query_cutoff_mock_dir/gh" <<'CODEX_LONG_REVIEW_BLOCKER_PAST_QUERY_CUTOFF_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":251,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"facade001234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("No blocking issues found.\n\n" + ("x" * 5200) + "\n\nBlocking issues: must fix the leak past the query-level cutoff.")}]'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_LONG_REVIEW_BLOCKER_PAST_QUERY_CUTOFF_GH
+chmod +x "$_codex_long_review_blocker_past_query_cutoff_mock_dir/gh"
+
+_codex_long_review_blocker_past_query_cutoff_output=""
+_codex_long_review_blocker_past_query_cutoff_exit=0
+PATH="$_codex_long_review_blocker_past_query_cutoff_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_long_review_blocker_past_query_cutoff_mock_dir/output.txt" 2>&1 || _codex_long_review_blocker_past_query_cutoff_exit=$?
+_codex_long_review_blocker_past_query_cutoff_output="$(cat "$_codex_long_review_blocker_past_query_cutoff_mock_dir/output.txt")"
+run_test "codex_long_review_blocker_past_query_cutoff_exit_needs_revision" "1" "$_codex_long_review_blocker_past_query_cutoff_exit"
+run_test "codex_long_review_blocker_past_query_cutoff_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_long_review_blocker_past_query_cutoff_output" | grep "^VERDICT:")"
+rm -rf "$_codex_long_review_blocker_past_query_cutoff_mock_dir"
+unset _codex_long_review_blocker_past_query_cutoff_mock_dir _codex_long_review_blocker_past_query_cutoff_output _codex_long_review_blocker_past_query_cutoff_exit
+
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
 #!/usr/bin/env bash

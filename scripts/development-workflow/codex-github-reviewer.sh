@@ -774,15 +774,19 @@ while true; do
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>"$REVIEW_STDERR" \
     | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:((.body // "") | .[0:5000])} end' \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // "")} end' \
     > "$REVIEW_TMPFILE" 2>"$REVIEW_STDERR"; then
     # Selects every review tied at the latest submitted_at timestamp (not
     # just one via sort_by | last) and picks the one requiring attention if
     # any do, so a blocking review is never discarded in favor of a clean
     # one that happens to share the same second-resolution timestamp
-    # (fresh evidence from PR #1490 finding 3788008326). Truncation happens
-    # inside jq (codepoint slice), not via a piped `head`, so a long body
-    # cannot trigger SIGPIPE on jq under `set -o pipefail`.
+    # (fresh evidence from PR #1490 finding 3788008326). The body is NOT
+    # sliced here — classification must see the complete review body (fresh
+    # evidence from PR #1490 finding 3789679344: slicing here loses content
+    # past the cutoff before BOT_RESPONSE_FULL is ever set, defeating the
+    # classify-full/truncate-only-for-display contract below). No SIGPIPE
+    # risk: jq redirects to a temp file (`>`), not to a piped consumer that
+    # could early-close its read end.
     codex_select_review_evidence "$REVIEW_TMPFILE"
     REVIEW_BODY="$SELECTED_REVIEW_BODY"
     REVIEW_TIME="$SELECTED_REVIEW_TIME"
@@ -1044,12 +1048,13 @@ ASYNC_REVIEW_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
   2>/dev/null \
   | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:((.body // "") | .[0:5000])} end' \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // "")} end' \
   > "$ASYNC_REVIEW_TMPFILE" 2>/dev/null; then
   # Selects every review tied at the latest timestamp and picks the one
   # requiring attention, if any (see rationale above the main-loop
-  # equivalent). Truncation happens inside jq (codepoint slice) to avoid
-  # SIGPIPE on jq under `set -o pipefail`.
+  # equivalent). The body is NOT sliced here — see the main-loop comment
+  # above for why classification needs the complete body (PR #1490 finding
+  # 3789679344) and why this is still SIGPIPE-safe.
   codex_select_review_evidence "$ASYNC_REVIEW_TMPFILE"
   ASYNC_REVIEW_BODY="$SELECTED_REVIEW_BODY"
   ASYNC_REVIEW_TIME="$SELECTED_REVIEW_TIME"
@@ -1143,12 +1148,13 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
     if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
       2>/dev/null \
       | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:((.body // "") | .[0:5000])} end' \
+          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // "")} end' \
       > "$ASYNC_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
       # Selects every review tied at the latest timestamp and picks the one
       # requiring attention, if any (see rationale above the main-loop
-      # equivalent). Truncation happens inside jq (codepoint slice) to
-      # avoid SIGPIPE on jq under `set -o pipefail`.
+      # equivalent). The body is NOT sliced here — see the main-loop
+      # comment above for why classification needs the complete body (PR
+      # #1490 finding 3789679344) and why this is still SIGPIPE-safe.
       codex_select_review_evidence "$ASYNC_FINAL_REVIEW_TMPFILE"
       ASYNC_FINAL_REVIEW_BODY="$SELECTED_REVIEW_BODY"
       ASYNC_FINAL_REVIEW_TIME="$SELECTED_REVIEW_TIME"
@@ -1279,12 +1285,13 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>/dev/null \
     | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:((.body // "") | .[0:5000])} end' \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // "")} end' \
     > "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
     # Selects every review tied at the latest timestamp and picks the one
     # requiring attention, if any (see rationale above the main-loop
-    # equivalent). Truncation happens inside jq (codepoint slice) to avoid
-    # SIGPIPE on jq under `set -o pipefail`.
+    # equivalent). The body is NOT sliced here — see the main-loop comment
+    # above for why classification needs the complete body (PR #1490
+    # finding 3789679344) and why this is still SIGPIPE-safe.
     codex_select_review_evidence "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE"
     ASYNC_REACTION_FINAL_REVIEW_BODY="$SELECTED_REVIEW_BODY"
     ASYNC_REACTION_FINAL_REVIEW_TIME="$SELECTED_REVIEW_TIME"

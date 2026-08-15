@@ -110,7 +110,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The classification helpers (`codex_response_is_blocking` and friends)
   now match via a here-string instead of a piped `printf`, since
   classifying the untruncated response means `grep -q`'s early-exit
-  behavior on a long input could otherwise SIGPIPE the writer.
+  behavior on a long input could otherwise SIGPIPE the writer; and the
+  four reviews-endpoint jq queries (main poll, async-arrival, async-final,
+  async-reaction-final) no longer slice a submitted review's body to
+  5000 characters inside the query itself — that upstream truncation
+  fed directly into the "full, untruncated response" classification path
+  described above, so a submitted review with an approval phrase before
+  the 5000-char query cutoff and a blocking marker after it was still
+  misclassified as APPROVED even with the shell-level fix in place (the
+  slice is dropped entirely; GitHub review bodies are capped well below
+  any size that would make this unsafe, and the query already writes to
+  a temp file rather than a piped consumer, so there is no SIGPIPE risk).
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
