@@ -753,6 +753,13 @@ while true; do
     "$REVIEW_BODY" "$REVIEW_TIME"
   BOT_RESPONSE="$COMBINED_BODY"
   BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
+  # Captured immediately after combine, before any intervening call could
+  # touch COMBINED_TIME, so presence can be checked below without relying
+  # on BOT_RESPONSE's body being non-empty (fresh evidence from PR #1490
+  # finding 3788164224: a bodyless-but-selected review must still enter
+  # verdict parsing and hit the unrecognized-format safe-fail instead of
+  # being treated as "no response at all").
+  BOT_RESPONSE_TIME="$COMBINED_TIME"
   # Truncate here (post-combine) — mirrors the prior per-source truncation but
   # applies uniformly regardless of which source won. Root-comment-sourced
   # bodies are not truncated at scan time (unlike review bodies, which are
@@ -779,7 +786,7 @@ while true; do
     echo "VERDICT: TIMED_OUT — failed to fetch Codex trigger reactions (treated as unavailable)"
     exit 2
   fi
-  if [ -n "$BOT_RESPONSE" ]; then
+  if [ -n "$BOT_RESPONSE_TIME" ]; then
     echo "INFO: bot response detected"
     codex_require_current_head
 
@@ -1002,12 +1009,15 @@ codex_combine_terminal_evidence "async-arrival bot response" \
   "$ASYNC_REVIEW_BODY" "$ASYNC_REVIEW_TIME"
 ASYNC_BOT_RESPONSE="$COMBINED_BODY"
 ASYNC_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
+# Captured before any intervening call could touch COMBINED_TIME (see
+# rationale above the main-loop equivalent).
+ASYNC_BOT_RESPONSE_TIME="$COMBINED_TIME"
 # `jq -Rs` slurps its entire stdin before producing output, avoiding
 # SIGPIPE on long root-comment-sourced bodies (see rationale above the
 # main-loop equivalent).
 ASYNC_BOT_RESPONSE=$(printf '%s' "$ASYNC_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
 
-if [ -n "$ASYNC_BOT_RESPONSE" ]; then
+if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
   echo "INFO: async-arrival bot response detected during grace period"
   codex_require_current_head
 
@@ -1094,12 +1104,15 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
       "$ASYNC_FINAL_REVIEW_BODY" "$ASYNC_FINAL_REVIEW_TIME"
     ASYNC_FINAL_BOT_RESPONSE="$COMBINED_BODY"
     ASYNC_FINAL_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
+    # Captured before any intervening call could touch COMBINED_TIME (see
+    # rationale above the main-loop equivalent).
+    ASYNC_FINAL_BOT_RESPONSE_TIME="$COMBINED_TIME"
     # `jq -Rs` slurps its entire stdin before producing output, avoiding
     # SIGPIPE on long root-comment-sourced bodies (see rationale above the
     # main-loop equivalent).
     ASYNC_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_FINAL_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
 
-    if [ -n "$ASYNC_FINAL_BOT_RESPONSE" ]; then
+    if [ -n "$ASYNC_FINAL_BOT_RESPONSE_TIME" ]; then
       echo "INFO: final async bot response detected after acknowledgement wait"
       codex_require_current_head
       # Blocking is checked first, ahead of usage-limit (see rationale
@@ -1224,12 +1237,15 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
     "$ASYNC_REACTION_FINAL_REVIEW_BODY" "$ASYNC_REACTION_FINAL_REVIEW_TIME"
   ASYNC_REACTION_FINAL_BOT_RESPONSE="$COMBINED_BODY"
   ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
+  # Captured before any intervening call could touch COMBINED_TIME (see
+  # rationale above the main-loop equivalent).
+  ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME="$COMBINED_TIME"
   # `jq -Rs` slurps its entire stdin before producing output, avoiding
   # SIGPIPE on long root-comment-sourced bodies (see rationale above the
   # main-loop equivalent).
   ASYNC_REACTION_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_REACTION_FINAL_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
 
-  if [ -n "$ASYNC_REACTION_FINAL_BOT_RESPONSE" ]; then
+  if [ -n "$ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME" ]; then
     codex_require_current_head
     # Blocking is checked first, ahead of usage-limit (see rationale above
     # the main-loop equivalent).

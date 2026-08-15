@@ -77,7 +77,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now checked via the review's timestamp (always set for a genuine review)
   instead of its body, so an empty body still participates in the
   not-a-clean-approval-first tie-break instead of silently losing to a
-  clean terminal comment.
+  clean terminal comment; and the main-loop and async verdict paths' entry
+  into verdict parsing is now gated on the winning evidence's timestamp
+  instead of its body content, so a bodyless-but-selected review reaches
+  the documented unrecognized-response safe-fail (`NEEDS_REVISION`)
+  instead of falling through to `TIMED_OUT`.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
