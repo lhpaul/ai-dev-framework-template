@@ -72,7 +72,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first tie-break as reviews; and blocking is now checked before
   usage-limit in every verdict path, so a blocking finding whose text
   happens to mention "usage limit" is no longer misrouted to an
-  unavailable verdict.
+  unavailable verdict; and a bodyless submitted review tied with a clean
+  SHA-pinned terminal comment is no longer treated as absent — presence is
+  now checked via the review's timestamp (always set for a genuine review)
+  instead of its body, so an empty body still participates in the
+  not-a-clean-approval-first tie-break instead of silently losing to a
+  clean terminal comment.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

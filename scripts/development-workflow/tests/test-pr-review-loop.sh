@@ -4001,6 +4001,59 @@ run_test "codex_blocking_text_mentions_usage_limit_verdict" "VERDICT: NEEDS_REVI
 rm -rf "$_codex_blocking_text_mentions_usage_limit_mock_dir"
 unset _codex_blocking_text_mentions_usage_limit_mock_dir _codex_blocking_text_mentions_usage_limit_output _codex_blocking_text_mentions_usage_limit_exit
 
+# Reproduces Codex finding on PR #1490 (P1, comment id 3788118857): when
+# the latest timestamp contains a bodyless submitted review tied with a
+# clean SHA-pinned terminal comment, codex_combine_terminal_evidence's
+# presence check `[ -n "$review_body" ]` treated the empty-bodied review as
+# absent, so the clean terminal comment won by default and the script
+# returned APPROVED — even though codex_response_requires_attention
+# correctly classifies an empty body as unrecognized/requires-attention.
+# Presence is now checked via review_time (guaranteed non-empty for any
+# selected review by the poll query's filter), not review_body. Fixture:
+# clean terminal comment, clean submitted review, and an empty submitted
+# review, all tied at the same timestamp -> expect NOT APPROVED (the empty
+# review participates in the tie-break and the script does not silently
+# approve).
+_codex_bodyless_tied_review_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_bodyless_tied_review_not_approved_mock_dir/gh" <<'CODEX_BODYLESS_TIED_REVIEW_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'c0ffee001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":200,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"c0ffee001234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"c0ffee001234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":""}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":310,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `c0ffee001234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_BODYLESS_TIED_REVIEW_NOT_APPROVED_GH
+chmod +x "$_codex_bodyless_tied_review_not_approved_mock_dir/gh"
+
+_codex_bodyless_tied_review_not_approved_output=""
+_codex_bodyless_tied_review_not_approved_exit=0
+PATH="$_codex_bodyless_tied_review_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_bodyless_tied_review_not_approved_mock_dir/output.txt" 2>&1 || _codex_bodyless_tied_review_not_approved_exit=$?
+_codex_bodyless_tied_review_not_approved_output="$(cat "$_codex_bodyless_tied_review_not_approved_mock_dir/output.txt")"
+run_test "codex_bodyless_tied_review_not_approved_verdict_not_approved" "0" \
+  "$(printf '%s\n' "$_codex_bodyless_tied_review_not_approved_output" | grep -c "^VERDICT: APPROVED$" || true)"
+rm -rf "$_codex_bodyless_tied_review_not_approved_mock_dir"
+unset _codex_bodyless_tied_review_not_approved_mock_dir _codex_bodyless_tied_review_not_approved_output _codex_bodyless_tied_review_not_approved_exit
+
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
 #!/usr/bin/env bash

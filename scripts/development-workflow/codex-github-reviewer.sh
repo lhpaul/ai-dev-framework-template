@@ -453,7 +453,15 @@ codex_combine_terminal_evidence() {
     echo "INFO: $label detected via SHA-pinned PR comment"
   fi
 
-  if [ -n "$review_body" ]; then
+  # Presence is checked via review_time, not review_body: a genuine
+  # selected review is guaranteed a non-empty submitted_at by the
+  # review-poll jq queries' filter, but its body CAN legitimately be
+  # empty. Checking review_body would treat an empty-bodied tied review
+  # as absent, letting a clean terminal comment win the tie-break by
+  # default even though codex_response_requires_attention correctly
+  # classifies an empty body as an unrecognized response requiring
+  # attention (fresh evidence from PR #1490 finding 3788118857).
+  if [ -n "$review_time" ]; then
     if [ "$COMBINED_SOURCE" = "review" ]; then
       if codex_select_terminal_evidence "$COMBINED_BODY" "$COMBINED_TIME" "$review_body" "$review_time"; then
         COMBINED_BODY="$review_body"
