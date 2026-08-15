@@ -4889,6 +4889,104 @@ run_test "codex_negation_prior_sentence_does_not_leak_root_comment_verdict" "VER
 rm -rf "$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir"
 unset _codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir _codex_negation_prior_sentence_does_not_leak_root_comment_output _codex_negation_prior_sentence_does_not_leak_root_comment_exit
 
+# Two more negation gaps surfaced once the pattern was unbounded: (a) the
+# target alternation had "approved" but not the bare verb "approve", and
+# (b) the pattern only checked negation-THEN-approval order, so an
+# approval phrase appearing BEFORE the negation in the same sentence
+# ("This looks good at first glance, but I cannot approve this change")
+# wasn't caught (fresh evidence from PR #1490 finding 3790023141). Both
+# alternation orders are now checked, and the target list includes the
+# bare verb.
+_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir/gh" <<'CODEX_NEGATION_REVERSE_ORDER_CANNOT_APPROVE_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade00dd1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":272,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":273,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but I cannot approve this change.\\n\\n**Reviewed commit:** `facade00dd`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NEGATION_REVERSE_ORDER_CANNOT_APPROVE_ROOT_COMMENT_GH
+chmod +x "$_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir/gh"
+
+_codex_negation_reverse_order_cannot_approve_root_comment_output=""
+_codex_negation_reverse_order_cannot_approve_root_comment_exit=0
+PATH="$_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir/output.txt" 2>&1 || _codex_negation_reverse_order_cannot_approve_root_comment_exit=$?
+_codex_negation_reverse_order_cannot_approve_root_comment_output="$(cat "$_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir/output.txt")"
+run_test "codex_negation_reverse_order_cannot_approve_root_comment_exit_needs_revision" "1" "$_codex_negation_reverse_order_cannot_approve_root_comment_exit"
+run_test "codex_negation_reverse_order_cannot_approve_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_negation_reverse_order_cannot_approve_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir"
+unset _codex_negation_reverse_order_cannot_approve_root_comment_mock_dir _codex_negation_reverse_order_cannot_approve_root_comment_output _codex_negation_reverse_order_cannot_approve_root_comment_exit
+
+# codex_scan_comment_evidence tracked COMMENT_LATEST_BODY without
+# recording whether it was the SAME comment as COMMENT_TERMINAL_BODY. When
+# the only comment is a clean SHA-pinned terminal review whose OWN finding
+# text happens to quote the environment-setup message (e.g. flagging that
+# docs accurately quote it), codex_combine_terminal_evidence's ancillary
+# environment-error/usage-limit override re-classified that SAME terminal
+# comment as if it were a genuinely separate ancillary setup-failure
+# notice, downgrading APPROVED to codex-github-environment-missing (fresh
+# evidence from PR #1490 finding 3790023143). COMMENT_LATEST_IS_TERMINAL
+# now gates that override so it never fires on the terminal comment itself.
+_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir="$(mktemp -d)"
+cat > "$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir/gh" <<'CODEX_TERMINAL_COMMENT_QUOTES_ENV_ERROR_NOT_ANCILLARY_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade00ee1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":274,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":275,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. The docs accurately quote: To use Codex here, create an environment for this repo.\\n\\n**Reviewed commit:** `facade00ee`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TERMINAL_COMMENT_QUOTES_ENV_ERROR_NOT_ANCILLARY_GH
+chmod +x "$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir/gh"
+
+_codex_terminal_comment_quotes_env_error_not_ancillary_output=""
+_codex_terminal_comment_quotes_env_error_not_ancillary_exit=0
+PATH="$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir/output.txt" 2>&1 || _codex_terminal_comment_quotes_env_error_not_ancillary_exit=$?
+_codex_terminal_comment_quotes_env_error_not_ancillary_output="$(cat "$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir/output.txt")"
+run_test "codex_terminal_comment_quotes_env_error_not_ancillary_exit_clean" "0" "$_codex_terminal_comment_quotes_env_error_not_ancillary_exit"
+run_test "codex_terminal_comment_quotes_env_error_not_ancillary_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_terminal_comment_quotes_env_error_not_ancillary_output" | grep "^VERDICT:")"
+rm -rf "$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir"
+unset _codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir _codex_terminal_comment_quotes_env_error_not_ancillary_output _codex_terminal_comment_quotes_env_error_not_ancillary_exit
+
 # codex_response_priority ranked an ancillary environment-setup-error
 # comment at the same "unrecognized format" tier (2) as a genuine but
 # unrecognized-format submitted review, instead of at the lower

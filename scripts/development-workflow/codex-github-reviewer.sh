@@ -325,7 +325,20 @@ CODEX_APPROVAL_PATTERN='(\bapproved\b|\blgtm\b|\blooks[[:space:]]+good\b|didn.t 
 # phrase from being treated as negated by an EARLIER sentence's negation
 # word (e.g. "The variable name is not great. No blocking issues found."
 # still classifies as approved).
-CODEX_NEGATED_APPROVAL_PATTERN='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|never)[^.!?]*(approved|lgtm|look(s|ing)?[[:space:]]+good|no[[:space:]]+blocking[[:space:]]+issues?|didn.t find[[:space:]]+any major[[:space:]]+issues)'
+#
+# Two more gaps surfaced once the pattern was unbounded (PR #1490 finding
+# 3790023141): (a) the target alternation had "approved" but not the bare
+# verb "approve", so "I cannot approve this change" wasn't recognized;
+# (b) the pattern only checked negation-THEN-approval order, so an
+# approval phrase appearing BEFORE the negation in the same sentence
+# ("This looks good at first glance, but I cannot approve this change")
+# wasn't caught, since "looks good" preceded "cannot" rather than
+# following it. Both alternation orders are now checked (approval-word
+# ... negation-word, in addition to negation-word ... approval-word), and
+# the target list includes the bare verb.
+CODEX_NEGATED_APPROVAL_TARGET_WORDS='(approve[ds]?|lgtm|look(s|ing)?[[:space:]]+good|no[[:space:]]+blocking[[:space:]]+issues?|didn.t find[[:space:]]+any major[[:space:]]+issues)'
+CODEX_NEGATION_WORDS='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|never)'
+CODEX_NEGATED_APPROVAL_PATTERN="(${CODEX_NEGATION_WORDS}[^.!?]*${CODEX_NEGATED_APPROVAL_TARGET_WORDS}|${CODEX_NEGATED_APPROVAL_TARGET_WORDS}[^.!?]*${CODEX_NEGATION_WORDS})"
 
 codex_response_is_blocking() {
   local body="$1"
@@ -450,13 +463,24 @@ codex_select_terminal_evidence() {
 # PR #1490 finding 3788078189).
 #
 # Sets: COMMENT_TERMINAL_BODY, COMMENT_TERMINAL_TIME, COMMENT_LATEST_BODY,
-# COMMENT_LATEST_TIME.
+# COMMENT_LATEST_TIME, COMMENT_LATEST_IS_TERMINAL.
 codex_scan_comment_evidence() {
   local comments_file="$1"
   COMMENT_TERMINAL_BODY=""
   COMMENT_TERMINAL_TIME=""
   COMMENT_LATEST_BODY=""
   COMMENT_LATEST_TIME=""
+  # Tracks whether the comment currently held in COMMENT_LATEST_BODY is
+  # ITSELF the SHA-pinned terminal comment (as opposed to a genuinely
+  # separate ancillary comment). codex_combine_terminal_evidence uses this
+  # to skip re-classifying a terminal comment as an ancillary
+  # environment-error/usage-limit notice just because its own finding
+  # text happens to quote that wording (fresh evidence from PR #1490
+  # finding 3790023143 — a case not caught by the existing "terminal
+  # comment never routed through the environment-error classifier"
+  # protection, since that protection only covers the terminal-vs-review
+  # combine path, not this separate ancillary-override check).
+  COMMENT_LATEST_IS_TERMINAL=0
   local comment_latest_is_actionable=0
   local line created_at body is_actionable is_terminal
   while IFS= read -r line; do
@@ -474,6 +498,7 @@ codex_scan_comment_evidence() {
     if [ "$comment_latest_is_actionable" -eq 0 ] || [ "$is_actionable" -eq 1 ]; then
       COMMENT_LATEST_BODY="$body"
       COMMENT_LATEST_TIME="$created_at"
+      COMMENT_LATEST_IS_TERMINAL="$is_terminal"
       comment_latest_is_actionable="$is_actionable"
     fi
     if [ "$is_terminal" -eq 1 ]; then
@@ -558,11 +583,16 @@ codex_select_review_evidence() {
 #
 # Sets: COMBINED_BODY, COMBINED_TIME, COMBINED_SOURCE ("review", "comment",
 # or "" if no evidence at all). LABEL is used only for INFO logging.
+# COMMENT_LATEST_IS_TERMINAL (8th arg) gates the ancillary-override check
+# below: it must never fire when the "latest ancillary comment" IS
+# actually the terminal comment itself, not a genuinely separate ancillary
+# one (see the comment above that check).
 codex_combine_terminal_evidence() {
   local label="$1"
   local comment_terminal_body="$2" comment_terminal_time="$3"
   local comment_latest_body="$4" comment_latest_time="$5"
   local review_body="$6" review_time="$7"
+  local comment_latest_is_terminal="$8"
 
   COMBINED_BODY=""
   COMBINED_TIME=""
@@ -609,7 +639,23 @@ codex_combine_terminal_evidence() {
     COMBINED_SOURCE="comment"
   fi
 
-  if [ -n "$comment_latest_body" ] && { codex_response_is_environment_error "$comment_latest_body" || codex_response_is_usage_limit "$comment_latest_body"; }; then
+  # comment_latest_is_terminal must be 0 (a genuinely separate ancillary
+  # comment, not the terminal comment itself) before applying this
+  # override: when a clean SHA-pinned terminal comment/review's OWN
+  # finding text happens to quote or discuss environment-error/usage-limit
+  # wording (e.g. reviewing this file's own detection code, or flagging
+  # stale docs that describe the setup message), codex_scan_comment_evidence
+  # can end up tracking that SAME terminal comment as COMMENT_LATEST_BODY
+  # (there being no other, genuinely ancillary comment). Without this
+  # guard, re-running the environment-error/usage-limit classifier on that
+  # text here reclassified a clean terminal review as an ancillary setup
+  # failure and downgraded APPROVED to codex-github-environment-missing —
+  # a case the "terminal comment never routed through the environment-error
+  # classifier" guarantee elsewhere in this function did NOT cover, since
+  # that guarantee only applies to the terminal-vs-review combine path
+  # above, not this separate ancillary-override check (fresh evidence from
+  # PR #1490 finding 3790023143).
+  if [ "$comment_latest_is_terminal" -eq 0 ] && [ -n "$comment_latest_body" ] && { codex_response_is_environment_error "$comment_latest_body" || codex_response_is_usage_limit "$comment_latest_body"; }; then
     if [ -n "$COMBINED_SOURCE" ] && codex_response_is_blocking "$COMBINED_BODY"; then
       # Blocking terminal/review evidence always wins outright — it is
       # never discarded by an environment-setup error or a usage-limit
@@ -876,7 +922,7 @@ while true; do
   codex_combine_terminal_evidence "bot response" \
     "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
     "$COMMENT_LATEST_BODY" "$COMMENT_LATEST_TIME" \
-    "$REVIEW_BODY" "$REVIEW_TIME"
+    "$REVIEW_BODY" "$REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL"
   BOT_RESPONSE="$COMBINED_BODY"
   BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
   # Captured immediately after combine, before any intervening call could
@@ -1142,7 +1188,7 @@ rm -f "$ASYNC_REVIEW_TMPFILE"
 codex_combine_terminal_evidence "async-arrival bot response" \
   "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
   "$COMMENT_LATEST_BODY" "$COMMENT_LATEST_TIME" \
-  "$ASYNC_REVIEW_BODY" "$ASYNC_REVIEW_TIME"
+  "$ASYNC_REVIEW_BODY" "$ASYNC_REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL"
 ASYNC_BOT_RESPONSE="$COMBINED_BODY"
 ASYNC_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
 # Captured before any intervening call could touch COMBINED_TIME (see
@@ -1242,7 +1288,7 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
     codex_combine_terminal_evidence "final async bot response" \
       "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
       "$COMMENT_LATEST_BODY" "$COMMENT_LATEST_TIME" \
-      "$ASYNC_FINAL_REVIEW_BODY" "$ASYNC_FINAL_REVIEW_TIME"
+      "$ASYNC_FINAL_REVIEW_BODY" "$ASYNC_FINAL_REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL"
     ASYNC_FINAL_BOT_RESPONSE="$COMBINED_BODY"
     ASYNC_FINAL_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
     # Captured before any intervening call could touch COMBINED_TIME (see
@@ -1379,7 +1425,7 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
   codex_combine_terminal_evidence "final async reaction bot response" \
     "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
     "$COMMENT_LATEST_BODY" "$COMMENT_LATEST_TIME" \
-    "$ASYNC_REACTION_FINAL_REVIEW_BODY" "$ASYNC_REACTION_FINAL_REVIEW_TIME"
+    "$ASYNC_REACTION_FINAL_REVIEW_BODY" "$ASYNC_REACTION_FINAL_REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL"
   ASYNC_REACTION_FINAL_BOT_RESPONSE="$COMBINED_BODY"
   ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
   # Captured before any intervening call could touch COMBINED_TIME (see

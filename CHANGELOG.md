@@ -190,7 +190,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   earlier sentence's negation word. Also corrected the same *retention*
   vs *priority* rule ambiguity as the integrations-doc fix above in
   `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`,
-  which had not yet been updated when the integrations doc was fixed.
+  which had not yet been updated when the integrations doc was fixed. Two
+  more negation gaps surfaced once the pattern was unbounded: the target
+  alternation had "approved" but not the bare verb "approve", and the
+  pattern only checked negation-THEN-approval order, so an approval
+  phrase appearing BEFORE the negation in the same sentence (e.g. "This
+  looks good at first glance, but I cannot approve this change") wasn't
+  caught. Both alternation orders are now checked, and the target list
+  includes the bare verb. Separately, `codex_scan_comment_evidence` now
+  tracks `COMMENT_LATEST_IS_TERMINAL` (whether the "latest ancillary
+  comment" is actually the SHA-pinned terminal comment itself, not a
+  genuinely separate one): when a clean terminal review's own finding
+  text happened to quote the environment-setup message or usage-limit
+  wording, `codex_combine_terminal_evidence`'s ancillary-override check
+  re-classified that SAME terminal comment as a genuinely separate
+  ancillary setup failure, downgrading APPROVED to
+  `codex-github-environment-missing` — a case the existing "terminal
+  comment never routed through the environment-error classifier"
+  guarantee did not cover, since it only applied to the terminal-vs-review
+  combine path, not this separate ancillary-override check.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
