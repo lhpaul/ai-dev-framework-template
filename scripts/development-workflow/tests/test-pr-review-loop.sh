@@ -4701,6 +4701,102 @@ run_test "codex_usage_limit_topic_mention_not_quota_verdict" "VERDICT: APPROVED"
 rm -rf "$_codex_usage_limit_topic_mention_not_quota_mock_dir"
 unset _codex_usage_limit_topic_mention_not_quota_mock_dir _codex_usage_limit_topic_mention_not_quota_output _codex_usage_limit_topic_mention_not_quota_exit
 
+# CODEX_NEGATED_APPROVAL_PATTERN's target alternation only covered
+# "approved"/"lgtm"/"looks good", not "no blocking issues"/"didn't find
+# any major issues" — those are approval SIGNALS in CODEX_APPROVAL_PATTERN
+# too, but were left unguarded. A hedged/uncertain response like "I
+# cannot confirm there are no blocking issues" still matched "no blocking
+# issues" and was classified APPROVED instead of the documented
+# unrecognized-format safe-fail (fresh evidence from PR #1490 finding
+# 3789958775).
+_codex_negated_no_blocking_issues_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_negated_no_blocking_issues_root_comment_mock_dir/gh" <<'CODEX_NEGATED_NO_BLOCKING_ISSUES_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade00911234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":264,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":265,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"I cannot confirm there are no blocking issues. Needs deeper review.\\n\\n**Reviewed commit:** `facade0091`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NEGATED_NO_BLOCKING_ISSUES_ROOT_COMMENT_GH
+chmod +x "$_codex_negated_no_blocking_issues_root_comment_mock_dir/gh"
+
+_codex_negated_no_blocking_issues_root_comment_output=""
+_codex_negated_no_blocking_issues_root_comment_exit=0
+PATH="$_codex_negated_no_blocking_issues_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_negated_no_blocking_issues_root_comment_mock_dir/output.txt" 2>&1 || _codex_negated_no_blocking_issues_root_comment_exit=$?
+_codex_negated_no_blocking_issues_root_comment_output="$(cat "$_codex_negated_no_blocking_issues_root_comment_mock_dir/output.txt")"
+run_test "codex_negated_no_blocking_issues_root_comment_exit_needs_revision" "1" "$_codex_negated_no_blocking_issues_root_comment_exit"
+run_test "codex_negated_no_blocking_issues_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_negated_no_blocking_issues_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_negated_no_blocking_issues_root_comment_mock_dir"
+unset _codex_negated_no_blocking_issues_root_comment_mock_dir _codex_negated_no_blocking_issues_root_comment_output _codex_negated_no_blocking_issues_root_comment_exit
+
+# codex_response_is_usage_limit's second alternative ("codex usage limits
+# for code reviews") had the exact same unguarded-mention gap as the
+# third alternative fixed just above — missed in that first pass since
+# only the third alternative was narrowed. A clean review merely
+# discussing the phrase in the context of docs (e.g. "No blocking issues
+# found. The docs correctly explain Codex usage limits for code
+# reviews.") was itself misclassified as a usage-limit notice (fresh
+# evidence from PR #1490 finding 3789958776).
+_codex_usage_limit_code_reviews_phrase_mention_mock_dir="$(mktemp -d)"
+cat > "$_codex_usage_limit_code_reviews_phrase_mention_mock_dir/gh" <<'CODEX_USAGE_LIMIT_CODE_REVIEWS_PHRASE_MENTION_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade00aa1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":266,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":267,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. The docs correctly explain Codex usage limits for code reviews.\\n\\n**Reviewed commit:** `facade00aa`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_USAGE_LIMIT_CODE_REVIEWS_PHRASE_MENTION_GH
+chmod +x "$_codex_usage_limit_code_reviews_phrase_mention_mock_dir/gh"
+
+_codex_usage_limit_code_reviews_phrase_mention_output=""
+_codex_usage_limit_code_reviews_phrase_mention_exit=0
+PATH="$_codex_usage_limit_code_reviews_phrase_mention_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_usage_limit_code_reviews_phrase_mention_mock_dir/output.txt" 2>&1 || _codex_usage_limit_code_reviews_phrase_mention_exit=$?
+_codex_usage_limit_code_reviews_phrase_mention_output="$(cat "$_codex_usage_limit_code_reviews_phrase_mention_mock_dir/output.txt")"
+run_test "codex_usage_limit_code_reviews_phrase_mention_exit_clean" "0" "$_codex_usage_limit_code_reviews_phrase_mention_exit"
+run_test "codex_usage_limit_code_reviews_phrase_mention_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_usage_limit_code_reviews_phrase_mention_output" | grep "^VERDICT:")"
+rm -rf "$_codex_usage_limit_code_reviews_phrase_mention_mock_dir"
+unset _codex_usage_limit_code_reviews_phrase_mention_mock_dir _codex_usage_limit_code_reviews_phrase_mention_output _codex_usage_limit_code_reviews_phrase_mention_exit
+
 # codex_response_priority ranked an ancillary environment-setup-error
 # comment at the same "unrecognized format" tier (2) as a genuine but
 # unrecognized-format submitted review, instead of at the lower

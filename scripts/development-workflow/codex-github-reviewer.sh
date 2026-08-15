@@ -252,8 +252,16 @@ codex_response_is_usage_limit() {
   # itself misclassified as a usage-limit notice (fresh evidence from PR
   # #1490 finding 3789928781). It now requires an exhaustion/unavailability
   # word directly after the noun, mirroring the structure already used by
-  # the fourth alternative ("capacity exhausted/unavailable/limited").
-  grep -qiE "(reached[[:space:]]+your[[:space:]]+codex[[:space:]]+usage[[:space:]]+limits?|codex[[:space:]]+usage[[:space:]]+limits?[[:space:]]+for[[:space:]]+code[[:space:]]+reviews?|codex[[:space:]]+(github[[:space:]]+app[[:space:]]+)?(review[[:space:]]+)?(usage[[:space:]]+limit|quota|capacity)[[:space:]]+(reached|exceeded|exhausted|hit|unavailable|limited)|codex[[:space:]]+review[[:space:]]+capacity[[:space:]]+(exhausted|unavailable|limited))" <<< "$response"
+  # the fourth alternative ("capacity exhausted/unavailable/limited"). The
+  # second alternative ("codex usage limits for code reviews") had the
+  # exact same unguarded-mention gap — e.g. "No blocking issues found. The
+  # docs correctly explain Codex usage limits for code reviews." — missed
+  # in the first pass since only the third alternative was narrowed then;
+  # it now requires an exhaustion word after "code reviews" too (fresh
+  # evidence from PR #1490 finding 3789958776, a followup to 3789928781).
+  # The real "reached your ... limits for code reviews" phrasing remains
+  # covered by the first alternative regardless of this narrowing.
+  grep -qiE "(reached[[:space:]]+your[[:space:]]+codex[[:space:]]+usage[[:space:]]+limits?|codex[[:space:]]+usage[[:space:]]+limits?[[:space:]]+for[[:space:]]+code[[:space:]]+reviews?[[:space:]]+(reached|exceeded|exhausted|hit|unavailable|limited)|codex[[:space:]]+(github[[:space:]]+app[[:space:]]+)?(review[[:space:]]+)?(usage[[:space:]]+limit|quota|capacity)[[:space:]]+(reached|exceeded|exhausted|hit|unavailable|limited)|codex[[:space:]]+review[[:space:]]+capacity[[:space:]]+(exhausted|unavailable|limited))" <<< "$response"
 }
 
 codex_response_is_environment_error() {
@@ -312,8 +320,17 @@ CODEX_APPROVAL_PATTERN='(\bapproved\b|\blgtm\b|\blooks[[:space:]]+good\b|didn.t 
 # Codex found the next one; allowing a bounded window of filler words
 # generalizes past this specific class of gap instead of special-casing
 # it again (fresh evidence from PR #1490 finding 3789904716, a followup to
-# 3789878264/3789851555/3789722818).
-CODEX_NEGATED_APPROVAL_PATTERN='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|never)[*_~]{0,3}([[:space:]]+[*_~]{0,3}[[:alpha:]'"'"'-]{1,20}[*_~]{0,3}){0,3}[[:space:]]+[*_~]{0,3}(be[[:space:]]+)?[*_~]{0,3}(approved|lgtm|look(s|ing)?[[:space:]]+good)'
+# 3789878264/3789851555/3789722818). The target alternation now also
+# covers "no blocking issues"/"didn't find any major issues", not just
+# "approved"/"lgtm"/"looks good": those are approval SIGNALS in
+# CODEX_APPROVAL_PATTERN too, but were left unguarded by this negation
+# check, so a hedged/uncertain response like "I cannot confirm there are
+# no blocking issues" still matched CODEX_APPROVAL_PATTERN's "no blocking
+# issues" alternative and was classified APPROVED (fresh evidence from PR
+# #1490 finding 3789958775). The existing filler-word tolerance already
+# generalizes to this case ("cannot" + "confirm there are" (3 filler
+# words) + "no blocking issues") without further changes.
+CODEX_NEGATED_APPROVAL_PATTERN='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|never)[*_~]{0,3}([[:space:]]+[*_~]{0,3}[[:alpha:]'"'"'-]{1,20}[*_~]{0,3}){0,3}[[:space:]]+[*_~]{0,3}(be[[:space:]]+)?[*_~]{0,3}(approved|lgtm|look(s|ing)?[[:space:]]+good|no[[:space:]]+blocking[[:space:]]+issues?|didn.t find[[:space:]]+any major[[:space:]]+issues)'
 
 codex_response_is_blocking() {
   local body="$1"

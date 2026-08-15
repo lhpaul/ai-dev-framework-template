@@ -162,7 +162,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an environment-setup error — it does not: unlike an environment-setup
   error, a usage-limit notice terminates the invocation immediately upon
   detection rather than being retained through the rest of the poll
-  window for a later, strictly newer review to potentially supersede.
+  window for a later, strictly newer review to potentially supersede;
+  `CODEX_NEGATED_APPROVAL_PATTERN`'s target alternation now also covers
+  "no blocking issues"/"didn't find any major issues", not just
+  "approved"/"lgtm"/"looks good" — those are approval signals in
+  `CODEX_APPROVAL_PATTERN` too, but were left unguarded, so a
+  hedged/uncertain response like "I cannot confirm there are no blocking
+  issues" still matched "no blocking issues" and was classified APPROVED;
+  and `codex_response_is_usage_limit`'s second alternative ("codex usage
+  limits for code reviews") had the exact same unguarded-mention gap as
+  the third alternative fixed in the same round — missed in that first
+  pass since only the third alternative was narrowed then — so a clean
+  review discussing the phrase in a docs context was itself misclassified
+  as a usage-limit notice; it now requires an exhaustion word after "code
+  reviews" too.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
