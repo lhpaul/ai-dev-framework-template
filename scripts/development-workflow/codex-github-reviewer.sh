@@ -232,21 +232,31 @@ codex_inline_review_comment_count_since() {
   rm -f "$review_comment_tmpfile"
 }
 
+# All classification helpers below match against the response via a
+# here-string (`<<<`), not a piped `printf`. A here-string is written to a
+# temp file/buffer by the shell BEFORE the command starts reading, so a
+# `grep -q` match that closes its input early (as soon as it finds a
+# match, per POSIX/GNU semantics) can never cause the writer side to
+# receive SIGPIPE — unlike `printf | grep -q`, where an early match on a
+# response large enough to require multiple pipe writes can SIGPIPE the
+# still-writing printf. This matters once classification runs on the
+# FULL, untruncated response (see BOT_RESPONSE_FULL below) rather than a
+# pre-truncated copy.
 codex_response_is_usage_limit() {
   local response="$1"
-  printf '%s\n' "$response" | grep -qiE "(reached[[:space:]]+your[[:space:]]+codex[[:space:]]+usage[[:space:]]+limits?|codex[[:space:]]+usage[[:space:]]+limits?[[:space:]]+for[[:space:]]+code[[:space:]]+reviews?|codex[[:space:]]+(github[[:space:]]+app[[:space:]]+)?(review[[:space:]]+)?(usage[[:space:]]+limit|quota|capacity)|codex[[:space:]]+review[[:space:]]+capacity[[:space:]]+(exhausted|unavailable|limited))"
+  grep -qiE "(reached[[:space:]]+your[[:space:]]+codex[[:space:]]+usage[[:space:]]+limits?|codex[[:space:]]+usage[[:space:]]+limits?[[:space:]]+for[[:space:]]+code[[:space:]]+reviews?|codex[[:space:]]+(github[[:space:]]+app[[:space:]]+)?(review[[:space:]]+)?(usage[[:space:]]+limit|quota|capacity)|codex[[:space:]]+review[[:space:]]+capacity[[:space:]]+(exhausted|unavailable|limited))" <<< "$response"
 }
 
 codex_response_is_environment_error() {
   local response="$1"
-  printf '%s\n' "$response" | grep -qiE "to[[:space:]]+use[[:space:]]+codex[[:space:]]+here,[[:space:]]+create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo"
+  grep -qiE "to[[:space:]]+use[[:space:]]+codex[[:space:]]+here,[[:space:]]+create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo" <<< "$response"
 }
 
 codex_response_reviews_current_head() {
   local response="$1"
   local reviewed_sha
-  reviewed_sha=$(printf '%s\n' "$response" | sed -n 's/.*Reviewed commit:[^`]*`\([0-9a-fA-F]\{7,40\}\)`.*/\1/p' | tail -n 1)
-  [ -n "$reviewed_sha" ] && { printf '%s\n' "$CURRENT_SHA" | grep -qi "^$reviewed_sha" || printf '%s\n' "$reviewed_sha" | grep -qi "^$CURRENT_SHA"; }
+  reviewed_sha=$(sed -n 's/.*Reviewed commit:[^`]*`\([0-9a-fA-F]\{7,40\}\)`.*/\1/p' <<< "$response" | tail -n 1)
+  [ -n "$reviewed_sha" ] && { grep -qi "^$reviewed_sha" <<< "$CURRENT_SHA" || grep -qi "^$CURRENT_SHA" <<< "$reviewed_sha"; }
 }
 
 # Blocking/approval marker patterns, centralized so every classification site
@@ -258,12 +268,12 @@ CODEX_APPROVAL_PATTERN='(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space
 
 codex_response_is_blocking() {
   local body="$1"
-  printf '%s\n' "$body" | grep -qiE "$CODEX_BLOCKING_PATTERN"
+  grep -qiE "$CODEX_BLOCKING_PATTERN" <<< "$body"
 }
 
 codex_response_is_approved() {
   local body="$1"
-  printf '%s\n' "$body" | grep -qiE "$CODEX_APPROVAL_PATTERN"
+  grep -qiE "$CODEX_APPROVAL_PATTERN" <<< "$body"
 }
 
 # Ranks a response into one of four priority tiers, highest wins on a
@@ -798,6 +808,15 @@ while true; do
   # verdict parsing and hit the unrecognized-format safe-fail instead of
   # being treated as "no response at all").
   BOT_RESPONSE_TIME="$COMBINED_TIME"
+  # BOT_RESPONSE_FULL (untruncated) is what every classifier below matches
+  # against — a truncated copy could cut off a blocking marker that
+  # appears after the cutoff in a long root comment, letting the response
+  # fall through to an approval or unavailable verdict while a real
+  # finding sits just past the cut point (fresh evidence from PR #1490
+  # finding 3789634709). BOT_RESPONSE itself is truncated below and used
+  # ONLY for the "---BEGIN/END BOT RESPONSE---" display in the script's
+  # own output, never for classification.
+  BOT_RESPONSE_FULL="$BOT_RESPONSE"
   # Truncate here (post-combine) — mirrors the prior per-source truncation but
   # applies uniformly regardless of which source won. Root-comment-sourced
   # bodies are not truncated at scan time (unlike review bodies, which are
@@ -860,7 +879,7 @@ while true; do
     # "no blocking issues". This avoids false positives without line-level filtering
     # (which would risk missing a genuine marker on the same line as a negation).
 
-    if [ "$BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$BOT_RESPONSE"; then
+    if [ "$BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$BOT_RESPONSE_FULL"; then
       # Blocking is checked first, ahead of usage-limit: a terminal/review
       # finding whose text happens to mention "usage limit" as part of an
       # actionable finding (e.g. flagging stale docs that describe it) must
@@ -871,15 +890,15 @@ while true; do
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 1
-    elif codex_response_is_usage_limit "$BOT_RESPONSE"; then
+    elif codex_response_is_usage_limit "$BOT_RESPONSE_FULL"; then
       codex_return_usage_limit "$BOT_RESPONSE"
-    elif [ "$BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$BOT_RESPONSE"; then
+    elif [ "$BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$BOT_RESPONSE_FULL"; then
       SEEN_ENVIRONMENT_ERROR=1
       SEEN_ENVIRONMENT_RESPONSE="$BOT_RESPONSE"
       SEEN_ENVIRONMENT_TIME="$COMBINED_TIME"
       echo "INFO: Codex environment setup response detected; waiting for fresh current-head review evidence"
       continue
-    elif [ "$BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$BOT_RESPONSE"; then
+    elif [ "$BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$BOT_RESPONSE_FULL"; then
       if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ] && ! [ "$COMBINED_TIME" \> "$SEEN_ENVIRONMENT_TIME" ]; then
         codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
       fi
@@ -888,7 +907,7 @@ while true; do
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 0
-    elif echo "$BOT_RESPONSE" | grep -qi "If Codex has suggestions, it will comment; otherwise it will react with"; then
+    elif grep -qi "If Codex has suggestions, it will comment; otherwise it will react with" <<< "$BOT_RESPONSE_FULL"; then
       echo "INFO: Codex acknowledgement detected; waiting for current-head review or inline review comments"
       continue
     elif [ "$BOT_RESPONSE_SOURCE" = "comment" ]; then
@@ -1050,6 +1069,10 @@ ASYNC_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
 # Captured before any intervening call could touch COMBINED_TIME (see
 # rationale above the main-loop equivalent).
 ASYNC_BOT_RESPONSE_TIME="$COMBINED_TIME"
+# Untruncated copy used for classification below (see rationale above the
+# main-loop equivalent — a truncated copy could cut off a blocking marker
+# in a long root comment).
+ASYNC_BOT_RESPONSE_FULL="$ASYNC_BOT_RESPONSE"
 # `jq -Rs` slurps its entire stdin before producing output, avoiding
 # SIGPIPE on long root-comment-sourced bodies (see rationale above the
 # main-loop equivalent).
@@ -1062,20 +1085,20 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
   # Apply the same three-path verdict parsing as the main poll loop.
   # Blocking is checked first, ahead of usage-limit (see rationale above
   # the main-loop equivalent).
-  if [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_BOT_RESPONSE"; then
+  if [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_BOT_RESPONSE_FULL"; then
     echo "VERDICT: NEEDS_REVISION"
     echo "---BEGIN BOT RESPONSE---"
     echo "$ASYNC_BOT_RESPONSE"
     echo "---END BOT RESPONSE---"
     exit 1
-  elif codex_response_is_usage_limit "$ASYNC_BOT_RESPONSE"; then
+  elif codex_response_is_usage_limit "$ASYNC_BOT_RESPONSE_FULL"; then
     codex_return_usage_limit "$ASYNC_BOT_RESPONSE"
-  elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_BOT_RESPONSE"; then
+  elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_BOT_RESPONSE_FULL"; then
     SEEN_ENVIRONMENT_ERROR=1
     SEEN_ENVIRONMENT_RESPONSE="$ASYNC_BOT_RESPONSE"
     SEEN_ENVIRONMENT_TIME="$COMBINED_TIME"
     echo "INFO: async-arrival Codex environment setup response detected without fresh review evidence"
-  elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_BOT_RESPONSE"; then
+  elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_BOT_RESPONSE_FULL"; then
     if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ] && ! [ "$COMBINED_TIME" \> "$SEEN_ENVIRONMENT_TIME" ]; then
       codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
     fi
@@ -1084,7 +1107,7 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
     echo "$ASYNC_BOT_RESPONSE"
     echo "---END BOT RESPONSE---"
     exit 0
-  elif echo "$ASYNC_BOT_RESPONSE" | grep -qi "If Codex has suggestions, it will comment; otherwise it will react with"; then
+  elif grep -qi "If Codex has suggestions, it will comment; otherwise it will react with" <<< "$ASYNC_BOT_RESPONSE_FULL"; then
     echo "INFO: async-arrival Codex acknowledgement detected without current-head review or inline comments"
     echo "INFO: waiting ${POLL_INTERVAL}s for final Codex async signal..."
     sleep "$POLL_INTERVAL"
@@ -1145,6 +1168,9 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
     # Captured before any intervening call could touch COMBINED_TIME (see
     # rationale above the main-loop equivalent).
     ASYNC_FINAL_BOT_RESPONSE_TIME="$COMBINED_TIME"
+    # Untruncated copy used for classification below (see rationale above
+    # the main-loop equivalent).
+    ASYNC_FINAL_BOT_RESPONSE_FULL="$ASYNC_FINAL_BOT_RESPONSE"
     # `jq -Rs` slurps its entire stdin before producing output, avoiding
     # SIGPIPE on long root-comment-sourced bodies (see rationale above the
     # main-loop equivalent).
@@ -1155,20 +1181,20 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
       codex_require_current_head
       # Blocking is checked first, ahead of usage-limit (see rationale
       # above the main-loop equivalent).
-      if [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_FINAL_BOT_RESPONSE"; then
+      if [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_FINAL_BOT_RESPONSE_FULL"; then
         echo "VERDICT: NEEDS_REVISION"
         echo "---BEGIN BOT RESPONSE---"
         echo "$ASYNC_FINAL_BOT_RESPONSE"
         echo "---END BOT RESPONSE---"
         exit 1
-      elif codex_response_is_usage_limit "$ASYNC_FINAL_BOT_RESPONSE"; then
+      elif codex_response_is_usage_limit "$ASYNC_FINAL_BOT_RESPONSE_FULL"; then
         codex_return_usage_limit "$ASYNC_FINAL_BOT_RESPONSE"
-      elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_FINAL_BOT_RESPONSE"; then
+      elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_FINAL_BOT_RESPONSE_FULL"; then
         SEEN_ENVIRONMENT_ERROR=1
         SEEN_ENVIRONMENT_RESPONSE="$ASYNC_FINAL_BOT_RESPONSE"
         SEEN_ENVIRONMENT_TIME="$COMBINED_TIME"
         echo "INFO: final async Codex environment setup response detected without fresh review evidence"
-      elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_FINAL_BOT_RESPONSE"; then
+      elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_FINAL_BOT_RESPONSE_FULL"; then
         if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ] && ! [ "$COMBINED_TIME" \> "$SEEN_ENVIRONMENT_TIME" ]; then
           codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
         fi
@@ -1179,7 +1205,7 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
         exit 0
       elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "comment" ]; then
         echo "INFO: final async Codex root comment is not SHA-pinned terminal evidence"
-      elif ! echo "$ASYNC_FINAL_BOT_RESPONSE" | grep -qi "If Codex has suggestions, it will comment; otherwise it will react with"; then
+      elif ! grep -qi "If Codex has suggestions, it will comment; otherwise it will react with" <<< "$ASYNC_FINAL_BOT_RESPONSE_FULL"; then
         echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
         echo "---BEGIN BOT RESPONSE---"
         echo "$ASYNC_FINAL_BOT_RESPONSE"
@@ -1278,6 +1304,9 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
   # Captured before any intervening call could touch COMBINED_TIME (see
   # rationale above the main-loop equivalent).
   ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME="$COMBINED_TIME"
+  # Untruncated copy used for classification below (see rationale above
+  # the main-loop equivalent).
+  ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL="$ASYNC_REACTION_FINAL_BOT_RESPONSE"
   # `jq -Rs` slurps its entire stdin before producing output, avoiding
   # SIGPIPE on long root-comment-sourced bodies (see rationale above the
   # main-loop equivalent).
@@ -1287,20 +1316,20 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
     codex_require_current_head
     # Blocking is checked first, ahead of usage-limit (see rationale above
     # the main-loop equivalent).
-    if [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
+    if [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL"; then
       echo "VERDICT: NEEDS_REVISION"
       echo "---BEGIN BOT RESPONSE---"
       echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 1
-    elif codex_response_is_usage_limit "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
+    elif codex_response_is_usage_limit "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL"; then
       codex_return_usage_limit "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
-    elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
+    elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL"; then
       SEEN_ENVIRONMENT_ERROR=1
       SEEN_ENVIRONMENT_RESPONSE="$ASYNC_REACTION_FINAL_BOT_RESPONSE"
       SEEN_ENVIRONMENT_TIME="$COMBINED_TIME"
       echo "INFO: final async reaction Codex environment setup response detected without fresh review evidence"
-    elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
+    elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL"; then
       if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ] && ! [ "$COMBINED_TIME" \> "$SEEN_ENVIRONMENT_TIME" ]; then
         codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
       fi
@@ -1311,7 +1340,7 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
       exit 0
     elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "comment" ]; then
       echo "INFO: final async reaction Codex root comment is not SHA-pinned terminal evidence"
-    elif ! echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE" | grep -qi "If Codex has suggestions, it will comment; otherwise it will react with"; then
+    elif ! grep -qi "If Codex has suggestions, it will comment; otherwise it will react with" <<< "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL"; then
       echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
       echo "---BEGIN BOT RESPONSE---"
       echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"

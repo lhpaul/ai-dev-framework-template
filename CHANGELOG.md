@@ -101,7 +101,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   usage-limit > clean approval), so two tied responses that were both
   merely "requires attention" (e.g. a usage-limit notice and a genuinely
   unrecognized-format response) are now ranked correctly against each
-  other instead of the scan keeping whichever was evaluated first.
+  other instead of the scan keeping whichever was evaluated first; and
+  verdict classification now runs against the full, untruncated response
+  instead of the 10000-char truncated copy — a SHA-pinned root review
+  longer than the cutoff with an approval phrase before it and a blocking
+  marker after it no longer has its blocker silently discarded (the
+  truncated copy is still used for the script's own displayed output).
+  The classification helpers (`codex_response_is_blocking` and friends)
+  now match via a here-string instead of a piped `printf`, since
+  classifying the untruncated response means `grep -q`'s early-exit
+  behavior on a long input could otherwise SIGPIPE the writer.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

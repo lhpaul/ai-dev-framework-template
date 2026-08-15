@@ -4356,6 +4356,56 @@ run_test "codex_tied_usage_limit_then_unrecognized_verdict" "VERDICT: NEEDS_REVI
 rm -rf "$_codex_tied_usage_limit_then_unrecognized_mock_dir"
 unset _codex_tied_usage_limit_then_unrecognized_mock_dir _codex_tied_usage_limit_then_unrecognized_output _codex_tied_usage_limit_then_unrecognized_exit
 
+# Reproduces Codex finding on PR #1490 (P1, comment id 3789634709): the
+# post-combine truncation to 10000 chars ran BEFORE the verdict-parsing
+# classification checks, so a SHA-pinned root review exceeding 10000
+# characters with an approval phrase before the cutoff and a blocking
+# marker after it had its blocker silently cut off, classifying the
+# truncated (approval-only) text as APPROVED. Classification now runs
+# against BOT_RESPONSE_FULL (untruncated); BOT_RESPONSE (truncated) is
+# used only for the script's own "---BEGIN/END BOT RESPONSE---" display.
+# Fixture: a 15000+ char root comment with a clean approval phrase near
+# the start and a blocking marker well past the 10000-char cutoff.
+_codex_long_root_review_blocker_past_cutoff_mock_dir="$(mktemp -d)"
+cat > "$_codex_long_root_review_blocker_past_cutoff_mock_dir/gh" <<'CODEX_LONG_ROOT_REVIEW_BLOCKER_PAST_CUTOFF_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'deadface1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":250,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:340,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("No blocking issues found.\n\n" + ("x" * 15000) + "\n\nBlocking issues: must fix the leak past the cutoff.\n\n**Reviewed commit:** `deadface1234`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_LONG_ROOT_REVIEW_BLOCKER_PAST_CUTOFF_GH
+chmod +x "$_codex_long_root_review_blocker_past_cutoff_mock_dir/gh"
+
+_codex_long_root_review_blocker_past_cutoff_output=""
+_codex_long_root_review_blocker_past_cutoff_exit=0
+PATH="$_codex_long_root_review_blocker_past_cutoff_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_long_root_review_blocker_past_cutoff_mock_dir/output.txt" 2>&1 || _codex_long_root_review_blocker_past_cutoff_exit=$?
+_codex_long_root_review_blocker_past_cutoff_output="$(cat "$_codex_long_root_review_blocker_past_cutoff_mock_dir/output.txt")"
+run_test "codex_long_root_review_blocker_past_cutoff_exit_needs_revision" "1" "$_codex_long_root_review_blocker_past_cutoff_exit"
+run_test "codex_long_root_review_blocker_past_cutoff_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_long_root_review_blocker_past_cutoff_output" | grep "^VERDICT:")"
+rm -rf "$_codex_long_root_review_blocker_past_cutoff_mock_dir"
+unset _codex_long_root_review_blocker_past_cutoff_mock_dir _codex_long_root_review_blocker_past_cutoff_output _codex_long_root_review_blocker_past_cutoff_exit
+
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
 #!/usr/bin/env bash
