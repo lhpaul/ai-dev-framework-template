@@ -120,7 +120,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   misclassified as APPROVED even with the shell-level fix in place (the
   slice is dropped entirely; GitHub review bodies are capped well below
   any size that would make this unsafe, and the query already writes to
-  a temp file rather than a piped consumer, so there is no SIGPIPE risk).
+  a temp file rather than a piped consumer, so there is no SIGPIPE risk);
+  `codex_response_is_approved` now rejects negated approval phrases (e.g.
+  "This change is **not** approved") instead of matching the unbounded
+  `approved`/`lgtm`/`looks good` alternatives unconditionally, which used
+  to report a rejecting terminal response as APPROVED instead of the
+  documented unrecognized-format safe-fail; and `codex_response_priority`
+  now ranks an ancillary environment-setup-error comment at the same
+  lower availability tier as a usage-limit notice instead of at the
+  unrecognized-format tier, so a setup-error comment tied at the same
+  timestamp as a genuine but unrecognized-format review can no longer win
+  the tie-break and replace the review's safe-fail NEEDS_REVISION with an
+  UNAVAILABLE-style `codex-github-environment-missing` verdict.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

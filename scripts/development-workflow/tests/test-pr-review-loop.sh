@@ -4456,6 +4456,106 @@ run_test "codex_long_review_blocker_past_query_cutoff_verdict" "VERDICT: NEEDS_R
 rm -rf "$_codex_long_review_blocker_past_query_cutoff_mock_dir"
 unset _codex_long_review_blocker_past_query_cutoff_mock_dir _codex_long_review_blocker_past_query_cutoff_output _codex_long_review_blocker_past_query_cutoff_exit
 
+# CODEX_APPROVAL_PATTERN's "approved" alternative is an unbounded substring
+# match, so a SHA-pinned terminal response REJECTING the change by saying
+# "This change is not approved" used to match it unconditionally and get
+# reported as APPROVED instead of falling through to the documented
+# unrecognized-format safe-fail (fresh evidence from PR #1490 finding
+# 3789722818).
+_codex_negated_approval_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_negated_approval_root_comment_mock_dir/gh" <<'CODEX_NEGATED_APPROVAL_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade003a1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":252,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":253,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This change is not approved. Needs more work before it can ship.\\n\\n**Reviewed commit:** `facade003a`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NEGATED_APPROVAL_ROOT_COMMENT_GH
+chmod +x "$_codex_negated_approval_root_comment_mock_dir/gh"
+
+_codex_negated_approval_root_comment_output=""
+_codex_negated_approval_root_comment_exit=0
+PATH="$_codex_negated_approval_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_negated_approval_root_comment_mock_dir/output.txt" 2>&1 || _codex_negated_approval_root_comment_exit=$?
+_codex_negated_approval_root_comment_output="$(cat "$_codex_negated_approval_root_comment_mock_dir/output.txt")"
+run_test "codex_negated_approval_root_comment_exit_needs_revision" "1" "$_codex_negated_approval_root_comment_exit"
+run_test "codex_negated_approval_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_negated_approval_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_negated_approval_root_comment_mock_dir"
+unset _codex_negated_approval_root_comment_mock_dir _codex_negated_approval_root_comment_output _codex_negated_approval_root_comment_exit
+
+# codex_response_priority ranked an ancillary environment-setup-error
+# comment at the same "unrecognized format" tier (2) as a genuine but
+# unrecognized-format submitted review, instead of at the lower
+# availability tier (1) shared with usage-limit notices. Tied at the same
+# timestamp, the setup-error comment then won the tie-break and replaced
+# the review's safe-fail NEEDS_REVISION with an UNAVAILABLE-style
+# codex-github-environment-missing verdict, silently discarding a review
+# that could have been a real rejection (fresh evidence from PR #1490
+# finding 3789722821). Fixture: an ancillary (non-SHA-pinned) environment-
+# setup-error comment and an unrecognized-format submitted review, both
+# timestamped identically.
+_codex_env_error_vs_unrecognized_review_tie_mock_dir="$(mktemp -d)"
+cat > "$_codex_env_error_vs_unrecognized_review_tie_mock_dir/gh" <<'CODEX_ENV_ERROR_VS_UNRECOGNIZED_REVIEW_TIE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade004b1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":254,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade004b1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Reviewed the changes, nothing further to add at this time."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":255,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ENV_ERROR_VS_UNRECOGNIZED_REVIEW_TIE_GH
+chmod +x "$_codex_env_error_vs_unrecognized_review_tie_mock_dir/gh"
+
+_codex_env_error_vs_unrecognized_review_tie_output=""
+_codex_env_error_vs_unrecognized_review_tie_exit=0
+PATH="$_codex_env_error_vs_unrecognized_review_tie_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_env_error_vs_unrecognized_review_tie_mock_dir/output.txt" 2>&1 || _codex_env_error_vs_unrecognized_review_tie_exit=$?
+_codex_env_error_vs_unrecognized_review_tie_output="$(cat "$_codex_env_error_vs_unrecognized_review_tie_mock_dir/output.txt")"
+run_test "codex_env_error_vs_unrecognized_review_tie_exit_needs_revision" "1" "$_codex_env_error_vs_unrecognized_review_tie_exit"
+run_test "codex_env_error_vs_unrecognized_review_tie_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_env_error_vs_unrecognized_review_tie_output" | grep "^VERDICT:")"
+run_test "codex_env_error_vs_unrecognized_review_tie_reason_not_env_missing" "" \
+  "$(printf '%s\n' "$_codex_env_error_vs_unrecognized_review_tie_output" | grep "^REASON=codex-github-environment-missing")"
+rm -rf "$_codex_env_error_vs_unrecognized_review_tie_mock_dir"
+unset _codex_env_error_vs_unrecognized_review_tie_mock_dir _codex_env_error_vs_unrecognized_review_tie_output _codex_env_error_vs_unrecognized_review_tie_exit
+
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
 #!/usr/bin/env bash

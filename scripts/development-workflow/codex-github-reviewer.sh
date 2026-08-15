@@ -265,6 +265,15 @@ codex_response_reviews_current_head() {
 # each marker.
 CODEX_BLOCKING_PATTERN='(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)'
 CODEX_APPROVAL_PATTERN='(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)'
+# Negated forms of the approval phrases above. CODEX_APPROVAL_PATTERN's
+# "approved"/"lgtm"/"looks good" alternatives are unbounded substring
+# matches, so a rejecting response like "This change is not approved"
+# matched them unconditionally and was classified APPROVED instead of
+# falling through to the documented unrecognized-format safe-fail (fresh
+# evidence from PR #1490 finding 3789722818). Checked BEFORE the positive
+# approval pattern in codex_response_is_approved so a negated approval
+# phrase can never be reported as approved.
+CODEX_NEGATED_APPROVAL_PATTERN='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|never)[[:space:]]+(be[[:space:]]+)?(approved|lgtm|look(s|ing)?[[:space:]]+good)'
 
 codex_response_is_blocking() {
   local body="$1"
@@ -273,6 +282,9 @@ codex_response_is_blocking() {
 
 codex_response_is_approved() {
   local body="$1"
+  if grep -qiE "$CODEX_NEGATED_APPROVAL_PATTERN" <<< "$body"; then
+    return 1
+  fi
   grep -qiE "$CODEX_APPROVAL_PATTERN" <<< "$body"
 }
 
@@ -293,11 +305,21 @@ codex_response_is_approved() {
 #       NEEDS_REVISION, so an ambiguous response must not be silently
 #       demoted behind a mere availability notice (fresh evidence from PR
 #       #1490 finding 3789597796).
-#   1 — usage-limit: Codex hit its review quota. A response containing
-#       both an approval phrase and usage-limit wording (e.g. "No
-#       blocking issues could be evaluated because you have reached your
-#       Codex usage limits") is a usage-limit notice, not approved (fresh
-#       evidence from PR #1490 finding 3789555934).
+#   1 — usage-limit / environment error: two distinct "review was
+#       unavailable" notices, ranked at the same lower availability tier.
+#       Codex hit its review quota, OR the repo has no Codex environment
+#       configured. A response containing both an approval phrase and
+#       usage-limit wording (e.g. "No blocking issues could be evaluated
+#       because you have reached your Codex usage limits") is a
+#       usage-limit notice, not approved (fresh evidence from PR #1490
+#       finding 3789555934). An ancillary environment-setup-error comment
+#       must rank here too, not at the unrecognized-format tier: tied
+#       against a genuine (if unrecognized-format) review, an
+#       environment-setup error is a weaker, merely-informational
+#       availability notice and must not silently replace the review's
+#       safe-fail NEEDS_REVISION with an UNAVAILABLE-style
+#       codex-github-environment-missing verdict (fresh evidence from PR
+#       #1490 finding 3789722821).
 #   0 — clean approval: the only tier that produces APPROVED.
 #
 # A single binary requires-attention flag is not enough: two tied
@@ -310,7 +332,7 @@ codex_response_priority() {
   local body="$1"
   if codex_response_is_blocking "$body"; then
     printf '3\n'
-  elif codex_response_is_usage_limit "$body"; then
+  elif codex_response_is_usage_limit "$body" || codex_response_is_environment_error "$body"; then
     printf '1\n'
   elif codex_response_is_approved "$body"; then
     printf '0\n'
