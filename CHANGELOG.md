@@ -142,7 +142,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rendered bold (e.g. "This change is **not** approved") has `**` wedged
   directly between "not" and the following space in the raw comment body,
   which broke the pattern's original unbroken-whitespace adjacency
-  requirement and let the negation go undetected.
+  requirement and let the negation go undetected; and
+  `CODEX_NEGATED_APPROVAL_PATTERN` now tolerates up to 3 intervening
+  qualifier words between the negation and approval words (e.g. "This
+  change is not **yet** approved"), generalizing past the specific
+  adjacency assumptions of the three prior negation fixes above instead
+  of special-casing yet another interrupting-word pattern.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

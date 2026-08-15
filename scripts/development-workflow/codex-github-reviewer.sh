@@ -293,8 +293,18 @@ CODEX_APPROVAL_PATTERN='(\bapproved\b|\blgtm\b|\blooks[[:space:]]+good\b|didn.t 
 # raw text has "**" directly between "not" and the following space, which
 # broke the plain [[:space:]]+ adjacency this pattern originally required;
 # fresh evidence from PR #1490 finding 3789878264, a followup to
-# 3789851555/3789722818).
-CODEX_NEGATED_APPROVAL_PATTERN='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|never)[*_~]{0,3}[[:space:]]+(be[[:space:]]+)?[*_~]{0,3}(approved|lgtm|look(s|ing)?[[:space:]]+good)'
+# 3789851555/3789722818). The optional ([[:space:]]+[*_~]{0,3}[[:alpha:]'-]{1,20}[*_~]{0,3}){0,3}
+# group tolerates up to 3 intervening qualifier words between the
+# negation and the approval word (e.g. "not YET approved", "not FULLY
+# approved YET"), since a rigid negation-immediately-adjacent-to-approval
+# requirement is a losing enumeration game against arbitrary English
+# phrasing — every prior round of this fix (space-separated, concatenated
+# prefix, Markdown-wrapped) narrowed one specific adjacency assumption and
+# Codex found the next one; allowing a bounded window of filler words
+# generalizes past this specific class of gap instead of special-casing
+# it again (fresh evidence from PR #1490 finding 3789904716, a followup to
+# 3789878264/3789851555/3789722818).
+CODEX_NEGATED_APPROVAL_PATTERN='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|never)[*_~]{0,3}([[:space:]]+[*_~]{0,3}[[:alpha:]'"'"'-]{1,20}[*_~]{0,3}){0,3}[[:space:]]+[*_~]{0,3}(be[[:space:]]+)?[*_~]{0,3}(approved|lgtm|look(s|ing)?[[:space:]]+good)'
 
 codex_response_is_blocking() {
   local body="$1"
