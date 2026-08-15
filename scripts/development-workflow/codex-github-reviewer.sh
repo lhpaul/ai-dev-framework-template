@@ -244,7 +244,16 @@ codex_inline_review_comment_count_since() {
 # pre-truncated copy.
 codex_response_is_usage_limit() {
   local response="$1"
-  grep -qiE "(reached[[:space:]]+your[[:space:]]+codex[[:space:]]+usage[[:space:]]+limits?|codex[[:space:]]+usage[[:space:]]+limits?[[:space:]]+for[[:space:]]+code[[:space:]]+reviews?|codex[[:space:]]+(github[[:space:]]+app[[:space:]]+)?(review[[:space:]]+)?(usage[[:space:]]+limit|quota|capacity)|codex[[:space:]]+review[[:space:]]+capacity[[:space:]]+(exhausted|unavailable|limited))" <<< "$response"
+  # The third alternative previously matched ANY "codex ... usage
+  # limit/quota/capacity" substring with no requirement for accompanying
+  # exhaustion/unavailability wording, so a clean submitted review merely
+  # discussing this PR's own usage-limit-detection code (e.g. "No blocking
+  # issues found. The Codex usage limit handling looks correct.") was
+  # itself misclassified as a usage-limit notice (fresh evidence from PR
+  # #1490 finding 3789928781). It now requires an exhaustion/unavailability
+  # word directly after the noun, mirroring the structure already used by
+  # the fourth alternative ("capacity exhausted/unavailable/limited").
+  grep -qiE "(reached[[:space:]]+your[[:space:]]+codex[[:space:]]+usage[[:space:]]+limits?|codex[[:space:]]+usage[[:space:]]+limits?[[:space:]]+for[[:space:]]+code[[:space:]]+reviews?|codex[[:space:]]+(github[[:space:]]+app[[:space:]]+)?(review[[:space:]]+)?(usage[[:space:]]+limit|quota|capacity)[[:space:]]+(reached|exceeded|exhausted|hit|unavailable|limited)|codex[[:space:]]+review[[:space:]]+capacity[[:space:]]+(exhausted|unavailable|limited))" <<< "$response"
 }
 
 codex_response_is_environment_error() {

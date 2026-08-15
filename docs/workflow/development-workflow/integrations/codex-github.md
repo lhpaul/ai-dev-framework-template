@@ -115,8 +115,16 @@ single poll as
 well as across polls: an environment-setup error is not silently discarded
 by a same-fetch or later plain acknowledgement, since a bare acknowledgement
 carries no information and is never treated as competing evidence. A
-usage-limit notice follows the same retention and priority rules as an
-environment-setup error throughout this section.
+usage-limit notice follows the same PRIORITY rules as an environment-setup
+error for ranking purposes (e.g. against a same-timestamp unrecognized-format
+response), but not the same RETENTION rule: unlike an environment-setup
+error, a usage-limit notice terminates the invocation immediately as soon as
+it is detected (`VERDICT: UNAVAILABLE`), rather than being retained through
+the rest of the poll window for a later, strictly newer review to
+potentially supersede. Codex hitting its own usage limit is treated as a
+harder stop than a misconfigured environment, since a fresh useful review
+arriving moments later in the same short poll window is unlikely once quota
+is exhausted.
 
 ## Troubleshooting
 

@@ -147,7 +147,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   qualifier words between the negation and approval words (e.g. "This
   change is not **yet** approved"), generalizing past the specific
   adjacency assumptions of the three prior negation fixes above instead
-  of special-casing yet another interrupting-word pattern.
+  of special-casing yet another interrupting-word pattern; and
+  `codex_response_is_usage_limit`'s broad "codex ... usage limit/quota/
+  capacity" alternative now requires an accompanying exhaustion/
+  unavailability word directly after the noun, since it previously matched
+  ANY mention of those words — a clean submitted review merely discussing
+  this PR's own usage-limit-detection code (e.g. "No blocking issues
+  found. The Codex usage limit handling looks correct.") was itself
+  misclassified as a usage-limit notice, winning a same-timestamp tie
+  against a genuinely clean terminal comment and returning UNAVAILABLE
+  instead of APPROVED for an actually-clean PR. Also corrected
+  `docs/workflow/development-workflow/integrations/codex-github.md`,
+  which claimed a usage-limit notice follows the same *retention* rule as
+  an environment-setup error — it does not: unlike an environment-setup
+  error, a usage-limit notice terminates the invocation immediately upon
+  detection rather than being retained through the rest of the poll
+  window for a later, strictly newer review to potentially supersede.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
