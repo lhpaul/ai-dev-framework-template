@@ -286,8 +286,15 @@ CODEX_APPROVAL_PATTERN='(\bapproved\b|\blgtm\b|\blooks[[:space:]]+good\b|didn.t 
 # approval pattern in codex_response_is_approved so a negated approval
 # phrase can never be reported as approved. This handles SPACE-separated
 # negations ("not approved"); CODEX_APPROVAL_PATTERN's \b boundaries above
-# separately handle CONCATENATED negation prefixes ("unapproved").
-CODEX_NEGATED_APPROVAL_PATTERN='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|never)[[:space:]]+(be[[:space:]]+)?(approved|lgtm|look(s|ing)?[[:space:]]+good)'
+# separately handle CONCATENATED negation prefixes ("unapproved"). The
+# optional [*_~]{0,3} groups between the negation word and the approval
+# word tolerate Markdown emphasis markers wedged between them (e.g. "This
+# change is **not** approved" — GitHub renders **not** as bold, but the
+# raw text has "**" directly between "not" and the following space, which
+# broke the plain [[:space:]]+ adjacency this pattern originally required;
+# fresh evidence from PR #1490 finding 3789878264, a followup to
+# 3789851555/3789722818).
+CODEX_NEGATED_APPROVAL_PATTERN='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|never)[*_~]{0,3}[[:space:]]+(be[[:space:]]+)?[*_~]{0,3}(approved|lgtm|look(s|ing)?[[:space:]]+good)'
 
 codex_response_is_blocking() {
   local body="$1"

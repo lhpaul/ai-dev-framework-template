@@ -4550,6 +4550,56 @@ run_test "codex_unapproved_prefix_root_comment_verdict" "VERDICT: NEEDS_REVISION
 rm -rf "$_codex_unapproved_prefix_root_comment_mock_dir"
 unset _codex_unapproved_prefix_root_comment_mock_dir _codex_unapproved_prefix_root_comment_output _codex_unapproved_prefix_root_comment_exit
 
+# Followup to codex_negated_approval_root_comment/codex_unapproved_prefix_
+# root_comment: CODEX_NEGATED_APPROVAL_PATTERN required an unbroken
+# [[:space:]]+ directly between the negation word and the approval word,
+# so GitHub's rendered Markdown bold ("This change is **not** approved")
+# — whose raw text has "**" wedged between "not" and the following
+# space — did not match, and the bare \bapproved\b in
+# CODEX_APPROVAL_PATTERN still did, misclassifying the rejection as
+# APPROVED (fresh evidence from PR #1490 finding 3789878264).
+# CODEX_NEGATED_APPROVAL_PATTERN now tolerates optional Markdown emphasis
+# markers between the negation and approval words.
+_codex_markdown_negated_approval_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_markdown_negated_approval_root_comment_mock_dir/gh" <<'CODEX_MARKDOWN_NEGATED_APPROVAL_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade006d1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":258,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":259,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This change is **not** approved. Needs more work.\\n\\n**Reviewed commit:** `facade006d`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MARKDOWN_NEGATED_APPROVAL_ROOT_COMMENT_GH
+chmod +x "$_codex_markdown_negated_approval_root_comment_mock_dir/gh"
+
+_codex_markdown_negated_approval_root_comment_output=""
+_codex_markdown_negated_approval_root_comment_exit=0
+PATH="$_codex_markdown_negated_approval_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_markdown_negated_approval_root_comment_mock_dir/output.txt" 2>&1 || _codex_markdown_negated_approval_root_comment_exit=$?
+_codex_markdown_negated_approval_root_comment_output="$(cat "$_codex_markdown_negated_approval_root_comment_mock_dir/output.txt")"
+run_test "codex_markdown_negated_approval_root_comment_exit_needs_revision" "1" "$_codex_markdown_negated_approval_root_comment_exit"
+run_test "codex_markdown_negated_approval_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_markdown_negated_approval_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_markdown_negated_approval_root_comment_mock_dir"
+unset _codex_markdown_negated_approval_root_comment_mock_dir _codex_markdown_negated_approval_root_comment_output _codex_markdown_negated_approval_root_comment_exit
+
 # codex_response_priority ranked an ancillary environment-setup-error
 # comment at the same "unrecognized format" tier (2) as a genuine but
 # unrecognized-format submitted review, instead of at the lower
