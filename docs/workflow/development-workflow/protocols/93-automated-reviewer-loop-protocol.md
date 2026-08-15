@@ -136,8 +136,10 @@ an environment-setup error regardless of timing, so an actionable finding
 can never be hidden behind an "unavailable" verdict. Likewise, a SHA-pinned
 terminal comment is never classified as an environment-setup error even if
 its finding text happens to quote the setup sentence verbatim — terminal
-evidence is never routed through the environment-error classifier. This
-applies within a single poll as well as across polls: an environment-setup
+evidence is never routed through the environment-error classifier. A
+usage-limit notice follows the same retention and priority rules as an
+environment-setup error throughout this section. This applies within a
+single poll as well as across polls: an environment-setup
 error is not silently discarded by a same-fetch or later plain
 acknowledgement, since a bare
 acknowledgement carries no information and is never treated as competing

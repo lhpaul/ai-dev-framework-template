@@ -58,7 +58,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comment is no longer misclassified as an environment-setup error when its
   finding text happens to quote the setup sentence verbatim (e.g. flagging
   stale documentation) — terminal evidence is never routed through the
-  environment-error classifier.
+  environment-error classifier; multiple current-head reviews tied at the
+  same second-resolution `submitted_at` timestamp no longer collapse to an
+  arbitrary array-order pick via `sort_by | last` — every tied review is
+  now considered and the one requiring attention (if any) wins, so a
+  blocking review can no longer be silently discarded by a clean one
+  submitted in the same second; and usage-limit comments are now retained
+  and compared independently the same way environment-error comments
+  already were, so an older clean review no longer silently wins over a
+  newer usage-limit notice.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

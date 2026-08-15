@@ -316,17 +316,20 @@ codex_select_terminal_evidence() {
 # acknowledgement or a "waiting" note) from silently discarding an earlier
 # SHA-pinned blocking root comment.
 #
-# An environment-setup-error comment is treated as the priority ancillary
-# signal once seen: a later PLAIN comment (e.g. an acknowledgement) does not
-# overwrite it, so an actionable setup failure is not silently lost to a
-# no-information comment that happens to arrive later in the same fetch
-# (fresh evidence from PR #1490 finding 3787786945). A LATER environment-
-# error comment still updates it, keeping the most recent one. A SHA-pinned
-# TERMINAL comment is never classified as an environment error even if its
-# text happens to quote the setup sentence (e.g. a blocking finding about
-# stale documentation that reproduces it verbatim) — terminal evidence is
-# always genuine review content, not a bare setup-failure message (fresh
-# evidence from PR #1490 finding 3787943163).
+# An ACTIONABLE ancillary comment — either an environment-setup error or a
+# usage-limit notice — is treated as the priority ancillary signal once
+# seen: a later PLAIN comment (e.g. an acknowledgement) does not overwrite
+# it, so an actionable failure is not silently lost to a no-information
+# comment that happens to arrive later in the same fetch (fresh evidence
+# from PR #1490 finding 3787786945, generalized in finding 3788008327 to
+# also cover usage-limit comments — the same evidence-loss pattern applied
+# to both classifiers, not just environment errors). A LATER actionable
+# comment still updates it, keeping the most recent one. A SHA-pinned
+# TERMINAL comment is never classified as either an environment error or a
+# usage-limit notice, even if its text happens to quote that wording (e.g.
+# a blocking finding about stale documentation that reproduces it
+# verbatim) — terminal evidence is always genuine review content, not a
+# bare failure message (fresh evidence from PR #1490 finding 3787943163).
 #
 # Sets: COMMENT_TERMINAL_BODY, COMMENT_TERMINAL_TIME, COMMENT_LATEST_BODY,
 # COMMENT_LATEST_TIME.
@@ -336,28 +339,63 @@ codex_scan_comment_evidence() {
   COMMENT_TERMINAL_TIME=""
   COMMENT_LATEST_BODY=""
   COMMENT_LATEST_TIME=""
-  local comment_latest_is_env_error=0
-  local line created_at body is_env_error is_terminal
+  local comment_latest_is_actionable=0
+  local line created_at body is_actionable is_terminal
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     created_at=$(printf '%s' "$line" | jq -r '.created_at // empty')  # workflow-shell-guard: allow SH003 - $line is a compact JSON object already validated parseable by the preceding jq -sc call; empty is a normal absent-field case, not a failure
     body=$(printf '%s' "$line" | jq -r '.body // empty')  # workflow-shell-guard: allow SH003 - same pre-validated $line as above; empty body is not a failure
     is_terminal=0
     codex_response_reviews_current_head "$body" && is_terminal=1
-    is_env_error=0
+    is_actionable=0
     if [ "$is_terminal" -eq 0 ]; then
-      codex_response_is_environment_error "$body" && is_env_error=1
+      if codex_response_is_environment_error "$body" || codex_response_is_usage_limit "$body"; then
+        is_actionable=1
+      fi
     fi
-    if [ "$comment_latest_is_env_error" -eq 0 ] || [ "$is_env_error" -eq 1 ]; then
+    if [ "$comment_latest_is_actionable" -eq 0 ] || [ "$is_actionable" -eq 1 ]; then
       COMMENT_LATEST_BODY="$body"
       COMMENT_LATEST_TIME="$created_at"
-      comment_latest_is_env_error="$is_env_error"
+      comment_latest_is_actionable="$is_actionable"
     fi
     if [ "$is_terminal" -eq 1 ]; then
       COMMENT_TERMINAL_BODY="$body"
       COMMENT_TERMINAL_TIME="$created_at"
     fi
   done < "$comments_file"
+}
+
+# Scans a JSON-lines file (one compact object per line) of current-head
+# submitted reviews that are ALL TIED at the globally latest submitted_at
+# timestamp (produced by the review-poll jq queries below, which select
+# every review sharing the max timestamp rather than collapsing to one via
+# `sort_by | last`). GitHub timestamps are second-resolution, so multiple
+# reviews genuinely CAN tie; picking an arbitrary one by array order could
+# silently discard a blocking review in favor of a clean one submitted in
+# the same second (fresh evidence from PR #1490 finding 3788008326). Picks
+# the first tied review that requires attention (blocking or unrecognized
+# format); if none do, every tied review is a clean approval and any one is
+# equivalent, so the first is used.
+# Sets: SELECTED_REVIEW_BODY, SELECTED_REVIEW_TIME.
+codex_select_review_evidence() {
+  local reviews_file="$1"
+  SELECTED_REVIEW_BODY=""
+  SELECTED_REVIEW_TIME=""
+  local line created_at body
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    created_at=$(printf '%s' "$line" | jq -r '.created_at // empty')  # workflow-shell-guard: allow SH003 - $line is a compact JSON object already validated parseable by the preceding jq -sc call; empty is a normal absent-field case, not a failure
+    body=$(printf '%s' "$line" | jq -r '.body // empty')  # workflow-shell-guard: allow SH003 - same pre-validated $line as above; empty body is not a failure
+    if [ -z "$SELECTED_REVIEW_BODY" ]; then
+      SELECTED_REVIEW_BODY="$body"
+      SELECTED_REVIEW_TIME="$created_at"
+    fi
+    if codex_response_requires_attention "$body"; then
+      SELECTED_REVIEW_BODY="$body"
+      SELECTED_REVIEW_TIME="$created_at"
+      break
+    fi
+  done < "$reviews_file"
 }
 
 # Combines comment-sourced evidence (terminal SHA-pinned root comment vs.
@@ -429,20 +467,20 @@ codex_combine_terminal_evidence() {
     COMBINED_SOURCE="comment"
   fi
 
-  if [ -n "$comment_latest_body" ] && codex_response_is_environment_error "$comment_latest_body"; then
+  if [ -n "$comment_latest_body" ] && { codex_response_is_environment_error "$comment_latest_body" || codex_response_is_usage_limit "$comment_latest_body"; }; then
     if [ -n "$COMBINED_SOURCE" ] && codex_response_is_blocking "$COMBINED_BODY"; then
       # Blocking terminal/review evidence always wins outright — it is
-      # never discarded by an environment-setup error, regardless of
-      # timing, so an actionable finding can never be hidden behind an
-      # "unavailable" verdict (fresh evidence from PR #1490 finding
-      # 3787943162; Protocol 93 requires blocking evidence to never be
-      # silently discarded).
+      # never discarded by an environment-setup error or a usage-limit
+      # notice, regardless of timing, so an actionable finding can never be
+      # hidden behind an "unavailable" verdict (fresh evidence from PR
+      # #1490 finding 3787943162; Protocol 93 requires blocking evidence to
+      # never be silently discarded).
       :
     elif [ -z "$COMBINED_TIME" ] || ! codex_select_terminal_evidence "$comment_latest_body" "$comment_latest_time" "$COMBINED_BODY" "$COMBINED_TIME"; then
       COMBINED_BODY="$comment_latest_body"
       COMBINED_TIME="$comment_latest_time"
       COMBINED_SOURCE="comment"
-      echo "INFO: $label environment-setup error retained over non-newer terminal/review evidence"
+      echo "INFO: $label environment-setup error or usage-limit notice retained over non-newer terminal/review evidence"
     fi
   fi
 }
@@ -667,16 +705,19 @@ while true; do
   REVIEW_TMPFILE=$(mktemp)
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>"$REVIEW_STDERR" \
-    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | {created_at:(.submitted_at // ""), body:(.body // "")}' \
+    | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:((.body // "") | .[0:5000])} end' \
     > "$REVIEW_TMPFILE" 2>"$REVIEW_STDERR"; then
-    # Truncation happens inside jq (codepoint slice), not via a piped `head`,
-    # so a long body cannot trigger SIGPIPE on jq under `set -o pipefail`
-    # (an external `| head -c N` pipe closes early on long output, and the
-    # writer's resulting SIGPIPE would otherwise abort the whole script
-    # before any VERDICT line is emitted).
-    REVIEW_BODY=$(jq -r '(.body // empty) | .[0:5000]' "$REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads a tmpfile already validated as parseable JSON by the preceding gh|jq call; empty body means no evidence yet, not a failure, and is checked downstream via [ -n ]
-    REVIEW_TIME=$(jq -r '.created_at // empty' "$REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads the same pre-validated tmpfile as the body extraction above; empty time is not a failure
+    # Selects every review tied at the latest submitted_at timestamp (not
+    # just one via sort_by | last) and picks the one requiring attention if
+    # any do, so a blocking review is never discarded in favor of a clean
+    # one that happens to share the same second-resolution timestamp
+    # (fresh evidence from PR #1490 finding 3788008326). Truncation happens
+    # inside jq (codepoint slice), not via a piped `head`, so a long body
+    # cannot trigger SIGPIPE on jq under `set -o pipefail`.
+    codex_select_review_evidence "$REVIEW_TMPFILE"
+    REVIEW_BODY="$SELECTED_REVIEW_BODY"
+    REVIEW_TIME="$SELECTED_REVIEW_TIME"
   else
     REVIEW_ERR=$(cat "$REVIEW_STDERR")
     rm -f "$REVIEW_STDERR" "$REVIEW_TMPFILE"
@@ -913,13 +954,16 @@ fi
 ASYNC_REVIEW_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
   2>/dev/null \
-  | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | {created_at:(.submitted_at // ""), body:(.body // "")}' \
+  | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:((.body // "") | .[0:5000])} end' \
   > "$ASYNC_REVIEW_TMPFILE" 2>/dev/null; then
-  # Truncation happens inside jq (codepoint slice) to avoid SIGPIPE on jq
-  # under `set -o pipefail` (see rationale above the main-loop equivalent).
-  ASYNC_REVIEW_BODY=$(jq -r '(.body // empty) | .[0:5000]' "$ASYNC_REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads a tmpfile already validated as parseable JSON by the preceding gh|jq call; empty body means no evidence yet, not a failure, and is checked downstream via [ -n ]
-  ASYNC_REVIEW_TIME=$(jq -r '.created_at // empty' "$ASYNC_REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads the same pre-validated tmpfile as the body extraction above; empty time is not a failure
+  # Selects every review tied at the latest timestamp and picks the one
+  # requiring attention, if any (see rationale above the main-loop
+  # equivalent). Truncation happens inside jq (codepoint slice) to avoid
+  # SIGPIPE on jq under `set -o pipefail`.
+  codex_select_review_evidence "$ASYNC_REVIEW_TMPFILE"
+  ASYNC_REVIEW_BODY="$SELECTED_REVIEW_BODY"
+  ASYNC_REVIEW_TIME="$SELECTED_REVIEW_TIME"
 else
   rm -f "$ASYNC_REVIEW_TMPFILE"
   echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews during async grace period (treated as unavailable)"
@@ -1000,14 +1044,16 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     ASYNC_FINAL_REVIEW_TMPFILE=$(mktemp)
     if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
       2>/dev/null \
-      | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | {created_at:(.submitted_at // ""), body:(.body // "")}' \
+      | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
+          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:((.body // "") | .[0:5000])} end' \
       > "$ASYNC_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
-      # Truncation happens inside jq (codepoint slice) to avoid SIGPIPE on
-      # jq under `set -o pipefail` (see rationale above the main-loop
-      # equivalent).
-      ASYNC_FINAL_REVIEW_BODY=$(jq -r '(.body // empty) | .[0:5000]' "$ASYNC_FINAL_REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads a tmpfile already validated as parseable JSON by the preceding gh|jq call; empty body means no evidence yet, not a failure, and is checked downstream via [ -n ]
-      ASYNC_FINAL_REVIEW_TIME=$(jq -r '.created_at // empty' "$ASYNC_FINAL_REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads the same pre-validated tmpfile as the body extraction above; empty time is not a failure
+      # Selects every review tied at the latest timestamp and picks the one
+      # requiring attention, if any (see rationale above the main-loop
+      # equivalent). Truncation happens inside jq (codepoint slice) to
+      # avoid SIGPIPE on jq under `set -o pipefail`.
+      codex_select_review_evidence "$ASYNC_FINAL_REVIEW_TMPFILE"
+      ASYNC_FINAL_REVIEW_BODY="$SELECTED_REVIEW_BODY"
+      ASYNC_FINAL_REVIEW_TIME="$SELECTED_REVIEW_TIME"
     else
       rm -f "$ASYNC_FINAL_REVIEW_TMPFILE"
       echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews after async acknowledgement (treated as unavailable)"
@@ -1126,13 +1172,16 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
   ASYNC_REACTION_FINAL_REVIEW_TMPFILE=$(mktemp)
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>/dev/null \
-    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | sort_by(.submitted_at) | last | {created_at:(.submitted_at // ""), body:(.body // "")}' \
+    | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:((.body // "") | .[0:5000])} end' \
     > "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
-    # Truncation happens inside jq (codepoint slice) to avoid SIGPIPE on jq
-    # under `set -o pipefail` (see rationale above the main-loop equivalent).
-    ASYNC_REACTION_FINAL_REVIEW_BODY=$(jq -r '(.body // empty) | .[0:5000]' "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads a tmpfile already validated as parseable JSON by the preceding gh|jq call; empty body means no evidence yet, not a failure, and is checked downstream via [ -n ]
-    ASYNC_REACTION_FINAL_REVIEW_TIME=$(jq -r '.created_at // empty' "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE")  # workflow-shell-guard: allow SH003 - reads the same pre-validated tmpfile as the body extraction above; empty time is not a failure
+    # Selects every review tied at the latest timestamp and picks the one
+    # requiring attention, if any (see rationale above the main-loop
+    # equivalent). Truncation happens inside jq (codepoint slice) to avoid
+    # SIGPIPE on jq under `set -o pipefail`.
+    codex_select_review_evidence "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE"
+    ASYNC_REACTION_FINAL_REVIEW_BODY="$SELECTED_REVIEW_BODY"
+    ASYNC_REACTION_FINAL_REVIEW_TIME="$SELECTED_REVIEW_TIME"
   else
     rm -f "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE"
     echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews after async reaction (treated as unavailable)"
