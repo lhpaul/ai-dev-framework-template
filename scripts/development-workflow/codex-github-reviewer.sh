@@ -266,18 +266,25 @@ codex_response_is_approved() {
   printf '%s\n' "$body" | grep -qiE "$CODEX_APPROVAL_PATTERN"
 }
 
-# True when a response is NOT the clean-approval path — i.e. it is either
-# explicitly blocking or an unrecognized format that the documented verdict
-# classifier safe-fails to NEEDS_REVISION (see "Verdict parsing" header
-# comment). Blocking is checked FIRST, matching the classifier's blocking-
-# first priority: a response containing both an approval phrase and a
-# blocking marker (e.g. "No blocking issues found. Must fix ...") is
-# blocking, not approved. Used by the tie-break below so neither an
-# unrecognized-format response nor a mixed blocking+approval response is
-# silently outranked by a clean approval on a timestamp tie.
+# True when a response is NOT the clean-approval path — i.e. it is
+# explicitly blocking, a usage-limit notice, or an unrecognized format
+# that the documented verdict classifier safe-fails to NEEDS_REVISION
+# (see "Verdict parsing" header comment). Blocking and usage-limit are
+# checked FIRST, matching the classifier's own priority: a response
+# containing both an approval phrase and a blocking marker (e.g. "No
+# blocking issues found. Must fix ...") is blocking, not approved, and a
+# response containing both an approval phrase and usage-limit wording
+# (e.g. "No blocking issues could be evaluated because you have reached
+# your Codex usage limits") is a usage-limit notice, not approved (fresh
+# evidence from PR #1490 finding 3789555934 — the earlier mixed-
+# blocking-and-approval fix checked only blocking, leaving the analogous
+# mixed-usage-limit-and-approval case unguarded). Used by the tie-break
+# below so neither an unrecognized-format response, a mixed
+# blocking+approval response, nor a mixed usage-limit+approval response
+# is silently outranked by a clean approval on a timestamp tie.
 codex_response_requires_attention() {
   local body="$1"
-  codex_response_is_blocking "$body" || ! codex_response_is_approved "$body"
+  codex_response_is_blocking "$body" || codex_response_is_usage_limit "$body" || ! codex_response_is_approved "$body"
 }
 
 # Decides whether CANDIDATE terminal ("review"-sourced) evidence should

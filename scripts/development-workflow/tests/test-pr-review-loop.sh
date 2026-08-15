@@ -4253,6 +4253,57 @@ run_test "codex_two_tied_terminal_comments_usage_limit_vs_blocking_verdict" "VER
 rm -rf "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir"
 unset _codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir _codex_two_tied_terminal_comments_usage_limit_vs_blocking_output _codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit
 
+# Reproduces Codex finding on PR #1490 (P1, comment id 3789555934): the
+# earlier mixed-blocking-and-approval fix to codex_response_requires_attention
+# checked only codex_response_is_blocking alongside is_approved, leaving the
+# analogous mixed-usage-limit-and-approval case unguarded. A usage-limit
+# response that ALSO contains an approval phrase (e.g. "No blocking issues
+# could be evaluated because you have reached your Codex usage limits")
+# matched the approval pattern and was classified as NOT requiring
+# attention, so codex_select_review_evidence kept a tied clean review
+# instead, returning APPROVED instead of UNAVAILABLE. requires_attention
+# now also checks codex_response_is_usage_limit. Fixture: clean review
+# first in the array, mixed usage-limit+approval review second, both tied.
+_codex_tied_usage_limit_with_approval_phrase_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_usage_limit_with_approval_phrase_mock_dir/gh" <<'CODEX_TIED_USAGE_LIMIT_WITH_APPROVAL_PHRASE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'feedc0de1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":230,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"feedc0de1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"feedc0de1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues could be evaluated because you have reached your Codex usage limits."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_USAGE_LIMIT_WITH_APPROVAL_PHRASE_GH
+chmod +x "$_codex_tied_usage_limit_with_approval_phrase_mock_dir/gh"
+
+_codex_tied_usage_limit_with_approval_phrase_output=""
+_codex_tied_usage_limit_with_approval_phrase_exit=0
+PATH="$_codex_tied_usage_limit_with_approval_phrase_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_usage_limit_with_approval_phrase_mock_dir/output.txt" 2>&1 || _codex_tied_usage_limit_with_approval_phrase_exit=$?
+_codex_tied_usage_limit_with_approval_phrase_output="$(cat "$_codex_tied_usage_limit_with_approval_phrase_mock_dir/output.txt")"
+run_test "codex_tied_usage_limit_with_approval_phrase_exit_unavailable" "3" "$_codex_tied_usage_limit_with_approval_phrase_exit"
+run_test "codex_tied_usage_limit_with_approval_phrase_verdict" "VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached" \
+  "$(printf '%s\n' "$_codex_tied_usage_limit_with_approval_phrase_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_usage_limit_with_approval_phrase_mock_dir"
+unset _codex_tied_usage_limit_with_approval_phrase_mock_dir _codex_tied_usage_limit_with_approval_phrase_output _codex_tied_usage_limit_with_approval_phrase_exit
+
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
 #!/usr/bin/env bash
