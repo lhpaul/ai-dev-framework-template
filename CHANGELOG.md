@@ -66,7 +66,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   submitted in the same second; and usage-limit comments are now retained
   and compared independently the same way environment-error comments
   already were, so an older clean review no longer silently wins over a
-  newer usage-limit notice.
+  newer usage-limit notice; two current-head terminal root comments tied at
+  the same second no longer collapse to whichever was scanned last —
+  terminal-comment selection now applies the same not-a-clean-approval-
+  first tie-break as reviews; and blocking is now checked before
+  usage-limit in every verdict path, so a blocking finding whose text
+  happens to mention "usage limit" is no longer misrouted to an
+  unavailable verdict.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

@@ -330,6 +330,11 @@ codex_select_terminal_evidence() {
 # a blocking finding about stale documentation that reproduces it
 # verbatim) — terminal evidence is always genuine review content, not a
 # bare failure message (fresh evidence from PR #1490 finding 3787943163).
+# When TWO terminal comments share a timestamp, the not-a-clean-approval-
+# first tie-break (codex_select_terminal_evidence) decides which one is
+# tracked, so a later clean terminal comment cannot silently discard an
+# earlier blocking one submitted in the same second (fresh evidence from
+# PR #1490 finding 3788078189).
 #
 # Sets: COMMENT_TERMINAL_BODY, COMMENT_TERMINAL_TIME, COMMENT_LATEST_BODY,
 # COMMENT_LATEST_TIME.
@@ -359,8 +364,15 @@ codex_scan_comment_evidence() {
       comment_latest_is_actionable="$is_actionable"
     fi
     if [ "$is_terminal" -eq 1 ]; then
-      COMMENT_TERMINAL_BODY="$body"
-      COMMENT_TERMINAL_TIME="$created_at"
+      # Apply the same not-a-clean-approval-first tie-break used for
+      # submitted reviews when TWO terminal comments share a timestamp:
+      # an unconditional overwrite would let a later clean comment
+      # silently discard an earlier blocking one submitted in the same
+      # second (fresh evidence from PR #1490 finding 3788078189).
+      if codex_select_terminal_evidence "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" "$body" "$created_at"; then
+        COMMENT_TERMINAL_BODY="$body"
+        COMMENT_TERMINAL_TIME="$created_at"
+      fi
     fi
   done < "$comments_file"
 }
@@ -795,7 +807,18 @@ while true; do
     # "no blocking issues". This avoids false positives without line-level filtering
     # (which would risk missing a genuine marker on the same line as a negation).
 
-    if codex_response_is_usage_limit "$BOT_RESPONSE"; then
+    if [ "$BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$BOT_RESPONSE"; then
+      # Blocking is checked first, ahead of usage-limit: a terminal/review
+      # finding whose text happens to mention "usage limit" as part of an
+      # actionable finding (e.g. flagging stale docs that describe it) must
+      # not be misrouted to an unavailable verdict before the blocking
+      # classifier runs (fresh evidence from PR #1490 finding 3788078191).
+      echo "VERDICT: NEEDS_REVISION"
+      echo "---BEGIN BOT RESPONSE---"
+      echo "$BOT_RESPONSE"
+      echo "---END BOT RESPONSE---"
+      exit 1
+    elif codex_response_is_usage_limit "$BOT_RESPONSE"; then
       codex_return_usage_limit "$BOT_RESPONSE"
     elif [ "$BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$BOT_RESPONSE"; then
       SEEN_ENVIRONMENT_ERROR=1
@@ -803,12 +826,6 @@ while true; do
       SEEN_ENVIRONMENT_TIME="$COMBINED_TIME"
       echo "INFO: Codex environment setup response detected; waiting for fresh current-head review evidence"
       continue
-    elif [ "$BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$BOT_RESPONSE"; then
-      echo "VERDICT: NEEDS_REVISION"
-      echo "---BEGIN BOT RESPONSE---"
-      echo "$BOT_RESPONSE"
-      echo "---END BOT RESPONSE---"
-      exit 1
     elif [ "$BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$BOT_RESPONSE"; then
       if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ] && ! [ "$COMBINED_TIME" \> "$SEEN_ENVIRONMENT_TIME" ]; then
         codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
@@ -987,19 +1004,21 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
   codex_require_current_head
 
   # Apply the same three-path verdict parsing as the main poll loop.
-  if codex_response_is_usage_limit "$ASYNC_BOT_RESPONSE"; then
+  # Blocking is checked first, ahead of usage-limit (see rationale above
+  # the main-loop equivalent).
+  if [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_BOT_RESPONSE"; then
+    echo "VERDICT: NEEDS_REVISION"
+    echo "---BEGIN BOT RESPONSE---"
+    echo "$ASYNC_BOT_RESPONSE"
+    echo "---END BOT RESPONSE---"
+    exit 1
+  elif codex_response_is_usage_limit "$ASYNC_BOT_RESPONSE"; then
     codex_return_usage_limit "$ASYNC_BOT_RESPONSE"
   elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_BOT_RESPONSE"; then
     SEEN_ENVIRONMENT_ERROR=1
     SEEN_ENVIRONMENT_RESPONSE="$ASYNC_BOT_RESPONSE"
     SEEN_ENVIRONMENT_TIME="$COMBINED_TIME"
     echo "INFO: async-arrival Codex environment setup response detected without fresh review evidence"
-  elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_BOT_RESPONSE"; then
-    echo "VERDICT: NEEDS_REVISION"
-    echo "---BEGIN BOT RESPONSE---"
-    echo "$ASYNC_BOT_RESPONSE"
-    echo "---END BOT RESPONSE---"
-    exit 1
   elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_BOT_RESPONSE"; then
     if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ] && ! [ "$COMBINED_TIME" \> "$SEEN_ENVIRONMENT_TIME" ]; then
       codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
@@ -1075,19 +1094,21 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     if [ -n "$ASYNC_FINAL_BOT_RESPONSE" ]; then
       echo "INFO: final async bot response detected after acknowledgement wait"
       codex_require_current_head
-      if codex_response_is_usage_limit "$ASYNC_FINAL_BOT_RESPONSE"; then
+      # Blocking is checked first, ahead of usage-limit (see rationale
+      # above the main-loop equivalent).
+      if [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_FINAL_BOT_RESPONSE"; then
+        echo "VERDICT: NEEDS_REVISION"
+        echo "---BEGIN BOT RESPONSE---"
+        echo "$ASYNC_FINAL_BOT_RESPONSE"
+        echo "---END BOT RESPONSE---"
+        exit 1
+      elif codex_response_is_usage_limit "$ASYNC_FINAL_BOT_RESPONSE"; then
         codex_return_usage_limit "$ASYNC_FINAL_BOT_RESPONSE"
       elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_FINAL_BOT_RESPONSE"; then
         SEEN_ENVIRONMENT_ERROR=1
         SEEN_ENVIRONMENT_RESPONSE="$ASYNC_FINAL_BOT_RESPONSE"
         SEEN_ENVIRONMENT_TIME="$COMBINED_TIME"
         echo "INFO: final async Codex environment setup response detected without fresh review evidence"
-      elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_FINAL_BOT_RESPONSE"; then
-        echo "VERDICT: NEEDS_REVISION"
-        echo "---BEGIN BOT RESPONSE---"
-        echo "$ASYNC_FINAL_BOT_RESPONSE"
-        echo "---END BOT RESPONSE---"
-        exit 1
       elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_FINAL_BOT_RESPONSE"; then
         if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ] && ! [ "$COMBINED_TIME" \> "$SEEN_ENVIRONMENT_TIME" ]; then
           codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"
@@ -1202,19 +1223,21 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
 
   if [ -n "$ASYNC_REACTION_FINAL_BOT_RESPONSE" ]; then
     codex_require_current_head
-    if codex_response_is_usage_limit "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
+    # Blocking is checked first, ahead of usage-limit (see rationale above
+    # the main-loop equivalent).
+    if [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
+      echo "VERDICT: NEEDS_REVISION"
+      echo "---BEGIN BOT RESPONSE---"
+      echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
+      echo "---END BOT RESPONSE---"
+      exit 1
+    elif codex_response_is_usage_limit "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
       codex_return_usage_limit "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
     elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
       SEEN_ENVIRONMENT_ERROR=1
       SEEN_ENVIRONMENT_RESPONSE="$ASYNC_REACTION_FINAL_BOT_RESPONSE"
       SEEN_ENVIRONMENT_TIME="$COMBINED_TIME"
       echo "INFO: final async reaction Codex environment setup response detected without fresh review evidence"
-    elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
-      echo "VERDICT: NEEDS_REVISION"
-      echo "---BEGIN BOT RESPONSE---"
-      echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
-      echo "---END BOT RESPONSE---"
-      exit 1
     elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$ASYNC_REACTION_FINAL_BOT_RESPONSE"; then
       if [ "$SEEN_ENVIRONMENT_ERROR" -eq 1 ] && ! [ "$COMBINED_TIME" \> "$SEEN_ENVIRONMENT_TIME" ]; then
         codex_return_environment_error "$SEEN_ENVIRONMENT_RESPONSE"

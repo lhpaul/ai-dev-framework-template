@@ -3905,6 +3905,102 @@ run_test "codex_older_review_vs_newer_usage_limit_reason" "REASON=codex-github-u
 rm -rf "$_codex_older_review_vs_newer_usage_limit_mock_dir"
 unset _codex_older_review_vs_newer_usage_limit_mock_dir _codex_older_review_vs_newer_usage_limit_output _codex_older_review_vs_newer_usage_limit_exit
 
+# Reproduces Codex finding on PR #1490 (P1, comment id 3788078189): when
+# two current-head terminal root comments share GitHub's second-resolution
+# timestamp, codex_scan_comment_evidence previously overwrote
+# COMMENT_TERMINAL_BODY unconditionally on every terminal comment seen,
+# regardless of content. A blocking terminal comment followed by a tied
+# clean terminal comment silently produced APPROVED. The not-a-clean-
+# approval-first tie-break now decides which tied terminal comment is
+# tracked. Fixture: blocking terminal comment first, clean terminal
+# comment second, both tied at the same timestamp, no review.
+_codex_tied_terminal_comments_blocking_survives_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_terminal_comments_blocking_survives_mock_dir/gh" <<'CODEX_TIED_TERMINAL_COMMENTS_BLOCKING_SURVIVES_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'aceface1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":190,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":300,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the leak.\\n\\n**Reviewed commit:** `aceface1234`"},{"id":301,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `aceface1234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_TERMINAL_COMMENTS_BLOCKING_SURVIVES_GH
+chmod +x "$_codex_tied_terminal_comments_blocking_survives_mock_dir/gh"
+
+_codex_tied_terminal_comments_blocking_survives_output=""
+_codex_tied_terminal_comments_blocking_survives_exit=0
+PATH="$_codex_tied_terminal_comments_blocking_survives_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_terminal_comments_blocking_survives_mock_dir/output.txt" 2>&1 || _codex_tied_terminal_comments_blocking_survives_exit=$?
+_codex_tied_terminal_comments_blocking_survives_output="$(cat "$_codex_tied_terminal_comments_blocking_survives_mock_dir/output.txt")"
+run_test "codex_tied_terminal_comments_blocking_survives_exit_needs_revision" "1" "$_codex_tied_terminal_comments_blocking_survives_exit"
+run_test "codex_tied_terminal_comments_blocking_survives_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_tied_terminal_comments_blocking_survives_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_terminal_comments_blocking_survives_mock_dir"
+unset _codex_tied_terminal_comments_blocking_survives_mock_dir _codex_tied_terminal_comments_blocking_survives_output _codex_tied_terminal_comments_blocking_survives_exit
+
+# Reproduces Codex finding on PR #1490 (P2, comment id 3788078191): the
+# usage-limit check ran before the blocking check in every verdict path, so
+# a current-head submitted review whose blocking finding text mentions
+# "usage limit" as part of the finding itself (e.g. flagging stale docs
+# that describe it) was misrouted to an UNAVAILABLE/usage-limit verdict
+# before the blocking classifier could run, hiding the actionable finding.
+# Blocking is now checked first in every verdict path.
+_codex_blocking_text_mentions_usage_limit_mock_dir="$(mktemp -d)"
+cat > "$_codex_blocking_text_mentions_usage_limit_mock_dir/gh" <<'CODEX_BLOCKING_TEXT_MENTIONS_USAGE_LIMIT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'baadf00d1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":191,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"baadf00d1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: docs incorrectly describe the Codex usage limit for code reviews."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_BLOCKING_TEXT_MENTIONS_USAGE_LIMIT_GH
+chmod +x "$_codex_blocking_text_mentions_usage_limit_mock_dir/gh"
+
+_codex_blocking_text_mentions_usage_limit_output=""
+_codex_blocking_text_mentions_usage_limit_exit=0
+PATH="$_codex_blocking_text_mentions_usage_limit_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_blocking_text_mentions_usage_limit_mock_dir/output.txt" 2>&1 || _codex_blocking_text_mentions_usage_limit_exit=$?
+_codex_blocking_text_mentions_usage_limit_output="$(cat "$_codex_blocking_text_mentions_usage_limit_mock_dir/output.txt")"
+run_test "codex_blocking_text_mentions_usage_limit_exit_needs_revision" "1" "$_codex_blocking_text_mentions_usage_limit_exit"
+run_test "codex_blocking_text_mentions_usage_limit_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_blocking_text_mentions_usage_limit_output" | grep "^VERDICT:")"
+rm -rf "$_codex_blocking_text_mentions_usage_limit_mock_dir"
+unset _codex_blocking_text_mentions_usage_limit_mock_dir _codex_blocking_text_mentions_usage_limit_output _codex_blocking_text_mentions_usage_limit_exit
+
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
 #!/usr/bin/env bash
