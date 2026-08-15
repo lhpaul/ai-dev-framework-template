@@ -321,7 +321,12 @@ codex_select_terminal_evidence() {
 # overwrite it, so an actionable setup failure is not silently lost to a
 # no-information comment that happens to arrive later in the same fetch
 # (fresh evidence from PR #1490 finding 3787786945). A LATER environment-
-# error comment still updates it, keeping the most recent one.
+# error comment still updates it, keeping the most recent one. A SHA-pinned
+# TERMINAL comment is never classified as an environment error even if its
+# text happens to quote the setup sentence (e.g. a blocking finding about
+# stale documentation that reproduces it verbatim) — terminal evidence is
+# always genuine review content, not a bare setup-failure message (fresh
+# evidence from PR #1490 finding 3787943163).
 #
 # Sets: COMMENT_TERMINAL_BODY, COMMENT_TERMINAL_TIME, COMMENT_LATEST_BODY,
 # COMMENT_LATEST_TIME.
@@ -332,19 +337,23 @@ codex_scan_comment_evidence() {
   COMMENT_LATEST_BODY=""
   COMMENT_LATEST_TIME=""
   local comment_latest_is_env_error=0
-  local line created_at body is_env_error
+  local line created_at body is_env_error is_terminal
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     created_at=$(printf '%s' "$line" | jq -r '.created_at // empty')  # workflow-shell-guard: allow SH003 - $line is a compact JSON object already validated parseable by the preceding jq -sc call; empty is a normal absent-field case, not a failure
     body=$(printf '%s' "$line" | jq -r '.body // empty')  # workflow-shell-guard: allow SH003 - same pre-validated $line as above; empty body is not a failure
+    is_terminal=0
+    codex_response_reviews_current_head "$body" && is_terminal=1
     is_env_error=0
-    codex_response_is_environment_error "$body" && is_env_error=1
+    if [ "$is_terminal" -eq 0 ]; then
+      codex_response_is_environment_error "$body" && is_env_error=1
+    fi
     if [ "$comment_latest_is_env_error" -eq 0 ] || [ "$is_env_error" -eq 1 ]; then
       COMMENT_LATEST_BODY="$body"
       COMMENT_LATEST_TIME="$created_at"
       comment_latest_is_env_error="$is_env_error"
     fi
-    if codex_response_reviews_current_head "$body"; then
+    if [ "$is_terminal" -eq 1 ]; then
       COMMENT_TERMINAL_BODY="$body"
       COMMENT_TERMINAL_TIME="$created_at"
     fi
@@ -367,8 +376,13 @@ codex_scan_comment_evidence() {
 # with a different evidence type (fresh evidence from PR #1490 finding
 # 3787868727: the terminal-comment branch previously never considered the
 # environment error at all). Only strictly newer terminal/review evidence
-# supersedes it. A bare non-error ancillary comment (acknowledgement,
-# "waiting" note) carries no information and never competes with anything.
+# supersedes it — EXCEPT when that terminal/review evidence is itself
+# blocking: a blocking finding always wins outright and is never discarded
+# by an environment-setup error regardless of timing, so an actionable
+# finding can never be hidden behind an "unavailable" verdict (fresh
+# evidence from PR #1490 finding 3787943162). A bare non-error ancillary
+# comment (acknowledgement, "waiting" note) carries no information and
+# never competes with anything.
 #
 # Sets: COMBINED_BODY, COMBINED_TIME, COMBINED_SOURCE ("review", "comment",
 # or "" if no evidence at all). LABEL is used only for INFO logging.
@@ -416,7 +430,15 @@ codex_combine_terminal_evidence() {
   fi
 
   if [ -n "$comment_latest_body" ] && codex_response_is_environment_error "$comment_latest_body"; then
-    if [ -z "$COMBINED_TIME" ] || ! codex_select_terminal_evidence "$comment_latest_body" "$comment_latest_time" "$COMBINED_BODY" "$COMBINED_TIME"; then
+    if [ -n "$COMBINED_SOURCE" ] && codex_response_is_blocking "$COMBINED_BODY"; then
+      # Blocking terminal/review evidence always wins outright — it is
+      # never discarded by an environment-setup error, regardless of
+      # timing, so an actionable finding can never be hidden behind an
+      # "unavailable" verdict (fresh evidence from PR #1490 finding
+      # 3787943162; Protocol 93 requires blocking evidence to never be
+      # silently discarded).
+      :
+    elif [ -z "$COMBINED_TIME" ] || ! codex_select_terminal_evidence "$comment_latest_body" "$comment_latest_time" "$COMBINED_BODY" "$COMBINED_TIME"; then
       COMBINED_BODY="$comment_latest_body"
       COMBINED_TIME="$comment_latest_time"
       COMBINED_SOURCE="comment"
@@ -679,7 +701,7 @@ while true; do
   # (printf) is always fully drained and can never receive SIGPIPE, unlike
   # a piped `head -c N` which can close early on long input (fresh evidence
   # from PR #1490 finding 3787868733).
-  BOT_RESPONSE=$(printf '%s' "$BOT_RESPONSE" | jq -Rrs '.[0:10000]')
+  BOT_RESPONSE=$(printf '%s' "$BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
 
   if ! INLINE_REVIEW_COMMENT_COUNT=$(codex_inline_review_comment_count_since "$TRIGGER_TIME"); then
     echo "VERDICT: TIMED_OUT — failed to fetch Codex inline review comments (treated as unavailable)"
@@ -914,7 +936,7 @@ ASYNC_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
 # `jq -Rs` slurps its entire stdin before producing output, avoiding
 # SIGPIPE on long root-comment-sourced bodies (see rationale above the
 # main-loop equivalent).
-ASYNC_BOT_RESPONSE=$(printf '%s' "$ASYNC_BOT_RESPONSE" | jq -Rrs '.[0:10000]')
+ASYNC_BOT_RESPONSE=$(printf '%s' "$ASYNC_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
 
 if [ -n "$ASYNC_BOT_RESPONSE" ]; then
   echo "INFO: async-arrival bot response detected during grace period"
@@ -1002,7 +1024,7 @@ if [ -n "$ASYNC_BOT_RESPONSE" ]; then
     # `jq -Rs` slurps its entire stdin before producing output, avoiding
     # SIGPIPE on long root-comment-sourced bodies (see rationale above the
     # main-loop equivalent).
-    ASYNC_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_FINAL_BOT_RESPONSE" | jq -Rrs '.[0:10000]')
+    ASYNC_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_FINAL_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
 
     if [ -n "$ASYNC_FINAL_BOT_RESPONSE" ]; then
       echo "INFO: final async bot response detected after acknowledgement wait"
@@ -1127,7 +1149,7 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
   # `jq -Rs` slurps its entire stdin before producing output, avoiding
   # SIGPIPE on long root-comment-sourced bodies (see rationale above the
   # main-loop equivalent).
-  ASYNC_REACTION_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_REACTION_FINAL_BOT_RESPONSE" | jq -Rrs '.[0:10000]')
+  ASYNC_REACTION_FINAL_BOT_RESPONSE=$(printf '%s' "$ASYNC_REACTION_FINAL_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq -R treats input as raw text (not JSON), so it cannot fail on malformed content; a genuine jq internal failure still trips `set -e` since this is a bare assignment, which is the desired fail-closed behavior
 
   if [ -n "$ASYNC_REACTION_FINAL_BOT_RESPONSE" ]; then
     codex_require_current_head

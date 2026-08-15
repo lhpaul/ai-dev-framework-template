@@ -51,7 +51,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   review-vs-ancillary-comment branch; and root-comment-sourced bodies (not
   truncated at scan time, unlike review bodies) are now also truncated via
   `jq -Rrs` instead of a piped `head`, closing the same `SIGPIPE` crash path
-  for a root comment body large enough to exceed a pipe buffer.
+  for a root comment body large enough to exceed a pipe buffer; a blocking
+  SHA-pinned terminal or review finding is no longer discarded by a
+  same-or-newer environment-setup-error comment — blocking evidence now
+  always wins outright, regardless of timing; and a SHA-pinned terminal
+  comment is no longer misclassified as an environment-setup error when its
+  finding text happens to quote the setup sentence verbatim (e.g. flagging
+  stale documentation) — terminal evidence is never routed through the
+  environment-error classifier.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

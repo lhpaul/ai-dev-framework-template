@@ -107,7 +107,11 @@ a later thumbs-up reaction or by review/comment evidence that is not
 strictly newer than the recorded error — but a genuinely fresh, strictly
 newer current-head review (e.g. after an operator creates the environment
 mid-poll) is allowed to supersede it, following the same newest-wins rule
-applied to every other evidence type. This applies within a single poll as
+applied to every other evidence type. A blocking terminal or review finding
+is the one exception to newest-wins: it always wins outright over an
+environment-setup error regardless of timing, so an actionable finding can
+never be hidden behind an "unavailable" verdict. This applies within a
+single poll as
 well as across polls: an environment-setup error is not silently discarded
 by a same-fetch or later plain acknowledgement, since a bare acknowledgement
 carries no information and is never treated as competing evidence.

@@ -3711,6 +3711,102 @@ run_test "codex_long_root_comment_no_sigpipe_verdict" "VERDICT: APPROVED" \
 rm -rf "$_codex_long_root_comment_no_sigpipe_mock_dir"
 unset _codex_long_root_comment_no_sigpipe_mock_dir _codex_long_root_comment_no_sigpipe_output _codex_long_root_comment_no_sigpipe_exit
 
+# Reproduces Codex finding on PR #1490 (P1, comment id 3787943162): a
+# SHA-pinned terminal root comment reporting a blocking finding at T1,
+# followed by a non-terminal environment-setup comment at T2 in the same
+# fetch. codex_combine_terminal_evidence's final environment-error override
+# previously replaced the blocking COMBINED_BODY whenever it was not
+# strictly newer than the environment-error comment, silently hiding the
+# blocking finding behind an "unavailable" verdict. Blocking terminal
+# evidence must now win outright, regardless of timing. No review from the
+# reviews endpoint -> expect NEEDS_REVISION, not environment-missing.
+_codex_blocking_terminal_beats_env_error_mock_dir="$(mktemp -d)"
+cat > "$_codex_blocking_terminal_beats_env_error_mock_dir/gh" <<'CODEX_BLOCKING_TERMINAL_BEATS_ENV_ERROR_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'beadf00d1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":160,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":270,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the null check.\\n\\n**Reviewed commit:** `beadf00d1234`"},{"id":271,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_BLOCKING_TERMINAL_BEATS_ENV_ERROR_GH
+chmod +x "$_codex_blocking_terminal_beats_env_error_mock_dir/gh"
+
+_codex_blocking_terminal_beats_env_error_output=""
+_codex_blocking_terminal_beats_env_error_exit=0
+PATH="$_codex_blocking_terminal_beats_env_error_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_blocking_terminal_beats_env_error_mock_dir/output.txt" 2>&1 || _codex_blocking_terminal_beats_env_error_exit=$?
+_codex_blocking_terminal_beats_env_error_output="$(cat "$_codex_blocking_terminal_beats_env_error_mock_dir/output.txt")"
+run_test "codex_blocking_terminal_beats_env_error_exit_needs_revision" "1" "$_codex_blocking_terminal_beats_env_error_exit"
+run_test "codex_blocking_terminal_beats_env_error_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_blocking_terminal_beats_env_error_output" | grep "^VERDICT:")"
+rm -rf "$_codex_blocking_terminal_beats_env_error_mock_dir"
+unset _codex_blocking_terminal_beats_env_error_mock_dir _codex_blocking_terminal_beats_env_error_output _codex_blocking_terminal_beats_env_error_exit
+
+# Reproduces Codex finding on PR #1490 (P2, comment id 3787943163): a
+# SHA-pinned terminal root review whose blocking finding text quotes the
+# environment-setup sentence verbatim (e.g. flagging stale docs that
+# reproduce it) was misclassified as an environment-setup error by the
+# unanchored substring matcher, suppressing NEEDS_REVISION. A SHA-pinned
+# TERMINAL comment is now never classified as an environment error,
+# regardless of its text content -> expect NEEDS_REVISION.
+_codex_quoted_setup_sentence_in_blocking_finding_mock_dir="$(mktemp -d)"
+cat > "$_codex_quoted_setup_sentence_in_blocking_finding_mock_dir/gh" <<'CODEX_QUOTED_SETUP_SENTENCE_IN_BLOCKING_FINDING_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'cafebabe1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":161,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":280,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: docs must not claim: To use Codex here, create an environment for this repo.\\n\\n**Reviewed commit:** `cafebabe1234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_QUOTED_SETUP_SENTENCE_IN_BLOCKING_FINDING_GH
+chmod +x "$_codex_quoted_setup_sentence_in_blocking_finding_mock_dir/gh"
+
+_codex_quoted_setup_sentence_in_blocking_finding_output=""
+_codex_quoted_setup_sentence_in_blocking_finding_exit=0
+PATH="$_codex_quoted_setup_sentence_in_blocking_finding_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_quoted_setup_sentence_in_blocking_finding_mock_dir/output.txt" 2>&1 || _codex_quoted_setup_sentence_in_blocking_finding_exit=$?
+_codex_quoted_setup_sentence_in_blocking_finding_output="$(cat "$_codex_quoted_setup_sentence_in_blocking_finding_mock_dir/output.txt")"
+run_test "codex_quoted_setup_sentence_in_blocking_finding_exit_needs_revision" "1" "$_codex_quoted_setup_sentence_in_blocking_finding_exit"
+run_test "codex_quoted_setup_sentence_in_blocking_finding_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_quoted_setup_sentence_in_blocking_finding_output" | grep "^VERDICT:")"
+rm -rf "$_codex_quoted_setup_sentence_in_blocking_finding_mock_dir"
+unset _codex_quoted_setup_sentence_in_blocking_finding_mock_dir _codex_quoted_setup_sentence_in_blocking_finding_output _codex_quoted_setup_sentence_in_blocking_finding_exit
+
 _codex_review_query_failure_mock_dir="$(mktemp -d)"
 cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
 #!/usr/bin/env bash
