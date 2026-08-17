@@ -5800,6 +5800,56 @@ run_test "codex_fenced_code_block_phrase_not_approved_root_comment_verdict" "VER
 rm -rf "$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir"
 unset _codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir _codex_fenced_code_block_phrase_not_approved_root_comment_output _codex_fenced_code_block_phrase_not_approved_root_comment_exit
 
+# The original fence-stripping awk pass toggled its "inside fence" state
+# on ANY line with 3+ backticks, with no regard for the LENGTH of the
+# opening delimiter. GitHub-flavored Markdown's actual fence semantics
+# require a delimiter of AT LEAST the opening fence's length to close it
+# — a longer outer fence (e.g. four backticks) can safely quote content
+# that itself contains a shorter (three-backtick) fence. The naive
+# implementation incorrectly closed on the inner three-backtick
+# delimiter, re-exposing the rest of the outer-fenced content —
+# including a quoted clean phrase — to classification (fresh evidence
+# from PR #1490 finding 3793497787, a followup to 3793453010).
+_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir/gh" <<'CODEX_NESTED_FENCE_LENGTH_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02661234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":310,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:311,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Response was:\n````\nHere is an example:\n```\nNo blocking issues found\n```\nThat quoted output is inaccurate.\n````\nAfter the fence.\n\n**Reviewed commit:** `facade02661`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NESTED_FENCE_LENGTH_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir/gh"
+
+_codex_nested_fence_length_phrase_not_approved_root_comment_output=""
+_codex_nested_fence_length_phrase_not_approved_root_comment_exit=0
+PATH="$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_nested_fence_length_phrase_not_approved_root_comment_exit=$?
+_codex_nested_fence_length_phrase_not_approved_root_comment_output="$(cat "$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_nested_fence_length_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_nested_fence_length_phrase_not_approved_root_comment_exit"
+run_test "codex_nested_fence_length_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_nested_fence_length_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir"
+unset _codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir _codex_nested_fence_length_phrase_not_approved_root_comment_output _codex_nested_fence_length_phrase_not_approved_root_comment_exit
+
 # codex_response_priority ranked an ancillary environment-setup-error
 # comment at the same "unrecognized format" tier (2) as a genuine but
 # unrecognized-format submitted review, instead of at the lower

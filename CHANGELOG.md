@@ -315,7 +315,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the same line to match, and the quoted content between the opening
   and closing fence spans arbitrarily many separate lines) — the fifth
   quoting style found unprotected, after straight-quote, backtick,
-  blockquote, and single-quote.
+  blockquote, and single-quote. That pass's initial implementation
+  toggled its "inside fence" state on ANY line with 3+ backticks, with no
+  regard for the LENGTH of the opening delimiter; GitHub-flavored
+  Markdown's actual fence semantics require a delimiter of at least the
+  opening fence's length to close it, so a longer outer fence (e.g. four
+  backticks) safely quoting content that itself contains a shorter
+  (three-backtick) fence incorrectly closed on the inner delimiter,
+  re-exposing everything after it — including a quoted clean phrase — to
+  classification. The awk pass now tracks the opening delimiter's length
+  (via the POSIX two-argument `match()`, not the gawk-only three-argument
+  array-capture form, since this environment's `awk` is the POSIX "one
+  true awk") and only closes on a delimiter of at least that length.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

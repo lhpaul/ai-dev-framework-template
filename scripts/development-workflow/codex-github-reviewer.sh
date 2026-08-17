@@ -412,15 +412,41 @@ CODEX_NEGATED_APPROVAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?;,]*${CODEX_NEGATED_
 # separate lines. A review quoting a clean signal inside a fenced block
 # was the fifth quoting style found unprotected, after straight-quote,
 # backtick, blockquote, and single-quote (fresh evidence from PR #1490
-# finding 3793453010).
+# finding 3793453010). The awk pass tracks the LENGTH of the opening
+# fence delimiter and only closes on a delimiter of AT LEAST that length
+# — matching GitHub-flavored Markdown's actual fence semantics, where a
+# longer outer fence (e.g. four backticks) can safely quote content that
+# itself contains a shorter (three-backtick) fence without the inner one
+# prematurely closing the block. A naive "any 3+ backtick line toggles
+# the state" implementation (the original version of this pass)
+# incorrectly closed on the inner delimiter, re-exposing everything after
+# it — including a quoted clean phrase — to classification (fresh
+# evidence from PR #1490 finding 3793497787, a followup to 3793453010).
+# Uses the POSIX two-argument `match()` (setting `RLENGTH`), not the
+# gawk-only three-argument form with an array capture, since this
+# environment's `awk` is the POSIX "one true awk", not gawk.
 codex_strip_quoted_spans() {
   local body="$1"
   local sq="'"
   local unfenced_body
   unfenced_body=$(awk '
-    /^[[:space:]]*```/ { infence = !infence; next }
-    infence { next }
-    { print }
+    {
+      line = $0
+      sub(/^[[:space:]]*/, "", line)
+      if (match(line, /^`{3,}/)) {
+        candidate_len = RLENGTH
+        if (!infence) {
+          infence = 1
+          fencelen = candidate_len
+          next
+        } else if (candidate_len >= fencelen) {
+          infence = 0
+          next
+        }
+      }
+      if (infence) next
+      print
+    }
   ' <<< "$body")
   sed -E "s/\"[^\"]*\"//g; s/\`[^\`]*\`//g; /^[[:space:]]*>/d; s/(^|[[:space:]])${sq}[^${sq}]*${sq}([[:space:].,;:!?]|\$)/\\1\\2/g" <<< "$unfenced_body"
 }
