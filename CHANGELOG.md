@@ -274,6 +274,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   input before classifying (a source gate isn't used here, unlike the
   already-safe environment-error check, since a genuine usage-limit
   notice can legitimately arrive via the reviews endpoint too).
+  `codex_response_is_approved` now also strips the "not only X" idiom
+  before running the negation check: "Not only X, (but) Y" is an
+  affirmative intensifier construction (both X and Y are being asserted,
+  not negated), not a negation of X, so `CODEX_NEGATION_WORDS`' bare
+  "not" alternative — which has no way to distinguish this idiom from a
+  genuine negation — misclassified "Not only does this look good, it is
+  approved" as negated even though both phrases are affirmative.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

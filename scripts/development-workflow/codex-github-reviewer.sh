@@ -387,14 +387,29 @@ codex_strip_quoted_spans() {
   sed -E 's/"[^"]*"//g; s/`[^`]*`//g' <<< "$body"
 }
 
+# Strips the "not only X" idiom — used ONLY by codex_response_is_approved
+# below. "Not only X, (but) Y" is an AFFIRMATIVE intensifier construction
+# (BOTH X and Y are being asserted, not negated: "Not only does this look
+# good, it is approved" means both "looks good" and "is approved" hold),
+# not a negation of X, so CODEX_NEGATION_WORDS' bare "not" alternative —
+# which has no way to distinguish this idiom from a genuine negation —
+# misclassified it as negated (fresh evidence from PR #1490 finding
+# 3793299512). Stripped entirely (not just skipped) so the leftover "not"
+# cannot accidentally trigger a match against some OTHER target word
+# later in the same clause.
+codex_strip_not_only_idiom() {
+  local body="$1"
+  sed -E 's/[Nn]ot[[:space:]]+[Oo]nly//g' <<< "$body"
+}
+
 codex_response_is_approved() {
   local body="$1"
-  local unquoted_body
-  unquoted_body=$(codex_strip_quoted_spans "$body")
-  if grep -qiE "$CODEX_NEGATED_APPROVAL_PATTERN" <<< "$unquoted_body"; then
+  local normalized_body
+  normalized_body=$(codex_strip_not_only_idiom "$(codex_strip_quoted_spans "$body")")
+  if grep -qiE "$CODEX_NEGATED_APPROVAL_PATTERN" <<< "$normalized_body"; then
     return 1
   fi
-  grep -qiE "$CODEX_APPROVAL_PATTERN" <<< "$unquoted_body"
+  grep -qiE "$CODEX_APPROVAL_PATTERN" <<< "$normalized_body"
 }
 
 # Ranks a response into one of four priority tiers, highest wins on a

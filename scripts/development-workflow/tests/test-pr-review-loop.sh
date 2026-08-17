@@ -5423,6 +5423,54 @@ run_test "codex_terminal_review_quotes_quota_message_verdict" "VERDICT: APPROVED
 rm -rf "$_codex_terminal_review_quotes_quota_message_mock_dir"
 unset _codex_terminal_review_quotes_quota_message_mock_dir _codex_terminal_review_quotes_quota_message_output _codex_terminal_review_quotes_quota_message_exit
 
+# "Not only X, (but) Y" is an AFFIRMATIVE intensifier construction (BOTH
+# X and Y are being asserted, not negated), not a negation of X, so
+# CODEX_NEGATION_WORDS' bare "not" alternative — which has no way to
+# distinguish this idiom from a genuine negation — misclassified "Not
+# only does this look good, it is approved" as negated even though both
+# phrases are affirmative (fresh evidence from PR #1490 finding
+# 3793299512). codex_response_is_approved now strips the "not only" idiom
+# before running the negation check.
+_codex_not_only_idiom_stays_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_not_only_idiom_stays_approved_root_comment_mock_dir/gh" <<'CODEX_NOT_ONLY_IDIOM_STAYS_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01881234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":295,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":296,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Not only does this look good, it is approved.\\n\\n**Reviewed commit:** `facade01881`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NOT_ONLY_IDIOM_STAYS_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_not_only_idiom_stays_approved_root_comment_mock_dir/gh"
+
+_codex_not_only_idiom_stays_approved_root_comment_output=""
+_codex_not_only_idiom_stays_approved_root_comment_exit=0
+PATH="$_codex_not_only_idiom_stays_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_not_only_idiom_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_idiom_stays_approved_root_comment_exit=$?
+_codex_not_only_idiom_stays_approved_root_comment_output="$(cat "$_codex_not_only_idiom_stays_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_not_only_idiom_stays_approved_root_comment_exit_clean" "0" "$_codex_not_only_idiom_stays_approved_root_comment_exit"
+run_test "codex_not_only_idiom_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_not_only_idiom_stays_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_not_only_idiom_stays_approved_root_comment_mock_dir"
+unset _codex_not_only_idiom_stays_approved_root_comment_mock_dir _codex_not_only_idiom_stays_approved_root_comment_output _codex_not_only_idiom_stays_approved_root_comment_exit
+
 # codex_response_priority ranked an ancillary environment-setup-error
 # comment at the same "unrecognized format" tier (2) as a genuine but
 # unrecognized-format submitted review, instead of at the lower
