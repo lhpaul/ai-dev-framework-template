@@ -5862,6 +5862,67 @@ run_test "codex_dismissed_review_excluded_root_comment_verdict_not_approved" "TI
 rm -rf "$_codex_dismissed_review_excluded_root_comment_mock_dir"
 unset _codex_dismissed_review_excluded_root_comment_mock_dir _codex_dismissed_review_excluded_root_comment_output _codex_dismissed_review_excluded_root_comment_exit
 
+# codex_select_review_evidence's tie-break (finding 3796982553) was fixed
+# to treat a tied CHANGES_REQUESTED review as blocking-tier regardless of
+# body text, but that fix only covers the review-vs-review tie-break. The
+# SEPARATE comment-vs-review tie-break in codex_select_terminal_evidence
+# (used when a SHA-pinned terminal root comment and a current-head review
+# share the same second-resolution timestamp) still called
+# codex_response_priority with body text only, with no state parameter at
+# all. A clean-looking SHA-pinned root comment ("No blocking issues
+# found.") and a same-timestamp CHANGES_REQUESTED review whose body ALSO
+# reads clean ("Looks good overall, but see inline comments.") both
+# scored priority 0 from body text, and since the comment is always
+# CURRENT in this comparison (set by the terminal-comment block before
+# the review is ever considered), the review never outranked it — the
+# review's CHANGES_REQUESTED state was discarded and the run returned
+# APPROVED (fresh evidence from PR #1490 finding 3797160202, a followup
+# to 3796982553 that fixed the review-vs-review tie-break but missed this
+# separate comment-vs-review one). codex_select_terminal_evidence now
+# accepts current/candidate state params and passes the review's state
+# through, so a same-timestamp CHANGES_REQUESTED review beats a
+# clean-looking root comment regardless of which source is "current".
+_codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir/gh" <<'CODEX_TIED_CHANGES_REQUESTED_REVIEW_BEATS_CLEAN_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'beef00001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":304,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"beef00001234567890","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Looks good overall, but see inline comments."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":230,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found.\\n\\n**Reviewed commit:** `beef0000`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_CHANGES_REQUESTED_REVIEW_BEATS_CLEAN_ROOT_COMMENT_GH
+chmod +x "$_codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir/gh"
+
+_codex_tied_changes_requested_review_beats_clean_root_comment_output=""
+_codex_tied_changes_requested_review_beats_clean_root_comment_exit=0
+PATH="$_codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir/output.txt" 2>&1 || _codex_tied_changes_requested_review_beats_clean_root_comment_exit=$?
+_codex_tied_changes_requested_review_beats_clean_root_comment_output="$(cat "$_codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir/output.txt")"
+run_test "codex_tied_changes_requested_review_beats_clean_root_comment_exit_needs_revision" "1" "$_codex_tied_changes_requested_review_beats_clean_root_comment_exit"
+run_test "codex_tied_changes_requested_review_beats_clean_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_tied_changes_requested_review_beats_clean_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir"
+unset _codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir _codex_tied_changes_requested_review_beats_clean_root_comment_output _codex_tied_changes_requested_review_beats_clean_root_comment_exit
+
 # codex_strip_quoted_spans handled straight-double-quotes, backticks, and
 # blockquotes, but not single-quoted spans — the fourth quoting style
 # found unprotected — so a review discussing a quoted clean phrase in

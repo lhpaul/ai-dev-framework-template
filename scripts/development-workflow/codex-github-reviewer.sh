@@ -613,17 +613,31 @@ codex_response_priority() {
 # SHA-pinned root comment) supplied it, and regardless of which side is
 # CURRENT vs. candidate. A tie in priority keeps CURRENT (arbitrary but
 # stable — both sides are equivalent for verdict purposes at that tier).
+#
+# Optional 5th/6th args (current_state/candidate_state) carry GitHub's
+# structured review state for whichever side is review-sourced (empty for
+# a SHA-pinned root comment, which has no review state). Without these,
+# a same-second tie between a clean-looking root comment and a
+# CHANGES_REQUESTED review whose body ALSO reads clean (e.g. "Looks good
+# overall, but see inline comments") scored both sides priority 0 from
+# body text alone, so the already-selected comment won the tie and the
+# review's CHANGES_REQUESTED state was discarded (fresh evidence from PR
+# #1490 finding 3797160202, a followup to 3796982553 that fixed this
+# exact class of gap for the review-vs-review tie-break in
+# codex_select_review_evidence but missed this separate comment-vs-review
+# tie-break, which has its own priority calculation).
 codex_select_terminal_evidence() {
   local current_body="$1" current_time="$2"
   local candidate_body="$3" candidate_time="$4"
+  local current_state="${5:-}" candidate_state="${6:-}"
   [ -z "$current_time" ] && return 0
   if [ "$candidate_time" \> "$current_time" ]; then
     return 0
   fi
   if [ "$candidate_time" = "$current_time" ]; then
     local candidate_priority current_priority
-    candidate_priority=$(codex_response_priority "$candidate_body")
-    current_priority=$(codex_response_priority "$current_body")
+    candidate_priority=$(codex_response_priority "$candidate_body" "$candidate_state")
+    current_priority=$(codex_response_priority "$current_body" "$current_state")
     if [ "$candidate_priority" -gt "$current_priority" ]; then
       return 0
     fi
@@ -861,7 +875,11 @@ codex_combine_terminal_evidence() {
   # (fresh evidence from PR #1490 finding 3788118857).
   if [ -n "$review_time" ]; then
     if [ "$COMBINED_SOURCE" = "review" ]; then
-      if codex_select_terminal_evidence "$COMBINED_BODY" "$COMBINED_TIME" "$review_body" "$review_time"; then
+      # CURRENT here is always the SHA-pinned terminal comment (no review
+      # state of its own) — this branch only runs when COMBINED_SOURCE
+      # was just set to "review" by the terminal-comment block above, so
+      # CANDIDATE's review_state is the only side with a real state.
+      if codex_select_terminal_evidence "$COMBINED_BODY" "$COMBINED_TIME" "$review_body" "$review_time" "" "$review_state"; then
         COMBINED_BODY="$review_body"
         COMBINED_TIME="$review_time"
         COMBINED_SOURCE="review"
@@ -949,7 +967,7 @@ codex_combine_terminal_evidence() {
       # state counts as blocking here too (fresh evidence from PR #1490
       # finding 3796396391).
       :
-    elif [ -z "$COMBINED_TIME" ] || ! codex_select_terminal_evidence "$comment_latest_body" "$comment_latest_time" "$COMBINED_BODY" "$COMBINED_TIME"; then
+    elif [ -z "$COMBINED_TIME" ] || ! codex_select_terminal_evidence "$comment_latest_body" "$comment_latest_time" "$COMBINED_BODY" "$COMBINED_TIME" "" "$COMBINED_REVIEW_STATE"; then
       COMBINED_BODY="$comment_latest_body"
       COMBINED_TIME="$comment_latest_time"
       COMBINED_SOURCE="comment"

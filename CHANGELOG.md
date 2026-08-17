@@ -431,6 +431,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fresh terminal evidence on an idempotent rerun even though GitHub no
   longer treats a dismissed review as active; all four reviews-endpoint
   `jq` queries now exclude `state == DISMISSED` entirely at the source.
+  (3) A third, separate tie-break — `codex_select_terminal_evidence`,
+  used when a SHA-pinned terminal root comment and a current-head review
+  share the same second-resolution timestamp — had the same class of gap
+  as (1) but was missed by that fix, since it's a different function with
+  its own `codex_response_priority` calls: a clean-looking root comment
+  and a same-timestamp `CHANGES_REQUESTED` review whose body also read
+  clean both scored priority 0 from body text, and since the comment is
+  always the "current" side of this comparison, the review could never
+  outrank it, discarding its `CHANGES_REQUESTED` state. `codex_select_
+  terminal_evidence` now accepts optional current/candidate state
+  parameters (empty for a root comment, which has no review state) and
+  passes them into `codex_response_priority`, so a same-timestamp
+  `CHANGES_REQUESTED` review wins this tie-break too, regardless of which
+  side is "current".
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
