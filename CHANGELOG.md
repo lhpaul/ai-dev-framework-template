@@ -518,7 +518,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   phrase alone won, returning `APPROVED`. `CODEX_BLOCKING_PATTERN` (checked
   first in the verdict-parsing chain, before approval) now recognizes an
   explicit should/must-not-be-merged verdict outright, regardless of what
-  an earlier hedge phrase in the same response says.
+  an earlier hedge phrase in the same response says. That fix only
+  covered the PASSIVE form; the IMPERATIVE form ("do not merge"/"don't
+  merge") is a separate, common phrasing the same gap applies to for the
+  identical reason — "merge" isn't in the negated-approval mechanism's
+  target-word list either, and unlike the passive form's "not be merged",
+  the imperative form's negation word isn't even adjacent to an
+  approval-vocabulary word at all. `do not merge`/`don't merge` are now
+  recognized alongside the passive form.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

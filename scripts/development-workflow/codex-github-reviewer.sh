@@ -356,8 +356,18 @@ codex_response_reviews_current_head() {
 # case). Checked here, in CODEX_BLOCKING_PATTERN (evaluated first in the
 # verdict-parsing chain, before approval), an explicit refusal to merge
 # is recognized as blocking outright regardless of what an earlier
-# hedge phrase in the same response says.
-CODEX_BLOCKING_PATTERN='(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|(should|must)[[:space:]]+not[[:space:]]+be[[:space:]]+merged|❌)'
+# hedge phrase in the same response says. That fix only covered the
+# PASSIVE form ("should/must not be merged"); the IMPERATIVE form ("do
+# not merge"/"don't merge") is a separate, common phrasing that the same
+# gap applies to for the identical reason — "merge" isn't in
+# CODEX_NEGATED_APPROVAL_TARGET_WORDS either, and unlike the passive
+# form's "not be merged", the imperative form's negation word ("do not"/
+# "don't") isn't even adjacent to an approval-vocabulary word at all, so
+# no plausible extension of the negated-approval mechanism could catch
+# it (fresh evidence from PR #1490 finding 3798999561, a followup to
+# 3798880969 that fixed the passive form only). do[[:space:]]+not[[:space:]]+
+# merge and don.t[[:space:]]+merge are added alongside the passive form.
+CODEX_BLOCKING_PATTERN='(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|(should|must)[[:space:]]+not[[:space:]]+be[[:space:]]+merged|do[[:space:]]+not[[:space:]]+merge|don.t[[:space:]]+merge|❌)'
 # \b word boundaries around the positive approval words: without them,
 # "approved" as a bare substring matched inside prefixed negative forms
 # like "unapproved" or "disapproved" (no space/word-break before

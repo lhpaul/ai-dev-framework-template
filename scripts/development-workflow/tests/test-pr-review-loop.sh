@@ -6239,6 +6239,55 @@ run_test "codex_should_not_be_merged_blocking_root_comment_verdict" "VERDICT: NE
 rm -rf "$_codex_should_not_be_merged_blocking_root_comment_mock_dir"
 unset _codex_should_not_be_merged_blocking_root_comment_mock_dir _codex_should_not_be_merged_blocking_root_comment_output _codex_should_not_be_merged_blocking_root_comment_exit
 
+# The should/must-not-be-merged fix above only covered the PASSIVE form;
+# the IMPERATIVE form ("do not merge"/"don't merge") is a separate,
+# common phrasing that the same gap applies to for the identical reason
+# — "merge" isn't in CODEX_NEGATED_APPROVAL_TARGET_WORDS either, and
+# unlike the passive form's "not be merged", the imperative form's
+# negation word isn't even adjacent to an approval-vocabulary word at
+# all. A response like "This looks good at first glance, but do not
+# merge until tests pass" still returned APPROVED (fresh evidence from PR
+# #1490 finding 3798999561, a followup to the passive-form fix).
+_codex_do_not_merge_blocking_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_do_not_merge_blocking_root_comment_mock_dir/gh" <<'CODEX_DO_NOT_MERGE_BLOCKING_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face33331234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":318,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":319,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but do not merge until tests pass.\\n\\n**Reviewed commit:** `face3333`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_DO_NOT_MERGE_BLOCKING_ROOT_COMMENT_GH
+chmod +x "$_codex_do_not_merge_blocking_root_comment_mock_dir/gh"
+
+_codex_do_not_merge_blocking_root_comment_output=""
+_codex_do_not_merge_blocking_root_comment_exit=0
+PATH="$_codex_do_not_merge_blocking_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_do_not_merge_blocking_root_comment_mock_dir/output.txt" 2>&1 || _codex_do_not_merge_blocking_root_comment_exit=$?
+_codex_do_not_merge_blocking_root_comment_output="$(cat "$_codex_do_not_merge_blocking_root_comment_mock_dir/output.txt")"
+run_test "codex_do_not_merge_blocking_root_comment_exit_needs_revision" "1" "$_codex_do_not_merge_blocking_root_comment_exit"
+run_test "codex_do_not_merge_blocking_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_do_not_merge_blocking_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_do_not_merge_blocking_root_comment_mock_dir"
+unset _codex_do_not_merge_blocking_root_comment_mock_dir _codex_do_not_merge_blocking_root_comment_output _codex_do_not_merge_blocking_root_comment_exit
+
 # codex_strip_quoted_spans handled straight-double-quotes, backticks, and
 # blockquotes, but not single-quoted spans — the fourth quoting style
 # found unprotected — so a review discussing a quoted clean phrase in
