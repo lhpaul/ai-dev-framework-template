@@ -5998,6 +5998,61 @@ run_test "codex_inline_backtick_pair_stays_approved_root_comment_verdict" "VERDI
 rm -rf "$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir"
 unset _codex_inline_backtick_pair_stays_approved_root_comment_mock_dir _codex_inline_backtick_pair_stays_approved_root_comment_output _codex_inline_backtick_pair_stays_approved_root_comment_exit
 
+# The fence-marker guard was added to codex_response_is_approved only,
+# but codex_response_is_usage_limit's own callers (the 4 top-level
+# verdict-parsing elif chains) were left unguarded — so a clean SHA-
+# pinned review that quotes a REAL quota notice inside a fenced example
+# (e.g. "No blocking issues found" followed by a ~~~ block containing
+# "You have reached your Codex usage limits") still matched the
+# usage-limit pattern on the unstripped fence content and returned
+# UNAVAILABLE (exit 3) instead of the safe-fail NEEDS_REVISION a fenced
+# response should produce (fresh evidence from PR #1490 finding
+# 3796042503, a followup to 3795661290). The fence-marker guard is now
+# embedded directly inside codex_response_has_fence_marker's callers
+# (usage-limit, environment-error, blocking, approved) rather than at
+# each call site, so every current and future caller benefits
+# automatically — the exact lesson codex_response_is_blocking already
+# taught for quote-stripping (finding 3793367887).
+_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir/gh" <<'CODEX_FENCED_QUOTA_EXAMPLE_NOT_UNAVAILABLE_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade03001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":318,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:319,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("No blocking issues found\n~~~\nYou have reached your Codex usage limits.\n~~~\n\n**Reviewed commit:** `facade03001`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_FENCED_QUOTA_EXAMPLE_NOT_UNAVAILABLE_ROOT_COMMENT_GH
+chmod +x "$_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir/gh"
+
+_codex_fenced_quota_example_not_unavailable_root_comment_output=""
+_codex_fenced_quota_example_not_unavailable_root_comment_exit=0
+PATH="$_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir/output.txt" 2>&1 || _codex_fenced_quota_example_not_unavailable_root_comment_exit=$?
+_codex_fenced_quota_example_not_unavailable_root_comment_output="$(cat "$_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir/output.txt")"
+run_test "codex_fenced_quota_example_not_unavailable_root_comment_exit_needs_revision" "1" "$_codex_fenced_quota_example_not_unavailable_root_comment_exit"
+run_test "codex_fenced_quota_example_not_unavailable_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_fenced_quota_example_not_unavailable_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir"
+unset _codex_fenced_quota_example_not_unavailable_root_comment_mock_dir _codex_fenced_quota_example_not_unavailable_root_comment_output _codex_fenced_quota_example_not_unavailable_root_comment_exit
+
 # codex_response_priority ranked an ancillary environment-setup-error
 # comment at the same "unrecognized format" tier (2) as a genuine but
 # unrecognized-format submitted review, instead of at the lower

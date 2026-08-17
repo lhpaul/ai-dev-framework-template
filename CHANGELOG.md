@@ -364,7 +364,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   converging. Single/inline backtick pairs on one line (not a 3+-backtick
   run) are unaffected and still get precise, stable stripping, since
   inline code references are common in genuinely clean review comments
-  and have not shown this same repeated-edge-case pattern.
+  and have not shown this same repeated-edge-case pattern. That fence-
+  marker guard was added to `codex_response_is_approved` only, so a
+  clean SHA-pinned review that quotes a REAL quota notice inside a fenced
+  example (e.g. "No blocking issues found" followed by a fenced block
+  containing "You have reached your Codex usage limits") still matched
+  the usage-limit pattern on the unstripped fence content and returned
+  `UNAVAILABLE` instead of the safe-fail `NEEDS_REVISION` a fenced
+  response should produce. The guard now lives in a new shared
+  `codex_response_has_fence_marker` helper used INSIDE every
+  positive/actionable classifier (usage-limit, environment-error,
+  blocking, approved) rather than scattered at call sites, so every
+  current and future caller benefits automatically — the same lesson
+  `codex_response_is_blocking` already taught for quote-stripping.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

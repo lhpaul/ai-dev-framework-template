@@ -242,8 +242,43 @@ codex_inline_review_comment_count_since() {
 # still-writing printf. This matters once classification runs on the
 # FULL, untruncated response (see BOT_RESPONSE_FULL below) rather than a
 # pre-truncated copy.
+
+# Returns true if the response contains a fence-opener marker (3+
+# consecutive backticks or tildes) ANYWHERE. Used by every positive-
+# signal classifier below (usage-limit, environment-error, approved) as a
+# conservative guard: a genuine SHA-pinned clean review can QUOTE example
+# text inside a fenced block (e.g. demonstrating what a usage-limit
+# notice looks like) without that text being a genuine assertion, and
+# after 5 rounds of precisely parsing GFM's fence-open/close semantics
+# repeatedly surfaced the next undiscovered edge case (see
+# codex_strip_quoted_spans below), the project's chosen direction is to
+# stop trying to determine what's inside vs. outside a fence and instead
+# treat the mere PRESENCE of a fence marker as disqualifying for any of
+# these positive/actionable classifications. This was initially added
+# only to codex_response_is_approved, but the SAME ambiguity applies
+# equally to usage-limit and environment-error detection — a fenced
+# example that merely QUOTES quota/setup-error wording must not trigger
+# an actual UNAVAILABLE verdict for an otherwise clean review (fresh
+# evidence from PR #1490 finding 3796042503, a followup to 3795661290:
+# the fence guard was added to codex_response_is_approved alone, but
+# codex_response_is_usage_limit's own callers were unguarded, so fenced
+# quota text still triggered a false UNAVAILABLE for a clean review).
+# Embedding this check INSIDE each shared classifier — rather than
+# requiring every call site to remember to apply it — is deliberate:
+# scattering the guard across call sites is exactly the pattern that
+# produced this gap in the first place (codex_response_is_blocking
+# learned the same lesson earlier for quote-stripping, PR #1490 finding
+# 3793367887).
+codex_response_has_fence_marker() {
+  local response="$1"
+  grep -qE '(`{3,}|~{3,})' <<< "$response"
+}
+
 codex_response_is_usage_limit() {
   local response="$1"
+  if codex_response_has_fence_marker "$response"; then
+    return 1
+  fi
   # The third alternative previously matched ANY "codex ... usage
   # limit/quota/capacity" substring with no requirement for accompanying
   # exhaustion/unavailability wording, so a clean submitted review merely
@@ -266,6 +301,9 @@ codex_response_is_usage_limit() {
 
 codex_response_is_environment_error() {
   local response="$1"
+  if codex_response_has_fence_marker "$response"; then
+    return 1
+  fi
   grep -qiE "to[[:space:]]+use[[:space:]]+codex[[:space:]]+here,[[:space:]]+create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo" <<< "$response"
 }
 
@@ -415,14 +453,16 @@ CODEX_NEGATED_APPROVAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?;,]*${CODEX_NEGATED_
 # producing one more undiscovered edge case each round (PR #1490 findings
 # 3793453010, 3793497787, a closing-validity followup, and 3795661290).
 # Rather than continue precisely re-implementing GFM's fence grammar one
-# construct at a time, codex_response_is_approved below now treats the
-# mere PRESENCE of a fence-opener marker (3+ consecutive backticks or
-# tildes) ANYWHERE in the response as disqualifying for a clean verdict,
-# without attempting to determine where it opens or closes. This is a
-# deliberate, explicit tradeoff: a small amount of false-NEEDS_REVISION
-# risk (a genuinely clean response that happens to include an example
-# code fence) in exchange for closing the entire class of "quoted/fenced
-# clean phrase misread as an assertion" bug in one step, rather than the
+# construct at a time, codex_response_has_fence_marker above (used by
+# every positive/actionable classifier: usage-limit, environment-error,
+# blocking, approved) now treats the mere PRESENCE of a fence-opener
+# marker (3+ consecutive backticks or tildes) ANYWHERE in the response as
+# disqualifying, without attempting to determine where it opens or
+# closes. This is a deliberate, explicit tradeoff: a small amount of
+# false-NEEDS_REVISION risk (a genuinely clean response that happens to
+# include an example code fence) in exchange for closing the entire class
+# of "quoted/fenced clean phrase misread as an assertion" bug in one
+# step, rather than the
 # previous direction of chasing precision at the cost of repeated
 # false-APPROVED gaps. Single/inline backticks (a PAIR on one line, not a
 # 3+-run) are unaffected by this and still get the precise, stable
@@ -438,6 +478,16 @@ codex_strip_quoted_spans() {
 
 codex_response_is_blocking() {
   local body="$1"
+  # A misdetected blocking finding inside a fenced example is already
+  # SAFE by itself (it only pushes the verdict toward NEEDS_REVISION, the
+  # conservative direction, never toward APPROVED) — but the fence guard
+  # is applied here too for consistency with every other classifier
+  # below, rather than leaving one classifier's fence-handling
+  # inconsistent with the rest and inviting the next Codex finding that
+  # specifically targets this asymmetry.
+  if codex_response_has_fence_marker "$body"; then
+    return 1
+  fi
   grep -qiE "$CODEX_BLOCKING_PATTERN" <<< "$(codex_strip_quoted_spans "$body")"
 }
 
@@ -464,16 +514,10 @@ codex_strip_not_only_idiom() {
 codex_response_is_approved() {
   local body="$1"
   # A fence-opener marker (3+ consecutive backticks or tildes) ANYWHERE
-  # in the response — see the "Fenced Markdown code blocks" comment above
-  # codex_strip_quoted_spans for the full rationale — disqualifies a
-  # clean verdict outright, without attempting to determine where the
-  # fence opens or closes. This deliberately trades a small amount of
-  # false-NEEDS_REVISION risk for closing the entire class of
-  # quoted/fenced-phrase-misread-as-assertion bugs at once, after four
-  # rounds of precise-fence-parsing fixes each surfaced the next
-  # undiscovered GFM fence edge case (most recently PR #1490 finding
-  # 3795661290, the tilde-fence variant).
-  if grep -qE '(`{3,}|~{3,})' <<< "$body"; then
+  # in the response — see codex_response_has_fence_marker above for the
+  # full rationale — disqualifies a clean verdict outright, without
+  # attempting to determine where the fence opens or closes.
+  if codex_response_has_fence_marker "$body"; then
     return 1
   fi
   local normalized_body
