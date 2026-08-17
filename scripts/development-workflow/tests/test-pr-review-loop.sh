@@ -5979,6 +5979,110 @@ run_test "codex_multiline_quoted_clean_phrase_not_approved_root_comment_verdict"
 rm -rf "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir"
 unset _codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir _codex_multiline_quoted_clean_phrase_not_approved_root_comment_output _codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit
 
+# The newline-flattening fix above (codex_multiline_quoted_clean_phrase_
+# not_approved_root_comment) had its own boundary gap: the single-quote
+# pattern's boundary alternatives ((^|[[:space:]]) and
+# ([[:space:].,;:!?]|$)) didn't include the placeholder character, so a
+# single-quoted span occupying an ENTIRE original line by itself (e.g.
+# "The documented response is:" / "'No blocking issues found'" / "That
+# claim is inaccurate" across three lines) has the placeholder — not real
+# whitespace, not true start/end-of-string — immediately before/after the
+# quote once flattened, so neither boundary matched and the span survived
+# unstripped, returning APPROVED (fresh evidence from PR #1490 finding
+# 3798665078). codex_strip_quoted_spans now includes the placeholder as
+# an additional valid boundary character for the single-quote pattern.
+_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir/gh" <<'CODEX_MULTILINE_SINGLE_QUOTED_WHOLE_LINE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'dead00001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":308,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:309,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented response is:\n'"'"'No blocking issues found'"'"'\nThat claim is inaccurate.\n\n**Reviewed commit:** `dead0000`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MULTILINE_SINGLE_QUOTED_WHOLE_LINE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir/gh"
+
+_codex_multiline_single_quoted_whole_line_not_approved_root_comment_output=""
+_codex_multiline_single_quoted_whole_line_not_approved_root_comment_exit=0
+PATH="$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_multiline_single_quoted_whole_line_not_approved_root_comment_exit=$?
+_codex_multiline_single_quoted_whole_line_not_approved_root_comment_output="$(cat "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_multiline_single_quoted_whole_line_not_approved_root_comment_exit_needs_revision" "1" "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_exit"
+run_test "codex_multiline_single_quoted_whole_line_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir"
+unset _codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir _codex_multiline_single_quoted_whole_line_not_approved_root_comment_output _codex_multiline_single_quoted_whole_line_not_approved_root_comment_exit
+
+# codex_strip_quoted_spans deliberately kept backtick-pair stripping
+# line-oriented, reasoning that GFM inline code spans never cross a line
+# — that reasoning was WRONG. CommonMark/GFM inline code spans CAN
+# legitimately span multiple lines (line endings inside a code span are
+# normalized to spaces in the rendered output); only FENCED
+# (triple-backtick) code blocks have line-anchored open/close semantics,
+# a different construct. A single-backtick code span split across lines
+# (e.g. "The documented response `" / "No blocking issues found" / "` is
+# inaccurate") was never stripped, letting the coded clean phrase reach
+# classification unstripped and return APPROVED (fresh evidence from PR
+# #1490 finding 3798665086). Backtick-pair stripping now runs on the same
+# newline-flattened body as the double-/single-quote passes.
+_codex_multiline_backtick_span_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_multiline_backtick_span_not_approved_root_comment_mock_dir/gh" <<'CODEX_MULTILINE_BACKTICK_SPAN_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'beef11121234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":310,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:311,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented response `\nNo blocking issues found\n` is inaccurate and should be corrected.\n\n**Reviewed commit:** `beef1112`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MULTILINE_BACKTICK_SPAN_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_multiline_backtick_span_not_approved_root_comment_mock_dir/gh"
+
+_codex_multiline_backtick_span_not_approved_root_comment_output=""
+_codex_multiline_backtick_span_not_approved_root_comment_exit=0
+PATH="$_codex_multiline_backtick_span_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_multiline_backtick_span_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_multiline_backtick_span_not_approved_root_comment_exit=$?
+_codex_multiline_backtick_span_not_approved_root_comment_output="$(cat "$_codex_multiline_backtick_span_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_multiline_backtick_span_not_approved_root_comment_exit_needs_revision" "1" "$_codex_multiline_backtick_span_not_approved_root_comment_exit"
+run_test "codex_multiline_backtick_span_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_multiline_backtick_span_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_multiline_backtick_span_not_approved_root_comment_mock_dir"
+unset _codex_multiline_backtick_span_not_approved_root_comment_mock_dir _codex_multiline_backtick_span_not_approved_root_comment_output _codex_multiline_backtick_span_not_approved_root_comment_exit
+
 # codex_strip_quoted_spans handled straight-double-quotes, backticks, and
 # blockquotes, but not single-quoted spans — the fourth quoting style
 # found unprotected — so a review discussing a quoted clean phrase in

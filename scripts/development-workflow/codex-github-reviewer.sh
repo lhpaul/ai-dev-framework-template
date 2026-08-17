@@ -477,28 +477,44 @@ codex_strip_quoted_spans() {
   # GFM blockquote marker only means anything at the start of a line.
   local no_blockquotes
   no_blockquotes=$(sed -E '/^[[:space:]]*>/d' <<< "$body")
-  # Double-quote and single-quote pairs, UNLIKE backtick pairs (see
-  # below), can legitimately span a newline — a bot can quote multi-line
-  # text inside one straight-quote pair (e.g. `The documented response
-  # "\nNo blocking issues found\n" is inaccurate`). sed's substitution
-  # operates per-line by default (each line is its own pattern space), so
-  # a quote pair split across two lines was never stripped at all,
-  # letting the quoted clean phrase reach classification unstripped and
-  # return APPROVED (fresh evidence from PR #1490 finding 3797334339).
-  # Newlines are swapped for a control-character placeholder before these
-  # two substitutions — collapsing the body to one sed "line" so `[^"]*`/
-  # `[^']*` can match across what were originally separate lines — then
-  # restored immediately after, before the backtick pass below.
+  # Double-quote, single-quote, AND backtick code-span pairs can all
+  # legitimately span a newline: a bot can quote multi-line text inside
+  # one straight-quote pair (e.g. `The documented response "\nNo blocking
+  # issues found\n" is inaccurate`), and — corrected here — CommonMark/GFM
+  # inline code spans are NOT line-bound the way this function previously
+  # assumed; a code span's contents can include line endings, which are
+  # normalized to spaces in the rendered output (the earlier "an inline
+  # code span never crosses a line" comment on the backtick pass was
+  # simply wrong, per fresh evidence from PR #1490 finding 3798665086 —
+  # only FENCED, triple-backtick blocks have line-anchored open/close
+  # semantics; that is a different construct from a single/paired-backtick
+  # inline code span). sed's substitution operates per-line by default
+  # (each line is its own pattern space), so any of these three pair
+  # styles split across two lines was never stripped at all, letting the
+  # quoted/coded clean phrase reach classification unstripped and return
+  # APPROVED (fresh evidence from PR #1490 findings 3797334339 and
+  # 3798665086). Newlines are swapped for a control-character placeholder
+  # before all three substitutions — collapsing the body to one sed
+  # "line" so `[^"]*`/`[^\`]*`/`[^']*` can match across what were
+  # originally separate lines — then restored immediately after.
+  #
+  # The single-quote pattern's boundary alternatives ((^|[[:space:]]) and
+  # ([[:space:].,;:!?]|$)) also need the placeholder added explicitly: a
+  # single-quoted span occupying an ENTIRE original line by itself (e.g.
+  # `The documented response is:` / `'No blocking issues found'` / `That
+  # claim is inaccurate` across three lines) has the placeholder — not
+  # real whitespace and not true start/end-of-string — immediately before
+  # and after the quote once flattened, so neither boundary alternative
+  # matched and the span survived unstripped (fresh evidence from PR
+  # #1490 finding 3798665078). The placeholder itself is a legitimate
+  # word-break in the original text (it stands in for a real newline), so
+  # treating it as an additional boundary character is correct, not a
+  # workaround.
   local nl_placeholder=$'\x01'
   local flattened stripped
   flattened=$(printf '%s' "$no_blockquotes" | tr '\n' "$nl_placeholder")
-  stripped=$(sed -E "s/\"[^\"]*\"//g; s/(^|[[:space:]])${sq}[^${sq}]*${sq}([[:space:].,;:!?]|\$)/\\1\\2/g" <<< "$flattened")
-  stripped=$(printf '%s' "$stripped" | tr "$nl_placeholder" '\n')
-  # Backtick pairs are intentionally NOT included in the flattening above:
-  # GFM defines an inline code span as never crossing a line (an
-  # unclosed backtick run at end-of-line is not code), so keeping this
-  # substitution line-oriented is correct per spec, not a gap.
-  sed -E "s/\`[^\`]*\`//g" <<< "$stripped"
+  stripped=$(sed -E "s/\"[^\"]*\"//g; s/\`[^\`]*\`//g; s/(^|[[:space:]]|${nl_placeholder})${sq}[^${sq}]*${sq}([[:space:].,;:!?]|${nl_placeholder}|\$)/\\1\\2/g" <<< "$flattened")
+  printf '%s' "$stripped" | tr "$nl_placeholder" '\n'
 }
 
 codex_response_is_blocking() {

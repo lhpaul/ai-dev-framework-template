@@ -459,10 +459,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before the double-/single-quote stripping passes (restoring them
   immediately after, before the line-oriented backtick pass), so a quote
   pair is stripped regardless of how many original lines it spans.
-  Blockquote-line deletion and backtick-pair stripping remain
-  line-oriented, which is correct by design for both (a GFM blockquote
-  marker only means anything at the start of a line, and GFM defines an
-  inline code span as never crossing a line).
+  Blockquote-line deletion remains line-oriented, which is correct by
+  design (a GFM blockquote marker only means anything at the start of a
+  line); backtick-pair stripping was ALSO kept line-oriented at the time,
+  reasoning that GFM inline code spans never cross a line — see the
+  followup fix below, which found that reasoning incorrect.
+- **Codex GitHub reviewer fixes two followup gaps in the multi-line quote
+  fix above**: (1) the single-quote pattern's boundary alternatives
+  (`(^|[[:space:]])` and `([[:space:].,;:!?]|$)`) didn't include the
+  newline-flattening placeholder character, so a single-quoted span
+  occupying an ENTIRE original line by itself (e.g. a bot's `The
+  documented response is:` / `'No blocking issues found'` / `That claim
+  is inaccurate` across three lines) has the placeholder — not real
+  whitespace, not true start/end-of-string — immediately before/after the
+  quote once flattened, so neither boundary matched and the quoted clean
+  phrase survived, returning `APPROVED`. The placeholder is now included
+  as an additional valid boundary character. (2) Backtick-pair stripping
+  was deliberately kept line-oriented in the multi-line quote fix,
+  reasoning that "GFM defines an inline code span as never crossing a
+  line" — that reasoning was wrong: CommonMark/GFM inline code spans CAN
+  legitimately span multiple lines (embedded line endings are normalized
+  to spaces in the rendered output); only FENCED, triple-backtick code
+  blocks have line-anchored open/close semantics, a different construct.
+  A single-backtick code span split across lines was never stripped,
+  letting the coded clean phrase reach classification unstripped and
+  return `APPROVED`. Backtick-pair stripping now runs on the same
+  newline-flattened body as the double-/single-quote passes, alongside
+  them, instead of as a separate line-oriented pass afterward.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
