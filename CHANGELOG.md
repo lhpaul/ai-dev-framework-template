@@ -549,7 +549,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   written to fix for approval only — a clean response like "This is not
   only safe to merge but looks good" was misread as a merge refusal.
   `codex_response_is_blocking` now applies that same idiom-stripping
-  normalization before matching.
+  normalization before matching. A fourth consecutive missing-negation-word
+  finding (`wouldn't`) prompted a proactive sweep of the remaining common
+  English negation forms in one pass — `was/wasn't`, `were/weren't`,
+  `would/wouldn't`, `has/hasn't`, `have/haven't`, `had/hadn't` (contracted
+  and space-separated) are now all included in `CODEX_NEGATION_WORDS`,
+  rather than continuing to fix them one synonym at a time. `did not`/
+  `didn't` is deliberately excluded from this sweep despite being an
+  equally common form: it already appears baked into
+  `CODEX_NEGATED_APPROVAL_TARGET_WORDS` as part of the atomic phrase
+  "didn't find any major issues" (itself a clean signal). Adding bare
+  `didn't` as a general negation word was verified during development to
+  introduce a genuine false positive — a doubly-reinforced clean response
+  ("Codex didn't find any major issues and looks good.") would misclassify
+  as `NEEDS_REVISION` because "didn't" matches as a bare negation and
+  reaches the separate "looks good" target later in the same unpunctuated
+  sentence — caught and reverted before being committed. A regression test
+  guards against this specific gap being silently reintroduced later.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

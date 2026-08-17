@@ -451,7 +451,26 @@ CODEX_APPROVAL_PATTERN='(\bapproved\b|\blgtm\b|\blooks[[:space:]]+good\b|didn.t 
 # "cannot approve" fixed for finding 3790023141, just a different
 # inability phrase).
 CODEX_NEGATED_APPROVAL_TARGET_WORDS='(approve[ds]?|lgtm|look(s|ing)?[[:space:]]+good|no[[:space:]]+blocking[[:space:]]+issues?|didn.t find[[:space:]]+any major[[:space:]]+issues)'
-CODEX_NEGATION_WORDS='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|do[[:space:]]+not|don.t|should[[:space:]]+not|shouldn.t|must[[:space:]]+not|mustn.t|never|unable[[:space:]]+to)'
+# Proactive sweep of the remaining common English negation forms not yet
+# covered (was/were/would/has/have/had, contracted and space-separated),
+# added in one pass after four consecutive findings each surfaced one
+# more missing modal-verb negation one at a time (don't, should/mustn't,
+# and finally wouldn't — fresh evidence from PR #1490 finding 3799391883
+# — prompted this sweep rather than continuing to fix them one at a
+# time). "did not"/"didn't" is DELIBERATELY excluded despite being an
+# equally common negation form: it already appears baked into
+# CODEX_NEGATED_APPROVAL_TARGET_WORDS above as part of the atomic phrase
+# "didn't find any major issues" (itself a clean/approval signal, not
+# something to negate). Adding bare "didn.t" here was verified to
+# introduce a genuine false positive: a response like "Codex didn't find
+# any major issues and looks good." — doubly-reinforced clean, not
+# rejected — matched NEGATION_WORDS on "didn't" and then reached the
+# separate "looks good" target later in the same unpunctuated sentence,
+# misclassifying a clean review as NEEDS_REVISION. Caught and reverted
+# during this sweep's own verification before ever being committed;
+# left undocumented here it would be an easy trap for a future sweep to
+# re-introduce.
+CODEX_NEGATION_WORDS='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|was[[:space:]]+not|wasn.t|were[[:space:]]+not|weren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|would[[:space:]]+not|wouldn.t|does[[:space:]]+not|doesn.t|do[[:space:]]+not|don.t|has[[:space:]]+not|hasn.t|have[[:space:]]+not|haven.t|had[[:space:]]+not|hadn.t|should[[:space:]]+not|shouldn.t|must[[:space:]]+not|mustn.t|never|unable[[:space:]]+to)'
 CODEX_NEGATED_APPROVAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?;,]*${CODEX_NEGATED_APPROVAL_TARGET_WORDS}"
 # Any CODEX_NEGATION_WORDS alternative, followed within the same clause
 # by "merge"/"merged" (with or without an intervening "be"), is treated

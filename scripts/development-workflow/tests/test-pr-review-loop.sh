@@ -6491,6 +6491,105 @@ run_test "codex_not_only_safe_to_merge_stays_approved_root_comment_verdict" "VER
 rm -rf "$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir"
 unset _codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir _codex_not_only_safe_to_merge_stays_approved_root_comment_output _codex_not_only_safe_to_merge_stays_approved_root_comment_exit
 
+# CODEX_NEGATION_WORDS was missing "would not"/"wouldn't" — the fourth
+# consecutive missing-negation-word finding (don't, should/mustn't, now
+# wouldn't), which prompted a proactive sweep of the remaining common
+# English negation forms (was/were/would/has/have/had, contracted and
+# space-separated) in one pass rather than continuing to fix them one at
+# a time (fresh evidence from PR #1490 finding 3799391883).
+_codex_wouldnt_approve_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_wouldnt_approve_not_approved_root_comment_mock_dir/gh" <<'CODEX_WOULDNT_APPROVE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face88881234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":328,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":329,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but I wouldn'"'"'t approve this change.\\n\\n**Reviewed commit:** `face8888`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_WOULDNT_APPROVE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_wouldnt_approve_not_approved_root_comment_mock_dir/gh"
+
+_codex_wouldnt_approve_not_approved_root_comment_output=""
+_codex_wouldnt_approve_not_approved_root_comment_exit=0
+PATH="$_codex_wouldnt_approve_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_wouldnt_approve_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_wouldnt_approve_not_approved_root_comment_exit=$?
+_codex_wouldnt_approve_not_approved_root_comment_output="$(cat "$_codex_wouldnt_approve_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_wouldnt_approve_not_approved_root_comment_exit_needs_revision" "1" "$_codex_wouldnt_approve_not_approved_root_comment_exit"
+run_test "codex_wouldnt_approve_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_wouldnt_approve_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_wouldnt_approve_not_approved_root_comment_mock_dir"
+unset _codex_wouldnt_approve_not_approved_root_comment_mock_dir _codex_wouldnt_approve_not_approved_root_comment_output _codex_wouldnt_approve_not_approved_root_comment_exit
+
+# "did not"/"didn't" is DELIBERATELY excluded from the negation-word
+# sweep above (see the comment above CODEX_NEGATION_WORDS): it already
+# appears baked into CODEX_NEGATED_APPROVAL_TARGET_WORDS as part of the
+# atomic phrase "didn't find any major issues" (itself a clean signal,
+# not something to negate). Adding bare "didn.t" as a general negation
+# word was verified during this sweep's own development to introduce a
+# genuine false positive — caught and reverted before ever being
+# committed — where a doubly-reinforced clean response ("Codex didn't
+# find any major issues and looks good.") was misclassified as
+# NEEDS_REVISION because "didn't" matched as a bare negation and reached
+# the separate "looks good" target later in the same unpunctuated
+# sentence. This test guards against that specific regression being
+# silently reintroduced by a future negation-word addition.
+_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir/gh" <<'CODEX_DIDNT_FIND_ISSUES_AND_LOOKS_GOOD_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face99991234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":330,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":331,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex didn'"'"'t find any major issues and looks good.\\n\\n**Reviewed commit:** `face9999`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_DIDNT_FIND_ISSUES_AND_LOOKS_GOOD_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir/gh"
+
+_codex_didnt_find_issues_and_looks_good_approved_root_comment_output=""
+_codex_didnt_find_issues_and_looks_good_approved_root_comment_exit=0
+PATH="$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_didnt_find_issues_and_looks_good_approved_root_comment_exit=$?
+_codex_didnt_find_issues_and_looks_good_approved_root_comment_output="$(cat "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_didnt_find_issues_and_looks_good_approved_root_comment_exit_clean" "0" "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_exit"
+run_test "codex_didnt_find_issues_and_looks_good_approved_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir"
+unset _codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir _codex_didnt_find_issues_and_looks_good_approved_root_comment_output _codex_didnt_find_issues_and_looks_good_approved_root_comment_exit
+
 # codex_strip_quoted_spans handled straight-double-quotes, backticks, and
 # blockquotes, but not single-quoted spans — the fourth quoting style
 # found unprotected — so a review discussing a quoted clean phrase in
