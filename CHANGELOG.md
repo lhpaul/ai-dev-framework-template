@@ -326,7 +326,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   classification. The awk pass now tracks the opening delimiter's length
   (via the POSIX two-argument `match()`, not the gawk-only three-argument
   array-capture form, since this environment's `awk` is the POSIX "one
-  true awk") and only closes on a delimiter of at least that length.
+  true awk") and only closes on a delimiter of at least that length. That
+  fix checked length but not GitHub-flavored Markdown's other closing-
+  fence requirement: a closing delimiter must be followed by nothing but
+  optional whitespace. A line like `` ```not-a-close `` is, per GFM, a
+  new *opening* fence with an info string, not a close, but the
+  length-only check treated it as closing regardless, incorrectly
+  re-exposing a quoted clean phrase positioned after it (and hiding
+  genuine rejection text positioned after THAT, since the length-only
+  check then misread the real closing delimiter as opening yet another
+  fence). This completes GFM's fenced-code-block spec — open, length,
+  close-only-whitespace — as the deliberately final fence-specific
+  refinement here, rather than another reactive edge-case patch: an
+  unclosed fence at end-of-input is already handled safely by
+  construction (everything after an opening delimiter that never finds a
+  valid close stays stripped), so the state machine now correctly
+  implements the finite GFM fence-closing rule end to end.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

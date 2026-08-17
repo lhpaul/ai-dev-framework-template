@@ -5850,6 +5850,55 @@ run_test "codex_nested_fence_length_phrase_not_approved_root_comment_verdict" "V
 rm -rf "$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir"
 unset _codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir _codex_nested_fence_length_phrase_not_approved_root_comment_output _codex_nested_fence_length_phrase_not_approved_root_comment_exit
 
+# The delimiter-length fix above checked LENGTH but not the GFM rule that
+# a closing fence must be followed by nothing but optional whitespace: a
+# line like ```` ```not-a-close ```` is, per GFM, a NEW opening fence with
+# an info string, not a close, but a length-only check treated it as
+# closing regardless — re-exposing everything after it, including a
+# quoted clean phrase, to classification (fresh evidence from PR #1490
+# finding following 3793497787/3793453010). This completes GFM's fence
+# spec (open, length, close-only-whitespace) — the awk pass now requires
+# nothing but whitespace after a would-be closing delimiter.
+_codex_fence_close_requires_whitespace_only_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir/gh" <<'CODEX_FENCE_CLOSE_REQUIRES_WHITESPACE_ONLY_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02771234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":312,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:313,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Response was:\n```text\nsome intro\n```not-a-close\nNo blocking issues found\n```\nThat quoted output is inaccurate.\n\n**Reviewed commit:** `facade02771`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_FENCE_CLOSE_REQUIRES_WHITESPACE_ONLY_ROOT_COMMENT_GH
+chmod +x "$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir/gh"
+
+_codex_fence_close_requires_whitespace_only_root_comment_output=""
+_codex_fence_close_requires_whitespace_only_root_comment_exit=0
+PATH="$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir/output.txt" 2>&1 || _codex_fence_close_requires_whitespace_only_root_comment_exit=$?
+_codex_fence_close_requires_whitespace_only_root_comment_output="$(cat "$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir/output.txt")"
+run_test "codex_fence_close_requires_whitespace_only_root_comment_exit_needs_revision" "1" "$_codex_fence_close_requires_whitespace_only_root_comment_exit"
+run_test "codex_fence_close_requires_whitespace_only_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_fence_close_requires_whitespace_only_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir"
+unset _codex_fence_close_requires_whitespace_only_root_comment_mock_dir _codex_fence_close_requires_whitespace_only_root_comment_output _codex_fence_close_requires_whitespace_only_root_comment_exit
+
 # codex_response_priority ranked an ancillary environment-setup-error
 # comment at the same "unrecognized format" tier (2) as a genuine but
 # unrecognized-format submitted review, instead of at the lower

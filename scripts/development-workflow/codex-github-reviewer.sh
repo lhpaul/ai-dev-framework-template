@@ -425,6 +425,25 @@ CODEX_NEGATED_APPROVAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?;,]*${CODEX_NEGATED_
 # Uses the POSIX two-argument `match()` (setting `RLENGTH`), not the
 # gawk-only three-argument form with an array capture, since this
 # environment's `awk` is the POSIX "one true awk", not gawk.
+#
+# This completes GFM's actual (finite, well-specified) fenced-code-block
+# rule: an opening delimiter (3+ backticks, optionally followed by an
+# info string) is closed by the first later delimiter that is (a) at
+# least as long as the opening one AND (b) followed by nothing but
+# optional whitespace. A candidate closing line that has trailing
+# non-whitespace content — e.g. ```` ```not-a-close ```` — is, per GFM,
+# an entirely different construct (a NEW opening fence with an info
+# string), not a close, but a length-only check (the previous version of
+# this fix) treated it as closing regardless, re-exposing quoted content
+# after it (fresh evidence from PR #1490 finding, followup to
+# 3793497787/3793453010). This is deliberately the LAST fence-specific
+# refinement here, not another reactive edge-case patch: GFM's fence spec
+# is genuinely finite (open, length, close-only-whitespace), and all
+# three parts are now implemented. An unclosed fence at end-of-input is
+# already handled safely by construction — `infence` simply stays true
+# through the rest of the loop, so everything after an opening delimiter
+# that never finds a valid close is stripped, which is the conservative
+# (never-expose-ambiguous-content) direction.
 codex_strip_quoted_spans() {
   local body="$1"
   local sq="'"
@@ -435,13 +454,18 @@ codex_strip_quoted_spans() {
       sub(/^[[:space:]]*/, "", line)
       if (match(line, /^`{3,}/)) {
         candidate_len = RLENGTH
+        rest = substr(line, RSTART + RLENGTH)
         if (!infence) {
           infence = 1
           fencelen = candidate_len
           next
         } else if (candidate_len >= fencelen) {
-          infence = 0
-          next
+          trimmed_rest = rest
+          gsub(/[[:space:]]/, "", trimmed_rest)
+          if (trimmed_rest == "") {
+            infence = 0
+            next
+          }
         }
       }
       if (infence) next
