@@ -445,6 +445,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passes them into `codex_response_priority`, so a same-timestamp
   `CHANGES_REQUESTED` review wins this tie-break too, regardless of which
   side is "current".
+- **Codex GitHub reviewer strips multi-line quoted spans**:
+  `codex_strip_quoted_spans`' double-quote stripping ran inside a single
+  `sed` invocation, which operates per-line by default (each line is its
+  own pattern space) — a straight-double-quote pair spanning a newline
+  (e.g. a bot quoting multi-line text as `The documented response "` /
+  `No blocking issues found` / `" is inaccurate` across three lines) was
+  never stripped at all, since the opening and closing quote sit in
+  different sed pattern spaces. The quoted clean phrase reached
+  classification unstripped and matched `CODEX_APPROVAL_PATTERN`,
+  returning `APPROVED` instead of the documented unrecognized-format
+  safe-fail. Newlines are now swapped for a control-character placeholder
+  before the double-/single-quote stripping passes (restoring them
+  immediately after, before the line-oriented backtick pass), so a quote
+  pair is stripped regardless of how many original lines it spans.
+  Blockquote-line deletion and backtick-pair stripping remain
+  line-oriented, which is correct by design for both (a GFM blockquote
+  marker only means anything at the start of a line, and GFM defines an
+  inline code span as never crossing a line).
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

@@ -5923,6 +5923,62 @@ run_test "codex_tied_changes_requested_review_beats_clean_root_comment_verdict" 
 rm -rf "$_codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir"
 unset _codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir _codex_tied_changes_requested_review_beats_clean_root_comment_output _codex_tied_changes_requested_review_beats_clean_root_comment_exit
 
+# codex_strip_quoted_spans' double-quote stripping ran inside a single sed
+# invocation, which operates per-line by default (each line is its own
+# pattern space) — a straight-double-quote pair that spans a newline (e.g.
+# `The documented response "` / `No blocking issues found` / `" is
+# inaccurate` across three lines) was never stripped at all, since the
+# opening and closing quote are in different sed pattern spaces. The
+# quoted clean phrase reached classification unstripped and matched
+# CODEX_APPROVAL_PATTERN's "no blocking issues" alternative, returning
+# APPROVED instead of the documented unrecognized-format safe-fail (fresh
+# evidence from PR #1490 finding 3797334339, a multi-line followup to the
+# same-line case already covered by codex_quoted_clean_phrase_not_
+# approved_root_comment above). codex_strip_quoted_spans now flattens
+# newlines to a placeholder before the double-/single-quote stripping
+# passes (restoring them immediately after, before the line-oriented
+# backtick pass), so a quote pair can be stripped regardless of how many
+# original lines it spans.
+_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir/gh" <<'CODEX_MULTILINE_QUOTED_CLEAN_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'beef00001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":306,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:307,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented response \"\nNo blocking issues found\n\" is inaccurate and should be corrected.\n\n**Reviewed commit:** `beef0000`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MULTILINE_QUOTED_CLEAN_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir/gh"
+
+_codex_multiline_quoted_clean_phrase_not_approved_root_comment_output=""
+_codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit=0
+PATH="$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit=$?
+_codex_multiline_quoted_clean_phrase_not_approved_root_comment_output="$(cat "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit"
+run_test "codex_multiline_quoted_clean_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir"
+unset _codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir _codex_multiline_quoted_clean_phrase_not_approved_root_comment_output _codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit
+
 # codex_strip_quoted_spans handled straight-double-quotes, backticks, and
 # blockquotes, but not single-quoted spans — the fourth quoting style
 # found unprotected — so a review discussing a quoted clean phrase in
