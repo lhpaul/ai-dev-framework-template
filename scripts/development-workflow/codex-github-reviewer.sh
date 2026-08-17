@@ -341,33 +341,34 @@ codex_response_reviews_current_head() {
 # same rules. See "Verdict parsing" header comment for the rationale behind
 # each marker.
 #
-# (should|must)[[:space:]]+not[[:space:]]+be[[:space:]]+merged targets an
-# explicit merge-refusal verdict that the negated-approval mechanism
-# below (CODEX_NEGATED_APPROVAL_PATTERN) cannot catch: that mechanism
-# only fires when a negation word is followed by one of a fixed list of
-# approval-vocabulary target words (approve[ds]?, lgtm, looks good, etc.)
-# within the same sentence, but a response like "This looks good at
-# first glance, but this should not be merged until tests pass." negates
-# "merged" — a word outside that target list entirely — so the negated-
-# approval check never matches and the earlier "looks good" phrase alone
-# wins, returning APPROVED (fresh evidence from PR #1490 finding
-# 3798880969, a followup to the "don't approve" fix that closed the
-# adjacent-to-an-approval-word case but not this direct-merge-refusal
-# case). Checked here, in CODEX_BLOCKING_PATTERN (evaluated first in the
+# Explicit merge-refusal verdicts (e.g. "should not be merged", "do not
+# merge", "cannot be merged") are a separate signal the negated-approval
+# mechanism below (CODEX_NEGATED_APPROVAL_PATTERN) cannot catch: that
+# mechanism only fires when a negation word is followed by one of a
+# fixed list of approval-vocabulary target words (approve[ds]?, lgtm,
+# looks good, etc.) within the same sentence, but a response like "This
+# looks good at first glance, but this should not be merged until tests
+# pass." negates "merged" — a word outside that target list entirely —
+# so the negated-approval check never matches and the earlier "looks
+# good" phrase alone wins, returning APPROVED. This was FIRST fixed by
+# manually enumerating one phrasing at a time directly in
+# CODEX_BLOCKING_PATTERN — "(should|must) not be merged" (fresh evidence
+# from PR #1490 finding 3798880969), then "do not merge"/"don't merge"
+# (finding 3798999561) — and each fix immediately surfaced the next
+# unenumerated synonym ("cannot be merged", finding 3799159335),
+# confirming this is the SAME kind of open-ended-vocabulary problem
+# CODEX_NEGATED_APPROVAL_PATTERN already solved by construction rather
+# than by enumeration. CODEX_MERGE_REFUSAL_PATTERN below reuses
+# CODEX_NEGATION_WORDS (defined further down) the same way
+# CODEX_NEGATED_APPROVAL_PATTERN does, against a "merge(d)" target,
+# so any negation word already known to this file — including future
+# additions to CODEX_NEGATION_WORDS — automatically covers merge
+# refusals too, without needing its own one-off enumeration. Checked
+# here, in CODEX_BLOCKING_PATTERN (evaluated first in the
 # verdict-parsing chain, before approval), an explicit refusal to merge
 # is recognized as blocking outright regardless of what an earlier
-# hedge phrase in the same response says. That fix only covered the
-# PASSIVE form ("should/must not be merged"); the IMPERATIVE form ("do
-# not merge"/"don't merge") is a separate, common phrasing that the same
-# gap applies to for the identical reason — "merge" isn't in
-# CODEX_NEGATED_APPROVAL_TARGET_WORDS either, and unlike the passive
-# form's "not be merged", the imperative form's negation word ("do not"/
-# "don't") isn't even adjacent to an approval-vocabulary word at all, so
-# no plausible extension of the negated-approval mechanism could catch
-# it (fresh evidence from PR #1490 finding 3798999561, a followup to
-# 3798880969 that fixed the passive form only). do[[:space:]]+not[[:space:]]+
-# merge and don.t[[:space:]]+merge are added alongside the passive form.
-CODEX_BLOCKING_PATTERN='(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|(should|must)[[:space:]]+not[[:space:]]+be[[:space:]]+merged|do[[:space:]]+not[[:space:]]+merge|don.t[[:space:]]+merge|❌)'
+# hedge phrase in the same response says.
+CODEX_BLOCKING_PATTERN='(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)'
 # \b word boundaries around the positive approval words: without them,
 # "approved" as a bare substring matched inside prefixed negative forms
 # like "unapproved" or "disapproved" (no space/word-break before
@@ -452,6 +453,16 @@ CODEX_APPROVAL_PATTERN='(\bapproved\b|\blgtm\b|\blooks[[:space:]]+good\b|didn.t 
 CODEX_NEGATED_APPROVAL_TARGET_WORDS='(approve[ds]?|lgtm|look(s|ing)?[[:space:]]+good|no[[:space:]]+blocking[[:space:]]+issues?|didn.t find[[:space:]]+any major[[:space:]]+issues)'
 CODEX_NEGATION_WORDS='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|do[[:space:]]+not|don.t|never|unable[[:space:]]+to)'
 CODEX_NEGATED_APPROVAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?;,]*${CODEX_NEGATED_APPROVAL_TARGET_WORDS}"
+# Any CODEX_NEGATION_WORDS alternative, followed within the same clause
+# by "merge"/"merged" (with or without an intervening "be"), is treated
+# as an explicit merge-refusal verdict — see the comment above
+# CODEX_BLOCKING_PATTERN for why this is built by reusing the negation
+# vocabulary rather than enumerating merge-refusal phrasings one at a
+# time. Appended to CODEX_BLOCKING_PATTERN below (not folded into its
+# own literal above) because it depends on CODEX_NEGATION_WORDS, which
+# must be defined first.
+CODEX_MERGE_REFUSAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?;,]*(be[[:space:]]+)?merged?"
+CODEX_BLOCKING_PATTERN="${CODEX_BLOCKING_PATTERN%)}|${CODEX_MERGE_REFUSAL_PATTERN})"
 
 # Strips quoted spans — text between a pair of straight double-quotes
 # ("...") AND text between a pair of backticks (`...`, Markdown inline

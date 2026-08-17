@@ -525,7 +525,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   target-word list either, and unlike the passive form's "not be merged",
   the imperative form's negation word isn't even adjacent to an
   approval-vocabulary word at all. `do not merge`/`don't merge` are now
-  recognized alongside the passive form.
+  recognized alongside the passive form. That fix immediately surfaced a
+  third sibling — `cannot be merged` — the same underlying gap: enumerating
+  one merge-refusal phrasing at a time in `CODEX_BLOCKING_PATTERN` kept
+  producing the next unenumerated synonym. Rather than add a fourth
+  one-off alternative, a new `CODEX_MERGE_REFUSAL_PATTERN` is built from
+  the existing `CODEX_NEGATION_WORDS` list against a `merge(d)` target —
+  the same construction `CODEX_NEGATED_APPROVAL_PATTERN` already uses —
+  so any negation word already known to this file, including future
+  additions, automatically covers merge refusals too, without needing
+  its own enumeration round-trip. `CODEX_BLOCKING_PATTERN`'s three
+  manually-enumerated merge-refusal alternatives are replaced by this
+  single generalized pattern.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
