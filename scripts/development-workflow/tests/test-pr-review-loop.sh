@@ -5762,6 +5762,106 @@ run_test "codex_changes_requested_state_forces_blocking_root_comment_verdict" "V
 rm -rf "$_codex_changes_requested_state_forces_blocking_root_comment_mock_dir"
 unset _codex_changes_requested_state_forces_blocking_root_comment_mock_dir _codex_changes_requested_state_forces_blocking_root_comment_output _codex_changes_requested_state_forces_blocking_root_comment_exit
 
+# codex_select_review_evidence's tie-break ranked tied current-head reviews
+# via codex_response_priority(body) alone, which had no notion of the
+# extracted `state` field. Two reviews tied at the same second — a clean
+# one and a CHANGES_REQUESTED one whose body ALSO happens to contain an
+# approval phrase like "Looks good" — both scored priority 0 from body
+# text, so whichever the API returned FIRST kept the selection (only a
+# STRICTLY greater priority replaces it): the clean review is returned
+# first here, so without the fix the CHANGES_REQUESTED review's state was
+# silently discarded and the run returned APPROVED (fresh evidence from
+# PR #1490 finding 3796982553). codex_response_priority now also treats
+# state CHANGES_REQUESTED as blocking-tier, so the tied CHANGES_REQUESTED
+# review wins regardless of array order.
+_codex_tied_changes_requested_wins_priority_tie_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_changes_requested_wins_priority_tie_root_comment_mock_dir/gh" <<'CODEX_TIED_CHANGES_REQUESTED_WINS_PRIORITY_TIE_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02221234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":303,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","state":"COMMENTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Looks good overall."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Looks good overall, but see inline comments."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_CHANGES_REQUESTED_WINS_PRIORITY_TIE_ROOT_COMMENT_GH
+chmod +x "$_codex_tied_changes_requested_wins_priority_tie_root_comment_mock_dir/gh"
+
+_codex_tied_changes_requested_wins_priority_tie_root_comment_output=""
+_codex_tied_changes_requested_wins_priority_tie_root_comment_exit=0
+PATH="$_codex_tied_changes_requested_wins_priority_tie_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_changes_requested_wins_priority_tie_root_comment_mock_dir/output.txt" 2>&1 || _codex_tied_changes_requested_wins_priority_tie_root_comment_exit=$?
+_codex_tied_changes_requested_wins_priority_tie_root_comment_output="$(cat "$_codex_tied_changes_requested_wins_priority_tie_root_comment_mock_dir/output.txt")"
+run_test "codex_tied_changes_requested_wins_priority_tie_root_comment_exit_needs_revision" "1" "$_codex_tied_changes_requested_wins_priority_tie_root_comment_exit"
+run_test "codex_tied_changes_requested_wins_priority_tie_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_tied_changes_requested_wins_priority_tie_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_changes_requested_wins_priority_tie_root_comment_mock_dir"
+unset _codex_tied_changes_requested_wins_priority_tie_root_comment_mock_dir _codex_tied_changes_requested_wins_priority_tie_root_comment_output _codex_tied_changes_requested_wins_priority_tie_root_comment_exit
+
+# A review with state DISMISSED still matched the SHA/bot/timestamp
+# filters (dismissal doesn't change commit_id or submitted_at), so its
+# now-stale body text (recorded before it was dismissed) could still be
+# selected as fresh terminal approval evidence on an idempotent rerun —
+# GitHub itself no longer treats a dismissed review as active (fresh
+# evidence from PR #1490 finding 3796982554). The reviews-endpoint jq
+# queries now exclude state DISMISSED entirely, so with no other
+# evidence, the run must fail closed to TIMED_OUT rather than APPROVED.
+_codex_dismissed_review_excluded_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_dismissed_review_excluded_root_comment_mock_dir/gh" <<'CODEX_DISMISSED_REVIEW_EXCLUDED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02221234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":303,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","state":"DISMISSED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_DISMISSED_REVIEW_EXCLUDED_ROOT_COMMENT_GH
+chmod +x "$_codex_dismissed_review_excluded_root_comment_mock_dir/gh"
+
+_codex_dismissed_review_excluded_root_comment_output=""
+_codex_dismissed_review_excluded_root_comment_exit=0
+PATH="$_codex_dismissed_review_excluded_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_dismissed_review_excluded_root_comment_mock_dir/output.txt" 2>&1 || _codex_dismissed_review_excluded_root_comment_exit=$?
+_codex_dismissed_review_excluded_root_comment_output="$(cat "$_codex_dismissed_review_excluded_root_comment_mock_dir/output.txt")"
+run_test "codex_dismissed_review_excluded_root_comment_exit_timed_out" "2" "$_codex_dismissed_review_excluded_root_comment_exit"
+run_test "codex_dismissed_review_excluded_root_comment_verdict_not_approved" "TIMED_OUT" \
+  "$(printf '%s\n' "$_codex_dismissed_review_excluded_root_comment_output" | grep -oE 'VERDICT: (TIMED_OUT|APPROVED)' | grep -oE 'TIMED_OUT|APPROVED')"
+rm -rf "$_codex_dismissed_review_excluded_root_comment_mock_dir"
+unset _codex_dismissed_review_excluded_root_comment_mock_dir _codex_dismissed_review_excluded_root_comment_output _codex_dismissed_review_excluded_root_comment_exit
+
 # codex_strip_quoted_spans handled straight-double-quotes, backticks, and
 # blockquotes, but not single-quoted spans — the fourth quoting style
 # found unprotected — so a review discussing a quoted clean phrase in

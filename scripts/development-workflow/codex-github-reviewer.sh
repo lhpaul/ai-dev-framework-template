@@ -581,7 +581,20 @@ codex_response_is_approved() {
 # from PR #1490 finding 3789521036).
 codex_response_priority() {
   local body="$1"
-  if codex_response_is_blocking "$body"; then
+  local state="${2:-}"
+  # A structurally CHANGES_REQUESTED review ranks at the blocking tier
+  # regardless of its body text, mirroring the verdict-parsing chain's own
+  # CHANGES_REQUESTED short-circuit. Without this, two current-head
+  # reviews tied at the same second — one genuinely clean, one
+  # CHANGES_REQUESTED but whose body ALSO happens to contain an approval
+  # phrase like "Looks good" — both scored priority 0 from body text
+  # alone, so whichever the API happened to return first won the tie
+  # (since this scan only replaces the selection on a STRICTLY greater
+  # priority): if the clean review was returned first, the
+  # CHANGES_REQUESTED review's state was silently discarded and never
+  # even reached the caller's CHANGES_REQUESTED check, producing a false
+  # APPROVED (fresh evidence from PR #1490 finding 3796982553).
+  if [ "$state" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$body"; then
     printf '3\n'
   elif codex_response_is_usage_limit "$body" || codex_response_is_environment_error "$body"; then
     printf '1\n'
@@ -763,7 +776,7 @@ codex_select_review_evidence() {
     created_at=$(printf '%s' "$line" | jq -r '.created_at // empty')  # workflow-shell-guard: allow SH003 - $line is a compact JSON object already validated parseable by the preceding jq -sc call; empty is a normal absent-field case, not a failure
     body=$(printf '%s' "$line" | jq -r '.body // empty')  # workflow-shell-guard: allow SH003 - same pre-validated $line as above; empty body is not a failure
     state=$(printf '%s' "$line" | jq -r '.state // empty')  # workflow-shell-guard: allow SH003 - same pre-validated $line as above; empty state is not a failure
-    priority=$(codex_response_priority "$body")
+    priority=$(codex_response_priority "$body" "$state")
     if [ "$have_selection" -eq 0 ] || [ "$priority" -gt "$best_priority" ]; then
       SELECTED_REVIEW_BODY="$body"
       SELECTED_REVIEW_TIME="$created_at"
@@ -1162,12 +1175,25 @@ while true; do
   # Also check PR reviews — Codex posts findings as a GitHub Review object
   # (via pulls/{PR}/reviews), not as a plain PR comment. Combining both sources
   # ensures we detect findings immediately instead of waiting for a timeout.
+  # A review with state DISMISSED is excluded here rather than merely
+  # deprioritized: GitHub itself no longer treats a dismissed review as
+  # active evidence, but this script's selection was still choosing it on
+  # an idempotent rerun — the SHA/timestamp filters above have no reason
+  # to exclude it (dismissal doesn't change commit_id or submitted_at),
+  # so a dismissed review's now-stale body text (e.g. "No blocking issues
+  # found", recorded before it was dismissed) could still win the
+  # tie-break and be classified as fresh terminal approval evidence
+  # (fresh evidence from PR #1490 finding 3796982554). Filtering it out at
+  # the source, rather than only gating the approval branch downstream,
+  # also prevents a dismissed review's state or body from winning
+  # codex_select_review_evidence's priority tie-break for ANY verdict, not
+  # just approval.
   REVIEW_STDERR=$(mktemp)
   REVIEW_TMPFILE=$(mktemp)
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>"$REVIEW_STDERR" \
     | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
     > "$REVIEW_TMPFILE" 2>"$REVIEW_STDERR"; then
     # Selects every review tied at the latest submitted_at timestamp (not
     # just one via sort_by | last) and picks the one requiring attention if
@@ -1463,7 +1489,7 @@ ASYNC_REVIEW_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
   2>/dev/null \
   | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
   > "$ASYNC_REVIEW_TMPFILE" 2>/dev/null; then
   # Selects every review tied at the latest timestamp and picks the one
   # requiring attention, if any (see rationale above the main-loop
@@ -1568,7 +1594,7 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
     if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
       2>/dev/null \
       | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
+          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
       > "$ASYNC_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
       # Selects every review tied at the latest timestamp and picks the one
       # requiring attention, if any (see rationale above the main-loop
@@ -1710,7 +1736,7 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>/dev/null \
     | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
     > "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
     # Selects every review tied at the latest timestamp and picks the one
     # requiring attention, if any (see rationale above the main-loop

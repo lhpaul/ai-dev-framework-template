@@ -414,7 +414,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   always wins outright" checks inside `codex_combine_terminal_evidence`
   (guarding against a same-fetch usage-limit notice or environment-setup
   error silently overriding a real blocker) now also treat a
-  `CHANGES_REQUESTED` state as blocking, not just a free-text match.
+  `CHANGES_REQUESTED` state as blocking, not just a free-text match. Two
+  followup gaps in that same `state`-field integration were also fixed:
+  (1) `codex_select_review_evidence`'s tie-break for reviews sharing the
+  same second-resolution timestamp ranked purely on `codex_response_
+  priority(body)`, which had no notion of `state` — two tied reviews, one
+  clean and one `CHANGES_REQUESTED` whose body also happened to contain
+  an approval phrase, both scored the same priority from body text alone,
+  so whichever the API returned first silently kept the selection and the
+  `CHANGES_REQUESTED` review's state was discarded before the caller's
+  short-circuit ever saw it; `codex_response_priority` now also ranks a
+  `CHANGES_REQUESTED` state at the blocking tier regardless of body text.
+  (2) A review with state `DISMISSED` still matched the SHA/commit/
+  timestamp filters (dismissal doesn't change `commit_id` or
+  `submitted_at`), so its now-stale body text could still be selected as
+  fresh terminal evidence on an idempotent rerun even though GitHub no
+  longer treats a dismissed review as active; all four reviews-endpoint
+  `jq` queries now exclude `state == DISMISSED` entirely at the source.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
