@@ -536,7 +536,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   additions, automatically covers merge refusals too, without needing
   its own enumeration round-trip. `CODEX_BLOCKING_PATTERN`'s three
   manually-enumerated merge-refusal alternatives are replaced by this
-  single generalized pattern.
+  single generalized pattern. Two more gaps surfaced immediately from
+  that generalization: `CODEX_NEGATION_WORDS` was still missing
+  "shouldn't"/"should not" and "mustn't"/"must not", so those contracted
+  refusals bypassed both the merge-refusal and negated-approval checks —
+  now added, automatically fixing both checks at once (the point of
+  generalizing on a shared word list). Separately, `codex_response_is_
+  blocking`'s new merge-refusal pattern reuses `CODEX_NEGATION_WORDS`'
+  bare "not" alternative the same way the negated-approval pattern does,
+  so it inherited the same "not only X" affirmative-idiom
+  misclassification that `codex_strip_not_only_idiom` was originally
+  written to fix for approval only — a clean response like "This is not
+  only safe to merge but looks good" was misread as a merge refusal.
+  `codex_response_is_blocking` now applies that same idiom-stripping
+  normalization before matching.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

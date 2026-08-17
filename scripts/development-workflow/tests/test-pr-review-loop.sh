@@ -6388,6 +6388,109 @@ run_test "codex_unrelated_negation_before_merge_stays_approved_root_comment_verd
 rm -rf "$_codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir"
 unset _codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir _codex_unrelated_negation_before_merge_stays_approved_root_comment_output _codex_unrelated_negation_before_merge_stays_approved_root_comment_exit
 
+# CODEX_NEGATION_WORDS was missing "shouldn't"/"should not" and
+# "mustn't"/"must not" entirely, so neither the generalized
+# merge-refusal pattern nor the negated-approval pattern recognized a
+# response like "This looks good at first glance, but this shouldn't be
+# merged until tests pass" as a rejection, and the earlier "looks good"
+# phrase alone won, returning APPROVED (fresh evidence from PR #1490
+# finding 3799277919, a followup to the "cannot be merged" fix).
+# "should not"/"shouldn't" and "must not"/"mustn't" are now included in
+# CODEX_NEGATION_WORDS, automatically fixing both the merge-refusal and
+# negated-approval checks at once (the whole point of generalizing
+# merge-refusal detection to reuse this shared word list).
+_codex_shouldnt_be_merged_blocking_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_shouldnt_be_merged_blocking_root_comment_mock_dir/gh" <<'CODEX_SHOULDNT_BE_MERGED_BLOCKING_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face66661234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":324,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":325,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but this shouldn'"'"'t be merged until tests pass.\\n\\n**Reviewed commit:** `face6666`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_SHOULDNT_BE_MERGED_BLOCKING_ROOT_COMMENT_GH
+chmod +x "$_codex_shouldnt_be_merged_blocking_root_comment_mock_dir/gh"
+
+_codex_shouldnt_be_merged_blocking_root_comment_output=""
+_codex_shouldnt_be_merged_blocking_root_comment_exit=0
+PATH="$_codex_shouldnt_be_merged_blocking_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_shouldnt_be_merged_blocking_root_comment_mock_dir/output.txt" 2>&1 || _codex_shouldnt_be_merged_blocking_root_comment_exit=$?
+_codex_shouldnt_be_merged_blocking_root_comment_output="$(cat "$_codex_shouldnt_be_merged_blocking_root_comment_mock_dir/output.txt")"
+run_test "codex_shouldnt_be_merged_blocking_root_comment_exit_needs_revision" "1" "$_codex_shouldnt_be_merged_blocking_root_comment_exit"
+run_test "codex_shouldnt_be_merged_blocking_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_shouldnt_be_merged_blocking_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_shouldnt_be_merged_blocking_root_comment_mock_dir"
+unset _codex_shouldnt_be_merged_blocking_root_comment_mock_dir _codex_shouldnt_be_merged_blocking_root_comment_output _codex_shouldnt_be_merged_blocking_root_comment_exit
+
+# CODEX_BLOCKING_PATTERN's generalized merge-refusal alternative
+# (CODEX_MERGE_REFUSAL_PATTERN) reuses CODEX_NEGATION_WORDS' bare "not"
+# alternative the same way CODEX_NEGATED_APPROVAL_PATTERN does, so it
+# inherited the exact same "not only X" affirmative-idiom
+# misclassification that motivated codex_strip_not_only_idiom in the
+# first place — "not only" is an intensifier, not a negation, but a
+# clean response like "This is not only safe to merge but looks good"
+# had "not" followed by "merge" within the same clause and was misread
+# as a merge refusal, returning NEEDS_REVISION for a genuinely clean
+# review (fresh evidence from PR #1490 finding 3799277922).
+# codex_response_is_blocking now applies codex_strip_not_only_idiom the
+# same way codex_response_is_approved already does.
+_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir/gh" <<'CODEX_NOT_ONLY_SAFE_TO_MERGE_STAYS_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face77771234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":326,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":327,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This is not only safe to merge but looks good.\\n\\n**Reviewed commit:** `face7777`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NOT_ONLY_SAFE_TO_MERGE_STAYS_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir/gh"
+
+_codex_not_only_safe_to_merge_stays_approved_root_comment_output=""
+_codex_not_only_safe_to_merge_stays_approved_root_comment_exit=0
+PATH="$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_safe_to_merge_stays_approved_root_comment_exit=$?
+_codex_not_only_safe_to_merge_stays_approved_root_comment_output="$(cat "$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_not_only_safe_to_merge_stays_approved_root_comment_exit_clean" "0" "$_codex_not_only_safe_to_merge_stays_approved_root_comment_exit"
+run_test "codex_not_only_safe_to_merge_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_not_only_safe_to_merge_stays_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir"
+unset _codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir _codex_not_only_safe_to_merge_stays_approved_root_comment_output _codex_not_only_safe_to_merge_stays_approved_root_comment_exit
+
 # codex_strip_quoted_spans handled straight-double-quotes, backticks, and
 # blockquotes, but not single-quoted spans — the fourth quoting style
 # found unprotected — so a review discussing a quoted clean phrase in

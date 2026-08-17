@@ -451,7 +451,7 @@ CODEX_APPROVAL_PATTERN='(\bapproved\b|\blgtm\b|\blooks[[:space:]]+good\b|didn.t 
 # "cannot approve" fixed for finding 3790023141, just a different
 # inability phrase).
 CODEX_NEGATED_APPROVAL_TARGET_WORDS='(approve[ds]?|lgtm|look(s|ing)?[[:space:]]+good|no[[:space:]]+blocking[[:space:]]+issues?|didn.t find[[:space:]]+any major[[:space:]]+issues)'
-CODEX_NEGATION_WORDS='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|do[[:space:]]+not|don.t|never|unable[[:space:]]+to)'
+CODEX_NEGATION_WORDS='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|do[[:space:]]+not|don.t|should[[:space:]]+not|shouldn.t|must[[:space:]]+not|mustn.t|never|unable[[:space:]]+to)'
 CODEX_NEGATED_APPROVAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?;,]*${CODEX_NEGATED_APPROVAL_TARGET_WORDS}"
 # Any CODEX_NEGATION_WORDS alternative, followed within the same clause
 # by "merge"/"merged" (with or without an intervening "be"), is treated
@@ -600,24 +600,46 @@ codex_response_is_blocking() {
   # pushes toward NEEDS_REVISION), so no fence guard is needed here for
   # that direction either — codex_strip_quoted_spans' straight-quote/
   # backtick-pair/blockquote/single-quote stripping is enough.
-  grep -qiE "$CODEX_BLOCKING_PATTERN" <<< "$(codex_strip_quoted_spans "$body")"
+  #
+  # codex_strip_not_only_idiom is also applied here now: CODEX_BLOCKING_
+  # PATTERN's generalized merge-refusal alternative
+  # (CODEX_MERGE_REFUSAL_PATTERN) reuses CODEX_NEGATION_WORDS' bare "not"
+  # alternative the same way CODEX_NEGATED_APPROVAL_PATTERN does, so it
+  # inherits the exact same "not only X" affirmative-idiom
+  # misclassification that motivated codex_strip_not_only_idiom in the
+  # first place — a clean response like "This is not only safe to merge
+  # but looks good" has "not" followed by "merge" within the same clause
+  # and was misread as a merge refusal, returning NEEDS_REVISION for a
+  # genuinely clean review (fresh evidence from PR #1490 finding
+  # 3799277922). This is a false POSITIVE (pushes toward the safe
+  # NEEDS_REVISION direction, never toward incorrectly APPROVED), unlike
+  # every other gap fixed in this function, but is still worth closing
+  # since needlessly blocking a clean review triggers an unnecessary fix
+  # cycle.
+  local normalized_body
+  normalized_body=$(codex_strip_not_only_idiom "$(codex_strip_quoted_spans "$body")")
+  grep -qiE "$CODEX_BLOCKING_PATTERN" <<< "$normalized_body"
 }
 
-# Strips the "not only X" idiom — used ONLY by codex_response_is_approved
-# below. "Not only X, (but) Y" is an AFFIRMATIVE intensifier construction
-# (BOTH X and Y are being asserted, not negated: "Not only does this look
-# good, it is approved" means both "looks good" and "is approved" hold),
-# not a negation of X, so CODEX_NEGATION_WORDS' bare "not" alternative —
-# which has no way to distinguish this idiom from a genuine negation —
-# misclassified it as negated (fresh evidence from PR #1490 finding
-# 3793299512). Stripped entirely (not just skipped) so the leftover "not"
-# cannot accidentally trigger a match against some OTHER target word
-# later in the same clause. Every letter is bracket-expanded for both
-# cases (rather than relying on sed's `I` substitution flag, whose
-# support varies across sed implementations), since the original
-# [Nn]ot/[Oo]nly form only covered Title-Case and lowercase, not a fully
-# uppercase emphasis form like "NOT ONLY" (fresh evidence from PR #1490
-# finding 3793330278, a followup to 3793299512).
+# Strips the "not only X" idiom — used by codex_response_is_approved and
+# codex_response_is_blocking below (originally added for approval only,
+# see codex_response_is_blocking's own comment for why the blocking
+# classifier needed it too once its merge-refusal pattern started reusing
+# CODEX_NEGATION_WORDS' bare "not" alternative). "Not only X, (but) Y" is
+# an AFFIRMATIVE intensifier construction (BOTH X and Y are being
+# asserted, not negated: "Not only does this look good, it is approved"
+# means both "looks good" and "is approved" hold), not a negation of X,
+# so CODEX_NEGATION_WORDS' bare "not" alternative — which has no way to
+# distinguish this idiom from a genuine negation — misclassified it as
+# negated (fresh evidence from PR #1490 finding 3793299512). Stripped
+# entirely (not just skipped) so the leftover "not" cannot accidentally
+# trigger a match against some OTHER target word later in the same
+# clause. Every letter is bracket-expanded for both cases (rather than
+# relying on sed's `I` substitution flag, whose support varies across sed
+# implementations), since the original [Nn]ot/[Oo]nly form only covered
+# Title-Case and lowercase, not a fully uppercase emphasis form like "NOT
+# ONLY" (fresh evidence from PR #1490 finding 3793330278, a followup to
+# 3793299512).
 codex_strip_not_only_idiom() {
   local body="$1"
   sed -E 's/[Nn][Oo][Tt][[:space:]]+[Oo][Nn][Ll][Yy]//g' <<< "$body"
