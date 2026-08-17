@@ -402,11 +402,27 @@ CODEX_NEGATED_APPROVAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?;,]*${CODEX_NEGATED_
 # and the closing quote by whitespace/punctuation-or-end, which a
 # contraction's apostrophe never satisfies (the letters on both sides of
 # it are word characters, not whitespace), so genuine quotation is
-# distinguished from an apostrophe embedded in a word.
+# distinguished from an apostrophe embedded in a word. Fenced Markdown
+# code blocks (```...```) are stripped FIRST via a separate awk pass,
+# since they're a MULTI-LINE construct the single-line sed substitutions
+# below can't handle: a fence marker line (```` ``` ````, optionally with
+# a language tag) has no PAIRED backtick on the same line for the
+# existing single-backtick-pair substitution to match against, and the
+# quoted content between the opening/closing fence spans arbitrarily many
+# separate lines. A review quoting a clean signal inside a fenced block
+# was the fifth quoting style found unprotected, after straight-quote,
+# backtick, blockquote, and single-quote (fresh evidence from PR #1490
+# finding 3793453010).
 codex_strip_quoted_spans() {
   local body="$1"
   local sq="'"
-  sed -E "s/\"[^\"]*\"//g; s/\`[^\`]*\`//g; /^[[:space:]]*>/d; s/(^|[[:space:]])${sq}[^${sq}]*${sq}([[:space:].,;:!?]|\$)/\\1\\2/g" <<< "$body"
+  local unfenced_body
+  unfenced_body=$(awk '
+    /^[[:space:]]*```/ { infence = !infence; next }
+    infence { next }
+    { print }
+  ' <<< "$body")
+  sed -E "s/\"[^\"]*\"//g; s/\`[^\`]*\`//g; /^[[:space:]]*>/d; s/(^|[[:space:]])${sq}[^${sq}]*${sq}([[:space:].,;:!?]|\$)/\\1\\2/g" <<< "$unfenced_body"
 }
 
 codex_response_is_blocking() {

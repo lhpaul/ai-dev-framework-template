@@ -5748,6 +5748,58 @@ run_test "codex_contraction_apostrophes_not_mangled_root_comment_verdict" "VERDI
 rm -rf "$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir"
 unset _codex_contraction_apostrophes_not_mangled_root_comment_mock_dir _codex_contraction_apostrophes_not_mangled_root_comment_output _codex_contraction_apostrophes_not_mangled_root_comment_exit
 
+# codex_strip_quoted_spans' single-line sed substitutions can't strip a
+# fenced Markdown code block (```...```): a fence marker line has no
+# PAIRED backtick on the same line for the single-backtick-pair
+# substitution to match, and the quoted content between the opening and
+# closing fence spans arbitrarily many separate lines. A review quoting
+# a clean signal inside a fenced block (e.g. "The documented output
+# is:\n```text\nNo blocking issues found\n```\nThat output is
+# inaccurate") was the fifth quoting style found unprotected, after
+# straight-quote, backtick, blockquote, and single-quote (fresh evidence
+# from PR #1490 finding 3793453010). codex_strip_quoted_spans now runs
+# an awk pre-pass that strips entire fenced-code-block regions before
+# the existing single-line substitutions.
+_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir/gh" <<'CODEX_FENCED_CODE_BLOCK_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02551234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":308,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:309,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented output is:\n```text\nNo blocking issues found\n```\nThat output is inaccurate.\n\n**Reviewed commit:** `facade02551`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_FENCED_CODE_BLOCK_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir/gh"
+
+_codex_fenced_code_block_phrase_not_approved_root_comment_output=""
+_codex_fenced_code_block_phrase_not_approved_root_comment_exit=0
+PATH="$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_fenced_code_block_phrase_not_approved_root_comment_exit=$?
+_codex_fenced_code_block_phrase_not_approved_root_comment_output="$(cat "$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_fenced_code_block_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_fenced_code_block_phrase_not_approved_root_comment_exit"
+run_test "codex_fenced_code_block_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_fenced_code_block_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir"
+unset _codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir _codex_fenced_code_block_phrase_not_approved_root_comment_output _codex_fenced_code_block_phrase_not_approved_root_comment_exit
+
 # codex_response_priority ranked an ancillary environment-setup-error
 # comment at the same "unrecognized format" tier (2) as a genuine but
 # unrecognized-format submitted review, instead of at the lower

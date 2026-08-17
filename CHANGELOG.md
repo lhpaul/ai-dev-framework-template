@@ -308,7 +308,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an opening/closing pair), so the opening quote must be preceded by
   whitespace-or-start-of-line and the closing quote by whitespace or
   punctuation, which a contraction's word-internal apostrophe never
-  satisfies.
+  satisfies. `codex_strip_quoted_spans` now also strips fenced Markdown
+  code blocks (```` ```...``` ````) via a separate `awk` pre-pass, since
+  they're a multi-line construct the existing single-line `sed`
+  substitutions can't handle (a fence marker line has no paired backtick
+  on the same line to match, and the quoted content between the opening
+  and closing fence spans arbitrarily many separate lines) — the fifth
+  quoting style found unprotected, after straight-quote, backtick,
+  blockquote, and single-quote.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
