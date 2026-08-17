@@ -342,9 +342,19 @@ CODEX_APPROVAL_PATTERN='(\bapproved\b|\blgtm\b|\blooks[[:space:]]+good\b|didn.t 
 # 3790062089). The reverse-order alternative has been removed; the
 # forward-only match plus the bare-verb addition covers the original
 # "cannot approve" case without this false-positive class.
+#
+# The [^.!?]* span only excluded sentence terminators, not clause
+# separators, so an unrelated negation in an EARLIER clause of the SAME
+# sentence still spanned into a LATER, unrelated clean clause — e.g.
+# "Tests are not required for this documentation-only change; looks
+# good" has "not" in one semicolon-joined clause and "looks good" in a
+# separate one, but the span crossed the semicolon and matched anyway
+# (PR #1490 finding 3790122061, the same class of gap as 3790062089
+# above but on the forward-order side rather than the removed reverse
+# alternative). The character class now also excludes `;`.
 CODEX_NEGATED_APPROVAL_TARGET_WORDS='(approve[ds]?|lgtm|look(s|ing)?[[:space:]]+good|no[[:space:]]+blocking[[:space:]]+issues?|didn.t find[[:space:]]+any major[[:space:]]+issues)'
 CODEX_NEGATION_WORDS='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|never)'
-CODEX_NEGATED_APPROVAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?]*${CODEX_NEGATED_APPROVAL_TARGET_WORDS}"
+CODEX_NEGATED_APPROVAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?;]*${CODEX_NEGATED_APPROVAL_TARGET_WORDS}"
 
 codex_response_is_blocking() {
   local body="$1"
@@ -356,7 +366,19 @@ codex_response_is_approved() {
   if grep -qiE "$CODEX_NEGATED_APPROVAL_PATTERN" <<< "$body"; then
     return 1
   fi
-  grep -qiE "$CODEX_APPROVAL_PATTERN" <<< "$body"
+  # Strip quoted spans (text between a pair of straight double-quotes)
+  # before matching CODEX_APPROVAL_PATTERN: a SHA-pinned review can QUOTE
+  # a clean phrase while REJECTING it (e.g. `The documented bot response
+  # "No blocking issues found" is inaccurate and should be corrected`),
+  # and CODEX_APPROVAL_PATTERN's substring match can't distinguish
+  # quotation/discussion of a phrase from an assertion of it. Removing
+  # quoted text first means only a genuinely UNQUOTED approval phrase can
+  # still match; a real approval elsewhere in the same response (outside
+  # any quotes) is unaffected (fresh evidence from PR #1490 finding
+  # 3790122058).
+  local unquoted_body
+  unquoted_body=$(sed -E 's/"[^"]*"//g' <<< "$body")
+  grep -qiE "$CODEX_APPROVAL_PATTERN" <<< "$unquoted_body"
 }
 
 # Ranks a response into one of four priority tiers, highest wins on a

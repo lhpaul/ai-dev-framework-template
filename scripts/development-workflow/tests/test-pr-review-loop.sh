@@ -5135,6 +5135,101 @@ run_test "codex_usage_limit_survives_later_env_error_same_fetch_verdict" "VERDIC
 rm -rf "$_codex_usage_limit_survives_later_env_error_same_fetch_mock_dir"
 unset _codex_usage_limit_survives_later_env_error_same_fetch_mock_dir _codex_usage_limit_survives_later_env_error_same_fetch_output _codex_usage_limit_survives_later_env_error_same_fetch_exit
 
+# CODEX_APPROVAL_PATTERN's substring match can't distinguish quotation/
+# discussion of a clean phrase from an actual assertion of it: a
+# SHA-pinned review that REJECTS text while QUOTING a clean signal (e.g.
+# `The documented bot response "No blocking issues found" is inaccurate
+# and should be corrected`) still matched and returned APPROVED instead
+# of the documented unrecognized-format safe-fail (fresh evidence from PR
+# #1490 finding 3790122058). codex_response_is_approved now strips
+# quoted spans before matching.
+_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir/gh" <<'CODEX_QUOTED_CLEAN_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01221234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":283,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:284,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented bot response \"No blocking issues found\" is inaccurate and should be corrected.\n\n**Reviewed commit:** `facade01221`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_QUOTED_CLEAN_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir/gh"
+
+_codex_quoted_clean_phrase_not_approved_root_comment_output=""
+_codex_quoted_clean_phrase_not_approved_root_comment_exit=0
+PATH="$_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_quoted_clean_phrase_not_approved_root_comment_exit=$?
+_codex_quoted_clean_phrase_not_approved_root_comment_output="$(cat "$_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_quoted_clean_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_quoted_clean_phrase_not_approved_root_comment_exit"
+run_test "codex_quoted_clean_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_quoted_clean_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir"
+unset _codex_quoted_clean_phrase_not_approved_root_comment_mock_dir _codex_quoted_clean_phrase_not_approved_root_comment_output _codex_quoted_clean_phrase_not_approved_root_comment_exit
+
+# The [^.!?]* negation span only excluded sentence terminators, not
+# clause separators, so an unrelated negation in an earlier semicolon-
+# joined clause of the same sentence still spanned into a later, unrelated
+# clean clause (e.g. "Tests are not required for this documentation-only
+# change; looks good") and was incorrectly flagged as negated (fresh
+# evidence from PR #1490 finding 3790122061). The character class now
+# also excludes `;`.
+_codex_semicolon_scoped_negation_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_semicolon_scoped_negation_root_comment_mock_dir/gh" <<'CODEX_SEMICOLON_SCOPED_NEGATION_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01331234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":285,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":286,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Tests are not required for this documentation-only change; looks good.\\n\\n**Reviewed commit:** `facade01331`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_SEMICOLON_SCOPED_NEGATION_ROOT_COMMENT_GH
+chmod +x "$_codex_semicolon_scoped_negation_root_comment_mock_dir/gh"
+
+_codex_semicolon_scoped_negation_root_comment_output=""
+_codex_semicolon_scoped_negation_root_comment_exit=0
+PATH="$_codex_semicolon_scoped_negation_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_semicolon_scoped_negation_root_comment_mock_dir/output.txt" 2>&1 || _codex_semicolon_scoped_negation_root_comment_exit=$?
+_codex_semicolon_scoped_negation_root_comment_output="$(cat "$_codex_semicolon_scoped_negation_root_comment_mock_dir/output.txt")"
+run_test "codex_semicolon_scoped_negation_root_comment_exit_clean" "0" "$_codex_semicolon_scoped_negation_root_comment_exit"
+run_test "codex_semicolon_scoped_negation_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_semicolon_scoped_negation_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_semicolon_scoped_negation_root_comment_mock_dir"
+unset _codex_semicolon_scoped_negation_root_comment_mock_dir _codex_semicolon_scoped_negation_root_comment_output _codex_semicolon_scoped_negation_root_comment_exit
+
 # codex_response_priority ranked an ancillary environment-setup-error
 # comment at the same "unrecognized format" tier (2) as a genuine but
 # unrecognized-format submitted review, instead of at the lower

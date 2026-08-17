@@ -237,7 +237,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   setup-error body silently replace the quota body. `codex_scan_comment_
   evidence` now tracks whether the currently-held ancillary comment is
   specifically a usage-limit notice, and once one is tracked, only
-  another usage-limit notice may replace it.
+  another usage-limit notice may replace it. `codex_response_is_approved`
+  now strips quoted spans (text between a pair of straight double-quotes)
+  before matching `CODEX_APPROVAL_PATTERN`, since a SHA-pinned review can
+  quote a clean phrase while rejecting it (e.g. `The documented bot
+  response "No blocking issues found" is inaccurate`) and the pattern's
+  substring match couldn't distinguish quotation/discussion of a phrase
+  from an assertion of it. Separately, `CODEX_NEGATED_APPROVAL_PATTERN`'s
+  `[^.!?]*` span only excluded sentence terminators, not clause
+  separators, so an unrelated negation in an earlier semicolon-joined
+  clause of the same sentence (e.g. "Tests are not required for this
+  documentation-only change; looks good") still spanned into a later,
+  unrelated clean clause; the character class now also excludes `;`.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
