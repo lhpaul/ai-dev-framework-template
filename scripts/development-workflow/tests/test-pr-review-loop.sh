@@ -6186,6 +6186,59 @@ run_test "codex_double_backtick_span_not_approved_root_comment_verdict" "VERDICT
 rm -rf "$_codex_double_backtick_span_not_approved_root_comment_mock_dir"
 unset _codex_double_backtick_span_not_approved_root_comment_mock_dir _codex_double_backtick_span_not_approved_root_comment_output _codex_double_backtick_span_not_approved_root_comment_exit
 
+# The negated-approval mechanism (CODEX_NEGATED_APPROVAL_PATTERN) only
+# fires when a negation word is followed by one of a fixed list of
+# approval-vocabulary target words (approve[ds]?, lgtm, looks good, etc.)
+# within the same sentence. A response like "This looks good at first
+# glance, but this should not be merged until tests pass." negates
+# "merged" — a word outside that target list entirely — so the
+# negated-approval check never matches, and the earlier "looks good"
+# phrase alone wins, returning APPROVED (fresh evidence from PR #1490
+# finding 3798880969, a followup to the "don't approve" fix that closed
+# the adjacent-to-an-approval-word case but not this direct-merge-refusal
+# case). CODEX_BLOCKING_PATTERN now recognizes an explicit
+# should/must-not-be-merged verdict outright, checked before approval in
+# the verdict-parsing chain.
+_codex_should_not_be_merged_blocking_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_should_not_be_merged_blocking_root_comment_mock_dir/gh" <<'CODEX_SHOULD_NOT_BE_MERGED_BLOCKING_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face22221234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":316,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":317,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but this should not be merged until tests pass.\\n\\n**Reviewed commit:** `face2222`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_SHOULD_NOT_BE_MERGED_BLOCKING_ROOT_COMMENT_GH
+chmod +x "$_codex_should_not_be_merged_blocking_root_comment_mock_dir/gh"
+
+_codex_should_not_be_merged_blocking_root_comment_output=""
+_codex_should_not_be_merged_blocking_root_comment_exit=0
+PATH="$_codex_should_not_be_merged_blocking_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_should_not_be_merged_blocking_root_comment_mock_dir/output.txt" 2>&1 || _codex_should_not_be_merged_blocking_root_comment_exit=$?
+_codex_should_not_be_merged_blocking_root_comment_output="$(cat "$_codex_should_not_be_merged_blocking_root_comment_mock_dir/output.txt")"
+run_test "codex_should_not_be_merged_blocking_root_comment_exit_needs_revision" "1" "$_codex_should_not_be_merged_blocking_root_comment_exit"
+run_test "codex_should_not_be_merged_blocking_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_should_not_be_merged_blocking_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_should_not_be_merged_blocking_root_comment_mock_dir"
+unset _codex_should_not_be_merged_blocking_root_comment_mock_dir _codex_should_not_be_merged_blocking_root_comment_output _codex_should_not_be_merged_blocking_root_comment_exit
+
 # codex_strip_quoted_spans handled straight-double-quotes, backticks, and
 # blockquotes, but not single-quoted spans — the fourth quoting style
 # found unprotected — so a review discussing a quoted clean phrase in

@@ -507,6 +507,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   3+ run always has; single backtick pairs are unaffected and still get
   precise stripping. The tilde threshold stays at 3+, since GFM only uses
   tildes for fenced code blocks, never inline code spans.
+- **Codex GitHub reviewer recognizes explicit merge-refusal verdicts**:
+  the negated-approval mechanism (`CODEX_NEGATED_APPROVAL_PATTERN`) only
+  fires when a negation word is followed by one of a fixed list of
+  approval-vocabulary target words (`approve[ds]?`, `lgtm`, `looks good`,
+  etc.) within the same sentence. A response like "This looks good at
+  first glance, but this should not be merged until tests pass." negates
+  "merged" — a word outside that target list entirely — so the
+  negated-approval check never matched, and the earlier "looks good"
+  phrase alone won, returning `APPROVED`. `CODEX_BLOCKING_PATTERN` (checked
+  first in the verdict-parsing chain, before approval) now recognizes an
+  explicit should/must-not-be-merged verdict outright, regardless of what
+  an earlier hedge phrase in the same response says.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

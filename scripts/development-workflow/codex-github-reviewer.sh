@@ -340,7 +340,24 @@ codex_response_reviews_current_head() {
 # (main poll, async grace, async-final, async-reaction-final) uses the exact
 # same rules. See "Verdict parsing" header comment for the rationale behind
 # each marker.
-CODEX_BLOCKING_PATTERN='(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)'
+#
+# (should|must)[[:space:]]+not[[:space:]]+be[[:space:]]+merged targets an
+# explicit merge-refusal verdict that the negated-approval mechanism
+# below (CODEX_NEGATED_APPROVAL_PATTERN) cannot catch: that mechanism
+# only fires when a negation word is followed by one of a fixed list of
+# approval-vocabulary target words (approve[ds]?, lgtm, looks good, etc.)
+# within the same sentence, but a response like "This looks good at
+# first glance, but this should not be merged until tests pass." negates
+# "merged" — a word outside that target list entirely — so the negated-
+# approval check never matches and the earlier "looks good" phrase alone
+# wins, returning APPROVED (fresh evidence from PR #1490 finding
+# 3798880969, a followup to the "don't approve" fix that closed the
+# adjacent-to-an-approval-word case but not this direct-merge-refusal
+# case). Checked here, in CODEX_BLOCKING_PATTERN (evaluated first in the
+# verdict-parsing chain, before approval), an explicit refusal to merge
+# is recognized as blocking outright regardless of what an earlier
+# hedge phrase in the same response says.
+CODEX_BLOCKING_PATTERN='(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|(should|must)[[:space:]]+not[[:space:]]+be[[:space:]]+merged|❌)'
 # \b word boundaries around the positive approval words: without them,
 # "approved" as a bare substring matched inside prefixed negative forms
 # like "unapproved" or "disapproved" (no space/word-break before
