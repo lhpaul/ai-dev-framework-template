@@ -737,11 +737,18 @@ codex_scan_comment_evidence() {
 # for a single binary tier — a scan that only distinguishes "requires
 # attention" from "clean" cannot correctly rank two tied responses that
 # are both "requires attention" but at different severities.
-# Sets: SELECTED_REVIEW_BODY, SELECTED_REVIEW_TIME.
+# Sets: SELECTED_REVIEW_BODY, SELECTED_REVIEW_TIME, SELECTED_REVIEW_STATE.
+# SELECTED_REVIEW_STATE is GitHub's own structured review state
+# (APPROVED/CHANGES_REQUESTED/COMMENTED/PENDING/DISMISSED, or empty if
+# the reviews-endpoint jq query behind $reviews_file predates this field
+# — a legacy caller passing an older tmpfile format degrades to empty
+# state rather than failing) — see codex_combine_terminal_evidence for
+# why this is threaded separately from body-text classification.
 codex_select_review_evidence() {
   local reviews_file="$1"
   SELECTED_REVIEW_BODY=""
   SELECTED_REVIEW_TIME=""
+  SELECTED_REVIEW_STATE=""
   # Presence is tracked via an explicit found-flag, not by checking
   # whether the selected body string is non-empty — a winning review's
   # body can legitimately be empty (see
@@ -750,15 +757,17 @@ codex_select_review_evidence() {
   # reintroduce that exact bug here.
   local have_selection=0
   local best_priority=-1
-  local line created_at body priority
+  local line created_at body state priority
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     created_at=$(printf '%s' "$line" | jq -r '.created_at // empty')  # workflow-shell-guard: allow SH003 - $line is a compact JSON object already validated parseable by the preceding jq -sc call; empty is a normal absent-field case, not a failure
     body=$(printf '%s' "$line" | jq -r '.body // empty')  # workflow-shell-guard: allow SH003 - same pre-validated $line as above; empty body is not a failure
+    state=$(printf '%s' "$line" | jq -r '.state // empty')  # workflow-shell-guard: allow SH003 - same pre-validated $line as above; empty state is not a failure
     priority=$(codex_response_priority "$body")
     if [ "$have_selection" -eq 0 ] || [ "$priority" -gt "$best_priority" ]; then
       SELECTED_REVIEW_BODY="$body"
       SELECTED_REVIEW_TIME="$created_at"
+      SELECTED_REVIEW_STATE="$state"
       best_priority="$priority"
       have_selection=1
     fi
@@ -790,21 +799,37 @@ codex_select_review_evidence() {
 # never competes with anything.
 #
 # Sets: COMBINED_BODY, COMBINED_TIME, COMBINED_SOURCE ("review", "comment",
-# or "" if no evidence at all). LABEL is used only for INFO logging.
-# COMMENT_LATEST_IS_TERMINAL (8th arg) gates the ancillary-override check
-# below: it must never fire when the "latest ancillary comment" IS
-# actually the terminal comment itself, not a genuinely separate ancillary
-# one (see the comment above that check).
+# or "" if no evidence at all), COMBINED_REVIEW_STATE. LABEL is used only
+# for INFO logging. COMMENT_LATEST_IS_TERMINAL (8th arg) gates the
+# ancillary-override check below: it must never fire when the "latest
+# ancillary comment" IS actually the terminal comment itself, not a
+# genuinely separate ancillary one (see the comment above that check).
+#
+# COMBINED_REVIEW_STATE carries GitHub's own structured review state
+# (e.g. CHANGES_REQUESTED) for the caller's verdict-parsing chain to
+# check ahead of/alongside free-text classification — relying solely on
+# body-text parsing (codex_response_is_blocking/is_approved) let a
+# submitted review with state CHANGES_REQUESTED but ambiguous or
+# clean-sounding body wording ("Looks good overall, but see the note
+# below.") fall through to the unrecognized-format safe-fail or even a
+# false APPROVED instead of being recognized as blocking on GitHub's own
+# authoritative signal (fresh evidence from PR #1490 finding 3796396391).
+# It is set ONLY when review_body/review_time (the actual submitted
+# review, from the reviews endpoint) is the winning evidence — never when
+# a SHA-pinned terminal COMMENT wins instead (comments have no review
+# state) or when an ancillary comment later overrides the winner below.
 codex_combine_terminal_evidence() {
   local label="$1"
   local comment_terminal_body="$2" comment_terminal_time="$3"
   local comment_latest_body="$4" comment_latest_time="$5"
   local review_body="$6" review_time="$7"
   local comment_latest_is_terminal="$8"
+  local review_state="$9"
 
   COMBINED_BODY=""
   COMBINED_TIME=""
   COMBINED_SOURCE=""
+  COMBINED_REVIEW_STATE=""
 
   if [ -n "$comment_terminal_body" ]; then
     COMBINED_BODY="$comment_terminal_body"
@@ -827,12 +852,14 @@ codex_combine_terminal_evidence() {
         COMBINED_BODY="$review_body"
         COMBINED_TIME="$review_time"
         COMBINED_SOURCE="review"
+        COMBINED_REVIEW_STATE="$review_state"
         echo "INFO: $label detected via PR reviews endpoint (supersedes SHA-pinned comment)"
       fi
     else
       COMBINED_BODY="$review_body"
       COMBINED_TIME="$review_time"
       COMBINED_SOURCE="review"
+      COMBINED_REVIEW_STATE="$review_state"
       echo "INFO: $label detected via PR reviews endpoint"
     fi
   fi
@@ -879,32 +906,41 @@ codex_combine_terminal_evidence() {
   # immediate-termination contract (fresh evidence from PR #1490 finding
   # 3790062091, a followup to 3789928786/3789992794).
   if [ "$comment_latest_is_terminal" -eq 0 ] && [ -n "$comment_latest_body" ] && codex_response_is_usage_limit "$comment_latest_body"; then
-    if [ -n "$COMBINED_SOURCE" ] && codex_response_is_blocking "$COMBINED_BODY"; then
+    if [ -n "$COMBINED_SOURCE" ] && { [ "$COMBINED_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$COMBINED_BODY"; }; then
       # Blocking terminal/review evidence always wins outright — it is
       # never discarded by a usage-limit notice, regardless of timing, so
       # an actionable finding can never be hidden behind an "unavailable"
       # verdict (fresh evidence from PR #1490 finding 3787943162; Protocol
-      # 93 requires blocking evidence to never be silently discarded).
+      # 93 requires blocking evidence to never be silently discarded). A
+      # winning review's own CHANGES_REQUESTED state counts as blocking
+      # here too, alongside free-text detection, so a same-fetch
+      # usage-limit notice can't silently override a structurally
+      # blocking review whose body text happens to be ambiguous (fresh
+      # evidence from PR #1490 finding 3796396391).
       :
     else
       COMBINED_BODY="$comment_latest_body"
       COMBINED_TIME="$comment_latest_time"
       COMBINED_SOURCE="comment"
+      COMBINED_REVIEW_STATE=""
       echo "INFO: $label usage-limit notice takes immediate precedence over terminal/review evidence, including same-fetch evidence"
     fi
   elif [ "$comment_latest_is_terminal" -eq 0 ] && [ -n "$comment_latest_body" ] && codex_response_is_environment_error "$comment_latest_body"; then
-    if [ -n "$COMBINED_SOURCE" ] && codex_response_is_blocking "$COMBINED_BODY"; then
+    if [ -n "$COMBINED_SOURCE" ] && { [ "$COMBINED_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$COMBINED_BODY"; }; then
       # Blocking terminal/review evidence always wins outright — it is
       # never discarded by an environment-setup error, regardless of
       # timing, so an actionable finding can never be hidden behind an
       # "unavailable" verdict (fresh evidence from PR #1490 finding
       # 3787943162; Protocol 93 requires blocking evidence to never be
-      # silently discarded).
+      # silently discarded). A winning review's own CHANGES_REQUESTED
+      # state counts as blocking here too (fresh evidence from PR #1490
+      # finding 3796396391).
       :
     elif [ -z "$COMBINED_TIME" ] || ! codex_select_terminal_evidence "$comment_latest_body" "$comment_latest_time" "$COMBINED_BODY" "$COMBINED_TIME"; then
       COMBINED_BODY="$comment_latest_body"
       COMBINED_TIME="$comment_latest_time"
       COMBINED_SOURCE="comment"
+      COMBINED_REVIEW_STATE=""
       echo "INFO: $label environment-setup error retained over non-newer terminal/review evidence"
     fi
   fi
@@ -1131,7 +1167,7 @@ while true; do
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>"$REVIEW_STDERR" \
     | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // "")} end' \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
     > "$REVIEW_TMPFILE" 2>"$REVIEW_STDERR"; then
     # Selects every review tied at the latest submitted_at timestamp (not
     # just one via sort_by | last) and picks the one requiring attention if
@@ -1147,6 +1183,7 @@ while true; do
     codex_select_review_evidence "$REVIEW_TMPFILE"
     REVIEW_BODY="$SELECTED_REVIEW_BODY"
     REVIEW_TIME="$SELECTED_REVIEW_TIME"
+    REVIEW_STATE="$SELECTED_REVIEW_STATE"
   else
     REVIEW_ERR=$(cat "$REVIEW_STDERR")
     rm -f "$REVIEW_STDERR" "$REVIEW_TMPFILE"
@@ -1159,7 +1196,7 @@ while true; do
   codex_combine_terminal_evidence "bot response" \
     "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
     "$COMMENT_LATEST_BODY" "$COMMENT_LATEST_TIME" \
-    "$REVIEW_BODY" "$REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL"
+    "$REVIEW_BODY" "$REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL" "$REVIEW_STATE"
   BOT_RESPONSE="$COMBINED_BODY"
   BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
   # Captured immediately after combine, before any intervening call could
@@ -1169,6 +1206,11 @@ while true; do
   # verdict parsing and hit the unrecognized-format safe-fail instead of
   # being treated as "no response at all").
   BOT_RESPONSE_TIME="$COMBINED_TIME"
+  # Captured alongside COMBINED_TIME for the same reason — GitHub's
+  # structured review state, non-empty only when the winning evidence is
+  # an actual submitted review (not a SHA-pinned terminal comment, which
+  # has no review state).
+  BOT_RESPONSE_REVIEW_STATE="$COMBINED_REVIEW_STATE"
   # BOT_RESPONSE_FULL (untruncated) is what every classifier below matches
   # against — a truncated copy could cut off a blocking marker that
   # appears after the cutoff in a long root comment, letting the response
@@ -1240,12 +1282,17 @@ while true; do
     # "no blocking issues". This avoids false positives without line-level filtering
     # (which would risk missing a genuine marker on the same line as a negation).
 
-    if [ "$BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$BOT_RESPONSE_FULL"; then
+    if [ "$BOT_RESPONSE_SOURCE" = "review" ] && { [ "$BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$BOT_RESPONSE_FULL"; }; then
       # Blocking is checked first, ahead of usage-limit: a terminal/review
       # finding whose text happens to mention "usage limit" as part of an
       # actionable finding (e.g. flagging stale docs that describe it) must
       # not be misrouted to an unavailable verdict before the blocking
       # classifier runs (fresh evidence from PR #1490 finding 3788078191).
+      # A submitted review's own CHANGES_REQUESTED state short-circuits
+      # straight to blocking here, ahead of free-text classification, so a
+      # review GitHub itself marked as requesting changes is never
+      # misclassified from its body wording alone (fresh evidence from PR
+      # #1490 finding 3796396391).
       echo "VERDICT: NEEDS_REVISION"
       echo "---BEGIN BOT RESPONSE---"
       echo "$BOT_RESPONSE"
@@ -1416,7 +1463,7 @@ ASYNC_REVIEW_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
   2>/dev/null \
   | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // "")} end' \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
   > "$ASYNC_REVIEW_TMPFILE" 2>/dev/null; then
   # Selects every review tied at the latest timestamp and picks the one
   # requiring attention, if any (see rationale above the main-loop
@@ -1426,6 +1473,7 @@ if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
   codex_select_review_evidence "$ASYNC_REVIEW_TMPFILE"
   ASYNC_REVIEW_BODY="$SELECTED_REVIEW_BODY"
   ASYNC_REVIEW_TIME="$SELECTED_REVIEW_TIME"
+  ASYNC_REVIEW_STATE="$SELECTED_REVIEW_STATE"
 else
   rm -f "$ASYNC_REVIEW_TMPFILE"
   echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews during async grace period (treated as unavailable)"
@@ -1436,12 +1484,14 @@ rm -f "$ASYNC_REVIEW_TMPFILE"
 codex_combine_terminal_evidence "async-arrival bot response" \
   "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
   "$COMMENT_LATEST_BODY" "$COMMENT_LATEST_TIME" \
-  "$ASYNC_REVIEW_BODY" "$ASYNC_REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL"
+  "$ASYNC_REVIEW_BODY" "$ASYNC_REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL" "$ASYNC_REVIEW_STATE"
 ASYNC_BOT_RESPONSE="$COMBINED_BODY"
 ASYNC_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
 # Captured before any intervening call could touch COMBINED_TIME (see
 # rationale above the main-loop equivalent).
 ASYNC_BOT_RESPONSE_TIME="$COMBINED_TIME"
+# See rationale above the main-loop equivalent (BOT_RESPONSE_REVIEW_STATE).
+ASYNC_BOT_RESPONSE_REVIEW_STATE="$COMBINED_REVIEW_STATE"
 # Untruncated copy used for classification below (see rationale above the
 # main-loop equivalent — a truncated copy could cut off a blocking marker
 # in a long root comment).
@@ -1458,7 +1508,7 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
   # Apply the same three-path verdict parsing as the main poll loop.
   # Blocking is checked first, ahead of usage-limit (see rationale above
   # the main-loop equivalent).
-  if [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_BOT_RESPONSE_FULL"; then
+  if [ "$ASYNC_BOT_RESPONSE_SOURCE" = "review" ] && { [ "$ASYNC_BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$ASYNC_BOT_RESPONSE_FULL"; }; then
     echo "VERDICT: NEEDS_REVISION"
     echo "---BEGIN BOT RESPONSE---"
     echo "$ASYNC_BOT_RESPONSE"
@@ -1518,7 +1568,7 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
     if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
       2>/dev/null \
       | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // "")} end' \
+          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
       > "$ASYNC_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
       # Selects every review tied at the latest timestamp and picks the one
       # requiring attention, if any (see rationale above the main-loop
@@ -1528,6 +1578,7 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
       codex_select_review_evidence "$ASYNC_FINAL_REVIEW_TMPFILE"
       ASYNC_FINAL_REVIEW_BODY="$SELECTED_REVIEW_BODY"
       ASYNC_FINAL_REVIEW_TIME="$SELECTED_REVIEW_TIME"
+      ASYNC_FINAL_REVIEW_STATE="$SELECTED_REVIEW_STATE"
     else
       rm -f "$ASYNC_FINAL_REVIEW_TMPFILE"
       echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews after async acknowledgement (treated as unavailable)"
@@ -1538,12 +1589,14 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
     codex_combine_terminal_evidence "final async bot response" \
       "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
       "$COMMENT_LATEST_BODY" "$COMMENT_LATEST_TIME" \
-      "$ASYNC_FINAL_REVIEW_BODY" "$ASYNC_FINAL_REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL"
+      "$ASYNC_FINAL_REVIEW_BODY" "$ASYNC_FINAL_REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL" "$ASYNC_FINAL_REVIEW_STATE"
     ASYNC_FINAL_BOT_RESPONSE="$COMBINED_BODY"
     ASYNC_FINAL_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
     # Captured before any intervening call could touch COMBINED_TIME (see
     # rationale above the main-loop equivalent).
     ASYNC_FINAL_BOT_RESPONSE_TIME="$COMBINED_TIME"
+    # See rationale above the main-loop equivalent (BOT_RESPONSE_REVIEW_STATE).
+    ASYNC_FINAL_BOT_RESPONSE_REVIEW_STATE="$COMBINED_REVIEW_STATE"
     # Untruncated copy used for classification below (see rationale above
     # the main-loop equivalent).
     ASYNC_FINAL_BOT_RESPONSE_FULL="$ASYNC_FINAL_BOT_RESPONSE"
@@ -1557,7 +1610,7 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
       codex_require_current_head
       # Blocking is checked first, ahead of usage-limit (see rationale
       # above the main-loop equivalent).
-      if [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_FINAL_BOT_RESPONSE_FULL"; then
+      if [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && { [ "$ASYNC_FINAL_BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$ASYNC_FINAL_BOT_RESPONSE_FULL"; }; then
         echo "VERDICT: NEEDS_REVISION"
         echo "---BEGIN BOT RESPONSE---"
         echo "$ASYNC_FINAL_BOT_RESPONSE"
@@ -1657,7 +1710,7 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>/dev/null \
     | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // "")} end' \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
     > "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
     # Selects every review tied at the latest timestamp and picks the one
     # requiring attention, if any (see rationale above the main-loop
@@ -1667,6 +1720,7 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
     codex_select_review_evidence "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE"
     ASYNC_REACTION_FINAL_REVIEW_BODY="$SELECTED_REVIEW_BODY"
     ASYNC_REACTION_FINAL_REVIEW_TIME="$SELECTED_REVIEW_TIME"
+    ASYNC_REACTION_FINAL_REVIEW_STATE="$SELECTED_REVIEW_STATE"
   else
     rm -f "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE"
     echo "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews after async reaction (treated as unavailable)"
@@ -1677,12 +1731,14 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
   codex_combine_terminal_evidence "final async reaction bot response" \
     "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
     "$COMMENT_LATEST_BODY" "$COMMENT_LATEST_TIME" \
-    "$ASYNC_REACTION_FINAL_REVIEW_BODY" "$ASYNC_REACTION_FINAL_REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL"
+    "$ASYNC_REACTION_FINAL_REVIEW_BODY" "$ASYNC_REACTION_FINAL_REVIEW_TIME" "$COMMENT_LATEST_IS_TERMINAL" "$ASYNC_REACTION_FINAL_REVIEW_STATE"
   ASYNC_REACTION_FINAL_BOT_RESPONSE="$COMBINED_BODY"
   ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
   # Captured before any intervening call could touch COMBINED_TIME (see
   # rationale above the main-loop equivalent).
   ASYNC_REACTION_FINAL_BOT_RESPONSE_TIME="$COMBINED_TIME"
+  # See rationale above the main-loop equivalent (BOT_RESPONSE_REVIEW_STATE).
+  ASYNC_REACTION_FINAL_BOT_RESPONSE_REVIEW_STATE="$COMBINED_REVIEW_STATE"
   # Untruncated copy used for classification below (see rationale above
   # the main-loop equivalent).
   ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL="$ASYNC_REACTION_FINAL_BOT_RESPONSE"
@@ -1695,7 +1751,7 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
     codex_require_current_head
     # Blocking is checked first, ahead of usage-limit (see rationale above
     # the main-loop equivalent).
-    if [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_blocking "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL"; then
+    if [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] && { [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL"; }; then
       echo "VERDICT: NEEDS_REVISION"
       echo "---BEGIN BOT RESPONSE---"
       echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"

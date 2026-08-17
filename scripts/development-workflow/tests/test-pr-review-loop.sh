@@ -5709,6 +5709,59 @@ run_test "codex_fenced_example_outside_blocker_stays_blocking_root_comment_verdi
 rm -rf "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir"
 unset _codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir _codex_fenced_example_outside_blocker_stays_blocking_root_comment_output _codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit
 
+# The reviewer script relied entirely on free-text body parsing
+# (codex_response_is_blocking/is_approved) and never consulted GitHub's
+# own structured review `state` field (APPROVED/CHANGES_REQUESTED/
+# COMMENTED/PENDING/DISMISSED), even though the reviews-endpoint response
+# carries it directly. A submitted review with state CHANGES_REQUESTED
+# but a clean-sounding or ambiguous body ("Looks good overall, but see
+# the note below.") fell through to the unrecognized-format safe-fail
+# instead of being recognized as blocking on GitHub's own authoritative
+# signal (fresh evidence from PR #1490 finding 3796396391).
+# codex_combine_terminal_evidence now threads the review's state through
+# as COMBINED_REVIEW_STATE, and the verdict-parsing chain short-circuits
+# to blocking whenever a winning review's state is CHANGES_REQUESTED,
+# ahead of free-text classification.
+_codex_changes_requested_state_forces_blocking_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_changes_requested_state_forces_blocking_root_comment_mock_dir/gh" <<'CODEX_CHANGES_REQUESTED_STATE_FORCES_BLOCKING_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02221234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":303,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Looks good overall, but see the note below."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_CHANGES_REQUESTED_STATE_FORCES_BLOCKING_ROOT_COMMENT_GH
+chmod +x "$_codex_changes_requested_state_forces_blocking_root_comment_mock_dir/gh"
+
+_codex_changes_requested_state_forces_blocking_root_comment_output=""
+_codex_changes_requested_state_forces_blocking_root_comment_exit=0
+PATH="$_codex_changes_requested_state_forces_blocking_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_changes_requested_state_forces_blocking_root_comment_mock_dir/output.txt" 2>&1 || _codex_changes_requested_state_forces_blocking_root_comment_exit=$?
+_codex_changes_requested_state_forces_blocking_root_comment_output="$(cat "$_codex_changes_requested_state_forces_blocking_root_comment_mock_dir/output.txt")"
+run_test "codex_changes_requested_state_forces_blocking_root_comment_exit_needs_revision" "1" "$_codex_changes_requested_state_forces_blocking_root_comment_exit"
+run_test "codex_changes_requested_state_forces_blocking_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_changes_requested_state_forces_blocking_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_changes_requested_state_forces_blocking_root_comment_mock_dir"
+unset _codex_changes_requested_state_forces_blocking_root_comment_mock_dir _codex_changes_requested_state_forces_blocking_root_comment_output _codex_changes_requested_state_forces_blocking_root_comment_exit
+
 # codex_strip_quoted_spans handled straight-double-quotes, backticks, and
 # blockquotes, but not single-quoted spans — the fourth quoting style
 # found unprotected — so a review discussing a quoted clean phrase in

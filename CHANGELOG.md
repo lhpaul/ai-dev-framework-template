@@ -390,6 +390,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer bails out on fence markers — it keeps only its existing
   `codex_strip_quoted_spans` normalization, since a blocking false
   positive on quoted/fenced text is safe on its own.
+- **Codex GitHub reviewer now consults GitHub's structured review `state`
+  field**: `codex-github-reviewer.sh` relied entirely on free-text body
+  parsing (`codex_response_is_blocking`/`codex_response_is_approved`) to
+  classify a submitted review, even though the reviews-endpoint response
+  carries GitHub's own authoritative `state`
+  (`APPROVED`/`CHANGES_REQUESTED`/`COMMENTED`/`PENDING`/`DISMISSED`)
+  directly. A review with state `CHANGES_REQUESTED` but a clean-sounding
+  or ambiguous body (e.g. "Looks good overall, but see the note below.")
+  fell through to the unrecognized-format safe-fail — or, worse, could
+  match `CODEX_APPROVAL_PATTERN` outright and return `APPROVED` — instead
+  of being recognized as blocking on GitHub's own signal. All four
+  reviews-endpoint `jq` queries (main poll, async-arrival, async-final,
+  async-reaction-final) now also extract `state`; `codex_select_review_
+  evidence` tracks it as `SELECTED_REVIEW_STATE` alongside the tied
+  review's body/timestamp; `codex_combine_terminal_evidence` threads it
+  through as a new `review_state` parameter and exposes
+  `COMBINED_REVIEW_STATE`, set only when an actual submitted review (not
+  a SHA-pinned terminal comment, which has no review state) is the
+  winning evidence. Every verdict-parsing call site now short-circuits to
+  blocking when the winning review's state is `CHANGES_REQUESTED`, ahead
+  of free-text classification; the two "blocking terminal/review evidence
+  always wins outright" checks inside `codex_combine_terminal_evidence`
+  (guarding against a same-fetch usage-limit notice or environment-setup
+  error silently overriding a real blocker) now also treat a
+  `CHANGES_REQUESTED` state as blocking, not just a free-text match.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
