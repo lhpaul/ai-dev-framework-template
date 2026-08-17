@@ -285,7 +285,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   emphasis form ("NOT ONLY does this look good, it is approved") slipped
   through. Every letter is now bracket-expanded for both cases (rather
   than relying on sed's `I` substitution flag, whose support varies
-  across sed implementations).
+  across sed implementations). `CODEX_NEGATION_WORDS` also now includes
+  "unable to", which was absent entirely, so "I am unable to approve
+  this change" wasn't recognized as a rejection while an earlier "looks
+  good" in the same sentence still matched. `codex_strip_quoted_spans`
+  now also deletes GitHub-flavored Markdown blockquote lines (a line
+  starting with `>`), since a review discussing a quoted clean phrase via
+  blockquote syntax rather than straight/backtick quotes was likewise
+  unprotected. And `codex_response_is_blocking` — never quote-stripped at
+  all, unlike the approval/negation checks — now shares the same
+  `codex_strip_quoted_spans` normalization, since a quoted blocker token
+  in an otherwise clean review (e.g. "No blocking issues found. The
+  tests correctly cover the `must fix` marker.") still matched
+  `CODEX_BLOCKING_PATTERN` and returned `NEEDS_REVISION` for an
+  actually-clean review.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
