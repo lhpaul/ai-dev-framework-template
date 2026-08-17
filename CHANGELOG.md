@@ -262,7 +262,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unstripped body and incorrectly safe-failed. The helper is scoped to
   `codex_response_is_approved` only and never applied before
   `codex_response_reviews_current_head`'s SHA extraction, which itself
-  relies on backtick-delimited `Reviewed commit:` markers.
+  relies on backtick-delimited `Reviewed commit:` markers. Separately,
+  the top-level verdict-parsing elif chains' usage-limit check (all 4
+  call sites) had no source gate and was not quote-stripped, so a clean
+  terminal review that merely quotes an actual quota message (e.g. "No
+  blocking issues found. The docs accurately quote: You have reached
+  your Codex usage limits.") was reclassified as UNAVAILABLE instead of
+  APPROVED — a case `COMMENT_LATEST_IS_TERMINAL` does not cover, since
+  that guard only protects the ancillary-evidence combination stage, not
+  this separate final verdict check. The check now quote-strips its
+  input before classifying (a source gate isn't used here, unlike the
+  already-safe environment-error check, since a genuine usage-limit
+  notice can legitimately arrive via the reviews endpoint too).
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

@@ -1109,7 +1109,18 @@ while true; do
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 1
-    elif codex_response_is_usage_limit "$BOT_RESPONSE_FULL"; then
+    elif codex_response_is_usage_limit "$(codex_strip_quoted_spans "$BOT_RESPONSE_FULL")"; then
+      # Quote-stripped before checking: unlike the environment-error
+      # check below (already safe — it's gated on source == "comment",
+      # and a terminal SHA-pinned review always has source == "review" by
+      # construction), this check has no source gate, since a genuine
+      # usage-limit notice CAN legitimately arrive via the reviews
+      # endpoint too. A clean terminal review that merely QUOTES an
+      # actual quota message (e.g. "No blocking issues found. The docs
+      # accurately quote: You have reached your Codex usage limits.")
+      # was still reclassified as UNAVAILABLE without this stripping
+      # (fresh evidence from PR #1490 finding 3793259351, a followup to
+      # 3790122058/3793219190/3793219192).
       codex_return_usage_limit "$BOT_RESPONSE"
     elif [ "$BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$BOT_RESPONSE_FULL"; then
       SEEN_ENVIRONMENT_ERROR=1
@@ -1311,7 +1322,9 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
     echo "$ASYNC_BOT_RESPONSE"
     echo "---END BOT RESPONSE---"
     exit 1
-  elif codex_response_is_usage_limit "$ASYNC_BOT_RESPONSE_FULL"; then
+  elif codex_response_is_usage_limit "$(codex_strip_quoted_spans "$ASYNC_BOT_RESPONSE_FULL")"; then
+    # Quote-stripped before checking — see the main-loop equivalent above
+    # for the rationale (PR #1490 finding 3793259351).
     codex_return_usage_limit "$ASYNC_BOT_RESPONSE"
   elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_BOT_RESPONSE_FULL"; then
     SEEN_ENVIRONMENT_ERROR=1
@@ -1408,7 +1421,9 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
         echo "$ASYNC_FINAL_BOT_RESPONSE"
         echo "---END BOT RESPONSE---"
         exit 1
-      elif codex_response_is_usage_limit "$ASYNC_FINAL_BOT_RESPONSE_FULL"; then
+      elif codex_response_is_usage_limit "$(codex_strip_quoted_spans "$ASYNC_FINAL_BOT_RESPONSE_FULL")"; then
+        # Quote-stripped before checking — see the main-loop equivalent
+        # above for the rationale (PR #1490 finding 3793259351).
         codex_return_usage_limit "$ASYNC_FINAL_BOT_RESPONSE"
       elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_FINAL_BOT_RESPONSE_FULL"; then
         SEEN_ENVIRONMENT_ERROR=1
@@ -1544,7 +1559,9 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
       echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 1
-    elif codex_response_is_usage_limit "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL"; then
+    elif codex_response_is_usage_limit "$(codex_strip_quoted_spans "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL")"; then
+      # Quote-stripped before checking — see the main-loop equivalent
+      # above for the rationale (PR #1490 finding 3793259351).
       codex_return_usage_limit "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
     elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL"; then
       SEEN_ENVIRONMENT_ERROR=1

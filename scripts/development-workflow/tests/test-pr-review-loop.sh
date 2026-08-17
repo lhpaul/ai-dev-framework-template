@@ -5372,6 +5372,57 @@ run_test "codex_comma_scoped_negation_root_comment_verdict" "VERDICT: APPROVED" 
 rm -rf "$_codex_comma_scoped_negation_root_comment_mock_dir"
 unset _codex_comma_scoped_negation_root_comment_mock_dir _codex_comma_scoped_negation_root_comment_output _codex_comma_scoped_negation_root_comment_exit
 
+# The top-level verdict-parsing elif chain's usage-limit check has no
+# source gate (unlike the environment-error check, already safe because
+# it's gated on source == "comment", and a terminal SHA-pinned review
+# always has source == "review" by construction) and was not
+# quote-stripped, so a clean terminal review that merely QUOTES an actual
+# quota message (e.g. "No blocking issues found. The docs accurately
+# quote: You have reached your Codex usage limits.") was reclassified as
+# UNAVAILABLE instead of APPROVED — a case COMMENT_LATEST_IS_TERMINAL
+# does not cover, since that guard only protects the ancillary-evidence
+# combination stage, not this separate final verdict check (fresh
+# evidence from PR #1490 finding 3793259351).
+_codex_terminal_review_quotes_quota_message_mock_dir="$(mktemp -d)"
+cat > "$_codex_terminal_review_quotes_quota_message_mock_dir/gh" <<'CODEX_TERMINAL_REVIEW_QUOTES_QUOTA_MESSAGE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01771234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":293,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":294,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. The docs accurately quote: `You have reached your Codex usage limits.`\\n\\n**Reviewed commit:** `facade01771`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TERMINAL_REVIEW_QUOTES_QUOTA_MESSAGE_GH
+chmod +x "$_codex_terminal_review_quotes_quota_message_mock_dir/gh"
+
+_codex_terminal_review_quotes_quota_message_output=""
+_codex_terminal_review_quotes_quota_message_exit=0
+PATH="$_codex_terminal_review_quotes_quota_message_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_terminal_review_quotes_quota_message_mock_dir/output.txt" 2>&1 || _codex_terminal_review_quotes_quota_message_exit=$?
+_codex_terminal_review_quotes_quota_message_output="$(cat "$_codex_terminal_review_quotes_quota_message_mock_dir/output.txt")"
+run_test "codex_terminal_review_quotes_quota_message_exit_clean" "0" "$_codex_terminal_review_quotes_quota_message_exit"
+run_test "codex_terminal_review_quotes_quota_message_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_terminal_review_quotes_quota_message_output" | grep "^VERDICT:")"
+rm -rf "$_codex_terminal_review_quotes_quota_message_mock_dir"
+unset _codex_terminal_review_quotes_quota_message_mock_dir _codex_terminal_review_quotes_quota_message_output _codex_terminal_review_quotes_quota_message_exit
+
 # codex_response_priority ranked an ancillary environment-setup-error
 # comment at the same "unrecognized format" tier (2) as a genuine but
 # unrecognized-format submitted review, instead of at the lower
