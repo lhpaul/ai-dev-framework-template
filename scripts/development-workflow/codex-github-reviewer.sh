@@ -243,35 +243,57 @@ codex_inline_review_comment_count_since() {
 # FULL, untruncated response (see BOT_RESPONSE_FULL below) rather than a
 # pre-truncated copy.
 
-# Returns true if the response contains a fence-opener marker (3+
-# consecutive backticks or tildes) ANYWHERE. Used by every positive-
-# signal classifier below (usage-limit, environment-error, approved) as a
-# conservative guard: a genuine SHA-pinned clean review can QUOTE example
-# text inside a fenced block (e.g. demonstrating what a usage-limit
-# notice looks like) without that text being a genuine assertion, and
-# after 5 rounds of precisely parsing GFM's fence-open/close semantics
-# repeatedly surfaced the next undiscovered edge case (see
-# codex_strip_quoted_spans below), the project's chosen direction is to
-# stop trying to determine what's inside vs. outside a fence and instead
-# treat the mere PRESENCE of a fence marker as disqualifying for any of
-# these positive/actionable classifications. This was initially added
-# only to codex_response_is_approved, but the SAME ambiguity applies
-# equally to usage-limit and environment-error detection — a fenced
-# example that merely QUOTES quota/setup-error wording must not trigger
-# an actual UNAVAILABLE verdict for an otherwise clean review (fresh
-# evidence from PR #1490 finding 3796042503, a followup to 3795661290:
-# the fence guard was added to codex_response_is_approved alone, but
-# codex_response_is_usage_limit's own callers were unguarded, so fenced
-# quota text still triggered a false UNAVAILABLE for a clean review).
-# Embedding this check INSIDE each shared classifier — rather than
-# requiring every call site to remember to apply it — is deliberate:
+# Returns true if the response contains a fence-opener marker (2+
+# consecutive backticks, or 3+ consecutive tildes) ANYWHERE. Used by
+# every positive-signal classifier below (usage-limit, environment-error,
+# approved) as a conservative guard: a genuine SHA-pinned clean review
+# can QUOTE example text inside a fenced block (e.g. demonstrating what a
+# usage-limit notice looks like) without that text being a genuine
+# assertion, and after 5 rounds of precisely parsing GFM's fence-open/
+# close semantics repeatedly surfaced the next undiscovered edge case
+# (see codex_strip_quoted_spans below), the project's chosen direction is
+# to stop trying to determine what's inside vs. outside a fence and
+# instead treat the mere PRESENCE of a fence marker as disqualifying for
+# any of these positive/actionable classifications. This was initially
+# added only to codex_response_is_approved, but the SAME ambiguity
+# applies equally to usage-limit and environment-error detection — a
+# fenced example that merely QUOTES quota/setup-error wording must not
+# trigger an actual UNAVAILABLE verdict for an otherwise clean review
+# (fresh evidence from PR #1490 finding 3796042503, a followup to
+# 3795661290: the fence guard was added to codex_response_is_approved
+# alone, but codex_response_is_usage_limit's own callers were unguarded,
+# so fenced quota text still triggered a false UNAVAILABLE for a clean
+# review). Embedding this check INSIDE each shared classifier — rather
+# than requiring every call site to remember to apply it — is deliberate:
 # scattering the guard across call sites is exactly the pattern that
 # produced this gap in the first place (codex_response_is_blocking
 # learned the same lesson earlier for quote-stripping, PR #1490 finding
 # 3793367887).
+#
+# The backtick threshold was lowered from 3+ to 2+ after
+# codex_strip_quoted_spans' naive `[^\`]*` backtick-pair regex was found
+# to mishandle CommonMark's actual delimiter-run matching: a code span
+# CAN be delimited by a run of 2+ backticks (not just a single pair), and
+# the opening/closing runs must be equal length — but the naive regex
+# treats an adjacent 2-backtick run as two separate EMPTY single-backtick
+# pairs (each backtick immediately "closes" against its neighbor with
+# zero content between), stripping only the empty delimiter pairs
+# themselves and leaving the actual enclosed content fully exposed (e.g.
+# a double-backtick-quoted `` `` No blocking issues found `` `` survived
+# stripping intact and matched CODEX_APPROVAL_PATTERN, fresh evidence
+# from PR #1490 finding 3798756834). Rather than write CommonMark-
+# compliant delimiter-run matching in regex (not realistically
+# expressible as a plain substitution), a 2+-backtick run now disqualifies
+# the same way a 3+ run always has — single backtick PAIRS (exactly one
+# backtick on each side, still extremely common in genuinely clean review
+# comments) are unaffected and still get precise stripping via
+# codex_strip_quoted_spans. Tildes are NOT lowered to 2+: GFM only uses
+# tildes for FENCED code blocks (3+ required), never for inline code
+# spans, so a lower tilde threshold would have no corresponding real gap
+# to close.
 codex_response_has_fence_marker() {
   local response="$1"
-  grep -qE '(`{3,}|~{3,})' <<< "$response"
+  grep -qE '(`{2,}|~{3,})' <<< "$response"
 }
 
 codex_response_is_usage_limit() {
@@ -401,7 +423,7 @@ CODEX_APPROVAL_PATTERN='(\bapproved\b|\blgtm\b|\blooks[[:space:]]+good\b|didn.t 
 # "cannot approve" fixed for finding 3790023141, just a different
 # inability phrase).
 CODEX_NEGATED_APPROVAL_TARGET_WORDS='(approve[ds]?|lgtm|look(s|ing)?[[:space:]]+good|no[[:space:]]+blocking[[:space:]]+issues?|didn.t find[[:space:]]+any major[[:space:]]+issues)'
-CODEX_NEGATION_WORDS='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|never|unable[[:space:]]+to)'
+CODEX_NEGATION_WORDS='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|do[[:space:]]+not|don.t|never|unable[[:space:]]+to)'
 CODEX_NEGATED_APPROVAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?;,]*${CODEX_NEGATED_APPROVAL_TARGET_WORDS}"
 
 # Strips quoted spans — text between a pair of straight double-quotes

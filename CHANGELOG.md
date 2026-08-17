@@ -486,6 +486,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   return `APPROVED`. Backtick-pair stripping now runs on the same
   newline-flattened body as the double-/single-quote passes, alongside
   them, instead of as a separate line-oriented pass afterward.
+- **Codex GitHub reviewer recognizes "don't approve" and multi-backtick
+  code spans**: `CODEX_NEGATION_WORDS` was missing "don't"/"do not"
+  entirely — only the third-person singular form ("does not"/"doesn't")
+  was covered — so a response like "This looks good at first glance, but
+  I don't approve this change." had the earlier positive phrase win and
+  returned `APPROVED` instead of falling through to the negated-approval
+  check; "don't"/"do not" is now included alongside every other verb's
+  contracted and space-separated forms. Separately,
+  `codex_strip_quoted_spans`' backtick-pair regex (`` `[^`]*` ``)
+  mishandled CommonMark's actual code-span delimiter-run matching: a code
+  span can be delimited by a run of 2+ backticks, not just a single pair,
+  and the naive regex treated an adjacent 2-backtick run as two separate
+  EMPTY single-backtick pairs (each backtick immediately "closing"
+  against its neighbor with zero content between), stripping only the
+  empty delimiter markers and leaving the actual enclosed content fully
+  exposed. Rather than write CommonMark-compliant delimiter-run matching
+  in regex, `codex_response_has_fence_marker`'s backtick threshold is
+  lowered from 3+ to 2+, so a 2+-backtick run disqualifies the same way a
+  3+ run always has; single backtick pairs are unaffected and still get
+  precise stripping. The tilde threshold stays at 3+, since GFM only uses
+  tildes for fenced code blocks, never inline code spans.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
