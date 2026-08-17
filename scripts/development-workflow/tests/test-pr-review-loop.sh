@@ -5656,6 +5656,98 @@ run_test "codex_quoted_blocker_token_stays_approved_root_comment_verdict" "VERDI
 rm -rf "$_codex_quoted_blocker_token_stays_approved_root_comment_mock_dir"
 unset _codex_quoted_blocker_token_stays_approved_root_comment_mock_dir _codex_quoted_blocker_token_stays_approved_root_comment_output _codex_quoted_blocker_token_stays_approved_root_comment_exit
 
+# codex_strip_quoted_spans handled straight-double-quotes, backticks, and
+# blockquotes, but not single-quoted spans — the fourth quoting style
+# found unprotected — so a review discussing a quoted clean phrase in
+# single quotes (e.g. "The documented response 'No blocking issues
+# found' is inaccurate and should be corrected") still matched and
+# returned APPROVED (fresh evidence from PR #1490 finding 3793410331).
+_codex_single_quoted_phrase_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_single_quoted_phrase_not_approved_root_comment_mock_dir/gh" <<'CODEX_SINGLE_QUOTED_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02331234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":304,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf "[{\"id\":305,\"created_at\":\"2026-01-01T00:00:01Z\",\"user\":{\"login\":\"chatgpt-codex-connector[bot]\"},\"body\":\"The documented response 'No blocking issues found' is inaccurate and should be corrected.\\\\n\\\\n**Reviewed commit:** \`facade02331\`\"}]\n"
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_SINGLE_QUOTED_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_single_quoted_phrase_not_approved_root_comment_mock_dir/gh"
+
+_codex_single_quoted_phrase_not_approved_root_comment_output=""
+_codex_single_quoted_phrase_not_approved_root_comment_exit=0
+PATH="$_codex_single_quoted_phrase_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_single_quoted_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_single_quoted_phrase_not_approved_root_comment_exit=$?
+_codex_single_quoted_phrase_not_approved_root_comment_output="$(cat "$_codex_single_quoted_phrase_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_single_quoted_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_single_quoted_phrase_not_approved_root_comment_exit"
+run_test "codex_single_quoted_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_single_quoted_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_single_quoted_phrase_not_approved_root_comment_mock_dir"
+unset _codex_single_quoted_phrase_not_approved_root_comment_mock_dir _codex_single_quoted_phrase_not_approved_root_comment_output _codex_single_quoted_phrase_not_approved_root_comment_exit
+
+# Positive control for the single-quote stripping above: a bare
+# `'[^']*'` pattern would also match the span between two UNRELATED
+# apostrophes in contractions (e.g. the apostrophe in "isn't" and the
+# apostrophe in "it's"), corrupting a genuinely clean review by deleting
+# everything between them. The stricter whitespace/punctuation-boundary
+# requirement must leave contractions untouched.
+_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir/gh" <<'CODEX_CONTRACTION_APOSTROPHES_NOT_MANGLED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02441234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":306,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":307,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"It'\''s fine, doesn'\''t need changes. No blocking issues found.\\n\\n**Reviewed commit:** `facade02441`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_CONTRACTION_APOSTROPHES_NOT_MANGLED_ROOT_COMMENT_GH
+chmod +x "$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir/gh"
+
+_codex_contraction_apostrophes_not_mangled_root_comment_output=""
+_codex_contraction_apostrophes_not_mangled_root_comment_exit=0
+PATH="$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir/output.txt" 2>&1 || _codex_contraction_apostrophes_not_mangled_root_comment_exit=$?
+_codex_contraction_apostrophes_not_mangled_root_comment_output="$(cat "$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir/output.txt")"
+run_test "codex_contraction_apostrophes_not_mangled_root_comment_exit_clean" "0" "$_codex_contraction_apostrophes_not_mangled_root_comment_exit"
+run_test "codex_contraction_apostrophes_not_mangled_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_contraction_apostrophes_not_mangled_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir"
+unset _codex_contraction_apostrophes_not_mangled_root_comment_mock_dir _codex_contraction_apostrophes_not_mangled_root_comment_output _codex_contraction_apostrophes_not_mangled_root_comment_exit
+
 # codex_response_priority ranked an ancillary environment-setup-error
 # comment at the same "unrecognized format" tier (2) as a genuine but
 # unrecognized-format submitted review, instead of at the lower

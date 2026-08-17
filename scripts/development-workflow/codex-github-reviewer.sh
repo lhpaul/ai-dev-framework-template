@@ -389,10 +389,24 @@ CODEX_NEGATED_APPROVAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?;,]*${CODEX_NEGATED_
 # strips GitHub-flavored Markdown blockquote LINES (a line starting with
 # `>`, optionally indented): a review discussing a quoted clean phrase via
 # blockquote syntax rather than straight/backtick quotes was likewise
-# unprotected (fresh evidence from PR #1490 finding 3793367885).
+# unprotected (fresh evidence from PR #1490 finding 3793367885). Also
+# strips single-quoted spans ('...') — the fourth quoting style found
+# unprotected after straight-quote, backtick, and blockquote (fresh
+# evidence from PR #1490 finding 3793410331). Single quotes need a
+# stricter boundary than the other three styles: a bare `'[^']*'` would
+# also match the space between two UNRELATED apostrophes in contractions
+# (e.g. "isn't approved, but it's fine" — a naive strip would treat the
+# apostrophe in "isn't" and the apostrophe in "it's" as an opening/closing
+# pair and delete everything between them, including "approved"). The
+# opening quote is required to be preceded by whitespace-or-start-of-line
+# and the closing quote by whitespace/punctuation-or-end, which a
+# contraction's apostrophe never satisfies (the letters on both sides of
+# it are word characters, not whitespace), so genuine quotation is
+# distinguished from an apostrophe embedded in a word.
 codex_strip_quoted_spans() {
   local body="$1"
-  sed -E 's/"[^"]*"//g; s/`[^`]*`//g; /^[[:space:]]*>/d' <<< "$body"
+  local sq="'"
+  sed -E "s/\"[^\"]*\"//g; s/\`[^\`]*\`//g; /^[[:space:]]*>/d; s/(^|[[:space:]])${sq}[^${sq}]*${sq}([[:space:].,;:!?]|\$)/\\1\\2/g" <<< "$body"
 }
 
 codex_response_is_blocking() {

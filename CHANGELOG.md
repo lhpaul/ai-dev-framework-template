@@ -298,7 +298,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in an otherwise clean review (e.g. "No blocking issues found. The
   tests correctly cover the `must fix` marker.") still matched
   `CODEX_BLOCKING_PATTERN` and returned `NEEDS_REVISION` for an
-  actually-clean review.
+  actually-clean review. `codex_strip_quoted_spans` now also strips
+  single-quoted spans (`'...'`) — the fourth quoting style found
+  unprotected after straight-quote, backtick, and blockquote. Single
+  quotes needed a stricter boundary than the other three styles: a bare
+  `'[^']*'` would also match the span between two unrelated apostrophes
+  in contractions (e.g. "isn't approved, but it's fine" would have its
+  "approved" deleted by a naive strip treating those two apostrophes as
+  an opening/closing pair), so the opening quote must be preceded by
+  whitespace-or-start-of-line and the closing quote by whitespace or
+  punctuation, which a contraction's word-internal apostrophe never
+  satisfies.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when
