@@ -248,7 +248,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separators, so an unrelated negation in an earlier semicolon-joined
   clause of the same sentence (e.g. "Tests are not required for this
   documentation-only change; looks good") still spanned into a later,
-  unrelated clean clause; the character class now also excludes `;`.
+  unrelated clean clause; the character class now also excludes `;` and
+  `,` (a followup finding showed a comma-joined clause crossed the
+  semicolon-only exclusion the same way). A new shared
+  `codex_strip_quoted_spans` helper now strips both straight-double-quoted
+  spans AND backtick-quoted (Markdown inline code) spans — the earlier
+  quote-stripping fix only handled straight quotes, so a review quoting a
+  clean phrase with backticks instead still matched — and this stripping
+  now runs ONCE, before BOTH the negation check and the positive approval
+  check, since the earlier fix only quote-stripped the positive check: an
+  otherwise-clean response quoting a REJECTION phrase from elsewhere
+  (e.g. test/documentation text) still tripped the negation check on the
+  unstripped body and incorrectly safe-failed. The helper is scoped to
+  `codex_response_is_approved` only and never applied before
+  `codex_response_reviews_current_head`'s SHA extraction, which itself
+  relies on backtick-delimited `Reviewed commit:` markers.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

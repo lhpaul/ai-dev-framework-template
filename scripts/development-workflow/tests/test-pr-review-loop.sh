@@ -5230,6 +5230,148 @@ run_test "codex_semicolon_scoped_negation_root_comment_verdict" "VERDICT: APPROV
 rm -rf "$_codex_semicolon_scoped_negation_root_comment_mock_dir"
 unset _codex_semicolon_scoped_negation_root_comment_mock_dir _codex_semicolon_scoped_negation_root_comment_output _codex_semicolon_scoped_negation_root_comment_exit
 
+# codex_response_is_approved only stripped straight-double-quoted spans,
+# not backtick-quoted (Markdown inline code) ones, so a review that
+# quotes a clean phrase using backticks instead of straight quotes (e.g.
+# "The documented response `No blocking issues found` is inaccurate")
+# still matched and returned APPROVED (fresh evidence from PR #1490
+# finding 3793219190, a followup to 3790122058). The shared
+# codex_strip_quoted_spans helper now strips both quoting styles.
+_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir/gh" <<'CODEX_BACKTICK_QUOTED_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01441234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":287,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":288,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"The documented response `No blocking issues found` is inaccurate and should be corrected.\\n\\n**Reviewed commit:** `facade01441`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_BACKTICK_QUOTED_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir/gh"
+
+_codex_backtick_quoted_phrase_not_approved_root_comment_output=""
+_codex_backtick_quoted_phrase_not_approved_root_comment_exit=0
+PATH="$_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_backtick_quoted_phrase_not_approved_root_comment_exit=$?
+_codex_backtick_quoted_phrase_not_approved_root_comment_output="$(cat "$_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_backtick_quoted_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_backtick_quoted_phrase_not_approved_root_comment_exit"
+run_test "codex_backtick_quoted_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_backtick_quoted_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir"
+unset _codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir _codex_backtick_quoted_phrase_not_approved_root_comment_output _codex_backtick_quoted_phrase_not_approved_root_comment_exit
+
+# codex_response_is_approved only quote-stripped before the POSITIVE
+# CODEX_APPROVAL_PATTERN check, not before the NEGATED_APPROVAL_PATTERN
+# check that runs first — so an otherwise-clean response that quotes a
+# rejection phrase from elsewhere (e.g. test/documentation text), such as
+# `No blocking issues found. The tests cover "This change is not
+# approved".`, still tripped the negation check on the unstripped body
+# and safe-failed to NEEDS_REVISION even though the actual review verdict
+# was clean (fresh evidence from PR #1490 finding 3793219192).
+# codex_response_is_approved now strips quoted spans ONCE, before running
+# either check.
+_codex_quoted_rejection_in_clean_review_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir/gh" <<'CODEX_QUOTED_REJECTION_IN_CLEAN_REVIEW_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01551234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":289,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:290,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("No blocking issues found. The tests cover \"This change is not approved\".\n\n**Reviewed commit:** `facade01551`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_QUOTED_REJECTION_IN_CLEAN_REVIEW_ROOT_COMMENT_GH
+chmod +x "$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir/gh"
+
+_codex_quoted_rejection_in_clean_review_root_comment_output=""
+_codex_quoted_rejection_in_clean_review_root_comment_exit=0
+PATH="$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir/output.txt" 2>&1 || _codex_quoted_rejection_in_clean_review_root_comment_exit=$?
+_codex_quoted_rejection_in_clean_review_root_comment_output="$(cat "$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir/output.txt")"
+run_test "codex_quoted_rejection_in_clean_review_root_comment_exit_clean" "0" "$_codex_quoted_rejection_in_clean_review_root_comment_exit"
+run_test "codex_quoted_rejection_in_clean_review_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_quoted_rejection_in_clean_review_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir"
+unset _codex_quoted_rejection_in_clean_review_root_comment_mock_dir _codex_quoted_rejection_in_clean_review_root_comment_output _codex_quoted_rejection_in_clean_review_root_comment_exit
+
+# Followup to codex_semicolon_scoped_negation_root_comment: the semicolon-
+# only exclusion still let a comma-joined clause cross ("Tests are not
+# required, but looks good") the same way the original unbounded span
+# crossed the semicolon (fresh evidence from PR #1490 finding
+# 3793219193). The character class now also excludes `,`.
+_codex_comma_scoped_negation_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_comma_scoped_negation_root_comment_mock_dir/gh" <<'CODEX_COMMA_SCOPED_NEGATION_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01661234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":291,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":292,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Tests are not required, but looks good.\\n\\n**Reviewed commit:** `facade01661`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_COMMA_SCOPED_NEGATION_ROOT_COMMENT_GH
+chmod +x "$_codex_comma_scoped_negation_root_comment_mock_dir/gh"
+
+_codex_comma_scoped_negation_root_comment_output=""
+_codex_comma_scoped_negation_root_comment_exit=0
+PATH="$_codex_comma_scoped_negation_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_comma_scoped_negation_root_comment_mock_dir/output.txt" 2>&1 || _codex_comma_scoped_negation_root_comment_exit=$?
+_codex_comma_scoped_negation_root_comment_output="$(cat "$_codex_comma_scoped_negation_root_comment_mock_dir/output.txt")"
+run_test "codex_comma_scoped_negation_root_comment_exit_clean" "0" "$_codex_comma_scoped_negation_root_comment_exit"
+run_test "codex_comma_scoped_negation_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_comma_scoped_negation_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_comma_scoped_negation_root_comment_mock_dir"
+unset _codex_comma_scoped_negation_root_comment_mock_dir _codex_comma_scoped_negation_root_comment_output _codex_comma_scoped_negation_root_comment_exit
+
 # codex_response_priority ranked an ancillary environment-setup-error
 # comment at the same "unrecognized format" tier (2) as a genuine but
 # unrecognized-format submitted review, instead of at the lower

@@ -351,33 +351,49 @@ CODEX_APPROVAL_PATTERN='(\bapproved\b|\blgtm\b|\blooks[[:space:]]+good\b|didn.t 
 # separate one, but the span crossed the semicolon and matched anyway
 # (PR #1490 finding 3790122061, the same class of gap as 3790062089
 # above but on the forward-order side rather than the removed reverse
-# alternative). The character class now also excludes `;`.
+# alternative). The character class also excludes `;` and `,`: a comma-
+# joined clause (e.g. "Tests are not required, but looks good") crossed
+# the semicolon-only exclusion the same way the semicolon-crossing case
+# crossed the original unbounded span (fresh evidence from PR #1490
+# finding 3793219193, a followup to 3790122061/3790062089).
 CODEX_NEGATED_APPROVAL_TARGET_WORDS='(approve[ds]?|lgtm|look(s|ing)?[[:space:]]+good|no[[:space:]]+blocking[[:space:]]+issues?|didn.t find[[:space:]]+any major[[:space:]]+issues)'
 CODEX_NEGATION_WORDS='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|does[[:space:]]+not|doesn.t|never)'
-CODEX_NEGATED_APPROVAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?;]*${CODEX_NEGATED_APPROVAL_TARGET_WORDS}"
+CODEX_NEGATED_APPROVAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?;,]*${CODEX_NEGATED_APPROVAL_TARGET_WORDS}"
 
 codex_response_is_blocking() {
   local body="$1"
   grep -qiE "$CODEX_BLOCKING_PATTERN" <<< "$body"
 }
 
+# Strips quoted spans — text between a pair of straight double-quotes
+# ("...") AND text between a pair of backticks (`...`, Markdown inline
+# code) — used ONLY by codex_response_is_approved below, never applied to
+# the body before codex_response_reviews_current_head's SHA extraction
+# (which itself relies on backtick-delimited `Reviewed commit:` markers
+# and must see the original, unstripped body). A SHA-pinned review can
+# QUOTE a clean phrase, in either quoting style, while REJECTING it (e.g.
+# `The documented bot response "No blocking issues found" is inaccurate`
+# or the Markdown-code equivalent using backticks), and both
+# CODEX_APPROVAL_PATTERN and CODEX_NEGATED_APPROVAL_PATTERN's substring
+# matches can't distinguish quotation/discussion of a phrase from an
+# assertion of it (fresh evidence from PR #1490 findings 3790122058 and
+# 3793219190 — straight-quote and backtick-quote versions of the same
+# gap — plus 3793219192, which found that only the POSITIVE check was
+# quote-stripped and a quoted REJECTION phrase, e.g. `No blocking issues
+# found. The tests cover "This change is not approved".`, still tripped
+# the NEGATION check on the unstripped body).
+codex_strip_quoted_spans() {
+  local body="$1"
+  sed -E 's/"[^"]*"//g; s/`[^`]*`//g' <<< "$body"
+}
+
 codex_response_is_approved() {
   local body="$1"
-  if grep -qiE "$CODEX_NEGATED_APPROVAL_PATTERN" <<< "$body"; then
+  local unquoted_body
+  unquoted_body=$(codex_strip_quoted_spans "$body")
+  if grep -qiE "$CODEX_NEGATED_APPROVAL_PATTERN" <<< "$unquoted_body"; then
     return 1
   fi
-  # Strip quoted spans (text between a pair of straight double-quotes)
-  # before matching CODEX_APPROVAL_PATTERN: a SHA-pinned review can QUOTE
-  # a clean phrase while REJECTING it (e.g. `The documented bot response
-  # "No blocking issues found" is inaccurate and should be corrected`),
-  # and CODEX_APPROVAL_PATTERN's substring match can't distinguish
-  # quotation/discussion of a phrase from an assertion of it. Removing
-  # quoted text first means only a genuinely UNQUOTED approval phrase can
-  # still match; a real approval elsewhere in the same response (outside
-  # any quotes) is unaffected (fresh evidence from PR #1490 finding
-  # 3790122058).
-  local unquoted_body
-  unquoted_body=$(sed -E 's/"[^"]*"//g' <<< "$body")
   grep -qiE "$CODEX_APPROVAL_PATTERN" <<< "$unquoted_body"
 }
 
