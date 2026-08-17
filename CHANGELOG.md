@@ -342,6 +342,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   construction (everything after an opening delimiter that never finds a
   valid close stays stripped), so the state machine now correctly
   implements the finite GFM fence-closing rule end to end.
+- **Codex GitHub fenced-code-block detection replaced with a conservative
+  heuristic**: a fifth consecutive fence-parsing gap surfaced — GitHub-
+  flavored Markdown's entirely separate TILDE-delimited fence syntax
+  (`~~~...~~~`), which the backtick-only precise parser never recognized
+  at all, so a quoted clean phrase inside a tilde fence stayed fully
+  exposed to classification. Rather than continue precisely
+  re-implementing GFM's fence grammar one construct at a time (detect,
+  length, close-only-whitespace, and now tilde variants — each round
+  surfaced the next undiscovered edge case), `codex_strip_quoted_spans`
+  no longer attempts to parse fence boundaries at all: the entire awk
+  state machine was removed. `codex_response_is_approved` instead treats
+  the mere presence of a fence-opener marker (3+ consecutive backticks or
+  tildes) anywhere in the response as disqualifying for a clean verdict,
+  without attempting to determine where it opens or closes. This is a
+  deliberate tradeoff — a small amount of false-`NEEDS_REVISION` risk (a
+  genuinely clean response that happens to include an example code fence)
+  in exchange for closing the entire class of quoted/fenced-phrase-
+  misread-as-assertion bugs in one step, since four rounds of chasing
+  precision produced four more false-`APPROVED` gaps instead of
+  converging. Single/inline backtick pairs on one line (not a 3+-backtick
+  run) are unaffected and still get precise, stable stripping, since
+  inline code references are common in genuinely clean review comments
+  and have not shown this same repeated-edge-case pattern.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

@@ -402,77 +402,38 @@ CODEX_NEGATED_APPROVAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?;,]*${CODEX_NEGATED_
 # and the closing quote by whitespace/punctuation-or-end, which a
 # contraction's apostrophe never satisfies (the letters on both sides of
 # it are word characters, not whitespace), so genuine quotation is
-# distinguished from an apostrophe embedded in a word. Fenced Markdown
-# code blocks (```...```) are stripped FIRST via a separate awk pass,
-# since they're a MULTI-LINE construct the single-line sed substitutions
-# below can't handle: a fence marker line (```` ``` ````, optionally with
-# a language tag) has no PAIRED backtick on the same line for the
-# existing single-backtick-pair substitution to match against, and the
-# quoted content between the opening/closing fence spans arbitrarily many
-# separate lines. A review quoting a clean signal inside a fenced block
-# was the fifth quoting style found unprotected, after straight-quote,
-# backtick, blockquote, and single-quote (fresh evidence from PR #1490
-# finding 3793453010). The awk pass tracks the LENGTH of the opening
-# fence delimiter and only closes on a delimiter of AT LEAST that length
-# — matching GitHub-flavored Markdown's actual fence semantics, where a
-# longer outer fence (e.g. four backticks) can safely quote content that
-# itself contains a shorter (three-backtick) fence without the inner one
-# prematurely closing the block. A naive "any 3+ backtick line toggles
-# the state" implementation (the original version of this pass)
-# incorrectly closed on the inner delimiter, re-exposing everything after
-# it — including a quoted clean phrase — to classification (fresh
-# evidence from PR #1490 finding 3793497787, a followup to 3793453010).
-# Uses the POSIX two-argument `match()` (setting `RLENGTH`), not the
-# gawk-only three-argument form with an array capture, since this
-# environment's `awk` is the POSIX "one true awk", not gawk.
+# distinguished from an apostrophe embedded in a word.
 #
-# This completes GFM's actual (finite, well-specified) fenced-code-block
-# rule: an opening delimiter (3+ backticks, optionally followed by an
-# info string) is closed by the first later delimiter that is (a) at
-# least as long as the opening one AND (b) followed by nothing but
-# optional whitespace. A candidate closing line that has trailing
-# non-whitespace content — e.g. ```` ```not-a-close ```` — is, per GFM,
-# an entirely different construct (a NEW opening fence with an info
-# string), not a close, but a length-only check (the previous version of
-# this fix) treated it as closing regardless, re-exposing quoted content
-# after it (fresh evidence from PR #1490 finding, followup to
-# 3793497787/3793453010). This is deliberately the LAST fence-specific
-# refinement here, not another reactive edge-case patch: GFM's fence spec
-# is genuinely finite (open, length, close-only-whitespace), and all
-# three parts are now implemented. An unclosed fence at end-of-input is
-# already handled safely by construction — `infence` simply stays true
-# through the rest of the loop, so everything after an opening delimiter
-# that never finds a valid close is stripped, which is the conservative
-# (never-expose-ambiguous-content) direction.
+# Fenced Markdown code blocks (```...``` or ~~~...~~~) are deliberately
+# NOT precisely parsed here, unlike the single-line constructs above.
+# Four consecutive rounds of chasing GitHub-flavored Markdown's fence
+# semantics — detecting a fence at all, tracking the opening delimiter's
+# LENGTH (a longer outer fence can safely contain a shorter inner one),
+# requiring a closing delimiter to be followed by nothing but whitespace,
+# and finally discovering GFM's entirely separate TILDE-delimited fence
+# syntax that a backtick-only implementation missed altogether — kept
+# producing one more undiscovered edge case each round (PR #1490 findings
+# 3793453010, 3793497787, a closing-validity followup, and 3795661290).
+# Rather than continue precisely re-implementing GFM's fence grammar one
+# construct at a time, codex_response_is_approved below now treats the
+# mere PRESENCE of a fence-opener marker (3+ consecutive backticks or
+# tildes) ANYWHERE in the response as disqualifying for a clean verdict,
+# without attempting to determine where it opens or closes. This is a
+# deliberate, explicit tradeoff: a small amount of false-NEEDS_REVISION
+# risk (a genuinely clean response that happens to include an example
+# code fence) in exchange for closing the entire class of "quoted/fenced
+# clean phrase misread as an assertion" bug in one step, rather than the
+# previous direction of chasing precision at the cost of repeated
+# false-APPROVED gaps. Single/inline backticks (a PAIR on one line, not a
+# 3+-run) are unaffected by this and still get the precise, stable
+# stripping below — only multi-backtick/tilde FENCE markers trigger the
+# conservative bail-out, since inline code references (e.g. `` `foo.py` ``)
+# are extremely common in genuinely clean review comments and haven't
+# shown this same repeated-edge-case pattern.
 codex_strip_quoted_spans() {
   local body="$1"
   local sq="'"
-  local unfenced_body
-  unfenced_body=$(awk '
-    {
-      line = $0
-      sub(/^[[:space:]]*/, "", line)
-      if (match(line, /^`{3,}/)) {
-        candidate_len = RLENGTH
-        rest = substr(line, RSTART + RLENGTH)
-        if (!infence) {
-          infence = 1
-          fencelen = candidate_len
-          next
-        } else if (candidate_len >= fencelen) {
-          trimmed_rest = rest
-          gsub(/[[:space:]]/, "", trimmed_rest)
-          if (trimmed_rest == "") {
-            infence = 0
-            next
-          }
-        }
-      }
-      if (infence) next
-      print
-    }
-  ' <<< "$body")
-  sed -E "s/\"[^\"]*\"//g; s/\`[^\`]*\`//g; /^[[:space:]]*>/d; s/(^|[[:space:]])${sq}[^${sq}]*${sq}([[:space:].,;:!?]|\$)/\\1\\2/g" <<< "$unfenced_body"
+  sed -E "s/\"[^\"]*\"//g; s/\`[^\`]*\`//g; /^[[:space:]]*>/d; s/(^|[[:space:]])${sq}[^${sq}]*${sq}([[:space:].,;:!?]|\$)/\\1\\2/g" <<< "$body"
 }
 
 codex_response_is_blocking() {
@@ -502,6 +463,19 @@ codex_strip_not_only_idiom() {
 
 codex_response_is_approved() {
   local body="$1"
+  # A fence-opener marker (3+ consecutive backticks or tildes) ANYWHERE
+  # in the response — see the "Fenced Markdown code blocks" comment above
+  # codex_strip_quoted_spans for the full rationale — disqualifies a
+  # clean verdict outright, without attempting to determine where the
+  # fence opens or closes. This deliberately trades a small amount of
+  # false-NEEDS_REVISION risk for closing the entire class of
+  # quoted/fenced-phrase-misread-as-assertion bugs at once, after four
+  # rounds of precise-fence-parsing fixes each surfaced the next
+  # undiscovered GFM fence edge case (most recently PR #1490 finding
+  # 3795661290, the tilde-fence variant).
+  if grep -qE '(`{3,}|~{3,})' <<< "$body"; then
+    return 1
+  fi
   local normalized_body
   normalized_body=$(codex_strip_not_only_idiom "$(codex_strip_quoted_spans "$body")")
   if grep -qiE "$CODEX_NEGATED_APPROVAL_PATTERN" <<< "$normalized_body"; then

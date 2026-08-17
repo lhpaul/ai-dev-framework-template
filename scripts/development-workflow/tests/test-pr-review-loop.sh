@@ -5899,6 +5899,105 @@ run_test "codex_fence_close_requires_whitespace_only_root_comment_verdict" "VERD
 rm -rf "$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir"
 unset _codex_fence_close_requires_whitespace_only_root_comment_mock_dir _codex_fence_close_requires_whitespace_only_root_comment_output _codex_fence_close_requires_whitespace_only_root_comment_exit
 
+# Four consecutive rounds of precisely re-implementing GFM's fenced-code-
+# block semantics (detect, length, close-only-whitespace) still missed
+# GFM's entirely separate TILDE-delimited fence syntax (~~~...~~~), which
+# a backtick-only implementation never recognized at all, so a quoted
+# clean phrase inside a tilde fence stayed fully exposed to classification
+# (fresh evidence from PR #1490 finding 3795661290). Per the project's
+# explicit direction after this fourth round, codex_strip_quoted_spans no
+# longer attempts precise fence parsing at all: codex_response_is_approved
+# now treats the mere PRESENCE of a fence-opener marker (3+ consecutive
+# backticks OR tildes) anywhere in the response as disqualifying for a
+# clean verdict, closing this whole class of bug in one step rather than
+# chasing the next undiscovered fence-syntax edge case.
+_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir/gh" <<'CODEX_TILDE_FENCE_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02881234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":314,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:315,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Response was:\n~~~text\nNo blocking issues found\n~~~\nThat quoted output is inaccurate.\n\n**Reviewed commit:** `facade02881`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TILDE_FENCE_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir/gh"
+
+_codex_tilde_fence_phrase_not_approved_root_comment_output=""
+_codex_tilde_fence_phrase_not_approved_root_comment_exit=0
+PATH="$_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_tilde_fence_phrase_not_approved_root_comment_exit=$?
+_codex_tilde_fence_phrase_not_approved_root_comment_output="$(cat "$_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_tilde_fence_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_tilde_fence_phrase_not_approved_root_comment_exit"
+run_test "codex_tilde_fence_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_tilde_fence_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir"
+unset _codex_tilde_fence_phrase_not_approved_root_comment_mock_dir _codex_tilde_fence_phrase_not_approved_root_comment_output _codex_tilde_fence_phrase_not_approved_root_comment_exit
+
+# Positive control for the new fence-marker bail-out above: a single
+# INLINE backtick PAIR on one line (e.g. referencing a filename), which is
+# NOT a 3+-backtick fence marker, must still classify a genuinely clean
+# review as APPROVED. Inline code references are extremely common in
+# legitimate review comments and must not be swept up by the new
+# conservative fence heuristic, which is deliberately scoped to
+# multi-backtick/tilde FENCE markers only.
+_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir/gh" <<'CODEX_INLINE_BACKTICK_PAIR_STAYS_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02991234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":316,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":317,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"The fix looks good. See `foo.py:42` for a minor nit.\\n\\n**Reviewed commit:** `facade02991`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_INLINE_BACKTICK_PAIR_STAYS_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir/gh"
+
+_codex_inline_backtick_pair_stays_approved_root_comment_output=""
+_codex_inline_backtick_pair_stays_approved_root_comment_exit=0
+PATH="$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_inline_backtick_pair_stays_approved_root_comment_exit=$?
+_codex_inline_backtick_pair_stays_approved_root_comment_output="$(cat "$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_inline_backtick_pair_stays_approved_root_comment_exit_clean" "0" "$_codex_inline_backtick_pair_stays_approved_root_comment_exit"
+run_test "codex_inline_backtick_pair_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_inline_backtick_pair_stays_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir"
+unset _codex_inline_backtick_pair_stays_approved_root_comment_mock_dir _codex_inline_backtick_pair_stays_approved_root_comment_output _codex_inline_backtick_pair_stays_approved_root_comment_exit
+
 # codex_response_priority ranked an ancillary environment-setup-error
 # comment at the same "unrecognized format" tier (2) as a genuine but
 # unrecognized-format submitted review, instead of at the lower
