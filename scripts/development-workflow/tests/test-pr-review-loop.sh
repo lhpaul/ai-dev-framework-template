@@ -5656,6 +5656,59 @@ run_test "codex_quoted_blocker_token_stays_approved_root_comment_verdict" "VERDI
 rm -rf "$_codex_quoted_blocker_token_stays_approved_root_comment_mock_dir"
 unset _codex_quoted_blocker_token_stays_approved_root_comment_mock_dir _codex_quoted_blocker_token_stays_approved_root_comment_output _codex_quoted_blocker_token_stays_approved_root_comment_exit
 
+# codex_response_is_blocking briefly gained the same fence-marker bail-out
+# used by is_usage_limit/is_environment_error/is_approved (applied "for
+# consistency" while fixing finding 3796042503), but that guard is unsafe
+# specifically for this classifier: a genuinely asserted blocking finding
+# OUTSIDE a fence, in a review that also happens to contain an unrelated
+# fenced code example elsewhere, must still be detected — Protocol 93's
+# "blocking always wins" invariant depends on is_blocking correctly
+# reporting TRUE for such a review, and bailing out on fence presence let
+# a real blocker fall through to the unrecognized-format safe-fail instead
+# of being reported as a detected blocking finding (fresh evidence from PR
+# #1490 finding 3796396399, a regression introduced by 3796042503's fix).
+# is_blocking must keep detecting a real blocker even when the review also
+# contains an unrelated fenced example, unlike the other three classifiers.
+_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir/gh" <<'CODEX_FENCED_EXAMPLE_OUTSIDE_BLOCKER_STAYS_BLOCKING_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02221234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":303,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This must fix the validation error before merge.\\n\\nExample:\\n```\\nfoo();\\n```"}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_FENCED_EXAMPLE_OUTSIDE_BLOCKER_STAYS_BLOCKING_ROOT_COMMENT_GH
+chmod +x "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir/gh"
+
+_codex_fenced_example_outside_blocker_stays_blocking_root_comment_output=""
+_codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit=0
+PATH="$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir/output.txt" 2>&1 || _codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit=$?
+_codex_fenced_example_outside_blocker_stays_blocking_root_comment_output="$(cat "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir/output.txt")"
+run_test "codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit_needs_revision" "1" "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit"
+run_test "codex_fenced_example_outside_blocker_stays_blocking_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir"
+unset _codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir _codex_fenced_example_outside_blocker_stays_blocking_root_comment_output _codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit
+
 # codex_strip_quoted_spans handled straight-double-quotes, backticks, and
 # blockquotes, but not single-quoted spans — the fourth quoting style
 # found unprotected — so a review discussing a quoted clean phrase in

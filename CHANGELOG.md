@@ -374,9 +374,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   response should produce. The guard now lives in a new shared
   `codex_response_has_fence_marker` helper used INSIDE every
   positive/actionable classifier (usage-limit, environment-error,
-  blocking, approved) rather than scattered at call sites, so every
-  current and future caller benefits automatically — the same lesson
+  approved) rather than scattered at call sites, so every current and
+  future caller benefits automatically — the same lesson
   `codex_response_is_blocking` already taught for quote-stripping.
+  `codex_response_is_blocking` briefly gained the same fence-marker guard
+  "for consistency" and was found to be the wrong call for that one
+  classifier: unlike a usage-limit/environment-error/approval false
+  negative (always safe — it only defaults toward `NEEDS_REVISION`), a
+  blocking false negative is unsafe, since Protocol 93 requires a
+  detected blocking finding to always win outright over other evidence
+  (e.g. a same-fetch usage-limit notice); bailing out on fence presence
+  let a real blocker outside a fence go undetected just because the same
+  review also contained an unrelated fenced example elsewhere, silently
+  breaking that "blocking always wins" invariant. `codex_response_is_blocking`
+  no longer bails out on fence markers — it keeps only its existing
+  `codex_strip_quoted_spans` normalization, since a blocking false
+  positive on quoted/fenced text is safe on its own.
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

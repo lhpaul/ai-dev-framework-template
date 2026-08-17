@@ -478,16 +478,27 @@ codex_strip_quoted_spans() {
 
 codex_response_is_blocking() {
   local body="$1"
-  # A misdetected blocking finding inside a fenced example is already
-  # SAFE by itself (it only pushes the verdict toward NEEDS_REVISION, the
-  # conservative direction, never toward APPROVED) — but the fence guard
-  # is applied here too for consistency with every other classifier
-  # below, rather than leaving one classifier's fence-handling
-  # inconsistent with the rest and inviting the next Codex finding that
-  # specifically targets this asymmetry.
-  if codex_response_has_fence_marker "$body"; then
-    return 1
-  fi
+  # UNLIKE the other three classifiers, this one deliberately does NOT
+  # bail out on codex_response_has_fence_marker: a false NEGATIVE here is
+  # NOT safe the way it is for usage-limit/environment-error/approved. A
+  # genuinely asserted blocking finding OUTSIDE a fence, in a review that
+  # also happens to contain an unrelated fenced code example elsewhere,
+  # must still be detected — Protocol 93 requires blocking terminal/
+  # review evidence to always win outright over other evidence (e.g. a
+  # same-fetch usage-limit notice), and codex_combine_terminal_evidence's
+  # "blocking always wins" check depends on this function correctly
+  # reporting TRUE for such a review. Bailing out here on fence presence
+  # briefly broke that invariant: a real blocker got silently overridden
+  # by a later ancillary notice because is_blocking incorrectly reported
+  # FALSE (fresh evidence from PR #1490 finding 3796396399, a regression
+  # introduced by finding 3796042503's "apply the guard everywhere for
+  # consistency" fix — consistency across all four classifiers was the
+  # wrong call for this one, since a blocking false-negative and an
+  # approval/quota false-positive are not symmetric risks). A blocking
+  # false POSITIVE on quoted/fenced text remains safe on its own (it only
+  # pushes toward NEEDS_REVISION), so no fence guard is needed here for
+  # that direction either — codex_strip_quoted_spans' straight-quote/
+  # backtick-pair/blockquote/single-quote stripping is enough.
   grep -qiE "$CODEX_BLOCKING_PATTERN" <<< "$(codex_strip_quoted_spans "$body")"
 }
 
