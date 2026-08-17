@@ -280,7 +280,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not negated), not a negation of X, so `CODEX_NEGATION_WORDS`' bare
   "not" alternative — which has no way to distinguish this idiom from a
   genuine negation — misclassified "Not only does this look good, it is
-  approved" as negated even though both phrases are affirmative.
+  approved" as negated even though both phrases are affirmative. That
+  strip only covered Title-Case and lowercase forms; a fully uppercase
+  emphasis form ("NOT ONLY does this look good, it is approved") slipped
+  through. Every letter is now bracket-expanded for both cases (rather
+  than relying on sed's `I` substitution flag, whose support varies
+  across sed implementations).
 - **Workflow sync hardening backports**: delegated epic resolution now fails
   closed on unknown tracker statuses, security-advisory fix evidence is verified
   against the current PR head, CodeRabbit CLI review evidence fails closed when

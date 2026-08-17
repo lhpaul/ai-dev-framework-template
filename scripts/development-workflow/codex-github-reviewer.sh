@@ -396,10 +396,15 @@ codex_strip_quoted_spans() {
 # misclassified it as negated (fresh evidence from PR #1490 finding
 # 3793299512). Stripped entirely (not just skipped) so the leftover "not"
 # cannot accidentally trigger a match against some OTHER target word
-# later in the same clause.
+# later in the same clause. Every letter is bracket-expanded for both
+# cases (rather than relying on sed's `I` substitution flag, whose
+# support varies across sed implementations), since the original
+# [Nn]ot/[Oo]nly form only covered Title-Case and lowercase, not a fully
+# uppercase emphasis form like "NOT ONLY" (fresh evidence from PR #1490
+# finding 3793330278, a followup to 3793299512).
 codex_strip_not_only_idiom() {
   local body="$1"
-  sed -E 's/[Nn]ot[[:space:]]+[Oo]nly//g' <<< "$body"
+  sed -E 's/[Nn][Oo][Tt][[:space:]]+[Oo][Nn][Ll][Yy]//g' <<< "$body"
 }
 
 codex_response_is_approved() {
