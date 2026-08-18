@@ -571,6 +571,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against the current PR head, CodeRabbit CLI review evidence fails closed when
   PR metadata cannot be resolved, and batch merge rechecks preserve explicit
   approvals for unready PRs.
+- **`post-merge-cleanup.sh` fails fast on missing `--pr`**: the `--pr <merged-pr-number>`
+  requirement for cleaning up an implementation branch's remote copy is now
+  checked immediately after the branch's ownership kind is resolved, before any
+  fetch/checkout/pull/delete work runs, instead of surfacing only after the rest
+  of cleanup had already mutated local state. The structured
+  `REMOTE_DELETE_RESULT`/`REMOTE_DELETE_REASON`/`ERROR_MESSAGE` output contract
+  is unchanged.
 
 ### Changed
 

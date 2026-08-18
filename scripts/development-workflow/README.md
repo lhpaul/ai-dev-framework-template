@@ -2,6 +2,21 @@
 
 Scripts used by the staged AI development workflow. Referenced by `docs/workflow/development-workflow/` and by the Codex skills in `.agents/skills/` and `.codex/skills/`. Run from the repository root.
 
+## Running the test suite
+
+Each script's tests live alongside it in `scripts/development-workflow/tests/` as
+`test-<script-name>.sh`. To run the full harness (every `test-*.sh` file in that
+directory), expect it to take **more than 2 minutes** as of this writing — invoke
+it with a longer explicit timeout, or in the background, rather than relying on
+a tool's default foreground command timeout:
+
+```bash
+for f in scripts/development-workflow/tests/test-*.sh; do bash "$f" || echo "FAILED: $f"; done
+```
+
+Individual `test-*.sh` files typically run in a few seconds each and are safe to
+invoke with a default foreground timeout.
+
 ## `install-codex-skills.sh`
 
 Installs the repository's bundled Codex skills into the local Codex skill directories by creating symlinks.

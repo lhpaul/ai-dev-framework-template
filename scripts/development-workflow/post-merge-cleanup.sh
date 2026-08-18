@@ -123,6 +123,21 @@ case "$(branch_prefix "$TO_DELETE")" in
     ;;
 esac
 
+# Fail fast: --pr is required to clean up the remote copy of an implementation
+# branch (see cleanup_remote_implementation_branch() below). Check this before
+# any fetch/checkout/pull/delete work runs, so the error surfaces immediately
+# instead of after the rest of cleanup has already mutated local state. Emits
+# the same structured REMOTE_DELETE_* contract as the (now unreachable for
+# this specific case) check inside cleanup_remote_implementation_branch(), so
+# existing consumers of that output are unaffected.
+if [ "$branch_owner_kind" = "implementation" ] && [ -z "$merged_pr_number" ]; then
+  print_kv REMOTE_DELETE_RESULT "skipped"
+  print_kv REMOTE_DELETE_REASON "pr_number_required"
+  print_kv_escaped ERROR_MESSAGE "Remote implementation branch '${TO_DELETE}' was not deleted because --pr <merged-pr-number> is required to bind cleanup to the exact merged PR."
+  echo "ERROR: remote implementation branch '$TO_DELETE' was not deleted because --pr <merged-pr-number> is required." >&2
+  exit 64
+fi
+
 if [ "$workflow_mode" = "workflow_hub" ] && [ "$branch_owner_kind" = "implementation" ] && [ -z "$target_repo" ]; then
   echo "ERROR: product repository selection is required for implementation branch cleanup in workflow_hub mode; pass --repo <name>." >&2
   exit 64
