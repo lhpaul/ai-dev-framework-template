@@ -178,6 +178,30 @@ does not contain one of the searched symbols is invisible to it. The check below
 the complete region directly, which cannot have that blind spot because it compares every line in the range,
 not just lines containing a searched substring.
 
+**Compare against the merge base, not the `origin/develop` branch tip (Codex GitHub finding `3805716206`, P2).**
+`origin/develop` is a moving target: if `develop` advances after this implementation branch was created — a
+routine, expected event, not an edge case — comparing against its current tip means an untouched
+`codex_response_is_blocking` can show a nonempty diff for a change this branch never made, failing this
+mandatory gate on valid work. The merge base (the commit this branch actually started from) does not move
+regardless of what merges into `develop` afterward, so it is the correct, stable comparison point.
+
+0. **Resolve the merge base once, before either comparison below.** Fetch first, so a stale local
+   `origin/develop` (or one that was never fetched at all in this checkout) does not silently resolve to the
+   wrong commit:
+
+   ```bash
+   git fetch origin
+   MERGE_BASE=$(git merge-base HEAD origin/develop) || {
+     echo "ERROR: could not resolve merge base against origin/develop — stop here." >&2
+     exit 1
+   }
+   ```
+
+   **If this fails, stop and report it rather than proceeding** — do not fall back to comparing against the
+   branch tip (`origin/develop` directly) as a workaround: that reintroduces the exact moving-target problem
+   this step exists to avoid, silently, in the one case (a broken or absent remote-tracking ref) where a
+   fallback would be most likely to go unnoticed.
+
 1. Locate the three pattern definitions this function depends on:
 
    ```bash
@@ -185,35 +209,39 @@ not just lines containing a searched substring.
      scripts/development-workflow/codex-github-reviewer.sh
    ```
 
-2. Extract and diff the three pattern-definition lines directly (not a `grep` over the whole-file diff). **Do
-   not include line numbers (`-n`) in the extraction.** This plan deletes a block of code and comments above
-   these three definitions, so they shift to earlier line numbers after a correct implementation; a comparison
-   that embeds line numbers in the compared text produces a false-positive difference on a byte-identical
-   region once that shift happens, purely because the numbers themselves differ.
+2. Extract and diff the three pattern-definition lines directly (not a `grep` over the whole-file diff), against
+   `$MERGE_BASE`. **Do not include line numbers (`-n`) in the extraction.** This plan deletes a block of code
+   and comments above these three definitions, so they shift to earlier line numbers after a correct
+   implementation; a comparison that embeds line numbers in the compared text produces a false-positive
+   difference on a byte-identical region once that shift happens, purely because the numbers themselves differ.
 
    ```bash
-   diff <(git show origin/develop:scripts/development-workflow/codex-github-reviewer.sh \
+   diff <(git show "$MERGE_BASE":scripts/development-workflow/codex-github-reviewer.sh \
             | grep '^CODEX_BLOCKING_PATTERN=\|^CODEX_MERGE_REFUSAL_PATTERN=\|^CODEX_NEGATION_WORDS=') \
         <(grep '^CODEX_BLOCKING_PATTERN=\|^CODEX_MERGE_REFUSAL_PATTERN=\|^CODEX_NEGATION_WORDS=' \
             scripts/development-workflow/codex-github-reviewer.sh)
    ```
 
-3. Extract and diff the **complete** `codex_response_is_blocking` function range — this is the check that
-   actually proves the function is unchanged, not merely that three unrelated constants above it are unchanged:
+3. Extract and diff the **complete** `codex_response_is_blocking` function range, also against `$MERGE_BASE` —
+   this is the check that actually proves the function is unchanged, not merely that three unrelated constants
+   above it are unchanged:
 
    ```bash
-   diff <(git show origin/develop:scripts/development-workflow/codex-github-reviewer.sh \
+   diff <(git show "$MERGE_BASE":scripts/development-workflow/codex-github-reviewer.sh \
             | awk '/^codex_response_is_blocking\(\)/,/^}/') \
         <(awk '/^codex_response_is_blocking\(\)/,/^}/' scripts/development-workflow/codex-github-reviewer.sh)
    ```
 
-**Expected result**: the three blocking-side pattern definitions are present (step 1). Step 2's diff is empty
-(exit 0) — the three pattern definitions are byte-identical to `develop`, before or after a correct
-implementation shifts their line numbers, because line numbers are not part of the compared text. **Step 3's
-diff is empty (exit 0) — the entire `codex_response_is_blocking` function, not merely the lines mentioning its
-name or `codex_strip_not_only_idiom`, is byte-identical to `develop`.** If step 3 shows any output,
-`is_blocking` has been edited — this form has no blind spot, unlike a `grep`-over-`diff` form, which can miss
-an edit on a line that does not contain a searched substring.
+**Expected result**: `$MERGE_BASE` resolves to a commit (step 0) — if it does not, stop and report before
+proceeding, do not substitute `origin/develop` directly. The three blocking-side pattern definitions are
+present (step 1). Step 2's diff is empty (exit 0) — the three pattern definitions are byte-identical to the
+merge base, before or after a correct implementation shifts their line numbers, because line numbers are not
+part of the compared text. **Step 3's diff is empty (exit 0) — the entire `codex_response_is_blocking`
+function, not merely the lines mentioning its name or `codex_strip_not_only_idiom`, is byte-identical to the
+merge base.** If step 3 shows any output, `is_blocking` has been edited — this form has no blind spot, unlike
+a `grep`-over-`diff` form, which can miss an edit on a line that does not contain a searched substring, and it
+does not false-positive merely because `develop` has advanced since this branch started, unlike a
+`origin/develop`-tip comparison.
 
 ---
 
