@@ -234,13 +234,38 @@ documented safe-fail, unless the acknowledgement branch is gated on non-terminal
 2. Repeat with the E9 construction (unrelated prose immediately before the template) and the E10 construction
    (unrelated prose immediately after the complete footer), each with the complete real footer present.
 
-**Expected result**: all three runs exit **1** and print `VERDICT: NEEDS_REVISION (unrecognized response
-format — safe-fail)` — **not** `VERDICT: TIMED_OUT` and **not** a hang until `--max-wait` is exhausted. If any
-run instead exits **2** with `VERDICT: TIMED_OUT — no response from '<bot>' after …`, the acknowledgement branch
-is not correctly gated on non-terminal evidence — this is the single highest-priority failure mode this
-runbook checks for in this step: it means a stricter classifier has silently degraded ready-phase throughput
-(every near-miss now waits out its poll budget instead of safe-failing promptly) rather than producing the
-documented behavior.
+**Expected result (steps 1–2)**: all three runs exit **1** and print `VERDICT: NEEDS_REVISION (unrecognized
+response format — safe-fail)` — **not** `VERDICT: TIMED_OUT` and **not** a hang until `--max-wait` is exhausted.
+If any run instead exits **2** with `VERDICT: TIMED_OUT — no response from '<bot>' after …`, the acknowledgement
+branch is not correctly gated on non-terminal evidence — this is a high-priority failure mode this runbook
+checks for in this step: it means a stricter classifier has silently degraded ready-phase throughput (every
+near-miss now waits out its poll budget instead of safe-failing promptly) rather than producing the documented
+behavior.
+
+**Steps 1–2 only exercise the main-loop verdict site — Decision 6's gate is four separately hand-edited copies,
+and a scenario resolving at one site cannot confirm the other three are correct.** Steps 3–5 below route the
+same E3 near-miss body through each of the other three sites, so a missed or mistyped gate at any one of them
+is caught by exactly that site's run, not masked by the other three passing.
+
+3. **Async-arrival.** Build a mock `gh` whose comment-fetch endpoint returns an empty list for the main poll
+   loop's own budget (`--poll-interval 1 --max-wait 1`), then returns the E3 near-miss body (SHA-pinned root
+   comment, complete real footer) only on the single grace poll that follows "poll budget exhausted."
+4. **Async-final.** Build a mock `gh` whose comment-fetch endpoint returns empty during the main poll loop,
+   then returns a **bare acknowledgement comment** (the footer's acknowledgement sentence alone, no
+   `**Reviewed commit:**` marker — non-terminal) on the first grace poll, then returns the E3 near-miss body
+   only on the second check that follows the resulting one-shot sleep.
+5. **Async-reaction-final.** Build a mock `gh` that reports a thumbs-up reaction on the trigger comment from
+   the first poll onward, with every comment fetch returning empty until the final check that follows the
+   reaction-triggered sleep, where the E3 near-miss body appears.
+
+**Expected result (steps 3–5)**: each run exits **1** and prints `VERDICT: NEEDS_REVISION (unrecognized
+response format — safe-fail)` — never `VERDICT: TIMED_OUT`. Confirm from the `INFO:` trace which site actually
+resolved each run (`async-arrival bot response detected during grace period` for step 3; `final async bot
+response detected after acknowledgement wait` for step 4; `final async reaction bot response detected` for
+step 5) — a run that exits 1 via the wrong site's trace does not confirm that site's gate. **This is the
+single highest-priority failure mode this runbook checks for in this step**: a footer-bearing near-miss timing
+out at any one of the four sites means that site's copy of Decision 6's gate is missing or wrong, even if the
+other three (and the full test suite) pass.
 
 ---
 

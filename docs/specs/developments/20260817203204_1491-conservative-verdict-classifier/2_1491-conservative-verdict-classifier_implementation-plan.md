@@ -492,6 +492,14 @@ async-final, and async-reaction-final verdict sites — the acknowledgement `eli
 of the four sites changes. `codex_response_is_blocking`, the usage-limit/environment-error checks, and the
 final `else` safe-fail are all unaffected.
 
+**Each of the four copies must be exercised by its own test, not inferred from the others** (Codex GitHub
+finding `3805277351`, P2). Because the fix is four hand-edited copies of one conditional, a typo in any one of
+them is exactly the kind of defect that survives a test suite where only one copy happens to be exercised —
+this is a distinct risk from whether the fix's *logic* is correct, which the reasoning above already
+establishes. "New scenarios" adds one terminal, footer-bearing near-miss scenario per site, confirmed this
+round by execution to resolve at its named site and to detect a regression when only that site's gate is
+reverted (the other three left correct).
+
 **Standing rule**: every edge-case expectation in this document is stated for the **composed verdict chain at
 a real verdict site**, never for `codex_response_is_approved` (or any other classifier function) in isolation.
 Two review rounds have now found a false claim caused by exactly this modeling error — one earlier round
@@ -525,8 +533,14 @@ and `[[ ]]`-free POSIX tests). No portable `bash-zsh` snippet is introduced.
       eventually times out.
       *Verify*: run every footer-bearing edge case in the Parser-risk addendum through the real, patched script
       via a mocked `gh` (not `is_approved` in isolation) and confirm each produces the documented composed
-      verdict, never `VERDICT: TIMED_OUT`; additionally, apply only this gate to an otherwise-unmodified copy of
-      the real script and confirm the full existing test suite still passes with no failures.
+      verdict, never `VERDICT: TIMED_OUT`. **This is not sufficient on its own** — a single scenario per edge
+      case resolves at whichever site its default mock sequencing reaches (typically main-loop), so it cannot
+      confirm the other three duplicated copies of this gate are each correct. Additionally run the four
+      verdict-site near-miss scenarios from "New scenarios" (one routed to each of main-loop, async-arrival,
+      async-final, and async-reaction-final) and confirm all four produce `NEEDS_REVISION`, never
+      `VERDICT: TIMED_OUT` — a missed or mistyped gate at any one site must be caught by exactly that site's
+      scenario. Finally, apply only this gate to an otherwise-unmodified copy of the real script and confirm
+      the full existing test suite still passes with no failures.
 - [ ] **Rename nothing, delete outright**: `CODEX_APPROVAL_PATTERN` (the original pre-plan symbol) is
       **deleted**, not renamed. Every prior revision of this plan proposed renaming it to
       `CODEX_CLEAN_SIGNAL_PATTERN`; the final design has no equivalent symbol at all, since there is no
@@ -754,11 +768,16 @@ discarded" question) are superseded by the whole-body edge cases below.
 ### Edge-case enumeration
 
 **Verification method, stated once, applies to every row below**: an edge case's real disposition must be
-proven by running the actual construction through the real, composed verdict chain (all four real verdict
-sites, unmodified except for the Decision 6 gate) via a mocked `gh`, never by evaluating `codex_response_is_approved`
+proven by running the actual construction through the real, composed verdict chain (the production script,
+unmodified except for the Decision 6 gate) via a mocked `gh`, never by evaluating `codex_response_is_approved`
 in isolation (standing rule, Decision 6) — a classifier-only test cannot see the acknowledgement branch
-downstream of it. Two fixture-construction caveats apply to several rows and are stated once here rather than
-per row:
+downstream of it. **A single scenario resolves at whichever one of the four verdict sites its mock sequencing
+reaches — by default, main-loop.** This is sufficient for edge cases that are not specifically about the
+acknowledgement gate (E1–E24 below), since the gate's *logic* is the same at every site regardless of which
+one a given scenario happens to hit. It is not sufficient to confirm all four hand-edited copies of the gate
+are individually correct — that requires the dedicated per-site scenarios in "New scenarios," not an inference
+from edge cases that happen to resolve at one site. Two fixture-construction caveats apply to several rows and
+are stated once here rather than per row:
 
 - A case whose SHA field is malformed (below or above the `{7,40}` bound, or non-hex) or whose entire body is
   case-folded **cannot be constructed as a SHA-pinned root comment** — `codex_response_reviews_current_head`'s
@@ -956,21 +975,40 @@ contains categories a subtraction could silently sweep in.
   parsing, and must pass unchanged; any failure among them is a genuine regression, not an intended contract
   change.
 
-**Reconciliation rule**: Group APPROVED's real (pre-existing) verdict-string members — now including the
-routing-testing scenarios kept in that group per the split above, not only the two template-anchored ones —
-plus Group RETARGETED's verdict-string members must equal the total `VERDICT: APPROVED` count. **A second,
-independent equation must also hold and must include every group, Group APPROVED included** (Codex GitHub
-finding `3805127037`, P2 — an earlier revision of this equation omitted Group APPROVED's real, pre-existing
-verdict-string members entirely, so the listed terms summed short of the total by exactly that many): Group
-APPROVED's real (pre-existing) verdict-string members + Group RETARGETED's verdict-string members + Group
-UNCHANGED-NEEDS_REVISION + Group UNTOUCHED's availability/timeout members + Group UNTOUCHED's non-verdict
-members + Group RETARGETED's paired `*_exit_clean` members must equal the total `codex_*` assertion count,
-with every real assertion counted in exactly one group. **Group APPROVED's own paired `*_exit_clean` members
-are not a separate term** — they stay `"0"`, unaffected, and are already inside Group UNTOUCHED's non-verdict
-count (only Group RETARGETED's paired `*_exit_clean` members are excluded from that count, per Group
-UNTOUCHED's definition above). If the sum does not match the total, re-derive rather than adjusting either
-number to force agreement — this is exactly the failure mode both Codex findings this round identified: a
-term silently missing from the list, not a wrong arithmetic operation.
+**Reconciliation rule, and exactly when it applies (Codex GitHub finding `3805277339`, P2).** Every term below
+is limited to **pre-existing** assertions — real scenarios already in the file, retargeted or left unchanged —
+plus the newly-updated Group APPROVED bodies. **This equation must be checked once, after Group APPROVED's
+bodies are updated and Group RETARGETED's scenarios are retargeted, and before any scenario from "New
+scenarios" is added** — adding new scenarios first would grow the `codex_*` total past what these terms sum
+to, and the equation could never balance at that point. (Implementation Order step 8 sequences this
+explicitly: the checkpoint below runs at its first `*Verify*`, before the "add the new scenarios" instruction;
+a second, separate check covers the post-addition state — see below.)
+
+Group APPROVED's real (pre-existing) verdict-string members — now including the routing-testing scenarios kept
+in that group per the split above, not only the two template-anchored ones — plus Group RETARGETED's
+verdict-string members must equal the total `VERDICT: APPROVED` count. **A second, independent equation must
+also hold and must include every group, Group APPROVED included** (Codex GitHub finding `3805127037`, P2 — an
+earlier revision of this equation omitted Group APPROVED's real, pre-existing verdict-string members entirely,
+so the listed terms summed short of the total by exactly that many): Group APPROVED's real (pre-existing)
+verdict-string members + Group RETARGETED's verdict-string members + Group UNCHANGED-NEEDS_REVISION + Group
+UNTOUCHED's availability/timeout members + Group UNTOUCHED's non-verdict members + Group RETARGETED's paired
+`*_exit_clean` members must equal the total `codex_*` assertion count **at this checkpoint** (before any new
+scenario is added), with every real assertion counted in exactly one group. **Group APPROVED's own paired
+`*_exit_clean` members are not a separate term** — they stay `"0"`, unaffected, and are already inside Group
+UNTOUCHED's non-verdict count (only Group RETARGETED's paired `*_exit_clean` members are excluded from that
+count, per Group UNTOUCHED's definition above). If the sum does not match the total at this checkpoint,
+re-derive rather than adjusting either number to force agreement — this is exactly the failure mode both Codex
+findings from the prior round identified: a term silently missing from the list, not a wrong arithmetic
+operation.
+
+**Post-addition check, separate from the equation above.** After "New scenarios" are added, the `codex_*`
+total necessarily grows — the equation above is not re-applied at this point, because none of its terms
+account for new assertions. Instead, confirm the growth is accounted for exactly: `grep -c 'run_test "codex_'
+test-pr-review-loop.sh` immediately before adding new scenarios, the same count immediately after, and the
+count of `run_test` lines actually added for the scenarios named in "New scenarios" (e.g. via `git diff
+--stat` on the test file, or by counting the new scenarios' own `run_test` invocations directly) — the
+after-total minus the before-total must equal that count exactly, with every new assertion belonging to a
+scenario named in "New scenarios," none elsewhere.
 
 **A scenario that was never implemented**: an earlier revision of this document described a
 `codex_disqualifier_diagnostic_emitted` scenario as scheduled for deletion. It is not, and has never been, in
@@ -998,6 +1036,45 @@ full rationale and the fixture-sourcing caveats):
 - **E23** — `NEEDS_REVISION`; the direct regression test for Codex GitHub finding `3803545669`.
 - **E24** — `NEEDS_REVISION` for all three footer-position mutations; may be implemented as one scenario with
   three assertions or three separate scenarios.
+
+**Four scenarios routing a terminal, footer-bearing near-miss through each of Decision 6's four verdict sites**
+(Codex GitHub finding `3805277351`, P2). Decision 6 duplicates the same acknowledgement gate at four separate
+call sites in the production script; requiring only one scenario per edge case does not confirm all four
+copies are correct, since a single scenario resolves at whichever site its mock sequencing happens to reach —
+by default, the main-loop site. A gate that is missing or mistyped at any one of the other three sites still
+lets the affected scenario pass (`VERDICT: NEEDS_REVISION`, exit 1) if it resolves at a different site, and
+the regression it reintroduces (a footer-bearing near-miss timing out instead of safe-failing) is a real
+production gap the round-11 P1 finding already showed is easy to reach. Each of the four scenarios below uses
+the same near-miss body (the E3 construction — missing `Swish!`, complete real footer, SHA-pinned) and differs
+only in mock sequencing, so that each resolves at a different, named site — reproduced this round by execution
+against the real script:
+
+- `codex_footer_near_miss_main_loop_safe_fails` — the near-miss body is present on the first poll (a SHA-pinned
+  root comment returned immediately). Resolves at the **main-loop** verdict site. `NEEDS_REVISION`, exit 1.
+- `codex_footer_near_miss_async_arrival_safe_fails` — the main poll loop's own comment fetches return empty for
+  its entire budget; the near-miss body appears only on the single async-grace poll that follows. Resolves at
+  the **async-arrival** verdict site. `NEEDS_REVISION`, exit 1.
+- `codex_footer_near_miss_async_final_safe_fails` — the main poll loop returns empty; the first async-grace
+  poll finds only a bare acknowledgement comment (the footer's acknowledgement sentence alone, with no
+  `**Reviewed commit:**` marker — non-terminal, so it cannot resolve the verdict on its own); this triggers the
+  one-shot sleep-and-recheck, and the near-miss body appears only on that second check. Resolves at the
+  **async-final** verdict site. `NEEDS_REVISION`, exit 1.
+- `codex_footer_near_miss_async_reaction_final_safe_fails` — a thumbs-up reaction is present on the trigger
+  comment from the first poll onward, and every comment fetch returns empty until the final check that follows
+  the reaction-triggered sleep, where the near-miss body appears. Resolves at the **async-reaction-final**
+  verdict site — the same site `codex_async_reaction_then_late_review` (Group APPROVED) exercises for the
+  positive path; this scenario is its negative-path counterpart. `NEEDS_REVISION`, exit 1.
+
+**Verified this round, not asserted**: patched a copy of the real production script with Decision 6's fix
+applied and ran all four constructions — each correctly resolves `NEEDS_REVISION`, exit 1, with an `INFO:`
+trace confirming which site fired (`bot response detected` / `async-arrival bot response detected during
+grace period` / `final async bot response detected after acknowledgement wait` / `final async reaction bot
+response detected`, respectively). Reverting Decision 6's gate at all four sites simultaneously makes all four
+constructions instead time out. Reverting the gate at **only** the async-final site — leaving the other three
+correct — makes only the async-final construction time out, while the other three still correctly resolve
+`NEEDS_REVISION`; this confirms the four scenarios are independently diagnostic, not incidentally passing
+together. This is the intended proof: a missed or mistyped gate at any one site is caught by exactly that
+site's scenario.
 
 Before authoring any of the above, re-check whether an equivalent scenario already exists under a different
 name — do not assume absence without searching the real file first (this document has previously assumed
@@ -1030,7 +1107,11 @@ This is a full design replacement, so the evidence the implementation must produ
    Decision 4) still passes, and specifically that the new E22 scenario resolves to the blocking branch — the
    one remaining case where `is_approved`'s own rejection and `is_blocking`'s independent recognition compose.
 8. Every footer-bearing edge case in the Parser-risk addendum run through the real, composed verdict chain
-   (Decision 6) — confirm none of them produces `VERDICT: TIMED_OUT`.
+   (Decision 6) — confirm none of them produces `VERDICT: TIMED_OUT`. **In addition, and specifically**, the
+   four verdict-site near-miss scenarios in "New scenarios" must each be confirmed to resolve at their named
+   site (via the `INFO:` trace) and to produce `NEEDS_REVISION`, not `VERDICT: TIMED_OUT` — one hand-edited
+   copy of Decision 6's gate per site is exactly where a typo survives passing tests, so a single edge-case
+   scenario resolving at one site by default is not evidence the other three copies are correct.
 9. **Before marking any "exists"/"kept"/"unchanged" claim in this document verified, re-derive it by execution
    against the file at implementation time**, not against this document's prose.
 
@@ -1188,9 +1269,13 @@ the classifier. The supported response to a persistent false `NEEDS_REVISION` is
    async-final, and async-reaction-final verdict sites from an unconditional footer-text match to one gated on
    `source != "review"`.
    *Verify*: run every footer-bearing edge case in the Parser-risk addendum through the real, patched script
-   via a mocked `gh` and confirm each produces the documented composed verdict, never `VERDICT: TIMED_OUT`;
-   additionally, apply only this gate to an otherwise-unmodified copy of the real script and confirm the full
-   existing test suite still passes with no failures.
+   via a mocked `gh` and confirm each produces the documented composed verdict, never `VERDICT: TIMED_OUT`.
+   **This alone does not confirm all four duplicated copies of this gate are correct** — a single scenario per
+   edge case resolves at whichever site its default mock sequencing reaches. Additionally run the four
+   verdict-site near-miss scenarios from "New scenarios" (one routed to each of main-loop, async-arrival,
+   async-final, and async-reaction-final) and confirm all four produce `NEEDS_REVISION`, never
+   `VERDICT: TIMED_OUT`. Finally, apply only this gate to an otherwise-unmodified copy of the real script and
+   confirm the full existing test suite still passes with no failures.
 6. **Update every stale approval-path comment.** Keeping `codex_response_has_fence_marker` and
    `codex_strip_quoted_spans` unchanged (Decision 1) preserves their source comments, which describe an
    approval-path relationship this plan removes. Sweep the file for every comment mentioning
@@ -1211,21 +1296,30 @@ the classifier. The supported response to a persistent false `NEEDS_REVISION` is
    `test-pr-review-loop.sh`** — this document's scenario-existence claims have been wrong before; do not
    proceed on any scenario list in this document without re-confirming it against the file as it stands at
    implementation time.
-8. **Update the tests**: update every Group APPROVED scenario body per the split in "Test disposition" (footer
-   append for the two template-anchored members; full body replacement, with mock sequencing preserved, for
-   the routing-testing members kept in that group); apply every Group RETARGETED disposition to the remaining,
-   vocabulary-testing scenarios only (see "Test disposition" for the derivation method) — **each retargeted
-   scenario requires two edits, not one**: its `VERDICT: APPROVED` assertion retargets to `VERDICT:
-   NEEDS_REVISION (unrecognized response format — safe-fail)`, **and** its paired `*_exit_clean` assertion
-   retargets from `"0"` to `"1"` in the same commit; confirm `codex_disqualifier_diagnostic_emitted` is
-   genuinely absent (no deletion needed — it was never implemented); refresh the comment on each real scenario
-   in Group UNCHANGED-NEEDS_REVISION (do not touch Group UNTOUCHED, per "Test disposition") — then add the new
-   scenarios from "New scenarios."
-   *Verify*: run `bash scripts/development-workflow/tests/test-pr-review-loop.sh` and confirm it exits 0, that
-   the "Test disposition" reconciliation rule holds against the real, current file, and that only the scenarios
-   named by that derivation changed expectation — specifically, every Group RETARGETED scenario changed
-   **both** its `VERDICT:` and its `*_exit_clean` assertion, and no assertion changed anywhere among Group
-   UNTOUCHED's members.
+8. **Update the tests, in two explicitly sequenced stages — do not interleave them (Codex GitHub finding
+   `3805277339`, P2: the reconciliation equation only balances at the first checkpoint, before new scenarios
+   exist).**
+   1. **First, update only the pre-existing scenarios.** Update every Group APPROVED scenario body per the
+      split in "Test disposition" (footer append for the two template-anchored members; full body replacement,
+      with mock sequencing preserved, for the routing-testing members kept in that group); apply every Group
+      RETARGETED disposition to the remaining, vocabulary-testing scenarios only (see "Test disposition" for
+      the derivation method) — **each retargeted scenario requires two edits, not one**: its `VERDICT:
+      APPROVED` assertion retargets to `VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)`,
+      **and** its paired `*_exit_clean` assertion retargets from `"0"` to `"1"` in the same commit; confirm
+      `codex_disqualifier_diagnostic_emitted` is genuinely absent (no deletion needed — it was never
+      implemented); refresh the comment on each real scenario in Group UNCHANGED-NEEDS_REVISION (do not touch
+      Group UNTOUCHED, per "Test disposition"). **Do not add any new scenario in this stage.**
+      *Verify*: run `bash scripts/development-workflow/tests/test-pr-review-loop.sh` and confirm it exits 0,
+      that the "Test disposition" reconciliation rule (both equations) holds against the real, current file
+      **at this checkpoint, before any new scenario exists**, and that only the scenarios named by that
+      derivation changed expectation — specifically, every Group RETARGETED scenario changed **both** its
+      `VERDICT:` and its `*_exit_clean` assertion, and no assertion changed anywhere among Group UNTOUCHED's
+      members.
+   2. **Then, and only then, add the new scenarios** from "New scenarios" — including the four verdict-site
+      near-miss routing scenarios described there (Codex GitHub finding `3805277351`, P2).
+      *Verify*: per the "Post-addition check" in "Test disposition" — confirm the `codex_*` total grows by
+      exactly the count of `run_test` lines the newly-added scenarios introduce, with every new assertion
+      belonging to a scenario named in "New scenarios." Re-run the full suite and confirm it still exits 0.
 9. **Update the documentation** listed in "Documentation Updates," then add the CHANGELOG entry under
    `[Unreleased]` → `### Changed`, copied literally:
 
