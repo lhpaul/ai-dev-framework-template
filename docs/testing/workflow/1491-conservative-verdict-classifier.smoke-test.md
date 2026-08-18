@@ -62,22 +62,24 @@ compared against the pre-change count recorded in the PR description.
 1. Run:
 
    ```bash
-   grep -n "CODEX_NEGATED_APPROVAL\|not_only\|CODEX_APPROVAL_PATTERN" \
+   grep -n "CODEX_NEGATED_APPROVAL\|not_only\|CODEX_APPROVAL_PATTERN\|CODEX_RESIDUE_STARTER_PATTERN" \
      scripts/development-workflow/codex-github-reviewer.sh
    ```
 
 2. Run:
 
    ```bash
-   grep -n "CODEX_CLEAN_SIGNAL_PATTERN\|CODEX_APPROVAL_DISQUALIFIER_PATTERN\|CODEX_RESIDUE_FILLER_WORD_PATTERN\|CODEX_RESIDUE_STARTER_PATTERN\|codex_strip_codex_footer\|codex_response_first_paragraph\|codex_excise_clean_signals\|codex_residue_is_closed_grammar" \
+   grep -n "CODEX_CLEAN_SIGNAL_PATTERN\|CODEX_APPROVAL_DISQUALIFIER_PATTERN\|CODEX_RESIDUE_FILLER_WORD_PATTERN\|CODEX_VENDOR_FLAVOR_TOKEN_PATTERN\|codex_strip_codex_footer\|codex_response_first_paragraph\|codex_excise_clean_signals\|codex_residue_is_closed_grammar" \
      scripts/development-workflow/codex-github-reviewer.sh
    ```
 
-**Expected result**: the first command prints nothing (all three superseded symbols are removed). The second
-command prints at least one definition line for each of the eight symbols (the original four plus
-`CODEX_RESIDUE_FILLER_WORD_PATTERN`, `CODEX_RESIDUE_STARTER_PATTERN`, `codex_excise_clean_signals`, and
-`codex_residue_is_closed_grammar`, added during the Step 7 review round for the closed residue grammar and
-iterative excision — see the implementation plan's Decision 2).
+**Expected result**: the first command prints nothing (the three originally-superseded symbols, plus
+`CODEX_RESIDUE_STARTER_PATTERN` — added and then deleted again within the same review round after a human
+decision rejected the design it supported — are all removed). The second command prints at least one
+definition line for each of the eight symbols (the original four plus `CODEX_RESIDUE_FILLER_WORD_PATTERN`,
+`CODEX_VENDOR_FLAVOR_TOKEN_PATTERN`, `codex_excise_clean_signals`, and `codex_residue_is_closed_grammar`,
+added during the Step 7 review round for the zero-tolerance closed residue grammar and iterative excision —
+see the implementation plan's Decision 2).
 
 ---
 
@@ -129,8 +131,9 @@ this change the same body returned `VERDICT: APPROVED`; the flip is intended.
 ### Step 5: A real vendor clean response still approves
 
 **Maps to**: Edge case E9; residual verification evidence item 3 — this is the highest-impact check in the
-runbook, and also the check that validates the closed residue grammar (A3 check 2) does not reject genuine
-vendor flavor text (`Swish!`) — see the implementation plan's Decision 2 residual-risk note
+runbook, and also the check that validates `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` (currently just `swish`) still
+covers the live wire format's sign-off flourish under the zero-tolerance closed residue grammar (A3 check 2)
+— see the implementation plan's Decision 2
 
 1. Capture the current real clean-response body:
 
@@ -147,9 +150,11 @@ vendor flavor text (`Swish!`) — see the implementation plan's Decision 2 resid
 
 **Expected result**: the command exits 0 and prints `VERDICT: APPROVED`. If the captured body no longer has
 the recorded shape, stop and report it — the allow-list may need a reviewed addition rather than a workaround.
-If it exits 1 with `residue grammar not closed` in the stderr diagnostic, that specifically means the closed
-grammar's vendor-identity/starter tolerance (`CODEX_RESIDUE_FILLER_WORD_PATTERN`/`CODEX_RESIDUE_STARTER_PATTERN`)
-no longer covers the live wire format — stop and report it rather than loosening the grammar unreviewed.
+If it exits 1 with `residue grammar not closed` in the stderr diagnostic, that specifically means the vendor
+has changed its sign-off flourish and `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` no longer covers it (zero-tolerance
+has no other exemption) — stop and report it rather than loosening the grammar unreviewed. The correct fix,
+per Decision 2, is to add the NEW flourish word to `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` with evidence from
+this live capture, not to invent a broader tolerance.
 
 ---
 
@@ -198,6 +203,42 @@ discarding the `<details>` block (and the instruction inside it) before A3 ever 
 
 ---
 
+### Step 6c: An actionable clause fused to the clean signal (no comma/colon/semicolon/period) safe-fails
+
+**Maps to**: Edge case E21; Decision 2 — a gap found and closed while implementing the human-directed
+zero-tolerance revision, not one of the four originally-filed findings
+
+1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
+   `Looks good and please remove the entire authentication check now.`, following the mock convention used by
+   Step 4.
+2. Run the reviewer as in Step 4.
+
+**Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
+safe-fail)`. An interim revision of A3 check 2 (commit `6e41e260`) exempted an entire sentence whenever any
+part of it carried a clean signal, with no bound on the exempted part, so content fused directly to the
+signal with no intervening punctuation escaped check 2 entirely and returned `VERDICT: APPROVED`; the current
+revision excises and re-checks every clause uniformly, closing this.
+
+---
+
+### Step 6d: A sentence starting with an allow-listed word but carrying unbounded content safe-fails
+
+**Maps to**: Edge case E22; Decision 2 — a gap found and closed while implementing the human-directed
+zero-tolerance revision, not one of the four originally-filed findings
+
+1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
+   `Looks good. The maintainer wants this file removed before merge.`, following the mock convention used by
+   Step 4.
+2. Run the reviewer as in Step 4.
+
+**Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
+safe-fail)`. An interim revision of A3 check 2 (commit `6e41e260`) let a sentence beginning with an enumerated
+subject/determiner ("the") bypass the leftover check regardless of what followed, and none of `wants`,
+`removed`, or `before merge` (without `-ing`) matched an enumerated disqualifier, so it returned `VERDICT:
+APPROVED`; zero-tolerance has no sentence-opener exemption, closing this.
+
+---
+
 ### Step 7: Documentation reflects the new contract
 
 **Maps to**: Documentation Updates
@@ -238,6 +279,8 @@ appears under `### Changed`.
 | 6 | | |
 | 6a | | |
 | 6b | | |
+| 6c | | |
+| 6d | | |
 | 7 | | |
 | 8 | | |
 
