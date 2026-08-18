@@ -37,14 +37,27 @@
 #      "required:", "❌"
 #      Note: "blocking issues:" (with colon) disambiguates the list form from
 #      "no blocking issues found"; bare "blocking" excluded (too broad).
-#   2. Approval signals present → APPROVED (exit 0)
-#      Signals (case-insensitive): "approved", "lgtm", "looks good",
-#      "didn't find any major issues", or "no blocking issues" from a
-#      submitted review pinned to the current head, or a root PR comment that
-#      names the current head in a Reviewed commit marker. Other Codex root PR
-#      comments and thumbs-up reactions are acknowledgements only; they are not
-#      SHA-pinned review evidence and must not approve the PR by themselves.
-#   3. Neither found (unrecognized format) → safe-fails to NEEDS_REVISION (exit 1)
+#   2. Whole-body exact template match → APPROVED (exit 0)
+#      The entire, untruncated response — whitespace-normalized, nothing
+#      truncated or discarded — must reproduce, character for character, one
+#      of the small set of clean-response templates in
+#      CODEX_APPROVED_TEMPLATES (captured verbatim from real Codex responses,
+#      each including the complete vendor <details> "About Codex in GitHub"
+#      footer). There is no vocabulary list, no grammar, and no
+#      case-insensitive or punctuation-tolerant matching — see
+#      codex_response_is_approved below and issue #1491's implementation plan
+#      (Decisions 1, 2, 5) for the full rationale. Only a submitted review
+#      pinned to the current head, or a root PR comment that names the
+#      current head in a Reviewed commit marker (terminal evidence), is ever
+#      tested against this match. Other Codex root PR comments and
+#      thumbs-up reactions are acknowledgements only; they are not SHA-pinned
+#      review evidence and must not approve the PR by themselves.
+#   3. Neither found, and evidence is terminal → safe-fails to NEEDS_REVISION
+#      (exit 1). A bare acknowledgement comment on NON-terminal evidence
+#      instead causes the poll loop to keep waiting for real evidence — this
+#      wait is gated on the evidence being non-terminal (Decision 6), so a
+#      footer-bearing near-miss on genuinely terminal evidence always
+#      safe-fails rather than being misrouted to a wait/timeout.
 #
 # Response source detection (two sources polled each cycle):
 #   - issues/{PR}/comments — plain PR comments; matches both BOT_LOGIN and
@@ -245,8 +258,12 @@ codex_inline_review_comment_count_since() {
 
 # Returns true if the response contains a fence-opener marker (2+
 # consecutive backticks, or 3+ consecutive tildes) ANYWHERE. Used by
-# every positive-signal classifier below (usage-limit, environment-error,
-# approved) as a conservative guard: a genuine SHA-pinned clean review
+# codex_response_is_usage_limit and codex_response_is_environment_error
+# below as a conservative guard (no longer by codex_response_is_approved,
+# which — since issue #1491's conservative-verdict-classifier redesign,
+# Decision 1 — is a whole-body exact-template match with no fence-presence
+# check of its own; a fence character inside the body is just extra text
+# that already breaks the exact match): a genuine SHA-pinned clean review
 # can QUOTE example text inside a fenced block (e.g. demonstrating what a
 # usage-limit notice looks like) without that text being a genuine
 # assertion, and after 5 rounds of precisely parsing GFM's fence-open/
@@ -369,88 +386,17 @@ codex_response_reviews_current_head() {
 # is recognized as blocking outright regardless of what an earlier
 # hedge phrase in the same response says.
 CODEX_BLOCKING_PATTERN='(changes[[:space:]]+requested|blocking[[:space:]]+issues?[[:space:]]*:|blocking[[:space:]]+finding|blocking:|must[[:space:]]+fix|action[[:space:]]+required|required:|❌)'
-# \b word boundaries around the positive approval words: without them,
-# "approved" as a bare substring matched inside prefixed negative forms
-# like "unapproved" or "disapproved" (no space/word-break before
-# "approved" in either), so a current-head response saying "This change
-# remains unapproved" was still classified APPROVED instead of falling
-# through to the documented safe-fail (fresh evidence from PR #1490
-# finding 3789851555 — a followup to finding 3789722818, whose fix only
-# handled SPACE-separated negations like "not approved"; \b closes the
-# concatenated-negation-prefix gap that a space-only negation check
-# cannot). Verified portable across BSD grep (macOS default), GNU grep,
-# and ugrep — all treat \b as a GNU-style word-boundary extension in -E
-# mode.
-CODEX_APPROVAL_PATTERN='(\bapproved\b|\blgtm\b|\blooks[[:space:]]+good\b|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)'
-# Negated forms of the approval phrases above. CODEX_APPROVAL_PATTERN's
-# alternatives are unbounded substring matches, so a rejecting response
-# like "This change is not approved" matched them unconditionally and was
-# classified APPROVED instead of falling through to the documented
-# unrecognized-format safe-fail. Checked BEFORE the positive approval
-# pattern in codex_response_is_approved so a negated approval phrase can
-# never be reported as approved.
-#
-# This went through several rounds of narrowly-scoped fixes (PR #1490
-# findings 3789722818, 3789851555, 3789878264, 3789904716, 3789958775):
-# require a negation word directly adjacent to the approval word, then
-# tolerate a concatenated prefix ("unapproved"), then Markdown emphasis
-# markers wedged in the middle ("**not** approved"), then a BOUNDED
-# window of up to 3 intervening qualifier words ("not YET approved").
-# Each fix narrowed one specific adjacency assumption and Codex found the
-# next one, up to and including the bounded-window fix itself: 5
-# intervening words ("I cannot confidently confirm that there are no
-# blocking issues") exceeded the {0,3} bound (fresh evidence from PR
-# #1490 finding 3789992792) — the reviewer's own stated remediation was
-# "avoid relying on a bounded filler-word count".
-#
-# [^.!?]* (any character except a sentence terminator, UNBOUNDED) between
-# the negation word and the approval word closes this whole class of gap
-# at once: it matches a negation and an approval word co-occurring
-# anywhere within the same sentence, regardless of how much text sits
-# between them or how it's formatted (Markdown markers included, since
-# they aren't excluded by the character class), while a period/!/?
-# between them correctly prevents an unrelated LATER sentence's approval
-# phrase from being treated as negated by an EARLIER sentence's negation
-# word (e.g. "The variable name is not great. No blocking issues found."
-# still classifies as approved).
-#
-# The target alternation had "approved" but not the bare verb "approve",
-# so "I cannot approve this change" wasn't recognized (PR #1490 finding
-# 3790023141). This is a forward negation-THEN-approval match: "cannot"
-# precedes "approve" in that sentence, so adding the bare verb to the
-# target list is sufficient on its own — no reverse-order (approval-word
-# ... negation-word) alternative is needed. An earlier version of this
-# fix DID add a reverse-order alternative, reasoning that "looks good"
-# preceded "cannot" in the same example; that reverse check was over-
-# broad in practice — it matched ANY later negation word in the same
-# sentence regardless of what the negation actually referred to, so a
-# genuinely clean response like "Looks good overall; tests were not run."
-# (the negation refers to the unrelated "tests were not run" clause, not
-# to the approval) was incorrectly flagged as negated (PR #1490 finding
-# 3790062089). The reverse-order alternative has been removed; the
-# forward-only match plus the bare-verb addition covers the original
-# "cannot approve" case without this false-positive class.
-#
-# The [^.!?]* span only excluded sentence terminators, not clause
-# separators, so an unrelated negation in an EARLIER clause of the SAME
-# sentence still spanned into a LATER, unrelated clean clause — e.g.
-# "Tests are not required for this documentation-only change; looks
-# good" has "not" in one semicolon-joined clause and "looks good" in a
-# separate one, but the span crossed the semicolon and matched anyway
-# (PR #1490 finding 3790122061, the same class of gap as 3790062089
-# above but on the forward-order side rather than the removed reverse
-# alternative). The character class also excludes `;` and `,`: a comma-
-# joined clause (e.g. "Tests are not required, but looks good") crossed
-# the semicolon-only exclusion the same way the semicolon-crossing case
-# crossed the original unbounded span (fresh evidence from PR #1490
-# finding 3793219193, a followup to 3790122061/3790062089). "unable to"
-# is also included: it wasn't in the negation-word list at all, so "I am
-# unable to approve this change" wasn't recognized as a rejection while
-# an earlier "looks good" in the same sentence still matched (fresh
-# evidence from PR #1490 finding 3793367883, the same class of gap as
-# "cannot approve" fixed for finding 3790023141, just a different
-# inability phrase).
-CODEX_NEGATED_APPROVAL_TARGET_WORDS='(approve[ds]?|lgtm|look(s|ing)?[[:space:]]+good|no[[:space:]]+blocking[[:space:]]+issues?|didn.t find[[:space:]]+any major[[:space:]]+issues)'
+# CODEX_APPROVAL_PATTERN, CODEX_NEGATED_APPROVAL_TARGET_WORDS, and
+# CODEX_NEGATED_APPROVAL_PATTERN (the open-ended approval-vocabulary and
+# negated-approval-vocabulary enumerations that used to live here) are
+# deleted outright, not narrowed further — issue #1491's implementation
+# plan (Decisions 1, 2) replaces this entire class of open-ended-vocabulary
+# matching with codex_response_is_approved's whole-body exact-template
+# match below, which has no vocabulary of its own to enumerate gaps in.
+# CODEX_NEGATION_WORDS (below) is kept — CODEX_MERGE_REFUSAL_PATTERN, part
+# of CODEX_BLOCKING_PATTERN above, still depends on it, and
+# codex_response_is_blocking's failure direction (a false negative there
+# is unsafe) means it keeps its own block-list unchanged (Decision 4).
 # Proactive sweep of the remaining common English negation forms not yet
 # covered (was/were/would/has/have/had, contracted and space-separated),
 # added in one pass after four consecutive findings each surfaced one
@@ -458,20 +404,24 @@ CODEX_NEGATED_APPROVAL_TARGET_WORDS='(approve[ds]?|lgtm|look(s|ing)?[[:space:]]+
 # and finally wouldn't — fresh evidence from PR #1490 finding 3799391883
 # — prompted this sweep rather than continuing to fix them one at a
 # time). "did not"/"didn't" is DELIBERATELY excluded despite being an
-# equally common negation form: it already appears baked into
-# CODEX_NEGATED_APPROVAL_TARGET_WORDS above as part of the atomic phrase
-# "didn't find any major issues" (itself a clean/approval signal, not
-# something to negate). Adding bare "didn.t" here was verified to
-# introduce a genuine false positive: a response like "Codex didn't find
-# any major issues and looks good." — doubly-reinforced clean, not
-# rejected — matched NEGATION_WORDS on "didn't" and then reached the
-# separate "looks good" target later in the same unpunctuated sentence,
-# misclassifying a clean review as NEEDS_REVISION. Caught and reverted
-# during this sweep's own verification before ever being committed;
-# left undocumented here it would be an easy trap for a future sweep to
-# re-introduce.
+# equally common negation form: "didn't find any major issues" is itself
+# a clean-signal phrase, not something to negate, so folding bare
+# "didn.t" into this list would make CODEX_MERGE_REFUSAL_PATTERN below
+# false-positive-match a genuinely clean, unpunctuated sentence like
+# "Codex didn't find any major issues that would block this from being
+# merged." (the "didn't" and "merge" fall in the same clause, with no
+# sentence terminator or comma between them to stop the match). This
+# exclusion originally protected the now-deleted negated-approval
+# pattern (issue #1491's implementation plan, Decision 2: the
+# open-ended approval/negated-approval vocabulary this constant used to
+# feed was replaced by codex_response_is_approved's whole-body
+# exact-template match) — it is kept here because CODEX_NEGATION_WORDS'
+# one remaining consumer, CODEX_MERGE_REFUSAL_PATTERN, has the exact
+# same "didn't find any major issues" adjacency risk. Caught and
+# reverted during this sweep's own verification before ever being
+# committed; left undocumented here it would be an easy trap for a
+# future sweep to re-introduce.
 CODEX_NEGATION_WORDS='(not|isn.t|is[[:space:]]+not|are[[:space:]]+not|aren.t|was[[:space:]]+not|wasn.t|were[[:space:]]+not|weren.t|cannot|can.t|could[[:space:]]+not|couldn.t|will[[:space:]]+not|won.t|would[[:space:]]+not|wouldn.t|does[[:space:]]+not|doesn.t|do[[:space:]]+not|don.t|has[[:space:]]+not|hasn.t|have[[:space:]]+not|haven.t|had[[:space:]]+not|hadn.t|should[[:space:]]+not|shouldn.t|must[[:space:]]+not|mustn.t|never|unable[[:space:]]+to)'
-CODEX_NEGATED_APPROVAL_PATTERN="${CODEX_NEGATION_WORDS}[^.!?;,]*${CODEX_NEGATED_APPROVAL_TARGET_WORDS}"
 # Any CODEX_NEGATION_WORDS alternative, followed within the same clause
 # by "merge"/"merged" (with or without an intervening "be"), is treated
 # as an explicit merge-refusal verdict — see the comment above
@@ -485,8 +435,11 @@ CODEX_BLOCKING_PATTERN="${CODEX_BLOCKING_PATTERN%)}|${CODEX_MERGE_REFUSAL_PATTER
 
 # Strips quoted spans — text between a pair of straight double-quotes
 # ("...") AND text between a pair of backticks (`...`, Markdown inline
-# code) — used by codex_response_is_approved AND codex_response_is_blocking
-# below, never applied to the body before codex_response_reviews_current_
+# code) — used by codex_response_is_blocking below (no longer by
+# codex_response_is_approved, which — since issue #1491's
+# conservative-verdict-classifier redesign, Decision 1 — is a whole-body
+# exact-template match with no quote-stripping step of its own), never
+# applied to the body before codex_response_reviews_current_
 # head's SHA extraction (which itself relies on backtick-delimited
 # `Reviewed commit:` markers and must see the original, unstripped body).
 # A SHA-pinned review can QUOTE a clean OR blocking phrase, in either
@@ -533,11 +486,13 @@ CODEX_BLOCKING_PATTERN="${CODEX_BLOCKING_PATTERN%)}|${CODEX_MERGE_REFUSAL_PATTER
 # 3793453010, 3793497787, a closing-validity followup, and 3795661290).
 # Rather than continue precisely re-implementing GFM's fence grammar one
 # construct at a time, codex_response_has_fence_marker above (used by
-# every positive/actionable classifier: usage-limit, environment-error,
-# blocking, approved) now treats the mere PRESENCE of a fence-opener
-# marker (3+ consecutive backticks or tildes) ANYWHERE in the response as
-# disqualifying, without attempting to determine where it opens or
-# closes. This is a deliberate, explicit tradeoff: a small amount of
+# codex_response_is_usage_limit and codex_response_is_environment_error;
+# no longer by codex_response_is_approved as of issue #1491's
+# conservative-verdict-classifier redesign, Decision 1) now treats the
+# mere PRESENCE of a fence-opener marker (3+ consecutive backticks or
+# tildes) ANYWHERE in the response as disqualifying, without attempting
+# to determine where it opens or closes. This is a deliberate, explicit
+# tradeoff: a small amount of
 # false-NEEDS_REVISION risk (a genuinely clean response that happens to
 # include an example code fence) in exchange for closing the entire class
 # of "quoted/fenced clean phrase misread as an assertion" bug in one
@@ -640,11 +595,15 @@ codex_response_is_blocking() {
   grep -qiE "$CODEX_BLOCKING_PATTERN" <<< "$normalized_body"
 }
 
-# Strips the "not only X" idiom — used by codex_response_is_approved and
-# codex_response_is_blocking below (originally added for approval only,
-# see codex_response_is_blocking's own comment for why the blocking
-# classifier needed it too once its merge-refusal pattern started reusing
-# CODEX_NEGATION_WORDS' bare "not" alternative). "Not only X, (but) Y" is
+# Strips the "not only X" idiom — used by codex_response_is_blocking
+# below (originally added for the old codex_response_is_approved only;
+# no longer called there since issue #1491's conservative-verdict-
+# classifier redesign, Decision 1, replaced that function with a
+# whole-body exact-template match that performs no prose normalization
+# of any kind — see codex_response_is_blocking's own comment for why the
+# blocking classifier needed this idiom-stripping too once its
+# merge-refusal pattern started reusing CODEX_NEGATION_WORDS' bare "not"
+# alternative). "Not only X, (but) Y" is
 # an AFFIRMATIVE intensifier construction (BOTH X and Y are being
 # asserted, not negated: "Not only does this look good, it is approved"
 # means both "looks good" and "is approved" hold), not a negation of X,
@@ -664,21 +623,87 @@ codex_strip_not_only_idiom() {
   sed -E 's/[Nn][Oo][Tt][[:space:]]+[Oo][Nn][Ll][Yy]//g' <<< "$body"
 }
 
+# Collapses every run of whitespace (spaces, tabs, newlines, carriage
+# returns — including blank lines between paragraphs) to a single space,
+# then trims leading/trailing whitespace. This is the ONLY step performed
+# before matching in codex_response_is_approved below, and the ONLY
+# permitted flexibility in template matching (issue #1491's
+# conservative-verdict-classifier implementation plan, Decision 1) — no
+# case folding, no optional clauses, no punctuation tolerance, no
+# synonym alternation, and no truncation of any kind. `tr` first converts
+# every whitespace class this function cares about to a literal space
+# (BSD tr does not support `\s`, hence the explicit newline/tab/
+# carriage-return class), then `tr -s ' '` squeezes runs of spaces to
+# one; `sed` trims the two remaining edges.
+codex_normalize_whitespace() {
+  local text
+  text=$(tr '\n\t\r' '   ' <<< "$1" | tr -s ' ')
+  sed -E 's/^ //; s/ $//' <<< "$text"
+}
+
+# Exact captured clean-response template, covering the ENTIRE body —
+# verdict sentence AND the complete vendor "About Codex in GitHub"
+# footer, with no truncation step anywhere in codex_response_is_approved
+# below. This closes Codex GitHub finding `3803545669` (issue #1491's
+# implementation plan, Decisions 1 and 5): a prior design truncated the
+# body at the footer's opening line and matched only the visible
+# portion, trusting every byte after that line, unseen; a body reading
+# the approved template + the footer's opening line only + an actual
+# instruction (e.g. "Rename the unsafe function.") matched the visible
+# portion exactly and would have been misclassified APPROVED under that
+# design. There is no discarded byte range left for that construction
+# (or any construction) to hide in — the entire body, first character to
+# last, must be part of this one literal.
+#
+# The ONE bounded placeholder this design permits is the commit SHA,
+# bound to git's own documented abbreviated-to-full SHA-1 hex-length
+# range (`[0-9a-f]{7,40}`) — NOT to the single length any one capture
+# happens to show. No other field is a placeholder, anywhere in the
+# verdict sentence or the footer. Extending this array requires a live
+# capture of the new wording and the same review discipline the deleted
+# CODEX_APPROVAL_PATTERN once required — it is the ONLY lever that can
+# widen the approval surface, and reintroducing any truncation step
+# before matching is explicitly forbidden (Decision 2/5).
+#
+# The footer portion of this literal was verified byte-identical (modulo
+# one API-transport-only trailing newline that whitespace normalization
+# already absorbs) across every real capture available at implementation
+# time — the PR #1489 root-comment capture and every PR #1490/#1492
+# review-body capture — so it contributes zero placeholders of its own.
+#
+# The apostrophe in "Didn't" is a literal straight ASCII apostrophe, NOT
+# a regex wildcard — do not replace it with `.` if this pattern is
+# edited; a wildcard there would silently widen the match to any
+# character, which is exactly the kind of unreviewed widening this
+# design forbids.
+CODEX_APPROVED_TEMPLATES=(
+  '^Codex Review: Didn'"'"'t find any major issues\. Swish! \*\*Reviewed commit:\*\* `[0-9a-f]{7,40}` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> \[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment "@codex review"\. If Codex has suggestions, it will comment; otherwise it will react with 👍\. Codex can also answer questions or update the PR\. Try commenting "@codex address that feedback"\. </details>$'
+)
+
+# `APPROVED` requires the ENTIRE, untruncated response — whitespace-
+# normalized, nothing else changed — to reproduce one of
+# CODEX_APPROVED_TEMPLATES exactly (issue #1491's conservative-verdict-
+# classifier implementation plan, Decision 1). There is no
+# fence-marker check, no quoted-span stripping, no "not only" idiom
+# stripping, and no vocabulary/negation/grammar scan in this function —
+# each of those existed to compensate for a parsing layer that no longer
+# exists; a stray fence marker, a quoted span, or off-position content
+# is now just "extra text that breaks the exact match," and the match
+# already rejects it without a dedicated check. No stderr diagnostic is
+# emitted on a non-match: under exact-template matching there is exactly
+# one reason a response fails to approve (it does not reproduce an
+# evidenced template), so a diagnostic distinguishing "no reason" would
+# not be useful and would reintroduce a fuzzy-matching concept this
+# design deliberately does not have.
 codex_response_is_approved() {
-  local body="$1"
-  # A fence-opener marker (3+ consecutive backticks or tildes) ANYWHERE
-  # in the response — see codex_response_has_fence_marker above for the
-  # full rationale — disqualifies a clean verdict outright, without
-  # attempting to determine where the fence opens or closes.
-  if codex_response_has_fence_marker "$body"; then
-    return 1
-  fi
-  local normalized_body
-  normalized_body=$(codex_strip_not_only_idiom "$(codex_strip_quoted_spans "$body")")
-  if grep -qiE "$CODEX_NEGATED_APPROVAL_PATTERN" <<< "$normalized_body"; then
-    return 1
-  fi
-  grep -qiE "$CODEX_APPROVAL_PATTERN" <<< "$normalized_body"
+  local body="$1" normalized template
+  normalized=$(codex_normalize_whitespace "$body")
+  for template in "${CODEX_APPROVED_TEMPLATES[@]}"; do
+    if grep -qE "$template" <<< "$normalized"; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 # Ranks a response into one of four priority tiers, highest wins on a
@@ -1449,17 +1474,25 @@ while true; do
     #    found"), "blocking finding", "blocking:", "must fix", "action required",
     #    "required:", "❌"
     #
-    # 2. Explicit approval signals present → APPROVED (exit 0)   [checked second]
-    #    Approval signals: "approved", "lgtm", "looks good",
-    #    "didn't find any major issues", or "no blocking issues" from a
-    #    submitted review pinned to the current head, or a root PR comment that
-    #    names the current head in a Reviewed commit marker. Other Codex root PR
-    #    comments and thumbs-up reactions are unavailable, not clean.
+    # 2. Whole-body exact template match → APPROVED (exit 0)   [checked second,
+    #    terminal (source == "review") evidence only]
+    #    The entire, untruncated response body — whitespace-normalized,
+    #    nothing truncated or discarded — must reproduce one of the
+    #    templates in CODEX_APPROVED_TEMPLATES exactly (see
+    #    codex_response_is_approved above and issue #1491's implementation
+    #    plan, Decisions 1/2/5). There is no vocabulary list, no grammar,
+    #    and no punctuation/case tolerance. Other Codex root PR comments
+    #    and thumbs-up reactions are unavailable, not clean.
     #
-    # 3. Neither found (unrecognized response format) → NEEDS_REVISION (exit 1)
-    #    Safe-fail: default to NEEDS_REVISION when the format is unrecognized to
-    #    avoid incorrectly approving a response that is a rejection in an
-    #    unexpected format (per spec risk mitigation for BR-4).
+    # 3. Neither found, and evidence is terminal → NEEDS_REVISION (exit 1)
+    #    Safe-fail: default to NEEDS_REVISION when a terminal response's
+    #    format is unrecognized, to avoid incorrectly approving a response
+    #    that is a rejection in an unexpected format (per spec risk
+    #    mitigation for BR-4). The acknowledgement branch immediately below
+    #    is gated on the evidence being NON-terminal (source != "review",
+    #    issue #1491's implementation plan, Decision 6), so a
+    #    footer-bearing near-miss on terminal evidence always reaches this
+    #    safe-fail rather than being misrouted to a wait/timeout.
     #
     # Note on "blocking issues" disambiguation: the phrase "blocking issues" appears
     # in both blocking context ("blocking issues: 1. foo") and clean context ("no
@@ -1512,7 +1545,19 @@ while true; do
       echo "$BOT_RESPONSE"
       echo "---END BOT RESPONSE---"
       exit 0
-    elif grep -qi "If Codex has suggestions, it will comment; otherwise it will react with" <<< "$BOT_RESPONSE_FULL"; then
+    elif [ "$BOT_RESPONSE_SOURCE" != "review" ] && grep -qi "If Codex has suggestions, it will comment; otherwise it will react with" <<< "$BOT_RESPONSE_FULL"; then
+      # Gated on non-terminal evidence (source != "review") — issue #1491's
+      # implementation plan, Decision 6. Without this gate, a genuine Codex
+      # response that carries the real footer but does not exactly match
+      # CODEX_APPROVED_TEMPLATES also matches this acknowledgement text
+      # (the footer's opening line), and terminal evidence would be
+      # misrouted here (wait for more evidence) instead of the documented
+      # NEEDS_REVISION safe-fail below, eventually timing out. A bare,
+      # non-terminal acknowledgement-only comment can never have
+      # source == "review" in the first place (codex_response_reviews_
+      # current_head requires an extractable Reviewed-commit SHA), so this
+      # narrowing removes only the one case (terminal evidence) this
+      # branch was never meant to catch.
       echo "INFO: Codex acknowledgement detected; waiting for current-head review or inline review comments"
       continue
     elif [ "$BOT_RESPONSE_SOURCE" = "comment" ]; then
@@ -1718,7 +1763,9 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
     echo "$ASYNC_BOT_RESPONSE"
     echo "---END BOT RESPONSE---"
     exit 0
-  elif grep -qi "If Codex has suggestions, it will comment; otherwise it will react with" <<< "$ASYNC_BOT_RESPONSE_FULL"; then
+  elif [ "$ASYNC_BOT_RESPONSE_SOURCE" != "review" ] && grep -qi "If Codex has suggestions, it will comment; otherwise it will react with" <<< "$ASYNC_BOT_RESPONSE_FULL"; then
+    # Gated on non-terminal evidence — see the main-loop equivalent above
+    # for the rationale (issue #1491's implementation plan, Decision 6).
     echo "INFO: async-arrival Codex acknowledgement detected without current-head review or inline comments"
     echo "INFO: waiting ${POLL_INTERVAL}s for final Codex async signal..."
     sleep "$POLL_INTERVAL"
@@ -1822,7 +1869,18 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
         exit 0
       elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "comment" ]; then
         echo "INFO: final async Codex root comment is not SHA-pinned terminal evidence"
-      elif ! grep -qi "If Codex has suggestions, it will comment; otherwise it will react with" <<< "$ASYNC_FINAL_BOT_RESPONSE_FULL"; then
+      elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "review" ] || ! grep -qi "If Codex has suggestions, it will comment; otherwise it will react with" <<< "$ASYNC_FINAL_BOT_RESPONSE_FULL"; then
+        # Gated on terminal evidence (source == "review") — issue #1491's
+        # implementation plan, Decision 6. This branch is only reachable
+        # for review-sourced (terminal) bodies to begin with (a bare
+        # non-terminal comment is already caught by the `source ==
+        # "comment"` branch immediately above), so the added
+        # `[ SOURCE = "review" ]` condition makes this safe-fail
+        # unconditional for every body that reaches this elif: without it,
+        # a genuine terminal response carrying the real footer but not
+        # exactly matching CODEX_APPROVED_TEMPLATES would silently fall
+        # through to "wait" (no branch taken) instead of the documented
+        # NEEDS_REVISION safe-fail, eventually timing out.
         echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
         echo "---BEGIN BOT RESPONSE---"
         echo "$ASYNC_FINAL_BOT_RESPONSE"
@@ -1963,7 +2021,10 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
       exit 0
     elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "comment" ]; then
       echo "INFO: final async reaction Codex root comment is not SHA-pinned terminal evidence"
-    elif ! grep -qi "If Codex has suggestions, it will comment; otherwise it will react with" <<< "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL"; then
+    elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "review" ] || ! grep -qi "If Codex has suggestions, it will comment; otherwise it will react with" <<< "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL"; then
+      # Gated on terminal evidence (source == "review") — see the
+      # async-final equivalent above for the rationale (issue #1491's
+      # implementation plan, Decision 6).
       echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
       echo "---BEGIN BOT RESPONSE---"
       echo "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
