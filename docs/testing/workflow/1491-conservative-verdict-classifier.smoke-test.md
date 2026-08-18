@@ -69,7 +69,7 @@ compared against the pre-change count recorded in the PR description.
 2. Run:
 
    ```bash
-   grep -n "CODEX_CLEAN_SIGNAL_PATTERN\|CODEX_APPROVAL_DISQUALIFIER_PATTERN\|CODEX_RESIDUE_FILLER_WORD_PATTERN\|CODEX_VENDOR_FLAVOR_TOKEN_PATTERN\|codex_strip_codex_footer\|codex_strip_vendor_metadata_lines\|codex_response_first_paragraph\|codex_excise_clean_signals\|codex_residue_is_closed_grammar" \
+   grep -n "CODEX_CLEAN_SIGNAL_PATTERN\|CODEX_APPROVAL_DISQUALIFIER_PATTERN\|CODEX_RESIDUE_FILLER_WORD_PATTERN\|CODEX_VENDOR_FLAVOR_TOKEN_PATTERN\|CODEX_FOOTER_OPENING_LITERAL\|codex_strip_codex_footer\|codex_strip_vendor_metadata_lines\|codex_response_first_paragraph\|codex_excise_clean_signals\|codex_residue_is_closed_grammar" \
      scripts/development-workflow/codex-github-reviewer.sh
    ```
 
@@ -81,16 +81,28 @@ compared against the pre-change count recorded in the PR description.
      | grep -E "codex|review|reviewed|commit|\bthis\b|\bthat\b"
    ```
 
+4. Run, to confirm `codex_strip_codex_footer` is an exact byte-literal match, not a regex (Codex GitHub
+   finding `3803189273`):
+
+   ```bash
+   grep -n "codex_strip_codex_footer" -A 2 scripts/development-workflow/codex-github-reviewer.sh
+   ```
+
 **Expected result**: the first command prints nothing (the three originally-superseded symbols, plus
 `CODEX_RESIDUE_STARTER_PATTERN` — added and then deleted again within the same review round after a human
 decision rejected the design it supported — are all removed). The second command prints at least one
-definition line for each of the nine symbols (the original four plus `CODEX_RESIDUE_FILLER_WORD_PATTERN`,
-`CODEX_VENDOR_FLAVOR_TOKEN_PATTERN`, `codex_strip_vendor_metadata_lines`, `codex_excise_clean_signals`, and
-`codex_residue_is_closed_grammar`, added during the Step 7 review round for the zero-tolerance closed residue
-grammar and iterative excision — see the implementation plan's Decision 2). The third command prints nothing:
+definition line for each of the ten symbols (the original four plus `CODEX_RESIDUE_FILLER_WORD_PATTERN`,
+`CODEX_VENDOR_FLAVOR_TOKEN_PATTERN`, `CODEX_FOOTER_OPENING_LITERAL`, `codex_strip_vendor_metadata_lines`,
+`codex_excise_clean_signals`, and `codex_residue_is_closed_grammar`, added during the Step 7 review round for
+the zero-tolerance closed residue grammar, iterative excision, and exact-literal footer matching — see the
+implementation plan's Decision 2 and Decision 6). The third command prints nothing:
 `CODEX_RESIDUE_FILLER_WORD_PATTERN` must not contain `codex`, `review`, `reviewed`, `commit`, `this`, or
 `that` — all six were removed this round because they can function as vendor-identity tokens, imperative
-verbs, or directive-object pronouns (see Decision 2's "governing asymmetry" note).
+verbs, or directive-object pronouns (see Decision 2's "governing asymmetry" note). The fourth command's
+`codex_strip_codex_footer` body must compare `$0` against `$CODEX_FOOTER_OPENING_LITERAL` with `==` — it must
+**not** contain any regex metacharacters like `[^>]*`, `.*`, or `\|` used for matching the footer; if it does,
+the footer strip has regressed back to pattern matching and must be treated as a P1 finding (Decision 6's
+standing rule in Risks & Mitigations).
 
 ---
 
@@ -161,11 +173,14 @@ covers the live wire format's sign-off flourish under the zero-tolerance closed 
 
 **Expected result**: the command exits 0 and prints `VERDICT: APPROVED`. If the captured body no longer has
 the recorded shape, stop and report it — the allow-list may need a reviewed addition rather than a workaround.
-If it exits 1 with `residue grammar not closed` in the stderr diagnostic, that specifically means the vendor
-has changed its sign-off flourish and `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` no longer covers it (zero-tolerance
-has no other exemption) — stop and report it rather than loosening the grammar unreviewed. The correct fix,
-per Decision 2, is to add the NEW flourish word to `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` with evidence from
-this live capture, not to invent a broader tolerance.
+If it exits 1 with `residue grammar not closed` in the stderr diagnostic, this can now mean either of two
+things (both require re-fetching the live body and comparing byte-for-byte, not guessing): (a) the vendor
+changed its sign-off flourish and `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` no longer covers it, or (b) the vendor
+changed the footer's exact opening bytes and `CODEX_FOOTER_OPENING_LITERAL` (Decision 6) no longer matches,
+so the whole footer stayed in the residue. Either way, stop and report it rather than loosening the grammar
+or the footer match unreviewed. The correct fix, per Decision 2 / Decision 6, is to add the NEW flourish word
+to `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN`, or update `CODEX_FOOTER_OPENING_LITERAL` to the newly captured exact
+line (verify with `od -c`) — never to invent a broader tolerance or reintroduce a regex for the footer.
 
 ---
 
@@ -263,8 +278,10 @@ shipped
 **Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
 safe-fail)`. An interim revision of `codex_strip_codex_footer` (the Step 6b fix) anchored on the bare phrase
 `about codex in github` anywhere in the body, so this ordinary paragraph — which has no `<details>`/`<summary>`
-markup at all — was discarded before A3 ever ran, and the response returned `VERDICT: APPROVED`. Closed by
-requiring the actual `<details>`/`<summary>` markup structure containing the marker, not just the phrase.
+markup at all — was discarded before A3 ever ran, and the response returned `VERDICT: APPROVED`. The phrase
+anchor was itself superseded twice more (Steps 6g/6h) and `codex_strip_codex_footer` now uses an exact
+byte-literal line match (Decision 6's "Third correction"): under the current implementation this paragraph
+still correctly stays intact, because it shares no bytes with `CODEX_FOOTER_OPENING_LITERAL`.
 
 ---
 
@@ -286,6 +303,48 @@ directive's object, so the whole clause excised to an empty residue and the resp
 filler list and replacing vendor-label handling with `codex_strip_vendor_metadata_lines`, an anchored
 structural strip that removes only the specific literal label text (see Decision 2's "governing asymmetry"
 note) — re-verify Step 2's third command also passes.
+
+---
+
+### Step 6g: A footer markup lookalike (wrong tag names) is not truncated away
+
+**Maps to**: Edge case E25; Decision 6 (Codex GitHub finding `3803189273`) — found after the Step 6e fix
+shipped
+
+1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
+   `Looks good.` followed by `<details-not-footer><summary-note>About Codex in GitHub</summary-note>` then
+   `Rename the unsafe function.`, following the mock convention used by Step 4.
+2. Run the reviewer as in Step 4.
+
+**Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
+safe-fail)`. An interim revision of `codex_strip_codex_footer` (the Step 6e fix) still used a regex over tag
+*names* (`<details[^>]*>…<summary[^>]*>…</summary`), which matched this lookalike — a different `<details…>`
+tag followed by a different `<summary…>…</summary` sequence, both containing the marker phrase but neither
+using the real vendor's tag names — so the instruction was discarded and the response returned
+`VERDICT: APPROVED`. This was the third consecutive round a regex over this one helper admitted a lookalike.
+Closed by changing the technique entirely: `codex_strip_codex_footer` now requires exact byte equality
+against `CODEX_FOOTER_OPENING_LITERAL`, so this lookalike — sharing no bytes with the real literal — is left
+intact and correctly rejected by A3.
+
+---
+
+### Step 6h: A one-byte deviation from the real footer opening is not truncated away
+
+**Maps to**: Edge case E26; Decision 6 — verifies the exact-literal-match technique fails closed, per the
+accepted trade recorded in Decision 6's "Third correction" note
+
+1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
+   `Looks good.` followed by the real footer's opening line with a single character removed
+   (`<details> <summary>ℹ️ About Codex in GitHu</summary>` instead of `...GitHub</summary>`), then
+   `Remove auth.`, following the mock convention used by Step 4.
+2. Run the reviewer as in Step 4.
+
+**Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
+safe-fail)`. This is not a bug to fix — it is the accepted, documented trade of the exact-literal-match
+technique: any deviation from `CODEX_FOOTER_OPENING_LITERAL`, however small, means the footer is not
+recognized and not truncated, so the response safe-fails rather than risking a silent truncation of genuine
+content. If this step instead returns `VERDICT: APPROVED`, the footer strip has regressed back toward
+pattern-flexible matching and must be treated as a P1 finding, not a minor deviation.
 
 ---
 
@@ -333,6 +392,8 @@ appears under `### Changed`.
 | 6d | | |
 | 6e | | |
 | 6f | | |
+| 6g | | |
+| 6h | | |
 | 7 | | |
 | 8 | | |
 

@@ -29,17 +29,23 @@ as a block-list because its failure direction is the opposite one and a false ne
 **Estimated complexity**: **M**
 
 **Rationale**: The code change itself is still small relative to the surface it touches (one function
-rewritten, four helpers added — `codex_strip_codex_footer`, `codex_response_first_paragraph`,
-`codex_excise_clean_signals`, `codex_residue_is_closed_grammar` — three original symbols deleted, one
-renamed). The closed-grammar constants were revised mid-round: `CODEX_RESIDUE_STARTER_PATTERN` was added,
-then deleted again after a human decision rejected the design it supported, and
-`CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` was added in its place. The work is medium-to-large because it changes a
-contract that 27 existing assertions depend on: 18 existing scenarios change their expected verdict or
-fixture body (Group A2's 5, Group A3's 3, Group B's 1, Group C's 9), plus new regression coverage for the
-allow-list contract, its parser edge cases, and — added during the Step 7 review round, then tightened again
-to zero-tolerance after a human decision — the closed residue grammar that makes the disqualifier list's
-non-exhaustiveness actually safe (Decision 2). Every disposition must be justified individually so a reviewer
-can tell an intended contract change from a regression.
+rewritten, five helpers added — `codex_strip_codex_footer`, `codex_strip_vendor_metadata_lines`,
+`codex_response_first_paragraph`, `codex_excise_clean_signals`, `codex_residue_is_closed_grammar` — three
+original symbols deleted, one renamed). The closed-grammar constants were revised mid-round:
+`CODEX_RESIDUE_STARTER_PATTERN` was added, then deleted again after a human decision rejected the design it
+supported, and `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` was added in its place; `CODEX_RESIDUE_FILLER_WORD_PATTERN`
+was subsequently narrowed twice more — once to remove vendor-identity tokens that reopened a false `APPROVED`
+(Decision 2's "governing asymmetry" note), and `codex_strip_codex_footer` was rewritten a third time, from a
+regex over tag names to an exact byte-literal match, after regex-based tag matching itself proved to admit
+lookalikes across three consecutive review rounds (Decision 6's "Third correction" note). The work is
+medium-to-large because it changes a contract that 27 existing assertions depend on: 18 existing scenarios
+change their expected verdict or fixture body (Group A2's 5, Group A3's 3, Group B's 1, Group C's 9), plus new
+regression coverage for the allow-list contract, its parser edge cases, and — added during the Step 7 review
+round, then tightened again to zero-tolerance after a human decision, then further hardened against vendor-
+metadata-token widening and footer-markup lookalikes — the closed residue grammar and footer-anchoring
+mechanism that make the disqualifier list's non-exhaustiveness actually safe (Decision 2, Decision 6). Every
+disposition must be justified individually so a reviewer can tell an intended contract change from a
+regression.
 
 **Dependencies**: None. PR #1490 is merged (`55b2df5d` is its merge commit on `develop`); this plan builds on
 top of it and must not modify its commits.
@@ -139,16 +145,17 @@ A response is `APPROVED` only when **all three** conditions hold. Each is a chec
 judgement call:
 
 - **A1 — Clean signal present in the opening paragraph.** After footer truncation, quoted-span stripping,
-  and lowercasing, the **first non-empty paragraph** (lines up to the first blank line, leading blank lines
-  skipped) must contain at least one **boundary-anchored** occurrence of `CODEX_CLEAN_SIGNAL_PATTERN` — tested
-  via `CODEX_CLEAN_SIGNAL_EXCISION`, not the raw alternation. A raw substring test would match `approved`
-  inside `unapproved` (edge case E1) and reintroduce a false `APPROVED`. The boundary class is
-  `[^[:alnum:]_]` (underscore is treated as a word character, matching `grep -E`'s `\b`), not bare
-  `[^[:alnum:]]` — see the "Boundary correction" note below Decision 2.
+  lowercasing, and vendor-metadata-label stripping (`codex_strip_vendor_metadata_lines` — see Decision 2's
+  "governing asymmetry" note), the **first non-empty paragraph** (lines up to the first blank line, leading
+  blank lines skipped) must contain at least one **boundary-anchored** occurrence of
+  `CODEX_CLEAN_SIGNAL_PATTERN` — tested via `CODEX_CLEAN_SIGNAL_EXCISION`, not the raw alternation. A raw
+  substring test would match `approved` inside `unapproved` (edge case E1) and reintroduce a false
+  `APPROVED`. The boundary class is `[^[:alnum:]_]` (underscore is treated as a word character, matching
+  `grep -E`'s `\b`), not bare `[^[:alnum:]]` — see the "Boundary correction" note below Decision 2.
 - **A2 — No fence marker anywhere.** `codex_response_has_fence_marker` on the **raw, untruncated** body must
   be false. Unchanged from today.
 - **A3 — Closed-grammar, disqualifier-free residue.** Two independent checks, both against the
-  footer-truncated, quote-stripped, lowercased body:
+  footer-truncated, quote-stripped, lowercased, vendor-metadata-label-stripped body:
   1. The whole-body residue (every `CODEX_CLEAN_SIGNAL_PATTERN` occurrence iteratively excised via
      `CODEX_CLEAN_SIGNAL_EXCISION` — see the "Iterative excision" note below Decision 2) must not match
      `CODEX_APPROVAL_DISQUALIFIER_PATTERN` (unchanged mechanism from the original draft of this plan).
@@ -191,14 +198,22 @@ the classifier is called an allow-list.** A grammar is "closed" when it defines 
 passing residue may take, rather than merely testing the absence of known-bad content. A3 check 2 is closed
 in the strictest sense available without changing approach: every clause in the body, independently, must
 reduce to **nothing** — literally the empty string — after its own clean signal (if any) is excised and
-`CODEX_RESIDUE_FILLER_WORD_PATTERN`/`CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` tokens are stripped. Both patterns
-are drawn from finite, non-growing vocabularies: `CODEX_RESIDUE_FILLER_WORD_PATTERN` is closed-class English
-function words (articles, a handful of prepositions/conjunctions, demonstrative/locative pronouns) plus a
-small set of specific, reviewed vendor-identity tokens; `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` is a short,
-explicitly curated list of vendor sign-off flourish words with zero directive content (see below). Enumerating
-either closed set exhaustively is a categorically different, safe exercise from enumerating the open-class
-negation/hedge/actionable vocabulary the old block-list tried and failed to enumerate — that distinction is
-the entire thesis of this plan (see "Background" above).
+`CODEX_RESIDUE_FILLER_WORD_PATTERN`/`CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` tokens are stripped. Both patterns are
+drawn from finite, non-growing vocabularies, but **not the vocabularies this decision originally described**:
+an earlier revision of this section said `CODEX_RESIDUE_FILLER_WORD_PATTERN` included demonstrative/locative
+pronouns and vendor-identity tokens — that description became inaccurate (and unsafe to leave in place, since
+it reads as license to re-add exactly what was removed) once the "governing asymmetry" note below shows
+`this`/`that` (demonstrative pronouns) and `codex`/`review`/`reviewed`/`commit` (vendor-identity tokens) were
+**removed** for reopening false `APPROVED` results. As shipped, `CODEX_RESIDUE_FILLER_WORD_PATTERN` contains
+**only** non-demonstrative closed-class function words — articles, conjunctions, prepositions, and
+non-demonstrative pronouns (`a`, `an`, `the`, `and`, `or`, `to`, `of`, `in`, `on`, `for`, `at`, `is`, `it`,
+`its`) — and vendor metadata (labels, footer) is handled entirely by anchored structural stripping
+(`codex_strip_codex_footer`, `codex_strip_vendor_metadata_lines`), never by a token in this pattern.
+`CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` is a short, explicitly curated, evidence-only list of vendor sign-off
+flourish words with zero directive content (see below; currently just `swish`). Enumerating either closed set
+exhaustively is a categorically different, safe exercise from enumerating the open-class negation/hedge/
+actionable vocabulary the old block-list tried and failed to enumerate — that distinction is the entire
+thesis of this plan (see "Background" above).
 
 **Human decision — zero-tolerance, not a leftover-token tolerance (revision after Step 7 review).** An
 earlier revision of this plan (pushed as commit `6e41e260`, in response to finding `3800167486`) shipped A3
@@ -297,9 +312,13 @@ on the closed-grammar check instead. Concretely:
   note above). Beyond that test, any addition to `CODEX_RESIDUE_FILLER_WORD_PATTERN` must be a genuinely
   closed-class word (an article, preposition, conjunction, or non-demonstrative pronoun) — **never** a
   demonstrative/locative pronoun (`this`/`that`/`here`/`there`) and **never** a vendor-identity token, even a
-  "safe-looking" one: vendor metadata (labels, footers) must be stripped by an anchored structural pattern
-  matching its literal/markup shape, applied before tokenization — **never** by adding the words it contains
-  to a token-level allow-list, because those words may also be ordinary English directives. Any addition to
+  "safe-looking" one: vendor metadata must be stripped before tokenization —
+  **never** by adding the words it contains to a token-level allow-list, because those words may also be
+  ordinary English directives. The stripping technique itself must not be a flexible pattern either: the
+  footer is matched by an **exact byte-literal line comparison** (`CODEX_FOOTER_OPENING_LITERAL`, Decision 6's
+  "Third correction" note — regex-over-tag-names was tried and produced a lookalike three rounds running), and
+  the vendor labels are matched by anchored, position-specific literal strips
+  (`codex_strip_vendor_metadata_lines`). Any addition to
   `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` must additionally be **evidenced from a real captured Codex response**,
   the same bar `swish` was held to — never an invented or merely plausible word, and still subject to the
   same imperative-verb/directive-noun exclusion test.
@@ -458,10 +477,10 @@ list, straight-quoted phrases, and marketing prose. Today it is inert; nothing i
 patterns. Under the new aggressive disqualifier list it becomes a standing hazard: one vendor-side wording
 change ("Reviews are not triggered for draft pull requests") would disqualify every clean response at once.
 
-`codex_strip_codex_footer` truncates the body at the first line matching the **actual vendor footer markup
-structure** — `<details[^>]*>[[:space:]]*<summary[^>]*>.*about[[:space:]]+codex[[:space:]]+in[[:space:]]+github.*</summary`
-(case-insensitive) — and is applied **only inside `codex_response_is_approved`**. It must not be applied
-anywhere else, because:
+`codex_strip_codex_footer` truncates the body at the first line that is **byte-identical to the real vendor
+footer's exact opening line**, captured verbatim from live Codex responses (see the "Third correction" note
+below for the technique change and the literal itself), and is applied **only inside
+`codex_response_is_approved`**. It must not be applied anywhere else, because:
 
 - `codex_response_reviews_current_head` must see the original body for SHA extraction.
 - The acknowledgement branch (`grep -qi "If Codex has suggestions, it will comment; otherwise it will react with"`)
@@ -503,6 +522,76 @@ round-3 plain-paragraph exploit is now also left intact (no markup tags present 
 case E23 (`codex_footer_phrase_outside_markup_not_truncated_root_comment`) covers this specifically, distinct
 from E20 (which covers a `<details>` block that lacks the marker phrase, not a marker phrase that lacks
 `<details>`/`<summary>` markup — the two edge cases are each other's mirror image and both are needed).
+
+**Third correction — a change of technique, not another regex iteration (Codex GitHub finding `3803189273`,
+P1/blocking, found after the second correction shipped).** The markup-structure regex above was itself still a
+flexible pattern over tag *names*, and flexible patterns accept lookalikes: verified that
+`Looks good.` followed by `<details-not-footer><summary-note>About Codex in GitHub</summary-note>` then
+`Rename the unsafe function.` matched the regex (it only required *some* `<details…>` tag followed by *some*
+`<summary…>…</summary` sequence containing the marker phrase, not the specific real tag names), so the
+instruction was discarded and the response incorrectly returned `APPROVED`. This is the third consecutive
+round in which tightening the footer regex produced a fresh lookalike gap (generic `<details` match →
+phrase-anywhere match → tag-name-flexible markup match). Continuing to hand-tighten the regex was rejected as
+the fix.
+
+**The technique changed: `codex_strip_codex_footer` now compares each line for byte-identical equality against
+a literal string captured verbatim from a live Codex response, not against any regex.**
+
+```bash
+CODEX_FOOTER_OPENING_LITERAL='<details> <summary>ℹ️ About Codex in GitHub</summary>'
+
+codex_strip_codex_footer() {
+  awk -v literal="$CODEX_FOOTER_OPENING_LITERAL" '$0 == literal { exit } { print }' <<< "$1"
+}
+```
+
+The literal was captured by re-fetching both real sources live during this review round —
+`gh api repos/lhpaul/ai-dev-framework-template/issues/1489/comments` (the root-comment format) and
+`gh api repos/lhpaul/ai-dev-framework-template/pulls/1490/reviews` (all 12 review instances currently on that
+PR, spanning its full review history, the "state: COMMENTED" format) — and comparing the `<details>` opening
+line from each with `diff` and `od -c` (byte-level dump). **The two sources are byte-identical**: the same
+`<details> <summary>ℹ️ About Codex in GitHub</summary>` line (with the same U+2139 `ℹ` INFORMATION SOURCE
+character followed by U+FE0F VARIATION SELECTOR-16, encoded as the same UTF-8 byte sequence
+`342 204 271 357 270 217` in `od -c`) appears in the root-comment format, and identically across all 12
+independent review submissions in the review-state format. There was no divergence to report or reconcile.
+
+**This is the same asymmetry that governs the rest of this design, applied to markup instead of vocabulary:**
+
+- An exact literal match fails to fire on *any* deviation — a different tag, a missing space, a different
+  emoji byte, a renamed attribute — so the footer is *not* stripped, its content stays in the residue, and
+  the zero-tolerance closed grammar (Decision 2) rejects it. Verified: a one-byte mutation of the real footer
+  opening (`GitHu</summary>` instead of `GitHub</summary>`) correctly leaves the footer content (and
+  everything after it) in the residue and returns `NEEDS_REVISION`, not a silent truncation. **This is the
+  safe direction.**
+- A flexible regex over tag names or a bare phrase fires on lookalikes, discards genuine content, and returns
+  `APPROVED` — verified three times now (Codex GitHub findings `3800167489`, `3803050750`, `3803189273`).
+  **This is the unsafe direction, and it is the one this correction eliminates as a class**, not just for the
+  one lookalike shape Codex most recently constructed.
+
+**The accepted trade — recorded explicitly, per the same principle already governing the top row of Risks &
+Mitigations below.** If the vendor changes the footer's opening markup (a different emoji, added whitespace,
+a wrapping `<div>`, and so on), `codex_strip_codex_footer` will no longer recognize it, the entire (now
+unrecognized) footer prose will sit in the residue, and **every genuinely clean PR will safe-fail** until
+someone updates `CODEX_FOOTER_OPENING_LITERAL` from a freshly captured live body. This is not a new risk: it
+is the identical shape of the plan's own top-ranked, already-accepted risk ("vendor changes the clean-response
+wording so no allow-listed signal matches, and every PR safe-fails"), now also covering the footer's exact
+markup rather than only the clean-signal vocabulary, and it is **strictly preferable** to the alternative
+(a lookalike silently discarding real content and returning a false `APPROVED`), which is the direction this
+plan exists to eliminate.
+
+New edge cases: E25 (`codex_footer_markup_lookalike_tag_names_not_truncated_root_comment`, the exact exploit
+Codex constructed) and E26 (`codex_footer_one_byte_mutation_not_truncated_root_comment`, a single-character
+deviation from the real literal). Both verified to return `NEEDS_REVISION`; both real captured bodies (PR
+#1489 root comment, PR #1490 review) re-verified to truncate correctly and, for #1489, to still return
+`APPROVED` end-to-end.
+
+**Is the footer helper closed as a class now, or is there still a lookalike that can cause truncation?**
+Closed, with one disclosed, structurally-different boundary condition, not a lookalike gap: if the **real**
+vendor changes its footer's literal opening bytes, this helper stops recognizing the real footer and the
+response safe-fails (the accepted trade above) — it does not truncate on a lookalike and produce a false
+`APPROVED`. Exact byte-equality against a single fixed line has no regex-flexibility surface left to exploit;
+the only way to make it match something other than the captured literal is to reproduce that literal exactly,
+which is definitionally the real footer, not a lookalike.
 
 ---
 
@@ -551,9 +640,11 @@ and `[[ ]]`-free POSIX tests). No portable `bash-zsh` snippet is introduced.
       decision to adopt zero-tolerance. **Any future PR that adds a token to either pattern must pass the
       imperative-verb/directive-noun exclusion test and must not be vendor metadata** (vendor metadata is
       handled structurally — see `codex_strip_vendor_metadata_lines` below — never by token allow-listing).
-- [ ] **Add** `codex_strip_codex_footer`, anchored on the actual `<details>`/`<summary>` markup structure
-      containing the vendor marker (see the "Correction" and "Second correction" notes under Decision 6), not
-      a generic `<details` match and not a bare-phrase match outside that markup.
+- [ ] **Add** `CODEX_FOOTER_OPENING_LITERAL` and `codex_strip_codex_footer`. The footer strip is an **exact
+      byte-literal line match**, not a regex (see the "Third correction" note under Decision 6 — three
+      consecutive rounds of regex tightening on this helper each closed one lookalike and admitted another;
+      the technique changed instead of tightening a fourth time). Not a generic `<details` match, not a
+      bare-phrase match, and not a tag-name-flexible markup regex.
 - [ ] **Add** `codex_strip_vendor_metadata_lines` — strips the literal, position-anchored `Codex Review:` and
       `Reviewed commit:` labels and a leading `Codex` self-reference (first line only), replacing the
       token-level `codex`/`review`/`reviewed`/`commit` filler entries this round removed. See Decision 2's
@@ -574,11 +665,12 @@ and `[[ ]]`-free POSIX tests). No portable `bash-zsh` snippet is introduced.
 - [ ] Simplify the fixture body of the 3 Group A3 scenarios (verdict stays `APPROVED`; see Group A3).
 - [ ] Retarget the fixture body of `codex_inline_backtick_pair_stays_approved_root_comment` (see the updated
       Group B row — the retargeted body changed a third time during this review round; use the current one).
-- [ ] Add the new scenarios listed in "Testing Strategy" (21 total, including the 9 added for edge cases
-      E16–E24 — 5 for findings `3800167486`, `3800167489`, `3800167492`, and `3800167494`; 2 for the
+- [ ] Add the new scenarios listed in "Testing Strategy" (23 total, including the 11 added for edge cases
+      E16–E26 — 5 for findings `3800167486`, `3800167489`, `3800167492`, and `3800167494`; 2 for the
       run-on-fusion and starter-exemption gaps found while implementing the human-directed zero-tolerance
-      revision; and 2 more for findings `3803050745` and `3803050750`, found after that revision shipped its
-      own vendor-metadata handling).
+      revision; 2 for findings `3803050745` and `3803050750`, found after that revision shipped its own
+      vendor-metadata handling; and 2 more for finding `3803189273`, found after the footer marker was
+      corrected a second time and turned out to still be a flexible regex).
 - [ ] Update the explanatory comment above every retargeted scenario so it states the **new** contract reason,
       not the superseded PR #1490 finding. Do not delete the historical finding references — rewrite them as
       "previously fixed by X; now covered structurally by the allow-list".
@@ -597,17 +689,20 @@ See "Documentation Updates" for exactly what changes in each.
 
 <!-- Illustrative — adapt during implementation. -->
 
-**Revised three times during the Step 7 review round**: first to close four Codex GitHub findings
+**Revised four times during the Step 7 review round**: first to close four Codex GitHub findings
 (`3800167486`/`3800167489` P1-blocking, `3800167492`/`3800167494` P2); second, after a human reviewer
 rejected the leftover-token tolerance the first revision shipped and directed zero-tolerance instead; third,
 after that zero-tolerance revision's own vendor-metadata handling (bare tokens `codex`/`review`/`reviewed`/
 `commit` added to the filler list, plus an under-anchored footer marker) produced two more P1-blocking
 findings (`3803050745`/`3803050750`) — the exact "widen a filler list" failure mode Decision 2 had already
-named as unsafe. Every regex and helper below was re-executed against the same macOS BSD toolchain this plan
-already targets (`sed`, `grep`, `awk`, invoked via their `/usr/bin/` paths to avoid any interactive-shell
-aliasing — confirmed BSD: `sed` rejects GNU's long-option `--` syntax, `grep --version` reports `BSD grep,
-GNU compatible`, `awk --version` reports the one-true-awk `20200816` build). See Decision 2 and Decision 6 for
-the rationale behind each change; this block is the resulting code.
+named as unsafe; fourth, after the corrected footer marker turned out to still be a flexible regex over tag
+names, which matched a markup lookalike (`3803189273`, P1-blocking) — the footer helper's technique was
+changed from regex matching to exact byte-literal matching (see Decision 6's "Third correction" note) rather
+than tightening the regex a fourth time. Every regex and helper below was re-executed against the same macOS
+BSD toolchain this plan already targets (`sed`, `grep`, `awk`, invoked via their `/usr/bin/` paths to avoid
+any interactive-shell aliasing — confirmed BSD: `sed` rejects GNU's long-option `--` syntax, `grep --version`
+reports `BSD grep, GNU compatible`, `awk --version` reports the one-true-awk `20200816` build). See Decision 2
+and Decision 6 for the rationale behind each change; this block is the resulting code.
 
 ```bash
 # Illustrative — adapt during implementation.
@@ -685,20 +780,28 @@ CODEX_VENDOR_FLAVOR_TOKEN_PATTERN='^(swish)$'
 # Truncates Codex's static "About Codex in GitHub" <details> footer. Applied
 # ONLY inside codex_response_is_approved (see Decision 6).
 #
-# Requires the ACTUAL <details>/<summary> markup structure CONTAINING the
-# marker (Codex GitHub finding 3800167489, then 3803050750) — not the bare
-# phrase anywhere in the body. A phrase-only match truncates a normal
-# paragraph that happens to mention "About Codex in GitHub" with no
-# <details>/<summary> tags at all — verified: `Looks good.` followed by
-# `About Codex in GitHub should mention: remove auth.` (plain prose, no
-# markup) had that paragraph discarded and returned APPROVED under the
-# phrase-only version. Requiring the markup shape leaves that paragraph
-# intact (no tags to match), while the real vendor footer (re-verified
-# against the live PR #1489 capture: `<details> <summary>ℹ️ About Codex in
-# GitHub</summary>`) and a synthetic non-vendor `<details>` block (finding
-# 3800167489, which lacks the marker phrase) both still behave correctly.
+# EXACT BYTE-LITERAL MATCH, not a regex (Codex GitHub findings 3800167489,
+# then 3803050750, then 3803189273 — three consecutive rounds of regex
+# tightening over this same helper, each closing one lookalike and admitting
+# another: generic `<details` match, then bare-phrase-anywhere match, then a
+# tag-name-flexible markup regex that still matched
+# `<details-not-footer><summary-note>About Codex in GitHub</summary-note>`).
+# The technique changed instead of iterating the regex again: match the
+# footer's exact opening LINE, captured verbatim from live Codex responses,
+# with plain string equality. CODEX_FOOTER_OPENING_LITERAL was verified
+# byte-identical (via `diff`/`od -c`) between the PR #1489 root-comment
+# capture and all 12 independent PR #1490 review captures re-fetched live
+# this round. Any deviation from this exact literal — a different tag, a
+# missing space, a different emoji byte, a lookalike tag name — fails to
+# match, so the footer is NOT stripped and its content stays in the residue
+# for the zero-tolerance closed grammar (Decision 2) to reject. This is the
+# safe failure direction; see Decision 6's "Third correction" note for the
+# full rationale and the accepted vendor-format-change trade this technique
+# makes explicit.
+CODEX_FOOTER_OPENING_LITERAL='<details> <summary>ℹ️ About Codex in GitHub</summary>'
+
 codex_strip_codex_footer() {
-  awk 'tolower($0) ~ /<details[^>]*>[[:space:]]*<summary[^>]*>.*about[[:space:]]+codex[[:space:]]+in[[:space:]]+github.*<\/summary/ { exit } { print }' <<< "$1"
+  awk -v literal="$CODEX_FOOTER_OPENING_LITERAL" '$0 == literal { exit } { print }' <<< "$1"
 }
 
 # Strips vendor metadata LABELS via anchored structural patterns — never via
@@ -861,7 +964,13 @@ Notes for the implementer:
   is retargeted from `APPROVED` to `NEEDS_REVISION` under zero-tolerance (see Test disposition below); the
   SIGPIPE-safety property itself (no crash on huge input) is orthogonal to which verdict is emitted and
   remains independently verified by this timing measurement.
-- Every disqualifier, edge case, and Group A/B/C body enumerated in this plan (E1–E24, all 9 Group A bodies
+- `codex_strip_codex_footer`'s exact-literal-match technique requires `CODEX_FOOTER_OPENING_LITERAL` to stay
+  byte-identical to the real vendor footer's opening line. If a future implementer or reviewer needs to
+  update it (a genuine vendor markup change, not a lookalike), re-capture it live the same way it was
+  captured here — `gh api …/issues/1489/comments` or `gh api …/pulls/1490/reviews`, extract the `<details>`
+  opening line, and confirm with `od -c` that the new literal is byte-for-byte what the vendor now sends. Do
+  not hand-edit the literal or generalize it back into a regex.
+- Every disqualifier, edge case, and Group A/B/C body enumerated in this plan (E1–E26, all 9 Group A bodies
   that remain `APPROVED`, the 5 Group A2 bodies that are retargeted, the 3 Group A3 bodies that are retargeted
   by simplifying their body instead, the retargeted Group B scenario, and all 9 Group C scenarios) was
   re-verified against this exact implementation on BSD `sed`/`grep`/`awk`, including against the real captured
@@ -897,10 +1006,12 @@ This plan is **parser-risk**: it materially changes regex-based scanning of stru
 | E17 | `Approved no blocking issues found.` | approved | Adjacency where the second signal contains `no` (Codex GitHub finding 3800167494): without iterative excision, `no blocking issues` survives un-excised and its `no` matches `CODEX_APPROVAL_NEGATION_PATTERN`, incorrectly returning `NEEDS_REVISION` |
 | E18 | `LGTM. Didn't find any major issues.` | approved | Adjacency where the second signal contains `didn't` (Codex GitHub finding 3800167494); a comma-joined no-space variant (`Approved, no blocking issues found.`) is covered by the same scenario as a second assertion |
 | E19 | `Looks good. Remove the authentication check.` (plus colon- and comma-joined variants: `Looks good: remove the authentication check.` / `Looks good, remove the authentication check.`) | not approved | The literal exploit from Codex GitHub finding 3800167486 (P1/blocking): a clean signal followed by an unenumerated actionable sentence. Closed by A3 check 2 (the closed residue grammar, zero-tolerance) — `remove the authentication check` leaves non-empty residue after excision/filler-stripping in its own clause, regardless of which punctuation joins it to the signal-bearing sentence |
-| E20 | `Looks good.` followed by a **non-vendor** `<details>` block containing `Rename the unsafe function.` | not approved | The exploit from Codex GitHub finding 3800167489 (P1/blocking): over-broad footer truncation (any `<details` line, not the specific vendor marker) hides the instruction from A3 entirely. Closed by anchoring `codex_strip_codex_footer` on the actual `about codex in github` marker; once left intact, A3 check 2 independently rejects the instruction too |
+| E20 | `Looks good.` followed by a **non-vendor** `<details>` block containing `Rename the unsafe function.` | not approved | The exploit from Codex GitHub finding 3800167489 (P1/blocking): over-broad footer truncation (any `<details` line, not the specific vendor marker) hides the instruction from A3 entirely. Originally closed by anchoring on the `about codex in github` marker phrase; that phrase-level anchor was itself superseded twice more (see E23, E25, E26) and `codex_strip_codex_footer` now uses an exact byte-literal line match (Decision 6's "Third correction"), under which this non-vendor block still correctly stays intact — once left intact, A3 check 2 independently rejects the instruction too |
 | E21 | `Looks good and please remove the entire authentication check now.` | not approved | Run-on fusion gap, found and closed while implementing the human-directed zero-tolerance revision: an earlier version of A3 check 2 (commit `6e41e260`) exempted an ENTIRE sentence once any part of it carried a clean signal, with no bound on the exempted part, so unpunctuated content fused to the signal (no `,`/`:`/`;`/`.`/`!`/`?` between them) escaped check 2 entirely and returned `APPROVED`. Closed by excising each clause's own clean signal and requiring its own residue to be empty, uniformly, rather than exempting a clause outright because it contains a match |
 | E22 | `Looks good. The maintainer wants this file removed before merge.` | not approved | Starter-exemption gap, found and closed the same way: the prior revision's "begins with an allow-listed subject/determiner" exemption had no bound on what followed the starter word, so `wants`, `removed`, and `before merge` (without `-ing`, so it does not match `\bbefore merging\b`) all slipped through unenumerated and the response returned `APPROVED`. Closed by removing the starter exemption entirely — zero-tolerance has no sentence-opener exemption |
-| E23 | `Looks good.` followed by an ordinary paragraph `About Codex in GitHub should mention: remove auth.` (no `<details>`/`<summary>` tags at all) | not approved | The exploit from Codex GitHub finding 3803050750 (P1/blocking): the footer strip matched the bare `about codex in github` phrase anywhere in the body, so a normal paragraph merely mentioning that phrase was discarded before A3 ever ran, and the response returned `APPROVED`. Closed by requiring the actual `<details>`/`<summary>` markup structure, not just the phrase. Mirrors E20: E20 is a `<details>` block that lacks the marker phrase; E23 is the marker phrase without `<details>`/`<summary>` markup — both must be tested |
+| E23 | `Looks good.` followed by an ordinary paragraph `About Codex in GitHub should mention: remove auth.` (no `<details>`/`<summary>` tags at all) | not approved | The exploit from Codex GitHub finding 3803050750 (P1/blocking): the footer strip matched the bare `about codex in github` phrase anywhere in the body, so a normal paragraph merely mentioning that phrase was discarded before A3 ever ran, and the response returned `APPROVED`. Originally closed by requiring the actual `<details>`/`<summary>` markup structure around the phrase; that markup-structure regex was itself superseded by the exact byte-literal match (see E25, E26), under which this ordinary paragraph — sharing no bytes with `CODEX_FOOTER_OPENING_LITERAL` — still correctly stays intact. Mirrors E20: E20 is a `<details>` block that lacks the marker phrase; E23 is the marker phrase without `<details>`/`<summary>` markup — both must be tested |
+| E25 | `Looks good.` followed by `<details-not-footer><summary-note>About Codex in GitHub</summary-note>` then `Rename the unsafe function.` | not approved | The exploit from Codex GitHub finding 3803189273 (P1/blocking): the markup-structure regex required *some* `<details…>` tag followed by *some* `<summary…>…</summary` sequence containing the marker phrase, not the specific real tag names, so this lookalike matched and the instruction was discarded, returning `APPROVED`. This is the third consecutive round a regex over this helper admitted a lookalike (generic `<details` → bare phrase → flexible tag names). Closed by changing the technique: `codex_strip_codex_footer` now requires exact byte equality against `CODEX_FOOTER_OPENING_LITERAL`, captured verbatim from live Codex responses — this lookalike shares no bytes with the real literal, so it does not match and the instruction stays in the residue |
+| E26 | The real footer opening with a single byte changed (`GitHu</summary>` instead of `GitHub</summary>`) | not approved | Verifies the exact-literal-match technique fails closed: any deviation from `CODEX_FOOTER_OPENING_LITERAL`, however small, means the footer is NOT recognized and NOT truncated, so its (unrecognized) content — and anything genuinely after it — stays in the residue and the zero-tolerance grammar (Decision 2) rejects it. This is the accepted trade recorded in Decision 6's "Third correction" note: a real vendor markup change causes safe-fail, not silent truncation |
 | E24 | `Looks good. Commit this.` | not approved | The exploit from Codex GitHub finding 3803050745 (P1/blocking): `commit`, `review`, `reviewed`, and `codex` were bare tokens in `CODEX_RESIDUE_FILLER_WORD_PATTERN` to make vendor labels excise to nothing, but `commit` and `review` are also ordinary imperative verbs, and `this` (also filler at the time) is the directive's object — the whole clause excised to empty and returned `APPROVED`. Closed by removing all four tokens (plus `that`, audited the same way) from the filler list and replacing vendor-label handling with `codex_strip_vendor_metadata_lines`, an anchored structural strip — see Decision 2's "governing asymmetry" note |
 
 ### Unit test mapping
@@ -935,6 +1046,8 @@ edge case above gets at least one scenario there, driven through the real script
 | E22 | `codex_starter_word_unbounded_tail_root_comment` (new — added when implementing the human-directed zero-tolerance revision) |
 | E23 | `codex_footer_phrase_outside_markup_not_truncated_root_comment` (new — Codex GitHub finding 3803050750) |
 | E24 | `codex_metadata_token_as_directive_root_comment` (new — Codex GitHub finding 3803050745) |
+| E25 | `codex_footer_markup_lookalike_tag_names_not_truncated_root_comment` (new — Codex GitHub finding 3803189273) |
+| E26 | `codex_footer_one_byte_mutation_not_truncated_root_comment` (new — verifies the exact-literal-match technique fails closed) |
 
 ### Suppression semantics
 
@@ -970,9 +1083,10 @@ reconciliation discipline this plan already requires (see "Residual verification
 
 #### Group A — keep as-is, still `VERDICT: APPROVED`
 
-These 9 bodies contain nothing beyond a clean signal, filler/vendor-identity tokens, and (for one scenario)
-another clean signal — so every clause reduces to nothing after excision, and the zero-tolerance closed
-grammar preserves them unchanged:
+These 9 bodies contain nothing beyond a clean signal, anchored-stripped vendor metadata (the `Codex Review:`/
+`Reviewed commit:` labels — removed structurally by `codex_strip_vendor_metadata_lines`, not by a filler
+token), closed-class filler tokens, and (for one scenario) another clean signal — so every clause reduces to
+nothing after excision, and the zero-tolerance closed grammar preserves them unchanged:
 
 | Scenario | Body (abridged) |
 | --- | --- |
@@ -1093,10 +1207,11 @@ failure among them is a genuine regression, not an intended contract change.
 
 ### New scenarios
 
-**21 new scenarios total**: the eleven from edge cases E2–E11 and E15 in the "Unit test mapping" table above,
-plus `codex_disqualifier_diagnostic_emitted`, plus nine more added during the Step 7 review round for edge
-cases E16–E24 (findings `3800167486`, `3800167489`, `3800167492`, `3800167494`, `3803050745`, `3803050750`,
-and the two additional gaps found while implementing the human-directed zero-tolerance revision):
+**23 new scenarios total**: the eleven from edge cases E2–E11 and E15 in the "Unit test mapping" table above,
+plus `codex_disqualifier_diagnostic_emitted`, plus eleven more added during the Step 7 review round for edge
+cases E16–E26 (findings `3800167486`, `3800167489`, `3800167492`, `3800167494`, `3803050745`, `3803050750`,
+`3803189273`, and the two additional gaps found while implementing the human-directed zero-tolerance
+revision):
 
 - `codex_disqualifier_diagnostic_emitted` — assert that a body with a clean signal plus a disqualifier emits
   the `INFO: Codex clean signal present but disqualified` line, so the operational diagnostic is itself
@@ -1112,6 +1227,8 @@ and the two additional gaps found while implementing the human-directed zero-tol
 - `codex_starter_word_unbounded_tail_root_comment` (E22) — `NEEDS_REVISION`.
 - `codex_footer_phrase_outside_markup_not_truncated_root_comment` (E23) — `NEEDS_REVISION`.
 - `codex_metadata_token_as_directive_root_comment` (E24) — `NEEDS_REVISION`.
+- `codex_footer_markup_lookalike_tag_names_not_truncated_root_comment` (E25) — `NEEDS_REVISION`.
+- `codex_footer_one_byte_mutation_not_truncated_root_comment` (E26) — `NEEDS_REVISION`.
 
 **Correction to E3's disposition (this is already reflected in the split below, not an adjustment to it).**
 E3 (`codex_contraction_lookalike_words_root_comment`) was originally planned to assert `VERDICT: APPROVED`.
@@ -1119,8 +1236,8 @@ Under zero-tolerance, its elaboration sentence (`The content is consistent and t
 leaves non-filler leftover tokens regardless of whether they happen to be disqualifier lookalikes, so it now
 asserts `VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)` instead.
 
-Of the 21 new scenarios, **8** assert `VERDICT: APPROVED` (E2, E5, E6, E7, E8, E9, E17, E18) and **13** assert
-`VERDICT: NEEDS_REVISION` (E3, E4, E10, E11, E15, E16, E19, E20, E21, E22, E23, E24, plus
+Of the 23 new scenarios, **8** assert `VERDICT: APPROVED` (E2, E5, E6, E7, E8, E9, E17, E18) and **15** assert
+`VERDICT: NEEDS_REVISION` (E3, E4, E10, E11, E15, E16, E19, E20, E21, E22, E23, E24, E25, E26, plus
 `codex_disqualifier_diagnostic_emitted`).
 
 The regex property E3 was written to prove (`content`/`consistent`/`constant`/`important` do not match
@@ -1129,18 +1246,20 @@ via a distinct `VERDICT: APPROVED` outcome — see Decision 2.
 
 ### Reconciled test-disposition counts
 
-Re-derived three times during the Step 7 review round: once for findings `3800167486`/`3800167489`/
+Re-derived four times during the Step 7 review round: once for findings `3800167486`/`3800167489`/
 `3800167492`/`3800167494`; again after the human-directed zero-tolerance revision (which also moved 8 Group A
 scenarios — 5 to Group A2, 3 to Group A3 — and E3, none of which the first revision of this table
-anticipated); and again after findings `3803050745`/`3803050750`, which add 2 more new scenarios (E23, E24)
-but move **no** additional existing scenario between groups — every Group A/A2/A3/B/C body was re-verified
-against the anchored-structural vendor-metadata fix and none changed disposition:
+anticipated); again after findings `3803050745`/`3803050750`, which added 2 new scenarios (E23, E24) but moved
+no additional existing scenario between groups; and again after finding `3803189273`, which adds 2 more new
+scenarios (E25, E26) and — like the prior round — moves **no** additional existing scenario between groups:
+every Group A/A2/A3/B/C body was re-verified against the exact-byte-literal footer fix and none changed
+disposition:
 
 | Metric | Before this plan (baseline, `55b2df5d`) | After this plan |
 | --- | --- | --- |
-| Total `run_test` assertions | 628 | 628 + 21 × 2 = 670 (`codex_disqualifier_diagnostic_emitted` may need a third assertion for the diagnostic line itself, and the 5 Group A2 scenarios may need a companion exit-code assertion beyond the verdict line — see Group A2's "Coverage preserved" column; confirm exact per-scenario assertion count against the harness convention at implementation time and report the real total in the PR description; treat any other delta as a finding) |
-| `codex_*` assertions | 247 | 247 + 42 = 289 (same caveat as above) |
-| Scenarios asserting `VERDICT: APPROVED` | 27 (Group A 17 + Group B 1 + Group C 9) | Of the baseline 27: Group A's 9 stay `APPROVED` unchanged, Group A3's 3 stay `APPROVED` via a simplified body, Group B's 1 stays `APPROVED` via a retargeted body — 13 total retained. Group A2's 5 and Group C's 9 (14 total) flip out to `NEEDS_REVISION`. Plus 8 of the 21 new scenarios assert `APPROVED` (E2, E5, E6, E7, E8, E9, E17, E18 — **not** E3, E23, or E24, all three of which assert `NEEDS_REVISION`, see "New scenarios" above). Total: 13 + 8 = **21** — unchanged from the count after the second Step 7 revision, because E23 and E24 both assert `NEEDS_REVISION`. The PR description must state the full composition delta by name regardless of the unchanged total (Group C's 9 out, Group A2's 5 out, the 8 new `APPROVED`-asserting scenarios in, Group A3's 3 and Group B's 1 retained via simplified/retargeted bodies, plus E23/E24 added as new `NEEDS_REVISION`-asserting scenarios) — a bare count is not sufficient evidence on its own, and this is now the SECOND time in this plan's history that a total held steady while composition changed underneath it |
+| Total `run_test` assertions | 628 | 628 + 23 × 2 = 674 (`codex_disqualifier_diagnostic_emitted` may need a third assertion for the diagnostic line itself, and the 5 Group A2 scenarios may need a companion exit-code assertion beyond the verdict line — see Group A2's "Coverage preserved" column; confirm exact per-scenario assertion count against the harness convention at implementation time and report the real total in the PR description; treat any other delta as a finding) |
+| `codex_*` assertions | 247 | 247 + 46 = 293 (same caveat as above) |
+| Scenarios asserting `VERDICT: APPROVED` | 27 (Group A 17 + Group B 1 + Group C 9) | Of the baseline 27: Group A's 9 stay `APPROVED` unchanged, Group A3's 3 stay `APPROVED` via a simplified body, Group B's 1 stays `APPROVED` via a retargeted body — 13 total retained. Group A2's 5 and Group C's 9 (14 total) flip out to `NEEDS_REVISION`. Plus 8 of the 23 new scenarios assert `APPROVED` (E2, E5, E6, E7, E8, E9, E17, E18 — **not** E3, E23, E24, E25, or E26, all five of which assert `NEEDS_REVISION`, see "New scenarios" above). Total: 13 + 8 = **21** — unchanged for the third consecutive revision of this table, because every new scenario added since the second revision has asserted `NEEDS_REVISION`. The PR description must state the full composition delta by name regardless of the unchanged total (Group C's 9 out, Group A2's 5 out, the 8 new `APPROVED`-asserting scenarios in, Group A3's 3 and Group B's 1 retained via simplified/retargeted bodies, plus E23/E24/E25/E26 added as new `NEEDS_REVISION`-asserting scenarios) — a bare count is not sufficient evidence on its own, and this is now the THIRD time in this plan's history that a total held steady while composition changed underneath it |
 
 ### Residual verification strategy
 
@@ -1157,26 +1276,30 @@ implementation must produce before `ready-for-human-review` is:
 3. Confirmation that the real captured Codex clean body (E9) approves — this is the check that guards against
    the highest-impact failure mode, a classifier that rejects every real clean review. Re-verify this
    specifically against the closed residue grammar (A3 check 2), not just the disqualifier scan: confirm the
-   shipped `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` (currently just `swish`) still lets it pass, confirm the
-   anchored `codex_strip_codex_footer` and `codex_strip_vendor_metadata_lines` still correctly strip the real
-   `<details>`/`<summary>` footer and the `Codex Review:`/`Reviewed commit:` labels, and confirm the real
+   shipped `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` (currently just `swish`) still lets it pass, confirm
+   `codex_strip_vendor_metadata_lines` still correctly strips the `Codex Review:`/`Reviewed commit:` labels,
+   confirm `CODEX_FOOTER_OPENING_LITERAL` still matches the real footer's opening line byte-for-byte (re-fetch
+   both PR #1489 and PR #1490 live and compare with `diff`/`od -c`, not by inspection), and confirm the real
    captured PR #1490 review body's verdict is unchanged (it fails A1 regardless of A3, since it carries no
    clean signal in its visible portion — re-verified this round to still return `NEEDS_REVISION`).
-4. Confirmation that the eight exploits from the Step 7 review round (E19–E24's underlying findings, plus the
+4. Confirmation that the nine exploits from the Step 7 review round (E19–E26's underlying findings, plus the
    run-on and starter-exemption gaps found while implementing zero-tolerance) are actually closed against the
    real script, not just the illustrative prototype in this plan — run
    `codex_unenumerated_actionable_sentence_after_signal_root_comment`,
    `codex_nonfooter_details_block_not_truncated_root_comment`,
    `codex_signal_fused_actionable_clause_root_comment`, `codex_starter_word_unbounded_tail_root_comment`,
-   `codex_footer_phrase_outside_markup_not_truncated_root_comment`, and
-   `codex_metadata_token_as_directive_root_comment` specifically and confirm all six report `NEEDS_REVISION`.
-   Also confirm `Approved. Revert.` (the construction that defeated the previously-shipped one-token
-   tolerance) still returns `NEEDS_REVISION`.
-5. Confirmation, specific to findings `3803050745`/`3803050750`, that removing `codex`/`review`/`reviewed`/
-   `commit`/`this`/`that` from `CODEX_RESIDUE_FILLER_WORD_PATTERN` did not silently move any existing Group A,
-   A2, A3, B, or C scenario — every one of them was re-run against the final implementation and none moved
-   (see the "Reconciled test-disposition counts" note above); report this explicitly in the PR description
-   rather than relying on the unchanged `21` total.
+   `codex_footer_phrase_outside_markup_not_truncated_root_comment`,
+   `codex_metadata_token_as_directive_root_comment`,
+   `codex_footer_markup_lookalike_tag_names_not_truncated_root_comment`, and
+   `codex_footer_one_byte_mutation_not_truncated_root_comment` specifically and confirm all eight report
+   `NEEDS_REVISION`. Also confirm `Approved. Revert.` and `Looks good. Commit this.` (the constructions that
+   defeated earlier revisions) still return `NEEDS_REVISION`.
+5. Confirmation, specific to findings `3803050745`/`3803050750`/`3803189273`, that removing `codex`/`review`/
+   `reviewed`/`commit`/`this`/`that` from `CODEX_RESIDUE_FILLER_WORD_PATTERN` and switching
+   `codex_strip_codex_footer` from a regex to an exact byte-literal match did not silently move any existing
+   Group A, A2, A3, B, or C scenario — every one of them was re-run against the final implementation and none
+   moved (see the "Reconciled test-disposition counts" note above); report this explicitly in the PR
+   description rather than relying on the unchanged `21` total.
 
 ---
 
@@ -1208,11 +1331,12 @@ do not add a fixture file, as the harness is deliberately self-contained.
       response, that any negation, hedge, or actionable-verb token elsewhere safe-fails to `NEEDS_REVISION`,
       that every clause in the body — independently, whether or not it carries a clean signal — must reduce
       to nothing after excising its own signal and stripping closed-class filler/evidenced vendor-flavor
-      tokens (zero-tolerance, no leftover-token or sentence-opener exemption), that vendor metadata (the
-      `Codex Review:`/`Reviewed commit:` labels and the `<details>`/`<summary>` footer) is stripped by
-      anchored structural patterns matching its actual literal/markup shape — never by token-level
-      allow-listing — before this scan runs, and that any candidate token for the filler/flavor lists must
-      fail an imperative-verb/directive-noun test before being added. Note the deliberate `NEEDS_REVISION`
+      tokens (zero-tolerance, no leftover-token or sentence-opener exemption), that vendor metadata is
+      stripped before this scan runs and never by token-level allow-listing — the `Codex Review:`/`Reviewed
+      commit:` labels via anchored, position-specific patterns, and the `<details>`/`<summary>` footer via
+      **exact byte-literal line matching** against a string captured verbatim from a live Codex response, not
+      a regex of any kind — and that any candidate token for the filler/flavor lists must fail an
+      imperative-verb/directive-noun test before being added. Note the deliberate `NEEDS_REVISION`
       tradeoff and that extending the disqualifier list is always safe while extending the clean-signal
       allow-list or the closed-grammar filler/flavor constants is not.
 - [ ] `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` — in the
@@ -1241,10 +1365,13 @@ do not add a fixture file, as the harness is deliberately self-contained.
 | BSD versus GNU regex divergence (`\b` in `sed`, `tr` locale behavior) | Medium | Medium | `\b` is used only in `grep -E`, where the file already documents cross-implementation verification; `sed` uses explicit `[^[:alnum:]_]` boundary groups; `tr` runs under `LC_ALL=C`. The prototype (including the closed-grammar helper added in the Step 7 review round) was executed on BSD tooling and CI covers GNU |
 | Retargeting Group C's 9 expectations masks a real regression | Medium | Medium | The Group A/A2/A3/B–E disposition tables are exhaustive; the PR must state that no scenario outside Group A2, Group A3, Group B, or Group C changed |
 | **RESOLVED — not an accepted risk.** A prior revision's single-leftover-token tolerance let `Approved. Revert.` return `APPROVED`. A human reviewer rejected that trade-off and directed zero-tolerance plus a curated, evidenced vendor-flavor allow-list instead (Decision 2). Verified: `Approved. Revert.` now returns `NEEDS_REVISION`. This row is retained to preserve the audit trail of the decision that was made and reversed within this same review round | — | — | Fixed. See Decision 2's "Human decision" note for the full rationale (failure-direction asymmetry: a missing flavor token safe-fails, it does not false-approve) |
-| **RESOLVED — not an accepted risk.** The zero-tolerance revision above then admitted `codex`/`review`/`reviewed`/`commit` to `CODEX_RESIDUE_FILLER_WORD_PATTERN` as bare tokens, to make vendor labels excise to nothing. `commit` and `review` are also ordinary imperative verbs; verified `Looks good. Commit this.` returned `APPROVED`. A companion finding showed the footer strip's bare-phrase anchor was under-specified the same way: a normal paragraph merely mentioning "About Codex in GitHub" was truncated away and the response returned `APPROVED`. This is retained to preserve the audit trail — this plan produced the SAME class of finding twice in a row before this row's fix | — | — | Fixed (Codex GitHub findings `3803050745`/`3803050750`). Vendor metadata is now stripped by anchored structural patterns (`codex_strip_codex_footer`'s markup-structure requirement, `codex_strip_vendor_metadata_lines`'s position-anchored label strips) — never by token-level allow-listing. See Decision 2's "governing asymmetry" note |
+| **RESOLVED — not an accepted risk.** The zero-tolerance revision above then admitted `codex`/`review`/`reviewed`/`commit` to `CODEX_RESIDUE_FILLER_WORD_PATTERN` as bare tokens, to make vendor labels excise to nothing. `commit` and `review` are also ordinary imperative verbs; verified `Looks good. Commit this.` returned `APPROVED`. A companion finding showed the footer strip's bare-phrase anchor was under-specified the same way: a normal paragraph merely mentioning "About Codex in GitHub" was truncated away and the response returned `APPROVED`. This is retained to preserve the audit trail — this plan produced the SAME class of finding twice in a row before this row's fix | — | — | Fixed (Codex GitHub findings `3803050745`/`3803050750`). Vendor metadata is now stripped by anchored structural patterns — never by token-level allow-listing. See Decision 2's "governing asymmetry" note. (The footer strip's specific technique was corrected again in the very next round — see the row below — this row documents only the vendor-metadata-token half of the fix, which remains unchanged) |
+| **RESOLVED — not an accepted risk.** The footer-marker correction two rows above was itself still a flexible regex over tag *names* (`<details[^>]*>…<summary[^>]*>…</summary`), and flexible patterns accept lookalikes: verified `Looks good.` followed by `<details-not-footer><summary-note>About Codex in GitHub</summary-note>` then `Rename the unsafe function.` matched the regex and returned `APPROVED`. This is the THIRD consecutive round a regex over this one helper produced a fresh lookalike gap (generic `<details` → bare phrase → flexible tag names). This is retained to preserve the audit trail — regex-tightening was explicitly rejected as the fix this time | — | — | Fixed (Codex GitHub finding `3803189273`) by changing technique, not tightening the regex a fourth time: `codex_strip_codex_footer` now requires exact byte equality against `CODEX_FOOTER_OPENING_LITERAL`, a line captured verbatim from live Codex responses and verified byte-identical between the PR #1489 and PR #1490 captures (`diff`/`od -c`). See Decision 6's "Third correction" note |
 | Vendor introduces a NEW sign-off flourish word not in `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` (currently just `swish`), and a real clean response containing it now safe-fails | Medium | Low–Medium | **This is not a new class of exposure** — it is the same "vendor wording change → safe-fail" risk already recorded in the first row of this table, just realized through a different token. Recovery is the same: capture the new wording live (as `swish` was captured from PR #1489) and add it to `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` with the same review discipline `CODEX_CLEAN_SIGNAL_PATTERN` changes receive — never add a plausible-sounding word pre-emptively, and the token must still pass the imperative-verb/directive-noun exclusion test |
+| **The vendor changes the footer's exact opening bytes (a new emoji, added whitespace, a wrapping tag), and `CODEX_FOOTER_OPENING_LITERAL` no longer matches — every genuinely clean PR safe-fails until the literal is updated** | Medium | Medium | **Accepted trade, recorded explicitly (Decision 6's "Third correction" note): this is the same shape as the first row of this table (a vendor wording/format change causing safe-fail), now covering the footer's exact markup rather than only the clean-signal vocabulary, and it is strictly preferable to the alternative it replaces — a lookalike silently discarding real content and returning a false `APPROVED`.** Recovery is a one-line update to `CODEX_FOOTER_OPENING_LITERAL`, re-captured live from a real Codex response and verified with `od -c`, not a return to regex matching |
 | Extending `CODEX_RESIDUE_FILLER_WORD_PATTERN` or `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` with a word that widens the false-`APPROVED` surface — this plan's review process has now produced this exact finding twice (the original leftover-token tolerance, then the bare vendor-identity tokens) | Low, **if the mechanical test below is applied**; historically Medium — it has recurred twice without one | High | **Mechanical, checkable admission test (Decision 2, added after findings `3803050745`/`3803050750`): no token may be added to either pattern if it can function as an imperative verb or a directive noun in English, and no vendor-identity/metadata token may be added at all — vendor metadata is handled by anchored structural stripping, never token allow-listing.** Same review discipline as extending `CODEX_CLEAN_SIGNAL_PATTERN` (Decision 2) — flagged explicitly in the Layer-by-Layer checklist and in Decision 2's "Reviewers must not..." list so a future PR touching either constant is held to the same bar. `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` specifically also requires evidence from a real captured Codex response before any addition |
-| The 5 Group A2 and 9 total retargeted scenarios (Group A2 + E3, plus E23/E24 as new `NEEDS_REVISION`-asserting scenarios) mask a real regression in something other than A3 | Medium | Medium | The Group A/A2/A3/B–E disposition tables are exhaustive; the PR must state the full composition delta by name (Decision 2, "Reconciled test-disposition counts") |
+| Regressing `codex_strip_codex_footer` back to a regex (for readability, or to "generalize" it) reopens the lookalike class this row's fix closed — this plan's review process has now produced this exact class of finding three times on this one helper | Low, **if this row's rule is followed**; historically High — it recurred three times without one | High | **Standing rule (Decision 6): `codex_strip_codex_footer` must remain an exact byte-literal match against `CODEX_FOOTER_OPENING_LITERAL`. Any PR that reintroduces a regex, a tag-name pattern, or a "flexible" match for this helper — however narrowly scoped it looks — must be rejected and pointed at this row and Decision 6's "Third correction" note.** Narrowing the literal's applicability (e.g. requiring an even more specific match) is always safe; any form of pattern-flexibility is not |
+| The 5 Group A2 and 11 total retargeted scenarios (Group A2 + E3, plus E23/E24/E25/E26 as new `NEEDS_REVISION`-asserting scenarios) mask a real regression in something other than A3 | Medium | Medium | The Group A/A2/A3/B–E disposition tables are exhaustive; the PR must state the full composition delta by name (Decision 2, "Reconciled test-disposition counts") |
 
 ---
 
@@ -1279,15 +1406,20 @@ responses to a persistent false `NEEDS_REVISION` are, in order:
 2. If a disqualifier is too broad, narrow `CODEX_APPROVAL_DISQUALIFIER_PATTERN` — always safe, no correctness
    analysis needed.
 3. If the closed-grammar check (A3 check 2) is too strict for a specific, genuinely inert construction, the
-   ONLY safe levers are (a) if it is vendor STRUCTURAL metadata (a label or footer form), add an anchored
-   structural pattern to `codex_strip_codex_footer` or `codex_strip_vendor_metadata_lines` matching its actual
-   literal/markup shape — **never** a token to `CODEX_RESIDUE_FILLER_WORD_PATTERN`, even a
-   "vendor-identity-looking" one, because the same word may also be an ordinary English directive (this is
-   exactly how findings `3803050745`/`3803050750` happened); or (b) if it is genuine vendor flavor prose, add a
-   specific token **evidenced from a real captured Codex response** to `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN`
-   (never an invented or merely plausible word), after confirming it fails the imperative-verb/directive-noun
-   test — the same review bar as step 4 below, per Decision 2. There is no sentence-opener/starter lever any
-   more; that mechanism was deleted along with `CODEX_RESIDUE_STARTER_PATTERN`.
+   ONLY safe levers are: (a) if the real vendor **footer's exact opening bytes** changed, re-capture the new
+   opening line live from a real Codex response and update `CODEX_FOOTER_OPENING_LITERAL` to match it
+   byte-for-byte (verify with `od -c`) — **never** loosen `codex_strip_codex_footer` back into a regex or
+   pattern of any kind, that is exactly the mistake three consecutive review rounds made (see Decision 6's
+   "Third correction" note and the standing rule in Risks & Mitigations); (b) if it is a different vendor
+   STRUCTURAL metadata label (not the footer), add a new anchored, position-specific strip to
+   `codex_strip_vendor_metadata_lines` matching its literal shape — **never** a token to
+   `CODEX_RESIDUE_FILLER_WORD_PATTERN`, even a "vendor-identity-looking" one, because the same word may also
+   be an ordinary English directive (this is exactly how findings `3803050745`/`3803050750` happened); or (c)
+   if it is genuine vendor flavor prose, add a specific token **evidenced from a real captured Codex response**
+   to `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` (never an invented or merely plausible word), after confirming it
+   fails the imperative-verb/directive-noun test — the same review bar as step 4 below, per Decision 2. There
+   is no sentence-opener/starter lever any more; that mechanism was deleted along with
+   `CODEX_RESIDUE_STARTER_PATTERN`.
 4. If the vendor's clean wording is unrecognized, extend `CODEX_CLEAN_SIGNAL_PATTERN` — one of the two changes
    that widens the approval surface and therefore needs full review.
 5. If Codex begins submitting reviews with `state == "APPROVED"`, file the deferred structural-approval
@@ -1311,9 +1443,10 @@ responses to a persistent false `NEEDS_REVISION` are, in order:
    and `CODEX_NEGATED_APPROVAL_PATTERN`.
    *Verify*: `bash -n scripts/development-workflow/codex-github-reviewer.sh` succeeds and
    `grep -n "CODEX_NEGATED_APPROVAL" scripts/development-workflow/codex-github-reviewer.sh` returns nothing.
-3. **Add the five helpers** `codex_strip_codex_footer` (anchored on the actual `<details>`/`<summary>` markup
-   structure containing the marker, not a generic `<details` match and not a bare-phrase match outside that
-   markup), `codex_strip_vendor_metadata_lines` (anchored, position-specific strips of the `Codex Review:` and
+3. **Add the five helpers** `codex_strip_codex_footer` (exact byte-literal match against
+   `CODEX_FOOTER_OPENING_LITERAL`, captured verbatim from live Codex responses — not a regex of any kind; see
+   Decision 6's "Third correction" note for why regex-over-tag-names was abandoned as a technique),
+   `codex_strip_vendor_metadata_lines` (anchored, position-specific strips of the `Codex Review:` and
    `Reviewed commit:` labels and a leading `Codex` self-reference — never a token-level `codex`/`review`/
    `commit` match), `codex_response_first_paragraph`, `codex_excise_clean_signals` (the iterative excision
    loop), and `codex_residue_is_closed_grammar` (A3 check 2), placed next to the other normalization helpers.
@@ -1327,8 +1460,8 @@ responses to a persistent false `NEEDS_REVISION` are, in order:
    and deleted symbols.
 7. **Update the tests**: apply Group A2, Group A3, Group B, and Group C changes (using the Group B body as
    retargeted a third time during the Step 7 review round — `` Looks good; `foo.py:42`. ``), refresh Group D
-   comments, then add the 21 new scenarios listed in "New scenarios" (the original 12 plus the 9 added for
-   E16–E24).
+   comments, then add the 23 new scenarios listed in "New scenarios" (the original 12 plus the 11 added for
+   E16–E26).
    *Verify*: run `bash scripts/development-workflow/tests/test-pr-review-loop.sh` and confirm it exits 0, that
    the total assertion count matches the "Reconciled test-disposition counts" table (report any discrepancy),
    and that the failures you fixed are exactly the ones this plan predicted — read the output and confirm no
@@ -1357,27 +1490,34 @@ responses to a persistent false `NEEDS_REVISION` are, in order:
 ## Document Quality Gate
 
 - Spec/brief coverage: Checked — every objective in issue #1491's Option 2 maps to a decision, an
-  implementation step, and test coverage; Options 1 and 3 are addressed explicitly under Decision 3. The six
+  implementation step, and test coverage; Options 1 and 3 are addressed explicitly under Decision 3. The seven
   Codex GitHub findings across the Step 7 review round (`3800167486`, `3800167489`, `3800167492`,
-  `3800167494`, `3803050745`, `3803050750`) and the human decision that revised how finding `3800167486` was
-  closed are all refinements strictly within Option 2 — none required or introduced a change of approach.
+  `3800167494`, `3803050745`, `3803050750`, `3803189273`) and the human decision that revised how finding
+  `3800167486` was closed are all refinements strictly within Option 2 — none required or introduced a change
+  of approach.
 - Implementation-order consistency: Checked — helper names (`codex_strip_codex_footer`,
   `codex_strip_vendor_metadata_lines`, `codex_response_first_paragraph`, `codex_excise_clean_signals`,
   `codex_residue_is_closed_grammar`), constant names (`CODEX_CLEAN_SIGNAL_PATTERN`,
   `CODEX_CLEAN_SIGNAL_EXCISION`, `CODEX_APPROVAL_NEGATION_PATTERN`, `CODEX_APPROVAL_HEDGE_PATTERN`,
   `CODEX_APPROVAL_ACTIONABLE_PATTERN`, `CODEX_APPROVAL_DISQUALIFIER_PATTERN`,
-  `CODEX_RESIDUE_FILLER_WORD_PATTERN`, `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` — no
+  `CODEX_RESIDUE_FILLER_WORD_PATTERN`, `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN`, `CODEX_FOOTER_OPENING_LITERAL` — no
   `CODEX_RESIDUE_STARTER_PATTERN`, deleted; no `codex`/`review`/`reviewed`/`commit`/`this`/`that` in
-  `CODEX_RESIDUE_FILLER_WORD_PATTERN`, removed this round), decision labels (Decision 1–6), scenario names
-  (including the 9 added for edge cases E16–E24), and file paths agree across the Summary, Decisions,
-  Layer-by-Layer, Code Samples, Parser-risk addendum, Testing Strategy, and Implementation Order sections.
+  `CODEX_RESIDUE_FILLER_WORD_PATTERN`, removed; `codex_strip_codex_footer` is an exact byte-literal match, not
+  a regex, changed this round), decision labels (Decision 1–6), scenario names (including the 11 added for
+  edge cases E16–E26), and file paths agree across the Summary, Decisions, Layer-by-Layer, Code Samples,
+  Parser-risk addendum, Testing Strategy, and Implementation Order sections. A dedicated staleness sweep this
+  round also reconciled the architecture/overview description (Summary, Decision 1), Decision 2's own prose
+  (it previously described `CODEX_RESIDUE_FILLER_WORD_PATTERN` as including demonstrative pronouns and
+  vendor-identity tokens — both were removed two revisions earlier; finding `3803189278`), the Layer-by-Layer
+  checklist, Risks & Mitigations, the operational-cost section, the Group A description in Test disposition,
+  and the smoke-test doc against the shipped code, not just the sections a specific finding named.
 - Verification support: Checked — every claim about existing behavior, file coverage, counts, and the vendor
   wire format cites a Verification Log command or a named source file. Every regex/helper introduced or
   changed during the Step 7 review round was re-executed on BSD `sed`/`grep`/`awk` against the reviewer's
-  literal counterexamples, the full E1–E24 edge-case set, all 9 Group A bodies, all 5 Group A2 bodies, all 3
+  literal counterexamples, the full E1–E26 edge-case set, all 9 Group A bodies, all 5 Group A2 bodies, all 3
   Group A3 (simplified) bodies, the retargeted Group B body, all 9 Group C bodies, and the two real captured
-  Codex bodies (PR #1489/#1490, re-fetched live during this review round) — see the Code Samples section's
-  opening note.
+  Codex bodies (PR #1489/#1490, re-fetched live during this review round, and their footer openings confirmed
+  byte-identical via `diff`/`od -c`) — see the Code Samples section's opening note.
 - Behavioral guarantees: Checked — the "cannot weaken the `CHANGES_REQUESTED` short-circuit" guarantee names
   its mechanism (the classifier only moves responses from priority tier 0 to tier 2, and blocking is
   evaluated first at every verdict site); the "truncation cannot hide a refusal" guarantee names
@@ -1386,10 +1526,12 @@ responses to a persistent false `NEEDS_REVISION` are, in order:
   merely asserting it, and discloses the one residual gap that mechanism does not close; the "vendor metadata
   handling cannot widen the approval surface" guarantee names its mechanism (anchored structural stripping,
   never token-level allow-listing) after two rounds of findings showed the token-list approach could not hold
-  that guarantee on its own.
+  that guarantee on its own; the "footer truncation cannot be defeated by a lookalike" guarantee now names its
+  mechanism (exact byte-literal line equality, not any regex) after three rounds of regex tightening on the
+  same helper each produced a fresh lookalike.
 - Complex workflow decision-gate matrix: Checked — see the matrix below.
 - Parser/API/concurrency checklist: Checked (parser-risk addendum present with edge-case enumeration through
-  E24 and per-case unit-test mapping); concurrent-event-source recorded as not applicable with rationale.
+  E26 and per-case unit-test mapping); concurrent-event-source recorded as not applicable with rationale.
 - CHANGELOG literal format: Checked — Implementation Order step 8 gives the entry in the project's
   `**Bold Title** (#N):` format under `### Changed`.
 - Not-applicable rationale: Checked — suppression semantics and concurrency each carry a rationale.
