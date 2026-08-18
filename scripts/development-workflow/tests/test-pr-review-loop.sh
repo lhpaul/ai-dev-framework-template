@@ -8974,6 +8974,7 @@ unset _codex_e24c_footer_byte_mutation_in_url_not_approved_mock_dir _codex_e24c_
 # from the others: a missing/mistyped gate at any one site still lets
 # this construction pass if it resolves at a different site.
 _codex_footer_near_miss_main_loop_safe_fails_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_footer_near_miss_main_loop_safe_fails_mock_dir/comment_calls"
 cat > "$_codex_footer_near_miss_main_loop_safe_fails_mock_dir/gh" <<'CODEX_FOOTER_NEAR_MISS_MAIN_LOOP_SAFE_FAILS_GH'
 #!/usr/bin/env bash
 case "$*" in
@@ -8990,7 +8991,26 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:451,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. **Reviewed commit:** `face000001` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    # Call 1 is the pre-trigger dedup check (stays empty). Call 2 is the
+    # main poll loop's own bot-response check -- this is the ONLY call
+    # that returns the near-miss body, so this scenario genuinely
+    # isolates the main-loop verdict site: if main-loop's own gate is
+    # broken, no LATER site (async-arrival, async-final) ever sees this
+    # body again to independently rescue the correct verdict, since
+    # calls 3+ return empty and the run legitimately times out instead
+    # (issue #1491 implementation plan follow-up, PR #1494 review
+    # finding 3808305143: the original construction returned the
+    # near-miss body on every call, which let a still-correct
+    # async-arrival gate silently rescue a broken main-loop gate).
+    if [ "$calls" -eq 2 ]; then
+      jq -nc '[{id:451,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. **Reviewed commit:** `face000001` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    else
+      printf '[]\n'
+    fi
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
@@ -9049,8 +9069,13 @@ case "$*" in
     # Calls 1-2 are the pre-trigger dedup check and the main poll-loop's
     # bot-response check; both stay empty so execution falls through to
     # the async-arrival grace poll (call 3), which returns the near-miss
-    # body directly as SHA-pinned terminal evidence.
-    if [ "$calls" -ge 3 ]; then
+    # body directly as SHA-pinned terminal evidence. Calls 4+ return
+    # empty, so this scenario genuinely isolates the async-arrival
+    # verdict site rather than letting a later site (async-final)
+    # independently rediscover the same body and rescue a broken
+    # async-arrival gate (issue #1491 implementation plan follow-up,
+    # PR #1494 review finding 3808305143).
+    if [ "$calls" -eq 3 ]; then
       jq -nc '[{id:461,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. **Reviewed commit:** `face000002` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     else
       printf '[]\n'

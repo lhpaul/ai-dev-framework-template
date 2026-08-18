@@ -1421,6 +1421,59 @@ This is a full design replacement, so the evidence the implementation must produ
     vector still safe-fails once normalization flattens it — confirmed by execution against the real, composed
     chain, not asserted from the pattern's appearance alone.
 
+### Planted-violation proof (REVIEW.md Verification Discipline; PR #1494 review finding `3808305143`)
+
+`REVIEW.md`'s Verification Discipline rule requires, for any PR that materially modifies an automated check —
+this classifier and its Decision 6 gate both qualify — a demonstrated run at a concrete file and line showing
+the check fails with the targeted violation present and passes once it is removed, in both directions, not a
+description. Codex GitHub finding `3808305143` (P1) correctly identified that the evidence posted for this PR
+did not meet that bar: it described gate-revert experiments in prose without naming file:line or pasting both
+runs' actual output. The full transcripts (mutation, failing-run output, restoration, passing-run output) for
+every materially modified check are posted as a PR #1494 comment and are the authoritative record; this section
+indexes what each transcript covers and what it found, so the proof is discoverable from the plan, not only
+from a comment that could scroll out of view.
+
+**Decision 6 acknowledgement gate — all four verdict sites, each with its own full transcript (not one
+transcript generalized to the other three):**
+
+- Main-loop, `codex-github-reviewer.sh:1605` — mutation removes the `[ SOURCE != "review" ]` condition,
+  reverting to the unconditional pre-Decision-6 form. Caught by `codex_footer_near_miss_main_loop_safe_fails`.
+  **This transcript also found and fixed a real, pre-existing test-isolation gap**: the scenario's mock
+  originally returned the near-miss body on every poll call, so a broken main-loop gate was silently rescued by
+  the still-correct async-arrival gate one site later, and the mutation produced no detectable failure at all
+  on first attempt. Fixed by making the mock call-counted (near-miss body only on call 2, the main poll loop's
+  own check; empty on calls 3+), matching the isolation convention the other three sites' mocks already used —
+  after the fix, the same mutation is correctly caught.
+- Async-arrival, `codex-github-reviewer.sh:1823` — same mutation shape. Caught by
+  `codex_footer_near_miss_async_arrival_safe_fails`. **Same rescue gap found and fixed**: the mock originally
+  kept returning the near-miss body from call 3 onward (`-ge 3`), letting async-final rescue a broken
+  async-arrival gate; tightened to `-eq 3` (near-miss body only on call 3; empty on calls 4+).
+- Async-final, `codex-github-reviewer.sh:1929` — mutation removes the `[ SOURCE = "review" ] ||` disjunct from
+  the negated-form gate, reverting to the unconditional `! grep` pre-Decision-6 form. Caught by
+  `codex_footer_near_miss_async_final_safe_fails`. This scenario's mock was already properly isolated (no
+  rescue possible — async-final is the terminal site for its own construction's branch).
+- Async-reaction-final, `codex-github-reviewer.sh:2081` — same negated-form mutation shape. Caught by
+  `codex_footer_near_miss_async_reaction_final_safe_fails`. Also already properly isolated for the same
+  structural reason (terminal site for the reaction-detected branch).
+
+**Whole-body exact-match classifier (`codex_response_is_approved`, the array element cited at
+`codex-github-reviewer.sh:759` in the finding, template literal at `codex-github-reviewer.sh:737`)** — mutation
+removes the trailing `$` anchor from `CODEX_APPROVED_TEMPLATES`' one entry, reopening the "extra trailing
+content" gap Decision 1 exists to close. Caught by `codex_e10_trailing_prose_not_approved`, which produces a
+false `VERDICT: APPROVED` with the violation present.
+
+**Bounded flavor placeholder (`codex-github-reviewer.sh:737`)** — mutation removes `*` from the placeholder's
+excluded-character class (`[^*`[:cntrl:]]{1,40}` → `[^`[:cntrl:]]{1,40}`). Caught by
+`codex_placeholder_asterisk_not_approved`, which also produces a false `VERDICT: APPROVED` with the violation
+present.
+
+**Not re-proven (exemption, `REVIEW.md:324`): the SHA field's `[0-9a-f]{7,40}` bound and the complete footer
+literal.** Neither was modified by this PR's diff — the SHA bound is unchanged from the version this plan's
+E5/E6/E7/E8 scenarios already proved (Decision 2's original implementation), and the footer literal is
+byte-identical to the version E9–E11/E24 already proved. Carrying an already-proven check unmodified is a pure
+refactor with no behavior change on that surface, so re-proof is exempt per `REVIEW.md:324`; this exemption is
+stated explicitly rather than silently omitting the proof.
+
 ---
 
 ## Seed Data

@@ -575,6 +575,32 @@ rather than a general wildcard.
 
 ---
 
+### Step 17: Planted-violation proof for every materially modified check (REVIEW.md Verification Discipline; PR #1494 review finding `3808305143`)
+
+**Maps to**: `REVIEW.md` → Verification Discipline / Code Review Checklist → Pass 2 → "PRs that add or modify an
+automated check, guard, lint rule, or CI job". A Codex GitHub review found the PR's original evidence for the
+Decision 6 gate reverts described the experiments in prose without naming file:line or pasting both runs —
+this step is the runbook-side record of the corrected proof. The full transcripts (exact commands, exact
+output, both directions, for every check) are posted as a comment on PR #1494 and indexed in the plan's
+"Planted-violation proof" section; this step's job is to confirm they exist and are reproducible, not to
+duplicate their full output here.
+
+1. For each of the four Decision 6 gate sites (`codex-github-reviewer.sh:1605`, `:1823`, `:1929`, `:2081`),
+   confirm the plan's "Planted-violation proof" section names the exact mutation, the scenario that catches it,
+   and (for main-loop and async-arrival) the pre-existing test-isolation gap found and fixed during this
+   verification.
+2. For the whole-body classifier (`codex-github-reviewer.sh:737`, trailing `$` anchor) and the bounded flavor
+   placeholder (`codex-github-reviewer.sh:737`, `*` exclusion), confirm the same section names the mutation and
+   catching scenario, and that both produced a false `VERDICT: APPROVED` with the violation present.
+3. Spot-check at least one transcript by reproducing it: apply the cited mutation to a scratch copy, run the
+   named scenario in isolation, confirm the failing output matches, restore, confirm the passing output matches.
+
+**Expected result**: every materially modified check has a named file:line, a named catching scenario, and a
+reproducible failing/passing pair; the SHA field and footer literal exemption (`REVIEW.md:324`) is stated
+explicitly with its rationale, not omitted silently.
+
+---
+
 ## Results
 
 | Step | Pass / Fail | Notes |
@@ -595,12 +621,15 @@ rather than a general wildcard.
 | 14 | Pass | `codex-github.md` gained a "Verdict Classification" section stating the whole-body exact-template contract; Protocol 93's "Codex GitHub terminal evidence" block states the template-reproduction requirement; `CHANGELOG.md` `[Unreleased]` → `### Changed` carries the `**Conservative Codex verdict classifier** (#1491):` entry |
 | 15 | Pass | `markdownlint-cli2` (changed docs + this runbook + `CHANGELOG.md`): 0 errors; `markdown-heuristic-lint.py`: exit 0; `workflow-shell-snippet-lint.py --base-ref origin/develop`: exit 0; `shellcheck --severity=warning` on both changed `.sh` files: only pre-existing, untouched warnings at unrelated lines (1699-1700 of the test file, unchanged by this PR) |
 | 16 | Pass | Live-refetched PR #1494 comment `5333550055` still reads `:rocket:`; all 14 evidenced flavor tokens (including the real `:rocket:` and `Swish!` captures) exit 0/`APPROVED` under the bounded placeholder; a previously-unevidenced token (`Fantastic job!`) now exits 0/`APPROVED` (the intended behavior change); `*`-in-slot and backtick-in-slot both exit 1/safe-fail; 40-char slot exits 0/`APPROVED` (boundary inclusive), 41-char slot exits 1/safe-fail; newline-separated overflow exits 1/safe-fail |
+| 17 | Pass | Six planted-violation transcripts produced (4 Decision 6 gates + whole-body classifier + bounded placeholder), each with cited file:line, exact command, failing output, and restored-passing output; posted as a PR #1494 comment and indexed in the plan's "Planted-violation proof" section; main-loop and async-arrival transcripts found and fixed a pre-existing test-isolation gap (sticky mock bodies letting a downstream site's correct gate rescue an upstream broken one) |
 
 **Platform tested**: macOS/BSD (Darwin 25.5.0)
 
 **Tester**: developer agent (issue #1491 implementation; Step 16 added and then revised by the reviewer agent
 after PR #1494's own Codex review falsified the single-flavor-literal assumption during Step 7a review, and
-after a follow-up evidence sweep for that fix falsified the enumeration approach itself)
+after a follow-up evidence sweep for that fix falsified the enumeration approach itself; Step 17 added by the
+reviewer agent after a Codex GitHub review (finding `3808305143`) found the planted-violation evidence for the
+Decision 6 gates was insufficiently specific)
 
 **Date**: 2026-08-18 (original); flavor-token enumeration correction 2026-08-18; bounded-placeholder correction
-2026-08-18
+2026-08-18; planted-violation transcript correction 2026-08-18
