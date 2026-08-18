@@ -24,6 +24,62 @@ during the async grace-period poll — is treated as unavailable, not as
 absence of evidence, so it cannot be silently overridden by a clean
 submitted review.
 
+## Verdict Classification
+
+`APPROVED` requires the response — the **entire, untruncated** body,
+whitespace-normalized — to be an **exact** match against one of a small set
+of literal templates captured verbatim from real Codex clean responses, each
+template including the complete vendor `<details>` "About Codex in GitHub"
+footer text. Today exactly one template is evidenced, covering the
+`Codex Review: Didn't find any major issues. <flavor>` / `**Reviewed commit:**`
+shape plus the complete footer. There is no vocabulary list, no grammar, no
+truncation step, and no case-insensitive or punctuation-tolerant matching —
+whitespace normalization (collapsing whitespace runs to a single space,
+trimming the ends) is the only permitted flexibility.
+
+**The template has exactly two bounded placeholders, never a general
+wildcard**: the commit SHA (`[0-9a-f]{7,40}`, git's own documented
+abbreviated-to-full SHA-1 hex-length range), and the `<flavor>` slot
+immediately after "Didn't find any major issues. " — a single bounded
+placeholder, ``[^*`[:cntrl:]]{1,40}`` (up to 40 characters, excluding
+asterisk, backtick, and control characters), not a fixed word and not an
+enumerated list.
+
+**Why a placeholder, not an enumeration.** PR #1494's own Codex review
+returned `:rocket:` instead of the originally-shipped `Swish!` literal,
+proving the vendor rotates this slot. The first fix enumerated every
+evidenced token as a literal alternation — but a repository-history sweep
+for that fix found 14 distinct tokens (single words, full sentences, GitHub
+emoji shortcodes, inconsistent trailing punctuation) from under 50 samples,
+a discovery rate indicating LLM-generated variety rather than a fixed,
+enumerable vocabulary. Enumeration would not have converged — the same
+non-convergence failure this classifier's entire design history exists to
+avoid, on a new axis. The bounded placeholder replaced the alternation
+before merge.
+
+**Bound derivation**: the 40-character cap is the longest evidenced token
+(31 characters, "More of your lovely PRs please.") rounded up with modest
+headroom. The excluded characters protect adjacent template structure only:
+asterisk protects the `**Reviewed commit:**` marker that follows, backtick
+protects the SHA field's delimiters, and control characters (including
+newline) are excluded as defense in depth even though whitespace
+normalization already prevents them from reaching this point.
+
+**The deliberate, disclosed trade of this design**: a genuinely clean
+response using different wording anywhere in the body — including a
+cosmetic vendor footer rewording, or a flavor phrase exceeding 40 characters
+or containing an excluded character — safe-fails to `NEEDS_REVISION` today
+rather than being approved. This failure direction is always safe (more
+`NEEDS_REVISION`, never a false `APPROVED`). **The flavor placeholder is the
+one exception to "never a false `APPROVED`" stated plainly, not hidden**: a
+false `APPROVED` through this slot requires Codex to emit self-contradictory
+output — a clean verdict immediately followed by an actual directive inside
+the 40-character slot, while still reproducing the complete, exact footer
+afterward. No evidence of this has ever been observed; recovery if it ever
+is, is narrowing the placeholder's bound, never widening it without new live
+evidence. See issue #1491's implementation plan (Decision 2 and its two
+addenda) for the full design history and rationale.
+
 ## Prerequisites
 
 Before a repository keeps `codex-github` in `review.on_ready.github`, verify:

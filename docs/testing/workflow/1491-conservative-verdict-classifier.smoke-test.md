@@ -340,9 +340,12 @@ runbook
    `**Reviewed commit:**` marker with a lowercase-hex SHA, followed by the **complete** `<details> <summary>ℹ️
    About Codex in GitHub</summary>…</details>` footer — not just its opening line. Compare the **entire** footer
    text (bulleted list, settings link, acknowledgement sentence, through the closing `</details>`) against the
-   literal baked into `CODEX_APPROVED_TEMPLATES`, not only the opening line. **If any of these components has
-   changed even slightly, anywhere in the body including the footer** (different flavor word, different marker
-   format, different footer wording anywhere in its text), stop and report it — do not proceed to step 3
+   literal baked into `CODEX_APPROVED_TEMPLATES`, not only the opening line. **The flavor word/phrase itself
+   (`Swish!` here) is no longer a fixed literal to compare against (Decision 2 Second Addendum) — it is a
+   bounded placeholder (up to 40 characters, excluding `*`, backtick, and control characters), so any flavor
+   text within that bound is expected and not itself a sign of drift.** If the `**Reviewed commit:**` marker
+   format, the footer's exact wording, or the flavor text's length/character set (exceeds 40 characters, or
+   contains `*`/backtick/a control character) has changed, stop and report it — do not proceed to step 3
    assuming the existing `CODEX_APPROVED_TEMPLATES` entry still applies. This is a stricter check than any
    truncate-then-match revision of this runbook required, because the footer is now part of the literal being
    matched, not discarded before comparison.
@@ -527,28 +530,106 @@ design any earlier revision of this plan shipped there).
 
 ---
 
+### Step 16: The bounded flavor placeholder approves every evidenced token, a previously-unevidenced one, and enforces its three guards (Decision 2 Second Addendum, PR #1494 follow-up)
+
+**Maps to**: Decision 2 Second Addendum — this step exists because PR #1494's own Codex review (comment id
+`5333550055`) safe-failed on its first real-traffic exercise (the response read `:rocket:`, not the sole
+originally-evidenced `Swish!` literal), and the enumeration this repository first shipped to fix that (a
+14-token literal alternation) was itself replaced by a bounded placeholder before merge, once a sweep for that
+fix found enough token diversity to prove enumeration would not converge either.
+
+1. Re-fetch the live PR #1494 comment and confirm it still reads `Codex Review: Didn't find any major issues.
+   :rocket:` followed by the `**Reviewed commit:**` marker and the complete real footer:
+
+   ```bash
+   gh api repos/lhpaul/ai-dev-framework-template/issues/comments/5333550055 --jq '.body'
+   ```
+
+2. Run the reviewer against that exact body as a SHA-pinned root comment (mock convention from Step 6).
+3. For each of the other 13 evidenced flavor tokens (`Swish!`, `Nice work!`, `Chef's kiss.`, `You're on a
+   roll.`, `:tada:`, `Another round soon, please!`, `:+1:`, `Bravo.`, `Keep it up!`, `Delightful!`, `Keep them
+   coming!`, `Can't wait for the next one!`, `More of your lovely PRs please.`), build a body reproducing the
+   template with that token in place of the flavor slot and run the reviewer against it.
+4. Build a body using an invented, previously-unevidenced token (e.g. `Fantastic job!`, the same phrase the
+   prior alternation design's negative test used) in the flavor slot and run the reviewer against it. This is
+   the direct proof of the behavior change: under the alternation this exited `NEEDS_REVISION`; under the
+   bounded placeholder it exits `APPROVED`.
+5. Confirm the placeholder's structure guards: build a body with `*` inside the flavor slot (e.g.
+   `Great **job**`) and confirm it does **not** approve; build a body with a backtick inside the flavor slot
+   (e.g. `` Nice `work` ``) and confirm it does **not** approve.
+6. Confirm the length cap: build a body with exactly 40 characters in the flavor slot and confirm it **does**
+   approve (boundary inclusive); build a body with 41 characters and confirm it does **not** approve.
+7. Confirm the length cap is enforced even via a newline-separated injection vector: build a body where a
+   paragraph break (blank line) sits inside the flavor position, followed by an extra sentence long enough
+   that the flattened (post-normalization) flavor text exceeds 40 characters, and confirm it does **not**
+   approve.
+
+**Expected result**: steps 2 and 3 (all 14 evidenced tokens) exit 0 and print `VERDICT: APPROVED`. Step 4
+(previously-unevidenced token) now exits 0 and prints `VERDICT: APPROVED` — this is the intended behavior
+change, not a regression. Step 5's two structure-guard bodies, the step 6 41-character body, and the step 7
+newline-separated body all exit 1 and print `VERDICT: NEEDS_REVISION (unrecognized response format —
+safe-fail)`; the step 6 40-character body exits 0. If any structure/length guard case instead approves, the
+placeholder's character class or length bound has regressed, and the finding must be treated as `blocking` on
+the same footing as a template-level escaping bug — this is the mechanism that keeps the placeholder bounded
+rather than a general wildcard.
+
+---
+
+### Step 17: Planted-violation proof for every materially modified check (REVIEW.md Verification Discipline; PR #1494 review finding `3808305143`)
+
+**Maps to**: `REVIEW.md` → Verification Discipline / Code Review Checklist → Pass 2 → "PRs that add or modify an
+automated check, guard, lint rule, or CI job". A Codex GitHub review found the PR's original evidence for the
+Decision 6 gate reverts described the experiments in prose without naming file:line or pasting both runs —
+this step is the runbook-side record of the corrected proof. The full transcripts (exact commands, exact
+output, both directions, for every check) are posted as a comment on PR #1494 and indexed in the plan's
+"Planted-violation proof" section; this step's job is to confirm they exist and are reproducible, not to
+duplicate their full output here.
+
+1. For each of the four Decision 6 gate sites (`codex-github-reviewer.sh:1605`, `:1823`, `:1929`, `:2081`),
+   confirm the plan's "Planted-violation proof" section names the exact mutation, the scenario that catches it,
+   and (for main-loop and async-arrival) the pre-existing test-isolation gap found and fixed during this
+   verification.
+2. For the whole-body classifier (`codex-github-reviewer.sh:737`, trailing `$` anchor) and the bounded flavor
+   placeholder (`codex-github-reviewer.sh:737`, `*` exclusion), confirm the same section names the mutation and
+   catching scenario, and that both produced a false `VERDICT: APPROVED` with the violation present.
+3. Spot-check at least one transcript by reproducing it: apply the cited mutation to a scratch copy, run the
+   named scenario in isolation, confirm the failing output matches, restore, confirm the passing output matches.
+
+**Expected result**: every materially modified check has a named file:line, a named catching scenario, and a
+reproducible failing/passing pair; the SHA field and footer literal exemption (`REVIEW.md:324`) is stated
+explicitly with its rationale, not omitted silently.
+
+---
+
 ## Results
 
 | Step | Pass / Fail | Notes |
 | --- | --- | --- |
-| 1 | | |
-| 2 | | |
-| 3 | | |
-| 4 | | |
-| 5 | | |
-| 6 | | |
-| 7 | | |
-| 8 | | |
-| 9 | | |
-| 10 | | |
-| 11 | | |
-| 12 | | |
-| 13 | | |
-| 14 | | |
-| 15 | | |
+| 1 | Pass | `bash scripts/development-workflow/tests/test-pr-review-loop.sh` exits 0, `Tests: 722 passed, 0 failed` (684 baseline; +28 then -28 for the superseded 14-token alternation scenarios; +38 for the 18 bounded-placeholder scenarios) |
+| 2 | Pass | Comment-filtered deletion-list search returns nothing; `CODEX_APPROVED_TEMPLATES`/`codex_normalize_whitespace` each show one definition; `codex_response_is_approved` shows no footer-strip/fence/quote/not-only-idiom call; five call sites confirmed (`codex_response_priority` plus the four verdict sites) |
+| 3 | Pass | Comment-filtered `codex_strip_not_only_idiom` count = 2 (definition + one call, inside `codex_response_is_blocking`) |
+| 4 | Pass | Merge base `a0b8f8c7d9b63ea0f2ace945f78990579ceca828` resolved; `CODEX_BLOCKING_PATTERN`/`CODEX_MERGE_REFUSAL_PATTERN`/`CODEX_NEGATION_WORDS` diffs empty; full `codex_response_is_blocking` function-range diff empty (byte-identical) |
+| 5 | Pass | All four `codex_footer_near_miss_*_safe_fails` scenarios exit 1 with the unrecognized-format safe-fail, resolving at their named site per `INFO:` trace; independence verified by reverting only the async-final gate in a scratch copy — only that scenario regressed to `TIMED_OUT`, the other three still passed |
+| 6 | Pass | `No blocking issues found.` root comment exits 1, `VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)` |
+| 7 | Pass | Live-refetched PR #1489 root comment (2026-08-18, repo `26b5dada`) still matches the evidenced template verbatim; `codex_e1_real_pr1489_capture_approved` exits 0, `VERDICT: APPROVED` |
+| 8 | Pass | Live-refetched PR #1490 review body still the generic wrapper with no clean-signal text; `codex_e2_real_pr1490_review_not_approved` (review-sourced, state `COMMENTED`) exits 1, safe-fail |
+| 9 | Pass | `codex_e22_refusal_inside_footer_blocking` exits 1 with plain `VERDICT: NEEDS_REVISION` (blocking branch); isolated `codex_response_is_approved` call on the same body also returns non-zero on its own |
+| 10 | Pass | `codex_e23_footer_opening_line_only_not_approved` exits 1, safe-fail — finding `3803545669`'s construction is rejected |
+| 11 | Pass | `codex_e24a/b/c_footer_byte_mutation_*` (mid-sentence, before `</details>`, inside the URL) all exit 1, safe-fail |
+| 12 | Pass | `codex_e21_filler_composed_hedge_not_approved` (`Looks good, or is it?`) exits 1, safe-fail |
+| 13 | Pass | (a) Group APPROVED's two template-anchored members use distinct valid SHAs (`abcdefab12`, `abcabcabcabc1234567890`) and both exit 0/`APPROVED`; `codex_e7_full_length_sha_approved` (40-char) exits 0/`APPROVED`; (b) `codex_e5_short_sha_not_approved` (6-char, review-sourced), (c) `codex_e6_oversized_sha_not_approved` (41-char, review-sourced), and (d) `codex_e8_non_hex_sha_not_approved` (review-sourced) all exit 1, safe-fail |
+| 14 | Pass | `codex-github.md` gained a "Verdict Classification" section stating the whole-body exact-template contract; Protocol 93's "Codex GitHub terminal evidence" block states the template-reproduction requirement; `CHANGELOG.md` `[Unreleased]` → `### Changed` carries the `**Conservative Codex verdict classifier** (#1491):` entry |
+| 15 | Pass | `markdownlint-cli2` (changed docs + this runbook + `CHANGELOG.md`): 0 errors; `markdown-heuristic-lint.py`: exit 0; `workflow-shell-snippet-lint.py --base-ref origin/develop`: exit 0; `shellcheck --severity=warning` on both changed `.sh` files: only pre-existing, untouched warnings at unrelated lines (1699-1700 of the test file, unchanged by this PR) |
+| 16 | Pass | Live-refetched PR #1494 comment `5333550055` still reads `:rocket:`; all 14 evidenced flavor tokens (including the real `:rocket:` and `Swish!` captures) exit 0/`APPROVED` under the bounded placeholder; a previously-unevidenced token (`Fantastic job!`) now exits 0/`APPROVED` (the intended behavior change); `*`-in-slot and backtick-in-slot both exit 1/safe-fail; 40-char slot exits 0/`APPROVED` (boundary inclusive), 41-char slot exits 1/safe-fail; newline-separated overflow exits 1/safe-fail |
+| 17 | Pass | Six planted-violation transcripts produced (4 Decision 6 gates + whole-body classifier + bounded placeholder), each with cited file:line, exact command, failing output, and restored-passing output; posted as a PR #1494 comment and indexed in the plan's "Planted-violation proof" section; main-loop and async-arrival transcripts found and fixed a pre-existing test-isolation gap (sticky mock bodies letting a downstream site's correct gate rescue an upstream broken one) |
 
-**Platform tested**: (macOS/BSD or Linux/GNU)
+**Platform tested**: macOS/BSD (Darwin 25.5.0)
 
-**Tester**:
+**Tester**: developer agent (issue #1491 implementation; Step 16 added and then revised by the reviewer agent
+after PR #1494's own Codex review falsified the single-flavor-literal assumption during Step 7a review, and
+after a follow-up evidence sweep for that fix falsified the enumeration approach itself; Step 17 added by the
+reviewer agent after a Codex GitHub review (finding `3808305143`) found the planted-violation evidence for the
+Decision 6 gates was insufficiently specific)
 
-**Date**:
+**Date**: 2026-08-18 (original); flavor-token enumeration correction 2026-08-18; bounded-placeholder correction
+2026-08-18; planted-violation transcript correction 2026-08-18
