@@ -108,6 +108,15 @@ figure is explicitly provisional — report the real count here).
    grep -n "codex_response_is_approved" -A 15 scripts/development-workflow/codex-github-reviewer.sh
    ```
 
+4. **Corrected/new this round (Codex GitHub finding `3804395363`, round 10)**: confirm every stale
+   approval-path comment named in Implementation Order step 5 was actually rewritten, not just the two Codex
+   named:
+
+   ```bash
+   grep -c "codex_response_is_approved" scripts/development-workflow/codex-github-reviewer.sh
+   grep -n "codex_response_is_approved" scripts/development-workflow/codex-github-reviewer.sh
+   ```
+
 **Expected result**: the comment-filtered form of the first command prints nothing — every symbol this plan's
 five prior revisions ever introduced or targeted for deletion is gone from the executable code, with no
 dormant leftovers. This includes `CODEX_FOOTER_OPENING_LITERAL` and `codex_strip_codex_footer`, which round 6
@@ -118,7 +127,13 @@ definition line for each of the two symbols the final design actually ships. The
 `CODEX_APPROVED_TEMPLATES` — no footer-strip call, no fence-marker check, no quote-stripping call, no
 `codex_strip_not_only_idiom` call, and no executable reference to any of the symbols the first command
 searched for (comments describing the plan's own history, in functions this plan does not touch, are expected
-and are not a failure).
+and are not a failure). **The fourth command's count must be 11** (unchanged from before this step — 5 comment
+mentions, 1 definition line, 5 real call sites) **and its output must show no comment claiming
+`codex_response_has_fence_marker`, `codex_strip_quoted_spans`, or `codex_strip_not_only_idiom` is "used by"
+`codex_response_is_approved`** — per Implementation Order step 5's six named locations (lines 33–45, ~1439–1461,
+~246–247, ~535–537, 488, 643–644 as they exist before this step). If any of those six still describes
+`codex_response_is_approved` as stripping quotes, checking fences, or calling the not-only idiom, this step
+fails even if Step 2's commands 1–3 above all pass.
 
 ---
 

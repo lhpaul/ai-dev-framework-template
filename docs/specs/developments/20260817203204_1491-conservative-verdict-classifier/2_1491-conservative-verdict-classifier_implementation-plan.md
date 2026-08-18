@@ -101,6 +101,8 @@ top of it and must not modify its commits.
 | **Codex GitHub finding `3804088454` (P2, round 9): the round-8 `grep -c "codex_strip_not_only_idiom"` verify command counts comment lines as code** | `grep -c "codex_strip_not_only_idiom" codex-github-reviewer.sh` (raw) vs. `grep -v '^[[:space:]]*#' codex-github-reviewer.sh \| grep -c "codex_strip_not_only_idiom"` (comment-filtered), both run against the real file today | Confirmed correct. Raw: **5** today (2 comments in `is_blocking`'s own rationale text + 1 definition + 2 calls); comment-filtered: **3** today (1 definition + 2 calls). After a correct implementation (only the `is_approved` call site removed): raw would read **4**, not 2 as the round-8 verify command claimed; comment-filtered correctly reads **2**. **Every `grep -c`/`grep -n` count-based verify command in this document and the smoke-test runbook was re-audited for the same defect class — see the round-9 audit row below for the full table** |
 | **Codex GitHub finding `3804088461` (P2, round 9): the round-8 `git diff origin/develop -- ... \| grep -n "codex_response_is_blocking\|codex_strip_not_only_idiom"` check cannot prove the function is unchanged** | Mutated a copy of the production script by removing `-i` from `codex_response_is_blocking`'s internal `grep -qiE "$CODEX_BLOCKING_PATTERN"` call, then ran the round-8 check against it | Confirmed correct. The mutation produced **zero output** from the round-8 check — invisible, because the diff line for that mutation contains neither `codex_response_is_blocking` nor `codex_strip_not_only_idiom` as a substring. Replaced with `diff <(git show origin/develop:… \| awk '/^codex_response_is_blocking\(\)/,/^}/') <(awk '/^codex_response_is_blocking\(\)/,/^}/' codex-github-reviewer.sh)` — run against the real tree: **exit 0, no output** (unchanged); run against the same mutated copy: **exit 1**, output shows exactly the mutated line. This form has no blind spot because it compares every line in the function's range, not only lines containing a searched substring |
 | **Round-9 full audit of every verification command in this document and the smoke-test runbook against both defect classes** (`grep -c` counting non-executable matches; `grep` over a diff used to prove a region is unmodified) — performed because rounds 8 and 9 both introduced defects in verification commands added the round before, and the coordinator required an exhaustive audit, not a two-instance patch | Every `*Verify*:`/`grep`/`diff`/`bash -n` command in both documents, individually executed against the real tree and classified | **Two additional instances of Class 1 found and fixed beyond the two Codex named**: (a) the Implementation Order step 2 deletion-list absence check (`grep -nE "CODEX_NEGATED_APPROVAL\|CODEX_CLEAN_SIGNAL\|…"`) is comment-vulnerable — `codex_response_is_blocking`'s, `codex_strip_quoted_spans`'s, and `CODEX_BLOCKING_PATTERN`'s own unchanged rationale comments mention `CODEX_NEGATED_APPROVAL_PATTERN`/`CODEX_APPROVAL_PATTERN` a combined 8 times; raw **13** matches today, comment-filtered **5** (all real code); fixed by comment-filtering and by adding the missing `CODEX_APPROVAL_PATTERN` term (present on the deletion list, absent from this specific check); (b) the identical smoke-test-runbook copy of the same check, same fix. **No other command needed a fix**: file-listing (`grep -l`/`-rl`) and pure-absence (`grep -rl <literal>` returning nothing) checks are sound because they test whether a string appears anywhere at all, not an exact count with semantic meaning or a region's invariance; the `run_test`-count checks (`^run_test `, `run_test "codex_`) are structurally low-risk (executable-invocation syntax unlikely to appear in prose comments) and were confirmed empirically to have zero comment-line matches in the real file; the round-7 scenario-existence audit methodology (`grep -c -- "<name>"`, cross-checked against the real `run_test "codex_…"` name list) remains sound as a boolean existence check, not an exact-count claim. Full per-command disposition table is in the round-9 report to the parent orchestrator |
+| **Codex GitHub finding `3804395368` (P2, round 10): Group UNCHANGED-NEEDS_REVISION's count of 220 was derived by subtracting 27 from 247, not by direct enumeration** | `grep -c 'run_test "codex_' test-pr-review-loop.sh`; `grep 'run_test "codex_' test-pr-review-loop.sh \| grep -c 'VERDICT: APPROVED'`; `grep 'run_test "codex_' test-pr-review-loop.sh \| grep -c 'VERDICT: NEEDS_REVISION'`; `grep 'run_test "codex_' test-pr-review-loop.sh \| grep 'VERDICT:' \| grep -vc 'VERDICT: APPROVED\|VERDICT: NEEDS_REVISION'`; `grep 'run_test "codex_' test-pr-review-loop.sh \| grep -vc 'VERDICT:'` | Confirmed correct, and worse than the finding stated (Codex's own reproduction matched this exactly): **247** total; **27** `VERDICT: APPROVED`; **54** `VERDICT: NEEDS_REVISION` (not 220); **4** other verdict strings (`UNAVAILABLE`/`TIMED_OUT`); **162** non-verdict assertions (exit codes, reasons, counts — e.g. `codex_github_default_max_wait`, `codex_github_poll_interval_clamps_to_budget`). Direct-enumeration accounting: 27 + 54 + 4 + 162 = 247, exact, no subtraction. Group UNCHANGED-NEEDS_REVISION corrected to its real membership (54, by direct enumeration of `VERDICT: NEEDS_REVISION` assertions); Group UNTOUCHED corrected to 166 (162 non-verdict + 4 availability/timeout, both counted directly); Implementation Order step 7 rewritten so its instruction matches the corrected 54-scenario group and explicitly excludes Group UNTOUCHED's 166. Standing rule added to Risks & Mitigations: no test-suite count in this document may be derived by subtracting one count from another; every count must come from a stated command run directly against the real file |
+| **Codex GitHub finding `3804395363` (P2, round 10): keeping `codex_response_has_fence_marker` and `codex_strip_quoted_spans` unchanged preserves source comments that describe an approval-path relationship this plan removes** | Full-file sweep of `codex-github-reviewer.sh` for every comment mentioning `codex_response_is_approved`, `is_approved`, or describing fence/quote/vocabulary/excision/truncation behavior, cross-checked line-by-line against what the redesigned `is_approved` actually does | Confirmed correct, and the sweep found more than the two ranges named. **Six** stale approval-path comment locations found (not two): (1) lines 33–45, the file-header "Verdict parsing" block; (2) lines ~1439–1461, a **second, previously undocumented copy of the same "Verdict parsing" block**, inline in the main polling loop — the existing Implementation Order step 5 named only the file-header copy; (3) lines ~246–247, `codex_response_has_fence_marker`'s own docstring ("used by every positive-signal classifier below (usage-limit, environment-error, approved)"); (4) lines ~535–537, the fence-grammar-chasing rationale comment ("used by every positive/actionable classifier: usage-limit, environment-error, blocking, approved") — **also contains a pre-existing inaccuracy independent of this plan**: `codex_response_is_blocking` has never called `codex_response_has_fence_marker` (confirmed by that function's own docstring at line ~602, "this one deliberately does NOT bail out on `codex_response_has_fence_marker`"), so "blocking" was already wrong before this plan and is corrected alongside "approved"; (5) line 488, `codex_strip_quoted_spans`'s docstring ("used by `codex_response_is_approved` AND `codex_response_is_blocking` below"); (6) lines 643–644, `codex_strip_not_only_idiom`'s docstring ("used by `codex_response_is_approved` and `codex_response_is_blocking` below"). All six corrected in the Implementation Order with exact before/after text. Also swept for "vocabulary," "excis," "truncat," "grammar," "disqualif," "residue," "flavor" as broader keywords: no further approval-path claims found — the hits under those keywords describe unrelated mechanisms (GFM's own fence grammar, BOT_RESPONSE truncation for SIGPIPE safety, Markdown "flavor" terminology) |
 
 ### Predicate validation (reproducible)
 
@@ -644,12 +646,17 @@ and `[[ ]]`-free POSIX tests). No portable `bash-zsh` snippet is introduced.
       pre-rename name `codex_footer_truncation_keeps_blocking_root_comment` was also confirmed absent).
 - [ ] Consolidate, rather than individually re-litigate, the regression scenarios whose underlying mechanism no
       longer exists but whose scenario **is real** (confirmed via the round-7 audit — e.g.
-      `codex_unapproved_prefix_root_comment`, E14) — these constructions are now trivially rejected because
-      they do not reproduce a template, and the assertion itself does not change (already `NEEDS_REVISION`),
-      but their comments must be rewritten to say so rather than describing removed machinery. Do **not**
-      delete them: they remain valid regression coverage. **Do not assume any other "exists — keep" claim in
-      this document is accurate without re-running the check above first** — this round found 14 such claims
-      were false.
+      `codex_unapproved_prefix_root_comment`, E14) — this is Group UNCHANGED-NEEDS_REVISION, **54 real
+      scenarios by direct enumeration (`grep 'run_test "codex_' test-pr-review-loop.sh | grep -c 'VERDICT:
+      NEEDS_REVISION'`), corrected this round (Codex GitHub finding `3804395368`) from a false count of 220
+      derived by subtracting the 27 `VERDICT: APPROVED` assertions from the 247 total — that arithmetic wrongly
+      swept in 166 exit-code/reason/count/availability assertions unrelated to verdict classification**. These
+      54 constructions are now trivially rejected because they do not reproduce a template, and the assertion
+      itself does not change (already `NEEDS_REVISION`), but their comments must be rewritten to say so rather
+      than describing removed machinery. Do **not** delete them: they remain valid regression coverage. **Do
+      not touch Group UNTOUCHED's 166 real assertions** — they neither approve nor depend on
+      approval-content parsing. **Do not assume any other "exists — keep" claim in this document is accurate
+      without re-running the check above first** — this round found 14 such claims were false.
       *Verify*: run `bash scripts/development-workflow/tests/test-pr-review-loop.sh` and confirm it exits 0,
       that the total assertion count matches the "Reconciled test-disposition counts" table (report any
       discrepancy), and that only the scenarios named in "Test disposition" changed expectation.
@@ -1018,30 +1025,62 @@ block-list/allow-list design) is already fully covered, under the whole-body des
 reproduce the template" rejection every other retained scenario demonstrates — adding 7 more instances of the
 same already-proven rejection would not increase coverage, so no replacement scenarios are added for them.
 
-#### Group UNCHANGED-NEEDS_REVISION — every other real scenario that was already `NEEDS_REVISION` and stays that way
+#### Group UNCHANGED-NEEDS_REVISION — every other real scenario that already asserts `VERDICT: NEEDS_REVISION` and stays that way
 
-**247 total `codex_*` assertions − 27 currently-`VERDICT: APPROVED` assertions = 220 assertions already
-`NEEDS_REVISION` today** (re-derived this round: `grep -c 'run_test "codex_'` minus the `VERDICT: APPROVED`
-count, both directly against the file). This group is not individually enumerated by name — doing so for 220
-assertions is neither feasible nor load-bearing, since none of their dispositions change — but two corrections
-apply:
+**Corrected this round (Codex GitHub finding `3804395368`, round 10): the prior count of 220 was derived by
+subtracting the 27 `VERDICT: APPROVED` assertions from the 247 total `codex_*` assertions.** That arithmetic is
+invalid — the 247 total also contains exit-code, reason-string, count, `UNAVAILABLE`, and `TIMED_OUT`
+assertions that are not verdict-classification assertions of any kind (e.g.
+`codex_environment_missing_exit_unavailable`, `codex_github_poll_interval_clamps_to_budget`). Subtracting one
+heterogeneous count from another does not identify a group's real membership; every group in this table is now
+derived by **direct enumeration**, never by subtraction. Commands run against the real file this round, with
+their actual output:
+
+- `grep -c 'run_test "codex_' test-pr-review-loop.sh` → **247** (total `codex_*` assertions, all kinds; unchanged from the round-7 count)
+- `grep 'run_test "codex_' test-pr-review-loop.sh | grep -c 'VERDICT: APPROVED'` → **27** (Group APPROVED + Group RETARGETED, unchanged from round 7)
+- `grep 'run_test "codex_' test-pr-review-loop.sh | grep -c 'VERDICT: NEEDS_REVISION'` → **54** — **this, not 220, is Group UNCHANGED-NEEDS_REVISION's real size**
+- `grep 'run_test "codex_' test-pr-review-loop.sh | grep 'VERDICT:' | grep -vc 'VERDICT: APPROVED\|VERDICT: NEEDS_REVISION'` → **4** (`codex_tied_usage_limit_with_approval_phrase_verdict`, `codex_usage_limit_beats_same_fetch_newer_review_verdict`, `codex_usage_limit_survives_later_env_error_same_fetch_verdict` all assert `VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached`; `codex_review_query_failure_verdict` asserts `VERDICT: TIMED_OUT — …` — these test evidence-priority/availability routing, not approval-content classification, so they belong to Group UNTOUCHED below, not this group)
+- `grep 'run_test "codex_' test-pr-review-loop.sh | grep -vc 'VERDICT:'` → **162** (exit-code, reason-string, and count assertions with no verdict string at all — also Group UNTOUCHED)
+- **Full accounting, direct sum, not subtraction: 27 + 54 + 4 + 162 = 247** — matches the total exactly, confirming no assertion is double-counted or missing from any group.
+
+None of the 54 real `NEEDS_REVISION`-asserting bodies has ever reproduced, and none reproduces, the evidenced
+whole-body template — this follows from the same asymmetry Decision 2 already establishes (the new design is a
+strict subset of what every prior, more permissive design accepted; a body that already fails the old,
+looser block-list check cannot pass the new, strictly narrower exact-match check), not from re-inspecting all
+54 bodies individually. Two corrections apply within this corrected group:
 
 - **`codex_long_review_body_no_sigpipe` and `codex_long_root_comment_no_sigpipe` are removed from this group**
   (an earlier revision placed them here as "previously-Group-A2 scenarios"); they are real, but they currently
   assert `VERDICT: APPROVED`, not `NEEDS_REVISION` — see Group RETARGETED above, where they now correctly
-  belong.
-- Every remaining scenario's explanatory comment must still be rewritten if it currently describes a
+  belong. (They were never among the real 54 to begin with — confirmed by the direct-enumeration command above,
+  which lists only `VERDICT: NEEDS_REVISION` assertions.)
+- Every one of the 54 scenarios' explanatory comments must still be rewritten if it currently describes a
   now-deleted mechanism (a disqualifier match, a closed-grammar clause, a fence-marker check) as the reason it
   passes; under this revision, it passes because the body is simply not an exact template reproduction.
   Scenarios that were already testing `codex_response_is_blocking` specifically (e.g. the merge-refusal-blocking
-  group) are wholly unaffected: that function did not change (Decision 4).
+  group, several of which are among the 54) are wholly unaffected: that function did not change (Decision 4).
 
 #### Group UNTOUCHED
 
-All remaining `codex_*` scenarios (evidence selection and tie-breaks, usage-limit and environment-error
-routing, `CHANGES_REQUESTED` state handling, trigger idempotency, thread audits, timeout and poll-interval
-configuration) neither approve nor depend on approval-content parsing at all, and must pass unchanged. Any
-failure among them is a genuine regression, not an intended contract change.
+**Corrected this round to resolve the contradiction Codex GitHub finding `3804395368` identified**: this group
+was previously described only in prose ("evidence selection and tie-breaks, usage-limit and environment-error
+routing, …") with no stated count, while Group UNCHANGED-NEEDS_REVISION's inflated count of 220 silently
+overlapped it. Group UNTOUCHED is now precisely **166 assertions** — the 162 non-verdict assertions (exit
+codes, reason strings, counts) plus the 4 `VERDICT: UNAVAILABLE`/`VERDICT: TIMED_OUT` assertions identified
+above, both counted directly against the file, not derived from any other group's count. All 166 (evidence
+selection and tie-breaks, usage-limit and environment-error routing, `CHANGES_REQUESTED` state handling,
+trigger idempotency, thread audits, timeout and poll-interval configuration) neither approve nor depend on
+approval-content parsing at all, and must pass unchanged. Any failure among them is a genuine regression, not
+an intended contract change.
+
+**Reconciliation of the 247 real, pre-existing `codex_*` assertions, by direct enumeration, no subtraction**:
+Group APPROVED's 2 real members (`codex_clean_root_review_comment`, `codex_full_root_review_comment`) + Group
+RETARGETED's 25 real members = 27 (matches the `VERDICT: APPROVED` count exactly); + Group
+UNCHANGED-NEEDS_REVISION's 54 + Group UNTOUCHED's 166 = 27 + 54 + 166 = **247**, the full total, with every
+real assertion counted in exactly one group. (Group APPROVED's other 3 members —
+`codex_real_vendor_footer_clean_root_comment`, `codex_sha_full_length_approved_root_comment`,
+`codex_irregular_whitespace_template_approved_root_comment` — are new additions, not part of the 247
+pre-existing total, and are excluded from this reconciliation for that reason.)
 
 #### Not applicable — `codex_disqualifier_diagnostic_emitted` was never implemented; there is nothing to delete
 
@@ -1132,6 +1171,8 @@ Carried forward, unaffected by this round's correction:
 | Total `run_test` assertions | **620** (corrects an earlier revision's "628," which this round's direct count — `grep -c '^run_test '` — does not reproduce) | 620 + 22 new scenarios' assertions (≈2 each, some scenarios use 3) ≈ **660–664** (confirm the exact figure when implementing — this table has carried the same "confirm at implementation time" caveat since round 2, because the harness's assertions-per-scenario convention is not perfectly uniform) |
 | `codex_*` assertions | **247** (confirmed via `grep -c 'run_test "codex_'`, unchanged from every prior revision's claim) | ~247 + 22 × 2 ≈ 291, same caveat |
 | Scenarios asserting `VERDICT: APPROVED` | **27** (confirmed via direct grep against the file, unchanged from every prior revision's claim — but see the corrected by-name breakdown below, which an earlier revision got wrong for 18 of the 25 non-Group-APPROVED members) | **5** — 2 real scenarios with updated bodies (`codex_clean_root_review_comment`, `codex_full_root_review_comment`) plus 3 new (`codex_real_vendor_footer_clean_root_comment`, `codex_sha_full_length_approved_root_comment`, `codex_irregular_whitespace_template_approved_root_comment`); the other 25 of the real 27 retarget to `NEEDS_REVISION` (Group RETARGETED, corrected this round from a false count of 18) |
+| Scenarios asserting `VERDICT: NEEDS_REVISION` (Group UNCHANGED-NEEDS_REVISION) | **54** (confirmed via `grep 'run_test "codex_' test-pr-review-loop.sh \| grep -c 'VERDICT: NEEDS_REVISION'` against the real file — **corrected this round from a false count of 220**, which an earlier revision derived by subtracting 27 from 247 rather than direct enumeration; Codex GitHub finding `3804395368`) | **54, unchanged in count** — none of these bodies has ever reproduced, or now reproduces, the evidenced template (Decision 2's narrowing-is-always-safe asymmetry); comments rewritten, dispositions unchanged |
+| `codex_*` assertions with no verdict at all, or a verdict other than `APPROVED`/`NEEDS_REVISION` (Group UNTOUCHED) | **166** (162 non-verdict + 4 `UNAVAILABLE`/`TIMED_OUT`, both confirmed via direct grep — this group was previously undercounted only implicitly, by never being given its own stated total) | **166, unchanged** — evidence-priority, availability, and timing/config assertions; none depend on approval-content parsing |
 
 ### Residual verification strategy
 
@@ -1250,6 +1291,7 @@ step 1 requires this re-check, and a drifted capture changes what `CODEX_APPROVE
 | **This document's own claims about which test scenarios already exist have now been wrong twice** (round 4's "no stale passage found," corrected in round 5; and round 7's `codex_real_vendor_footer_clean_root_comment` plus 14 further fabricated "exists" claims) | Medium, absent the standing rule below; **historically has recurred**, so treat as a real, not hypothetical, risk | High — a false "exists" claim leaves a genuine coverage gap that reads as covered | **Standing rule: before relying on any claim in this document that a named test scenario "exists," "is kept," or "is unchanged," re-run the exact `grep` command against the real file** (see the Verification Log's round-7 audit row for the commands used) rather than trusting this document's prose, no matter how recent the revision. This applies to every future round of this plan, not only this one |
 | **A symbol scheduled for deletion is silently load-bearing for `codex_response_is_blocking` — deleting it (or one of its call sites) reintroduces a false-blocking regression the production script's own history already fixed once.** This is the third distinct class of "this document's own claim about the codebase was wrong" finding across rounds 7–8 (round 7: fabricated test-scenario existence; round 8: a real, load-bearing call site scheduled for deletion) | Medium, absent the standing rule below; **has now occurred once (round 8, `codex_strip_not_only_idiom`)** | High — a silently reintroduced false-blocking match can override concurrent availability evidence and produce an incorrect `NEEDS_REVISION` (blocking branch) for a genuinely clean response | **Standing rule (new this round, Codex GitHub finding `3803959040`): before scheduling ANY symbol for deletion, check whether it has a real call site inside `codex_response_is_blocking` specifically** (not just inside the function being replaced) — `codex_response_is_blocking`'s failure direction is unsafe (Decision 4), so an incorrect deletion there is never merely a disclosed trade the way an `is_approved`-side deletion can be. The round-8 sibling-coupling check (Verification Log) confirmed no other scheduled-for-deletion symbol has this coupling today, but any future addition to the deletion list must repeat this check, not assume it |
 | **A verification command added to close one finding introduces a new, unexecuted defect of its own — this happened twice in round 8's own verify commands (a `grep -c` count vulnerable to comment-line inflation, and a `grep`-over-`git diff` check that cannot prove a function region is unmodified), caught in round 9** | Medium, absent the standing rule below; **has now occurred twice in one round (round 9, Codex GitHub findings `3804088454` and `3804088461`)**, confirming this is a recurring failure mode of writing verify commands without executing them, not a one-off | Medium — a mandatory smoke step that fails a correct implementation blocks shipping; a check that cannot detect a real regression (the diff-grep case) is worse, since it gives false confidence | **Standing rule (new this round): every verification command added to this document or the smoke-test runbook must be executed against the real tree before being written down, and its actual output recorded — not reasoned about.** Two structural sub-rules from the round-9 audit: (1) any `grep -c`/exact-count check must either anchor to executable syntax (e.g. `^run_test `) or explicitly filter comment lines (`grep -v '^[[:space:]]*#'`) before counting, if the searched symbol could plausibly appear in a comment; (2) any check whose purpose is "prove this function/region is unmodified" must extract the complete region (e.g. `awk '/^name\(\)/,/^}/'`) and diff the extraction directly — `grep` over a diff can only prove a specific line exists or changed, never that an unrelated line inside the same region did not change. The round-9 audit applied both sub-rules to every verification command in this document and the smoke-test runbook; see the Verification Log's round-9 audit row for the full disposition |
+| **A test-suite count is derived by arithmetic (subtracting one count from another) instead of direct enumeration, and the arithmetic conceals a heterogeneous total** — this is the third time a test-suite claim in this document has been wrong (round 7: 15 phantom scenarios claimed to exist; round 7: a 628 baseline that direct count showed was 620; round 10: a "220" group size derived by subtracting 27 from 247, when the real group is 54 and the 247 total also contains 166 exit-code/reason/count/availability assertions the subtraction silently folded in) | Medium, absent the standing rule below; **has now recurred a third time (round 10, Codex GitHub finding `3804395368`)**, confirming derived/recalled numbers are a systemic risk in this document, not isolated incidents | High — an inflated group size instructs the implementer to edit 166 unrelated assertions, and a correct implementation would then fail a mandatory smoke step for touching too few | **Standing rule (new this round): every test-suite count in this document is produced by a stated command run directly against the real file, and no count is ever derived by subtracting one count from another.** A heterogeneous total (e.g. "247 `codex_*` assertions of every kind") is never a valid basis for computing a subgroup's size by subtraction, because the total may contain categories the subtraction does not account for. Where a reconciliation across groups is useful, it must be presented as a direct-enumeration sum that is *checked against* the total (as confirmatory arithmetic), never as the sole method used to *derive* a group's membership |
 
 ---
 
@@ -1334,8 +1376,54 @@ The supported response to a persistent false `NEEDS_REVISION` is:
 4. **Rewrite `codex_response_is_approved`** per Decision 1 and the Code Samples section: normalize whitespace
    on the raw body directly (no footer-strip call), test against every `CODEX_APPROVED_TEMPLATES` entry, return
    on first match.
-5. **Update the file-header "Verdict parsing" comment block** to describe the exact-template contract; remove
-   every reference to the allow-list/grammar contract the comment block described after the prior revision.
+5. **Update every stale approval-path comment** — corrected and expanded this round (Codex GitHub finding
+   `3804395363`, round 10): keeping `codex_response_has_fence_marker` and `codex_strip_quoted_spans` unchanged
+   (Decision 1) preserves their source comments, which describe an approval-path relationship this plan
+   removes. A full sweep of `codex-github-reviewer.sh` found **six** locations, not the two Codex named — fix
+   all six:
+   1. **Lines 33–45, the file-header "Verdict parsing" block.** Currently describes the three-path
+      vocabulary-based contract ("Approval signals present → APPROVED… Signals (case-insensitive): 'approved',
+      'lgtm', 'looks good', …"). Rewrite to state the whole-body exact-template contract: `APPROVED` requires
+      the entire response, whitespace-normalized, to exactly reproduce one of a small set of literal templates
+      captured from real Codex responses (footer included, no truncation); anything else, including a
+      superset or subset of a template, safe-fails to `NEEDS_REVISION`.
+   2. **Lines ~1439–1461, a second, previously undocumented copy of the same "Verdict parsing" block**, inline
+      in the main polling loop (`# ── Verdict parsing ──…` through the "3. Neither found…" line). This is a
+      near-duplicate of location 1 that an earlier revision of this plan never named — it must receive the
+      identical rewrite, not be left describing the superseded vocabulary contract while location 1 is
+      updated.
+   3. **Lines ~246–247, `codex_response_has_fence_marker`'s own docstring**: "Used by every positive-signal
+      classifier below (usage-limit, environment-error, approved)". Remove "approved" — its real callers after
+      this revision are only `codex_response_is_usage_limit` and `codex_response_is_environment_error`.
+   4. **Lines ~535–537, the fence-grammar-chasing rationale comment**, in the same section: "codex_response_has_fence_marker
+      above (used by every positive/actionable classifier: usage-limit, environment-error, blocking,
+      approved)". Remove **both** "blocking" and "approved": "blocking" is already inaccurate independent of
+      this plan (`codex_response_is_blocking` has never called `codex_response_has_fence_marker` — confirmed by
+      that function's own docstring at line ~602, "this one deliberately does NOT bail out on
+      `codex_response_has_fence_marker`" — a pre-existing comment bug, fixed here since this line is already
+      being touched); "approved" becomes inaccurate because of this revision. Result: "used by every
+      positive/actionable classifier: usage-limit, environment-error".
+   5. **Line 488, `codex_strip_quoted_spans`'s docstring**: "used by `codex_response_is_approved` AND
+      `codex_response_is_blocking` below". Remove "`codex_response_is_approved` AND" — result: "used by
+      `codex_response_is_blocking` below".
+   6. **Lines 643–644, `codex_strip_not_only_idiom`'s docstring**: "used by `codex_response_is_approved` and
+      `codex_response_is_blocking` below (originally added for approval only, …)". Remove "`codex_response_is_approved`
+      and" from the current-tense claim; keep the historical "(originally added for approval only…)" framing,
+      since it correctly describes past evolution, not current behavior. Result: "used by
+      `codex_response_is_blocking` below (originally added for approval only, …)".
+
+   *Verify*: `grep -c "codex_response_is_approved" scripts/development-workflow/codex-github-reviewer.sh` — run
+   today, pre-implementation: **11** (5 comment mentions at lines 258, 263, 390, 488, 643; the function's own
+   definition line, 667; and 5 real call sites at the main-loop/async verdict sites: 743, 1506, 1712, 1814,
+   1955). After this step, `grep -n "codex_response_is_approved"
+   scripts/development-workflow/codex-github-reviewer.sh` must show: line 258/263 unchanged (historical,
+   describing why the fence guard was originally added only to `is_approved` — this remains accurate as
+   history); line 390 gone entirely (it is inside `CODEX_NEGATED_APPROVAL_PATTERN`'s own deleted block,
+   Decision 2); line 488 no longer contains "used by `codex_response_is_approved`" — only "used by
+   `codex_response_is_blocking`"; line 643 no longer contains "used by `codex_response_is_approved` and" — only
+   "used by `codex_response_is_blocking`"; the definition line and all 5 real call sites unaffected —
+   `is_approved` is still invoked the same way at every verdict site, only its internal implementation changed
+   (Decision 1).
 6. **Before touching the test file, re-run the round-7 audit's `grep` commands (Verification Log) against the
    real, current `test-pr-review-loop.sh`** — this document's "exists" claims have been wrong twice; do not
    proceed on this document's scenario lists without re-confirming them against the file as it stands at
@@ -1344,9 +1432,13 @@ The supported response to a persistent false `NEEDS_REVISION` is:
    (`codex_clean_root_review_comment`, `codex_full_root_review_comment`); apply the 25 Group RETARGETED
    dispositions (Test disposition, corrected this round from a false count of 18); confirm
    `codex_disqualifier_diagnostic_emitted` is genuinely absent (no deletion needed — it was never implemented);
-   refresh every Group UNCHANGED-NEEDS_REVISION scenario's comment; then add the 22 new scenarios from "New
-   scenarios" (15 carried forward correctly, plus 7 corrected this round from false "exists" claims:
-   `codex_real_vendor_footer_clean_root_comment`, `codex_underscore_prefixed_lookalike_root_comment`,
+   **refresh the comment on each of the 54 real scenarios in Group UNCHANGED-NEEDS_REVISION — corrected this
+   round (Codex GitHub finding `3804395368`) from a false count of 220, which wrongly instructed touching 166
+   unrelated timing/config/availability assertions that have nothing to do with verdict classification; do not
+   touch any scenario in Group UNTOUCHED (166 real assertions, unaffected by this plan)** — then add the 22 new
+   scenarios from "New scenarios" (15 carried forward correctly, plus 7 corrected this round from false
+   "exists" claims: `codex_real_vendor_footer_clean_root_comment`,
+   `codex_underscore_prefixed_lookalike_root_comment`,
    `codex_unenumerated_actionable_sentence_after_signal_root_comment`,
    `codex_metadata_token_as_directive_root_comment`, `codex_nonfooter_details_block_not_truncated_root_comment`,
    `codex_footer_markup_lookalike_tag_names_not_truncated_root_comment`, and
@@ -1354,7 +1446,9 @@ The supported response to a persistent false `NEEDS_REVISION` is:
    *Verify*: run `bash scripts/development-workflow/tests/test-pr-review-loop.sh` and confirm it exits 0, that
    the total assertion count is reconciled against the "Reconciled test-disposition counts" table (report the
    real figure — the table's estimate is explicitly provisional), and that only the scenarios named in Test
-   disposition changed expectation.
+   disposition changed expectation — specifically, exactly 54 comment-only changes in Group
+   UNCHANGED-NEEDS_REVISION (not 220), and no comment or assertion changes anywhere among Group UNTOUCHED's 166
+   members.
 8. **Update the documentation** listed in "Documentation Updates," then add the CHANGELOG entry under
    `[Unreleased]` → `### Changed`, copied literally:
 
