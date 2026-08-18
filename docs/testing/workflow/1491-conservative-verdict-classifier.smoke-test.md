@@ -14,7 +14,7 @@ Before running this smoke test:
 
 - [ ] The implementation branch for issue #1491 is checked out
 - [ ] `bash`, `grep`, `sed`, `awk`, `tr`, `jq`, and `gh` are available on `PATH`
-- [ ] `gh auth status` succeeds (needed for Steps 5 and 6)
+- [ ] `gh auth status` succeeds (needed for Steps 6 and 7)
 - [ ] You know which platform's tooling you are on (macOS/BSD or Linux/GNU) so you can note it in the results
 
 **Design assets**: none. This work item has no `## Design assets` section, no tracker attachments, no linked
@@ -64,9 +64,15 @@ figure is explicitly provisional — report the real count here).
 1. Run:
 
    ```bash
-   grep -nE "CODEX_NEGATED_APPROVAL|CODEX_APPROVAL_PATTERN|CODEX_CLEAN_SIGNAL|CODEX_APPROVAL_(NEGATION|HEDGE|ACTIONABLE|DISQUALIFIER)|CODEX_RESIDUE_FILLER|CODEX_RESIDUE_STARTER|CODEX_VENDOR_FLAVOR|codex_excise_clean_signals|codex_residue_is_closed_grammar|codex_response_first_paragraph|codex_strip_vendor_metadata_lines|CODEX_FOOTER_OPENING_LITERAL|codex_strip_codex_footer|not_only" \
+   grep -nE "CODEX_NEGATED_APPROVAL|CODEX_APPROVAL_PATTERN|CODEX_CLEAN_SIGNAL|CODEX_APPROVAL_(NEGATION|HEDGE|ACTIONABLE|DISQUALIFIER)|CODEX_RESIDUE_FILLER|CODEX_RESIDUE_STARTER|CODEX_VENDOR_FLAVOR|codex_excise_clean_signals|codex_residue_is_closed_grammar|codex_response_first_paragraph|codex_strip_vendor_metadata_lines|CODEX_FOOTER_OPENING_LITERAL|codex_strip_codex_footer" \
      scripts/development-workflow/codex-github-reviewer.sh
    ```
+
+   **`codex_strip_not_only_idiom`/`not_only` is deliberately excluded from this search — see Step 3 below.**
+   An earlier revision of this runbook included it here, which is wrong: the function and its call inside
+   `codex_response_is_blocking` are kept (Codex GitHub finding `3803959040`, round 8); only its call inside the
+   old `codex_response_is_approved` is gone, as a byproduct of that function's full replacement, not a listed
+   deletion.
 
 2. Run:
 
@@ -76,7 +82,8 @@ figure is explicitly provisional — report the real count here).
    ```
 
 3. Run, to confirm `codex_response_is_approved` itself contains no leftover reference to a deleted symbol or
-   mechanism (in particular, no footer-strip call and no `visible` intermediate variable):
+   mechanism (in particular, no footer-strip call, no `visible` intermediate variable, and no
+   `codex_strip_not_only_idiom` call — that call belongs only to `codex_response_is_blocking` now):
 
    ```bash
    grep -n "codex_response_is_approved" -A 15 scripts/development-workflow/codex-github-reviewer.sh
@@ -84,18 +91,47 @@ figure is explicitly provisional — report the real count here).
 
 **Expected result**: the first command prints nothing — every symbol this plan's five prior revisions ever
 introduced or targeted for deletion is gone, with no dormant leftovers. This includes `CODEX_FOOTER_OPENING_LITERAL`
-and `codex_strip_codex_footer`, which this round moves from "keep unchanged" to "delete" (Decision 5) — if
-either still appears anywhere in the file, this step fails even if every other symbol is gone. The second
-command prints at least one definition line for each of the two symbols the final design actually ships. The
-third command's output shows `codex_response_is_approved` normalizing whitespace on `$body` directly and
-looping over `CODEX_APPROVED_TEMPLATES` — no footer-strip call, no fence-marker check, no quote-stripping call,
-and no reference to any of the symbols the first command searched for.
+and `codex_strip_codex_footer`, which round 6 moved from "keep unchanged" to "delete" (Decision 5) — if either
+still appears anywhere in the file, this step fails even if every other symbol is gone. The second command
+prints at least one definition line for each of the two symbols the final design actually ships. The third
+command's output shows `codex_response_is_approved` normalizing whitespace on `$body` directly and looping
+over `CODEX_APPROVED_TEMPLATES` — no footer-strip call, no fence-marker check, no quote-stripping call, no
+`codex_strip_not_only_idiom` call, and no reference to any of the symbols the first command searched for.
 
 ---
 
-### Step 3: The blocking classifier is untouched
+### Step 3: `codex_strip_not_only_idiom` is kept, with exactly one call site — inside `codex_response_is_blocking`
+
+**Maps to**: Decision 4 (corrected round 8, Codex GitHub finding `3803959040`)
+
+1. Run:
+
+   ```bash
+   grep -c "codex_strip_not_only_idiom" scripts/development-workflow/codex-github-reviewer.sh
+   ```
+
+2. Run, to confirm which function the one remaining call lives inside:
+
+   ```bash
+   grep -n "codex_response_is_blocking\|codex_strip_not_only_idiom" scripts/development-workflow/codex-github-reviewer.sh
+   ```
+
+**Expected result**: the first command returns exactly **2** (the function definition, plus its one remaining
+call). If it returns 0, the function was wrongly deleted entirely — a direct regression of Codex GitHub finding
+`3803959040` (a genuinely clean response containing "not only … merge" in one clause, e.g. `This is not only
+safe to merge but looks good.`, will be misclassified as a merge refusal). If it returns 3, the old
+`is_approved`-side call was wrongly left in place. The second command's output shows the one remaining call
+appearing inside `codex_response_is_blocking`'s function body, not inside `codex_response_is_approved`'s.
+
+---
+
+### Step 4: The blocking classifier is untouched — zero diff, not merely an unchanged pattern definition
 
 **Maps to**: Decision 4
+
+**Corrected this round (Codex GitHub finding `3803959040`).** An earlier revision of this runbook expected a
+diff here (the removed `codex_strip_not_only_idiom` call). That expectation was itself the bug this round
+fixes: the call is retained, so there must be **no** diff touching `codex_response_is_blocking` at all.
 
 1. Run:
 
@@ -110,13 +146,21 @@ and no reference to any of the symbols the first command searched for.
    git diff origin/develop -- scripts/development-workflow/codex-github-reviewer.sh | grep -n "^[-+].*CODEX_BLOCKING_PATTERN\|^[-+].*CODEX_NEGATION_WORDS\|^[-+].*CODEX_MERGE_REFUSAL_PATTERN"
    ```
 
-**Expected result**: the three blocking-side pattern definitions are present and the diff shows no change to
-their values. The only diff touching `codex_response_is_blocking` is the removed `codex_strip_not_only_idiom`
-call (the function itself is deleted this round, not just its call sites — confirm via Step 2's first command).
+3. Additionally, diff the entire `codex_response_is_blocking` function body specifically:
+
+   ```bash
+   git diff origin/develop -- scripts/development-workflow/codex-github-reviewer.sh | grep -n "codex_response_is_blocking\|codex_strip_not_only_idiom"
+   ```
+
+**Expected result**: the three blocking-side pattern definitions are present and the diff from step 2 shows no
+change to their values. **The diff from step 3 shows no change at all inside `codex_response_is_blocking` —
+not even the removal of the `codex_strip_not_only_idiom` call.** If the diff shows that call being removed,
+this is the exact regression Codex GitHub finding `3803959040` identified: `codex_strip_not_only_idiom` and
+its `is_blocking` call site must both be present, unchanged, on `develop` (Step 3 confirms this directly).
 
 ---
 
-### Step 4: A response that is not, character-for-character, an evidenced template safe-fails
+### Step 5: A response that is not, character-for-character, an evidenced template safe-fails
 
 **Maps to**: Group RETARGETED and Group UNCHANGED-NEEDS_REVISION in Test disposition; Operational cost section
 
@@ -139,7 +183,7 @@ revision: this is now true of nearly every wording that would have previously ap
 
 ---
 
-### Step 5: The real vendor clean response still approves, end to end
+### Step 6: The real vendor clean response still approves, end to end
 
 **Maps to**: Edge case E1; residual verification evidence item 3 — this is the highest-impact check in the
 runbook
@@ -162,7 +206,7 @@ runbook
    revision of this runbook required, because the footer is now part of the literal being matched, not
    discarded before comparison.
 3. Build a mock `gh` that serves that exact body as a SHA-pinned root comment and run the reviewer as in
-   Step 4.
+   Step 5.
 
 **Expected result**: the command exits 0 and prints `VERDICT: APPROVED`. If it instead exits 1, this is a
 total operational failure of the ready phase (the classifier rejects the one response it exists to accept) —
@@ -173,7 +217,7 @@ and no reintroduction of a truncation step to avoid having to capture the footer
 
 ---
 
-### Step 6: The real review-wrapper body (no clean signal) is not misclassified
+### Step 7: The real review-wrapper body (no clean signal) is not misclassified
 
 **Maps to**: Edge case E2
 
@@ -191,7 +235,7 @@ and no reintroduction of a truncation step to avoid having to capture the footer
 2. Confirm it reads the generic `### 💡 Codex Review\n\nHere are some automated review suggestions for this
    pull request.` wrapper, with **no** clean-signal wording in its visible text.
 3. Build a mock `gh` that serves that body via the review endpoint (not the root-comment endpoint) with
-   `state: COMMENTED`, and run the reviewer as in Step 4.
+   `state: COMMENTED`, and run the reviewer as in Step 5.
 
 **Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
 safe-fail)`. This body was never eligible to become a template (Decision 2) — its verdict is unaffected by
@@ -199,7 +243,7 @@ this revision, exactly as it was unaffected by every prior revision.
 
 ---
 
-### Step 7: A refusal inserted inside the footer is rejected by `is_approved` alone — `is_blocking` upgrades verdict specificity, but is no longer load-bearing for safety here
+### Step 8: A refusal inserted inside the footer is rejected by `is_approved` alone — `is_blocking` upgrades verdict specificity, but is no longer load-bearing for safety here
 
 **Maps to**: Edge case E22 (rewritten this round); Decision 4/5
 
@@ -207,7 +251,7 @@ this revision, exactly as it was unaffected by every prior revision.
 `codex_response_is_approved` **alone** returned `APPROVED` for this body, and only `codex_response_is_blocking`
 prevented the composed verdict from being wrong. Under this revision, `is_approved` alone already rejects it.
 
-1. Take the Step 5 body and insert the sentence `This must not be merged.` **inside** the `<details>` block
+1. Take the Step 6 body and insert the sentence `This must not be merged.` **inside** the `<details>` block
    (e.g. immediately after `</summary>`).
 2. Run the reviewer against it with the same mock setup.
 3. **Additionally**, call `codex_response_is_approved` directly (source the script or extract the function) on
@@ -226,17 +270,17 @@ stop and report it immediately, this is the single highest-priority regression t
 
 ---
 
-### Step 8: The round-6 exploit (Codex GitHub finding `3803545669`) is closed — footer-opening-line-only plus trailing content is rejected
+### Step 9: The round-6 exploit (Codex GitHub finding `3803545669`) is closed — footer-opening-line-only plus trailing content is rejected
 
 **Maps to**: Edge case E23; Decision 1/2/5 (Codex GitHub finding `3803545669`) — **this is the direct
 regression test for the finding that motivated this revision; treat a failure here as the highest-priority
 result in this runbook**
 
-1. Take the Step 5 template's verdict sentence and `**Reviewed commit:**` line, append **only** the footer's
+1. Take the Step 6 template's verdict sentence and `**Reviewed commit:**` line, append **only** the footer's
    opening line (`<details> <summary>ℹ️ About Codex in GitHub</summary>`, not the rest of the footer), then
    append a new paragraph reading `Rename the unsafe function.`
 2. Build a mock `gh` that serves this exact body as a SHA-pinned root comment and run the reviewer as in
-   Step 4.
+   Step 5.
 
 **Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
 safe-fail)`. Under the immediately prior revision of this plan, this exact construction reproduced the
@@ -249,15 +293,15 @@ immediately.
 
 ---
 
-### Step 9: A one-byte mutation anywhere inside the footer — not only its opening line — is rejected
+### Step 10: A one-byte mutation anywhere inside the footer — not only its opening line — is rejected
 
 **Maps to**: Edge case E24
 
-1. Take the Step 5 body (complete real footer included) and, in three separate runs, mutate exactly one byte
+1. Take the Step 6 body (complete real footer included) and, in three separate runs, mutate exactly one byte
    at each of these positions: (a) mid-footer-sentence (e.g. `react with` → `react With`), (b) immediately
    before the closing `</details>` (e.g. the word preceding it), and (c) inside the `chatgpt.com` settings URL.
 2. Build a mock `gh` that serves each mutated body as a SHA-pinned root comment and run the reviewer as in
-   Step 4, once per mutation.
+   Step 5, once per mutation.
 
 **Expected result**: all three runs exit 1 and print `VERDICT: NEEDS_REVISION (unrecognized response format —
 safe-fail)`. This confirms the entire footer text is load-bearing for the match, not merely its opening line —
@@ -266,13 +310,13 @@ was ever compared against anything under that design.
 
 ---
 
-### Step 10: The round-5 exploit that triggered the prior design replacement is still closed
+### Step 11: The round-5 exploit that triggered the prior design replacement is still closed
 
 **Maps to**: Edge case E21; Decision 2 (Codex GitHub finding `3803306915`)
 
 1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
-   `Looks good, or is it?`, following the mock convention used by Step 4.
-2. Run the reviewer as in Step 4.
+   `Looks good, or is it?`, following the mock convention used by Step 5.
+2. Run the reviewer as in Step 5.
 
 **Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
 safe-fail)`. An earlier (residue-grammar) revision of this plan returned `VERDICT: APPROVED` for this body:
@@ -283,11 +327,11 @@ reproduction of any evidenced template.
 
 ---
 
-### Step 11: The SHA placeholder generalizes within its bound and rejects outside it
+### Step 12: The SHA placeholder generalizes within its bound and rejects outside it
 
 **Maps to**: Edge cases E4–E8
 
-1. Using the mock convention from Step 4, run the reviewer four times against the Step 5 template (complete
+1. Using the mock convention from Step 5, run the reviewer four times against the Step 6 template (complete
    real footer appended) with the `Reviewed commit:` SHA replaced, in turn, by: (a) a different 10-character
    valid hex SHA than the one captured live, (b) a 6-character hex SHA, (c) a 41-character hex SHA, and (d) a
    non-hex string such as `not-a-sha!`.
@@ -300,7 +344,7 @@ Every one of these four bodies must include the complete real footer — a body 
 
 ---
 
-### Step 12: Documentation reflects the new contract
+### Step 13: Documentation reflects the new contract
 
 **Maps to**: Documentation Updates
 
@@ -321,7 +365,7 @@ design an earlier revision of this plan shipped there).
 
 ---
 
-### Step 13: Lint gates are clean
+### Step 14: Lint gates are clean
 
 **Maps to**: Implementation Order step 8
 
@@ -349,6 +393,7 @@ design an earlier revision of this plan shipped there).
 | 11 | | |
 | 12 | | |
 | 13 | | |
+| 14 | | |
 
 **Platform tested**: (macOS/BSD or Linux/GNU)
 

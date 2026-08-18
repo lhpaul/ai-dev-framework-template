@@ -29,7 +29,11 @@ whitespace runs) one of the evidenced clean-response shapes from its first chara
 safe-fails to `NEEDS_REVISION`. `codex_response_is_blocking` is unchanged — still a block-list, unchanged
 priority ordering, PR #1490's `CHANGES_REQUESTED` short-circuit untouched — because its failure direction is
 the opposite one and a false negative there is unsafe, so applying this same "exact evidence only" discipline
-to it would be unsafe in the other direction (see Decision 4).
+to it would be unsafe in the other direction (see Decision 4). **This "unchanged" claim holds only if
+`codex_strip_not_only_idiom`'s call inside `codex_response_is_blocking` is retained — corrected this round
+per Codex GitHub finding `3803959040`, which caught an earlier revision scheduling that call for deletion,
+reproduced here as a real false-blocking regression (`CODEX_MERGE_REFUSAL_PATTERN` matches "not only … merge"
+constructions without the strip).**
 
 **This is the fourth design this plan has shipped**, each time in response to a new false-`APPROVED`
 construction a review round found (see Decision 2 and Decision 5 for the specifics). The prior (third) design
@@ -91,6 +95,9 @@ top of it and must not modify its commits.
 | **Codex GitHub finding `3803807958` (P1, round 7): `codex_real_vendor_footer_clean_root_comment` does not exist** | `grep -rl "codex_real_vendor_footer_clean_root_comment" scripts/`; `grep -rl "About Codex in GitHub" scripts/` | Confirmed correct — both return nothing. This round's document previously described this scenario as already implemented ("exists — keep, verdict unchanged"). It is not implemented anywhere in the repository. Corrected: reclassified as a new scenario to be added (see the round-7 audit row immediately below and the corrected Test disposition) |
 | **Codex GitHub finding `3803807963` (P2, round 7): Step 6 of the smoke-test runbook truncated a multi-line review body with `head -1`** | `gh api .../pulls/1490/reviews --jq '[.[] \| select(...)][0].body' \| wc -l` vs. the same query piped through `\| head -1` | Confirmed correct — the real review body is 24 lines; `head -1` after the `--jq` pipe returned only the first physical line (a truncated `### 💡 Codex Review` header fragment), not one complete review body. Fixed by moving the array-index selection inside the jq expression (`[.[] \| select(...)][0].body`), which correctly emits exactly one complete, multi-line body. Grepped the whole document set for every other `head -1`/`head -n1`/`head -n 1` instance applied to potentially multi-line content: **one instance found, the one above; no others exist** |
 | **Round-7 full re-audit of every "exists"/"kept"/"unchanged"/"retargeted" scenario-name claim against the real `test-pr-review-loop.sh`** — performed because the finding above was the second time this plan's completeness/verification claims were wrong (round 4's "no stale passage found" was also incomplete) | For every `codex_*_root_comment`-style name this document referenced as already implemented: `grep -c -- "<name>" test-pr-review-loop.sh`, cross-checked against `grep -oE 'run_test "codex_[a-zA-Z0-9_]+"' test-pr-review-loop.sh \| sort -u` (247 real names) and, for keyword-level near-miss checking, `grep -in "<keyword>" test-pr-review-loop.sh` | **Extensive additional fabrication found, well beyond the one Codex named.** Of the ~40 scenario names this document claimed already existed, **14 more do not exist anywhere in the repository** (not merely under this name — the underlying test mechanism itself was never implemented): `codex_bare_approved_punctuation_root_comment`, `codex_two_clean_signals_one_line_root_comment`, `codex_adjacent_clean_signals_root_comment`, `codex_uppercase_clean_signal_root_comment`, `codex_emoji_clean_signal_root_comment`, `codex_adjacent_signal_second_contains_no_root_comment`, `codex_adjacent_signal_second_contains_didnt_root_comment`, `codex_disqualifier_diagnostic_emitted`, `codex_footer_truncation_keeps_blocking_root_comment`, `codex_footer_markup_lookalike_tag_names_not_truncated_root_comment`, `codex_nonfooter_details_block_not_truncated_root_comment`, `codex_metadata_token_as_directive_root_comment`, `codex_underscore_prefixed_lookalike_root_comment`, `codex_unenumerated_actionable_sentence_after_signal_root_comment`. Additionally, **two real scenarios were misclassified by disposition, not just by existence**: `codex_long_review_body_no_sigpipe` and `codex_long_root_comment_no_sigpipe` are real and currently assert `VERDICT: APPROVED` (bodies use the pre-plan block-list phrase `No blocking issues found.` inside a 200 000-character SIGPIPE-safety fixture) — this document had placed them in "Group UNCHANGED-NEEDS_REVISION" ("already `NEEDS_REVISION`, stays that way"), which is the opposite of their real, current, verified disposition; they belong in Group RETARGETED. Full corrected inventory, and the complete list of every name checked, is in the rebuilt Test disposition section below |
+| **Codex GitHub finding `3803959040` (P2, round 8): deleting `codex_strip_not_only_idiom`'s call inside `codex_response_is_blocking` reintroduces a false-blocking regression** | The real, unmodified `CODEX_BLOCKING_PATTERN`/`CODEX_MERGE_REFUSAL_PATTERN`/`CODEX_NEGATION_WORDS` and `codex_strip_not_only_idiom` extracted from `codex-github-reviewer.sh`, executed against `This is not only safe to merge but looks good.` with and without the strip | Confirmed correct. **Without** the strip: matches `CODEX_MERGE_REFUSAL_PATTERN` — `is_blocking` returns `TRUE` (false blocking). **With** the strip (the production script's actual, current behavior): no match — `is_blocking` returns `FALSE` (correct). An earlier revision of this document scheduled the function for outright deletion "plus its call in `codex_response_is_blocking`," which is exactly the regression reproduced here. Corrected: the function and its `is_blocking` call site are both kept; only the (already-replaced) `is_approved` call site is gone — see Decision 4 |
+| **Round-8 sibling-coupling check: does any other symbol scheduled for deletion have a real call site inside `codex_response_is_blocking`?** | `awk 'NR==599,NR==641' codex-github-reviewer.sh \| grep -vE '^\s*#' \| grep -oE '\bcodex_[a-zA-Z_]+\b\|\bCODEX_[A-Z_]+\b' \| sort -u` (filters comment-only lines, so only real code references count) | `codex_response_is_blocking`'s real function body references exactly four symbols: `CODEX_BLOCKING_PATTERN`, `codex_strip_not_only_idiom`, `codex_strip_quoted_spans`, and itself. All four are already in this document's "Keep unchanged" list (after this round's correction). **No other symbol on the deletion list has any real call site inside `codex_response_is_blocking`** — the coupling this round found is isolated to the one symbol Codex named. Also checked `codex_combine_terminal_evidence` (the function whose comment references `is_blocking`'s "blocking always wins" invariant): its real body calls only `codex_response_is_blocking`, `codex_response_is_environment_error`, `codex_response_is_usage_limit`, and `codex_select_terminal_evidence` — all four already kept, none scheduled for deletion |
+| **`codex_not_only_safe_to_merge_stays_approved_root_comment`'s real, current disposition re-verified with the strip retained** | The real `codex_response_is_blocking` (strip retained) composed with this plan's whole-body `codex_response_is_approved`, against the scenario's real body: `"This is not only safe to merge but looks good.\n\n**Reviewed commit:** \`face7777\`"` | `is_blocking`: `FALSE`. `is_approved`: `FALSE` (does not reproduce the template). Composed verdict: **`NEEDS_REVISION (unrecognized response format — safe-fail)`** — unchanged from what this document's round-7 Group RETARGETED entry already stated; the round-8 fix does not change this scenario's expected string, because the bug was in the deletion-list instruction, not in the disposition table. Also re-verified the two sibling "not only" scenarios (`codex_not_only_idiom_stays_approved_root_comment`, `codex_not_only_idiom_uppercase_stays_approved_root_comment`) — neither contains "merge," so neither is affected by the strip either way; both still resolve to the same safe-fail |
 
 ### Predicate validation (reproducible)
 
@@ -385,11 +392,15 @@ it comes from GitHub's own API rather than from parsing vendor-authored text.
 
 ### Decision 4 — `codex_response_is_blocking` stays a block-list
 
-`codex_response_is_blocking` is **kept**, and `CODEX_BLOCKING_PATTERN`, `CODEX_MERGE_REFUSAL_PATTERN`, and
-`CODEX_NEGATION_WORDS` are **kept unchanged** — this redesign does not touch them. Its only edit, unchanged
-from every prior revision of this plan, is dropping the now-deleted `codex_strip_not_only_idiom` call
-(see below). Reasons, restated because they are exactly as true under exact-template matching as they were
-under every earlier design:
+`codex_response_is_blocking` is **kept, with zero edits — not even the drop of a call site.** `CODEX_BLOCKING_PATTERN`,
+`CODEX_MERGE_REFUSAL_PATTERN`, `CODEX_NEGATION_WORDS`, `codex_strip_quoted_spans`, and **`codex_strip_not_only_idiom`
+and its call inside `codex_response_is_blocking`** are all **kept unchanged** — this redesign does not touch
+any of them. **This corrects Codex GitHub finding `3803959040` (P2, round 8): an earlier revision of this
+document scheduled `codex_strip_not_only_idiom` for deletion "plus its call in `codex_response_is_blocking`,"
+which is a real behavioral regression, re-executed and confirmed this round against the real, unmodified
+production constants** — reasons below. The claim "`codex_response_is_blocking` is unchanged" is true **only
+conditional on retaining this one call site**; every place that claim appears in this document (this Decision,
+the Summary, the Verification Log, Risks & Mitigations) now states that condition explicitly.
 
 - **The failure directions are not symmetric.** A false negative from `is_approved` is safe (extra
   `NEEDS_REVISION`); a false negative from `is_blocking` is unsafe. Protocol 93 and
@@ -417,15 +428,40 @@ under every earlier design:
   prevent a false `APPROVED` that `is_approved` would otherwise have produced. This is a direct consequence of
   Decision 1's whole-body match, not a new mechanism added to `is_blocking` itself.
 
-`codex_strip_not_only_idiom` is deleted **entirely — the function definition, not just its call sites** (a
-change from how earlier revisions of this plan described this step, which removed the calls but left the
-function defined and unused; per this round's explicit "delete what the redesign obsoletes, do not leave it
-dormant" instruction, an unreferenced function is exactly that). It existed only to avoid a false
-`NEEDS_REVISION` on the rhetorical "not only X, but Y" construction, in both `is_approved` (now moot — the
-function's own removal means there is no prose-normalization step left to need it) and `is_blocking` (kept,
-per the standing decision recorded here since round 1: keeping a bespoke idiom stripper while the file
-accepts a much higher false-`NEEDS_REVISION` rate everywhere else is incoherent, and "not only X, but Y" is
-one of the enumerated constructs issue #1491 names as evidence that enumeration does not converge).
+**`codex_strip_not_only_idiom` is kept — the function definition, and its one remaining call site inside
+`codex_response_is_blocking`.** This corrects a self-contradiction in an earlier revision of this document,
+which claimed the function was "deleted entirely" in the same breath as describing it as "kept… in
+`is_blocking`" — those two statements cannot both be true, and Codex GitHub finding `3803959040` caught the
+one that mattered: deleting the real, currently-load-bearing call site.
+
+**Why it is load-bearing for `is_blocking`, reproduced by execution this round (not asserted):**
+`CODEX_MERGE_REFUSAL_PATTERN` is built from `CODEX_NEGATION_WORDS`' bare `not` alternative plus
+`[^.!?;,]*(be[[:space:]]+)?merged?` — the exact same construction that motivated `codex_strip_not_only_idiom`
+for `is_approved` in the first place, now inherited by `is_blocking` once `CODEX_BLOCKING_PATTERN` absorbed
+`CODEX_MERGE_REFUSAL_PATTERN` (this is documented in the production script's own comment above
+`codex_response_is_blocking`, citing PR #1490 finding `3799277922`). Running the real, unmodified constants
+extracted from `codex-github-reviewer.sh` against `This is not only safe to merge but looks good.`:
+
+```text
+WITHOUT the codex_strip_not_only_idiom call: MATCHES CODEX_BLOCKING_PATTERN — is_blocking returns TRUE (false blocking)
+WITH the codex_strip_not_only_idiom call:    no match — is_blocking returns FALSE (correct)
+```
+
+Deleting the call, as an earlier revision of this document scheduled, reintroduces exactly the false-positive
+`CODEX_MERGE_REFUSAL_PATTERN` was already known to produce on this idiom — a genuinely clean response
+containing "not only … merge" in the same clause, with no intervening `.!?;,`, would be misclassified as an
+explicit merge refusal.
+
+**What is actually removed, and why that removal is still correct.** The call site inside the *original*
+`codex_response_is_approved` (the pre-plan function this revision fully replaces, not edits in place) is gone
+— but that is a consequence of replacing the entire function body with the whole-body exact-template match
+(Decision 1), which performs no prose normalization of any kind and therefore has no use for any stripping
+helper. Nothing is deleted from `is_approved` by name; the function that called
+`codex_strip_not_only_idiom` no longer exists in its old form at all. This is the same distinction Decision 2
+already draws for every other now-unused prose-matching symbol — the difference for
+`codex_strip_not_only_idiom` specifically is that, unlike those other symbols, it still has one real,
+load-bearing caller left (`is_blocking`), so the function itself is not obsoleted, only one of its two call
+sites is.
 
 ### Decision 5 — The vendor `<details>` footer is captured verbatim as part of the exact-match template; it is no longer truncated before classification
 
@@ -518,9 +554,18 @@ and `[[ ]]`-free POSIX tests). No portable `bash-zsh` snippet is introduced.
       `codex_response_first_paragraph`, and `codex_strip_vendor_metadata_lines`. None of these has a role in
       the final design — see Decision 2 for why each category (vocabulary, grammar, position) was replaced,
       not narrowed.
-- [ ] **Delete** `codex_strip_not_only_idiom` — the function definition itself, not just its call sites (see
-      Decision 4). Remove its call from `codex_response_is_blocking`.
-      *Verify*: `grep -n "not_only" scripts/development-workflow/codex-github-reviewer.sh` returns nothing.
+- [ ] **Keep** `codex_strip_not_only_idiom` — **the function definition, and its call inside
+      `codex_response_is_blocking` (line 639 of the current production script).** This is a correction to an
+      earlier revision of this document (Codex GitHub finding `3803959040`, round 8), which scheduled the
+      function and both its call sites for deletion; deleting the `is_blocking` call site is a real regression,
+      reproduced this round against the real production constants: `CODEX_MERGE_REFUSAL_PATTERN` (built from
+      `CODEX_NEGATION_WORDS`' bare `not` plus `merge`) matches `This is not only safe to merge but looks good.`
+      without the strip, and does not match with it. **Only the call site inside `codex_response_is_approved`
+      is gone** — not by an explicit deletion instruction, but because the entire function is being replaced by
+      the whole-body exact-template match (Decision 1), which performs no prose normalization at all.
+      *Verify*: `grep -n "codex_strip_not_only_idiom" scripts/development-workflow/codex-github-reviewer.sh`
+      returns the function definition plus **exactly one** call site, inside `codex_response_is_blocking` — not
+      zero, and not two.
 - [ ] **Keep unchanged**: `codex_response_has_fence_marker`, `codex_strip_quoted_spans`,
       `codex_response_is_usage_limit`, `codex_response_is_environment_error`,
       `codex_response_reviews_current_head`, `codex_response_priority`, `codex_select_terminal_evidence`,
@@ -924,7 +969,15 @@ new reason:
 - `codex_unrelated_negation_before_merge_stays_approved_root_comment` — `"This is not a blocker; looks good,
   please merge.\n\n**Reviewed commit:** \`face5555\`"`
 - `codex_not_only_safe_to_merge_stays_approved_root_comment` — `"This is not only safe to merge but looks
-  good.\n\n**Reviewed commit:** \`face7777\`"`
+  good.\n\n**Reviewed commit:** \`face7777\`"`. **Re-verified this round (round 8) with `codex_strip_not_only_idiom`'s
+  `is_blocking` call site correctly retained (Decision 4 correction, Codex GitHub finding `3803959040`):** this
+  scenario's expected disposition is unchanged — `is_blocking` returns `FALSE` (the strip removes "not only,"
+  leaving no negation word adjacent to "merge"), `is_approved` returns `FALSE` (does not reproduce the
+  template), composed verdict remains `NEEDS_REVISION (unrecognized response format — safe-fail)`. Also
+  re-checked `codex_unrelated_negation_before_merge_stays_approved_root_comment` (below) for the same class of
+  risk, since its body also contains "not" and "merge": its semicolon (`"This is not a blocker; looks good,
+  please merge."`) already breaks `CODEX_MERGE_REFUSAL_PATTERN`'s same-clause requirement independent of the
+  not-only strip, so it is unaffected either way — confirmed by execution, not assumed.
 - `codex_contraction_apostrophes_not_mangled_root_comment` — `"It's fine, doesn't need changes. No blocking
   issues found.\n\n**Reviewed commit:** \`facade02441\`"`
 - `codex_inline_backtick_pair_stays_approved_root_comment` — `` "The fix looks good. See `foo.py:42` for a
@@ -1182,7 +1235,8 @@ step 1 requires this re-check, and a drifted capture changes what `CODEX_APPROVE
 | BSD versus GNU tooling divergence (`tr`'s whitespace-class handling, `grep -E`'s escaping of `.`/`*`/backtick/parentheses in the template) | Medium | Medium | This revision uses **fewer** BSD/GNU divergence points than the prior one: no `awk` truncation pass at all (one fewer tool in the comparison path), no `\b` word boundaries anywhere, and the one remaining regex per template is a fully-anchored literal with a single bounded character-class placeholder — the simplest, least divergence-prone construct this plan has ever shipped, now applied to a longer literal. Verified on BSD tooling this round; CI covers GNU |
 | `CODEX_APPROVED_TEMPLATES` regresses to a flexible pattern (an optional clause, a case-insensitive flag, a wildcard placeholder) — this is the same class of finding that recurred five times against this classifier's prior designs, now aimed at the one array that replaced all of them | Low, **if the mechanical rule below is applied**; historically High — it recurred five times across the classifier's history without one | High | **Standing rule (Decision 2): every entry in `CODEX_APPROVED_TEMPLATES` must be backed by a live capture, every non-literal character must be a placeholder bound to that field's own external specification (never a general wildcard), and no case-insensitive, optional, alternation, or truncation-based matching may be introduced.** Any PR proposing otherwise — however narrowly scoped it looks — must be rejected and pointed at this row and Decision 2 |
 | The 25 scenarios in Group RETARGETED (corrected this round from a false count of 18 — see the round-7 audit), plus the 22 new scenarios (corrected from 15 — 7 were previously, incorrectly, described as already existing), mask a real regression in something other than `is_approved` | Medium | Medium | The Test disposition section is exhaustive, named, and ground-truth-verified against the real file this round; the PR description must state the full delta by scenario name, not a bare count (this is now the fourth revision in this plan's history where a stable-looking total would have concealed a real composition change if reported as a bare number alone) |
-| **This document's own claims about which test scenarios already exist have now been wrong twice** (round 4's "no stale passage found," corrected in round 5; and this round's `codex_real_vendor_footer_clean_root_comment` plus 14 further fabricated "exists" claims, corrected in round 7) | Medium, absent the standing rule below; **historically has recurred**, so treat as a real, not hypothetical, risk | High — a false "exists" claim leaves a genuine coverage gap that reads as covered | **Standing rule (new this round): before relying on any claim in this document that a named test scenario "exists," "is kept," or "is unchanged," re-run the exact `grep` command against the real file** (see the Verification Log's round-7 audit row for the commands used) rather than trusting this document's prose, no matter how recent the revision. This applies to every future round of this plan, not only this one |
+| **This document's own claims about which test scenarios already exist have now been wrong twice** (round 4's "no stale passage found," corrected in round 5; and round 7's `codex_real_vendor_footer_clean_root_comment` plus 14 further fabricated "exists" claims) | Medium, absent the standing rule below; **historically has recurred**, so treat as a real, not hypothetical, risk | High — a false "exists" claim leaves a genuine coverage gap that reads as covered | **Standing rule: before relying on any claim in this document that a named test scenario "exists," "is kept," or "is unchanged," re-run the exact `grep` command against the real file** (see the Verification Log's round-7 audit row for the commands used) rather than trusting this document's prose, no matter how recent the revision. This applies to every future round of this plan, not only this one |
+| **A symbol scheduled for deletion is silently load-bearing for `codex_response_is_blocking` — deleting it (or one of its call sites) reintroduces a false-blocking regression the production script's own history already fixed once.** This is the third distinct class of "this document's own claim about the codebase was wrong" finding across rounds 7–8 (round 7: fabricated test-scenario existence; round 8: a real, load-bearing call site scheduled for deletion) | Medium, absent the standing rule below; **has now occurred once (round 8, `codex_strip_not_only_idiom`)** | High — a silently reintroduced false-blocking match can override concurrent availability evidence and produce an incorrect `NEEDS_REVISION` (blocking branch) for a genuinely clean response | **Standing rule (new this round, Codex GitHub finding `3803959040`): before scheduling ANY symbol for deletion, check whether it has a real call site inside `codex_response_is_blocking` specifically** (not just inside the function being replaced) — `codex_response_is_blocking`'s failure direction is unsafe (Decision 4), so an incorrect deletion there is never merely a disclosed trade the way an `is_approved`-side deletion can be. The round-8 sibling-coupling check (Verification Log) confirmed no other scheduled-for-deletion symbol has this coupling today, but any future addition to the deletion list must repeat this check, not assume it |
 
 ---
 
@@ -1233,12 +1287,16 @@ The supported response to a persistent false `NEEDS_REVISION` is:
    `CODEX_APPROVAL_ACTIONABLE_PATTERN`, `CODEX_APPROVAL_DISQUALIFIER_PATTERN`,
    `CODEX_RESIDUE_FILLER_WORD_PATTERN`, `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN`, `codex_excise_clean_signals`,
    `codex_residue_is_closed_grammar`, `codex_response_first_paragraph`, `codex_strip_vendor_metadata_lines`,
-   `CODEX_FOOTER_OPENING_LITERAL`, `codex_strip_codex_footer` (both **new to the deletion list this round** —
-   see Decision 5), and `codex_strip_not_only_idiom` (the function definition, plus its call in
-   `codex_response_is_blocking`).
-   *Verify*: `bash -n scripts/development-workflow/codex-github-reviewer.sh` succeeds and
-   `grep -nE "CODEX_NEGATED_APPROVAL|CODEX_CLEAN_SIGNAL|CODEX_APPROVAL_(NEGATION|HEDGE|ACTIONABLE|DISQUALIFIER)|CODEX_RESIDUE_FILLER|CODEX_VENDOR_FLAVOR|codex_excise_clean_signals|codex_residue_is_closed_grammar|codex_response_first_paragraph|codex_strip_vendor_metadata_lines|CODEX_FOOTER_OPENING_LITERAL|codex_strip_codex_footer|not_only" scripts/development-workflow/codex-github-reviewer.sh`
-   returns nothing.
+   and `CODEX_FOOTER_OPENING_LITERAL`/`codex_strip_codex_footer` (**new to the deletion list in round 6** — see
+   Decision 5). **`codex_strip_not_only_idiom` is corrected this round (Codex GitHub finding `3803959040`) to
+   NOT be on this list** — the function definition and its call inside `codex_response_is_blocking` are both
+   kept; only its call inside the old `codex_response_is_approved` disappears, as a consequence of that
+   function being fully replaced (Decision 1), not as a separate deletion step.
+   *Verify*: `bash -n scripts/development-workflow/codex-github-reviewer.sh` succeeds;
+   `grep -nE "CODEX_NEGATED_APPROVAL|CODEX_CLEAN_SIGNAL|CODEX_APPROVAL_(NEGATION|HEDGE|ACTIONABLE|DISQUALIFIER)|CODEX_RESIDUE_FILLER|CODEX_VENDOR_FLAVOR|codex_excise_clean_signals|codex_residue_is_closed_grammar|codex_response_first_paragraph|codex_strip_vendor_metadata_lines|CODEX_FOOTER_OPENING_LITERAL|codex_strip_codex_footer" scripts/development-workflow/codex-github-reviewer.sh`
+   returns nothing; and, separately, `grep -c "codex_strip_not_only_idiom" scripts/development-workflow/codex-github-reviewer.sh`
+   returns exactly **2** (the definition plus its one remaining call inside `codex_response_is_blocking`) — not
+   0 and not 3.
 3. **Add** `CODEX_APPROVED_TEMPLATES` (Decision 2, now covering the entire body including the complete footer)
    and `codex_normalize_whitespace` (Decision 1, unchanged).
 4. **Rewrite `codex_response_is_approved`** per Decision 1 and the Code Samples section: normalize whitespace
@@ -1302,42 +1360,55 @@ The supported response to a persistent false `NEEDS_REVISION` is:
   prior revision), constant names (`CODEX_APPROVED_TEMPLATES`, updated in place to cover the whole body — no
   `CODEX_FOOTER_OPENING_LITERAL`, `CODEX_CLEAN_SIGNAL_PATTERN`, `CODEX_APPROVAL_DISQUALIFIER_PATTERN`,
   `CODEX_RESIDUE_FILLER_WORD_PATTERN`, or `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN`, all deleted — `CODEX_FOOTER_OPENING_LITERAL`
-  and `codex_strip_codex_footer` newly deleted this round), decision labels (Decision 1–5, same numbering as
-  the immediately prior revision — Decisions 1, 2, and 5 rewritten in place rather than renumbered, since each
-  still addresses the same question its number always has: what counts as a match, why exact matching
-  converges, and how the footer is handled), and file paths agree across the Summary, Decisions, Layer-by-Layer,
-  Code Samples, Parser-risk addendum, Testing Strategy, and Implementation Order sections. **Scenario-name
-  claims specifically were re-verified this round by direct execution against the real `test-pr-review-loop.sh`
-  — not by document self-consistency alone** — after Codex GitHub finding `3803807958` and the round-7 audit it
-  triggered found 14 additional fabricated "exists" claims beyond the one Codex named, plus 2 real scenarios
-  misclassified by disposition (`codex_long_review_body_no_sigpipe`, `codex_long_root_comment_no_sigpipe`). Every
-  scenario name this document currently marks "exists," "kept," "real," or "confirmed present" was checked with
-  `grep -c -- "<name>" test-pr-review-loop.sh` (or, for the two misclassified scenarios, by reading their real
-  body and expected-verdict directly) this round; every scenario name marked "new" was confirmed absent by the
-  same method. A full-document re-read this round confirmed no remaining passage describes footer truncation,
-  `codex_strip_codex_footer`, `CODEX_FOOTER_OPENING_LITERAL`, the "visible portion only" match, or any
-  now-corrected false "exists" claim as current — every reference to them is explicitly framed as history (in
-  "Background," Decision 2, Decision 5, or the round-7 corrections in "Test disposition").
+  and `codex_strip_codex_footer` deleted in round 6; **`codex_strip_not_only_idiom` corrected in round 8 to be
+  kept, not deleted — see below**), decision labels (Decision 1–5, same numbering as the immediately prior
+  revision — Decisions 1, 2, 4, and 5 rewritten in place rather than renumbered, since each still addresses the
+  same question its number always has: what counts as a match, why exact matching converges, why
+  `is_blocking` stays a block-list, and how the footer is handled), and file paths agree across the Summary,
+  Decisions, Layer-by-Layer, Code Samples, Parser-risk addendum, Testing Strategy, and Implementation Order
+  sections. **Scenario-name claims specifically were re-verified in round 7 by direct execution against the
+  real `test-pr-review-loop.sh` — not by document self-consistency alone** — after Codex GitHub finding
+  `3803807958` and the round-7 audit it triggered found 14 additional fabricated "exists" claims beyond the one
+  Codex named, plus 2 real scenarios misclassified by disposition (`codex_long_review_body_no_sigpipe`,
+  `codex_long_root_comment_no_sigpipe`). Every scenario name this document currently marks "exists," "kept,"
+  "real," or "confirmed present" was checked with `grep -c -- "<name>" test-pr-review-loop.sh` (or, for the two
+  misclassified scenarios, by reading their real body and expected-verdict directly); every scenario name
+  marked "new" was confirmed absent by the same method. **In round 8, the same execution-first discipline was
+  applied to a behavioral (not existence) claim**: Codex GitHub finding `3803959040` showed the deletion list
+  itself was wrong — `codex_strip_not_only_idiom`'s call inside `codex_response_is_blocking` is load-bearing,
+  reproduced this round by running the real `CODEX_MERGE_REFUSAL_PATTERN`/`CODEX_NEGATION_WORDS` constants with
+  and without the strip against `This is not only safe to merge but looks good.`, and a sibling-coupling check
+  confirmed no other symbol on the deletion list has the same coupling. A full-document re-read this round
+  confirmed no remaining passage describes footer truncation, `codex_strip_codex_footer`,
+  `CODEX_FOOTER_OPENING_LITERAL`, the "visible portion only" match, any now-corrected false "exists" claim, or
+  `codex_strip_not_only_idiom`'s full deletion as current — every reference to them is explicitly framed as
+  history (in "Background," Decision 2, Decision 4, Decision 5, or the round-7/round-8 corrections).
 - Verification support: Checked — every claim about existing behavior, file coverage, counts, and the vendor
   wire format cites a Verification Log command or a named source file. The exact implementation shipped in
   Code Samples (not an illustrative approximation of it) was re-executed on BSD `sed`/`grep`/`awk`/`tr` against
-  all 13 real captured Codex bodies (re-fetched live this round), every construction found across all seven
-  review rounds, and every edge case in the Parser-risk addendum, including the two new to round 6 (E23, E24),
-  the rewritten E22, and the seven scenario-existence corrections made this round (round 7). **The total
-  `run_test` assertion baseline is corrected this round from 628 to 620 — re-derived by direct count against
-  the real file (`grep -c '^run_test '`), not carried forward from an earlier revision's claim** — the `codex_*`
-  count (247) and the `VERDICT: APPROVED` count (27) were independently re-derived the same way and confirmed
-  to match the earlier revision's figures, so those two specific numbers were correct even though several of the
-  named scenarios behind the 27 were not.
+  all 13 real captured Codex bodies, every construction found across all eight review rounds, and every edge
+  case in the Parser-risk addendum, including the two new to round 6 (E23, E24), the rewritten E22, and the
+  seven scenario-existence corrections made in round 7. **The total `run_test` assertion baseline is corrected
+  in round 7 from 628 to 620 — re-derived by direct count against the real file (`grep -c '^run_test '`), not
+  carried forward from an earlier revision's claim** — the `codex_*` count (247) and the `VERDICT: APPROVED`
+  count (27) were independently re-derived the same way and confirmed to match the earlier revision's figures,
+  so those two specific numbers were correct even though several of the named scenarios behind the 27 were not.
+  **Round 8 additionally re-verified, by execution against the real production constants (not the plan's prior
+  description of them), that `codex_response_is_blocking` behaves identically before and after this plan only
+  when `codex_strip_not_only_idiom`'s call site is retained** — this document's blanket "`is_blocking` is
+  unchanged" claim is now stated everywhere as conditional on that retention, not as an unqualified fact.
 - Behavioral guarantees: Checked — the "cannot weaken the `CHANGES_REQUESTED` short-circuit" guarantee names
   its mechanism (unchanged, Decision 3); the "whole-body match leaves no discarded byte range" guarantee names
   its actual mechanism (no truncation step exists in `codex_response_is_approved`, Decision 1/5) rather than
   merely asserting it, and is the guarantee that directly answers Codex GitHub finding `3803545669`; the
   "`is_blocking` is no longer load-bearing for this specific composition" guarantee is stated as a consequence
-  of the whole-body match, not as a new mechanism added to `is_blocking` (Decision 4); the "exact matching
-  converges" guarantee names its actual mechanism (a finite language defined by one literal template plus one
-  bounded placeholder, Decision 2) rather than merely asserting it, and explicitly discloses both trades this
-  design makes (a categorically higher false-`NEEDS_REVISION` rate, and — new this round — a dependency on
+  of the whole-body match, not as a new mechanism added to `is_blocking` (Decision 4); **the "`is_blocking` is
+  unchanged" guarantee is now explicitly conditional on retaining `codex_strip_not_only_idiom`'s call site
+  (Decision 4, corrected round 8, Codex GitHub finding `3803959040`) — the claim previously read as
+  unconditional while the same section scheduled the very call site it depends on for deletion**; the "exact
+  matching converges" guarantee names its actual mechanism (a finite language defined by one literal template
+  plus one bounded placeholder, Decision 2) rather than merely asserting it, and explicitly discloses both
+  trades this design makes (a categorically higher false-`NEEDS_REVISION` rate, and a dependency on
   vendor-controlled footer wording) rather than presenting the design as risk-free.
 - Complex workflow decision-gate matrix: Checked — see the matrix below, updated this round to remove the
   "footer-stripped" qualifier from the matched-body rows.
