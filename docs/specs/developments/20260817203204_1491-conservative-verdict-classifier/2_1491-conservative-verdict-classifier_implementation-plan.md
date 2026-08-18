@@ -960,6 +960,27 @@ contains categories a subtraction could silently sweep in.
   vocabulary-matching artifacts, not routing tests (single-shot, no poll sequencing), and must retarget along
   with every other member of this group; do not leave them classified as already-`NEEDS_REVISION` without
   checking their real, current disposition first.
+  **One scenario in this group has a competing evidence fixture whose priority, not just its own body,
+  determines the scenario's regression-detection value** (Codex GitHub finding `3805611400`, P2) —
+  `codex_usage_limit_topic_mention_not_quota` mocks both a review (body mentioning "Codex usage limit" only as
+  a topic, not an actual quota message) and a SHA-pinned root comment (currently a bare, old-vocabulary clean
+  body) at the same timestamp, and relies on `codex_response_priority`'s tie-break to prove the review's
+  topic-mention is not misclassified: the scenario passes only if the correctly-classified evidence source
+  wins the tie regardless of what the other side is. `codex_response_priority` ranks an unrecognized body at
+  priority 2 — **above** usage-limit's priority 1 — so once retargeting leaves the root comment's body an
+  unrecognized (non-template) shape, it would win the tie against a misclassified usage-limit review by
+  coincidence of tier ordering, not because the review was correctly classified, silently absorbing the exact
+  regression the scenario exists to catch. **The competing root-comment fixture must also be updated to the
+  new exact template** (not merely retargeted), so it stays classified at priority 0 and the tie remains
+  decided by whether the review is correctly classified, not by both sides collapsing into the same
+  unrecognized tier. Verified this round by mutation: with the root comment left as its old body, a review
+  falsely classified as usage-limit (reverting `codex_response_is_usage_limit`'s third alternative to its
+  historical, unguarded pre-fix form) still produces the expected `NEEDS_REVISION` — the regression is not
+  caught. With the root comment updated to the new template, the same mutation produces `VERDICT: UNAVAILABLE`
+  instead of the expected `NEEDS_REVISION` — caught. **Checked all 18 other Group RETARGETED scenarios for the
+  same property this round**: every one of them mocks exactly one non-empty evidence source (the other endpoint
+  returns `[]`), confirmed by reading each scenario's mock directly — none has a competing-fixture dependency,
+  so none needs this treatment.
   **Every scenario in this group has a paired `*_exit_clean` assertion** (a second `run_test` line, named
   `<scenario>_exit_clean`, checking the scenario's exit code independently of its verdict string) that
   currently expects exit `0` and must retarget to `1` in the same commit, because `VERDICT: NEEDS_REVISION`
@@ -1382,8 +1403,12 @@ the classifier. The supported response to a persistent false `NEEDS_REVISION` is
       to the remaining, vocabulary-testing scenarios only — **each retargeted scenario
       requires two edits, not one**: its `VERDICT: APPROVED` assertion retargets to `VERDICT: NEEDS_REVISION
       (unrecognized response format — safe-fail)`, **and** its paired `*_exit_clean` assertion retargets from
-      `"0"` to `"1"` in the same commit; confirm `codex_disqualifier_diagnostic_emitted` is genuinely absent
-      (no deletion needed — it was never implemented); refresh the comment on each real scenario in Group
+      `"0"` to `"1"` in the same commit; **`codex_usage_limit_topic_mention_not_quota` additionally requires
+      its competing root-comment fixture updated to the new exact template, not merely the retargeting edits
+      above** (Codex GitHub finding `3805611400`, P2 — see "Test disposition" for why the tie-break otherwise
+      silently absorbs the exact regression this scenario exists to catch); confirm
+      `codex_disqualifier_diagnostic_emitted` is genuinely absent (no deletion needed — it was never
+      implemented); refresh the comment on each real scenario in Group
       UNCHANGED-NEEDS_REVISION (do not touch Group UNTOUCHED, per "Test disposition"). **Do not add any new
       scenario in this stage, and do not re-run the equations from stage 1 against the now-edited file** — the
       "different, simpler check" in "Test disposition" applies instead.
