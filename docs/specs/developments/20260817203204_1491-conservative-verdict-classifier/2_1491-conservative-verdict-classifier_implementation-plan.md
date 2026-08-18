@@ -51,13 +51,19 @@ in — every single byte of the response is either part of the one evidenced lit
 revision removes — are **deleted outright**, not deprecated in place, because nothing in the redesigned
 function calls them and Decision 5 already established (in the prior revision) that nothing else in the file
 did either. The work is still medium, not small, because the test corpus this contract change affects is
-large (247 `codex_*` assertions) and the disposition delta is real but narrower than the prior revision's:
-the same 5 scenarios that asserted `VERDICT: APPROVED` after the prior revision still assert it here, but 4 of
-those 5 fixture bodies must be updated **again**, this time to append the complete, verbatim vendor footer —
-under the prior (truncate-then-match) design a footer-less fixture matched because the footer was discarded
-before comparison; under this (no-truncation) design the same fixture no longer matches unless the footer text
-is actually present, because there is nothing left to discard — see "Test disposition" for the full, named
-delta.
+large (**247** `codex_*` assertions, confirmed by direct count against the real file this round — see the
+Verification Log) and the disposition delta is real: **5 scenarios assert `VERDICT: APPROVED`** — 2 real,
+existing scenarios (`codex_clean_root_review_comment`, `codex_full_root_review_comment`) whose bodies must be
+updated to append the complete, verbatim vendor footer (under the prior, truncate-then-match design a
+footer-less fixture matched because the footer was discarded before comparison; under this no-truncation
+design the same fixture no longer matches unless the footer text is actually present), plus **3 new
+scenarios** authored with the footer built in from the start (`codex_real_vendor_footer_clean_root_comment`,
+`codex_sha_full_length_approved_root_comment`, `codex_irregular_whitespace_template_approved_root_comment`).
+**`codex_real_vendor_footer_clean_root_comment` is corrected this round from "already existing" to "new" — see
+Codex GitHub finding `3803807958` and the round-7 audit in the Verification Log** — an earlier revision of
+this document wrongly claimed it already existed; it did not, and this correction, together with a full
+re-audit of every other existing-scenario claim, is this round's primary change. See "Test disposition" for the
+full, named, ground-truth-verified delta.
 
 **Dependencies**: None. PR #1490 is merged (`55b2df5d` is its merge commit on `develop`); this plan builds on
 top of it and must not modify its commits.
@@ -72,7 +78,7 @@ top of it and must not modify its commits.
 | Reviewer script size | `wc -l scripts/development-workflow/codex-github-reviewer.sh` | 1996 lines |
 | Symbols in scope | `grep -rln "CODEX_NEGATED_APPROVAL\|CODEX_APPROVAL_PATTERN\|CODEX_NEGATION_WORDS\|codex_strip_not_only_idiom" .` | `CHANGELOG.md`, `scripts/development-workflow/codex-github-reviewer.sh`, `scripts/development-workflow/tests/test-pr-review-loop.sh` — no agent, skill, protocol, or doc file references these symbols |
 | Test-harness location | `grep -rln "codex_response_is_approved\|codex-github-reviewer" scripts/development-workflow/tests/` | `scripts/development-workflow/tests/test-pr-review-loop.sh` only (single harness) |
-| Assertion inventory (pre-plan baseline) | `python3 -c "…count run_test lines…"` on `test-pr-review-loop.sh` | 628 total `run_test` assertions; 247 `codex_*` assertions; 27 assert `VERDICT: APPROVED` |
+| Assertion inventory (pre-plan baseline) — **re-derived directly from the file this round, not carried forward** | `grep -c '^run_test ' test-pr-review-loop.sh`; `grep -c 'run_test "codex_' test-pr-review-loop.sh`; `grep 'run_test "codex_' test-pr-review-loop.sh \| grep -c 'VERDICT: APPROVED'` | **620** total `run_test` assertions (corrects an earlier revision's "628," which this round's re-count does not reproduce); **247** `codex_*` assertions (confirmed, unchanged); **27** assert `VERDICT: APPROVED` (confirmed, unchanged) — see the round-7 audit row below for the full by-name reconciliation of which 27 |
 | Loop coupling | `grep -n "codex-github-reviewer\|codex_response" scripts/development-workflow/pr-review-loop.sh` | single hit at line 790 (script path resolution). `pr-review-loop.sh` consumes only the verdict line and exit code, so no loop change is required |
 | Real clean Codex root comment — re-fetched live this round | `gh api repos/lhpaul/ai-dev-framework-template/issues/1489/comments --jq '.[] \| select(.user.login\|test("codex";"i")) \| .body'` | `Codex Review: Didn't find any major issues. Swish!` + `**Reviewed commit:** \`87aaefceff\`` (10 lowercase hex chars) + the `<details>` "About Codex in GitHub" footer. Apostrophe confirmed straight ASCII (`0x27`) via `od -c`, not a curly quote |
 | Real findings Codex reviews — ALL 12 re-fetched live this round | `gh api repos/lhpaul/ai-dev-framework-template/pulls/1490/reviews --jq '.[] \| select(.user.login\|test("codex";"i")) \| .body'` | All 12 review bodies on PR #1490 (its full review history) are structurally identical: `\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** \`<10-hex-char SHA, one per review>\`\n    \n\n<details>…</details>`. **None contains a clean-signal phrase in its visible text** — the body is Codex's generic "a review was submitted" wrapper; the actual verdict for this evidence type is carried by the review's `state` field (`COMMENTED` in every one of these 12), which Decision 3's precedence table already routes around prose parsing entirely. This means **none of the 12 #1490 captures is eligible to become an `is_approved` template** — they are not evidence of a clean-response shape, they are evidence of the review-submission wrapper shape, which is out of scope for this function |
@@ -81,7 +87,10 @@ top of it and must not modify its commits.
 | Tooling identity confirmed for this review round | `sed 2>&1`, `grep --version`, `awk --version` (via `/usr/bin/{sed,grep,awk}` explicitly) | BSD `sed` (rejects GNU long-option syntax), `grep (BSD grep, GNU compatible) 2.6.0-FreeBSD`, one-true-awk `20200816` — confirms the same macOS BSD toolchain this plan has targeted throughout |
 | Open PRs on the same surface | `gh pr list --state open --limit 50` | zero open pull requests in the repository at check time |
 | Repository mode | `grep -nE "^mode:\|^workflow_hub:\|^product_repo:" .ai-dev-workflow.yaml` | no key present → `single_repo`; this repository owns the plan |
-| Codex GitHub finding `3803545669` (P1, this round) closed by removing truncation | `codex_response_is_approved` re-executed, unmodified from Code Samples, against a body reading template + `CODEX_FOOTER_OPENING_LITERAL` (the footer's opening line only, not the complete footer) + `Rename the unsafe function.` | `NEEDS_REVISION` (exit 1) — the opening-line-only construction no longer reproduces the required complete-footer literal, so it fails the whole-body match on its own terms, independent of what follows it |
+| Codex GitHub finding `3803545669` (P1, round 6) closed by removing truncation | `codex_response_is_approved` re-executed, unmodified from Code Samples, against a body reading template + `CODEX_FOOTER_OPENING_LITERAL` (the footer's opening line only, not the complete footer) + `Rename the unsafe function.` | `NEEDS_REVISION` (exit 1) — the opening-line-only construction no longer reproduces the required complete-footer literal, so it fails the whole-body match on its own terms, independent of what follows it |
+| **Codex GitHub finding `3803807958` (P1, round 7): `codex_real_vendor_footer_clean_root_comment` does not exist** | `grep -rl "codex_real_vendor_footer_clean_root_comment" scripts/`; `grep -rl "About Codex in GitHub" scripts/` | Confirmed correct — both return nothing. This round's document previously described this scenario as already implemented ("exists — keep, verdict unchanged"). It is not implemented anywhere in the repository. Corrected: reclassified as a new scenario to be added (see the round-7 audit row immediately below and the corrected Test disposition) |
+| **Codex GitHub finding `3803807963` (P2, round 7): Step 6 of the smoke-test runbook truncated a multi-line review body with `head -1`** | `gh api .../pulls/1490/reviews --jq '[.[] \| select(...)][0].body' \| wc -l` vs. the same query piped through `\| head -1` | Confirmed correct — the real review body is 24 lines; `head -1` after the `--jq` pipe returned only the first physical line (a truncated `### 💡 Codex Review` header fragment), not one complete review body. Fixed by moving the array-index selection inside the jq expression (`[.[] \| select(...)][0].body`), which correctly emits exactly one complete, multi-line body. Grepped the whole document set for every other `head -1`/`head -n1`/`head -n 1` instance applied to potentially multi-line content: **one instance found, the one above; no others exist** |
+| **Round-7 full re-audit of every "exists"/"kept"/"unchanged"/"retargeted" scenario-name claim against the real `test-pr-review-loop.sh`** — performed because the finding above was the second time this plan's completeness/verification claims were wrong (round 4's "no stale passage found" was also incomplete) | For every `codex_*_root_comment`-style name this document referenced as already implemented: `grep -c -- "<name>" test-pr-review-loop.sh`, cross-checked against `grep -oE 'run_test "codex_[a-zA-Z0-9_]+"' test-pr-review-loop.sh \| sort -u` (247 real names) and, for keyword-level near-miss checking, `grep -in "<keyword>" test-pr-review-loop.sh` | **Extensive additional fabrication found, well beyond the one Codex named.** Of the ~40 scenario names this document claimed already existed, **14 more do not exist anywhere in the repository** (not merely under this name — the underlying test mechanism itself was never implemented): `codex_bare_approved_punctuation_root_comment`, `codex_two_clean_signals_one_line_root_comment`, `codex_adjacent_clean_signals_root_comment`, `codex_uppercase_clean_signal_root_comment`, `codex_emoji_clean_signal_root_comment`, `codex_adjacent_signal_second_contains_no_root_comment`, `codex_adjacent_signal_second_contains_didnt_root_comment`, `codex_disqualifier_diagnostic_emitted`, `codex_footer_truncation_keeps_blocking_root_comment`, `codex_footer_markup_lookalike_tag_names_not_truncated_root_comment`, `codex_nonfooter_details_block_not_truncated_root_comment`, `codex_metadata_token_as_directive_root_comment`, `codex_underscore_prefixed_lookalike_root_comment`, `codex_unenumerated_actionable_sentence_after_signal_root_comment`. Additionally, **two real scenarios were misclassified by disposition, not just by existence**: `codex_long_review_body_no_sigpipe` and `codex_long_root_comment_no_sigpipe` are real and currently assert `VERDICT: APPROVED` (bodies use the pre-plan block-list phrase `No blocking issues found.` inside a 200 000-character SIGPIPE-safety fixture) — this document had placed them in "Group UNCHANGED-NEEDS_REVISION" ("already `NEEDS_REVISION`, stays that way"), which is the opposite of their real, current, verified disposition; they belong in Group RETARGETED. Full corrected inventory, and the complete list of every name checked, is in the rebuilt Test disposition section below |
 
 ### Predicate validation (reproducible)
 
@@ -548,28 +557,42 @@ and `[[ ]]`-free POSIX tests). No portable `bash-zsh` snippet is introduced.
 
 ### Tests — `scripts/development-workflow/tests/test-pr-review-loop.sh`
 
-- [ ] Retarget every scenario whose fixture body is not byte-for-byte (whitespace aside) one of the
-      `CODEX_APPROVED_TEMPLATES` entries from `VERDICT: APPROVED` to `VERDICT: NEEDS_REVISION`. This is nearly
-      every scenario that previously asserted `APPROVED` — see "Test disposition" for the exhaustive,
-      named delta. Update each retargeted scenario's fixture-body comment to state the new reason (the body is
-      not an exact template reproduction), not the superseded grammar-based reason.
-- [ ] **Append the complete, verbatim vendor footer to every scenario body that must assert `VERDICT:
-      APPROVED`** (`codex_clean_root_review_comment`, `codex_full_root_review_comment`,
-      `codex_sha_full_length_approved_root_comment`, `codex_irregular_whitespace_template_approved_root_comment`)
-      — see Group APPROVED in "Test disposition." This is a stricter requirement than the prior revision's:
-      under truncate-then-match, a fixture body omitting the footer still matched (the footer was discarded
-      before comparison either way); under whole-body exact matching, the same fixture no longer matches unless
-      the footer text is genuinely present, because nothing is discarded any more.
-- [ ] Add the new regression scenarios listed in "Testing Strategy" (the round-6 exploit closing Codex GitHub
-      finding `3803545669`, the one-byte-anywhere-in-the-footer mutation, the whitespace-normalization boundary
-      cases, and the SHA-placeholder-bound cases) — see "New scenarios."
-- [ ] Consolidate, rather than individually re-litigate, the round 1–5 regression scenarios whose underlying
-      mechanism no longer exists (e.g. the underscore-boundary, adjacent-signal-excision, closed-grammar, and
-      footer-opening-line-only-truncation scenarios) — every one of these constructions is now trivially
-      rejected because it does not reproduce a template, and the assertion itself does not change (all were
-      already, or are now, `NEEDS_REVISION`), but their comments must be rewritten to say so rather than
-      describing removed machinery. Do **not** delete them: they remain valid regression coverage proving the
-      new design does not reopen any exploit a prior round found.
+- [ ] **Re-verify every scenario name in "Test disposition" against the real file before starting this work**
+      (`grep -c -- "<name>" test-pr-review-loop.sh` per name) — this document was wrong twice about which
+      scenarios already exist (rounds 6 and 7); do not trust the scenario lists below without re-running the
+      check, since the file may have changed again between this plan's last edit and implementation start.
+- [ ] Retarget the **25 real, confirmed-existing** scenarios in Group RETARGETED whose fixture bodies are not
+      byte-for-byte (whitespace aside) `CODEX_APPROVED_TEMPLATES`' one entry, from `VERDICT: APPROVED` to
+      `VERDICT: NEEDS_REVISION` — see "Test disposition" for the exhaustive, named, ground-truth-verified list
+      (corrected this round from a false count of 18). Update each retargeted scenario's fixture-body comment
+      to state the new reason (the body is not an exact template reproduction), not the superseded
+      grammar-based reason.
+- [ ] **Append the complete, verbatim vendor footer to the 2 real, existing scenario bodies that must continue
+      to assert `VERDICT: APPROVED`** (`codex_clean_root_review_comment`, `codex_full_root_review_comment`) —
+      see Group APPROVED in "Test disposition." This is a stricter requirement than the prior revision's: under
+      truncate-then-match, a fixture body omitting the footer still matched (the footer was discarded before
+      comparison either way); under whole-body exact matching, the same fixture no longer matches unless the
+      footer text is genuinely present, because nothing is discarded any more.
+- [ ] Add the **22** new scenarios listed in "New scenarios" — 15 carried forward correctly from the immediately
+      prior revision (the round-6 exploit closing Codex GitHub finding `3803545669`, the
+      one-byte-anywhere-in-the-footer mutation, the whitespace-normalization boundary cases, and the
+      SHA-placeholder-bound cases), plus **7 corrected this round from false "exists" claims**:
+      `codex_real_vendor_footer_clean_root_comment` (E1 — the classifier's primary real-response anchor; Codex
+      GitHub finding `3803807958`), `codex_underscore_prefixed_lookalike_root_comment` (E15),
+      `codex_unenumerated_actionable_sentence_after_signal_root_comment` (E16),
+      `codex_metadata_token_as_directive_root_comment` (E18),
+      `codex_nonfooter_details_block_not_truncated_root_comment` (E19),
+      `codex_footer_markup_lookalike_tag_names_not_truncated_root_comment` (E20), and
+      `codex_footer_refusal_rejected_by_whole_body_match_root_comment` (E22 — a new addition, not a rename; the
+      pre-rename name `codex_footer_truncation_keeps_blocking_root_comment` was also confirmed absent).
+- [ ] Consolidate, rather than individually re-litigate, the regression scenarios whose underlying mechanism no
+      longer exists but whose scenario **is real** (confirmed via the round-7 audit — e.g.
+      `codex_unapproved_prefix_root_comment`, E14) — these constructions are now trivially rejected because
+      they do not reproduce a template, and the assertion itself does not change (already `NEEDS_REVISION`),
+      but their comments must be rewritten to say so rather than describing removed machinery. Do **not**
+      delete them: they remain valid regression coverage. **Do not assume any other "exists — keep" claim in
+      this document is accurate without re-running the check above first** — this round found 14 such claims
+      were false.
       *Verify*: run `bash scripts/development-workflow/tests/test-pr-review-loop.sh` and confirm it exits 0,
       that the total assertion count matches the "Reconciled test-disposition counts" table (report any
       discrepancy), and that only the scenarios named in "Test disposition" changed expectation.
@@ -715,13 +738,21 @@ discarded" question) are superseded by the whole-body edge cases below.
 ### Edge-case enumeration
 
 The edge-case set below is a full replacement of every prior revision's set (E1–E26 across five rounds, then
-E1–E22 after the fifth), renumbered from 1, because most of those cases tested mechanisms (vocabulary excision,
-closed-grammar clause splitting, filler-token admission, footer truncation) that no longer exist. Every
-construction that was ever found to cause a false `APPROVED` across all six rounds is retained below as a
-regression case (E13–E21, plus the new E23 for this round's finding); the boundary/shape cases for the final
-design are E3–E12 (each now updated to include the complete footer where the case asserts `approved`, since
-the template requires it — see the "Test disposition" note on why); E22 is rewritten to describe the new
-structural relationship between `is_approved` and `is_blocking`; E24 is new this round.
+E1–E22 after the fifth, then E1–E24 after the sixth), renumbered from 1, because most of those cases tested
+mechanisms (vocabulary excision, closed-grammar clause splitting, filler-token admission, footer truncation)
+that no longer exist. Every construction that was ever found to cause a false `APPROVED` across all six review
+rounds is retained below as a regression case (E13–E21, plus the round-6 E23); the boundary/shape cases for the
+final design are E3–E12 (each now updated to include the complete footer where the case asserts `approved`,
+since the template requires it — see the "Test disposition" note on why); E22 is rewritten to describe the new
+structural relationship between `is_approved` and `is_blocking`; E24 is from round 6.
+
+**Round-7 correction — automated-test *status*, not the edge case itself, changed for seven of these rows.**
+The edge cases themselves (E1, E15, E16, E18, E19, E20, E22) are unchanged and still valid; what changed is
+that this document previously, incorrectly, described each of their automated `test-pr-review-loop.sh`
+scenarios as already implemented. All seven are confirmed absent from the file (Codex GitHub finding
+`3803807958` for E1; a full round-7 re-audit for the other six — see the Verification Log's round-7 audit row
+and the corrected "Unit test mapping" table immediately below). They are now correctly scheduled as new
+additions in "New scenarios," not as existing scenarios to keep or rename.
 
 | # | Input (verbatim) | Expected | Why it is an edge case |
 | --- | --- | --- | --- |
@@ -756,12 +787,18 @@ There is one test file for this script: `scripts/development-workflow/tests/test
 edge case above gets at least one scenario there, driven through the real script with a mocked `gh` on `PATH`
 (the harness convention already used by all 247 `codex_*` assertions).
 
+**Corrected this round**: E1, E15, E16, E18, E19, E20, and E22 are marked `new` below, not `exists`. An earlier
+revision of this document marked all seven as "exists — keep"; every one of the seven is confirmed absent from
+`test-pr-review-loop.sh` (Codex GitHub finding `3803807958` for E1; the round-7 full audit for the other six —
+see the Verification Log's round-7 audit row for the exact `grep` commands and keyword searches run against
+each).
+
 | Edge case | Scenario name |
 | --- | --- |
-| E1 | `codex_real_vendor_footer_clean_root_comment` (exists — keep, verdict unchanged) |
+| E1 | `codex_real_vendor_footer_clean_root_comment` (**new — corrected this round from "exists"**; confirmed absent via `grep -rl "codex_real_vendor_footer_clean_root_comment" scripts/` and `grep -rl "About Codex in GitHub" scripts/`, both empty; Codex GitHub finding `3803807958`) |
 | E2 | `codex_review_wrapper_no_clean_signal_not_approved_root_comment` (new) |
 | E3 | `codex_template_missing_flavor_sentence_not_approved_root_comment` (new — body updated this round to include the complete real footer, so the scenario isolates the missing-flavor-sentence defect specifically) |
-| E4 | Covered by existing scenarios `codex_clean_root_review_comment`/`codex_full_root_review_comment` — both already use a different, non-captured SHA (`abcdefab12`, `abcabcabcabc1234567890`); no new scenario needed, but **both bodies are updated this round to append the complete real footer** (Group APPROVED; see "Test disposition") |
+| E4 | Covered by existing scenarios `codex_clean_root_review_comment`/`codex_full_root_review_comment` — both confirmed present, both use a different, non-captured SHA (`abcdefab12`, `abcabcabcabc1234567890`); no new scenario needed, but **both bodies are updated this round to append the complete real footer** (Group APPROVED; see "Test disposition") |
 | E5 | `codex_sha_below_bound_not_approved_root_comment` (new — body includes the complete real footer) |
 | E6 | `codex_sha_above_bound_not_approved_root_comment` (new — body includes the complete real footer) |
 | E7 | `codex_sha_full_length_approved_root_comment` (new — body includes the complete real footer, required for this scenario to assert `APPROVED`) |
@@ -771,15 +808,15 @@ edge case above gets at least one scenario there, driven through the real script
 | E11 | `codex_fenced_template_not_approved_root_comment` (new — fenced body includes the complete real footer) |
 | E12 | `codex_irregular_whitespace_template_approved_root_comment` (new — irregular whitespace applied around the complete real footer too, required for this scenario to assert `APPROVED`) |
 | E13 | `codex_case_altered_template_not_approved_root_comment` (new — case alteration applied to the footer text too) |
-| E14 | `codex_unapproved_prefix_root_comment` (exists — keep, comment rewritten) |
-| E15 | `codex_underscore_prefixed_lookalike_root_comment` (exists — keep, comment rewritten) |
-| E16 | `codex_unenumerated_actionable_sentence_after_signal_root_comment` (exists — keep, comment rewritten) |
+| E14 | `codex_unapproved_prefix_root_comment` (**exists — confirmed present** via `grep -n "codex_unapproved_prefix_root_comment" scripts/development-workflow/tests/test-pr-review-loop.sh`, real body `"This change remains unapproved pending further work."`; keep, comment rewritten) |
+| E15 | `codex_underscore_prefixed_lookalike_root_comment` (**new — corrected this round from "exists"**; confirmed absent — `grep -c "underscore" test-pr-review-loop.sh` is 0) |
+| E16 | `codex_unenumerated_actionable_sentence_after_signal_root_comment` (**new — corrected this round from "exists"**; confirmed absent — no `Remove the authentication check` construction anywhere in the file) |
 | E17 | `codex_approved_revert_not_approved_root_comment` (new — the residual gap is now a positive regression test rather than a disclosed accepted risk) |
-| E18 | `codex_metadata_token_as_directive_root_comment` (exists — keep, comment rewritten) |
-| E19 | `codex_nonfooter_details_block_not_truncated_root_comment` (exists — keep, comment rewritten to state there is no truncation step of any kind to over-match, not merely that this specific block fails to trigger one) |
-| E20 | `codex_footer_markup_lookalike_tag_names_not_truncated_root_comment` (exists — keep, comment rewritten, same reason as E19) |
+| E18 | `codex_metadata_token_as_directive_root_comment` (**new — corrected this round from "exists"**; confirmed absent — `grep -c "metadata_token"` is 0) |
+| E19 | `codex_nonfooter_details_block_not_truncated_root_comment` (**new — corrected this round from "exists"**; confirmed absent — `grep -c "footer" test-pr-review-loop.sh` is 0, no footer-related scenario of any kind currently exists) |
+| E20 | `codex_footer_markup_lookalike_tag_names_not_truncated_root_comment` (**new — corrected this round from "exists"**; confirmed absent, same footer-keyword-zero-hits evidence as E19) |
 | E21 | `codex_or_is_it_hedge_question_not_approved_root_comment` (new) |
-| E22 | `codex_footer_truncation_keeps_blocking_root_comment`, **renamed this round to `codex_footer_refusal_rejected_by_whole_body_match_root_comment`** — its old name asserted a mechanism (truncation) this revision deletes, which is exactly the "name and expectation must never disagree" rule the prior revision's Group RETARGETED note already applies to other scenarios. Kept, verdict unchanged, **comment rewritten** to state the new reason: `is_approved` alone now rejects this body on its own; `is_blocking` still upgrades the composed verdict to the more specific blocking branch but is no longer the sole safeguard against a false `APPROVED` here — see the Parser-risk addendum E22 row and Decision 4/5 |
+| E22 | `codex_footer_refusal_rejected_by_whole_body_match_root_comment` (**new — corrected this round.** An earlier revision claimed this scenario existed under the name `codex_footer_truncation_keeps_blocking_root_comment` and scheduled a rename; that pre-rename name is also confirmed absent from the file (0 hits for "footer" anywhere in it), so there is nothing to rename — this is a new addition, not a rename. Verdict on addition: `NEEDS_REVISION`, blocking branch — see the Parser-risk addendum E22 row and Decision 4/5 for why `is_blocking` upgrades but is no longer load-bearing for safety) |
 | E23 | `codex_footer_opening_line_only_then_trailer_not_approved_root_comment` (new — the exact regression test for Codex GitHub finding `3803545669`) |
 | E24 | `codex_one_byte_mutation_inside_footer_not_approved_root_comment` (new — parameterized or triplicated across the three footer-body positions named in the Parser-risk addendum E24 row) |
 
@@ -809,76 +846,130 @@ assertions passing, on macOS (BSD tooling) and in CI (GNU tooling).
 
 ### Test disposition — the full, named delta
 
-**This section is a full replacement, not an amendment.** Every prior revision's group structure described
-dispositions under a design this plan no longer ships. The whole-body contract is at least as restrictive as
-the immediately prior (truncate-then-match) revision's, and strictly more restrictive in one respect: **the
-same 5 scenarios assert `VERDICT: APPROVED`** as under the prior revision (down from 21 after the fourth
-revision, and from a 27-scenario, block-list-era baseline), but **4 of those 5 fixture bodies must change
-again this round** — each must have the complete, verbatim vendor footer appended, because a body that matched
-under truncate-then-match by virtue of the footer being discarded before comparison no longer matches once
-nothing is discarded. Every scenario below was re-executed against the exact implementation in the Code
-Samples section.
+**This section is a full replacement, ground-truth-audited against the real `test-pr-review-loop.sh` this
+round, not carried forward from an earlier revision's description of itself.** Codex GitHub finding
+`3803807958` (round 7) showed that an earlier revision's claim that `codex_real_vendor_footer_clean_root_comment`
+already existed was false. Because that was the second time this plan's own completeness/verification claims
+were wrong (round 4's "no stale passage found" was also incomplete, corrected in round 5), every scenario name
+this document references as already implemented — "exists," "kept," "unchanged," or "retargeted" — was
+re-checked this round directly against the file, by name and by keyword, not assumed from an earlier
+revision's prose. The result: **14 additional scenario names besides the one Codex named were also fabricated
+— they do not exist anywhere in the repository** — and **2 real scenarios were misclassified by disposition**
+(claimed already-`NEEDS_REVISION`, actually currently `APPROVED`). See the Verification Log's round-7 audit row
+for the full list of names checked and the full list found missing. The corrected groups below reflect only
+what `grep`-verified execution against the real file actually shows.
 
 #### Group APPROVED — exactly 5 scenarios assert `VERDICT: APPROVED`
 
-| Scenario | Body | Why it matches a template |
-| --- | --- | --- |
-| `codex_clean_root_review_comment` | **Body updated again this round**: `Codex Review: Didn't find any major issues. Swish!` + `**Reviewed commit:** \`abcdefab12\`` + the **complete, verbatim real footer** appended (the prior revision's body stopped at the `Reviewed commit:` line and matched only because the footer was discarded before comparison; under whole-body matching that same body no longer matches until the footer is actually present) | Exact reproduction of Template 1 — verdict sentence, SHA `abcdefab12` (10 hex chars, within bound), and the complete footer, whitespace-normalized |
-| `codex_full_root_review_comment` | **Body updated the same way**, with a different placeholder SHA (`abcabcabcabc1234567890`, 22 hex chars) plus the complete real footer appended | Exact reproduction of Template 1 with a different valid SHA and the complete footer — demonstrates the SHA placeholder is not hardcoded to one value, independent of the footer requirement |
-| `codex_real_vendor_footer_clean_root_comment` | The real captured PR #1489 body, in full, including its real `<details>` footer — **unaffected by this round's change**, since it already carried the complete footer | The literal evidence Template 1 was drawn from — whitespace-normalized, reproduces the template exactly, footer included, with no truncation step applied |
-| `codex_sha_full_length_approved_root_comment` (new — authored correctly for this design from the start, no retarget needed) | Template 1 with a 40-character (full-length) SHA, plus the complete real footer appended | Confirms the SHA bound's upper edge is inclusive (edge case E7) |
-| `codex_irregular_whitespace_template_approved_root_comment` (new — authored correctly for this design from the start, no retarget needed) | Template 1 with extra spaces, tabs, and multiple blank lines inserted between lines (including around the footer), plus trailing whitespace, plus the complete real footer | Confirms `codex_normalize_whitespace` provides exactly the permitted flexibility and nothing more (edge case E12), across the entire body |
+**2 real, existing scenarios with updated bodies; 3 new scenarios (not 3 existing + 2 new, as an earlier
+revision incorrectly stated) — `codex_real_vendor_footer_clean_root_comment` moves from "existing" to "new"
+this round, per Codex GitHub finding `3803807958`.**
 
-#### Group RETARGETED — every previously-`APPROVED` scenario that does not reproduce a template
+| Scenario | Real/New | Body | Why it matches a template |
+| --- | --- | --- | --- |
+| `codex_clean_root_review_comment` | **Real — confirmed in file** (`test-pr-review-loop.sh`, current body: `"Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`abcdefab12\`"`, no `Swish!`, no footer) | **Body updated again this round** to add the evidenced `Swish!` sentence and the **complete, verbatim real footer** — the real current body has neither | Exact reproduction of Template 1 — verdict sentence, SHA `abcdefab12` (10 hex chars, within bound), and the complete footer, whitespace-normalized |
+| `codex_full_root_review_comment` | **Real — confirmed in file** (current body: `"Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`abcabcabcabc1234567890\`"`, no `Swish!`, no footer) | **Body updated the same way** | Exact reproduction of Template 1 with a different valid SHA and the complete footer |
+| `codex_real_vendor_footer_clean_root_comment` | **New — confirmed NOT in file.** `grep -rl "codex_real_vendor_footer_clean_root_comment" scripts/` and `grep -rl "About Codex in GitHub" scripts/` both return nothing (Codex GitHub finding `3803807958`, round 7). An earlier revision of this document described this scenario as "exists — keep, verdict unchanged"; that was false | Must be added: the real captured PR #1489 body, in full, including its real `<details>` footer | The literal evidence Template 1 was drawn from — whitespace-normalized, reproduces the template exactly, footer included, with no truncation step applied |
+| `codex_sha_full_length_approved_root_comment` | New | Template 1 with a 40-character (full-length) SHA, plus the complete real footer | Confirms the SHA bound's upper edge is inclusive (edge case E7) |
+| `codex_irregular_whitespace_template_approved_root_comment` | New | Template 1 with extra spaces, tabs, and multiple blank lines inserted between lines (including around the footer), plus trailing whitespace, plus the complete real footer | Confirms `codex_normalize_whitespace` provides exactly the permitted flexibility and nothing more (edge case E12), across the entire body |
 
-These 18 scenarios asserted `VERDICT: APPROVED` after the fourth revision of this plan. None of their fixture
-bodies is a reproduction (whitespace aside) of `CODEX_APPROVED_TEMPLATES`' one entry, so all 18 retarget to
-`VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)`. Keep each scenario and its body; rewrite
-its comment to state the new reason (does not reproduce an evidenced template) rather than the superseded
-grammar-based reason:
+#### Group RETARGETED — 25 real, confirmed-existing scenarios that currently assert `VERDICT: APPROVED` and do not reproduce a template
 
-- `codex_reaction_with_current_review`, `codex_reaction_then_late_review`,
-  `codex_async_reaction_then_late_review`, `codex_latest_current_review`,
-  `codex_environment_with_current_review`, `codex_main_loop_env_then_newer_review_supersedes`,
-  `codex_didnt_find_issues_and_looks_good_approved_root_comment` — all use `No blocking issues found.` or
-  `Codex didn't find any major issues and looks good.`, neither of which is an evidenced template (see
-  Decision 2: only the `Codex Review: … Swish! … Reviewed commit: …` shape is currently evidenced).
-- `codex_quoted_rejection_in_clean_review_root_comment`, `codex_terminal_review_quotes_quota_message`,
-  `codex_quoted_blocker_token_stays_approved_root_comment` — the three bodies this plan's third revision
-  simplified specifically to survive the (now-deleted) zero-tolerance grammar; none reproduces the template.
-- `codex_inline_backtick_pair_stays_approved_root_comment` — `` Looks good; `foo.py:42`. `` after three
-  rounds of retargeting; does not reproduce the template.
-- `codex_bare_approved_punctuation_root_comment`, `codex_two_clean_signals_one_line_root_comment`,
-  `codex_adjacent_clean_signals_root_comment`, `codex_uppercase_clean_signal_root_comment`,
-  `codex_emoji_clean_signal_root_comment`, `codex_adjacent_signal_second_contains_no_root_comment`,
-  `codex_adjacent_signal_second_contains_didnt_root_comment` — added across rounds 1–2 to test
-  clean-signal-vocabulary boundary conditions (`Approved.`, `lgtm approved`, `NO BLOCKING ISSUES FOUND.`,
-  etc.) that no longer exist as a concept; none reproduces the template.
+**This is 25, not 18 — the number an earlier revision of this document stated.** These are the complete real
+set: `grep 'run_test "codex_' test-pr-review-loop.sh | grep -c 'VERDICT: APPROVED'` returns 27, of which 2 are
+`codex_clean_root_review_comment`/`codex_full_root_review_comment` (Group APPROVED above); the remaining 25 are
+listed below with their real, current bodies (verified by reading the file directly, not carried forward).
+None reproduces `CODEX_APPROVED_TEMPLATES`' one entry, so all 25 retarget to `VERDICT: NEEDS_REVISION
+(unrecognized response format — safe-fail)`. Keep each scenario and its body; rewrite its comment to state the
+new reason:
 
-Also rename any scenario whose name now asserts the opposite of its expectation (the `…_stays_approved_…` and
-`…_approved_root_comment` suffixes on several of the scenarios above) in the same commit that retargets it, so
-the name and expectation never disagree on `develop`.
+- `codex_reaction_with_current_review` — `"If Codex has suggestions, it will comment; otherwise it will react
+  with thumbs up."`
+- `codex_reaction_then_late_review`, `codex_async_reaction_then_late_review`,
+  `codex_main_loop_env_then_newer_review_supersedes`, `codex_latest_current_review`,
+  `codex_environment_with_current_review` — all driven by a review body reading `"No blocking issues found."`
+- `codex_didnt_find_issues_and_looks_good_approved_root_comment` — `"Codex didn't find any major issues and
+  looks good.\n\n**Reviewed commit:** \`face9999\`"`
+- **`codex_long_review_body_no_sigpipe`, `codex_long_root_comment_no_sigpipe`** — **corrected this round from
+  Group UNCHANGED-NEEDS_REVISION, where an earlier revision wrongly placed them.** Real bodies:
+  `"No blocking issues found. " + ("x" * 200000)` (review) and `"Codex Review: Didn't find any major
+  issues.\n\n" + ("x" * 200000) + "\n\n**Reviewed commit:** \`deadf00d1234\`"` (root comment) — SIGPIPE-safety
+  fixtures that currently assert `VERDICT: APPROVED` under the pre-plan block-list classifier (the
+  `"No blocking issues found."`/`"Didn't find any major issues."` substrings match `CODEX_APPROVAL_PATTERN`
+  today). Neither reproduces the evidenced whole-body template, so both retarget
+- `codex_usage_limit_topic_mention_not_quota` — `"No blocking issues found.\n\n**Reviewed commit:**
+  \`facade008f\`"`
+- `codex_usage_limit_code_reviews_phrase_mention` — `"No blocking issues found. The docs correctly explain
+  Codex usage limits for code reviews.\n\n**Reviewed commit:** \`facade00aa\`"`
+- `codex_negation_prior_sentence_does_not_leak_root_comment` — `"The variable name is not great. No blocking
+  issues found.\n\n**Reviewed commit:** \`facade00cc\`"`
+- `codex_terminal_comment_quotes_env_error_not_ancillary` — `"No blocking issues found. The docs accurately
+  quote: To use Codex here, create an environment for this repo.\n\n**Reviewed commit:** \`facade00ee\`"`
+- `codex_unrelated_later_negation_stays_approved_root_comment` — `"Looks good overall; tests were not
+  run.\n\n**Reviewed commit:** \`facade00ff\`"`
+- `codex_semicolon_scoped_negation_root_comment` — `"Tests are not required for this documentation-only
+  change; looks good.\n\n**Reviewed commit:** \`facade01331\`"`
+- `codex_quoted_rejection_in_clean_review_root_comment` — `"No blocking issues found. The tests cover \"This
+  change is not approved\".\n\n**Reviewed commit:** \`facade01551\`"`
+- `codex_comma_scoped_negation_root_comment` — `"Tests are not required, but looks good.\n\n**Reviewed
+  commit:** \`facade01661\`"`
+- `codex_terminal_review_quotes_quota_message` — `"No blocking issues found. The docs accurately quote: `You
+  have reached your Codex usage limits.`\n\n**Reviewed commit:** \`facade01771\`"`
+- `codex_not_only_idiom_stays_approved_root_comment` — `"Not only does this look good, it is
+  approved.\n\n**Reviewed commit:** \`facade01881\`"`
+- `codex_not_only_idiom_uppercase_stays_approved_root_comment` — `"NOT ONLY does this look good, it is
+  approved.\n\n**Reviewed commit:** \`facade01991\`"`
+- `codex_quoted_blocker_token_stays_approved_root_comment` — `"No blocking issues found. The tests correctly
+  cover the `must fix` marker."`
+- `codex_unrelated_negation_before_merge_stays_approved_root_comment` — `"This is not a blocker; looks good,
+  please merge.\n\n**Reviewed commit:** \`face5555\`"`
+- `codex_not_only_safe_to_merge_stays_approved_root_comment` — `"This is not only safe to merge but looks
+  good.\n\n**Reviewed commit:** \`face7777\`"`
+- `codex_contraction_apostrophes_not_mangled_root_comment` — `"It's fine, doesn't need changes. No blocking
+  issues found.\n\n**Reviewed commit:** \`facade02441\`"`
+- `codex_inline_backtick_pair_stays_approved_root_comment` — `` "The fix looks good. See `foo.py:42` for a
+  minor nit.\n\n**Reviewed commit:** `facade02991`" ``
 
-**This group is unaffected by this round's footer change.** None of these 18 bodies is a template-plus-footer
-construction — they are all negation/vocabulary/quoting constructions independent of the footer question — so
-none of them needed a body update this round; they were re-verified against the exact implementation in Code
-Samples and remain `NEEDS_REVISION` for the same reason as before (they do not reproduce the template).
+None of these 25 real bodies is a template-plus-footer construction, so this group is unaffected by this
+round's footer change specifically — the disposition (retarget) was already correct for 23 of the 25 in the
+immediately prior revision; the correction this round is (a) the count (18 → 25) and (b) moving the two
+SIGPIPE scenarios in from Group UNCHANGED-NEEDS_REVISION. Also rename any scenario whose name now asserts the
+opposite of its expectation (the `…_stays_approved_…` and `…_approved_root_comment` suffixes on several of the
+scenarios above) in the same commit that retargets it, so the name and expectation never disagree on
+`develop`.
 
-#### Group UNCHANGED-NEEDS_REVISION — every scenario that was already `NEEDS_REVISION` and stays that way
+**Removed this round — false "exists" claims with no real scenario or mechanism behind them at all.** An
+earlier revision listed the following as an additional Group RETARGETED bullet, "added across rounds 1–2 to
+test clean-signal-vocabulary boundary conditions": `codex_bare_approved_punctuation_root_comment`,
+`codex_two_clean_signals_one_line_root_comment`, `codex_adjacent_clean_signals_root_comment`,
+`codex_uppercase_clean_signal_root_comment`, `codex_emoji_clean_signal_root_comment`,
+`codex_adjacent_signal_second_contains_no_root_comment`,
+`codex_adjacent_signal_second_contains_didnt_root_comment`. **All 7 are confirmed absent from the repository**
+— not merely under a different name; keyword search (`emoji`, `uppercase`, `adjacent`, `bare_approved`,
+`two_clean_signals`) found no matching mechanism anywhere in the test file. There is nothing to retarget and
+nothing to rename; the claim is removed outright rather than corrected to "new," because the vocabulary-
+boundary mechanism these names describe (clean-signal-vocabulary boundary conditions of the original
+block-list/allow-list design) is already fully covered, under the whole-body design, by the general "does not
+reproduce the template" rejection every other retained scenario demonstrates — adding 7 more instances of the
+same already-proven rejection would not increase coverage, so no replacement scenarios are added for them.
 
-This is the large majority of the `codex_*` corpus: the 5 previously-Group-A2 scenarios
-(`codex_long_review_body_no_sigpipe`, `codex_long_root_comment_no_sigpipe`,
-`codex_usage_limit_topic_mention_not_quota`, `codex_usage_limit_code_reviews_phrase_mention`,
-`codex_terminal_comment_quotes_env_error_not_ancillary`), the 9 previously-Group-C negation-precision
-scenarios, and the roughly 26 previously-Group-D scenarios (negated-approval vocabulary, merge-refusal
-blocking, quote/fence stripping). None of these bodies has ever reproduced, and still does not reproduce, any
-template, so none changes verdict. **Every scenario's explanatory comment must still be rewritten** — under
-every prior revision, most of these passed because a specific mechanism (a disqualifier match, a closed-
-grammar clause, a fence-marker check) caught them; under this revision, they pass because the body is simply
-not an exact template reproduction. That is a materially different — and, per Decision 2, structurally
-simpler and more robust — reason, and the comment must say so, not describe removed machinery as current.
-Scenarios that were already testing `codex_response_is_blocking` specifically (e.g. the merge-refusal-blocking
-group) are wholly unaffected: that function did not change (Decision 4).
+#### Group UNCHANGED-NEEDS_REVISION — every other real scenario that was already `NEEDS_REVISION` and stays that way
+
+**247 total `codex_*` assertions − 27 currently-`VERDICT: APPROVED` assertions = 220 assertions already
+`NEEDS_REVISION` today** (re-derived this round: `grep -c 'run_test "codex_'` minus the `VERDICT: APPROVED`
+count, both directly against the file). This group is not individually enumerated by name — doing so for 220
+assertions is neither feasible nor load-bearing, since none of their dispositions change — but two corrections
+apply:
+
+- **`codex_long_review_body_no_sigpipe` and `codex_long_root_comment_no_sigpipe` are removed from this group**
+  (an earlier revision placed them here as "previously-Group-A2 scenarios"); they are real, but they currently
+  assert `VERDICT: APPROVED`, not `NEEDS_REVISION` — see Group RETARGETED above, where they now correctly
+  belong.
+- Every remaining scenario's explanatory comment must still be rewritten if it currently describes a
+  now-deleted mechanism (a disqualifier match, a closed-grammar clause, a fence-marker check) as the reason it
+  passes; under this revision, it passes because the body is simply not an exact template reproduction.
+  Scenarios that were already testing `codex_response_is_blocking` specifically (e.g. the merge-refusal-blocking
+  group) are wholly unaffected: that function did not change (Decision 4).
 
 #### Group UNTOUCHED
 
@@ -887,67 +978,95 @@ routing, `CHANGES_REQUESTED` state handling, trigger idempotency, thread audits,
 configuration) neither approve nor depend on approval-content parsing at all, and must pass unchanged. Any
 failure among them is a genuine regression, not an intended contract change.
 
-#### Deleted — `codex_disqualifier_diagnostic_emitted`
+#### Not applicable — `codex_disqualifier_diagnostic_emitted` was never implemented; there is nothing to delete
 
-This scenario (added in an earlier revision) asserted that a stderr `INFO:` diagnostic line was emitted when a
-clean signal was present but disqualified. The final design emits no diagnostic at all (Code Samples note: the
-concept of "a clean signal was present but something else disqualified it" does not exist when there is no
-clean-signal detection step, only exact-or-not template matching). Deleted outright, per the "delete what the
-redesign obsoletes" instruction — there is no replacement, because there is nothing left to diagnose.
+**Corrected this round.** An earlier revision of this document described this scenario as "added in an earlier
+revision" and scheduled it for deletion. It is not in the repository: `grep -c "codex_disqualifier_diagnostic_emitted"
+test-pr-review-loop.sh` returns 0. There is no stderr-diagnostic-emitted test to delete, because no revision of
+this plan has ever been implemented — the production script still carries only the original pre-plan
+classifier (`CODEX_APPROVAL_PATTERN`, `CODEX_NEGATED_APPROVAL_PATTERN`, `codex_strip_not_only_idiom`, all
+confirmed present; `CODEX_APPROVED_TEMPLATES`, `codex_normalize_whitespace`, and every symbol this plan
+proposes are confirmed absent). The "Deleted" work item is removed from the Implementation Order and the
+Layer-by-Layer checklist accordingly — there is no deletion step for this scenario, only a note that it was
+never real.
 
 ### New scenarios
 
-**15 new scenarios** (13 carried over from the immediately prior revision, plus 2 new this round for the
-round-6 finding and its generalization) — one per edge case in the Parser-risk addendum that does not already
-have an existing scenario, plus the 2 counted above in Group APPROVED
-(`codex_sha_full_length_approved_root_comment`, `codex_irregular_whitespace_template_approved_root_comment`):
+**22 new scenarios** (15 carried forward correctly from the immediately prior revision's own audit, plus 7
+more this round that an earlier revision incorrectly described as already existing — see the Verification
+Log's round-7 audit row for the full list of names checked). Of the 22, **3** assert `VERDICT: APPROVED` (E1,
+E7, E12) and **19** assert `VERDICT: NEEDS_REVISION`.
+
+Carried forward, unaffected by this round's correction:
 
 - `codex_review_wrapper_no_clean_signal_not_approved_root_comment` (E2) — `NEEDS_REVISION`. Uses a real
   captured PR #1490 review body verbatim.
 - `codex_template_missing_flavor_sentence_not_approved_root_comment` (E3) — `NEEDS_REVISION`. Body includes the
-  complete real footer, updated this round.
+  complete real footer.
 - `codex_sha_below_bound_not_approved_root_comment` (E5) — `NEEDS_REVISION`. Body includes the complete real
-  footer, updated this round.
+  footer.
 - `codex_sha_above_bound_not_approved_root_comment` (E6) — `NEEDS_REVISION`. Body includes the complete real
-  footer, updated this round.
-- `codex_sha_full_length_approved_root_comment` (E7) — `APPROVED`. Body includes the complete real footer,
-  updated this round — **required** for this scenario to still assert `APPROVED`.
+  footer.
+- `codex_sha_full_length_approved_root_comment` (E7) — `APPROVED`. Body includes the complete real footer —
+  **required** for this scenario to assert `APPROVED`.
 - `codex_sha_non_hex_not_approved_root_comment` (E8) — `NEEDS_REVISION`. Body includes the complete real
-  footer, updated this round.
+  footer.
 - `codex_leading_prose_before_template_not_approved_root_comment` (E9) — `NEEDS_REVISION`. Body includes the
-  complete real footer, updated this round.
-- `codex_trailing_prose_after_template_not_approved_root_comment` (E10) — `NEEDS_REVISION`. Body updated this
-  round so the trailing prose sits after the complete footer's `</details>`, not after a truncation point.
+  complete real footer.
+- `codex_trailing_prose_after_template_not_approved_root_comment` (E10) — `NEEDS_REVISION`. Trailing prose sits
+  after the complete footer's `</details>`, not after a truncation point.
 - `codex_fenced_template_not_approved_root_comment` (E11) — `NEEDS_REVISION`. Body includes the complete real
-  footer, updated this round.
+  footer.
 - `codex_irregular_whitespace_template_approved_root_comment` (E12) — `APPROVED`. Body includes irregular
-  whitespace around the complete real footer, updated this round — **required** for this scenario to still
-  assert `APPROVED`.
+  whitespace around the complete real footer — **required** for this scenario to assert `APPROVED`.
 - `codex_case_altered_template_not_approved_root_comment` (E13) — `NEEDS_REVISION`. Body includes the complete
-  real footer (also case-altered), updated this round.
-- `codex_approved_revert_not_approved_root_comment` (E17) — `NEEDS_REVISION`. The construction that defeated
-  an earlier revision's disclosed one-token tolerance; now a positive regression test, not an accepted risk.
+  real footer (also case-altered).
+- `codex_approved_revert_not_approved_root_comment` (E17) — `NEEDS_REVISION`. The construction that defeated an
+  earlier revision's disclosed one-token tolerance; a positive regression test.
 - `codex_or_is_it_hedge_question_not_approved_root_comment` (E21) — `NEEDS_REVISION`. The round-5 exploit that
   triggered the third design.
-- `codex_footer_opening_line_only_then_trailer_not_approved_root_comment` (E23) — `NEEDS_REVISION`. **New this
-  round.** The exact regression test for Codex GitHub finding `3803545669` — this is the single
-  highest-priority new scenario in this round's delta, since it is the direct regression test for the finding
-  that motivated this revision.
-- `codex_one_byte_mutation_inside_footer_not_approved_root_comment` (E24) — `NEEDS_REVISION`. **New this
-  round.** Verifies the entire footer is load-bearing, not just its opening line; may be implemented as one
-  scenario with three assertions (one per mutation position named in the Parser-risk addendum) rather than
-  three separate scenarios, consistent with the harness's existing convention of multiple assertions per
-  scenario where they share a single mocked fixture setup.
+- `codex_footer_opening_line_only_then_trailer_not_approved_root_comment` (E23) — `NEEDS_REVISION`. The exact
+  regression test for Codex GitHub finding `3803545669`.
+- `codex_one_byte_mutation_inside_footer_not_approved_root_comment` (E24) — `NEEDS_REVISION`. Verifies the
+  entire footer is load-bearing, not just its opening line; may be implemented as one scenario with three
+  assertions (one per mutation position) rather than three separate scenarios.
 
-Of the 15, **2** assert `VERDICT: APPROVED` (E7, E12) and **13** assert `VERDICT: NEEDS_REVISION`.
+**New this round — corrected from false "exists" claims, per the round-7 audit:**
+
+- `codex_real_vendor_footer_clean_root_comment` (E1) — `APPROVED`. Counted in Group APPROVED above. The
+  regression test for Codex GitHub finding `3803807958` — an earlier revision claimed this scenario already
+  existed; it did not, and this is now the highest-priority addition in this round's delta, since E1 is the
+  classifier's primary real-response anchor and must have automated coverage.
+- `codex_underscore_prefixed_lookalike_root_comment` (E15) — `NEEDS_REVISION`. Real body: `This remains
+  un_approved.` An earlier revision claimed this scenario "exists — keep"; confirmed absent (`grep -c
+  underscore` returns 0 hits anywhere in the file).
+- `codex_unenumerated_actionable_sentence_after_signal_root_comment` (E16) — `NEEDS_REVISION`. Real construction:
+  `Looks good. Remove the authentication check.` An earlier revision claimed this scenario "exists — keep";
+  confirmed absent.
+- `codex_metadata_token_as_directive_root_comment` (E18) — `NEEDS_REVISION`. Real construction: `Looks good.
+  Commit this.` An earlier revision claimed this scenario "exists — keep"; confirmed absent (`grep -c
+  metadata_token` returns 0 hits).
+- `codex_nonfooter_details_block_not_truncated_root_comment` (E19) — `NEEDS_REVISION`. Real construction:
+  `Looks good.` followed by a non-vendor `<details>` block containing `Rename the unsafe function.` An earlier
+  revision claimed this scenario "exists — keep"; confirmed absent (`grep -c footer` returns 0 hits anywhere in
+  the file — no footer-related scenario of any kind currently exists).
+- `codex_footer_markup_lookalike_tag_names_not_truncated_root_comment` (E20) — `NEEDS_REVISION`. Real
+  construction: `Looks good.` followed by `<details-not-footer><summary-note>About Codex in
+  GitHub</summary-note>` then `Rename the unsafe function.` An earlier revision claimed this scenario "exists —
+  keep"; confirmed absent.
+- `codex_footer_refusal_rejected_by_whole_body_match_root_comment` (E22) — `NEEDS_REVISION` (blocking branch).
+  Real construction: the real template plus complete footer with `This must not be merged.` inserted inside
+  it. **An earlier revision claimed this scenario existed under the name `codex_footer_truncation_keeps_blocking_root_comment`
+  and scheduled a rename; the pre-rename name is also confirmed absent from the file — there was nothing to
+  rename, this is a new addition.**
 
 ### Reconciled test-disposition counts
 
-| Metric | Before this plan (baseline, `55b2df5d`) | After 4 prior revisions | After the immediately prior revision | After this revision (final) |
-| --- | --- | --- | --- | --- |
-| Total `run_test` assertions | 628 | 674 | 674 − (`codex_disqualifier_diagnostic_emitted`'s assertions) + 13 × 2 ≈ 698 | ≈698 + 2 new scenarios' assertions (E23 single-assertion, E24 up to 3 assertions if implemented as one parameterized scenario) ≈ **701–703** (confirm the exact figure when implementing — this table has carried the same "confirm at implementation time" caveat since round 2, because the harness's assertions-per-scenario convention is not perfectly uniform) |
-| `codex_*` assertions | 247 | 293 | ~317 | ~320–322, same caveat |
-| Scenarios asserting `VERDICT: APPROVED` | 27 | 21 | **5** | **5 — unchanged in count from the immediately prior revision**, but 4 of the 5 fixture bodies changed again this round (Group APPROVED above), and the 18 named in Group RETARGETED remain retargeted (re-verified, unaffected by this round's footer change). This is not a coincidentally-stable total — it is the same deliberate reduction the prior revision made, re-confirmed against a stricter whole-body contract, and the PR description must state it as such, by name, not as a bare count |
+| Metric | Before this plan (baseline, re-derived this round directly from the file) | After this revision (final) |
+| --- | --- | --- |
+| Total `run_test` assertions | **620** (corrects an earlier revision's "628," which this round's direct count — `grep -c '^run_test '` — does not reproduce) | 620 + 22 new scenarios' assertions (≈2 each, some scenarios use 3) ≈ **660–664** (confirm the exact figure when implementing — this table has carried the same "confirm at implementation time" caveat since round 2, because the harness's assertions-per-scenario convention is not perfectly uniform) |
+| `codex_*` assertions | **247** (confirmed via `grep -c 'run_test "codex_'`, unchanged from every prior revision's claim) | ~247 + 22 × 2 ≈ 291, same caveat |
+| Scenarios asserting `VERDICT: APPROVED` | **27** (confirmed via direct grep against the file, unchanged from every prior revision's claim — but see the corrected by-name breakdown below, which an earlier revision got wrong for 18 of the 25 non-Group-APPROVED members) | **5** — 2 real scenarios with updated bodies (`codex_clean_root_review_comment`, `codex_full_root_review_comment`) plus 3 new (`codex_real_vendor_footer_clean_root_comment`, `codex_sha_full_length_approved_root_comment`, `codex_irregular_whitespace_template_approved_root_comment`); the other 25 of the real 27 retarget to `NEEDS_REVISION` (Group RETARGETED, corrected this round from a false count of 18) |
 
 ### Residual verification strategy
 
@@ -958,9 +1077,11 @@ This is a full design replacement, so the evidence the implementation must produ
    assertion count reported before and after, reconciled against the table above (report and explain any
    discrepancy — the estimate above is explicitly not final).
 2. A reconciliation statement in the PR description naming, individually: the 5 scenarios in Group APPROVED
-   (and which 4 have updated bodies this round to append the complete footer), the 18 scenarios in Group
-   RETARGETED (unaffected by this round), the deletion of `codex_disqualifier_diagnostic_emitted`, and the 15
-   new scenarios (13 carried over, 2 new this round: E23 and E24). No scenario outside these four buckets may
+   (2 real with updated bodies, 3 new), the 25 scenarios in Group RETARGETED (corrected count — verify by
+   re-running the same `grep` commands in the Verification Log's round-7 audit row, do not assume the count in
+   this document is still current by the time of implementation), the confirmation that
+   `codex_disqualifier_diagnostic_emitted` never existed (no deletion needed), and the 22 new scenarios (15
+   carried forward, 7 corrected from false "exists" claims this round). No scenario outside these buckets may
    change disposition; any that does is a genuine regression, not an intended part of this contract change.
 3. Confirmation that the real captured PR #1489 body approves end-to-end (not just via the illustrative
    snippet in the Verification Log) — this remains the single highest-impact check: a classifier that rejects
@@ -969,19 +1090,24 @@ This is a full design replacement, so the evidence the implementation must produ
    for any with `state == "CHANGES_REQUESTED"`, are still routed to the blocking short-circuit unaffected by
    this function) — re-fetch live, do not rely on the bodies captured during this review round, since the
    whole point of exact-template matching is that it is sensitive to exactly this kind of drift.
-5. Confirmation that every construction found across all six review rounds of this plan's history — E14
-   through E21 and E23 in the Parser-risk addendum — still returns `NEEDS_REVISION` against the real script,
-   not just the illustrative prototype in this plan. E23 specifically re-verifies Codex GitHub finding
-   `3803545669` is closed.
+5. Confirmation that every construction found across all seven review rounds of this plan's history — E14
+   through E24 in the Parser-risk addendum — still returns `NEEDS_REVISION` against the real script, not just
+   the illustrative prototype in this plan. E23 specifically re-verifies Codex GitHub finding `3803545669` is
+   closed.
 6. Confirmation that a one-byte mutation anywhere inside the footer (not only its opening line — E24) still
    returns `NEEDS_REVISION`, proving the entire footer text is load-bearing for the match.
 7. Confirmation that `codex_response_is_blocking`'s own test coverage (unaffected by this revision, per
-   Decision 4) still passes unchanged, and specifically that
-   `codex_footer_refusal_rejected_by_whole_body_match_root_comment` (renamed this round from
-   `codex_footer_truncation_keeps_blocking_root_comment`; edge case E22) still resolves to the blocking branch
-   — this is the one remaining case where `is_approved`'s own rejection and `is_blocking`'s independent
-   recognition compose, and confirming both still fire (even though `is_approved` alone is now sufficient for
-   safety) prevents a silent loss of verdict specificity if a future change ever alters the precedence chain.
+   Decision 4) still passes, and specifically that the new `codex_footer_refusal_rejected_by_whole_body_match_root_comment`
+   scenario (edge case E22 — genuinely new this round, not a rename of a pre-existing scenario) resolves to the
+   blocking branch — this is the one remaining case where `is_approved`'s own rejection and `is_blocking`'s
+   independent recognition compose, and confirming both fire (even though `is_approved` alone is now sufficient
+   for safety) prevents a silent loss of verdict specificity if a future change ever alters the precedence
+   chain.
+8. **Before marking this document's test-suite claims verified again, re-run the exact `grep` commands in the
+   Verification Log's round-7 audit row against the file at implementation time**, not against this document's
+   prose — this plan has now been wrong about test-suite existence twice (rounds 6 and 7), and the standing
+   instruction going forward is that every "exists"/"kept"/"unchanged" claim in this document must be
+   re-verified by execution immediately before it is relied upon, not assumed from a prior revision.
 
 ---
 
@@ -989,9 +1115,9 @@ This is a full design replacement, so the evidence the implementation must produ
 
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
-| Real Codex clean root comment | Body captured from PR #1489: `Codex Review: Didn't find any major issues. Swish!`, a `**Reviewed commit:**` marker matching the fixture head SHA, and the full `<details>` "About Codex in GitHub" footer including its bulleted list | `scripts/development-workflow/tests/test-pr-review-loop.sh` (inline `gh` mock heredoc, scenario `codex_real_vendor_footer_clean_root_comment`) |
+| Real Codex clean root comment | Body captured from PR #1489: `Codex Review: Didn't find any major issues. Swish!`, a `**Reviewed commit:**` marker matching the fixture head SHA, and the full `<details>` "About Codex in GitHub" footer including its bulleted list | `scripts/development-workflow/tests/test-pr-review-loop.sh` (inline `gh` mock heredoc, scenario `codex_real_vendor_footer_clean_root_comment` — **new this round, corrected from "exists"; confirmed absent from the file, Codex GitHub finding `3803807958`**) |
 | Real Codex review-wrapper body (no clean signal) | Any one of the 12 bodies captured from PR #1490's review history, verbatim | `scripts/development-workflow/tests/test-pr-review-loop.sh` (scenario `codex_review_wrapper_no_clean_signal_not_approved_root_comment`) |
-| Footer-with-refusal variant | The real PR #1489 body with `This must not be merged.` inserted inside the `<details>` block | `scripts/development-workflow/tests/test-pr-review-loop.sh` (scenario `codex_footer_refusal_rejected_by_whole_body_match_root_comment`, renamed this round from `codex_footer_truncation_keeps_blocking_root_comment`) |
+| Footer-with-refusal variant | The real PR #1489 body with `This must not be merged.` inserted inside the `<details>` block | `scripts/development-workflow/tests/test-pr-review-loop.sh` (scenario `codex_footer_refusal_rejected_by_whole_body_match_root_comment` — **new this round; the pre-rename name `codex_footer_truncation_keeps_blocking_root_comment` this document previously scheduled for renaming is also confirmed absent from the file, so this is a new addition, not a rename**) |
 | Footer-opening-line-only-plus-trailer variant (round-6 exploit) | The real approved template, followed by only the footer's opening line (not its complete text), followed by `Rename the unsafe function.` | `scripts/development-workflow/tests/test-pr-review-loop.sh` (scenario `codex_footer_opening_line_only_then_trailer_not_approved_root_comment`) |
 
 Capture the real bodies with:
@@ -1055,7 +1181,8 @@ step 1 requires this re-check, and a drifted capture changes what `CODEX_APPROVE
 | **This revision removes the approval path's last dependency on `codex_response_is_blocking` for safety (not merely for verdict specificity) — a future refactor that assumes `is_blocking` is still load-bearing there, and relaxes it on that mistaken assumption, would reintroduce risk `is_approved` no longer independently guards against** | Low | Medium | Recorded explicitly (Decision 4, new bullet; Decision 5, closing paragraph): `is_approved`'s whole-body exact match is now self-contained — no input can reach `APPROVED` without being byte-identical (whitespace aside) to the one evidenced literal, regardless of what `is_blocking` does. `is_blocking` remains independently necessary for its own reason (Decision 4: false negatives there are unsafe on their own terms, for `CHANGES_REQUESTED`-adjacent and merge-refusal wording that never reaches `is_approved` at all) — this row exists so a future contributor does not mistake "is_blocking is no longer needed to prevent this specific false APPROVED" for "is_blocking is no longer needed" |
 | BSD versus GNU tooling divergence (`tr`'s whitespace-class handling, `grep -E`'s escaping of `.`/`*`/backtick/parentheses in the template) | Medium | Medium | This revision uses **fewer** BSD/GNU divergence points than the prior one: no `awk` truncation pass at all (one fewer tool in the comparison path), no `\b` word boundaries anywhere, and the one remaining regex per template is a fully-anchored literal with a single bounded character-class placeholder — the simplest, least divergence-prone construct this plan has ever shipped, now applied to a longer literal. Verified on BSD tooling this round; CI covers GNU |
 | `CODEX_APPROVED_TEMPLATES` regresses to a flexible pattern (an optional clause, a case-insensitive flag, a wildcard placeholder) — this is the same class of finding that recurred five times against this classifier's prior designs, now aimed at the one array that replaced all of them | Low, **if the mechanical rule below is applied**; historically High — it recurred five times across the classifier's history without one | High | **Standing rule (Decision 2): every entry in `CODEX_APPROVED_TEMPLATES` must be backed by a live capture, every non-literal character must be a placeholder bound to that field's own external specification (never a general wildcard), and no case-insensitive, optional, alternation, or truncation-based matching may be introduced.** Any PR proposing otherwise — however narrowly scoped it looks — must be rejected and pointed at this row and Decision 2 |
-| The 18 scenarios in Group RETARGETED, plus the deletion of `codex_disqualifier_diagnostic_emitted`, mask a real regression in something other than `is_approved` | Medium | Medium | The Test disposition section is exhaustive and named; the PR description must state the full delta by scenario name, not a bare count (this is now the fourth revision in this plan's history where a stable-looking total would have concealed a real composition change if reported as a bare number alone) |
+| The 25 scenarios in Group RETARGETED (corrected this round from a false count of 18 — see the round-7 audit), plus the 22 new scenarios (corrected from 15 — 7 were previously, incorrectly, described as already existing), mask a real regression in something other than `is_approved` | Medium | Medium | The Test disposition section is exhaustive, named, and ground-truth-verified against the real file this round; the PR description must state the full delta by scenario name, not a bare count (this is now the fourth revision in this plan's history where a stable-looking total would have concealed a real composition change if reported as a bare number alone) |
+| **This document's own claims about which test scenarios already exist have now been wrong twice** (round 4's "no stale passage found," corrected in round 5; and this round's `codex_real_vendor_footer_clean_root_comment` plus 14 further fabricated "exists" claims, corrected in round 7) | Medium, absent the standing rule below; **historically has recurred**, so treat as a real, not hypothetical, risk | High — a false "exists" claim leaves a genuine coverage gap that reads as covered | **Standing rule (new this round): before relying on any claim in this document that a named test scenario "exists," "is kept," or "is unchanged," re-run the exact `grep` command against the real file** (see the Verification Log's round-7 audit row for the commands used) rather than trusting this document's prose, no matter how recent the revision. This applies to every future round of this plan, not only this one |
 
 ---
 
@@ -1119,17 +1246,26 @@ The supported response to a persistent false `NEEDS_REVISION` is:
    on first match.
 5. **Update the file-header "Verdict parsing" comment block** to describe the exact-template contract; remove
    every reference to the allow-list/grammar contract the comment block described after the prior revision.
-6. **Update the tests**: apply the Group APPROVED changes (append the complete real footer to 4 of the 5
-   bodies) and the (unaffected) Group RETARGETED dispositions (Test disposition), delete
-   `codex_disqualifier_diagnostic_emitted`, rename `codex_footer_truncation_keeps_blocking_root_comment` to
-   `codex_footer_refusal_rejected_by_whole_body_match_root_comment` and rewrite its comment, refresh every
-   Group UNCHANGED-NEEDS_REVISION scenario's comment, then add the 15 new scenarios from "New scenarios"
-   (13 carried over, plus E23 and E24 new this round).
+6. **Before touching the test file, re-run the round-7 audit's `grep` commands (Verification Log) against the
+   real, current `test-pr-review-loop.sh`** — this document's "exists" claims have been wrong twice; do not
+   proceed on this document's scenario lists without re-confirming them against the file as it stands at
+   implementation time.
+7. **Update the tests**: append the complete real footer to the 2 real scenario bodies in Group APPROVED
+   (`codex_clean_root_review_comment`, `codex_full_root_review_comment`); apply the 25 Group RETARGETED
+   dispositions (Test disposition, corrected this round from a false count of 18); confirm
+   `codex_disqualifier_diagnostic_emitted` is genuinely absent (no deletion needed — it was never implemented);
+   refresh every Group UNCHANGED-NEEDS_REVISION scenario's comment; then add the 22 new scenarios from "New
+   scenarios" (15 carried forward correctly, plus 7 corrected this round from false "exists" claims:
+   `codex_real_vendor_footer_clean_root_comment`, `codex_underscore_prefixed_lookalike_root_comment`,
+   `codex_unenumerated_actionable_sentence_after_signal_root_comment`,
+   `codex_metadata_token_as_directive_root_comment`, `codex_nonfooter_details_block_not_truncated_root_comment`,
+   `codex_footer_markup_lookalike_tag_names_not_truncated_root_comment`, and
+   `codex_footer_refusal_rejected_by_whole_body_match_root_comment`).
    *Verify*: run `bash scripts/development-workflow/tests/test-pr-review-loop.sh` and confirm it exits 0, that
    the total assertion count is reconciled against the "Reconciled test-disposition counts" table (report the
    real figure — the table's estimate is explicitly provisional), and that only the scenarios named in Test
    disposition changed expectation.
-7. **Update the documentation** listed in "Documentation Updates," then add the CHANGELOG entry under
+8. **Update the documentation** listed in "Documentation Updates," then add the CHANGELOG entry under
    `[Unreleased]` → `### Changed`, copied literally:
 
    ```text
@@ -1146,11 +1282,11 @@ The supported response to a persistent false `NEEDS_REVISION` is:
      structured `CHANGES_REQUESTED` review-state short-circuit and the blocking classifier are unchanged.
    ```
 
-8. **Run the markdown and shell lint gates**: `npx markdownlint-cli2` on the changed docs and this plan,
+9. **Run the markdown and shell lint gates**: `npx markdownlint-cli2` on the changed docs and this plan,
    `python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md`,
    `bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md`, and
    `python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop`.
-9. **Walk the smoke test runbook** and record the results in the PR description.
+10. **Walk the smoke test runbook** and record the results in the PR description.
 
 ---
 
@@ -1169,19 +1305,30 @@ The supported response to a persistent false `NEEDS_REVISION` is:
   and `codex_strip_codex_footer` newly deleted this round), decision labels (Decision 1–5, same numbering as
   the immediately prior revision — Decisions 1, 2, and 5 rewritten in place rather than renumbered, since each
   still addresses the same question its number always has: what counts as a match, why exact matching
-  converges, and how the footer is handled), scenario names (including the one rename this round,
-  `codex_footer_truncation_keeps_blocking_root_comment` → `codex_footer_refusal_rejected_by_whole_body_match_root_comment`),
-  and file paths agree across the Summary, Decisions, Layer-by-Layer, Code Samples, Parser-risk addendum,
-  Testing Strategy, and Implementation Order sections. A full-document re-read this round confirmed no
-  remaining passage describes footer truncation, `codex_strip_codex_footer`, `CODEX_FOOTER_OPENING_LITERAL`, or
-  the "visible portion only" match as current — every reference to them is explicitly framed as history (in
-  "Background," Decision 2, or Decision 5).
+  converges, and how the footer is handled), and file paths agree across the Summary, Decisions, Layer-by-Layer,
+  Code Samples, Parser-risk addendum, Testing Strategy, and Implementation Order sections. **Scenario-name
+  claims specifically were re-verified this round by direct execution against the real `test-pr-review-loop.sh`
+  — not by document self-consistency alone** — after Codex GitHub finding `3803807958` and the round-7 audit it
+  triggered found 14 additional fabricated "exists" claims beyond the one Codex named, plus 2 real scenarios
+  misclassified by disposition (`codex_long_review_body_no_sigpipe`, `codex_long_root_comment_no_sigpipe`). Every
+  scenario name this document currently marks "exists," "kept," "real," or "confirmed present" was checked with
+  `grep -c -- "<name>" test-pr-review-loop.sh` (or, for the two misclassified scenarios, by reading their real
+  body and expected-verdict directly) this round; every scenario name marked "new" was confirmed absent by the
+  same method. A full-document re-read this round confirmed no remaining passage describes footer truncation,
+  `codex_strip_codex_footer`, `CODEX_FOOTER_OPENING_LITERAL`, the "visible portion only" match, or any
+  now-corrected false "exists" claim as current — every reference to them is explicitly framed as history (in
+  "Background," Decision 2, Decision 5, or the round-7 corrections in "Test disposition").
 - Verification support: Checked — every claim about existing behavior, file coverage, counts, and the vendor
   wire format cites a Verification Log command or a named source file. The exact implementation shipped in
   Code Samples (not an illustrative approximation of it) was re-executed on BSD `sed`/`grep`/`awk`/`tr` against
-  all 13 real captured Codex bodies (re-fetched live this round), every construction found across all six
-  review rounds, and every edge case in the Parser-risk addendum, including the two new to this round (E23,
-  E24) and the rewritten E22.
+  all 13 real captured Codex bodies (re-fetched live this round), every construction found across all seven
+  review rounds, and every edge case in the Parser-risk addendum, including the two new to round 6 (E23, E24),
+  the rewritten E22, and the seven scenario-existence corrections made this round (round 7). **The total
+  `run_test` assertion baseline is corrected this round from 628 to 620 — re-derived by direct count against
+  the real file (`grep -c '^run_test '`), not carried forward from an earlier revision's claim** — the `codex_*`
+  count (247) and the `VERDICT: APPROVED` count (27) were independently re-derived the same way and confirmed
+  to match the earlier revision's figures, so those two specific numbers were correct even though several of the
+  named scenarios behind the 27 were not.
 - Behavioral guarantees: Checked — the "cannot weaken the `CHANGES_REQUESTED` short-circuit" guarantee names
   its mechanism (unchanged, Decision 3); the "whole-body match leaves no discarded byte range" guarantee names
   its actual mechanism (no truncation step exists in `codex_response_is_approved`, Decision 1/5) rather than
@@ -1197,7 +1344,8 @@ The supported response to a persistent false `NEEDS_REVISION` is:
 - Parser/API/concurrency checklist: Checked (parser-risk addendum present with a full-replacement edge-case
   enumeration and per-case unit-test mapping, updated this round for the whole-body match); concurrent-event-source
   recorded as not applicable with rationale, unchanged.
-- CHANGELOG literal format: Checked — Implementation Order step 7 gives the entry in the project's
+- CHANGELOG literal format: Checked — Implementation Order step 8 (renumbered this round to make room for the
+  new step 6, re-running the round-7 audit before touching the test file) gives the entry in the project's
   `**Bold Title** (#N):` format under `### Changed`, rewritten this round to describe the whole-body,
   no-truncation contract that will actually ship.
 - Not-applicable rationale: Checked — suppression semantics and concurrency each carry a rationale.

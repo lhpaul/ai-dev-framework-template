@@ -177,11 +177,15 @@ and no reintroduction of a truncation step to avoid having to capture the footer
 
 **Maps to**: Edge case E2
 
-1. Capture a real review body from PR #1490 (any of its 12 reviews):
+1. Capture a real review body from PR #1490 (any of its 12 reviews). **Select the first matching review
+   inside the jq expression itself, not by piping the emitted bodies through `head -1`** — `head -1` on
+   multi-line output stops at the first *line*, not the first *review*, so it would truncate the body to a
+   partial `### 💡 Codex Review` header fragment rather than yielding one complete review body (Codex GitHub
+   finding `3803807963`, round 7):
 
    ```bash
    gh api repos/lhpaul/ai-dev-framework-template/pulls/1490/reviews \
-     --jq '.[] | select(.user.login | test("codex"; "i")) | .body' | head -1
+     --jq '[.[] | select(.user.login | test("codex"; "i"))][0].body'
    ```
 
 2. Confirm it reads the generic `### 💡 Codex Review\n\nHere are some automated review suggestions for this
