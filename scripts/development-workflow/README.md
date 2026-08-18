@@ -10,6 +10,8 @@ directory), expect it to take **more than 2 minutes** as of this writing — inv
 it with a longer explicit timeout, or in the background, rather than relying on
 a tool's default foreground command timeout:
 
+<!-- workflow-shell-contract: bash-zsh -->
+
 ```bash
 for f in scripts/development-workflow/tests/test-*.sh; do bash "$f" || echo "FAILED: $f"; done
 ```
