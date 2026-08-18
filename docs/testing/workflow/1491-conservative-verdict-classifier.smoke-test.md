@@ -527,11 +527,44 @@ design any earlier revision of this plan shipped there).
 
 ---
 
+### Step 16: The flavor-token alternation approves every evidenced token and rejects an unevidenced one (Decision 2 Addendum, PR #1494 follow-up)
+
+**Maps to**: Decision 2 Addendum — this step exists because PR #1494's own Codex review (comment id
+`5333550055`) safe-failed on its first real-traffic exercise: the response read `:rocket:`, not the sole
+originally-evidenced `Swish!` literal.
+
+1. Re-fetch the live PR #1494 comment and confirm it still reads `Codex Review: Didn't find any major issues.
+   :rocket:` followed by the `**Reviewed commit:**` marker and the complete real footer:
+
+   ```bash
+   gh api repos/lhpaul/ai-dev-framework-template/issues/comments/5333550055 --jq '.body'
+   ```
+
+2. Run the reviewer against that exact body as a SHA-pinned root comment (mock convention from Step 6).
+3. For each of the other 13 evidenced flavor tokens (`Swish!`, `Nice work!`, `Chef's kiss.`, `You're on a
+   roll.`, `:tada:`, `Another round soon, please!`, `:+1:`, `Bravo.`, `Keep it up!`, `Delightful!`, `Keep them
+   coming!`, `Can't wait for the next one!`, `More of your lovely PRs please.`), build a body reproducing the
+   template with that token in place of the flavor slot and run the reviewer against it.
+4. Build a body using an invented, unevidenced token (e.g. `Fantastic job!`) in the flavor slot and run the
+   reviewer against it.
+5. Confirm the escaped metacharacters inside tokens are literal, not wildcards: mutate a dotted token (e.g.
+   `Bravo.` → `Bravo!`) and confirm it does **not** approve; mutate the `+` in `:+1:` (e.g. to `::::1:`) and
+   confirm it does **not** approve.
+
+**Expected result**: steps 2 and 3 (all 14 evidenced tokens) exit 0 and print `VERDICT: APPROVED`. Step 4
+(unevidenced token) exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)` —
+this is the accepted safe-direction failure mode, not a defect. Step 5's two mutations both exit 1 — if either
+approves, an escaping regression has reintroduced a wildcard/quantifier where a literal token character was
+required, and the finding must be treated as a `blocking` regression on the same footing as a template-level
+escaping bug.
+
+---
+
 ## Results
 
 | Step | Pass / Fail | Notes |
 | --- | --- | --- |
-| 1 | Pass | `bash scripts/development-workflow/tests/test-pr-review-loop.sh` exits 0, `Tests: 684 passed, 0 failed` |
+| 1 | Pass | `bash scripts/development-workflow/tests/test-pr-review-loop.sh` exits 0, `Tests: 712 passed, 0 failed` (684 prior to the Step 16 flavor-token addendum; +28 assertions from the 14 new flavor scenarios) |
 | 2 | Pass | Comment-filtered deletion-list search returns nothing; `CODEX_APPROVED_TEMPLATES`/`codex_normalize_whitespace` each show one definition; `codex_response_is_approved` shows no footer-strip/fence/quote/not-only-idiom call; five call sites confirmed (`codex_response_priority` plus the four verdict sites) |
 | 3 | Pass | Comment-filtered `codex_strip_not_only_idiom` count = 2 (definition + one call, inside `codex_response_is_blocking`) |
 | 4 | Pass | Merge base `a0b8f8c7d9b63ea0f2ace945f78990579ceca828` resolved; `CODEX_BLOCKING_PATTERN`/`CODEX_MERGE_REFUSAL_PATTERN`/`CODEX_NEGATION_WORDS` diffs empty; full `codex_response_is_blocking` function-range diff empty (byte-identical) |
@@ -546,9 +579,11 @@ design any earlier revision of this plan shipped there).
 | 13 | Pass | (a) Group APPROVED's two template-anchored members use distinct valid SHAs (`abcdefab12`, `abcabcabcabc1234567890`) and both exit 0/`APPROVED`; `codex_e7_full_length_sha_approved` (40-char) exits 0/`APPROVED`; (b) `codex_e5_short_sha_not_approved` (6-char, review-sourced), (c) `codex_e6_oversized_sha_not_approved` (41-char, review-sourced), and (d) `codex_e8_non_hex_sha_not_approved` (review-sourced) all exit 1, safe-fail |
 | 14 | Pass | `codex-github.md` gained a "Verdict Classification" section stating the whole-body exact-template contract; Protocol 93's "Codex GitHub terminal evidence" block states the template-reproduction requirement; `CHANGELOG.md` `[Unreleased]` → `### Changed` carries the `**Conservative Codex verdict classifier** (#1491):` entry |
 | 15 | Pass | `markdownlint-cli2` (changed docs + this runbook + `CHANGELOG.md`): 0 errors; `markdown-heuristic-lint.py`: exit 0; `workflow-shell-snippet-lint.py --base-ref origin/develop`: exit 0; `shellcheck --severity=warning` on both changed `.sh` files: only pre-existing, untouched warnings at unrelated lines (1699-1700 of the test file, unchanged by this PR) |
+| 16 | Pass | Live-refetched PR #1494 comment `5333550055` still reads `:rocket:`; all 14 evidenced flavor tokens (including the real `:rocket:` and `Swish!` captures) exit 0/`APPROVED`; an unevidenced token (`Fantastic job!`) exits 1/safe-fail; both escaping-regression mutations (`Bravo!`, `::::1:`) exit 1/safe-fail, confirming the alternation's escaped metacharacters remain literal |
 
 **Platform tested**: macOS/BSD (Darwin 25.5.0)
 
-**Tester**: developer agent (issue #1491 implementation)
+**Tester**: developer agent (issue #1491 implementation; Step 16 added by the reviewer agent after PR #1494's
+own Codex review falsified the single-flavor-literal assumption during Step 7a review)
 
-**Date**: 2026-08-18
+**Date**: 2026-08-18 (original); flavor-token correction 2026-08-18

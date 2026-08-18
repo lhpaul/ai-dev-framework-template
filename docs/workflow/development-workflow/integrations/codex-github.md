@@ -31,7 +31,7 @@ whitespace-normalized — to be an **exact** match against one of a small set
 of literal templates captured verbatim from real Codex clean responses, each
 template including the complete vendor `<details>` "About Codex in GitHub"
 footer text. Today exactly one template is evidenced, covering the
-`Codex Review: Didn't find any major issues. Swish!` / `**Reviewed commit:**`
+`Codex Review: Didn't find any major issues. <flavor>` / `**Reviewed commit:**`
 shape plus the complete footer, with a bounded placeholder only for the
 commit SHA (`[0-9a-f]{7,40}`, git's own documented abbreviated-to-full
 SHA-1 hex-length range). There is no vocabulary list, no grammar, no
@@ -42,14 +42,29 @@ the only way to widen the approval surface, and it needs a live capture of
 the new wording plus the same review discipline the classifier's earlier,
 now-deleted vocabulary patterns once required.
 
+**The `<flavor>` slot is a bounded alternation of every evidenced token, not
+a single fixed word.** PR #1494's own Codex review returned `:rocket:`
+instead of the sole originally-evidenced `Swish!`, proving the vendor
+rotates this slot through a pool of phrases. A repository-history sweep
+found 14 distinct tokens evidenced by live GitHub captures: `Swish!`,
+`:rocket:`, `Nice work!`, `Chef's kiss.`, `You're on a roll.`, `:tada:`,
+`Another round soon, please!`, `:+1:`, `Bravo.`, `Keep it up!`,
+`Delightful!`, `Keep them coming!`, `Can't wait for the next one!`, and
+`More of your lovely PRs please.` — each is a literal alternative, never a
+character-class wildcard, so an as-yet-unobserved token still safe-fails
+(the discovery rate suggests the true pool is larger than what has been
+observed so far). Adding a newly observed token requires the identical
+live-capture discipline as adding a whole new template.
+
 The deliberate, disclosed trade of this design: a genuinely clean response
 using different wording anywhere in the body — including a cosmetic vendor
-footer rewording — safe-fails to `NEEDS_REVISION` today rather than being
-approved. This failure direction is always safe (more `NEEDS_REVISION`,
-never a false `APPROVED`); recovery is a live capture of the new wording
-added as a new template entry, never a relaxation of the matching
-technique. See issue #1491's implementation plan for the full design
-history and rationale.
+footer rewording, or a flavor token not yet in the evidenced alternation —
+safe-fails to `NEEDS_REVISION` today rather than being approved. This
+failure direction is always safe (more `NEEDS_REVISION`, never a false
+`APPROVED`); recovery is a live capture of the new wording added as a new
+template entry or alternation token, never a relaxation of the matching
+technique. See issue #1491's implementation plan (Decision 2 and its
+Decision 2 Addendum) for the full design history and rationale.
 
 ## Prerequisites
 

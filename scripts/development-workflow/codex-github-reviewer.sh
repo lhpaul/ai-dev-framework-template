@@ -676,8 +676,25 @@ codex_normalize_whitespace() {
 # edited; a wildcard there would silently widen the match to any
 # character, which is exactly the kind of unreviewed widening this
 # design forbids.
+#
+# The "flavor" slot immediately after "Didn't find any major issues. " is
+# a bounded, parenthesized alternation of every literal flavor token
+# evidenced by a live Codex response — NOT a single fixed word and NOT a
+# general wildcard/character-class. This was learned the hard way: the
+# single-literal ("Swish!") version of this template shipped on this
+# repository's own PR #1494, whose first Codex review used ":rocket:"
+# instead and safe-failed on real traffic (issue #1491's implementation
+# plan, Decision 2 Addendum). A repository-history sweep of every Codex
+# clean-verdict root comment found 14 distinct tokens; every one is
+# reproduced here as an ERE-escaped literal (note the escaped `.` in
+# "Chef's kiss\." and "Bravo\." and the escaped `+` in ":\+1:" — these
+# MUST stay escaped, or the "." would silently become an any-character
+# wildcard and the "+" a one-or-more quantifier, each exactly the kind of
+# unreviewed widening this design forbids). Extending this alternation
+# with a newly observed token requires the identical live-capture
+# discipline as adding a whole new template — see Decision 2 Addendum.
 CODEX_APPROVED_TEMPLATES=(
-  '^Codex Review: Didn'"'"'t find any major issues\. Swish! \*\*Reviewed commit:\*\* `[0-9a-f]{7,40}` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> \[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment "@codex review"\. If Codex has suggestions, it will comment; otherwise it will react with 👍\. Codex can also answer questions or update the PR\. Try commenting "@codex address that feedback"\. </details>$'
+  '^Codex Review: Didn'"'"'t find any major issues\. (Swish!|:rocket:|Nice work!|Chef'"'"'s kiss\.|You'"'"'re on a roll\.|:tada:|Another round soon, please!|:\+1:|Bravo\.|Keep it up!|Delightful!|Keep them coming!|Can'"'"'t wait for the next one!|More of your lovely PRs please\.) \*\*Reviewed commit:\*\* `[0-9a-f]{7,40}` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> \[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment "@codex review"\. If Codex has suggestions, it will comment; otherwise it will react with 👍\. Codex can also answer questions or update the PR\. Try commenting "@codex address that feedback"\. </details>$'
 )
 
 # `APPROVED` requires the ENTIRE, untruncated response — whitespace-

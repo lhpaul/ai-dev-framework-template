@@ -292,6 +292,74 @@ truncate-then-match design it would not have. This is the accepted trade the hum
 stated, evidence-derived bound for any variable field — is the same fix this plan has always prescribed for
 its riskiest lever, just now applied to one array instead of several.
 
+### Decision 2 Addendum — PR #1494 live evidence falsified the single-literal flavor assumption; the flavor slot is now a bounded alternation of evidenced tokens
+
+**What happened.** This PR's own first real-world use, PR #1494, received a genuinely clean Codex GitHub
+response on its first ready-phase check. The response read `Codex Review: Didn't find any major issues.
+:rocket:` — not `Swish!`. `CODEX_APPROVED_TEMPLATES`' one entry hardcoded `Swish!` as a literal, so this
+genuinely clean response safe-failed to `NEEDS_REVISION` on the classifier's first real-traffic exercise
+(GitHub comment id `5333550055`, PR #1494, 2026-08-18). This is not an implementation defect — the shipped
+code does exactly what Decision 2 specified — it is the residual gap Decision 2 already disclosed explicitly
+("a vendor phrasing change, a different flavor sentence than `Swish!`... safe-fails") materializing in
+practice, faster than expected.
+
+**Live evidence: the flavor slot is a vendor-rotated pool, not a fixed word.** A sweep of every Codex
+GitHub clean-verdict root comment reachable in this repository's history (issues/comments across PRs #470–#519,
+#683, #869–#872, #1489, #1490, #1492, #1494 — the full set returned by a `commenter:chatgpt-codex-connector[bot]`
+search) found **14 distinct flavor tokens**, not the 1–2 anticipated:
+
+| Token (byte-exact) | Evidenced in |
+| --- | --- |
+| `Swish!` | PR #491 (comment `4381989833`), PR #1489 (comment `5294701769`) |
+| `:rocket:` | PR #1494 (comment `5333550055`) — the finding that triggered this correction |
+| `Nice work!` | PR #490 (`4381534986`), PR #506 (`4391791674`), PR #871 (`4664586913`) |
+| `Chef's kiss.` | PR #503 (`4391484333`), PR #510 (`4392497562`), PR #871 (`4665009816`) |
+| `You're on a roll.` | PR #870 (`4664324795`) |
+| `:tada:` | PR #869 (`4664269616`) |
+| `Another round soon, please!` | PR #500 (`4389724254`), PR #683 (`4500576578`) |
+| `:+1:` | PR #481 (`4374386509`), PR #517 (`4396260443`) |
+| `Bravo.` | PR #514 (`4392864280`) |
+| `Keep it up!` | PR #496 (`4383590778`) |
+| `Delightful!` | PR #493 (`4388320805`) |
+| `Keep them coming!` | PR #488 (`4380098761`), PR #489 (`4380656798`) |
+| `Can't wait for the next one!` | PR #484 (`4374411552`), PR #485 (`4374391710`) |
+| `More of your lovely PRs please.` | PR #476 (`4371879954`) |
+
+Every token above was captured verbatim from a live GitHub API response and re-verified byte-for-byte (apostrophe
+form, trailing punctuation) before being bound into the pattern — none is invented or paraphrased. The literal
+emoji form (`🚀`) was checked for and not found in any capture; every shortcode-style token (`:rocket:`, `:tada:`,
+`:+1:`) appears in its raw GitHub shortcode form in the API response body, never as a rendered unicode emoji, so
+only the shortcode forms are bound.
+
+**This sample is very likely not exhaustive.** 14 distinct, largely unrelated phrases (single words, full
+sentences, GitHub emoji shortcodes, inconsistent trailing punctuation) surfaced from a search covering roughly
+40 clean responses — a token discovery rate this high strongly suggests the vendor draws from a large, possibly
+still-growing pool, not a small fixed set. This changes the operational cost estimate in "Risks & Mitigations"
+below from hypothetical to observed: expect further genuinely clean responses to safe-fail on a
+not-yet-evidenced token, and expect this correction cycle (capture live, add to the alternation) to recur.
+
+**Human decision: enumerate, as a bounded alternation, not a wildcard.** The one slot that was a single literal
+becomes a parenthesized ERE alternation of every evidenced token
+(`(Swish!|:rocket:|Nice work!|Chef's kiss\.|...)`), each token escaped for ERE metacharacters as a literal
+string — never a character class, never an open vocabulary, never a "starts with a flavor word" heuristic.
+**Rationale for why this is safe where the original disqualifier/vocabulary enumeration (see "Background") was
+not**: an incomplete flavor list produces a false `NEEDS_REVISION` — the safe failure direction, identical in
+kind to every other residual gap this design already accepts (Decision 2, Risks & Mitigations) — whereas the
+disqualifier enumeration that failed across this plan's first three designs produced a false `APPROVED` on every
+gap, the unsafe direction. Enumerating the flavor slot is the direct, template-scoped application of the
+"capture the new wording live, add a template entry" escape hatch this plan has always prescribed (Decision 2's
+extension rule; "Operational cost and escape hatch") — it is not a new mechanism, and it does not reopen the
+class of gap the whole-body exact match was designed to close: every character in the body is still either part
+of one of the finite literal strings the alternation can produce, or the match fails.
+
+**Standing rule (extends Decision 2's governing rule to the flavor slot specifically).** Adding a flavor token
+is, alongside adding a whole new template, the only other lever that can widen the approval surface. It requires
+the identical review discipline: a token must come from a **live capture** of a real Codex response, never
+invented or guessed by "plausible enthusiasm," and — because unlike the SHA field this slot has no external
+specification to bound it — there is no narrower bound available than "the literal set evidenced so far."
+Removing a token (if a capture is ever found to be a transcription error) is always safe; adding one requires
+the same review this document's history has required for every prior widening.
+
 ### Decision 3 — Composition with the GitHub review `state` short-circuit from PR #1490
 
 PR #1490 threaded GitHub's structured review `state` through evidence selection. That behavior is **preserved
@@ -655,6 +723,13 @@ See "Documentation Updates" for exactly what changes in each.
 ## Code Samples
 
 <!-- Illustrative — adapt during implementation. -->
+
+**Post-implementation note (Decision 2 Addendum):** the flavor slot below is shown with the single `Swish!`
+literal this plan originally shipped. The shipped code no longer matches this illustration exactly — the flavor
+slot is a bounded alternation of every evidenced token (see Decision 2 Addendum for the full list and
+provenance), not a single literal. This snippet is left as originally illustrative, per its own header, rather
+than rewritten to track every subsequent correction; the shipped `codex-github-reviewer.sh` and Decision 2
+Addendum are authoritative for the current contract.
 
 **This is the fourth design this plan has shipped**, replacing (not extending) the truncate-then-match design
 of the immediately prior revision after Codex GitHub finding `3803545669` showed that design still trusted
@@ -1169,7 +1244,30 @@ Before authoring any of the above, re-check whether an equivalent scenario alrea
 name — do not assume absence without searching the real file first (this document has previously assumed
 scenarios existed, or did not exist, incorrectly in both directions).
 
+### New scenarios addendum — flavor-token enumeration (Decision 2 Addendum, PR #1494 follow-up)
+
+Fourteen new scenarios cover the flavor-token alternation, added after implementation was otherwise complete:
+
+- **`codex_flavor_rocket_real_pr1494_capture_approved`** — the real, live PR #1494 root comment (comment id
+  `5333550055`) that falsified the single-literal assumption, verbatim, same real-capture convention as
+  `codex_e1_real_pr1489_capture_approved`. `APPROVED`.
+- **One scenario per remaining evidenced token** (`Nice work!`, `Chef's kiss.`, `You're on a roll.`, `:tada:`,
+  `Another round soon, please!`, `:+1:`, `Bravo.`, `Keep it up!`, `Delightful!`, `Keep them coming!`, `Can't
+  wait for the next one!`, `More of your lovely PRs please.`) — a synthetic body reproducing that token in the
+  otherwise-exact template, each with its own valid SHA. `APPROVED`. (`Swish!` itself remains covered by
+  `codex_e1_real_pr1489_capture_approved`, unchanged.)
+- **`codex_flavor_unevidenced_token_not_approved`** — a clean-shaped body using an invented, unevidenced token
+  (`Fantastic job!`). `NEEDS_REVISION`. Proves the alternation is closed, not a wildcard, and that the accepted
+  safe-direction failure mode (a genuine future flavor rotation safe-failing until captured and added) is
+  intentional and under test, not an oversight.
+- **Escaping regressions verified directly against the isolated classifier** (not asserted): a mutated `Bravo!`
+  body does not match the `Bravo.` alternative (proves the token's literal period is not acting as an
+  any-character wildcard), and a mutated `::::1:` body does not match the `:+1:` alternative (proves the
+  token's literal `+` is not acting as a one-or-more quantifier) — both confirm the ERE-escaping of
+  metacharacters inside each flavor token is correct, not merely that the happy path passes.
+
 ### Residual verification strategy
+
 
 This is a full design replacement, so the evidence the implementation must produce before
 `ready-for-human-review` is:
@@ -1203,6 +1301,10 @@ This is a full design replacement, so the evidence the implementation must produ
    scenario resolving at one site by default is not evidence the other three copies are correct.
 9. **Before marking any "exists"/"kept"/"unchanged" claim in this document verified, re-derive it by execution
    against the file at implementation time**, not against this document's prose.
+10. **(Decision 2 Addendum, PR #1494 follow-up) Every evidenced flavor token approves, an unevidenced one still
+    safe-fails, and neither escaped metacharacter inside a token (the periods in `Chef's kiss.`/`Bravo.`/etc.,
+    the `+` in `:+1:`) silently reverts to acting as a regex wildcard/quantifier** — confirmed by execution
+    against the real, isolated classifier, not asserted from the pattern's appearance alone.
 
 ---
 
@@ -1248,6 +1350,10 @@ shape recorded in the Cross-Cutting Operational Assumption Check, stop and repor
       `CODEX_CLEAN_SIGNAL_PATTERN` change once required. Note the deliberate, disclosed trade: a genuinely
       clean response using different wording anywhere in the body — including the vendor footer — safe-fails
       to `NEEDS_REVISION` today.
+- [ ] **(Decision 2 Addendum, PR #1494 follow-up)** Update the same section to state that the flavor slot
+      between the verdict sentence and the `Reviewed commit:` marker is a **bounded alternation of every
+      evidenced token** (list them), not a single literal — the vendor rotates this slot — and that adding a
+      newly observed token requires the same live-capture discipline as adding a template.
 - [ ] `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` — in the
       "Codex GitHub terminal evidence" block, state: the response must reproduce, whitespace aside, one of a
       small set of exact captured clean-response templates covering the entire body, footer included, with no
@@ -1267,7 +1373,7 @@ shape recorded in the Cross-Cutting Operational Assumption Check, stop and repor
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| A genuinely clean Codex response uses wording that does not reproduce any evidenced template, and safe-fails to `NEEDS_REVISION` | **High, by design** | Low–Medium | **This is the central, accepted trade of this design, stated explicitly rather than discovered later.** The failure direction is always safe (never a false `APPROVED`). Recovery is a one-line addition to `CODEX_APPROVED_TEMPLATES`, backed by a live capture of the new wording and held to the same review a `CODEX_CLEAN_SIGNAL_PATTERN` change once required (Decision 2). This risk directly subsumes and replaces every "vendor wording change" risk row every prior revision of this plan carried separately for the clean-signal vocabulary, the flavor-token list, and the footer literal — under this design there is exactly one surface (the template array) where this class of risk lives, not three |
+| A genuinely clean Codex response uses wording that does not reproduce any evidenced template, and safe-fails to `NEEDS_REVISION` | **Confirmed, not hypothetical — materialized on PR #1494, this plan's own first real-traffic exercise** | Low–Medium | **This is the central, accepted trade of this design, stated explicitly rather than discovered later — and now observed directly, not merely anticipated.** The failure direction is always safe (never a false `APPROVED`): PR #1494's Codex review used `:rocket:` instead of the sole evidenced `Swish!` literal and safe-failed, exactly as this row predicted. Recovery is a one-line addition to `CODEX_APPROVED_TEMPLATES` (or, for the flavor slot specifically, to its bounded alternation — see Decision 2 Addendum), backed by a live capture of the new wording and held to the same review a `CODEX_CLEAN_SIGNAL_PATTERN` change once required (Decision 2). A repository-wide sweep triggered by this finding evidenced 14 distinct flavor tokens from roughly 40 historical clean responses — a discovery rate implying the true pool is larger still — so this recovery cycle should be expected to recur, not treated as a one-time correction. This risk directly subsumes and replaces every "vendor wording change" risk row every prior revision of this plan carried separately for the clean-signal vocabulary, the flavor-token list, and the footer literal — under this design there is exactly one surface (the template array, including its one bounded-alternation slot) where this class of risk lives, not three |
 | **The template now binds to vendor-controlled help text (the `<details>` footer), not just the verdict sentence — a purely cosmetic rewording of OpenAI's footer now also produces a false `NEEDS_REVISION`, which it did not under the prior (truncate-then-match) revision.** | **High, by design — an explicit, accepted trade** | Low–Medium | **Recorded explicitly (Decision 5).** The failure direction remains safe (more `NEEDS_REVISION`, never a false `APPROVED`) — this trade is accepted specifically because it closes Codex GitHub finding `3803545669`, which was the opposite (unsafe) failure direction. Recovery is the same as the row above: re-capture the footer live and update the one template entry. This risk did not exist under the prior revision (the footer was discarded before comparison, so its wording was irrelevant to the match) and is a direct, disclosed consequence of removing truncation |
 | Only one template is evidenced today, so the approval surface is intentionally very narrow at ship time | High (by design) | Medium | Accepted, not a defect: the two live sources this plan had access to yield exactly one clean-response shape. Widening it requires a genuinely new live capture, per Decision 2's extension rule — inventing a plausible-looking second template with no current live evidence was explicitly out of scope and must not be done without one |
 | The commit-SHA placeholder's bound (`{7,40}`) is wider than the length every current real capture shows, and could in principle match a SHA-shaped string that is not really a commit reference | Low | Low | The bound is git's own documented abbreviated-to-full SHA-1 range, not an arbitrary guess (Decision 2) — narrowing it to today's observed length would be *safer* in the false-`APPROVED` direction but would fail on the very next legitimate response once this repository's object count crosses git's next auto-lengthening threshold, for a reason unrelated to anything Codex changed. This trade was made deliberately; revisit only with fresh evidence that git's behavior differs from its documented specification |
