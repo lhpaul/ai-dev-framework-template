@@ -614,16 +614,20 @@ and `[[ ]]`-free POSIX tests). No portable `bash-zsh` snippet is introduced.
       same commit**, from `"0"` to `"1"` — see "Test disposition" for why this pairing matters and how to find
       every instance.
 - [ ] **Update the bodies of every scenario in Group APPROVED** — see "Test disposition" for the full
-      membership and per-scenario notes. The two template-anchored members need only the complete, verbatim
-      vendor footer appended (their existing verdict sentence and SHA are otherwise correct). The routing-
-      testing members kept in this group need a full body replacement with the exact template's verdict
-      sentence, `**Reviewed commit:**` marker, and complete footer, since their current bodies use different
-      wording entirely — while preserving each one's distinguishing mock sequencing (poll timing or
-      competing-evidence setup), or the routing behavior it tests is no longer exercised. This is a stricter
-      requirement than the prior revision's for the two footer-only members: under truncate-then-match, a
-      fixture body omitting the footer still matched (the footer was discarded before comparison either way);
-      under whole-body exact matching, the same fixture no longer matches unless the footer text is genuinely
-      present, because nothing is discarded any more.
+      membership and per-scenario notes. **All eight members need a full body replacement with the exact
+      template's verdict sentence (including the `Swish!` sentence), `**Reviewed commit:**` marker, and
+      complete footer — this is not merely a footer append for any of them (Codex GitHub finding
+      `3805497682`, P2: the two template-anchored members' real, current bodies read `Codex Review: Didn't
+      find any major issues.` followed directly by the SHA marker, with no `Swish!` sentence and no footer at
+      all — appending only the footer would leave the verdict sentence short of the template and the
+      retained `APPROVED` assertion would fail).** For the routing-testing members kept in this group, the
+      full replacement is the same requirement already stated for a different reason (their current bodies
+      use entirely different wording, not merely a missing `Swish!`/footer) — while preserving each one's
+      distinguishing mock sequencing (poll timing or competing-evidence setup), or the routing behavior it
+      tests is no longer exercised. This is a stricter requirement than the prior revision's: under
+      truncate-then-match, a fixture body omitting the footer (or reading a close-but-inexact verdict
+      sentence) still matched under the old vocabulary-based check; under whole-body exact matching, nothing
+      is discarded or approximated any more, so the body must reproduce the template exactly.
 - [ ] Add the new scenarios listed in "New scenarios" — see that section for the full list and construction
       notes for each.
 - [ ] Consolidate, rather than individually re-litigate, the regression scenarios whose underlying mechanism no
@@ -839,11 +843,17 @@ edge case above must get at least one scenario there, driven through the real sc
 **Do not trust a name list of which scenarios already exist versus which are new** — this document has been
 wrong about that before. Before writing any test code, derive the real status of each edge case's coverage
 directly against the file (e.g. search for the construction's distinguishing text or an obviously-related
-scenario name) and treat anything not found as needing to be authored. Apply the fixture-sourcing caveats from
+scenario name) and treat anything not found as needing to be authored — **this applies to all 24 cases, not
+only the ones already flagged in a prior round** (Codex GitHub finding `3805497692`, P2: E2 was previously
+missing from this document's coverage plan entirely, found only by walking the full E1–E24 list against the
+real file end to end, not by a reviewer spotting it case by case). Apply the fixture-sourcing caveats from
 "Edge-case enumeration" above when constructing each scenario: cases with a malformed or case-folded SHA
 (E5, E6, E8, E13) must be built as review-sourced fixtures, not root-comment fixtures, or the scenario will
 time out instead of exercising the classifier at all; E19 and E20 must include an explicit `**Reviewed
-commit:**` marker in their bodies for the same reason.
+commit:**` marker in their bodies for the same reason; **E2 must also be review-sourced, for a different
+reason than E5/E6/E8/E13 — it is naturally drawn from the reviews endpoint (Decision 3), and a review is
+always terminal (`SOURCE = "review"`) by construction regardless of its body text, so this is the correct
+source type to use rather than a caveat to work around.**
 
 ### Suppression semantics
 
@@ -885,10 +895,14 @@ contains categories a subtraction could silently sweep in.
 
 - **Group APPROVED** — scenarios that assert `VERDICT: APPROVED` and correctly continue to, because their body
   is (or is updated to be) an exact reproduction of a `CODEX_APPROVED_TEMPLATES` entry. Two real, existing
-  scenarios currently assert `VERDICT: APPROVED` with a body that is the verdict sentence and SHA but no
-  footer — both must have the complete, verbatim vendor footer appended, or they no longer match under the new
-  whole-body design. Beyond those two, this plan adds new scenarios to cover the boundary cases in
-  "New scenarios" below (E1, E7, E12).
+  scenarios currently assert `VERDICT: APPROVED`. **Their real, current bodies read `Codex Review: Didn't find
+  any major issues.` followed directly by the `**Reviewed commit:**` SHA marker — no `Swish!` sentence and no
+  footer at all** (corrected this round from a false "verdict sentence and SHA but no footer" description,
+  Codex GitHub finding `3805497682`, P2 — confirmed via `grep -c 'Swish' test-pr-review-loop.sh`, which returns
+  0). Both need a **full body replacement** with the complete template text (the `Swish!` sentence included)
+  plus the complete, verbatim vendor footer — appending only the footer to the current body would leave the
+  verdict sentence short of the template and the retained `APPROVED` assertion would fail. Beyond those two,
+  this plan adds new scenarios to cover the boundary cases in "New scenarios" below (E1, E7, E12).
   **A further subset of the scenarios that currently assert `VERDICT: APPROVED` belongs in this group too, not
   in Group RETARGETED, even though their body does not reproduce a template** (Codex GitHub finding
   `3805127030`, P2). Retargeting is only correct for a scenario whose assertion is really about approval
@@ -904,10 +918,11 @@ contains categories a subtraction could silently sweep in.
   round, each testing routing at a specific verdict site — keep every one asserting `VERDICT: APPROVED`. **Their
   current bodies use different wording than the template entirely (e.g. `"No blocking issues found."`), so this
   is a full body replacement with the exact template's verdict sentence, `**Reviewed commit:**` marker, and
-  complete footer — not merely a footer append like the two pre-existing members above** — while preserving
-  each scenario's distinguishing mock sequencing (the poll timing or competing-evidence setup that makes it a
-  routing test, not just its final review/comment payload). Do not touch any of these six scenarios' paired
-  `*_exit_clean` assertions (each correctly stays `"0"`, unaffected):
+  complete footer** — the same full-replacement treatment the two pre-existing Group APPROVED members also
+  need (see above), each for its own reason — while preserving each scenario's distinguishing mock sequencing
+  (the poll timing or competing-evidence setup that makes it a routing test, not just its final review/comment
+  payload). Do not touch any of these six scenarios' paired `*_exit_clean` assertions (each correctly stays
+  `"0"`, unaffected):
   - `codex_reaction_with_current_review` — a current-head review resolves `APPROVED` despite a simultaneous
     reaction-bearing ancillary comment; confirms the review, not the reaction/acknowledgement noise, wins.
     Resolves at the main-loop verdict site.
@@ -1038,11 +1053,31 @@ deletion work is needed here.
 
 ### New scenarios
 
+**Every edge case in the Parser-risk addendum (E1–E24) must have an automated scenario — confirmed this round
+by walking the full E1–E24 list against the real file, not case by case as reviewers happened to spot gaps**
+(Codex GitHub finding `3805497692`, P2). Two cases were not previously accounted for correctly:
+
+- **E2 was missing from this list entirely** — a repository-wide search for its distinguishing text (`Here are
+  some automated review suggestions`, `💡`) returns zero matches, and the prior list jumped from E1 straight to
+  E3. Added below.
+- **E4 and E14 are genuinely covered, but only implicitly** — neither needed a new scenario (E4 by the two
+  updated Group APPROVED members using distinct SHAs, per "Test disposition"; E14 by the real, pre-existing
+  `codex_unapproved_prefix_root_comment`, confirmed present and matching E14's construction), but this
+  document did not say so anywhere after removing the old per-case mapping table, leaving their coverage
+  unstated rather than confirmed. Stated explicitly below so no case is left ambiguous between "new," "covered
+  by an existing scenario," and "not covered at all."
+
 The following must be authored (construction notes only — see the Parser-risk addendum for each edge case's
 full rationale and the fixture-sourcing caveats):
 
 - **E1** — the real captured PR #1489 body, in full, including its real `<details>` footer. `APPROVED`. This is
   the classifier's primary real-response anchor and the highest-priority addition in this set.
+- **E2** — a real captured PR #1490 review body, in full, verbatim. `NEEDS_REVISION`. **Must be a review-sourced
+  fixture** (mocked `commit_id` equal to the current head SHA, `state: COMMENTED`) — the same requirement that
+  applies to E5/E6/E8/E13, since a review is always terminal (`SOURCE = "review"`) by construction regardless
+  of its body text, and this case specifically needs to reach `is_approved` (and fail it, on wording alone) to
+  prove the generic wrapper is correctly never a template match, not merely to reach a safe-fail for an
+  unrelated reason (e.g. never pinning as terminal at all).
 - **E3, E5, E6, E8, E9, E10, E11, E13** — each a `NEEDS_REVISION`-asserting boundary/shape construction per its
   Parser-risk addendum row, each including the complete real footer (required for the case to isolate what it
   is meant to test). E5, E6, E8, and E13 must be review-sourced fixtures (see the fixture-sourcing caveats).
@@ -1056,6 +1091,19 @@ full rationale and the fixture-sourcing caveats):
 - **E23** — `NEEDS_REVISION`; the direct regression test for Codex GitHub finding `3803545669`.
 - **E24** — `NEEDS_REVISION` for all three footer-position mutations; may be implemented as one scenario with
   three assertions or three separate scenarios.
+
+**Not authored as new scenarios, because coverage already exists (confirmed this round, not assumed):**
+
+- **E4** — covered by the two Group APPROVED template-anchored members once their body-replacement fix (see
+  "Test disposition") is applied: each already uses a different, valid SHA (`abcdefab12` and
+  `abcabcabcabc1234567890`, neither the live-captured value), so once their bodies reproduce the complete
+  template the SHA-generalization case is exercised as a side effect of retaining those two distinct values —
+  no separate scenario is needed.
+- **E14** — covered by the real, pre-existing `codex_unapproved_prefix_root_comment` (confirmed present via a
+  direct search of the file this round; its body, `"This change remains unapproved pending further work."`,
+  reproduces E14's boundary-lookalike construction). This scenario is in Group UNCHANGED-NEEDS_REVISION and
+  needs only its explanatory comment refreshed, per that group's instructions in "Test disposition" — no new
+  scenario or body change.
 
 **Four scenarios routing a terminal, footer-bearing near-miss through each of Decision 6's four verdict sites**
 (Codex GitHub finding `3805277351`, P2). Decision 6 duplicates the same acknowledgement gate at four separate
@@ -1327,9 +1375,11 @@ the classifier. The supported response to a persistent false `NEEDS_REVISION` is
       wrong — re-derive it before proceeding; do not adjust either equation's numbers to force agreement, and
       do not proceed to edit any scenario until it balances.
    2. **Then, and only then, apply the edits.** Update every Group APPROVED scenario body per the split in
-      "Test disposition" (footer append for the two template-anchored members; full body replacement, with
-      mock sequencing preserved, for the routing-testing members kept in that group); apply every Group
-      RETARGETED disposition to the remaining, vocabulary-testing scenarios only — **each retargeted scenario
+      "Test disposition" — **a full body replacement for all eight members**, not a footer append for any of
+      them (Codex GitHub finding `3805497682`, P2: the two template-anchored members' current bodies are
+      missing the `Swish!` sentence and the footer entirely, not just the footer), with mock sequencing
+      preserved for the routing-testing members kept in that group; apply every Group RETARGETED disposition
+      to the remaining, vocabulary-testing scenarios only — **each retargeted scenario
       requires two edits, not one**: its `VERDICT: APPROVED` assertion retargets to `VERDICT: NEEDS_REVISION
       (unrecognized response format — safe-fail)`, **and** its paired `*_exit_clean` assertion retargets from
       `"0"` to `"1"` in the same commit; confirm `codex_disqualifier_diagnostic_emitted` is genuinely absent
