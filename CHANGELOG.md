@@ -571,6 +571,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against the current PR head, CodeRabbit CLI review evidence fails closed when
   PR metadata cannot be resolved, and batch merge rechecks preserve explicit
   approvals for unready PRs.
+- **`post-merge-cleanup.sh` fails fast on missing `--pr`**: the `--pr <merged-pr-number>`
+  requirement for cleaning up an implementation branch's remote copy is now
+  checked immediately after the branch's ownership kind is resolved (and after
+  the existing `workflow_hub` product-repo-selection check, preserving that
+  check's original priority), before any fetch/checkout/pull/delete work runs,
+  instead of surfacing only after the rest of cleanup had already mutated
+  local state. The structured `REMOTE_DELETE_RESULT`/`REMOTE_DELETE_REASON`/
+  `ERROR_MESSAGE` output is emitted from a single shared helper used by both
+  the new early guard and the pre-existing (now defensive, unreachable via
+  the main flow) check inside `cleanup_remote_implementation_branch()`, so the
+  message text can't drift between the two call sites. The early guard exits
+  with status 64, this script's usage-error convention shared by every other
+  argument-validation check, rather than the incidental status 1 that used to
+  result from `set -e` propagating the deep check's generic `return 1`. A
+  planted-violation proof (both directions, including before/after
+  `git rev-parse HEAD` / `git branch --show-current` / `git for-each-ref` /
+  `git ls-remote` evidence that nothing mutates before the guard fires) and a
+  regression test proving a reverted guard placement turns the suite red are
+  recorded in [PR #1500](https://github.com/lhpaul/ai-dev-framework-template/pull/1500#issuecomment-5335650280).
 
 ### Changed
 

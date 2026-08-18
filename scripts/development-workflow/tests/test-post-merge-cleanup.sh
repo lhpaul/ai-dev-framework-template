@@ -246,6 +246,35 @@ run_test "unmerged_remote_ref_still_exists" "yes" "$(
   fi
 )"
 
+unmerged_before_local_head="$("$REAL_GIT" -C "$unmerged_repo" rev-parse HEAD)"
+unmerged_before_branch_sha="$("$REAL_GIT" -C "$unmerged_repo" rev-parse "refs/heads/$unmerged_branch")"
+set +e
+unmerged_no_mutation_output="$(
+  env WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$stub_bin:$PATH" \
+    "$HELPER" --repo-root "$unmerged_repo" --base develop "$unmerged_branch" 2>&1
+)"
+set -e
+unmerged_after_local_head="$("$REAL_GIT" -C "$unmerged_repo" rev-parse HEAD)"
+unmerged_after_branch_sha="$("$REAL_GIT" -C "$unmerged_repo" rev-parse "refs/heads/$unmerged_branch")"
+
+# Regression coverage for the no-mutation property: the pr_number_required
+# guard must fire before any fetch/checkout/pull/local-delete runs. Asserts
+# both that the "Fetching origin..." banner (printed immediately before the
+# first mutating git command) never appears, and that the local develop HEAD
+# and the target branch's local ref are byte-identical before and after the
+# failing invocation. A future refactor that moved the guard back below the
+# mutating work would make this fail.
+run_test "unmerged_guard_fires_before_fetch" "no" "$(
+  if grep -Fq "Fetching origin..." <<<"$unmerged_no_mutation_output"; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+run_test "unmerged_guard_local_develop_head_unchanged" "$unmerged_before_local_head" "$unmerged_after_local_head"
+run_test "unmerged_guard_local_branch_ref_unchanged" "$unmerged_before_branch_sha" "$unmerged_after_branch_sha"
+
 fork_branch="feature/noissue-fork-pr"
 fork_repo="$(make_repo fork "$fork_branch" yes)"
 fork_output="$(

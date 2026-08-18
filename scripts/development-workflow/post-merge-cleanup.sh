@@ -123,8 +123,43 @@ case "$(branch_prefix "$TO_DELETE")" in
     ;;
 esac
 
+# Shared with cleanup_remote_implementation_branch() below, which emits the
+# identical REMOTE_DELETE_* contract for the same condition when reached via
+# a different call path, so the two checks can't drift apart in wording.
+emit_pr_number_required_skip() {
+  local branch="$1"
+  print_kv REMOTE_DELETE_RESULT "skipped"
+  print_kv REMOTE_DELETE_REASON "pr_number_required"
+  print_kv_escaped ERROR_MESSAGE "Remote implementation branch '${branch}' was not deleted because --pr <merged-pr-number> is required to bind cleanup to the exact merged PR."
+  echo "ERROR: remote implementation branch '$branch' was not deleted because --pr <merged-pr-number> is required." >&2
+}
+
 if [ "$workflow_mode" = "workflow_hub" ] && [ "$branch_owner_kind" = "implementation" ] && [ -z "$target_repo" ]; then
   echo "ERROR: product repository selection is required for implementation branch cleanup in workflow_hub mode; pass --repo <name>." >&2
+  exit 64
+fi
+
+# Fail fast: --pr is required to clean up the remote copy of an implementation
+# branch (see cleanup_remote_implementation_branch() below). Check this before
+# any fetch/checkout/pull/delete work runs, so the error surfaces immediately
+# instead of after the rest of cleanup has already mutated local state. Kept
+# after the workflow_hub product-repo-selection check above so the original
+# relative check priority (and therefore which error a caller sees first when
+# both --repo and --pr are missing in workflow_hub mode) is preserved exactly.
+# Uses exit 64 (this script's usage-error convention, matching every other
+# argument-validation check above) rather than the incidental exit 1 that
+# resulted from cleanup_remote_implementation_branch()'s `return 1` plus
+# `set -e` when this condition was only checked there.
+#
+# Planted-violation proof (both directions, plus no-mutation evidence:
+# git rev-parse HEAD / git branch --show-current / git for-each-ref /
+# git ls-remote identical before and after the failing invocation) is
+# recorded at https://github.com/lhpaul/ai-dev-framework-template/pull/1500#issuecomment-5335650280
+# Regression coverage lives in
+# scripts/development-workflow/tests/test-post-merge-cleanup.sh
+# (unmerged_guard_fires_before_fetch and friends).
+if [ "$branch_owner_kind" = "implementation" ] && [ -z "$merged_pr_number" ]; then
+  emit_pr_number_required_skip "$TO_DELETE"
   exit 64
 fi
 
@@ -270,10 +305,10 @@ cleanup_remote_implementation_branch() {
   fi
 
   if [ -z "$merged_pr_number" ]; then
-    print_kv REMOTE_DELETE_RESULT "skipped"
-    print_kv REMOTE_DELETE_REASON "pr_number_required"
-    print_kv_escaped ERROR_MESSAGE "Remote implementation branch '${branch}' was not deleted because --pr <merged-pr-number> is required to bind cleanup to the exact merged PR."
-    echo "ERROR: remote implementation branch '$branch' was not deleted because --pr <merged-pr-number> is required." >&2
+    # Unreachable via the main script flow above (the early guard near the
+    # top exits first), kept as a defensive check in case this function is
+    # ever called from another path in the future.
+    emit_pr_number_required_skip "$branch"
     return 1
   fi
 
