@@ -69,12 +69,15 @@ compared against the pre-change count recorded in the PR description.
 2. Run:
 
    ```bash
-   grep -n "CODEX_CLEAN_SIGNAL_PATTERN\|CODEX_APPROVAL_DISQUALIFIER_PATTERN\|codex_strip_codex_footer\|codex_response_first_paragraph" \
+   grep -n "CODEX_CLEAN_SIGNAL_PATTERN\|CODEX_APPROVAL_DISQUALIFIER_PATTERN\|CODEX_RESIDUE_FILLER_WORD_PATTERN\|CODEX_RESIDUE_STARTER_PATTERN\|codex_strip_codex_footer\|codex_response_first_paragraph\|codex_excise_clean_signals\|codex_residue_is_closed_grammar" \
      scripts/development-workflow/codex-github-reviewer.sh
    ```
 
 **Expected result**: the first command prints nothing (all three superseded symbols are removed). The second
-command prints at least one definition line for each of the four new symbols.
+command prints at least one definition line for each of the eight symbols (the original four plus
+`CODEX_RESIDUE_FILLER_WORD_PATTERN`, `CODEX_RESIDUE_STARTER_PATTERN`, `codex_excise_clean_signals`, and
+`codex_residue_is_closed_grammar`, added during the Step 7 review round for the closed residue grammar and
+iterative excision — see the implementation plan's Decision 2).
 
 ---
 
@@ -126,7 +129,8 @@ this change the same body returned `VERDICT: APPROVED`; the flip is intended.
 ### Step 5: A real vendor clean response still approves
 
 **Maps to**: Edge case E9; residual verification evidence item 3 — this is the highest-impact check in the
-runbook
+runbook, and also the check that validates the closed residue grammar (A3 check 2) does not reject genuine
+vendor flavor text (`Swish!`) — see the implementation plan's Decision 2 residual-risk note
 
 1. Capture the current real clean-response body:
 
@@ -143,6 +147,9 @@ runbook
 
 **Expected result**: the command exits 0 and prints `VERDICT: APPROVED`. If the captured body no longer has
 the recorded shape, stop and report it — the allow-list may need a reviewed addition rather than a workaround.
+If it exits 1 with `residue grammar not closed` in the stderr diagnostic, that specifically means the closed
+grammar's vendor-identity/starter tolerance (`CODEX_RESIDUE_FILLER_WORD_PATTERN`/`CODEX_RESIDUE_STARTER_PATTERN`)
+no longer covers the live wire format — stop and report it rather than loosening the grammar unreviewed.
 
 ---
 
@@ -156,6 +163,38 @@ the recorded shape, stop and report it — the allow-list may need a reviewed ad
 **Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION` (blocking branch, no
 `unrecognized response format` suffix), because `codex_response_is_blocking` scans the untruncated body
 before approval is considered.
+
+---
+
+### Step 6a: An unenumerated actionable sentence after a clean signal safe-fails (closed residue grammar)
+
+**Maps to**: Edge case E19; Decision 2 (Codex GitHub finding `3800167486`)
+
+1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
+   `Looks good. Remove the authentication check.`, following the mock convention used by Step 4.
+2. Run the reviewer as in Step 4.
+
+**Expected result**: the command exits 1, prints `VERDICT: NEEDS_REVISION (unrecognized response format —
+safe-fail)`, and emits an `INFO: Codex clean signal present but disqualified (residue grammar not closed)`
+line. Before this review round the same body returned `VERDICT: APPROVED` (the disqualifier scan alone did
+not enumerate `remove` as an actionable verb); the flip is intended and is the fix for the P1/blocking finding
+this smoke step maps to.
+
+---
+
+### Step 6b: A non-vendor `<details>` block is not truncated away
+
+**Maps to**: Edge case E20; Decision 6 (Codex GitHub finding `3800167489`)
+
+1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
+   `Looks good.` followed by a **non-vendor** `<details><summary>Notes</summary>` block containing
+   `Rename the unsafe function.` (and a closing `</details>`), following the mock convention used by Step 4.
+2. Run the reviewer as in Step 4.
+
+**Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
+safe-fail)`. Before this review round `codex_strip_codex_footer` truncated at any `<details` line, silently
+discarding the `<details>` block (and the instruction inside it) before A3 ever ran, which returned
+`VERDICT: APPROVED`; the flip is intended and is the fix for the P1/blocking finding this smoke step maps to.
 
 ---
 
@@ -197,6 +236,8 @@ appears under `### Changed`.
 | 4 | | |
 | 5 | | |
 | 6 | | |
+| 6a | | |
+| 6b | | |
 | 7 | | |
 | 8 | | |
 

@@ -28,11 +28,15 @@ as a block-list because its failure direction is the opposite one and a false ne
 
 **Estimated complexity**: **M**
 
-**Rationale**: The code change itself is small (one function rewritten, one helper added, three symbols deleted,
-one renamed). The work is medium because it changes a contract that 27 existing assertions depend on: 9 test
-scenarios change their expected verdict, 1 changes its fixture text, and new regression coverage must be added
-for the allow-list contract and its parser edge cases. Every disposition must be justified individually so a
-reviewer can tell an intended contract change from a regression.
+**Rationale**: The code change itself is still small relative to the surface it touches (one function
+rewritten, four helpers added — `codex_strip_codex_footer`, `codex_response_first_paragraph`,
+`codex_excise_clean_signals`, `codex_residue_is_closed_grammar` — three symbols deleted, one renamed, two new
+closed-grammar constants). The work is medium because it changes a contract that 27 existing assertions
+depend on: 9 test scenarios change their expected verdict, 1 changes its fixture text, and new regression
+coverage must be added for the allow-list contract, its parser edge cases, and — added during the Step 7
+review round — the closed residue grammar that makes the disqualifier list's non-exhaustiveness actually safe
+(Decision 2). Every disposition must be justified individually so a reviewer can tell an intended contract
+change from a regression.
 
 **Dependencies**: None. PR #1490 is merged (`55b2df5d` is its merge commit on `develop`); this plan builds on
 top of it and must not modify its commits.
@@ -54,6 +58,9 @@ top of it and must not modify its commits.
 | Predicate dry-run on the real clean body | prototype `tr`/`sed`/`grep` pipeline in a scratch script (see "Predicate validation" below) | `CLEAN_PRESENT=yes`, no disqualifier matched, verdict-eligible `APPROVED` both with and without footer truncation |
 | Open PRs on the same surface | `gh pr list --state open --limit 50` | zero open pull requests in the repository at check time |
 | Repository mode | `grep -nE "^mode:\|^workflow_hub:\|^product_repo:" .ai-dev-workflow.yaml` | no key present → `single_repo`; this repository owns the plan |
+| Real clean Codex root comment — re-verified during Step 7 review round | `gh api repos/lhpaul/ai-dev-framework-template/issues/1489/comments --jq '.[] \| select(.user.login\|test("codex";"i")) \| .body'` | Unchanged: `Codex Review: Didn't find any major issues. Swish!` + `**Reviewed commit:** \`87aaefceff\`` + the same `<details>` "About Codex in GitHub" footer. Still Valid |
+| Real findings Codex review — re-verified during Step 7 review round | `gh api repos/lhpaul/ai-dev-framework-template/pulls/1490/reviews --jq '…'` | Unchanged: body opens `### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.`, `state` is `COMMENTED`, same `<details>` footer, no clean-signal text in the visible portion (A1 already fails this body regardless of A3). Still Valid |
+| Tooling identity confirmed for this review round | `sed 2>&1`, `grep --version`, `awk --version` (via `/usr/bin/{sed,grep,awk}` explicitly) | BSD `sed` (rejects GNU long-option syntax), `grep (BSD grep, GNU compatible) 2.6.0-FreeBSD`, one-true-awk `20200816` — confirms the same macOS BSD toolchain this plan already targets |
 
 ### Predicate validation (reproducible)
 
@@ -74,6 +81,17 @@ Observed residues (clean signals excised) for the two real bodies and the larges
 `  found. the docs accurately quote: to use codex here, create an environment for this repo.` —
 5, 8, and 16 residue words respectively. This is the evidence behind the
 "no length cap" decision recorded under Decision 4.
+
+**Note (Step 7 review round):** the prototype above uses the boundary class `[^[:alnum:]]`, matching the
+version of this plan reviewed at Step 7a. That boundary class was found to be incorrect (Codex GitHub finding
+`3800167492` — see Decision 2's "Boundary correction" note) and is **not** what the Code Samples section
+below ships; the shipped `CODEX_CLEAN_SIGNAL_EXCISION` uses `[^[:alnum:]_]`. The observed residue word counts
+above are unaffected by that correction (none of the three sample bodies contain an underscore), so Decision
+4's "no length cap" conclusion still holds, but the illustrative regex literal above is intentionally left as
+originally written for historical accuracy — do not copy it into an implementation; use the Code Samples
+section instead. The residue word counts above were also re-derived, this round, under the full tightened A3
+(disqualifier scan plus the new closed residue grammar) with the same result: all three residues still pass —
+see the "Test disposition" Group A re-verification note.
 
 ---
 
@@ -121,39 +139,117 @@ judgement call:
   and lowercasing, the **first non-empty paragraph** (lines up to the first blank line, leading blank lines
   skipped) must contain at least one **boundary-anchored** occurrence of `CODEX_CLEAN_SIGNAL_PATTERN` — tested
   via `CODEX_CLEAN_SIGNAL_EXCISION`, not the raw alternation. A raw substring test would match `approved`
-  inside `unapproved` (edge case E1) and reintroduce a false `APPROVED`.
+  inside `unapproved` (edge case E1) and reintroduce a false `APPROVED`. The boundary class is
+  `[^[:alnum:]_]` (underscore is treated as a word character, matching `grep -E`'s `\b`), not bare
+  `[^[:alnum:]]` — see the "Boundary correction" note below Decision 2.
 - **A2 — No fence marker anywhere.** `codex_response_has_fence_marker` on the **raw, untruncated** body must
   be false. Unchanged from today.
-- **A3 — Disqualifier-free residue.** The **residue** — the whole footer-truncated, quote-stripped,
-  lowercased body with every boundary-anchored `CODEX_CLEAN_SIGNAL_PATTERN` occurrence excised (via
-  `CODEX_CLEAN_SIGNAL_EXCISION`) — must not match `CODEX_APPROVAL_DISQUALIFIER_PATTERN`.
+- **A3 — Closed-grammar, disqualifier-free residue.** Two independent checks, both against the
+  footer-truncated, quote-stripped, lowercased body (the **residue** after every occurrence of
+  `CODEX_CLEAN_SIGNAL_PATTERN` is iteratively excised via `CODEX_CLEAN_SIGNAL_EXCISION` — see the "Iterative
+  excision" note below Decision 2):
+  1. The residue must not match `CODEX_APPROVAL_DISQUALIFIER_PATTERN` (unchanged mechanism from the original
+     draft of this plan).
+  2. **New — the closed clean-response grammar.** Every sentence (and, inside a sentence that itself carries
+     a clean signal, every comma/colon/semicolon-delimited clause) that does **not** itself carry a clean
+     signal must, once punctuation and `CODEX_RESIDUE_FILLER_WORD_PATTERN` tokens are stripped, reduce to at
+     most one bare token, or otherwise begin with an allow-listed `CODEX_RESIDUE_STARTER_PATTERN`
+     subject/determiner. See Decision 2 for why check 2 exists and what it does not close.
 
 If any condition fails, `codex_response_is_approved` returns non-zero and the caller falls through to the
 existing safe-fail branch (`VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)`), or to the
 blocking branch when `codex_response_is_blocking` already matched earlier in the chain.
 
-**Excision before scanning is the mechanism that makes A3 sound.** The recognized clean phrases themselves
-contain words that are otherwise disqualifiers (`no` in "no blocking issues", `didn't` in "didn't find any
-major issues"). Removing them first lets the disqualifier list be aggressive without self-contradiction, and
-removes the need for the existing `didn't`-is-deliberately-excluded special case in `CODEX_NEGATION_WORDS`.
+**Excision before scanning is the mechanism that makes the disqualifier check sound.** The recognized clean
+phrases themselves contain words that are otherwise disqualifiers (`no` in "no blocking issues", `didn't` in
+"didn't find any major issues"). Removing them first lets the disqualifier list be aggressive without
+self-contradiction, and removes the need for the existing `didn't`-is-deliberately-excluded special case in
+`CODEX_NEGATION_WORDS`. **The closed-grammar check (2) is what makes non-exhaustiveness of the disqualifier
+list itself safe — not the fact that the classifier is an allow-list.** See Decision 2.
 
-### Decision 2 — Non-exhaustiveness of the disqualifier list is now safe, and that is the point
+### Decision 2 — Non-exhaustiveness of the disqualifier list is safe *because the residue grammar is closed*
 
-Under the old block-list, a missing negation synonym caused a false `APPROVED` — a correctness bug, because
-`pr-review-loop.sh` would mark the platform clean on a rejecting review. Under the allow-list, a missing
-disqualifier can only matter when a genuine clean signal is *also* present in the opening paragraph and no
-listed disqualifier appears anywhere; the residual exposure is far narrower, and the *default* for anything
-unrecognized is already `NEEDS_REVISION`.
+**Correction from the version of this plan reviewed at Step 7a (Codex GitHub finding `3800167486`,
+P1/blocking).** The original text of this decision argued that non-exhaustiveness of
+`CODEX_APPROVAL_DISQUALIFIER_PATTERN` was safe merely because the classifier is an allow-list. That argument
+does not hold on its own: a response like `Looks good. Remove the authentication check.` satisfies A1 (a
+clean signal in the opening paragraph), and after excision the residue `remove the authentication check.`
+matches no entry in `CODEX_APPROVAL_DISQUALIFIER_PATTERN` (`remove` is not an enumerated actionable verb), so
+the old A3 (disqualifier-scan only) reported `APPROVED` — reintroducing exactly the open-ended-enumeration
+correctness dependency this plan exists to eliminate, just moved from the negation vocabulary to the
+actionable-verb vocabulary. Verified: `Looks good. Remove the authentication check.` returns `APPROVED` under
+the disqualifier-scan-only A3, and under the tightened A3 (closed grammar, below) it correctly returns
+`NEEDS_REVISION` — reproduced on BSD `sed`/`grep`/`awk` during this review round, and the fixed behavior is
+now the `codex_unenumerated_actionable_sentence_after_signal_root_comment` regression (edge case E19).
 
-**Reviewers must not read the non-exhaustive disqualifier list as a reintroduction of the old bug.** The
-correctness argument no longer depends on the disqualifier list being complete. Concretely:
+**What actually makes non-exhaustiveness safe is A3 check 2, the closed residue grammar — not the fact that
+the classifier is called an allow-list.** A grammar is "closed" when it defines the finite set of shapes a
+passing residue may take, rather than merely testing the absence of known-bad content. A3 check 2 is closed
+in exactly this sense: a sentence (or, inside a signal-bearing sentence, a comma/colon/semicolon clause) that
+lacks its own clean signal is required to reduce, after filler stripping, to at most one bare token or to
+begin with one of a small enumerated `CODEX_RESIDUE_STARTER_PATTERN` subject/determiner. Both bounds
+(`CODEX_RESIDUE_FILLER_WORD_PATTERN`, `CODEX_RESIDUE_STARTER_PATTERN`) are drawn from English's closed word
+classes — articles, a handful of prepositions/conjunctions, and demonstrative/locative pronouns — which are
+finite and do not grow the way the open-class negation/hedge/actionable vocabulary does. Enumerating a closed
+class exhaustively is a categorically different, safe exercise; enumerating an open class never converges,
+which is the entire thesis of this plan (see "Background" above).
+
+**Residual, disclosed gap — the residue grammar is not perfectly closed.** A single bare open-class token
+left over in a non-signal sentence/clause (the "at most one token" branch above) is tolerated without content
+review, because a zero-tolerance grammar was verified during this review round to reject the plan's own real
+captured clean root comment (PR #1489: `Codex Review: Didn't find any major issues. Swish!` — the residual
+`swish` token, after excising the recognized clean signal and known vendor labels, is a single open-class
+word that a strict "filler-only" grammar has no way to distinguish from an unenumerated one-word imperative).
+Consequently, a single-word directive with no object (for example `Approved. Revert.`) is a known, narrow,
+accepted exposure: verified during this review round to still return `APPROVED`. This is a real, disclosed
+trade-off, not a silently reintroduced gap — it is dramatically narrower than the exposure this decision
+replaces (any number of unenumerated words in a trailing clause, versus exactly one bare word with no
+object), and it is recorded in Risks & Mitigations below. **This is the one item in this plan that a human
+reviewer should explicitly confirm is an acceptable trade-off**, since narrowing it further (for example by
+also requiring the single leftover token to be checked against a curated flavor-word list) would reintroduce
+either an open-ended vocabulary problem or a rejection of the real captured clean response, and this plan
+does not attempt to resolve that tension unilaterally.
+
+**Reviewers must not read the non-exhaustive disqualifier list, on its own, as a reintroduction of the old
+bug.** The correctness argument no longer depends on the disqualifier list being complete, but it now depends
+on the closed-grammar check instead. Concretely:
 
 - Extending `CODEX_APPROVAL_DISQUALIFIER_PATTERN` is **always safe** and never required for correctness. It
   can be done at any time without re-analysis; it only moves the false-`NEEDS_REVISION` rate.
-- Extending `CODEX_CLEAN_SIGNAL_PATTERN` is **the only change that can create new false-`APPROVED` surface**
-  and must receive the same scrutiny the old negation list used to receive. This plan therefore adds **no**
-  new clean-signal alternatives: the allow-list keeps exactly the alternatives that `CODEX_APPROVAL_PATTERN`
-  has today.
+- Extending `CODEX_CLEAN_SIGNAL_PATTERN` is **one of the changes that can create new false-`APPROVED`
+  surface** and must receive the same scrutiny the old negation list used to receive. This plan therefore
+  adds **no** new clean-signal alternatives: the allow-list keeps exactly the alternatives that
+  `CODEX_APPROVAL_PATTERN` has today.
+- Extending `CODEX_RESIDUE_FILLER_WORD_PATTERN` or `CODEX_RESIDUE_STARTER_PATTERN` is **the other change that
+  can create new false-`APPROVED` surface**, for the same reason: both widen what the closed grammar treats
+  as inert. Any addition must be a genuinely closed-class word (an article, preposition, conjunction, or
+  demonstrative/locative pronoun) or a specific, reviewed vendor-identity token — never a general content
+  word — and must receive the same scrutiny as a `CODEX_CLEAN_SIGNAL_PATTERN` change.
+
+**Boundary correction (Codex GitHub finding `3800167492`, P2).** `CODEX_CLEAN_SIGNAL_EXCISION`'s boundary
+class must be `[^[:alnum:]_]`, not `[^[:alnum:]]`: `_` is a word character for `grep -E`'s `\b` (used by the
+disqualifier patterns), but the old bare `[^[:alnum:]]` class treated `_` as a boundary character, so
+`This remains un_approved.` supplied an A1 clean signal (`approved` matched with `_` accepted as a preceding
+boundary) and excision left `this remains un_ .`, which contains no disqualifier and returned `APPROVED`.
+Verified: the old boundary class matches `approved` inside `un_approved` on BSD `sed`; `[^[:alnum:]_]` does
+not. Fixed edge case E1 already covers the no-underscore prefix (`unapproved`); the underscore-prefixed
+variant is new edge case E16, covered by regression scenario
+`codex_underscore_prefixed_lookalike_root_comment`.
+
+**Iterative excision (Codex GitHub finding `3800167494`, P2).** A single `sed 's/.../.../g'` pass over
+`CODEX_CLEAN_SIGNAL_EXCISION` does not excise every occurrence when two clean signals are adjacent: `sed`'s
+`g` flag resumes scanning immediately after the end of the previous match, so the boundary character the
+first match's trailing group consumed is unavailable to satisfy the next match's leading-boundary group.
+Verified: a single pass over `approved no blocking issues` excises only `approved`, leaving
+`no blocking issues` — which then matches `CODEX_APPROVAL_NEGATION_PATTERN`'s `\bno\b` — un-excised, and the
+response incorrectly returns `NEEDS_REVISION` (a false-`NEEDS_REVISION`, not a safety bug, but it silently
+breaks a response composed entirely of clean signals — e.g. `Approved no blocking issues found.`). The fix is
+iterative excision to a fixed point (`codex_excise_clean_signals` below), bounded at 25 iterations as a
+defensive cap; verified to converge in 3 iterations even against a body with 20 repeated adjacent occurrences,
+with no measurable performance cost. New edge cases E17 (`Approved no blocking issues found.`) and E18
+(`LGTM. Didn't find any major issues.`, plus a no-space comma variant) cover this, via regression scenarios
+`codex_adjacent_signal_second_contains_no_root_comment` and
+`codex_adjacent_signal_second_contains_didnt_root_comment`.
 
 ### Decision 3 — Composition with the GitHub review `state` short-circuit from PR #1490
 
@@ -225,8 +321,9 @@ list, straight-quoted phrases, and marketing prose. Today it is inert; nothing i
 patterns. Under the new aggressive disqualifier list it becomes a standing hazard: one vendor-side wording
 change ("Reviews are not triggered for draft pull requests") would disqualify every clean response at once.
 
-`codex_strip_codex_footer` truncates the body at the first line containing `<details` (case-insensitive) and
-is applied **only inside `codex_response_is_approved`**. It must not be applied anywhere else, because:
+`codex_strip_codex_footer` truncates the body at the first line matching the **actual vendor footer marker**
+— `about[[:space:]]+codex[[:space:]]+in[[:space:]]+github` (case-insensitive) — and is applied **only inside
+`codex_response_is_approved`**. It must not be applied anywhere else, because:
 
 - `codex_response_reviews_current_head` must see the original body for SHA extraction.
 - The acknowledgement branch (`grep -qi "If Codex has suggestions, it will comment; otherwise it will react with"`)
@@ -235,6 +332,25 @@ is applied **only inside `codex_response_is_approved`**. It must not be applied 
 - `codex_response_is_blocking` must keep scanning the full body, which is also the mitigation for the only
   risk truncation introduces (a refusal placed after the footer): blocking is evaluated before approval at
   every verdict site.
+
+**Correction from the version of this plan reviewed at Step 7a (Codex GitHub finding `3800167489`, P1/
+blocking).** The original text of this decision truncated at the first line matching the generic `<details`
+(case-insensitive), not the specific vendor marker. That is over-broad: any `<details>` block anywhere in the
+response — not just the real vendor footer — silently disappears from the residue before A3 ever runs.
+Verified: a response reading `Looks good.` followed by a **non-vendor** `<details>` block containing
+`Rename the unsafe function.` loses that instruction to truncation under the generic-marker version; the
+instruction is invisible to both A3's disqualifier scan and its closed grammar because it is truncated away
+before either runs, and (since `rename` is not in `CODEX_BLOCKING_PATTERN`/`CODEX_MERGE_REFUSAL_PATTERN`
+either) `codex_response_is_blocking` does not catch it either, so the response incorrectly returns
+`APPROVED`. Anchoring on the specific `about codex in github` marker fixes this: the real vendor footer still
+truncates correctly (re-verified against the live `<details> <summary>ℹ️ About Codex in GitHub</summary>`
+body captured from PR #1489 during this review round), while the non-vendor `<details>` block above is left
+in the residue, where A3's closed grammar (Decision 2) correctly rejects it — `rename the unsafe function` is
+a sentence with no clean signal, more than one leftover open-class token, and no allow-listed starter, so it
+fails check 2 and the response correctly returns `NEEDS_REVISION`. This is deliberately a **precision** fix,
+not something the closed grammar alone can substitute for: over-truncation removes the offending text before
+either A3 check ever sees it, so a stray `<details>` block would still hide content even under a maximally
+strict grammar. New edge case E20 (`codex_nonfooter_details_block_not_truncated_root_comment`) covers this.
 
 ---
 
@@ -267,23 +383,32 @@ and `[[ ]]`-free POSIX tests). No portable `bash-zsh` snippet is introduced.
       `CODEX_CLEAN_SIGNAL_PATTERN`: `\b` remains fine in `grep -E` in general (the disqualifier patterns below
       use it, and the file already documents it as verified across BSD grep, GNU grep, and ugrep), but
       `CODEX_CLEAN_SIGNAL_PATTERN` specifically must stay `\b`-free because it is shared with the sed-facing
-      wrapper — see the code sample and its inline comments.
+      wrapper — see the code sample and its inline comments. The boundary class is `[^[:alnum:]_]` (see the
+      "Boundary correction" note under Decision 2, not bare `[^[:alnum:]]`).
 - [ ] **Add** `CODEX_APPROVAL_NEGATION_PATTERN`, `CODEX_APPROVAL_HEDGE_PATTERN`,
       `CODEX_APPROVAL_ACTIONABLE_PATTERN`, and the composite `CODEX_APPROVAL_DISQUALIFIER_PATTERN`
       (the three groups plus `CODEX_BLOCKING_PATTERN`). These must be defined **after** the line that appends
       `CODEX_MERGE_REFUSAL_PATTERN` to `CODEX_BLOCKING_PATTERN`, since the composite reads it.
-- [ ] **Add** `codex_strip_codex_footer`.
+- [ ] **Add** `CODEX_RESIDUE_FILLER_WORD_PATTERN` and `CODEX_RESIDUE_STARTER_PATTERN` — the closed-class
+      filler/starter constants A3 check 2 (the closed residue grammar) is built on. See Decision 2.
+- [ ] **Add** `codex_strip_codex_footer`, anchored on the actual `about codex in github` marker (see the
+      "Correction" note under Decision 6), not a generic `<details` match.
 - [ ] **Add** `codex_response_first_paragraph`.
+- [ ] **Add** `codex_excise_clean_signals` — the iterative excision helper (see the "Iterative excision" note
+      under Decision 2).
+- [ ] **Add** `codex_residue_is_closed_grammar` — A3 check 2 (see Decision 2 and the Code Samples section).
 - [ ] **Rewrite** `codex_response_is_approved` per Decision 1.
 - [ ] **Update** the file-header "Verdict parsing" comment block (currently describing path 2 as "Approval
-      signals present → APPROVED") to state the allow-list contract, the three conditions, and the deliberate
-      false-`NEEDS_REVISION` tradeoff.
+      signals present → APPROVED") to state the allow-list contract, the three conditions (including A3's two
+      checks), and the deliberate false-`NEEDS_REVISION` tradeoff.
 
 ### Tests — `scripts/development-workflow/tests/test-pr-review-loop.sh`
 
 - [ ] Retarget the expected verdict of every scenario listed in Group C of "Test disposition" below.
-- [ ] Retarget the fixture body of `codex_inline_backtick_pair_stays_approved_root_comment`.
-- [ ] Add the new scenarios listed in "Testing Strategy".
+- [ ] Retarget the fixture body of `codex_inline_backtick_pair_stays_approved_root_comment` (see the updated
+      Group B row — the retargeted body itself changed again during this review round; use the current one).
+- [ ] Add the new scenarios listed in "Testing Strategy" (17 total, including the 5 added during this review
+      round for findings `3800167486`, `3800167489`, `3800167492`, and `3800167494`).
 - [ ] Update the explanatory comment above every retargeted scenario so it states the **new** contract reason,
       not the superseded PR #1490 finding. Do not delete the historical finding references — rewrite them as
       "previously fixed by X; now covered structurally by the allow-list".
@@ -302,6 +427,14 @@ See "Documentation Updates" for exactly what changes in each.
 
 <!-- Illustrative — adapt during implementation. -->
 
+**Revised during the Step 7 review round** to close four Codex GitHub findings
+(`3800167486`/`3800167489` P1-blocking, `3800167492`/`3800167494` P2). Every regex and helper below was
+re-executed against the same macOS BSD toolchain this plan already targets (`sed`, `grep`, `awk`, invoked via
+their `/usr/bin/` paths to avoid any interactive-shell aliasing — confirmed BSD: `sed` rejects GNU's
+long-option `--` syntax, `grep --version` reports `BSD grep, GNU compatible`, `awk --version` reports the
+one-true-awk `20200816` build). See Decision 2 and Decision 6 for the rationale behind each change; this
+block is the resulting code.
+
 ```bash
 # Illustrative — adapt during implementation.
 # Allow-list: the SAME five alternatives CODEX_APPROVAL_PATTERN has today,
@@ -313,14 +446,20 @@ See "Documentation Updates" for exactly what changes in each.
 # embedded \b would silently make the A3 excision stop excising genuine clean
 # signals on macOS (verified: `sed -E 's/\bapproved\b/X/' <<< "approved"`
 # leaves the input unchanged on BSD sed). The boundary wrapper below restores
-# equivalent boundary-safety using only portable [^[:alnum:]] classes.
+# equivalent boundary-safety using only portable [^[:alnum:]_] classes.
 CODEX_CLEAN_SIGNAL_PATTERN='(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)'
 # Portable word-boundary wrapper (no \b — unsupported by BSD sed). Used at
 # BOTH classifier call sites below: A1's grep presence test AND A3's sed
 # excision. Do not call grep or sed with the raw CODEX_CLEAN_SIGNAL_PATTERN
 # directly at either site — see the A1 comment in codex_response_is_approved
 # for the false-APPROVED gap that reintroduces.
-CODEX_CLEAN_SIGNAL_EXCISION='(^|[^[:alnum:]])'"${CODEX_CLEAN_SIGNAL_PATTERN}"'([^[:alnum:]]|$)'
+#
+# The boundary class is [^[:alnum:]_], NOT bare [^[:alnum:]] (Codex GitHub
+# finding 3800167492): `_` is a word character for grep -E's \b (used by the
+# disqualifier patterns below), so treating `_` as a boundary here let
+# "This remains un_approved." supply an A1 clean signal — verified on BSD sed
+# with the bare class; [^[:alnum:]_] correctly leaves it unmatched.
+CODEX_CLEAN_SIGNAL_EXCISION='(^|[^[:alnum:]_])'"${CODEX_CLEAN_SIGNAL_PATTERN}"'([^[:alnum:]_]|$)'
 
 # Disqualifiers. Deliberately NON-EXHAUSTIVE: see Decision 2. Lowercase-only,
 # because the residue is lowercased before scanning.
@@ -329,15 +468,121 @@ CODEX_APPROVAL_HEDGE_PATTERN='(\bbut\b|\bhowever\b|\balthough\b|\bthough\b|\bunl
 CODEX_APPROVAL_ACTIONABLE_PATTERN='(\bshould\b|\bmust\b|\bneeds?\b|\brequires?d?\b|\baddress\b|\bconsider\b|\brecommends?\b|\bsuggests?\b|\brevise\b|\bbefore merging\b)'
 CODEX_APPROVAL_DISQUALIFIER_PATTERN="(${CODEX_APPROVAL_NEGATION_PATTERN}|${CODEX_APPROVAL_HEDGE_PATTERN}|${CODEX_APPROVAL_ACTIONABLE_PATTERN}|${CODEX_BLOCKING_PATTERN})"
 
+# A3 check 2 — the closed residue grammar (Codex GitHub finding 3800167486;
+# see Decision 2). Both patterns are drawn from English's CLOSED word
+# classes (articles, a handful of prepositions/conjunctions, demonstrative/
+# locative pronouns) plus a small set of specific, reviewed vendor-identity
+# tokens ("codex", "review", "reviewed", "commit" — the literal labels the
+# real vendor wire format uses, e.g. "Codex Review:" / "**Reviewed
+# commit:**"). Extending either pattern needs the SAME scrutiny as extending
+# CODEX_CLEAN_SIGNAL_PATTERN — see Decision 2's "Reviewers must not..." list.
+CODEX_RESIDUE_FILLER_WORD_PATTERN='^(a|an|the|and|or|to|of|in|on|for|at|is|it|its|this|that|codex|review|reviewed|commit)$'
+CODEX_RESIDUE_STARTER_PATTERN='^[[:space:]]*(the|this|that|these|those|it|its|here|there|no|all|everything|nothing|codex)([^[:alnum:]_]|$)'
+
 # Truncates Codex's static "About Codex in GitHub" <details> footer. Applied
 # ONLY inside codex_response_is_approved (see Decision 6).
+#
+# Anchored on the ACTUAL vendor marker (Codex GitHub finding 3800167489), not
+# a generic `<details` match: a generic match truncates ANY <details> block,
+# including one an attacker (or an unrelated bot) placed elsewhere in the
+# body, silently hiding its content from A3 entirely. Verified against the
+# live footer captured from PR #1489 (`<details> <summary>ℹ️ About Codex in
+# GitHub</summary>`) — still truncates correctly — and against a synthetic
+# non-vendor `<details>` block, which this version correctly leaves intact
+# for A3 to evaluate.
 codex_strip_codex_footer() {
-  awk 'tolower($0) ~ /<details/ { exit } { print }' <<< "$1"
+  awk 'tolower($0) ~ /about[[:space:]]+codex[[:space:]]+in[[:space:]]+github/ { exit } { print }' <<< "$1"
 }
 
 # First non-empty paragraph, leading blank lines skipped.
 codex_response_first_paragraph() {
   awk 'NF == 0 { if (started) exit; next } { started = 1; print }' <<< "$1"
+}
+
+# Iteratively excises every CODEX_CLEAN_SIGNAL_EXCISION occurrence (Codex
+# GitHub finding 3800167494). A single sed 's///g' pass is NOT sufficient:
+# sed's g flag resumes scanning immediately after the previous match, so a
+# clean signal immediately adjacent to another one shares the boundary
+# character the first match's trailing group already consumed, and the
+# second match's leading-boundary group has nothing left to match — verified
+# on BSD sed: a single pass over "approved no blocking issues" excises only
+# "approved", leaving "no blocking issues" (which then matches
+# CODEX_APPROVAL_NEGATION_PATTERN's \bno\b) un-excised. Looping to a fixed
+# point closes this. Bounded at 25 iterations as a defensive cap; verified to
+# converge in 3 iterations even against 20 repeated adjacent occurrences,
+# with no measurable performance cost, and unaffected by the existing
+# 200 000-character SIGPIPE-safety fixtures (verified: sub-second).
+codex_excise_clean_signals() {
+  local text="$1" prev iterations=0
+  while :; do
+    prev="$text"
+    text=$(sed -E "s/${CODEX_CLEAN_SIGNAL_EXCISION}/\1 \3/g" <<< "$text")
+    iterations=$((iterations + 1))
+    [ "$text" = "$prev" ] && break
+    [ "$iterations" -ge 25 ] && break
+  done
+  printf '%s' "$text"
+}
+
+# A3 check 2 — the closed residue grammar (Codex GitHub finding 3800167486;
+# see Decision 2). $1 is the lowered, quote-stripped, footer-truncated body
+# BEFORE excision — this function needs to know, per sentence, whether the
+# sentence itself carried a clean signal, which a fully-excised residue no
+# longer records.
+#
+# A sentence lacking its own clean signal must, after stripping punctuation
+# and CODEX_RESIDUE_FILLER_WORD_PATTERN tokens, reduce to at most one bare
+# token (a bounded tolerance for vendor sign-off flavor text such as
+# "Swish!" — see Decision 2's residual-risk note), or otherwise begin with
+# an allow-listed CODEX_RESIDUE_STARTER_PATTERN subject/determiner.
+#
+# A sentence carrying its own clean signal is further split on [,:;] into
+# clauses, and every clause that does NOT itself carry the signal is bound
+# by the same rule. Without this inner split, "Looks good: remove the
+# authentication check." would exempt the whole sentence (comma/colon/
+# semicolon do not end a "sentence" for the outer split, by design — see
+# below) and the exploit from finding 3800167486 would survive unclosed;
+# verified this inner split closes the colon/comma/semicolon variants
+# without affecting the outer split's Group A compatibility.
+#
+# The outer split is deliberately on [.!?] only, NOT on [,:;] — verified
+# that splitting the outer pass on [,:;] too breaks existing Group A bodies
+# such as "The docs accurately quote: To use Codex here, create an
+# environment for this repo." (a signal-FREE sentence containing legitimate
+# elaboration with internal commas/colons); the coarser outer split, plus
+# the finer inner split scoped to signal-bearing sentences only, is what
+# keeps both the exploit closed and Group A passing.
+codex_residue_is_closed_grammar() {
+  local lowered="$1" sentence clause stripped leftover
+  while IFS= read -r sentence; do
+    [ -z "$(tr -d '[:space:]' <<< "$sentence")" ] && continue
+    if grep -qE "$CODEX_CLEAN_SIGNAL_EXCISION" <<< "$sentence"; then
+      while IFS= read -r clause; do
+        [ -z "$(tr -d '[:space:]' <<< "$clause")" ] && continue
+        if grep -qE "$CODEX_CLEAN_SIGNAL_EXCISION" <<< "$clause"; then
+          continue
+        fi
+        stripped=$(sed -E 's/[^[:alnum:][:space:]_]/ /g' <<< "$clause")
+        leftover=$(awk -v pat="$CODEX_RESIDUE_FILLER_WORD_PATTERN" \
+          '{ for (i = 1; i <= NF; i++) if ($i !~ pat) c++ } END { print c + 0 }' <<< "$stripped")
+        [ "$leftover" -le 1 ] && continue
+        grep -qE "$CODEX_RESIDUE_STARTER_PATTERN" <<< "$clause" && continue
+        return 1
+      done < <(sed -E 's/[,:;]/\n/g' <<< "$sentence")
+      continue
+    fi
+    stripped=$(sed -E 's/[^[:alnum:][:space:]_]/ /g' <<< "$sentence")
+    leftover=$(awk -v pat="$CODEX_RESIDUE_FILLER_WORD_PATTERN" \
+      '{ for (i = 1; i <= NF; i++) if ($i !~ pat) c++ } END { print c + 0 }' <<< "$stripped")
+    if [ "$leftover" -le 1 ]; then
+      continue
+    fi
+    if grep -qE "$CODEX_RESIDUE_STARTER_PATTERN" <<< "$sentence"; then
+      continue
+    fi
+    return 1
+  done < <(sed -E 's/[.!?]/\n/g' <<< "$lowered")
+  return 0
 }
 
 codex_response_is_approved() {
@@ -355,7 +600,7 @@ codex_response_is_approved() {
   # unapproved." as having a clean signal — reintroducing the exact
   # false-APPROVED bug (PR #1490 finding 3789851555) the original \b
   # boundaries existed to prevent. CODEX_CLEAN_SIGNAL_EXCISION supplies the
-  # same boundary guarantee using only portable [^[:alnum:]] classes, so one
+  # same boundary guarantee using only portable [^[:alnum:]_] classes, so one
   # boundary-safe pattern is reused for both the A1 presence test and the A3
   # excision, and grep is a pure existence test here (the capture groups are
   # unused).
@@ -370,10 +615,20 @@ codex_response_is_approved() {
     return 1
   fi
 
-  # A3 — excise the clean signals, then reject on any disqualifier in what is left.
-  residue=$(sed -E "s/${CODEX_CLEAN_SIGNAL_EXCISION}/\1 \3/g" <<< "$lowered")
+  # A3 check 1 — excise the clean signals (iteratively — see
+  # codex_excise_clean_signals), then reject on any disqualifier in what is
+  # left.
+  residue=$(codex_excise_clean_signals "$lowered")
   if grep -qE "$CODEX_APPROVAL_DISQUALIFIER_PATTERN" <<< "$residue"; then
     echo "INFO: Codex clean signal present but disqualified (negation/hedge/actionable token)" >&2
+    return 1
+  fi
+
+  # A3 check 2 — the closed residue grammar (see Decision 2 and
+  # codex_residue_is_closed_grammar above). This is what makes
+  # non-exhaustiveness of CODEX_APPROVAL_DISQUALIFIER_PATTERN safe.
+  if ! codex_residue_is_closed_grammar "$lowered"; then
+    echo "INFO: Codex clean signal present but disqualified (residue grammar not closed)" >&2
     return 1
   fi
   return 0
@@ -391,6 +646,16 @@ Notes for the implementer:
   responses with no clean signal at all are the ordinary case and would flood the poll log.
 - `LC_ALL=C tr '[:upper:]' '[:lower:]'` maps only ASCII `A-Z`, so multibyte content (`❌`, `👍`, `💡`) passes
   through byte-identical.
+- `codex_residue_is_closed_grammar` is a genuine additional pass over the body (roughly proportional to
+  sentence/clause count, not body length), on top of the existing excision/disqualifier passes. Verified
+  sub-second even against the two existing 200 000-character SIGPIPE-safety fixtures, both of which contain
+  no additional sentence-ending punctuation after the clean signal and so exercise the single-token-leftover
+  branch, not a pathological sentence count.
+- Every disqualifier, edge case, and Group A/B/C body enumerated in this plan (E1–E20, all 17 existing
+  Group A scenarios, the retargeted Group B scenario, and all 9 Group C scenarios) was re-verified against
+  this exact implementation on BSD `sed`/`grep`/`awk` during this review round. See "Testing Strategy" for
+  the reconciled disposition and Decision 2 / Decision 6 for the two findings that changed behavior beyond
+  what a mechanical read of the diff would suggest.
 
 ---
 
@@ -402,21 +667,26 @@ This plan is **parser-risk**: it materially changes regex-based scanning of stru
 
 | # | Input (verbatim) | Expected | Why it is an edge case |
 | --- | --- | --- | --- |
-| E1 | `This change remains unapproved.` | not approved | Boundary variant: `\bapproved\b` must not match inside a concatenated prefix, so A1 fails outright |
-| E2 | `Approved.` / `Approved!` / `(approved)` | approved | Boundary variant: terminal and bracketing punctuation must satisfy the excision's `([^[:alnum:]]\|$)` boundary group |
+| E1 | `This change remains unapproved.` | not approved | Boundary variant: `approved` must not match inside a concatenated prefix, so A1 fails outright |
+| E2 | `Approved.` / `Approved!` / `(approved)` | approved | Boundary variant: terminal and bracketing punctuation must satisfy the excision's `([^[:alnum:]_]\|$)` boundary group |
 | E3 | `No blocking issues found. The content is consistent and the constant is important.` | approved | Negative lookalike: `content`, `consistent`, `constant`, `important` must not match `[[:alpha:]]n.t\b` |
 | E4 | `This looks good; it oughtn't be merged yet.` | not approved | Unenumerated contraction. `oughtn't` is absent from `CODEX_NEGATION_WORDS`; the structural `[[:alpha:]]n.t\b` rule catches the whole contraction class at once |
 | E5 | `Looks good and no blocking issues found.` | approved | Multiple occurrences on one line — both must be excised, leaving a disqualifier-free residue |
-| E6 | `lgtm approved` | approved | Adjacent/overlapping occurrences. `sed`'s `g` flag resumes scanning after the replacement, so the second signal may be left un-excised. That is harmless: an un-excised clean signal is not a disqualifier. Assert the outcome, not the residue |
+| E6 | `lgtm approved` | approved | Adjacent/overlapping occurrences. `sed`'s `g` flag resumes scanning after the replacement, so a single pass leaves the second signal un-excised — **corrected** (Codex GitHub finding 3800167494): `codex_excise_clean_signals` loops to a fixed point instead of relying on a single pass, and the assertion covers the outcome, not the residue |
 | E7 | `NO BLOCKING ISSUES FOUND.` | approved | Case normalization: the `tr` pass must make the lowercase-only patterns match |
 | E8 | `No blocking issues found. 🎉` | approved | Multibyte safety: `LC_ALL=C tr` must not corrupt the emoji into something matching a pattern |
-| E9 | Real clean root comment including the `<details>` footer with its bullet list | approved | The vendor footer must be truncated before the disqualifier scan; without truncation this is the single most likely source of a mass false-`NEEDS_REVISION` |
+| E9 | Real clean root comment including the `<details>` footer with its bullet list | approved | The vendor footer must be truncated before A3; without truncation this is the single most likely source of a mass false-`NEEDS_REVISION`. Also the case that validates the closed residue grammar (A3 check 2) does not reject genuine vendor flavor text (`Swish!`) — see Decision 2's residual-risk note |
 | E10 | `Didn't find any major issues.` + footer whose interior says `This must not be merged.` | not approved | Truncation must not hide a refusal: `codex_response_is_blocking` runs first, on the untruncated body |
 | E11 | `Summary of the diff.` blank line `No blocking issues found.` | not approved | A1 position rule: a clean signal outside the opening paragraph does not approve |
 | E12 | `` The documented output is: ```text / No blocking issues found / ``` `` | not approved | Fence marker present anywhere (A2), unchanged behavior; the closing fence is never located |
 | E13 | `The documented bot response "No blocking issues found" is inaccurate.` | not approved | Quoted span is stripped before A1, so no clean signal survives |
-| E14 | `No blocking issues found. The tests correctly cover the` `` `must fix` `` `marker.` | approved | Quoted span stripping must run **before** the disqualifier scan, or the quoted blocker token would disqualify a genuinely clean review |
-| E15 | `No blocking issues found. Please address the naming.` | not approved | Actionable-verb group; the residue has no negation and no hedge, so this is the case only that group catches |
+| E14 | `No blocking issues found. The tests correctly cover the` `` `must fix` `` `marker.` | approved | Quoted span stripping must run **before** A3, or the quoted blocker token would disqualify a genuinely clean review |
+| E15 | `No blocking issues found. Please address the naming.` | not approved | Actionable-verb group; the residue has no negation and no hedge, so this is the case only that group catches (also independently caught by A3 check 2's closed grammar, since `address the naming` has 2 leftover open-class tokens and no allow-listed starter) |
+| E16 | `This remains un_approved.` | not approved | Underscore boundary (Codex GitHub finding 3800167492): `_` is a word character for `\b`, so the old `[^[:alnum:]]` excision boundary incorrectly treated it as a boundary; `[^[:alnum:]_]` correctly leaves `un_approved` unmatched |
+| E17 | `Approved no blocking issues found.` | approved | Adjacency where the second signal contains `no` (Codex GitHub finding 3800167494): without iterative excision, `no blocking issues` survives un-excised and its `no` matches `CODEX_APPROVAL_NEGATION_PATTERN`, incorrectly returning `NEEDS_REVISION` |
+| E18 | `LGTM. Didn't find any major issues.` | approved | Adjacency where the second signal contains `didn't` (Codex GitHub finding 3800167494); a comma-joined no-space variant (`Approved, no blocking issues found.`) is covered by the same scenario as a second assertion |
+| E19 | `Looks good. Remove the authentication check.` (plus colon- and comma-joined variants: `Looks good: remove the authentication check.` / `Looks good, remove the authentication check.`) | not approved | The literal exploit from Codex GitHub finding 3800167486 (P1/blocking): a clean signal followed by an unenumerated actionable sentence. Closed by A3 check 2 (the closed residue grammar) — `remove the authentication check` has more than one leftover open-class token after filler stripping and does not begin with an allow-listed starter, regardless of which punctuation joins it to the signal-bearing sentence |
+| E20 | `Looks good.` followed by a **non-vendor** `<details>` block containing `Rename the unsafe function.` | not approved | The exploit from Codex GitHub finding 3800167489 (P1/blocking): over-broad footer truncation (any `<details` line, not the specific vendor marker) hides the instruction from A3 entirely. Closed by anchoring `codex_strip_codex_footer` on the actual `about codex in github` marker; once left intact, A3 check 2 independently rejects the instruction too |
 
 ### Unit test mapping
 
@@ -441,6 +711,11 @@ edge case above gets at least one scenario there, driven through the real script
 | E13 | `codex_quoted_clean_phrase_not_approved_root_comment` (exists — keep) |
 | E14 | `codex_quoted_blocker_token_stays_approved_root_comment` (exists — keep) |
 | E15 | `codex_actionable_verb_after_clean_signal_root_comment` (new) |
+| E16 | `codex_underscore_prefixed_lookalike_root_comment` (new — added during Step 7 review round) |
+| E17 | `codex_adjacent_signal_second_contains_no_root_comment` (new — added during Step 7 review round) |
+| E18 | `codex_adjacent_signal_second_contains_didnt_root_comment` (new — added during Step 7 review round) |
+| E19 | `codex_unenumerated_actionable_sentence_after_signal_root_comment` (new — added during Step 7 review round; asserts all three punctuation variants) |
+| E20 | `codex_nonfooter_details_block_not_truncated_root_comment` (new — added during Step 7 review round) |
 
 ### Suppression semantics
 
@@ -467,12 +742,20 @@ assertions passing, on macOS (BSD tooling) and in CI (GNU tooling).
 
 ### Test disposition — existing scenarios
 
-Every existing `codex_*` scenario is accounted for below. **No existing test is deleted.**
+Every existing `codex_*` scenario is accounted for below. **No existing test is deleted.** Every Group A/B/C
+body in this section was re-executed against the tightened A3 (both the disqualifier scan and the new closed
+residue grammar — see Decision 2) on BSD `sed`/`grep`/`awk` during the Step 7 review round that added findings
+`3800167486`/`3800167489`/`3800167492`/`3800167494`. **No scenario moved between groups as a result**: the
+closed grammar was specifically shaped (via `CODEX_RESIDUE_FILLER_WORD_PATTERN`'s vendor-identity tokens and
+`CODEX_RESIDUE_STARTER_PATTERN`'s closed-class starters) so that every Group A body — including the
+multi-word "topic mention" and "quote" elaboration bodies below — still passes; see Decision 2's residual-risk
+note for the one body that would **not** have passed a naively stricter (zero-tolerance) grammar, and why that
+was rejected in favor of the design actually shipped here.
 
 #### Group A — keep as-is, still `VERDICT: APPROVED`
 
-These bodies contain a clean signal in the opening paragraph and a disqualifier-free residue, so the new
-contract preserves them:
+These bodies contain a clean signal in the opening paragraph and a disqualifier-free, closed-grammar residue,
+so the new contract preserves them:
 
 | Scenario | Body (abridged) |
 | --- | --- |
@@ -498,7 +781,7 @@ contract preserves them:
 
 | Scenario | Change | Reason |
 | --- | --- | --- |
-| `codex_inline_backtick_pair_stays_approved_root_comment` | Change the body from `` The fix looks good. See `foo.py:42` for a minor nit. `` to `` The fix looks good. See `foo.py:42` in the diff. ``; keep `VERDICT: APPROVED` | The scenario's purpose is to prove a **single** inline backtick pair does not trip the fence guard. `minor nit` is now a hedge disqualifier, which would flip the verdict for a reason unrelated to the regression being guarded. Retargeting the body preserves the original intent |
+| `codex_inline_backtick_pair_stays_approved_root_comment` | Change the body from `` The fix looks good. See `foo.py:42` for a minor nit. `` to `` The fix looks good. See `foo.py:42`. ``; keep `VERDICT: APPROVED` | The scenario's purpose is to prove a **single** inline backtick pair does not trip the fence guard. `minor nit` is a hedge disqualifier, which would flip the verdict for a reason unrelated to the regression being guarded. **Retargeted a second time during the Step 7 review round**: the first retarget candidate (`` The fix looks good. See `foo.py:42` in the diff. ``) was re-verified against the new closed residue grammar (A3 check 2, Decision 2) and found to fail it — after the backtick span is stripped, the trailing sentence `See  in the diff.` leaves 2 open-class leftover tokens (`see`, `diff`) and does not begin with an allow-listed starter. The shorter body verified above leaves only 1 leftover token (`see`) and passes |
 
 #### Group C — retarget the expected verdict from `APPROVED` to `NEEDS_REVISION`
 
@@ -564,11 +847,35 @@ failure among them is a genuine regression, not an intended contract change.
 
 ### New scenarios
 
-The eleven new scenarios in the "Unit test mapping" table above, plus:
+**17 new scenarios total**: the eleven from edge cases E2–E11 and E15 in the "Unit test mapping" table above,
+plus `codex_disqualifier_diagnostic_emitted`, plus five more added during the Step 7 review round for edge
+cases E16–E20 (findings `3800167486`, `3800167489`, `3800167492`, `3800167494`):
 
 - `codex_disqualifier_diagnostic_emitted` — assert that a body with a clean signal plus a disqualifier emits
   the `INFO: Codex clean signal present but disqualified` line, so the operational diagnostic is itself
-  covered.
+  covered. (Two diagnostic reasons now exist — `negation/hedge/actionable token` and `residue grammar not
+  closed` — assert at least one; asserting both, from two separate bodies, is preferred.)
+- `codex_underscore_prefixed_lookalike_root_comment` (E16) — `NEEDS_REVISION`.
+- `codex_adjacent_signal_second_contains_no_root_comment` (E17) — `APPROVED`.
+- `codex_adjacent_signal_second_contains_didnt_root_comment` (E18) — `APPROVED`.
+- `codex_unenumerated_actionable_sentence_after_signal_root_comment` (E19) — `NEEDS_REVISION`, asserted for
+  all three punctuation variants (period/colon/comma).
+- `codex_nonfooter_details_block_not_truncated_root_comment` (E20) — `NEEDS_REVISION`.
+
+Of the 17 new scenarios, 9 assert `VERDICT: APPROVED` (E2, E3, E5, E6, E7, E8, E9, E17, E18) and 8 assert
+`VERDICT: NEEDS_REVISION` (E4, E10, E11, E15, E16, E19, E20, plus `codex_disqualifier_diagnostic_emitted`).
+
+### Reconciled test-disposition counts
+
+Re-derived during the Step 7 review round, since findings `3800167486`/`3800167492`/`3800167494` add
+regression coverage and finding `3800167486` also changes what Decision 2 claims about correctness (though,
+as verified above, it does **not** move any scenario between Group A/B/C):
+
+| Metric | Before this plan (baseline, `55b2df5d`) | After this plan |
+| --- | --- | --- |
+| Total `run_test` assertions | 628 | 628 + 17 × 2 = 662 (`codex_disqualifier_diagnostic_emitted` may need a third assertion for the diagnostic line itself — confirm exact per-scenario assertion count against the harness convention at implementation time and report the real total in the PR description; treat any other delta as a finding) |
+| `codex_*` assertions | 247 | 247 + 34 = 281 (same caveat as above) |
+| Scenarios asserting `VERDICT: APPROVED` | 27 (Group A 17 + Group B 1 + Group C 9) | 27 — composition changes, count does not: Group C's 9 flip out (27 → 18), 9 of the 17 new scenarios flip in (18 → 27). The coincidence in the total is real but incidental; the PR description must state the composition delta explicitly (Group C scenario names out, new E2/E3/E5/E6/E7/E8/E9/E17/E18 scenario names in), not just the unchanged total, or a reviewer skimming only the count would incorrectly conclude nothing changed |
 
 ### Residual verification strategy
 
@@ -576,12 +883,21 @@ This is a contract-flip refactor with pattern-completeness characteristics, so t
 implementation must produce before `ready-for-human-review` is:
 
 1. A full `bash scripts/development-workflow/tests/test-pr-review-loop.sh` run exiting 0, with the total
-   assertion count reported before and after.
+   assertion count reported before and after, reconciled against the "Reconciled test-disposition counts"
+   table above (report and explain any discrepancy rather than silently accepting a different number).
 2. A reconciliation statement in the PR description: every scenario whose expectation changed appears in
    Group B or Group C above, and no scenario outside those groups changed. Any additional flip discovered
    during implementation must be added to the table with its own justification rather than silently accepted.
 3. Confirmation that the real captured Codex clean body (E9) approves — this is the check that guards against
-   the highest-impact failure mode, a classifier that rejects every real clean review.
+   the highest-impact failure mode, a classifier that rejects every real clean review. Re-verify this
+   specifically against the closed residue grammar (A3 check 2), not just the disqualifier scan: this is the
+   check a naively strict grammar would fail (see Decision 2's residual-risk note) — confirm the shipped
+   `CODEX_RESIDUE_FILLER_WORD_PATTERN`/`CODEX_RESIDUE_STARTER_PATTERN` still let it pass.
+4. Confirmation that the four exploits from the Step 7 review round (E16–E20's underlying findings) are
+   actually closed against the real script, not just the illustrative prototype in this plan — run
+   `codex_unenumerated_actionable_sentence_after_signal_root_comment` and
+   `codex_nonfooter_details_block_not_truncated_root_comment` specifically and confirm both report
+   `NEEDS_REVISION`.
 
 ---
 
@@ -611,9 +927,12 @@ do not add a fixture file, as the harness is deliberately self-contained.
 - [ ] `docs/workflow/development-workflow/integrations/codex-github.md` — add a **Verdict classification**
       section stating that `APPROVED` requires an allow-listed clean signal in the opening paragraph of the
       response, that any negation, hedge, or actionable-verb token elsewhere safe-fails to `NEEDS_REVISION`,
-      and that the vendor `<details>` footer is ignored for this decision. Note the deliberate
-      false-`NEEDS_REVISION` tradeoff and that extending the disqualifier list is always safe while extending
-      the clean-signal allow-list is not.
+      that any sentence/clause lacking its own clean signal must also satisfy the closed residue grammar (at
+      most one leftover open-class token, or begin with an allow-listed subject/determiner starter), and that
+      the vendor `<details>` footer (matched precisely, not any `<details>` block) is ignored for this
+      decision. Note the deliberate false-`NEEDS_REVISION` tradeoff, the disclosed residual gap (a single
+      bare-word unenumerated imperative — see Decision 2), and that extending the disqualifier list is always
+      safe while extending the clean-signal allow-list or the closed-grammar filler/starter constants is not.
 - [ ] `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` — in the
       "Codex GitHub terminal evidence" block (around line 112), add one sentence: SHA-pinned terminal evidence
       is necessary but not sufficient; the response must additionally carry an unhedged clean signal, and a
@@ -637,8 +956,10 @@ do not add a fixture file, as the harness is deliberately self-contained.
 | Higher false-`NEEDS_REVISION` rate causes extra reviewer-loop cycles | High (by design) | Low–Medium | Accepted and documented. The stderr diagnostic names the reason so a maintainer can distinguish "Codex actually objected" from "the classifier was conservative" without re-deriving the rule |
 | A disqualifier token is too broad and rejects a genuinely clean response (`\bno\b`, `\bshould\b`, `\bminor\b` are the widest) | Medium | Low | Safe direction. Every disqualifier can be narrowed later without correctness analysis (Decision 2). All existing and real clean bodies were checked against the proposed list before this plan was written |
 | Footer truncation hides a refusal placed after the footer | Very low | High | `codex_response_is_blocking` runs before approval at every verdict site and scans the untruncated body; covered by scenario `codex_footer_truncation_keeps_blocking_root_comment` |
-| BSD versus GNU regex divergence (`\b` in `sed`, `tr` locale behavior) | Medium | Medium | `\b` is used only in `grep -E`, where the file already documents cross-implementation verification; `sed` uses explicit `[^[:alnum:]]` boundary groups; `tr` runs under `LC_ALL=C`. The prototype was executed on BSD tooling and CI covers GNU |
+| BSD versus GNU regex divergence (`\b` in `sed`, `tr` locale behavior) | Medium | Medium | `\b` is used only in `grep -E`, where the file already documents cross-implementation verification; `sed` uses explicit `[^[:alnum:]_]` boundary groups; `tr` runs under `LC_ALL=C`. The prototype (including the closed-grammar helper added in the Step 7 review round) was executed on BSD tooling and CI covers GNU |
 | Retargeting 9 expectations masks a real regression | Medium | Medium | The Group A–E disposition table is exhaustive; the PR must state that no scenario outside Groups B and C changed |
+| **A single unenumerated bare-word imperative with no object (e.g. `Approved. Revert.`) is not caught by A3 check 2's "at most one leftover token" tolerance** | Low | Medium | **Disclosed, accepted, not fixed by this plan** — see Decision 2's residual-risk note. Verified: `Approved. Revert.` returns `APPROVED` under the shipped design. The tolerance exists because a zero-tolerance grammar rejects the real captured clean root comment (`Codex Review: Didn't find any major issues. Swish!`, whose `swish` residue is lexically identical in shape to `revert`) — closing this gap without also rejecting genuine vendor flavor text needs either a curated vendor-flavor allow-list (reintroducing an open-ended-enumeration problem in the safe direction) or a structured verdict signal from GitHub (Decision 3's deferred `state == "APPROVED"` follow-up). **Flagged for explicit human confirmation that this narrower, disclosed trade-off is acceptable**; it is a strict improvement over the pre-this-plan exposure (any number of unenumerated words, not just one bare word with no object) |
+| Extending `CODEX_RESIDUE_FILLER_WORD_PATTERN` or `CODEX_RESIDUE_STARTER_PATTERN` with a general content word (rather than a genuinely closed-class word or a specific reviewed vendor-identity token) silently widens the false-`APPROVED` surface | Low | High | Same review discipline as extending `CODEX_CLEAN_SIGNAL_PATTERN` (Decision 2) — flagged explicitly in the Layer-by-Layer checklist and in Decision 2's "Reviewers must not..." list so a future PR touching either constant is held to the same bar |
 
 ---
 
@@ -648,20 +969,28 @@ do not add a fixture file, as the harness is deliberately self-contained.
 `NEEDS_REVISION` more often than before. Concretely, the constructions that used to approve and no longer
 will are: an unrelated negation anywhere in the response ("tests were not run", "not a blocker"), any hedge
 ("but", "however", "minor nit", "at first glance"), any actionable verb ("please address", "should rename"),
-and the "not only X" idiom. Each of these produces one extra reviewer-loop cycle: `pr-review-loop.sh` reports
-the platform as not clean, the item agent inspects the response, finds nothing actionable, and re-triggers.
+the "not only X" idiom, **and — new in the Step 7 review round — a trailing sentence or clause after a clean
+signal that carries more than one open-class content word and does not open with a recognized subject/
+determiner** (A3 check 2, the closed residue grammar; see Decision 2). Each of these produces one extra
+reviewer-loop cycle: `pr-review-loop.sh` reports the platform as not clean, the item agent inspects the
+response, finds nothing actionable, and re-triggers.
 
 **Escape hatch: none, deliberately.** No environment variable, config flag, or CLI option is added to relax
 the classifier. A bypass would be indistinguishable from the false-`APPROVED` bug this change exists to
 eliminate, and it would be reached for precisely when the classifier is doing its job. The supported
 responses to a persistent false `NEEDS_REVISION` are, in order:
 
-1. Read the `INFO: Codex clean signal present but disqualified (…)` line to see which rule fired.
+1. Read the `INFO: Codex clean signal present but disqualified (…)` line to see which rule fired
+   (`negation/hedge/actionable token` vs. `residue grammar not closed`).
 2. If a disqualifier is too broad, narrow `CODEX_APPROVAL_DISQUALIFIER_PATTERN` — always safe, no correctness
    analysis needed.
-3. If the vendor's clean wording is unrecognized, extend `CODEX_CLEAN_SIGNAL_PATTERN` — the one change that
-   widens the approval surface and therefore needs full review.
-4. If Codex begins submitting reviews with `state == "APPROVED"`, file the deferred structural-approval
+3. If the closed-grammar check (A3 check 2) is too strict for a specific, genuinely inert vendor construction,
+   the ONLY safe lever is adding that construction as a specific, reviewed vendor-identity token to
+   `CODEX_RESIDUE_FILLER_WORD_PATTERN` or `CODEX_RESIDUE_STARTER_PATTERN` (never a general content word) — the
+   same review bar as step 4 below, per Decision 2.
+4. If the vendor's clean wording is unrecognized, extend `CODEX_CLEAN_SIGNAL_PATTERN` — one of the two changes
+   that widens the approval surface and therefore needs full review.
+5. If Codex begins submitting reviews with `state == "APPROVED"`, file the deferred structural-approval
    follow-up from Decision 3 instead of loosening the prose rules.
 
 ---
@@ -674,23 +1003,29 @@ responses to a persistent false `NEEDS_REVISION` are, in order:
    orchestrator.
 2. **Add the new constants** in `codex-github-reviewer.sh`, immediately after the existing line that appends
    `CODEX_MERGE_REFUSAL_PATTERN` to `CODEX_BLOCKING_PATTERN`: `CODEX_CLEAN_SIGNAL_PATTERN` (renamed from
-   `CODEX_APPROVAL_PATTERN`), `CODEX_CLEAN_SIGNAL_EXCISION`, the three disqualifier groups, and the composite
-   `CODEX_APPROVAL_DISQUALIFIER_PATTERN`. Delete `CODEX_NEGATED_APPROVAL_TARGET_WORDS` and
-   `CODEX_NEGATED_APPROVAL_PATTERN`.
+   `CODEX_APPROVAL_PATTERN`), `CODEX_CLEAN_SIGNAL_EXCISION` (boundary class `[^[:alnum:]_]`, not
+   `[^[:alnum:]]`), the three disqualifier groups, the composite `CODEX_APPROVAL_DISQUALIFIER_PATTERN`, and
+   `CODEX_RESIDUE_FILLER_WORD_PATTERN`/`CODEX_RESIDUE_STARTER_PATTERN` (A3 check 2's closed-grammar
+   constants). Delete `CODEX_NEGATED_APPROVAL_TARGET_WORDS` and `CODEX_NEGATED_APPROVAL_PATTERN`.
    *Verify*: `bash -n scripts/development-workflow/codex-github-reviewer.sh` succeeds and
    `grep -n "CODEX_NEGATED_APPROVAL" scripts/development-workflow/codex-github-reviewer.sh` returns nothing.
-3. **Add the two helpers** `codex_strip_codex_footer` and `codex_response_first_paragraph`, placed next to the
-   other normalization helpers.
-4. **Rewrite `codex_response_is_approved`** per Decision 1, including the two stderr diagnostics.
+3. **Add the four helpers** `codex_strip_codex_footer` (anchored on the `about codex in github` marker, not a
+   generic `<details` match), `codex_response_first_paragraph`, `codex_excise_clean_signals` (the iterative
+   excision loop), and `codex_residue_is_closed_grammar` (A3 check 2), placed next to the other normalization
+   helpers.
+4. **Rewrite `codex_response_is_approved`** per Decision 1, including both A3 checks and the three stderr
+   diagnostics (`fence-marker`, `negation/hedge/actionable token`, `residue grammar not closed`).
 5. **Delete `codex_strip_not_only_idiom`** and remove its call from `codex_response_is_blocking`. Make no
    other change to `codex_response_is_blocking`.
    *Verify*: `grep -n "not_only" scripts/development-workflow/codex-github-reviewer.sh` returns nothing.
 6. **Update the file-header "Verdict parsing" comment block** and the rationale comments around the changed
    and deleted symbols.
-7. **Update the tests**: apply Group B and Group C changes, refresh Group D comments, then add the new
-   scenarios from the unit-test mapping table plus `codex_disqualifier_diagnostic_emitted`.
-   *Verify*: run `bash scripts/development-workflow/tests/test-pr-review-loop.sh` and confirm it exits 0 and
-   that the failures you fixed are exactly the ones this plan predicted — read the output and confirm no
+7. **Update the tests**: apply Group B and Group C changes (using the Group B body as retargeted a second time
+   during the Step 7 review round — `` The fix looks good. See `foo.py:42`. ``), refresh Group D comments, then
+   add the 17 new scenarios listed in "New scenarios" (the original 12 plus the 5 added for E16–E20).
+   *Verify*: run `bash scripts/development-workflow/tests/test-pr-review-loop.sh` and confirm it exits 0, that
+   the total assertion count matches the "Reconciled test-disposition counts" table (report any discrepancy),
+   and that the failures you fixed are exactly the ones this plan predicted — read the output and confirm no
    unexpected scenario changed.
 8. **Update the documentation** listed in "Documentation Updates", then add the CHANGELOG entry under
    `[Unreleased]` → `### Changed`, copied literally:
@@ -716,22 +1051,32 @@ responses to a persistent false `NEEDS_REVISION` are, in order:
 ## Document Quality Gate
 
 - Spec/brief coverage: Checked — every objective in issue #1491's Option 2 maps to a decision, an
-  implementation step, and test coverage; Options 1 and 3 are addressed explicitly under Decision 3.
+  implementation step, and test coverage; Options 1 and 3 are addressed explicitly under Decision 3. The
+  four Codex GitHub findings from the Step 7 review round (`3800167486`, `3800167489`, `3800167492`,
+  `3800167494`) are refinements strictly within Option 2 — none required or introduced a change of approach.
 - Implementation-order consistency: Checked — helper names (`codex_strip_codex_footer`,
-  `codex_response_first_paragraph`), constant names (`CODEX_CLEAN_SIGNAL_PATTERN`,
-  `CODEX_CLEAN_SIGNAL_EXCISION`, `CODEX_APPROVAL_NEGATION_PATTERN`, `CODEX_APPROVAL_HEDGE_PATTERN`,
-  `CODEX_APPROVAL_ACTIONABLE_PATTERN`, `CODEX_APPROVAL_DISQUALIFIER_PATTERN`), decision labels
-  (Decision 1–6), scenario names, and file paths agree across the Summary, Decisions, Layer-by-Layer, Code
-  Samples, Parser-risk addendum, Testing Strategy, and Implementation Order sections.
+  `codex_response_first_paragraph`, `codex_excise_clean_signals`, `codex_residue_is_closed_grammar`), constant
+  names (`CODEX_CLEAN_SIGNAL_PATTERN`, `CODEX_CLEAN_SIGNAL_EXCISION`, `CODEX_APPROVAL_NEGATION_PATTERN`,
+  `CODEX_APPROVAL_HEDGE_PATTERN`, `CODEX_APPROVAL_ACTIONABLE_PATTERN`, `CODEX_APPROVAL_DISQUALIFIER_PATTERN`,
+  `CODEX_RESIDUE_FILLER_WORD_PATTERN`, `CODEX_RESIDUE_STARTER_PATTERN`), decision labels (Decision 1–6),
+  scenario names (including the 5 added for edge cases E16–E20), and file paths agree across the Summary,
+  Decisions, Layer-by-Layer, Code Samples, Parser-risk addendum, Testing Strategy, and Implementation Order
+  sections.
 - Verification support: Checked — every claim about existing behavior, file coverage, counts, and the vendor
-  wire format cites a Verification Log command or a named source file.
+  wire format cites a Verification Log command or a named source file. Every regex/helper introduced or
+  changed during the Step 7 review round was re-executed on BSD `sed`/`grep`/`awk` against the reviewer's
+  literal counterexamples, the full E1–E20 edge-case set, all 17 Group A bodies, the retargeted Group B body,
+  all 9 Group C bodies, and the two real captured Codex bodies (PR #1489/#1490, re-fetched live during this
+  review round) — see the Code Samples section's opening note.
 - Behavioral guarantees: Checked — the "cannot weaken the `CHANGES_REQUESTED` short-circuit" guarantee names
   its mechanism (the classifier only moves responses from priority tier 0 to tier 2, and blocking is
   evaluated first at every verdict site); the "truncation cannot hide a refusal" guarantee names
-  `codex_response_is_blocking` running on the untruncated body.
+  `codex_response_is_blocking` running on the untruncated body; the "non-exhaustiveness of the disqualifier
+  list is safe" guarantee now names its actual mechanism (the closed residue grammar, Decision 2) rather than
+  merely asserting it, and discloses the one residual gap that mechanism does not close.
 - Complex workflow decision-gate matrix: Checked — see the matrix below.
-- Parser/API/concurrency checklist: Checked (parser-risk addendum present with edge-case enumeration and
-  per-case unit-test mapping); concurrent-event-source recorded as not applicable with rationale.
+- Parser/API/concurrency checklist: Checked (parser-risk addendum present with edge-case enumeration through
+  E20 and per-case unit-test mapping); concurrent-event-source recorded as not applicable with rationale.
 - CHANGELOG literal format: Checked — Implementation Order step 8 gives the entry in the project's
   `**Bold Title** (#N):` format under `### Changed`.
 - Not-applicable rationale: Checked — suppression semantics and concurrency each carry a rationale.
@@ -743,10 +1088,10 @@ responses to a persistent false `NEEDS_REVISION` are, in order:
 | Review-sourced evidence with `state == CHANGES_REQUESTED` | `NEEDS_REVISION` | 1 | Loop counts unresolved threads; item agent fixes findings | Unchanged in all four verdict sites and in `codex_response_priority` |
 | `codex_response_is_blocking` matches | `NEEDS_REVISION` | 1 | Same as above | Unchanged |
 | Usage-limit or environment-error notice | `UNAVAILABLE` | 3 | Platform reported unavailable; loop applies the configured unavailable policy | Unchanged |
-| Clean signal in opening paragraph, no fence, disqualifier-free residue | `APPROVED` | 0 | Platform reported clean | **Changed** — stricter than today |
-| Clean signal present but fence marker, negation, hedge, or actionable token found | `NEEDS_REVISION (unrecognized response format — safe-fail)` | 1 | Item agent inspects the stderr diagnostic and re-triggers or fixes | **Changed** — this is the new false-`NEEDS_REVISION` surface |
+| Clean signal in opening paragraph, no fence, disqualifier-free AND closed-grammar residue | `APPROVED` | 0 | Platform reported clean | **Changed** — stricter than today |
+| Clean signal present but fence marker, negation, hedge, actionable token found, or the residue grammar is not closed | `NEEDS_REVISION (unrecognized response format — safe-fail)` | 1 | Item agent inspects the stderr diagnostic (`negation/hedge/actionable token` or `residue grammar not closed`) and re-triggers or fixes | **Changed** — this is the new false-`NEEDS_REVISION` surface, now driven by two independent A3 checks |
 | No clean signal at all | `NEEDS_REVISION (unrecognized response format — safe-fail)` | 1 | Same as above | Unchanged |
 | No terminal evidence within the poll window | `TIMED_OUT` | 2 | Treated as unavailable | Unchanged |
 
-Example bodies for each changed row are enumerated in the Parser-risk addendum (E1–E15) and mapped to named
+Example bodies for each changed row are enumerated in the Parser-risk addendum (E1–E20) and mapped to named
 test scenarios, so the matrix, the examples, and the tests are the same set.
