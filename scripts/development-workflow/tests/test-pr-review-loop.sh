@@ -3529,7 +3529,7 @@ PATH="$_codex_long_review_body_no_sigpipe_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_long_review_body_no_sigpipe_mock_dir/output.txt" 2>&1 || _codex_long_review_body_no_sigpipe_exit=$?
 _codex_long_review_body_no_sigpipe_output="$(cat "$_codex_long_review_body_no_sigpipe_mock_dir/output.txt")"
-run_test "codex_long_review_body_no_sigpipe_exit_clean" "1" "$_codex_long_review_body_no_sigpipe_exit"
+run_test "codex_long_review_body_no_sigpipe_exit_needs_revision" "1" "$_codex_long_review_body_no_sigpipe_exit"
 run_test "codex_long_review_body_no_sigpipe_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_long_review_body_no_sigpipe_output" | grep "^VERDICT:")"
 rm -rf "$_codex_long_review_body_no_sigpipe_mock_dir"
@@ -3732,7 +3732,7 @@ PATH="$_codex_long_root_comment_no_sigpipe_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_long_root_comment_no_sigpipe_mock_dir/output.txt" 2>&1 || _codex_long_root_comment_no_sigpipe_exit=$?
 _codex_long_root_comment_no_sigpipe_output="$(cat "$_codex_long_root_comment_no_sigpipe_mock_dir/output.txt")"
-run_test "codex_long_root_comment_no_sigpipe_exit_clean" "1" "$_codex_long_root_comment_no_sigpipe_exit"
+run_test "codex_long_root_comment_no_sigpipe_exit_needs_revision" "1" "$_codex_long_root_comment_no_sigpipe_exit"
 run_test "codex_long_root_comment_no_sigpipe_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_long_root_comment_no_sigpipe_output" | grep "^VERDICT:")"
 rm -rf "$_codex_long_root_comment_no_sigpipe_mock_dir"
@@ -4752,7 +4752,7 @@ PATH="$_codex_usage_limit_topic_mention_not_quota_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_usage_limit_topic_mention_not_quota_mock_dir/output.txt" 2>&1 || _codex_usage_limit_topic_mention_not_quota_exit=$?
 _codex_usage_limit_topic_mention_not_quota_output="$(cat "$_codex_usage_limit_topic_mention_not_quota_mock_dir/output.txt")"
-run_test "codex_usage_limit_topic_mention_not_quota_exit_clean" "1" "$_codex_usage_limit_topic_mention_not_quota_exit"
+run_test "codex_usage_limit_topic_mention_not_quota_exit_needs_revision" "1" "$_codex_usage_limit_topic_mention_not_quota_exit"
 run_test "codex_usage_limit_topic_mention_not_quota_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_usage_limit_topic_mention_not_quota_output" | grep "^VERDICT:")"
 rm -rf "$_codex_usage_limit_topic_mention_not_quota_mock_dir"
@@ -4855,7 +4855,7 @@ PATH="$_codex_usage_limit_code_reviews_phrase_mention_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_usage_limit_code_reviews_phrase_mention_mock_dir/output.txt" 2>&1 || _codex_usage_limit_code_reviews_phrase_mention_exit=$?
 _codex_usage_limit_code_reviews_phrase_mention_output="$(cat "$_codex_usage_limit_code_reviews_phrase_mention_mock_dir/output.txt")"
-run_test "codex_usage_limit_code_reviews_phrase_mention_exit_clean" "1" "$_codex_usage_limit_code_reviews_phrase_mention_exit"
+run_test "codex_usage_limit_code_reviews_phrase_mention_exit_needs_revision" "1" "$_codex_usage_limit_code_reviews_phrase_mention_exit"
 run_test "codex_usage_limit_code_reviews_phrase_mention_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_usage_limit_code_reviews_phrase_mention_output" | grep "^VERDICT:")"
 rm -rf "$_codex_usage_limit_code_reviews_phrase_mention_mock_dir"
@@ -4954,7 +4954,7 @@ PATH="$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir:$PATH"
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir/output.txt" 2>&1 || _codex_negation_prior_sentence_does_not_leak_root_comment_exit=$?
 _codex_negation_prior_sentence_does_not_leak_root_comment_output="$(cat "$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir/output.txt")"
-run_test "codex_negation_prior_sentence_does_not_leak_root_comment_exit_clean" "1" "$_codex_negation_prior_sentence_does_not_leak_root_comment_exit"
+run_test "codex_negation_prior_sentence_does_not_leak_root_comment_exit_needs_revision" "1" "$_codex_negation_prior_sentence_does_not_leak_root_comment_exit"
 run_test "codex_negation_prior_sentence_does_not_leak_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_negation_prior_sentence_does_not_leak_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir"
@@ -5061,7 +5061,7 @@ PATH="$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir/output.txt" 2>&1 || _codex_terminal_comment_quotes_env_error_not_ancillary_exit=$?
 _codex_terminal_comment_quotes_env_error_not_ancillary_output="$(cat "$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir/output.txt")"
-run_test "codex_terminal_comment_quotes_env_error_not_ancillary_exit_clean" "1" "$_codex_terminal_comment_quotes_env_error_not_ancillary_exit"
+run_test "codex_terminal_comment_quotes_env_error_not_ancillary_exit_needs_revision" "1" "$_codex_terminal_comment_quotes_env_error_not_ancillary_exit"
 run_test "codex_terminal_comment_quotes_env_error_not_ancillary_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_terminal_comment_quotes_env_error_not_ancillary_output" | grep "^VERDICT:")"
 rm -rf "$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir"
@@ -5117,7 +5117,7 @@ PATH="$_codex_unrelated_later_negation_safe_fails_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_unrelated_later_negation_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_unrelated_later_negation_safe_fails_root_comment_exit=$?
 _codex_unrelated_later_negation_safe_fails_root_comment_output="$(cat "$_codex_unrelated_later_negation_safe_fails_root_comment_mock_dir/output.txt")"
-run_test "codex_unrelated_later_negation_safe_fails_root_comment_exit_clean" "1" "$_codex_unrelated_later_negation_safe_fails_root_comment_exit"
+run_test "codex_unrelated_later_negation_safe_fails_root_comment_exit_needs_revision" "1" "$_codex_unrelated_later_negation_safe_fails_root_comment_exit"
 run_test "codex_unrelated_later_negation_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_unrelated_later_negation_safe_fails_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_unrelated_later_negation_safe_fails_root_comment_mock_dir"
@@ -5318,7 +5318,7 @@ PATH="$_codex_semicolon_scoped_negation_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_semicolon_scoped_negation_root_comment_mock_dir/output.txt" 2>&1 || _codex_semicolon_scoped_negation_root_comment_exit=$?
 _codex_semicolon_scoped_negation_root_comment_output="$(cat "$_codex_semicolon_scoped_negation_root_comment_mock_dir/output.txt")"
-run_test "codex_semicolon_scoped_negation_root_comment_exit_clean" "1" "$_codex_semicolon_scoped_negation_root_comment_exit"
+run_test "codex_semicolon_scoped_negation_root_comment_exit_needs_revision" "1" "$_codex_semicolon_scoped_negation_root_comment_exit"
 run_test "codex_semicolon_scoped_negation_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_semicolon_scoped_negation_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_semicolon_scoped_negation_root_comment_mock_dir"
@@ -5422,7 +5422,7 @@ PATH="$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir/output.txt" 2>&1 || _codex_quoted_rejection_in_clean_review_root_comment_exit=$?
 _codex_quoted_rejection_in_clean_review_root_comment_output="$(cat "$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir/output.txt")"
-run_test "codex_quoted_rejection_in_clean_review_root_comment_exit_clean" "1" "$_codex_quoted_rejection_in_clean_review_root_comment_exit"
+run_test "codex_quoted_rejection_in_clean_review_root_comment_exit_needs_revision" "1" "$_codex_quoted_rejection_in_clean_review_root_comment_exit"
 run_test "codex_quoted_rejection_in_clean_review_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_quoted_rejection_in_clean_review_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir"
@@ -5473,7 +5473,7 @@ PATH="$_codex_comma_scoped_negation_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_comma_scoped_negation_root_comment_mock_dir/output.txt" 2>&1 || _codex_comma_scoped_negation_root_comment_exit=$?
 _codex_comma_scoped_negation_root_comment_output="$(cat "$_codex_comma_scoped_negation_root_comment_mock_dir/output.txt")"
-run_test "codex_comma_scoped_negation_root_comment_exit_clean" "1" "$_codex_comma_scoped_negation_root_comment_exit"
+run_test "codex_comma_scoped_negation_root_comment_exit_needs_revision" "1" "$_codex_comma_scoped_negation_root_comment_exit"
 run_test "codex_comma_scoped_negation_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_comma_scoped_negation_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_comma_scoped_negation_root_comment_mock_dir"
@@ -5533,7 +5533,7 @@ PATH="$_codex_terminal_review_quotes_quota_message_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_terminal_review_quotes_quota_message_mock_dir/output.txt" 2>&1 || _codex_terminal_review_quotes_quota_message_exit=$?
 _codex_terminal_review_quotes_quota_message_output="$(cat "$_codex_terminal_review_quotes_quota_message_mock_dir/output.txt")"
-run_test "codex_terminal_review_quotes_quota_message_exit_clean" "1" "$_codex_terminal_review_quotes_quota_message_exit"
+run_test "codex_terminal_review_quotes_quota_message_exit_needs_revision" "1" "$_codex_terminal_review_quotes_quota_message_exit"
 run_test "codex_terminal_review_quotes_quota_message_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_terminal_review_quotes_quota_message_output" | grep "^VERDICT:")"
 rm -rf "$_codex_terminal_review_quotes_quota_message_mock_dir"
@@ -5590,7 +5590,7 @@ PATH="$_codex_not_only_idiom_safe_fails_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_not_only_idiom_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_idiom_safe_fails_root_comment_exit=$?
 _codex_not_only_idiom_safe_fails_root_comment_output="$(cat "$_codex_not_only_idiom_safe_fails_root_comment_mock_dir/output.txt")"
-run_test "codex_not_only_idiom_safe_fails_root_comment_exit_clean" "1" "$_codex_not_only_idiom_safe_fails_root_comment_exit"
+run_test "codex_not_only_idiom_safe_fails_root_comment_exit_needs_revision" "1" "$_codex_not_only_idiom_safe_fails_root_comment_exit"
 run_test "codex_not_only_idiom_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_not_only_idiom_safe_fails_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_not_only_idiom_safe_fails_root_comment_mock_dir"
@@ -5642,7 +5642,7 @@ PATH="$_codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_idiom_uppercase_safe_fails_root_comment_exit=$?
 _codex_not_only_idiom_uppercase_safe_fails_root_comment_output="$(cat "$_codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir/output.txt")"
-run_test "codex_not_only_idiom_uppercase_safe_fails_root_comment_exit_clean" "1" "$_codex_not_only_idiom_uppercase_safe_fails_root_comment_exit"
+run_test "codex_not_only_idiom_uppercase_safe_fails_root_comment_exit_needs_revision" "1" "$_codex_not_only_idiom_uppercase_safe_fails_root_comment_exit"
 run_test "codex_not_only_idiom_uppercase_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_not_only_idiom_uppercase_safe_fails_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir"
@@ -5793,7 +5793,7 @@ PATH="$_codex_quoted_blocker_token_safe_fails_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_quoted_blocker_token_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_quoted_blocker_token_safe_fails_root_comment_exit=$?
 _codex_quoted_blocker_token_safe_fails_root_comment_output="$(cat "$_codex_quoted_blocker_token_safe_fails_root_comment_mock_dir/output.txt")"
-run_test "codex_quoted_blocker_token_safe_fails_root_comment_exit_clean" "1" "$_codex_quoted_blocker_token_safe_fails_root_comment_exit"
+run_test "codex_quoted_blocker_token_safe_fails_root_comment_exit_needs_revision" "1" "$_codex_quoted_blocker_token_safe_fails_root_comment_exit"
 run_test "codex_quoted_blocker_token_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_quoted_blocker_token_safe_fails_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_quoted_blocker_token_safe_fails_root_comment_mock_dir"
@@ -6536,7 +6536,7 @@ PATH="$_codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir:$
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_unrelated_negation_before_merge_safe_fails_root_comment_exit=$?
 _codex_unrelated_negation_before_merge_safe_fails_root_comment_output="$(cat "$_codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir/output.txt")"
-run_test "codex_unrelated_negation_before_merge_safe_fails_root_comment_exit_clean" "1" "$_codex_unrelated_negation_before_merge_safe_fails_root_comment_exit"
+run_test "codex_unrelated_negation_before_merge_safe_fails_root_comment_exit_needs_revision" "1" "$_codex_unrelated_negation_before_merge_safe_fails_root_comment_exit"
 run_test "codex_unrelated_negation_before_merge_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_unrelated_negation_before_merge_safe_fails_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir"
@@ -6652,7 +6652,7 @@ PATH="$_codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_safe_to_merge_safe_fails_root_comment_exit=$?
 _codex_not_only_safe_to_merge_safe_fails_root_comment_output="$(cat "$_codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir/output.txt")"
-run_test "codex_not_only_safe_to_merge_safe_fails_root_comment_exit_clean" "1" "$_codex_not_only_safe_to_merge_safe_fails_root_comment_exit"
+run_test "codex_not_only_safe_to_merge_safe_fails_root_comment_exit_needs_revision" "1" "$_codex_not_only_safe_to_merge_safe_fails_root_comment_exit"
 run_test "codex_not_only_safe_to_merge_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_not_only_safe_to_merge_safe_fails_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir"
@@ -6762,7 +6762,7 @@ PATH="$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir:
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_exit=$?
 _codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_output="$(cat "$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir/output.txt")"
-run_test "codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_exit_clean" "1" "$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_exit"
+run_test "codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_exit_needs_revision" "1" "$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_exit"
 run_test "codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir"
@@ -6862,7 +6862,7 @@ PATH="$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir/output.txt" 2>&1 || _codex_contraction_apostrophes_not_mangled_root_comment_exit=$?
 _codex_contraction_apostrophes_not_mangled_root_comment_output="$(cat "$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir/output.txt")"
-run_test "codex_contraction_apostrophes_not_mangled_root_comment_exit_clean" "1" "$_codex_contraction_apostrophes_not_mangled_root_comment_exit"
+run_test "codex_contraction_apostrophes_not_mangled_root_comment_exit_needs_revision" "1" "$_codex_contraction_apostrophes_not_mangled_root_comment_exit"
 run_test "codex_contraction_apostrophes_not_mangled_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_contraction_apostrophes_not_mangled_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir"
@@ -7123,7 +7123,7 @@ PATH="$_codex_inline_backtick_pair_safe_fails_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_inline_backtick_pair_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_inline_backtick_pair_safe_fails_root_comment_exit=$?
 _codex_inline_backtick_pair_safe_fails_root_comment_output="$(cat "$_codex_inline_backtick_pair_safe_fails_root_comment_mock_dir/output.txt")"
-run_test "codex_inline_backtick_pair_safe_fails_root_comment_exit_clean" "1" "$_codex_inline_backtick_pair_safe_fails_root_comment_exit"
+run_test "codex_inline_backtick_pair_safe_fails_root_comment_exit_needs_revision" "1" "$_codex_inline_backtick_pair_safe_fails_root_comment_exit"
 run_test "codex_inline_backtick_pair_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_inline_backtick_pair_safe_fails_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_inline_backtick_pair_safe_fails_root_comment_mock_dir"
