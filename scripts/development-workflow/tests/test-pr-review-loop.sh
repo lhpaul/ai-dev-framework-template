@@ -2574,7 +2574,7 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    printf '[{"id":218,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `abcdefab12`"}]\n'
+    jq -nc '[{id:218,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `abcdefab12` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
@@ -2614,7 +2614,7 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    printf '[{"id":226,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `abcabcabcabc1234567890`"}]\n'
+    jq -nc '[{id:226,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `abcabcabcabc1234567890` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
@@ -3050,7 +3050,7 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
-    printf '[{"submitted_at":"2026-01-01T00:00:00Z","commit_id":"abcreviewok1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    jq -nc '[{submitted_at:"2026-01-01T00:00:00Z",commit_id:"abcreviewok1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `aaaaaaaaaa` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":206,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"If Codex has suggestions, it will comment; otherwise it will react with thumbs up."}]\n'
@@ -3097,7 +3097,7 @@ case "$*" in
     calls=$((calls + 1))
     printf '%s\n' "$calls" > "$calls_file"
     if [ "$calls" -ge 2 ]; then
-      printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abcreactlate1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+      jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"abcreactlate1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `bbbbbbbbbb` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     else
       printf '[]\n'
     fi
@@ -3146,7 +3146,7 @@ case "$*" in
     calls=$((calls + 1))
     printf '%s\n' "$calls" > "$calls_file"
     if [ "$calls" -ge 3 ]; then
-      printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abc456aa1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+      jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"abc456aa1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `cccccccccc` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     else
       printf '[]\n'
     fi
@@ -3291,6 +3291,17 @@ unset _codex_ack_repoll_env_then_reaction_mock_dir _codex_ack_repoll_env_then_re
 # main poll loop. A strictly NEWER review is expected to supersede the
 # stale environment error instead — see
 # codex_main_loop_env_then_newer_review_supersedes below.
+#
+# The review body must reproduce a real CODEX_APPROVED_TEMPLATES entry
+# (issue #1491's conservative-verdict-classifier implementation plan): the
+# SEEN_ENVIRONMENT_ERROR-supersede check this scenario exercises lives
+# INSIDE the `source == "review" && codex_response_is_approved` branch, so
+# a body that does not exactly reproduce the template never reaches that
+# check at all (it falls through to the unrecognized-format safe-fail
+# instead) — silently defeating this scenario's own coverage rather than
+# failing loudly, which is exactly why this fixture needed updating
+# alongside the classifier redesign even though its own assertion never
+# mentions "APPROVED".
 _codex_main_loop_env_then_review_mock_dir="$(mktemp -d)"
 printf '0\n' > "$_codex_main_loop_env_then_review_mock_dir/comment_calls"
 printf '0\n' > "$_codex_main_loop_env_then_review_mock_dir/review_calls"
@@ -3313,7 +3324,7 @@ case "$*" in
     calls=$((calls + 1))
     printf '%s\n' "$calls" > "$calls_file"
     if [ "$calls" -ge 2 ]; then
-      printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"mainloopenv1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+      jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"mainloopenv1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `1111111111` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     else
       printf '[]\n'
     fi
@@ -3380,7 +3391,7 @@ case "$*" in
     calls=$((calls + 1))
     printf '%s\n' "$calls" > "$calls_file"
     if [ "$calls" -ge 2 ]; then
-      printf '[{"submitted_at":"2026-01-01T00:00:03Z","commit_id":"newerreview1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+      jq -nc '[{submitted_at:"2026-01-01T00:00:03Z",commit_id:"newerreview1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `dddddddddd` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     else
       printf '[]\n'
     fi
@@ -3476,6 +3487,14 @@ unset _codex_tied_mixed_blocking_review_wins_mock_dir _codex_tied_mixed_blocking
 # instead of via a piped `head`, eliminating the SIGPIPE entirely. Body is
 # built via jq's own string-repeat operator (200000 chars) rather than a
 # large literal in this file or a python3 dependency.
+#
+# Retargeted for issue #1491's conservative-verdict-classifier redesign:
+# this body's leading "No blocking issues found." prefix was a pre-plan
+# block-list vocabulary artifact, not a reproduction of
+# CODEX_APPROVED_TEMPLATES' whole-body exact template, so it now correctly
+# safe-fails to NEEDS_REVISION. The scenario's actual purpose — proving a
+# large (~200,000-character) response completes without a SIGPIPE crash —
+# is unaffected by the verdict changing; only the disposition changes.
 _codex_long_review_body_no_sigpipe_mock_dir="$(mktemp -d)"
 cat > "$_codex_long_review_body_no_sigpipe_mock_dir/gh" <<'CODEX_LONG_REVIEW_BODY_NO_SIGPIPE_GH'
 #!/usr/bin/env bash
@@ -3510,8 +3529,8 @@ PATH="$_codex_long_review_body_no_sigpipe_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_long_review_body_no_sigpipe_mock_dir/output.txt" 2>&1 || _codex_long_review_body_no_sigpipe_exit=$?
 _codex_long_review_body_no_sigpipe_output="$(cat "$_codex_long_review_body_no_sigpipe_mock_dir/output.txt")"
-run_test "codex_long_review_body_no_sigpipe_exit_clean" "0" "$_codex_long_review_body_no_sigpipe_exit"
-run_test "codex_long_review_body_no_sigpipe_verdict" "VERDICT: APPROVED" \
+run_test "codex_long_review_body_no_sigpipe_exit_clean" "1" "$_codex_long_review_body_no_sigpipe_exit"
+run_test "codex_long_review_body_no_sigpipe_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_long_review_body_no_sigpipe_output" | grep "^VERDICT:")"
 rm -rf "$_codex_long_review_body_no_sigpipe_mock_dir"
 unset _codex_long_review_body_no_sigpipe_mock_dir _codex_long_review_body_no_sigpipe_output _codex_long_review_body_no_sigpipe_exit
@@ -3671,6 +3690,14 @@ unset _codex_terminal_comment_vs_newer_env_error_mock_dir _codex_terminal_commen
 # All 4 sites now truncate via `jq -Rrs '.[0:10000]'`, which slurps its
 # entire stdin before producing output so the writer can never receive
 # SIGPIPE regardless of input size.
+#
+# Retargeted for issue #1491's conservative-verdict-classifier redesign:
+# this body (verdict sentence + 200,000 filler characters + Reviewed-commit
+# marker, no footer) does not reproduce CODEX_APPROVED_TEMPLATES' whole-body
+# exact template, so it now correctly safe-fails to NEEDS_REVISION. The
+# scenario's actual purpose — proving a large root-comment body completes
+# without a SIGPIPE crash — is unaffected by the verdict changing; only the
+# disposition changes.
 _codex_long_root_comment_no_sigpipe_mock_dir="$(mktemp -d)"
 cat > "$_codex_long_root_comment_no_sigpipe_mock_dir/gh" <<'CODEX_LONG_ROOT_COMMENT_NO_SIGPIPE_GH'
 #!/usr/bin/env bash
@@ -3705,8 +3732,8 @@ PATH="$_codex_long_root_comment_no_sigpipe_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_long_root_comment_no_sigpipe_mock_dir/output.txt" 2>&1 || _codex_long_root_comment_no_sigpipe_exit=$?
 _codex_long_root_comment_no_sigpipe_output="$(cat "$_codex_long_root_comment_no_sigpipe_mock_dir/output.txt")"
-run_test "codex_long_root_comment_no_sigpipe_exit_clean" "0" "$_codex_long_root_comment_no_sigpipe_exit"
-run_test "codex_long_root_comment_no_sigpipe_verdict" "VERDICT: APPROVED" \
+run_test "codex_long_root_comment_no_sigpipe_exit_clean" "1" "$_codex_long_root_comment_no_sigpipe_exit"
+run_test "codex_long_root_comment_no_sigpipe_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_long_root_comment_no_sigpipe_output" | grep "^VERDICT:")"
 rm -rf "$_codex_long_root_comment_no_sigpipe_mock_dir"
 unset _codex_long_root_comment_no_sigpipe_mock_dir _codex_long_root_comment_no_sigpipe_output _codex_long_root_comment_no_sigpipe_exit
@@ -4264,6 +4291,17 @@ unset _codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir _codex_
 # instead, returning APPROVED instead of UNAVAILABLE. requires_attention
 # now also checks codex_response_is_usage_limit. Fixture: clean review
 # first in the array, mixed usage-limit+approval review second, both tied.
+#
+# The clean review's body must reproduce a real CODEX_APPROVED_TEMPLATES
+# entry (issue #1491's conservative-verdict-classifier implementation
+# plan): codex_response_priority ranks an unrecognized body (2) ABOVE
+# usage-limit (1), so once this fixture's clean-review body stopped
+# reproducing a template it would rank as "unrecognized" and win the tie
+# against the usage-limit review by coincidence of tier ordering, not
+# because the usage-limit review was correctly classified — silently
+# absorbing the exact regression this scenario exists to catch (the same
+# failure mode Codex GitHub finding `3805611400` identified for
+# codex_usage_limit_topic_mention_not_quota's competing fixture).
 _codex_tied_usage_limit_with_approval_phrase_mock_dir="$(mktemp -d)"
 cat > "$_codex_tied_usage_limit_with_approval_phrase_mock_dir/gh" <<'CODEX_TIED_USAGE_LIMIT_WITH_APPROVAL_PHRASE_GH'
 #!/usr/bin/env bash
@@ -4279,7 +4317,7 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
-    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"feedc0de1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"feedc0de1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues could be evaluated because you have reached your Codex usage limits."}]\n'
+    jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"feedc0de1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `2222222222` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")},{submitted_at:"2026-01-01T00:00:01Z",commit_id:"feedc0de1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:"No blocking issues could be evaluated because you have reached your Codex usage limits."}]'
     exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
@@ -4660,6 +4698,25 @@ unset _codex_qualifier_negated_approval_root_comment_mock_dir _codex_qualifier_n
 # emitted UNAVAILABLE instead of APPROVED for an actually-clean PR (fresh
 # evidence from PR #1490 finding 3789928781). The alternative now
 # requires an exhaustion/unavailability word directly after the noun.
+#
+# Retargeted for issue #1491's conservative-verdict-classifier redesign
+# (Codex GitHub finding `3805611400`, P2): the review's own body still
+# does not reproduce CODEX_APPROVED_TEMPLATES (it never did — this
+# scenario relies on codex_response_priority ranking an unrecognized body
+# ABOVE usage-limit, priority 2 vs 1, so the review correctly wins the tie
+# and the composed verdict now safe-fails to NEEDS_REVISION instead of
+# APPROVED). The competing SHA-pinned ROOT COMMENT body, however, is
+# updated to the exact new template (not merely left as-is): if it were
+# left at its old "No blocking issues found." vocabulary body, it would
+# also collapse to the same unrecognized priority tier (2) as the review,
+# and the tie would then be decided by array order rather than by whether
+# the review's usage-limit-topic-mention is correctly classified —
+# silently absorbing the exact regression this scenario exists to catch.
+# Keeping the root comment as a real template (priority 0) preserves the
+# scenario's actual test: the review (priority 2, correctly NOT
+# usage-limit) still wins the tie over the clean root comment
+# (priority 0), and the composed verdict safe-fails on the review's own
+# unrecognized wording — never misrouted to UNAVAILABLE.
 _codex_usage_limit_topic_mention_not_quota_mock_dir="$(mktemp -d)"
 cat > "$_codex_usage_limit_topic_mention_not_quota_mock_dir/gh" <<'CODEX_USAGE_LIMIT_TOPIC_MENTION_NOT_QUOTA_GH'
 #!/usr/bin/env bash
@@ -4678,7 +4735,7 @@ case "$*" in
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade008f1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. The Codex usage limit handling looks correct."}]\n'
     exit 0 ;;
   *"issues/"*"/comments"*)
-    printf '[{"id":263,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found.\\n\\n**Reviewed commit:** `facade008f`"}]\n'
+    jq -nc '[{id:263,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `facade008f` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
@@ -4695,8 +4752,8 @@ PATH="$_codex_usage_limit_topic_mention_not_quota_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_usage_limit_topic_mention_not_quota_mock_dir/output.txt" 2>&1 || _codex_usage_limit_topic_mention_not_quota_exit=$?
 _codex_usage_limit_topic_mention_not_quota_output="$(cat "$_codex_usage_limit_topic_mention_not_quota_mock_dir/output.txt")"
-run_test "codex_usage_limit_topic_mention_not_quota_exit_clean" "0" "$_codex_usage_limit_topic_mention_not_quota_exit"
-run_test "codex_usage_limit_topic_mention_not_quota_verdict" "VERDICT: APPROVED" \
+run_test "codex_usage_limit_topic_mention_not_quota_exit_clean" "1" "$_codex_usage_limit_topic_mention_not_quota_exit"
+run_test "codex_usage_limit_topic_mention_not_quota_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_usage_limit_topic_mention_not_quota_output" | grep "^VERDICT:")"
 rm -rf "$_codex_usage_limit_topic_mention_not_quota_mock_dir"
 unset _codex_usage_limit_topic_mention_not_quota_mock_dir _codex_usage_limit_topic_mention_not_quota_output _codex_usage_limit_topic_mention_not_quota_exit
@@ -4757,6 +4814,13 @@ unset _codex_negated_no_blocking_issues_root_comment_mock_dir _codex_negated_no_
 # found. The docs correctly explain Codex usage limits for code
 # reviews.") was itself misclassified as a usage-limit notice (fresh
 # evidence from PR #1490 finding 3789958776).
+#
+# Retargeted for issue #1491's conservative-verdict-classifier redesign:
+# this body does not reproduce CODEX_APPROVED_TEMPLATES' whole-body exact
+# template, so it now correctly safe-fails to NEEDS_REVISION. This is a
+# single-evidence-source fixture (no competing tied evidence), so the
+# retarget is a plain disposition change — is_usage_limit's own guard
+# (unaffected by this plan) is still what is under test here.
 _codex_usage_limit_code_reviews_phrase_mention_mock_dir="$(mktemp -d)"
 cat > "$_codex_usage_limit_code_reviews_phrase_mention_mock_dir/gh" <<'CODEX_USAGE_LIMIT_CODE_REVIEWS_PHRASE_MENTION_GH'
 #!/usr/bin/env bash
@@ -4791,8 +4855,8 @@ PATH="$_codex_usage_limit_code_reviews_phrase_mention_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_usage_limit_code_reviews_phrase_mention_mock_dir/output.txt" 2>&1 || _codex_usage_limit_code_reviews_phrase_mention_exit=$?
 _codex_usage_limit_code_reviews_phrase_mention_output="$(cat "$_codex_usage_limit_code_reviews_phrase_mention_mock_dir/output.txt")"
-run_test "codex_usage_limit_code_reviews_phrase_mention_exit_clean" "0" "$_codex_usage_limit_code_reviews_phrase_mention_exit"
-run_test "codex_usage_limit_code_reviews_phrase_mention_verdict" "VERDICT: APPROVED" \
+run_test "codex_usage_limit_code_reviews_phrase_mention_exit_clean" "1" "$_codex_usage_limit_code_reviews_phrase_mention_exit"
+run_test "codex_usage_limit_code_reviews_phrase_mention_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_usage_limit_code_reviews_phrase_mention_output" | grep "^VERDICT:")"
 rm -rf "$_codex_usage_limit_code_reviews_phrase_mention_mock_dir"
 unset _codex_usage_limit_code_reviews_phrase_mention_mock_dir _codex_usage_limit_code_reviews_phrase_mention_output _codex_usage_limit_code_reviews_phrase_mention_exit
@@ -4849,6 +4913,13 @@ unset _codex_negation_beyond_bounded_window_root_comment_mock_dir _codex_negatio
 # in a later, unrelated sentence — the sentence-terminator exclusion in
 # the character class is what keeps the unbounded window from
 # over-matching across sentence boundaries.
+#
+# Retargeted for issue #1491's conservative-verdict-classifier redesign:
+# this body does not reproduce CODEX_APPROVED_TEMPLATES' whole-body exact
+# template, so it now correctly safe-fails to NEEDS_REVISION regardless of
+# the (now-deleted) negation-leak mechanism this scenario originally
+# regression-tested; the construction remains valid coverage confirming it
+# is trivially rejected under the new design.
 _codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir="$(mktemp -d)"
 cat > "$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir/gh" <<'CODEX_NEGATION_PRIOR_SENTENCE_DOES_NOT_LEAK_ROOT_COMMENT_GH'
 #!/usr/bin/env bash
@@ -4883,8 +4954,8 @@ PATH="$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir:$PATH"
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir/output.txt" 2>&1 || _codex_negation_prior_sentence_does_not_leak_root_comment_exit=$?
 _codex_negation_prior_sentence_does_not_leak_root_comment_output="$(cat "$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir/output.txt")"
-run_test "codex_negation_prior_sentence_does_not_leak_root_comment_exit_clean" "0" "$_codex_negation_prior_sentence_does_not_leak_root_comment_exit"
-run_test "codex_negation_prior_sentence_does_not_leak_root_comment_verdict" "VERDICT: APPROVED" \
+run_test "codex_negation_prior_sentence_does_not_leak_root_comment_exit_clean" "1" "$_codex_negation_prior_sentence_does_not_leak_root_comment_exit"
+run_test "codex_negation_prior_sentence_does_not_leak_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_negation_prior_sentence_does_not_leak_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir"
 unset _codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir _codex_negation_prior_sentence_does_not_leak_root_comment_output _codex_negation_prior_sentence_does_not_leak_root_comment_exit
@@ -4947,6 +5018,15 @@ unset _codex_negation_reverse_order_cannot_approve_root_comment_mock_dir _codex_
 # notice, downgrading APPROVED to codex-github-environment-missing (fresh
 # evidence from PR #1490 finding 3790023143). COMMENT_LATEST_IS_TERMINAL
 # now gates that override so it never fires on the terminal comment itself.
+#
+# Retargeted for issue #1491's conservative-verdict-classifier redesign:
+# this body does not reproduce CODEX_APPROVED_TEMPLATES' whole-body exact
+# template, so it now correctly safe-fails to NEEDS_REVISION instead of
+# APPROVED. The property this scenario actually tests — that the terminal
+# comment is never re-classified as a separate ancillary environment-error
+# notice — is unaffected: COMMENT_LATEST_IS_TERMINAL's gate is independent
+# of codex_response_is_approved and still correctly prevents the downgrade
+# to codex-github-environment-missing.
 _codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir="$(mktemp -d)"
 cat > "$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir/gh" <<'CODEX_TERMINAL_COMMENT_QUOTES_ENV_ERROR_NOT_ANCILLARY_GH'
 #!/usr/bin/env bash
@@ -4981,8 +5061,8 @@ PATH="$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir/output.txt" 2>&1 || _codex_terminal_comment_quotes_env_error_not_ancillary_exit=$?
 _codex_terminal_comment_quotes_env_error_not_ancillary_output="$(cat "$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir/output.txt")"
-run_test "codex_terminal_comment_quotes_env_error_not_ancillary_exit_clean" "0" "$_codex_terminal_comment_quotes_env_error_not_ancillary_exit"
-run_test "codex_terminal_comment_quotes_env_error_not_ancillary_verdict" "VERDICT: APPROVED" \
+run_test "codex_terminal_comment_quotes_env_error_not_ancillary_exit_clean" "1" "$_codex_terminal_comment_quotes_env_error_not_ancillary_exit"
+run_test "codex_terminal_comment_quotes_env_error_not_ancillary_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_terminal_comment_quotes_env_error_not_ancillary_output" | grep "^VERDICT:")"
 rm -rf "$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir"
 unset _codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir _codex_terminal_comment_quotes_env_error_not_ancillary_output _codex_terminal_comment_quotes_env_error_not_ancillary_exit
@@ -4995,8 +5075,16 @@ unset _codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir _codex_ter
 # were not run" clause, not to the approval) was incorrectly flagged as
 # negated and returned NEEDS_REVISION instead of APPROVED (fresh evidence
 # from PR #1490 finding 3790062089).
-_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir="$(mktemp -d)"
-cat > "$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir/gh" <<'CODEX_UNRELATED_LATER_NEGATION_STAYS_APPROVED_ROOT_COMMENT_GH'
+#
+# Retargeted and renamed for issue #1491's conservative-verdict-classifier
+# redesign: this body does not reproduce CODEX_APPROVED_TEMPLATES' whole-
+# body exact template, so it now correctly safe-fails to NEEDS_REVISION —
+# the (now-deleted) reverse-order negation mechanism this scenario
+# originally regression-tested no longer exists to have a gap in. Renamed
+# from "...stays_approved_..." per the plan's naming standing rule (a
+# scenario name must never assert the opposite of its expectation).
+_codex_unrelated_later_negation_safe_fails_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_unrelated_later_negation_safe_fails_root_comment_mock_dir/gh" <<'CODEX_UNRELATED_LATER_NEGATION_SAFE_FAILS_ROOT_COMMENT_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
@@ -5019,21 +5107,21 @@ case "$*" in
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_UNRELATED_LATER_NEGATION_STAYS_APPROVED_ROOT_COMMENT_GH
-chmod +x "$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir/gh"
+CODEX_UNRELATED_LATER_NEGATION_SAFE_FAILS_ROOT_COMMENT_GH
+chmod +x "$_codex_unrelated_later_negation_safe_fails_root_comment_mock_dir/gh"
 
-_codex_unrelated_later_negation_stays_approved_root_comment_output=""
-_codex_unrelated_later_negation_stays_approved_root_comment_exit=0
-PATH="$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir:$PATH" \
+_codex_unrelated_later_negation_safe_fails_root_comment_output=""
+_codex_unrelated_later_negation_safe_fails_root_comment_exit=0
+PATH="$_codex_unrelated_later_negation_safe_fails_root_comment_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_unrelated_later_negation_stays_approved_root_comment_exit=$?
-_codex_unrelated_later_negation_stays_approved_root_comment_output="$(cat "$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_unrelated_later_negation_stays_approved_root_comment_exit_clean" "0" "$_codex_unrelated_later_negation_stays_approved_root_comment_exit"
-run_test "codex_unrelated_later_negation_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_unrelated_later_negation_stays_approved_root_comment_output" | grep "^VERDICT:")"
-rm -rf "$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir"
-unset _codex_unrelated_later_negation_stays_approved_root_comment_mock_dir _codex_unrelated_later_negation_stays_approved_root_comment_output _codex_unrelated_later_negation_stays_approved_root_comment_exit
+  >"$_codex_unrelated_later_negation_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_unrelated_later_negation_safe_fails_root_comment_exit=$?
+_codex_unrelated_later_negation_safe_fails_root_comment_output="$(cat "$_codex_unrelated_later_negation_safe_fails_root_comment_mock_dir/output.txt")"
+run_test "codex_unrelated_later_negation_safe_fails_root_comment_exit_clean" "1" "$_codex_unrelated_later_negation_safe_fails_root_comment_exit"
+run_test "codex_unrelated_later_negation_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_unrelated_later_negation_safe_fails_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_unrelated_later_negation_safe_fails_root_comment_mock_dir"
+unset _codex_unrelated_later_negation_safe_fails_root_comment_mock_dir _codex_unrelated_later_negation_safe_fails_root_comment_output _codex_unrelated_later_negation_safe_fails_root_comment_exit
 
 # codex_combine_terminal_evidence previously applied the SAME newest-wins
 # comparison to a usage-limit ancillary comment as it does to an
@@ -5190,6 +5278,12 @@ unset _codex_quoted_clean_phrase_not_approved_root_comment_mock_dir _codex_quote
 # change; looks good") and was incorrectly flagged as negated (fresh
 # evidence from PR #1490 finding 3790122061). The character class now
 # also excludes `;`.
+#
+# Retargeted for issue #1491's conservative-verdict-classifier redesign:
+# this body does not reproduce CODEX_APPROVED_TEMPLATES' whole-body exact
+# template, so it now correctly safe-fails to NEEDS_REVISION regardless of
+# the (now-deleted) semicolon-scoping mechanism this scenario originally
+# regression-tested.
 _codex_semicolon_scoped_negation_root_comment_mock_dir="$(mktemp -d)"
 cat > "$_codex_semicolon_scoped_negation_root_comment_mock_dir/gh" <<'CODEX_SEMICOLON_SCOPED_NEGATION_ROOT_COMMENT_GH'
 #!/usr/bin/env bash
@@ -5224,8 +5318,8 @@ PATH="$_codex_semicolon_scoped_negation_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_semicolon_scoped_negation_root_comment_mock_dir/output.txt" 2>&1 || _codex_semicolon_scoped_negation_root_comment_exit=$?
 _codex_semicolon_scoped_negation_root_comment_output="$(cat "$_codex_semicolon_scoped_negation_root_comment_mock_dir/output.txt")"
-run_test "codex_semicolon_scoped_negation_root_comment_exit_clean" "0" "$_codex_semicolon_scoped_negation_root_comment_exit"
-run_test "codex_semicolon_scoped_negation_root_comment_verdict" "VERDICT: APPROVED" \
+run_test "codex_semicolon_scoped_negation_root_comment_exit_clean" "1" "$_codex_semicolon_scoped_negation_root_comment_exit"
+run_test "codex_semicolon_scoped_negation_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_semicolon_scoped_negation_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_semicolon_scoped_negation_root_comment_mock_dir"
 unset _codex_semicolon_scoped_negation_root_comment_mock_dir _codex_semicolon_scoped_negation_root_comment_output _codex_semicolon_scoped_negation_root_comment_exit
@@ -5287,6 +5381,13 @@ unset _codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir _codex_ba
 # was clean (fresh evidence from PR #1490 finding 3793219192).
 # codex_response_is_approved now strips quoted spans ONCE, before running
 # either check.
+#
+# Retargeted for issue #1491's conservative-verdict-classifier redesign:
+# this body does not reproduce CODEX_APPROVED_TEMPLATES' whole-body exact
+# template, so it now correctly safe-fails to NEEDS_REVISION regardless of
+# the (now-deleted) quote-stripping-order mechanism this scenario
+# originally regression-tested for the approval path (codex_strip_quoted_
+# spans itself is unchanged, and is_approved no longer calls it at all).
 _codex_quoted_rejection_in_clean_review_root_comment_mock_dir="$(mktemp -d)"
 cat > "$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir/gh" <<'CODEX_QUOTED_REJECTION_IN_CLEAN_REVIEW_ROOT_COMMENT_GH'
 #!/usr/bin/env bash
@@ -5321,8 +5422,8 @@ PATH="$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir/output.txt" 2>&1 || _codex_quoted_rejection_in_clean_review_root_comment_exit=$?
 _codex_quoted_rejection_in_clean_review_root_comment_output="$(cat "$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir/output.txt")"
-run_test "codex_quoted_rejection_in_clean_review_root_comment_exit_clean" "0" "$_codex_quoted_rejection_in_clean_review_root_comment_exit"
-run_test "codex_quoted_rejection_in_clean_review_root_comment_verdict" "VERDICT: APPROVED" \
+run_test "codex_quoted_rejection_in_clean_review_root_comment_exit_clean" "1" "$_codex_quoted_rejection_in_clean_review_root_comment_exit"
+run_test "codex_quoted_rejection_in_clean_review_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_quoted_rejection_in_clean_review_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir"
 unset _codex_quoted_rejection_in_clean_review_root_comment_mock_dir _codex_quoted_rejection_in_clean_review_root_comment_output _codex_quoted_rejection_in_clean_review_root_comment_exit
@@ -5332,6 +5433,12 @@ unset _codex_quoted_rejection_in_clean_review_root_comment_mock_dir _codex_quote
 # required, but looks good") the same way the original unbounded span
 # crossed the semicolon (fresh evidence from PR #1490 finding
 # 3793219193). The character class now also excludes `,`.
+#
+# Retargeted for issue #1491's conservative-verdict-classifier redesign:
+# this body does not reproduce CODEX_APPROVED_TEMPLATES' whole-body exact
+# template, so it now correctly safe-fails to NEEDS_REVISION regardless of
+# the (now-deleted) comma-scoping mechanism this scenario originally
+# regression-tested.
 _codex_comma_scoped_negation_root_comment_mock_dir="$(mktemp -d)"
 cat > "$_codex_comma_scoped_negation_root_comment_mock_dir/gh" <<'CODEX_COMMA_SCOPED_NEGATION_ROOT_COMMENT_GH'
 #!/usr/bin/env bash
@@ -5366,8 +5473,8 @@ PATH="$_codex_comma_scoped_negation_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_comma_scoped_negation_root_comment_mock_dir/output.txt" 2>&1 || _codex_comma_scoped_negation_root_comment_exit=$?
 _codex_comma_scoped_negation_root_comment_output="$(cat "$_codex_comma_scoped_negation_root_comment_mock_dir/output.txt")"
-run_test "codex_comma_scoped_negation_root_comment_exit_clean" "0" "$_codex_comma_scoped_negation_root_comment_exit"
-run_test "codex_comma_scoped_negation_root_comment_verdict" "VERDICT: APPROVED" \
+run_test "codex_comma_scoped_negation_root_comment_exit_clean" "1" "$_codex_comma_scoped_negation_root_comment_exit"
+run_test "codex_comma_scoped_negation_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_comma_scoped_negation_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_comma_scoped_negation_root_comment_mock_dir"
 unset _codex_comma_scoped_negation_root_comment_mock_dir _codex_comma_scoped_negation_root_comment_output _codex_comma_scoped_negation_root_comment_exit
@@ -5383,6 +5490,15 @@ unset _codex_comma_scoped_negation_root_comment_mock_dir _codex_comma_scoped_neg
 # does not cover, since that guard only protects the ancillary-evidence
 # combination stage, not this separate final verdict check (fresh
 # evidence from PR #1490 finding 3793259351).
+#
+# Retargeted for issue #1491's conservative-verdict-classifier redesign:
+# this body does not reproduce CODEX_APPROVED_TEMPLATES' whole-body exact
+# template, so it now correctly safe-fails to NEEDS_REVISION. The property
+# this scenario actually tests — that the quoted quota message does not
+# trigger a false UNAVAILABLE — is unaffected: codex_response_is_usage_
+# limit is still called on the quote-stripped body at this verdict site
+# (unchanged by this plan), so the quoted quota wording is still correctly
+# never treated as a genuine usage-limit notice.
 _codex_terminal_review_quotes_quota_message_mock_dir="$(mktemp -d)"
 cat > "$_codex_terminal_review_quotes_quota_message_mock_dir/gh" <<'CODEX_TERMINAL_REVIEW_QUOTES_QUOTA_MESSAGE_GH'
 #!/usr/bin/env bash
@@ -5417,8 +5533,8 @@ PATH="$_codex_terminal_review_quotes_quota_message_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_terminal_review_quotes_quota_message_mock_dir/output.txt" 2>&1 || _codex_terminal_review_quotes_quota_message_exit=$?
 _codex_terminal_review_quotes_quota_message_output="$(cat "$_codex_terminal_review_quotes_quota_message_mock_dir/output.txt")"
-run_test "codex_terminal_review_quotes_quota_message_exit_clean" "0" "$_codex_terminal_review_quotes_quota_message_exit"
-run_test "codex_terminal_review_quotes_quota_message_verdict" "VERDICT: APPROVED" \
+run_test "codex_terminal_review_quotes_quota_message_exit_clean" "1" "$_codex_terminal_review_quotes_quota_message_exit"
+run_test "codex_terminal_review_quotes_quota_message_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_terminal_review_quotes_quota_message_output" | grep "^VERDICT:")"
 rm -rf "$_codex_terminal_review_quotes_quota_message_mock_dir"
 unset _codex_terminal_review_quotes_quota_message_mock_dir _codex_terminal_review_quotes_quota_message_output _codex_terminal_review_quotes_quota_message_exit
@@ -5431,8 +5547,17 @@ unset _codex_terminal_review_quotes_quota_message_mock_dir _codex_terminal_revie
 # phrases are affirmative (fresh evidence from PR #1490 finding
 # 3793299512). codex_response_is_approved now strips the "not only" idiom
 # before running the negation check.
-_codex_not_only_idiom_stays_approved_root_comment_mock_dir="$(mktemp -d)"
-cat > "$_codex_not_only_idiom_stays_approved_root_comment_mock_dir/gh" <<'CODEX_NOT_ONLY_IDIOM_STAYS_APPROVED_ROOT_COMMENT_GH'
+#
+# Retargeted and renamed for issue #1491's conservative-verdict-classifier
+# redesign: this body does not reproduce CODEX_APPROVED_TEMPLATES' whole-
+# body exact template, so it now correctly safe-fails to NEEDS_REVISION.
+# codex_strip_not_only_idiom itself is unchanged, but is_approved no
+# longer calls it (only codex_response_is_blocking does, Decision 4) — the
+# idiom-stripping-before-negation-check mechanism this scenario originally
+# regression-tested no longer applies to the approval path. Renamed from
+# "...stays_approved_..." per the plan's naming standing rule.
+_codex_not_only_idiom_safe_fails_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_not_only_idiom_safe_fails_root_comment_mock_dir/gh" <<'CODEX_NOT_ONLY_IDIOM_SAFE_FAILS_ROOT_COMMENT_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
@@ -5455,29 +5580,36 @@ case "$*" in
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_NOT_ONLY_IDIOM_STAYS_APPROVED_ROOT_COMMENT_GH
-chmod +x "$_codex_not_only_idiom_stays_approved_root_comment_mock_dir/gh"
+CODEX_NOT_ONLY_IDIOM_SAFE_FAILS_ROOT_COMMENT_GH
+chmod +x "$_codex_not_only_idiom_safe_fails_root_comment_mock_dir/gh"
 
-_codex_not_only_idiom_stays_approved_root_comment_output=""
-_codex_not_only_idiom_stays_approved_root_comment_exit=0
-PATH="$_codex_not_only_idiom_stays_approved_root_comment_mock_dir:$PATH" \
+_codex_not_only_idiom_safe_fails_root_comment_output=""
+_codex_not_only_idiom_safe_fails_root_comment_exit=0
+PATH="$_codex_not_only_idiom_safe_fails_root_comment_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_not_only_idiom_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_idiom_stays_approved_root_comment_exit=$?
-_codex_not_only_idiom_stays_approved_root_comment_output="$(cat "$_codex_not_only_idiom_stays_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_not_only_idiom_stays_approved_root_comment_exit_clean" "0" "$_codex_not_only_idiom_stays_approved_root_comment_exit"
-run_test "codex_not_only_idiom_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_not_only_idiom_stays_approved_root_comment_output" | grep "^VERDICT:")"
-rm -rf "$_codex_not_only_idiom_stays_approved_root_comment_mock_dir"
-unset _codex_not_only_idiom_stays_approved_root_comment_mock_dir _codex_not_only_idiom_stays_approved_root_comment_output _codex_not_only_idiom_stays_approved_root_comment_exit
+  >"$_codex_not_only_idiom_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_idiom_safe_fails_root_comment_exit=$?
+_codex_not_only_idiom_safe_fails_root_comment_output="$(cat "$_codex_not_only_idiom_safe_fails_root_comment_mock_dir/output.txt")"
+run_test "codex_not_only_idiom_safe_fails_root_comment_exit_clean" "1" "$_codex_not_only_idiom_safe_fails_root_comment_exit"
+run_test "codex_not_only_idiom_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_not_only_idiom_safe_fails_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_not_only_idiom_safe_fails_root_comment_mock_dir"
+unset _codex_not_only_idiom_safe_fails_root_comment_mock_dir _codex_not_only_idiom_safe_fails_root_comment_output _codex_not_only_idiom_safe_fails_root_comment_exit
 
 # codex_strip_not_only_idiom's [Nn]ot/[Oo]nly form only covered Title-Case
 # and lowercase, not a fully uppercase emphasis form like "NOT ONLY does
 # this look good, it is approved" (fresh evidence from PR #1490 finding
 # 3793330278, a followup to 3793299512). Every letter is now
 # bracket-expanded for both cases.
-_codex_not_only_idiom_uppercase_stays_approved_root_comment_mock_dir="$(mktemp -d)"
-cat > "$_codex_not_only_idiom_uppercase_stays_approved_root_comment_mock_dir/gh" <<'CODEX_NOT_ONLY_IDIOM_UPPERCASE_STAYS_APPROVED_ROOT_COMMENT_GH'
+#
+# Retargeted and renamed for issue #1491's conservative-verdict-classifier
+# redesign: this body does not reproduce CODEX_APPROVED_TEMPLATES' whole-
+# body exact template, so it now correctly safe-fails to NEEDS_REVISION,
+# for the same reason as codex_not_only_idiom_safe_fails_root_comment
+# above. Renamed from "...stays_approved_..." per the plan's naming
+# standing rule.
+_codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir/gh" <<'CODEX_NOT_ONLY_IDIOM_UPPERCASE_SAFE_FAILS_ROOT_COMMENT_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
@@ -5500,21 +5632,21 @@ case "$*" in
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_NOT_ONLY_IDIOM_UPPERCASE_STAYS_APPROVED_ROOT_COMMENT_GH
-chmod +x "$_codex_not_only_idiom_uppercase_stays_approved_root_comment_mock_dir/gh"
+CODEX_NOT_ONLY_IDIOM_UPPERCASE_SAFE_FAILS_ROOT_COMMENT_GH
+chmod +x "$_codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir/gh"
 
-_codex_not_only_idiom_uppercase_stays_approved_root_comment_output=""
-_codex_not_only_idiom_uppercase_stays_approved_root_comment_exit=0
-PATH="$_codex_not_only_idiom_uppercase_stays_approved_root_comment_mock_dir:$PATH" \
+_codex_not_only_idiom_uppercase_safe_fails_root_comment_output=""
+_codex_not_only_idiom_uppercase_safe_fails_root_comment_exit=0
+PATH="$_codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_not_only_idiom_uppercase_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_idiom_uppercase_stays_approved_root_comment_exit=$?
-_codex_not_only_idiom_uppercase_stays_approved_root_comment_output="$(cat "$_codex_not_only_idiom_uppercase_stays_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_not_only_idiom_uppercase_stays_approved_root_comment_exit_clean" "0" "$_codex_not_only_idiom_uppercase_stays_approved_root_comment_exit"
-run_test "codex_not_only_idiom_uppercase_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_not_only_idiom_uppercase_stays_approved_root_comment_output" | grep "^VERDICT:")"
-rm -rf "$_codex_not_only_idiom_uppercase_stays_approved_root_comment_mock_dir"
-unset _codex_not_only_idiom_uppercase_stays_approved_root_comment_mock_dir _codex_not_only_idiom_uppercase_stays_approved_root_comment_output _codex_not_only_idiom_uppercase_stays_approved_root_comment_exit
+  >"$_codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_idiom_uppercase_safe_fails_root_comment_exit=$?
+_codex_not_only_idiom_uppercase_safe_fails_root_comment_output="$(cat "$_codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir/output.txt")"
+run_test "codex_not_only_idiom_uppercase_safe_fails_root_comment_exit_clean" "1" "$_codex_not_only_idiom_uppercase_safe_fails_root_comment_exit"
+run_test "codex_not_only_idiom_uppercase_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_not_only_idiom_uppercase_safe_fails_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir"
+unset _codex_not_only_idiom_uppercase_safe_fails_root_comment_mock_dir _codex_not_only_idiom_uppercase_safe_fails_root_comment_output _codex_not_only_idiom_uppercase_safe_fails_root_comment_exit
 
 # "unable to" wasn't in CODEX_NEGATION_WORDS at all, so "I am unable to
 # approve this change" wasn't recognized as a rejection while an earlier
@@ -5616,8 +5748,19 @@ unset _codex_blockquoted_clean_phrase_not_approved_root_comment_mock_dir _codex_
 # NEEDS_REVISION for an actually-clean review (fresh evidence from PR
 # #1490 finding 3793367887). codex_response_is_blocking now shares the
 # same codex_strip_quoted_spans normalization as the approval checks.
-_codex_quoted_blocker_token_stays_approved_root_comment_mock_dir="$(mktemp -d)"
-cat > "$_codex_quoted_blocker_token_stays_approved_root_comment_mock_dir/gh" <<'CODEX_QUOTED_BLOCKER_TOKEN_STAYS_APPROVED_ROOT_COMMENT_GH'
+#
+# Retargeted and renamed for issue #1491's conservative-verdict-classifier
+# redesign: this body does not reproduce CODEX_APPROVED_TEMPLATES' whole-
+# body exact template, so it now correctly safe-fails to NEEDS_REVISION.
+# The property this scenario actually tests — that the quoted "must fix"
+# token does not cause a false blocking verdict — is unaffected:
+# codex_response_is_blocking (Decision 4, unchanged) still quote-strips
+# before matching and still correctly does not classify this body as
+# blocking; the composed verdict now reaches the unrecognized-format
+# safe-fail instead of APPROVED, never the blocking branch. Renamed from
+# "...stays_approved_..." per the plan's naming standing rule.
+_codex_quoted_blocker_token_safe_fails_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_quoted_blocker_token_safe_fails_root_comment_mock_dir/gh" <<'CODEX_QUOTED_BLOCKER_TOKEN_SAFE_FAILS_ROOT_COMMENT_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
@@ -5640,21 +5783,21 @@ case "$*" in
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_QUOTED_BLOCKER_TOKEN_STAYS_APPROVED_ROOT_COMMENT_GH
-chmod +x "$_codex_quoted_blocker_token_stays_approved_root_comment_mock_dir/gh"
+CODEX_QUOTED_BLOCKER_TOKEN_SAFE_FAILS_ROOT_COMMENT_GH
+chmod +x "$_codex_quoted_blocker_token_safe_fails_root_comment_mock_dir/gh"
 
-_codex_quoted_blocker_token_stays_approved_root_comment_output=""
-_codex_quoted_blocker_token_stays_approved_root_comment_exit=0
-PATH="$_codex_quoted_blocker_token_stays_approved_root_comment_mock_dir:$PATH" \
+_codex_quoted_blocker_token_safe_fails_root_comment_output=""
+_codex_quoted_blocker_token_safe_fails_root_comment_exit=0
+PATH="$_codex_quoted_blocker_token_safe_fails_root_comment_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_quoted_blocker_token_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_quoted_blocker_token_stays_approved_root_comment_exit=$?
-_codex_quoted_blocker_token_stays_approved_root_comment_output="$(cat "$_codex_quoted_blocker_token_stays_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_quoted_blocker_token_stays_approved_root_comment_exit_clean" "0" "$_codex_quoted_blocker_token_stays_approved_root_comment_exit"
-run_test "codex_quoted_blocker_token_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_quoted_blocker_token_stays_approved_root_comment_output" | grep "^VERDICT:")"
-rm -rf "$_codex_quoted_blocker_token_stays_approved_root_comment_mock_dir"
-unset _codex_quoted_blocker_token_stays_approved_root_comment_mock_dir _codex_quoted_blocker_token_stays_approved_root_comment_output _codex_quoted_blocker_token_stays_approved_root_comment_exit
+  >"$_codex_quoted_blocker_token_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_quoted_blocker_token_safe_fails_root_comment_exit=$?
+_codex_quoted_blocker_token_safe_fails_root_comment_output="$(cat "$_codex_quoted_blocker_token_safe_fails_root_comment_mock_dir/output.txt")"
+run_test "codex_quoted_blocker_token_safe_fails_root_comment_exit_clean" "1" "$_codex_quoted_blocker_token_safe_fails_root_comment_exit"
+run_test "codex_quoted_blocker_token_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_quoted_blocker_token_safe_fails_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_quoted_blocker_token_safe_fails_root_comment_mock_dir"
+unset _codex_quoted_blocker_token_safe_fails_root_comment_mock_dir _codex_quoted_blocker_token_safe_fails_root_comment_output _codex_quoted_blocker_token_safe_fails_root_comment_exit
 
 # codex_response_is_blocking briefly gained the same fence-marker bail-out
 # used by is_usage_limit/is_environment_error/is_approved (applied "for
@@ -6348,8 +6491,19 @@ unset _codex_cannot_be_merged_blocking_root_comment_mock_dir _codex_cannot_be_me
 # misread as targeting a LATER, unrelated mention of "merge": a genuinely
 # clean review that discusses an unrelated negation before a separate
 # instruction to merge must still classify as approved.
-_codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir="$(mktemp -d)"
-cat > "$_codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir/gh" <<'CODEX_UNRELATED_NEGATION_BEFORE_MERGE_STAYS_APPROVED_ROOT_COMMENT_GH'
+#
+# Retargeted and renamed for issue #1491's conservative-verdict-classifier
+# redesign: this body does not reproduce CODEX_APPROVED_TEMPLATES' whole-
+# body exact template, so it now correctly safe-fails to NEEDS_REVISION.
+# The property this scenario actually tests — that the unrelated earlier
+# negation does not cause a false merge-refusal blocking verdict — is
+# unaffected: CODEX_MERGE_REFUSAL_PATTERN and codex_response_is_blocking
+# (Decision 4, unchanged) still correctly do not classify this body as
+# blocking; the composed verdict now reaches the unrecognized-format
+# safe-fail instead of APPROVED, never the blocking branch. Renamed from
+# "...stays_approved_..." per the plan's naming standing rule.
+_codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir/gh" <<'CODEX_UNRELATED_NEGATION_BEFORE_MERGE_SAFE_FAILS_ROOT_COMMENT_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
@@ -6372,21 +6526,21 @@ case "$*" in
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_UNRELATED_NEGATION_BEFORE_MERGE_STAYS_APPROVED_ROOT_COMMENT_GH
-chmod +x "$_codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir/gh"
+CODEX_UNRELATED_NEGATION_BEFORE_MERGE_SAFE_FAILS_ROOT_COMMENT_GH
+chmod +x "$_codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir/gh"
 
-_codex_unrelated_negation_before_merge_stays_approved_root_comment_output=""
-_codex_unrelated_negation_before_merge_stays_approved_root_comment_exit=0
-PATH="$_codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir:$PATH" \
+_codex_unrelated_negation_before_merge_safe_fails_root_comment_output=""
+_codex_unrelated_negation_before_merge_safe_fails_root_comment_exit=0
+PATH="$_codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_unrelated_negation_before_merge_stays_approved_root_comment_exit=$?
-_codex_unrelated_negation_before_merge_stays_approved_root_comment_output="$(cat "$_codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_unrelated_negation_before_merge_stays_approved_root_comment_exit_clean" "0" "$_codex_unrelated_negation_before_merge_stays_approved_root_comment_exit"
-run_test "codex_unrelated_negation_before_merge_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_unrelated_negation_before_merge_stays_approved_root_comment_output" | grep "^VERDICT:")"
-rm -rf "$_codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir"
-unset _codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir _codex_unrelated_negation_before_merge_stays_approved_root_comment_output _codex_unrelated_negation_before_merge_stays_approved_root_comment_exit
+  >"$_codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_unrelated_negation_before_merge_safe_fails_root_comment_exit=$?
+_codex_unrelated_negation_before_merge_safe_fails_root_comment_output="$(cat "$_codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir/output.txt")"
+run_test "codex_unrelated_negation_before_merge_safe_fails_root_comment_exit_clean" "1" "$_codex_unrelated_negation_before_merge_safe_fails_root_comment_exit"
+run_test "codex_unrelated_negation_before_merge_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_unrelated_negation_before_merge_safe_fails_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir"
+unset _codex_unrelated_negation_before_merge_safe_fails_root_comment_mock_dir _codex_unrelated_negation_before_merge_safe_fails_root_comment_output _codex_unrelated_negation_before_merge_safe_fails_root_comment_exit
 
 # CODEX_NEGATION_WORDS was missing "shouldn't"/"should not" and
 # "mustn't"/"must not" entirely, so neither the generalized
@@ -6451,8 +6605,21 @@ unset _codex_shouldnt_be_merged_blocking_root_comment_mock_dir _codex_shouldnt_b
 # review (fresh evidence from PR #1490 finding 3799277922).
 # codex_response_is_blocking now applies codex_strip_not_only_idiom the
 # same way codex_response_is_approved already does.
-_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir="$(mktemp -d)"
-cat > "$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir/gh" <<'CODEX_NOT_ONLY_SAFE_TO_MERGE_STAYS_APPROVED_ROOT_COMMENT_GH'
+#
+# Retargeted and renamed for issue #1491's conservative-verdict-classifier
+# redesign: this body does not reproduce CODEX_APPROVED_TEMPLATES' whole-
+# body exact template, so it now correctly safe-fails to NEEDS_REVISION.
+# This scenario's real coverage — that codex_strip_not_only_idiom's call
+# inside codex_response_is_blocking is load-bearing (Decision 4) and still
+# correctly prevents this "not only ... merge" idiom from being misread as
+# a merge refusal — is unaffected: is_blocking is unchanged by this plan
+# and codex_strip_not_only_idiom keeps both its definition and its one
+# real call site there. The composed verdict now reaches the
+# unrecognized-format safe-fail instead of APPROVED, never the blocking
+# branch. Renamed from "...stays_approved_..." per the plan's naming
+# standing rule.
+_codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir/gh" <<'CODEX_NOT_ONLY_SAFE_TO_MERGE_SAFE_FAILS_ROOT_COMMENT_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
@@ -6475,21 +6642,21 @@ case "$*" in
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_NOT_ONLY_SAFE_TO_MERGE_STAYS_APPROVED_ROOT_COMMENT_GH
-chmod +x "$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir/gh"
+CODEX_NOT_ONLY_SAFE_TO_MERGE_SAFE_FAILS_ROOT_COMMENT_GH
+chmod +x "$_codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir/gh"
 
-_codex_not_only_safe_to_merge_stays_approved_root_comment_output=""
-_codex_not_only_safe_to_merge_stays_approved_root_comment_exit=0
-PATH="$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir:$PATH" \
+_codex_not_only_safe_to_merge_safe_fails_root_comment_output=""
+_codex_not_only_safe_to_merge_safe_fails_root_comment_exit=0
+PATH="$_codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_safe_to_merge_stays_approved_root_comment_exit=$?
-_codex_not_only_safe_to_merge_stays_approved_root_comment_output="$(cat "$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_not_only_safe_to_merge_stays_approved_root_comment_exit_clean" "0" "$_codex_not_only_safe_to_merge_stays_approved_root_comment_exit"
-run_test "codex_not_only_safe_to_merge_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_not_only_safe_to_merge_stays_approved_root_comment_output" | grep "^VERDICT:")"
-rm -rf "$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir"
-unset _codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir _codex_not_only_safe_to_merge_stays_approved_root_comment_output _codex_not_only_safe_to_merge_stays_approved_root_comment_exit
+  >"$_codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_safe_to_merge_safe_fails_root_comment_exit=$?
+_codex_not_only_safe_to_merge_safe_fails_root_comment_output="$(cat "$_codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir/output.txt")"
+run_test "codex_not_only_safe_to_merge_safe_fails_root_comment_exit_clean" "1" "$_codex_not_only_safe_to_merge_safe_fails_root_comment_exit"
+run_test "codex_not_only_safe_to_merge_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_not_only_safe_to_merge_safe_fails_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir"
+unset _codex_not_only_safe_to_merge_safe_fails_root_comment_mock_dir _codex_not_only_safe_to_merge_safe_fails_root_comment_output _codex_not_only_safe_to_merge_safe_fails_root_comment_exit
 
 # CODEX_NEGATION_WORDS was missing "would not"/"wouldn't" — the fourth
 # consecutive missing-negation-word finding (don't, should/mustn't, now
@@ -6550,8 +6717,19 @@ unset _codex_wouldnt_approve_not_approved_root_comment_mock_dir _codex_wouldnt_a
 # the separate "looks good" target later in the same unpunctuated
 # sentence. This test guards against that specific regression being
 # silently reintroduced by a future negation-word addition.
-_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir="$(mktemp -d)"
-cat > "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir/gh" <<'CODEX_DIDNT_FIND_ISSUES_AND_LOOKS_GOOD_APPROVED_ROOT_COMMENT_GH'
+#
+# Retargeted and renamed for issue #1491's conservative-verdict-classifier
+# redesign: this body does not reproduce CODEX_APPROVED_TEMPLATES' whole-
+# body exact template (it has no "Swish!" sentence and no vendor footer),
+# so it now correctly safe-fails to NEEDS_REVISION. CODEX_NEGATION_WORDS'
+# "didn't"-exclusion property this scenario originally regression-tested
+# is unaffected — CODEX_NEGATION_WORDS is kept unchanged (Decision 4) and
+# still excludes "didn't" for the same reason, now guarding
+# CODEX_MERGE_REFUSAL_PATTERN inside codex_response_is_blocking instead of
+# the deleted negated-approval pattern. Renamed from "..._approved_..."
+# per the plan's naming standing rule.
+_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir/gh" <<'CODEX_DIDNT_FIND_ISSUES_AND_LOOKS_GOOD_SAFE_FAILS_ROOT_COMMENT_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
@@ -6574,21 +6752,21 @@ case "$*" in
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_DIDNT_FIND_ISSUES_AND_LOOKS_GOOD_APPROVED_ROOT_COMMENT_GH
-chmod +x "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir/gh"
+CODEX_DIDNT_FIND_ISSUES_AND_LOOKS_GOOD_SAFE_FAILS_ROOT_COMMENT_GH
+chmod +x "$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir/gh"
 
-_codex_didnt_find_issues_and_looks_good_approved_root_comment_output=""
-_codex_didnt_find_issues_and_looks_good_approved_root_comment_exit=0
-PATH="$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir:$PATH" \
+_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_output=""
+_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_exit=0
+PATH="$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_didnt_find_issues_and_looks_good_approved_root_comment_exit=$?
-_codex_didnt_find_issues_and_looks_good_approved_root_comment_output="$(cat "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_didnt_find_issues_and_looks_good_approved_root_comment_exit_clean" "0" "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_exit"
-run_test "codex_didnt_find_issues_and_looks_good_approved_root_comment_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_output" | grep "^VERDICT:")"
-rm -rf "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir"
-unset _codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir _codex_didnt_find_issues_and_looks_good_approved_root_comment_output _codex_didnt_find_issues_and_looks_good_approved_root_comment_exit
+  >"$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_exit=$?
+_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_output="$(cat "$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir/output.txt")"
+run_test "codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_exit_clean" "1" "$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_exit"
+run_test "codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir"
+unset _codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_mock_dir _codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_output _codex_didnt_find_issues_and_looks_good_safe_fails_root_comment_exit
 
 # codex_strip_quoted_spans handled straight-double-quotes, backticks, and
 # blockquotes, but not single-quoted spans — the fourth quoting style
@@ -6642,6 +6820,14 @@ unset _codex_single_quoted_phrase_not_approved_root_comment_mock_dir _codex_sing
 # apostrophe in "it's"), corrupting a genuinely clean review by deleting
 # everything between them. The stricter whitespace/punctuation-boundary
 # requirement must leave contractions untouched.
+#
+# Retargeted for issue #1491's conservative-verdict-classifier redesign:
+# this body does not reproduce CODEX_APPROVED_TEMPLATES' whole-body exact
+# template, so it now correctly safe-fails to NEEDS_REVISION. is_approved
+# no longer calls codex_strip_quoted_spans at all (Decision 1), so this
+# scenario no longer has a live approval-path mechanism to regression-test
+# for contraction-mangling; codex_strip_quoted_spans itself is unchanged
+# and still used by codex_response_is_blocking.
 _codex_contraction_apostrophes_not_mangled_root_comment_mock_dir="$(mktemp -d)"
 cat > "$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir/gh" <<'CODEX_CONTRACTION_APOSTROPHES_NOT_MANGLED_ROOT_COMMENT_GH'
 #!/usr/bin/env bash
@@ -6676,8 +6862,8 @@ PATH="$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir/output.txt" 2>&1 || _codex_contraction_apostrophes_not_mangled_root_comment_exit=$?
 _codex_contraction_apostrophes_not_mangled_root_comment_output="$(cat "$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir/output.txt")"
-run_test "codex_contraction_apostrophes_not_mangled_root_comment_exit_clean" "0" "$_codex_contraction_apostrophes_not_mangled_root_comment_exit"
-run_test "codex_contraction_apostrophes_not_mangled_root_comment_verdict" "VERDICT: APPROVED" \
+run_test "codex_contraction_apostrophes_not_mangled_root_comment_exit_clean" "1" "$_codex_contraction_apostrophes_not_mangled_root_comment_exit"
+run_test "codex_contraction_apostrophes_not_mangled_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
   "$(printf '%s\n' "$_codex_contraction_apostrophes_not_mangled_root_comment_output" | grep "^VERDICT:")"
 rm -rf "$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir"
 unset _codex_contraction_apostrophes_not_mangled_root_comment_mock_dir _codex_contraction_apostrophes_not_mangled_root_comment_output _codex_contraction_apostrophes_not_mangled_root_comment_exit
@@ -6892,8 +7078,19 @@ unset _codex_tilde_fence_phrase_not_approved_root_comment_mock_dir _codex_tilde_
 # legitimate review comments and must not be swept up by the new
 # conservative fence heuristic, which is deliberately scoped to
 # multi-backtick/tilde FENCE markers only.
-_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir="$(mktemp -d)"
-cat > "$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir/gh" <<'CODEX_INLINE_BACKTICK_PAIR_STAYS_APPROVED_ROOT_COMMENT_GH'
+#
+# Retargeted and renamed for issue #1491's conservative-verdict-classifier
+# redesign: this body does not reproduce CODEX_APPROVED_TEMPLATES' whole-
+# body exact template, so it now correctly safe-fails to NEEDS_REVISION.
+# is_approved no longer calls codex_response_has_fence_marker at all
+# (Decision 1), so this scenario no longer has a live approval-path
+# mechanism to regression-test for inline-backtick-pair false rejection;
+# codex_response_has_fence_marker itself is unchanged and still used by
+# codex_response_is_usage_limit and codex_response_is_environment_error.
+# Renamed from "...stays_approved_..." per the plan's naming standing
+# rule.
+_codex_inline_backtick_pair_safe_fails_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_inline_backtick_pair_safe_fails_root_comment_mock_dir/gh" <<'CODEX_INLINE_BACKTICK_PAIR_SAFE_FAILS_ROOT_COMMENT_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
@@ -6916,21 +7113,21 @@ case "$*" in
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_INLINE_BACKTICK_PAIR_STAYS_APPROVED_ROOT_COMMENT_GH
-chmod +x "$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir/gh"
+CODEX_INLINE_BACKTICK_PAIR_SAFE_FAILS_ROOT_COMMENT_GH
+chmod +x "$_codex_inline_backtick_pair_safe_fails_root_comment_mock_dir/gh"
 
-_codex_inline_backtick_pair_stays_approved_root_comment_output=""
-_codex_inline_backtick_pair_stays_approved_root_comment_exit=0
-PATH="$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir:$PATH" \
+_codex_inline_backtick_pair_safe_fails_root_comment_output=""
+_codex_inline_backtick_pair_safe_fails_root_comment_exit=0
+PATH="$_codex_inline_backtick_pair_safe_fails_root_comment_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_inline_backtick_pair_stays_approved_root_comment_exit=$?
-_codex_inline_backtick_pair_stays_approved_root_comment_output="$(cat "$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir/output.txt")"
-run_test "codex_inline_backtick_pair_stays_approved_root_comment_exit_clean" "0" "$_codex_inline_backtick_pair_stays_approved_root_comment_exit"
-run_test "codex_inline_backtick_pair_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_inline_backtick_pair_stays_approved_root_comment_output" | grep "^VERDICT:")"
-rm -rf "$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir"
-unset _codex_inline_backtick_pair_stays_approved_root_comment_mock_dir _codex_inline_backtick_pair_stays_approved_root_comment_output _codex_inline_backtick_pair_stays_approved_root_comment_exit
+  >"$_codex_inline_backtick_pair_safe_fails_root_comment_mock_dir/output.txt" 2>&1 || _codex_inline_backtick_pair_safe_fails_root_comment_exit=$?
+_codex_inline_backtick_pair_safe_fails_root_comment_output="$(cat "$_codex_inline_backtick_pair_safe_fails_root_comment_mock_dir/output.txt")"
+run_test "codex_inline_backtick_pair_safe_fails_root_comment_exit_clean" "1" "$_codex_inline_backtick_pair_safe_fails_root_comment_exit"
+run_test "codex_inline_backtick_pair_safe_fails_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_inline_backtick_pair_safe_fails_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_inline_backtick_pair_safe_fails_root_comment_mock_dir"
+unset _codex_inline_backtick_pair_safe_fails_root_comment_mock_dir _codex_inline_backtick_pair_safe_fails_root_comment_output _codex_inline_backtick_pair_safe_fails_root_comment_exit
 
 # The fence-marker guard was added to codex_response_is_approved only,
 # but codex_response_is_usage_limit's own callers (the 4 top-level
@@ -7097,7 +7294,7 @@ case "$*" in
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
     printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abclatestre1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: old finding."}]\n'
-    printf '[{"submitted_at":"2026-01-01T00:00:02Z","commit_id":"abclatestre1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    jq -nc '[{submitted_at:"2026-01-01T00:00:02Z",commit_id:"abclatestre1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `eeeeeeeeee` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
@@ -7275,7 +7472,7 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
-    printf '[{"submitted_at":"2026-01-01T00:00:02Z","commit_id":"abcenvok1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    jq -nc '[{submitted_at:"2026-01-01T00:00:02Z",commit_id:"abcenvok1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `ffffffffff` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[{"id":207,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"To use Codex here, create an environment for this repo."}]\n'
@@ -7599,6 +7796,1429 @@ run_test "codex_same_second_root_comment_reason" "REASON=codex-github-environmen
   "$(printf '%s\n' "$_codex_same_second_root_comment_output" | grep "^REASON=")"
 rm -rf "$_codex_same_second_root_comment_mock_dir"
 unset _codex_same_second_root_comment_mock_dir _codex_same_second_root_comment_output _codex_same_second_root_comment_exit
+
+# ---------------------------------------------------------------------------
+# New scenarios for issue #1491's conservative-verdict-classifier
+# implementation plan — Parser-risk addendum edge cases E1-E24 (E4 and E14
+# already covered: E4 by the two Group APPROVED template-anchored members'
+# distinct SHAs; E14 by the pre-existing codex_unapproved_prefix_root_comment
+# above) — plus the four Decision-6 verdict-site near-miss scenarios.
+# ---------------------------------------------------------------------------
+# Parser-risk addendum E1 (issue #1491's implementation plan): the real
+# captured PR #1489 root comment, in full, including its real <details>
+# footer, verbatim. The anchor case for the classifier's primary
+# real-response template.
+_codex_e1_real_pr1489_capture_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e1_real_pr1489_capture_approved_mock_dir/gh" <<'CODEX_E1_REAL_PR1489_CAPTURE_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf '87aaefceff1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":400,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:401,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish!
+
+**Reviewed commit:** `87aaefceff`
+
+<details> <summary>ℹ️ About Codex in GitHub</summary>
+<br/>
+
+[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you
+- Open a pull request for review
+- Mark a draft as ready
+- Comment \"@codex review\".
+
+If Codex has suggestions, it will comment; otherwise it will react with 👍.
+
+
+
+
+Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".
+            
+</details>
+")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E1_REAL_PR1489_CAPTURE_APPROVED_GH
+chmod +x "$_codex_e1_real_pr1489_capture_approved_mock_dir/gh"
+
+_codex_e1_real_pr1489_capture_approved_output=""
+_codex_e1_real_pr1489_capture_approved_exit=0
+PATH="$_codex_e1_real_pr1489_capture_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e1_real_pr1489_capture_approved_mock_dir/output.txt" 2>&1 || _codex_e1_real_pr1489_capture_approved_exit=$?
+_codex_e1_real_pr1489_capture_approved_output="$(cat "$_codex_e1_real_pr1489_capture_approved_mock_dir/output.txt")"
+run_test "codex_e1_real_pr1489_capture_approved_exit_clean" "0" "$_codex_e1_real_pr1489_capture_approved_exit"
+run_test "codex_e1_real_pr1489_capture_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_e1_real_pr1489_capture_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e1_real_pr1489_capture_approved_mock_dir"
+unset _codex_e1_real_pr1489_capture_approved_mock_dir _codex_e1_real_pr1489_capture_approved_output _codex_e1_real_pr1489_capture_approved_exit
+
+# Parser-risk addendum E2 (issue #1491's implementation plan): a real
+# captured PR #1490 review body, in full, verbatim. Confirms the generic
+# review-submission wrapper — no clean-signal text — correctly never
+# matches; verdict is driven by review `state`, not this function
+# (Decision 3). Review-sourced: always terminal by construction.
+_codex_e2_real_pr1490_review_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e2_real_pr1490_review_not_approved_mock_dir/gh" <<'CODEX_E2_REAL_PR1490_REVIEW_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e2e2e2e2e2e2\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":401,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"e2e2e2e2e2e2",user:{login:"chatgpt-codex-connector[bot]"},state:"COMMENTED",body:("### 💡 Codex Review
+
+Here are some automated review suggestions for this pull request.
+
+**Reviewed commit:** `6b70f9b229`
+    
+
+<details> <summary>ℹ️ About Codex in GitHub</summary>
+<br/>
+
+[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you
+- Open a pull request for review
+- Mark a draft as ready
+- Comment \"@codex review\".
+
+If Codex has suggestions, it will comment; otherwise it will react with 👍.
+
+
+
+
+Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".
+            
+</details>")}]'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E2_REAL_PR1490_REVIEW_NOT_APPROVED_GH
+chmod +x "$_codex_e2_real_pr1490_review_not_approved_mock_dir/gh"
+
+_codex_e2_real_pr1490_review_not_approved_output=""
+_codex_e2_real_pr1490_review_not_approved_exit=0
+PATH="$_codex_e2_real_pr1490_review_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e2_real_pr1490_review_not_approved_mock_dir/output.txt" 2>&1 || _codex_e2_real_pr1490_review_not_approved_exit=$?
+_codex_e2_real_pr1490_review_not_approved_output="$(cat "$_codex_e2_real_pr1490_review_not_approved_mock_dir/output.txt")"
+run_test "codex_e2_real_pr1490_review_not_approved_exit_needs_revision" "1" "$_codex_e2_real_pr1490_review_not_approved_exit"
+run_test "codex_e2_real_pr1490_review_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e2_real_pr1490_review_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e2_real_pr1490_review_not_approved_mock_dir"
+unset _codex_e2_real_pr1490_review_not_approved_mock_dir _codex_e2_real_pr1490_review_not_approved_output _codex_e2_real_pr1490_review_not_approved_exit
+
+# Parser-risk addendum E3 (issue #1491's implementation plan): the real
+# template's opening sentence, Reviewed-commit marker, and complete real
+# footer, but WITHOUT "Swish!". The template has no optional clauses —
+# a response missing the evidenced flavor sentence does not reproduce it,
+# however close it looks, including when the rest of the body (footer
+# included) is otherwise exact.
+_codex_e3_missing_swish_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e3_missing_swish_not_approved_mock_dir/gh" <<'CODEX_E3_MISSING_SWISH_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e3e3e3e3e3e3\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":402,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:403,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. **Reviewed commit:** `e3e3e3e3e3` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E3_MISSING_SWISH_NOT_APPROVED_GH
+chmod +x "$_codex_e3_missing_swish_not_approved_mock_dir/gh"
+
+_codex_e3_missing_swish_not_approved_output=""
+_codex_e3_missing_swish_not_approved_exit=0
+PATH="$_codex_e3_missing_swish_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e3_missing_swish_not_approved_mock_dir/output.txt" 2>&1 || _codex_e3_missing_swish_not_approved_exit=$?
+_codex_e3_missing_swish_not_approved_output="$(cat "$_codex_e3_missing_swish_not_approved_mock_dir/output.txt")"
+run_test "codex_e3_missing_swish_not_approved_exit_needs_revision" "1" "$_codex_e3_missing_swish_not_approved_exit"
+run_test "codex_e3_missing_swish_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e3_missing_swish_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e3_missing_swish_not_approved_mock_dir"
+unset _codex_e3_missing_swish_not_approved_mock_dir _codex_e3_missing_swish_not_approved_output _codex_e3_missing_swish_not_approved_exit
+
+# Parser-risk addendum E5 (issue #1491's implementation plan): the real
+# template with a 6-character SHA plus the complete real footer — below
+# the {7,40} bound. Review-sourced: a malformed SHA never becomes
+# terminal evidence via the root-comment extraction path, so this case
+# is constructed as a review (pinned via the API's own commit_id field,
+# independent of the body text) to isolate what the classifier itself
+# does with the malformed value.
+_codex_e5_short_sha_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e5_short_sha_not_approved_mock_dir/gh" <<'CODEX_E5_SHORT_SHA_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e5e5e5e5e5e5\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":403,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"e5e5e5e5e5e5",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `abcdef` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E5_SHORT_SHA_NOT_APPROVED_GH
+chmod +x "$_codex_e5_short_sha_not_approved_mock_dir/gh"
+
+_codex_e5_short_sha_not_approved_output=""
+_codex_e5_short_sha_not_approved_exit=0
+PATH="$_codex_e5_short_sha_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e5_short_sha_not_approved_mock_dir/output.txt" 2>&1 || _codex_e5_short_sha_not_approved_exit=$?
+_codex_e5_short_sha_not_approved_output="$(cat "$_codex_e5_short_sha_not_approved_mock_dir/output.txt")"
+run_test "codex_e5_short_sha_not_approved_exit_needs_revision" "1" "$_codex_e5_short_sha_not_approved_exit"
+run_test "codex_e5_short_sha_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e5_short_sha_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e5_short_sha_not_approved_mock_dir"
+unset _codex_e5_short_sha_not_approved_mock_dir _codex_e5_short_sha_not_approved_output _codex_e5_short_sha_not_approved_exit
+
+# Parser-risk addendum E6 (issue #1491's implementation plan): the real
+# template with a 41-character SHA plus the complete real footer — above
+# the {7,40} bound (one past a full SHA-1). Review-sourced, same reason
+# as E5.
+_codex_e6_oversized_sha_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e6_oversized_sha_not_approved_mock_dir/gh" <<'CODEX_E6_OVERSIZED_SHA_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e6e6e6e6e6e6\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":404,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"e6e6e6e6e6e6",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E6_OVERSIZED_SHA_NOT_APPROVED_GH
+chmod +x "$_codex_e6_oversized_sha_not_approved_mock_dir/gh"
+
+_codex_e6_oversized_sha_not_approved_output=""
+_codex_e6_oversized_sha_not_approved_exit=0
+PATH="$_codex_e6_oversized_sha_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e6_oversized_sha_not_approved_mock_dir/output.txt" 2>&1 || _codex_e6_oversized_sha_not_approved_exit=$?
+_codex_e6_oversized_sha_not_approved_output="$(cat "$_codex_e6_oversized_sha_not_approved_mock_dir/output.txt")"
+run_test "codex_e6_oversized_sha_not_approved_exit_needs_revision" "1" "$_codex_e6_oversized_sha_not_approved_exit"
+run_test "codex_e6_oversized_sha_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e6_oversized_sha_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e6_oversized_sha_not_approved_mock_dir"
+unset _codex_e6_oversized_sha_not_approved_mock_dir _codex_e6_oversized_sha_not_approved_output _codex_e6_oversized_sha_not_approved_exit
+
+# Parser-risk addendum E7 (issue #1491's implementation plan): the real
+# template with a full-length (40-character) SHA plus the complete real
+# footer. Confirms the upper bound is inclusive, not an off-by-one
+# exclusion of legitimate full-length SHAs.
+_codex_e7_full_length_sha_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e7_full_length_sha_approved_mock_dir/gh" <<'CODEX_E7_FULL_LENGTH_SHA_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abababababababababababababababababababab\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":405,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:406,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `abababababababababababababababababababab` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E7_FULL_LENGTH_SHA_APPROVED_GH
+chmod +x "$_codex_e7_full_length_sha_approved_mock_dir/gh"
+
+_codex_e7_full_length_sha_approved_output=""
+_codex_e7_full_length_sha_approved_exit=0
+PATH="$_codex_e7_full_length_sha_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e7_full_length_sha_approved_mock_dir/output.txt" 2>&1 || _codex_e7_full_length_sha_approved_exit=$?
+_codex_e7_full_length_sha_approved_output="$(cat "$_codex_e7_full_length_sha_approved_mock_dir/output.txt")"
+run_test "codex_e7_full_length_sha_approved_exit_clean" "0" "$_codex_e7_full_length_sha_approved_exit"
+run_test "codex_e7_full_length_sha_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_e7_full_length_sha_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e7_full_length_sha_approved_mock_dir"
+unset _codex_e7_full_length_sha_approved_mock_dir _codex_e7_full_length_sha_approved_output _codex_e7_full_length_sha_approved_exit
+
+# Parser-risk addendum E8 (issue #1491's implementation plan): the real
+# template with a non-hex "SHA" plus the complete real footer. The
+# placeholder accepts hex digits only. Review-sourced, same reason as E5.
+_codex_e8_non_hex_sha_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e8_non_hex_sha_not_approved_mock_dir/gh" <<'CODEX_E8_NON_HEX_SHA_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e8e8e8e8e8e8\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":406,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"e8e8e8e8e8e8",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `not-a-sha!` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E8_NON_HEX_SHA_NOT_APPROVED_GH
+chmod +x "$_codex_e8_non_hex_sha_not_approved_mock_dir/gh"
+
+_codex_e8_non_hex_sha_not_approved_output=""
+_codex_e8_non_hex_sha_not_approved_exit=0
+PATH="$_codex_e8_non_hex_sha_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e8_non_hex_sha_not_approved_mock_dir/output.txt" 2>&1 || _codex_e8_non_hex_sha_not_approved_exit=$?
+_codex_e8_non_hex_sha_not_approved_output="$(cat "$_codex_e8_non_hex_sha_not_approved_mock_dir/output.txt")"
+run_test "codex_e8_non_hex_sha_not_approved_exit_needs_revision" "1" "$_codex_e8_non_hex_sha_not_approved_exit"
+run_test "codex_e8_non_hex_sha_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e8_non_hex_sha_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e8_non_hex_sha_not_approved_mock_dir"
+unset _codex_e8_non_hex_sha_not_approved_mock_dir _codex_e8_non_hex_sha_not_approved_output _codex_e8_non_hex_sha_not_approved_exit
+
+# Parser-risk addendum E9 (issue #1491's implementation plan): the real
+# template plus complete real footer, with unrelated prose immediately
+# BEFORE the verdict sentence. Exact match is whole-body, not a
+# substring/prefix test — extra leading text breaks the match.
+_codex_e9_leading_prose_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e9_leading_prose_not_approved_mock_dir/gh" <<'CODEX_E9_LEADING_PROSE_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e9e9e9e9e9e9\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":407,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:408,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("FYI: Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `e9e9e9e9e9` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E9_LEADING_PROSE_NOT_APPROVED_GH
+chmod +x "$_codex_e9_leading_prose_not_approved_mock_dir/gh"
+
+_codex_e9_leading_prose_not_approved_output=""
+_codex_e9_leading_prose_not_approved_exit=0
+PATH="$_codex_e9_leading_prose_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e9_leading_prose_not_approved_mock_dir/output.txt" 2>&1 || _codex_e9_leading_prose_not_approved_exit=$?
+_codex_e9_leading_prose_not_approved_output="$(cat "$_codex_e9_leading_prose_not_approved_mock_dir/output.txt")"
+run_test "codex_e9_leading_prose_not_approved_exit_needs_revision" "1" "$_codex_e9_leading_prose_not_approved_exit"
+run_test "codex_e9_leading_prose_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e9_leading_prose_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e9_leading_prose_not_approved_mock_dir"
+unset _codex_e9_leading_prose_not_approved_mock_dir _codex_e9_leading_prose_not_approved_output _codex_e9_leading_prose_not_approved_exit
+
+# Parser-risk addendum E10 (issue #1491's implementation plan): the real
+# template plus complete real footer, with unrelated prose immediately
+# AFTER </details>. Confirms no trailing-clause exploit of any kind can
+# reach APPROVED: any trailing content at all breaks the whole-body
+# match, regardless of wording or how much of the footer precedes it.
+_codex_e10_trailing_prose_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e10_trailing_prose_not_approved_mock_dir/gh" <<'CODEX_E10_TRAILING_PROSE_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e1010101010a\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":408,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:409,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `e1010101010` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details> Rename the unsafe function.")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E10_TRAILING_PROSE_NOT_APPROVED_GH
+chmod +x "$_codex_e10_trailing_prose_not_approved_mock_dir/gh"
+
+_codex_e10_trailing_prose_not_approved_output=""
+_codex_e10_trailing_prose_not_approved_exit=0
+PATH="$_codex_e10_trailing_prose_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e10_trailing_prose_not_approved_mock_dir/output.txt" 2>&1 || _codex_e10_trailing_prose_not_approved_exit=$?
+_codex_e10_trailing_prose_not_approved_output="$(cat "$_codex_e10_trailing_prose_not_approved_mock_dir/output.txt")"
+run_test "codex_e10_trailing_prose_not_approved_exit_needs_revision" "1" "$_codex_e10_trailing_prose_not_approved_exit"
+run_test "codex_e10_trailing_prose_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e10_trailing_prose_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e10_trailing_prose_not_approved_mock_dir"
+unset _codex_e10_trailing_prose_not_approved_mock_dir _codex_e10_trailing_prose_not_approved_output _codex_e10_trailing_prose_not_approved_exit
+
+# Parser-risk addendum E11 (issue #1491's implementation plan): the real
+# template plus complete real footer, wrapped in a fenced code block.
+# Confirms no dedicated fence-marker check is needed (Decision 1): the
+# fence characters are literal extra text the template does not
+# contain, so the match fails on its own.
+_codex_e11_fenced_wrapper_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e11_fenced_wrapper_not_approved_mock_dir/gh" <<'CODEX_E11_FENCED_WRAPPER_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e11e11e11e1\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":409,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:410,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("```
+Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `e11e11e11e` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>
+```")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E11_FENCED_WRAPPER_NOT_APPROVED_GH
+chmod +x "$_codex_e11_fenced_wrapper_not_approved_mock_dir/gh"
+
+_codex_e11_fenced_wrapper_not_approved_output=""
+_codex_e11_fenced_wrapper_not_approved_exit=0
+PATH="$_codex_e11_fenced_wrapper_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e11_fenced_wrapper_not_approved_mock_dir/output.txt" 2>&1 || _codex_e11_fenced_wrapper_not_approved_exit=$?
+_codex_e11_fenced_wrapper_not_approved_output="$(cat "$_codex_e11_fenced_wrapper_not_approved_mock_dir/output.txt")"
+run_test "codex_e11_fenced_wrapper_not_approved_exit_needs_revision" "1" "$_codex_e11_fenced_wrapper_not_approved_exit"
+run_test "codex_e11_fenced_wrapper_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e11_fenced_wrapper_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e11_fenced_wrapper_not_approved_mock_dir"
+unset _codex_e11_fenced_wrapper_not_approved_mock_dir _codex_e11_fenced_wrapper_not_approved_output _codex_e11_fenced_wrapper_not_approved_exit
+
+# Parser-risk addendum E12 (issue #1491's implementation plan): the real
+# template with extra/irregular whitespace (extra spaces, tabs, multiple
+# blank lines, trailing spaces, extra whitespace around the footer).
+# Confirms codex_normalize_whitespace provides exactly the permitted
+# flexibility (Decision 1) and nothing more, across the entire body
+# including the footer.
+_codex_e12_irregular_whitespace_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e12_irregular_whitespace_approved_mock_dir/gh" <<'CODEX_E12_IRREGULAR_WHITESPACE_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e12e12e12e1\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":410,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:411,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("  Codex Review:   Didn'\''t find any major issues.	 Swish!
+
+**Reviewed commit:**  `e12e12e12e`  <details>   <summary>ℹ️ About Codex in GitHub</summary>
+
+
+<br/>		[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general).   Reviews are triggered when you
+  - Open a pull request for review
+  - Mark a draft as ready
+  - Comment \"@codex review\".
+
+
+If Codex has suggestions, it will comment; otherwise it will react with 👍.
+
+
+
+Codex can also answer questions or update the PR.   Try commenting
+\"@codex address that feedback\".   
+
+</details>   ")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E12_IRREGULAR_WHITESPACE_APPROVED_GH
+chmod +x "$_codex_e12_irregular_whitespace_approved_mock_dir/gh"
+
+_codex_e12_irregular_whitespace_approved_output=""
+_codex_e12_irregular_whitespace_approved_exit=0
+PATH="$_codex_e12_irregular_whitespace_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e12_irregular_whitespace_approved_mock_dir/output.txt" 2>&1 || _codex_e12_irregular_whitespace_approved_exit=$?
+_codex_e12_irregular_whitespace_approved_output="$(cat "$_codex_e12_irregular_whitespace_approved_mock_dir/output.txt")"
+run_test "codex_e12_irregular_whitespace_approved_exit_clean" "0" "$_codex_e12_irregular_whitespace_approved_exit"
+run_test "codex_e12_irregular_whitespace_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_e12_irregular_whitespace_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e12_irregular_whitespace_approved_mock_dir"
+unset _codex_e12_irregular_whitespace_approved_mock_dir _codex_e12_irregular_whitespace_approved_output _codex_e12_irregular_whitespace_approved_exit
+
+# Parser-risk addendum E13 (issue #1491's implementation plan): the real
+# template plus complete real footer, case-altered (lower-cased verdict
+# sentence and footer text). Confirms there is no case-insensitive
+# matching beyond what the captures themselves show (Decision 1),
+# for the footer as much as for the verdict sentence. Review-sourced,
+# same reason as E5 (a case-folded SHA is never extracted by the
+# case-sensitive root-comment path).
+_codex_e13_case_altered_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e13_case_altered_not_approved_mock_dir/gh" <<'CODEX_E13_CASE_ALTERED_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e13e13e13e1\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":411,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"e13e13e13e1",user:{login:"chatgpt-codex-connector[bot]"},body:("codex review: didn'\''t find any major issues. swish! **reviewed commit:** `e13e13e13e` <details> <summary>ℹ️ about codex in github</summary> <br/> [your team has set up codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). reviews are triggered when you - open a pull request for review - mark a draft as ready - comment \"@codex review\". if codex has suggestions, it will comment; otherwise it will react with 👍. codex can also answer questions or update the pr. try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E13_CASE_ALTERED_NOT_APPROVED_GH
+chmod +x "$_codex_e13_case_altered_not_approved_mock_dir/gh"
+
+_codex_e13_case_altered_not_approved_output=""
+_codex_e13_case_altered_not_approved_exit=0
+PATH="$_codex_e13_case_altered_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e13_case_altered_not_approved_mock_dir/output.txt" 2>&1 || _codex_e13_case_altered_not_approved_exit=$?
+_codex_e13_case_altered_not_approved_output="$(cat "$_codex_e13_case_altered_not_approved_mock_dir/output.txt")"
+run_test "codex_e13_case_altered_not_approved_exit_needs_revision" "1" "$_codex_e13_case_altered_not_approved_exit"
+run_test "codex_e13_case_altered_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e13_case_altered_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e13_case_altered_not_approved_mock_dir"
+unset _codex_e13_case_altered_not_approved_mock_dir _codex_e13_case_altered_not_approved_output _codex_e13_case_altered_not_approved_exit
+
+# Parser-risk addendum E15 (issue #1491's implementation plan): an
+# underscore-variant boundary-lookalike construction — trivially
+# rejected under this design because it is not a reproduction of any
+# template.
+_codex_e15_underscore_variant_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e15_underscore_variant_not_approved_mock_dir/gh" <<'CODEX_E15_UNDERSCORE_VARIANT_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e15e15e15e1\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":412,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:413,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("This remains un_approved.
+
+**Reviewed commit:** `e15e15e15e`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E15_UNDERSCORE_VARIANT_NOT_APPROVED_GH
+chmod +x "$_codex_e15_underscore_variant_not_approved_mock_dir/gh"
+
+_codex_e15_underscore_variant_not_approved_output=""
+_codex_e15_underscore_variant_not_approved_exit=0
+PATH="$_codex_e15_underscore_variant_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e15_underscore_variant_not_approved_mock_dir/output.txt" 2>&1 || _codex_e15_underscore_variant_not_approved_exit=$?
+_codex_e15_underscore_variant_not_approved_output="$(cat "$_codex_e15_underscore_variant_not_approved_mock_dir/output.txt")"
+run_test "codex_e15_underscore_variant_not_approved_exit_needs_revision" "1" "$_codex_e15_underscore_variant_not_approved_exit"
+run_test "codex_e15_underscore_variant_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e15_underscore_variant_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e15_underscore_variant_not_approved_mock_dir"
+unset _codex_e15_underscore_variant_not_approved_mock_dir _codex_e15_underscore_variant_not_approved_output _codex_e15_underscore_variant_not_approved_exit
+
+# Parser-risk addendum E16 (issue #1491's implementation plan):
+# disqualifier-list gap under an earlier design (Codex GitHub finding
+# `3800167486`) — now genuinely closed, because it was never a
+# reproduction of any template to begin with.
+_codex_e16_disqualifier_gap_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e16_disqualifier_gap_not_approved_mock_dir/gh" <<'CODEX_E16_DISQUALIFIER_GAP_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e16e16e16e1\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":413,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:414,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Looks good. Remove the authentication check.
+
+**Reviewed commit:** `e16e16e16e`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E16_DISQUALIFIER_GAP_NOT_APPROVED_GH
+chmod +x "$_codex_e16_disqualifier_gap_not_approved_mock_dir/gh"
+
+_codex_e16_disqualifier_gap_not_approved_output=""
+_codex_e16_disqualifier_gap_not_approved_exit=0
+PATH="$_codex_e16_disqualifier_gap_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e16_disqualifier_gap_not_approved_mock_dir/output.txt" 2>&1 || _codex_e16_disqualifier_gap_not_approved_exit=$?
+_codex_e16_disqualifier_gap_not_approved_output="$(cat "$_codex_e16_disqualifier_gap_not_approved_mock_dir/output.txt")"
+run_test "codex_e16_disqualifier_gap_not_approved_exit_needs_revision" "1" "$_codex_e16_disqualifier_gap_not_approved_exit"
+run_test "codex_e16_disqualifier_gap_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e16_disqualifier_gap_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e16_disqualifier_gap_not_approved_mock_dir"
+unset _codex_e16_disqualifier_gap_not_approved_mock_dir _codex_e16_disqualifier_gap_not_approved_output _codex_e16_disqualifier_gap_not_approved_exit
+
+# Parser-risk addendum E17 (issue #1491's implementation plan): the
+# residual gap an earlier zero-tolerance-grammar design disclosed but
+# could not close — now genuinely closed, because it was never a
+# reproduction of any template to begin with.
+_codex_e17_zero_tolerance_gap_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e17_zero_tolerance_gap_not_approved_mock_dir/gh" <<'CODEX_E17_ZERO_TOLERANCE_GAP_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e17e17e17e1\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":414,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:415,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Approved. Revert.
+
+**Reviewed commit:** `e17e17e17e`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E17_ZERO_TOLERANCE_GAP_NOT_APPROVED_GH
+chmod +x "$_codex_e17_zero_tolerance_gap_not_approved_mock_dir/gh"
+
+_codex_e17_zero_tolerance_gap_not_approved_output=""
+_codex_e17_zero_tolerance_gap_not_approved_exit=0
+PATH="$_codex_e17_zero_tolerance_gap_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e17_zero_tolerance_gap_not_approved_mock_dir/output.txt" 2>&1 || _codex_e17_zero_tolerance_gap_not_approved_exit=$?
+_codex_e17_zero_tolerance_gap_not_approved_output="$(cat "$_codex_e17_zero_tolerance_gap_not_approved_mock_dir/output.txt")"
+run_test "codex_e17_zero_tolerance_gap_not_approved_exit_needs_revision" "1" "$_codex_e17_zero_tolerance_gap_not_approved_exit"
+run_test "codex_e17_zero_tolerance_gap_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e17_zero_tolerance_gap_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e17_zero_tolerance_gap_not_approved_mock_dir"
+unset _codex_e17_zero_tolerance_gap_not_approved_mock_dir _codex_e17_zero_tolerance_gap_not_approved_output _codex_e17_zero_tolerance_gap_not_approved_exit
+
+# Parser-risk addendum E18 (issue #1491's implementation plan):
+# vendor-metadata-token gap under an earlier design (Codex GitHub
+# finding `3803050745`) — now genuinely closed, because it was never a
+# reproduction of any template to begin with.
+_codex_e18_vendor_flavor_token_gap_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e18_vendor_flavor_token_gap_not_approved_mock_dir/gh" <<'CODEX_E18_VENDOR_FLAVOR_TOKEN_GAP_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e18e18e18e1\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":415,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:416,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Looks good. Commit this.
+
+**Reviewed commit:** `e18e18e18e`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E18_VENDOR_FLAVOR_TOKEN_GAP_NOT_APPROVED_GH
+chmod +x "$_codex_e18_vendor_flavor_token_gap_not_approved_mock_dir/gh"
+
+_codex_e18_vendor_flavor_token_gap_not_approved_output=""
+_codex_e18_vendor_flavor_token_gap_not_approved_exit=0
+PATH="$_codex_e18_vendor_flavor_token_gap_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e18_vendor_flavor_token_gap_not_approved_mock_dir/output.txt" 2>&1 || _codex_e18_vendor_flavor_token_gap_not_approved_exit=$?
+_codex_e18_vendor_flavor_token_gap_not_approved_output="$(cat "$_codex_e18_vendor_flavor_token_gap_not_approved_mock_dir/output.txt")"
+run_test "codex_e18_vendor_flavor_token_gap_not_approved_exit_needs_revision" "1" "$_codex_e18_vendor_flavor_token_gap_not_approved_exit"
+run_test "codex_e18_vendor_flavor_token_gap_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e18_vendor_flavor_token_gap_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e18_vendor_flavor_token_gap_not_approved_mock_dir"
+unset _codex_e18_vendor_flavor_token_gap_not_approved_mock_dir _codex_e18_vendor_flavor_token_gap_not_approved_output _codex_e18_vendor_flavor_token_gap_not_approved_exit
+
+# Parser-risk addendum E19 (issue #1491's implementation plan):
+# over-broad footer-truncation-regex gap under an earlier design
+# (Codex GitHub finding `3800167489`) — under this revision there is no
+# truncation step at all to over-match; the body simply does not
+# reproduce the one evidenced literal, regardless of what any
+# <details>-shaped text inside it says. Includes an explicit
+# **Reviewed commit:** marker (needed to reach terminal evidence).
+_codex_e19_non_vendor_details_block_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e19_non_vendor_details_block_not_approved_mock_dir/gh" <<'CODEX_E19_NON_VENDOR_DETAILS_BLOCK_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e19e19e19e1\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":416,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:417,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Looks good. <details><summary>Notes</summary>Rename the unsafe function.</details>
+
+**Reviewed commit:** `e19e19e19e`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E19_NON_VENDOR_DETAILS_BLOCK_NOT_APPROVED_GH
+chmod +x "$_codex_e19_non_vendor_details_block_not_approved_mock_dir/gh"
+
+_codex_e19_non_vendor_details_block_not_approved_output=""
+_codex_e19_non_vendor_details_block_not_approved_exit=0
+PATH="$_codex_e19_non_vendor_details_block_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e19_non_vendor_details_block_not_approved_mock_dir/output.txt" 2>&1 || _codex_e19_non_vendor_details_block_not_approved_exit=$?
+_codex_e19_non_vendor_details_block_not_approved_output="$(cat "$_codex_e19_non_vendor_details_block_not_approved_mock_dir/output.txt")"
+run_test "codex_e19_non_vendor_details_block_not_approved_exit_needs_revision" "1" "$_codex_e19_non_vendor_details_block_not_approved_exit"
+run_test "codex_e19_non_vendor_details_block_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e19_non_vendor_details_block_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e19_non_vendor_details_block_not_approved_mock_dir"
+unset _codex_e19_non_vendor_details_block_not_approved_mock_dir _codex_e19_non_vendor_details_block_not_approved_output _codex_e19_non_vendor_details_block_not_approved_exit
+
+# Parser-risk addendum E20 (issue #1491's implementation plan):
+# tag-name-flexible footer-truncation-regex gap under an earlier design
+# (Codex GitHub finding `3803189273`) — same reason as E19: no
+# truncation step left to apply a tag-name pattern to. Includes an
+# explicit **Reviewed commit:** marker (needed to reach terminal
+# evidence).
+_codex_e20_tag_flexible_variant_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e20_tag_flexible_variant_not_approved_mock_dir/gh" <<'CODEX_E20_TAG_FLEXIBLE_VARIANT_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e20e20e20e1\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":417,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:418,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Looks good. <details-not-footer><summary-note>About Codex in GitHub</summary-note>Rename the unsafe function.</details-not-footer>
+
+**Reviewed commit:** `e20e20e20e`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E20_TAG_FLEXIBLE_VARIANT_NOT_APPROVED_GH
+chmod +x "$_codex_e20_tag_flexible_variant_not_approved_mock_dir/gh"
+
+_codex_e20_tag_flexible_variant_not_approved_output=""
+_codex_e20_tag_flexible_variant_not_approved_exit=0
+PATH="$_codex_e20_tag_flexible_variant_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e20_tag_flexible_variant_not_approved_mock_dir/output.txt" 2>&1 || _codex_e20_tag_flexible_variant_not_approved_exit=$?
+_codex_e20_tag_flexible_variant_not_approved_output="$(cat "$_codex_e20_tag_flexible_variant_not_approved_mock_dir/output.txt")"
+run_test "codex_e20_tag_flexible_variant_not_approved_exit_needs_revision" "1" "$_codex_e20_tag_flexible_variant_not_approved_exit"
+run_test "codex_e20_tag_flexible_variant_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e20_tag_flexible_variant_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e20_tag_flexible_variant_not_approved_mock_dir"
+unset _codex_e20_tag_flexible_variant_not_approved_mock_dir _codex_e20_tag_flexible_variant_not_approved_output _codex_e20_tag_flexible_variant_not_approved_exit
+
+# Parser-risk addendum E21 (issue #1491's implementation plan):
+# filler-composed-hedge construction (Codex GitHub finding
+# `3803306915`) that motivated the third design of this classifier —
+# trivially rejected under this design because it is not a
+# reproduction of any template.
+_codex_e21_filler_composed_hedge_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e21_filler_composed_hedge_not_approved_mock_dir/gh" <<'CODEX_E21_FILLER_COMPOSED_HEDGE_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e21e21e21e1\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":418,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:419,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Looks good, or is it?
+
+**Reviewed commit:** `e21e21e21e`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E21_FILLER_COMPOSED_HEDGE_NOT_APPROVED_GH
+chmod +x "$_codex_e21_filler_composed_hedge_not_approved_mock_dir/gh"
+
+_codex_e21_filler_composed_hedge_not_approved_output=""
+_codex_e21_filler_composed_hedge_not_approved_exit=0
+PATH="$_codex_e21_filler_composed_hedge_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e21_filler_composed_hedge_not_approved_mock_dir/output.txt" 2>&1 || _codex_e21_filler_composed_hedge_not_approved_exit=$?
+_codex_e21_filler_composed_hedge_not_approved_output="$(cat "$_codex_e21_filler_composed_hedge_not_approved_mock_dir/output.txt")"
+run_test "codex_e21_filler_composed_hedge_not_approved_exit_needs_revision" "1" "$_codex_e21_filler_composed_hedge_not_approved_exit"
+run_test "codex_e21_filler_composed_hedge_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e21_filler_composed_hedge_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e21_filler_composed_hedge_not_approved_mock_dir"
+unset _codex_e21_filler_composed_hedge_not_approved_mock_dir _codex_e21_filler_composed_hedge_not_approved_output _codex_e21_filler_composed_hedge_not_approved_exit
+
+# Parser-risk addendum E22 (issue #1491's implementation plan): the real
+# template plus complete real footer, with "This must not be merged."
+# inserted inside the footer (immediately after </summary>). Under this
+# revision, is_approved ALONE already returns NEEDS_REVISION for this
+# body — inserting any text inside the footer breaks the whole-body
+# exact match on its own. codex_response_is_blocking (unchanged,
+# Decision 4) still runs first at every verdict site and still
+# independently recognizes the refusal, so the COMPOSED verdict is
+# still the more specific blocking branch (plain "VERDICT:
+# NEEDS_REVISION", not the "(unrecognized...)" safe-fail suffix) — the
+# structural relationship between is_approved and is_blocking
+# described in Decision 4/5.
+_codex_e22_refusal_inside_footer_blocking_mock_dir="$(mktemp -d)"
+cat > "$_codex_e22_refusal_inside_footer_blocking_mock_dir/gh" <<'CODEX_E22_REFUSAL_INSIDE_FOOTER_BLOCKING_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e22e22e22e1\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":419,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:420,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `e22e22e22e` <details> <summary>ℹ️ About Codex in GitHub</summary> This must not be merged. <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E22_REFUSAL_INSIDE_FOOTER_BLOCKING_GH
+chmod +x "$_codex_e22_refusal_inside_footer_blocking_mock_dir/gh"
+
+_codex_e22_refusal_inside_footer_blocking_output=""
+_codex_e22_refusal_inside_footer_blocking_exit=0
+PATH="$_codex_e22_refusal_inside_footer_blocking_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e22_refusal_inside_footer_blocking_mock_dir/output.txt" 2>&1 || _codex_e22_refusal_inside_footer_blocking_exit=$?
+_codex_e22_refusal_inside_footer_blocking_output="$(cat "$_codex_e22_refusal_inside_footer_blocking_mock_dir/output.txt")"
+run_test "codex_e22_refusal_inside_footer_blocking_exit_needs_revision" "1" "$_codex_e22_refusal_inside_footer_blocking_exit"
+run_test "codex_e22_refusal_inside_footer_blocking_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_e22_refusal_inside_footer_blocking_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e22_refusal_inside_footer_blocking_mock_dir"
+unset _codex_e22_refusal_inside_footer_blocking_mock_dir _codex_e22_refusal_inside_footer_blocking_output _codex_e22_refusal_inside_footer_blocking_exit
+
+# Parser-risk addendum E23 (issue #1491's implementation plan): the real
+# template, followed by the footer's OPENING LINE ONLY (not its
+# complete text), followed by "Rename the unsafe function." — the exact
+# construction from Codex GitHub finding `3803545669` that motivated
+# this revision. The required literal is the COMPLETE footer text, so a
+# body carrying only its opening line does not reproduce that literal.
+# The direct regression test for finding `3803545669`.
+_codex_e23_footer_opening_line_only_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e23_footer_opening_line_only_not_approved_mock_dir/gh" <<'CODEX_E23_FOOTER_OPENING_LINE_ONLY_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e23e23e23e1\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":420,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:421,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `e23e23e23e` <details> <summary>ℹ️ About Codex in GitHub</summary> Rename the unsafe function.")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E23_FOOTER_OPENING_LINE_ONLY_NOT_APPROVED_GH
+chmod +x "$_codex_e23_footer_opening_line_only_not_approved_mock_dir/gh"
+
+_codex_e23_footer_opening_line_only_not_approved_output=""
+_codex_e23_footer_opening_line_only_not_approved_exit=0
+PATH="$_codex_e23_footer_opening_line_only_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e23_footer_opening_line_only_not_approved_mock_dir/output.txt" 2>&1 || _codex_e23_footer_opening_line_only_not_approved_exit=$?
+_codex_e23_footer_opening_line_only_not_approved_output="$(cat "$_codex_e23_footer_opening_line_only_not_approved_mock_dir/output.txt")"
+run_test "codex_e23_footer_opening_line_only_not_approved_exit_needs_revision" "1" "$_codex_e23_footer_opening_line_only_not_approved_exit"
+run_test "codex_e23_footer_opening_line_only_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e23_footer_opening_line_only_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e23_footer_opening_line_only_not_approved_mock_dir"
+unset _codex_e23_footer_opening_line_only_not_approved_mock_dir _codex_e23_footer_opening_line_only_not_approved_output _codex_e23_footer_opening_line_only_not_approved_exit
+
+# Parser-risk addendum E24a (issue #1491's implementation plan): the
+# real template plus complete real footer, with a single byte changed
+# MID-SENTENCE inside the footer body ("this repo" -> "thXs repo").
+# Confirms the entire footer is load-bearing for the match, not merely
+# its opening line.
+_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_mock_dir/gh" <<'CODEX_E24A_FOOTER_BYTE_MUTATION_MID_SENTENCE_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e24a24a24a1\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":421,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:422,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `e24a24a24a` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in thXs repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E24A_FOOTER_BYTE_MUTATION_MID_SENTENCE_NOT_APPROVED_GH
+chmod +x "$_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_mock_dir/gh"
+
+_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_output=""
+_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_exit=0
+PATH="$_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_mock_dir/output.txt" 2>&1 || _codex_e24a_footer_byte_mutation_mid_sentence_not_approved_exit=$?
+_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_output="$(cat "$_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_mock_dir/output.txt")"
+run_test "codex_e24a_footer_byte_mutation_mid_sentence_not_approved_exit_needs_revision" "1" "$_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_exit"
+run_test "codex_e24a_footer_byte_mutation_mid_sentence_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e24a_footer_byte_mutation_mid_sentence_not_approved_mock_dir"
+unset _codex_e24a_footer_byte_mutation_mid_sentence_not_approved_mock_dir _codex_e24a_footer_byte_mutation_mid_sentence_not_approved_output _codex_e24a_footer_byte_mutation_mid_sentence_not_approved_exit
+
+# Parser-risk addendum E24b (issue #1491's implementation plan): the
+# real template plus complete real footer, with a single byte changed
+# IMMEDIATELY BEFORE </details> (the final "." -> "!"). Confirms the
+# footer's closing text is load-bearing, not just its opening line.
+_codex_e24b_footer_byte_mutation_before_details_close_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e24b_footer_byte_mutation_before_details_close_not_approved_mock_dir/gh" <<'CODEX_E24B_FOOTER_BYTE_MUTATION_BEFORE_DETAILS_CLOSE_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e24b24b24b1\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":422,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:423,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `e24b24b24b` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\"! </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E24B_FOOTER_BYTE_MUTATION_BEFORE_DETAILS_CLOSE_NOT_APPROVED_GH
+chmod +x "$_codex_e24b_footer_byte_mutation_before_details_close_not_approved_mock_dir/gh"
+
+_codex_e24b_footer_byte_mutation_before_details_close_not_approved_output=""
+_codex_e24b_footer_byte_mutation_before_details_close_not_approved_exit=0
+PATH="$_codex_e24b_footer_byte_mutation_before_details_close_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e24b_footer_byte_mutation_before_details_close_not_approved_mock_dir/output.txt" 2>&1 || _codex_e24b_footer_byte_mutation_before_details_close_not_approved_exit=$?
+_codex_e24b_footer_byte_mutation_before_details_close_not_approved_output="$(cat "$_codex_e24b_footer_byte_mutation_before_details_close_not_approved_mock_dir/output.txt")"
+run_test "codex_e24b_footer_byte_mutation_before_details_close_not_approved_exit_needs_revision" "1" "$_codex_e24b_footer_byte_mutation_before_details_close_not_approved_exit"
+run_test "codex_e24b_footer_byte_mutation_before_details_close_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e24b_footer_byte_mutation_before_details_close_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e24b_footer_byte_mutation_before_details_close_not_approved_mock_dir"
+unset _codex_e24b_footer_byte_mutation_before_details_close_not_approved_mock_dir _codex_e24b_footer_byte_mutation_before_details_close_not_approved_output _codex_e24b_footer_byte_mutation_before_details_close_not_approved_exit
+
+# Parser-risk addendum E24c (issue #1491's implementation plan): the
+# real template plus complete real footer, with a single byte changed
+# INSIDE the settings URL ("general" -> "genera1"). Confirms the
+# footer's URL text is load-bearing, not just its opening line.
+_codex_e24c_footer_byte_mutation_in_url_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_e24c_footer_byte_mutation_in_url_not_approved_mock_dir/gh" <<'CODEX_E24C_FOOTER_BYTE_MUTATION_IN_URL_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'e24c24c24c1\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":423,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:424,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `e24c24c24c` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/genera1). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_E24C_FOOTER_BYTE_MUTATION_IN_URL_NOT_APPROVED_GH
+chmod +x "$_codex_e24c_footer_byte_mutation_in_url_not_approved_mock_dir/gh"
+
+_codex_e24c_footer_byte_mutation_in_url_not_approved_output=""
+_codex_e24c_footer_byte_mutation_in_url_not_approved_exit=0
+PATH="$_codex_e24c_footer_byte_mutation_in_url_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_e24c_footer_byte_mutation_in_url_not_approved_mock_dir/output.txt" 2>&1 || _codex_e24c_footer_byte_mutation_in_url_not_approved_exit=$?
+_codex_e24c_footer_byte_mutation_in_url_not_approved_output="$(cat "$_codex_e24c_footer_byte_mutation_in_url_not_approved_mock_dir/output.txt")"
+run_test "codex_e24c_footer_byte_mutation_in_url_not_approved_exit_needs_revision" "1" "$_codex_e24c_footer_byte_mutation_in_url_not_approved_exit"
+run_test "codex_e24c_footer_byte_mutation_in_url_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_e24c_footer_byte_mutation_in_url_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_e24c_footer_byte_mutation_in_url_not_approved_mock_dir"
+unset _codex_e24c_footer_byte_mutation_in_url_not_approved_mock_dir _codex_e24c_footer_byte_mutation_in_url_not_approved_output _codex_e24c_footer_byte_mutation_in_url_not_approved_exit
+# Decision-6 verdict-site near-miss #1 of 4 (issue #1491's implementation
+# plan, Codex GitHub finding `3805277351`, P2): the E3 near-miss body
+# (missing "Swish!", complete real footer, SHA-pinned) present on the
+# first poll. Resolves at the MAIN-LOOP verdict site. NEEDS_REVISION,
+# exit 1 — never VERDICT: TIMED_OUT. Each of the four Decision-6
+# verdict-site gates must be exercised by its own scenario, not inferred
+# from the others: a missing/mistyped gate at any one site still lets
+# this construction pass if it resolves at a different site.
+_codex_footer_near_miss_main_loop_safe_fails_mock_dir="$(mktemp -d)"
+cat > "$_codex_footer_near_miss_main_loop_safe_fails_mock_dir/gh" <<'CODEX_FOOTER_NEAR_MISS_MAIN_LOOP_SAFE_FAILS_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face0000011234567\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":450,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:451,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. **Reviewed commit:** `face000001` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_FOOTER_NEAR_MISS_MAIN_LOOP_SAFE_FAILS_GH
+chmod +x "$_codex_footer_near_miss_main_loop_safe_fails_mock_dir/gh"
+
+_codex_footer_near_miss_main_loop_safe_fails_output=""
+_codex_footer_near_miss_main_loop_safe_fails_exit=0
+PATH="$_codex_footer_near_miss_main_loop_safe_fails_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_footer_near_miss_main_loop_safe_fails_mock_dir/output.txt" 2>&1 || _codex_footer_near_miss_main_loop_safe_fails_exit=$?
+_codex_footer_near_miss_main_loop_safe_fails_output="$(cat "$_codex_footer_near_miss_main_loop_safe_fails_mock_dir/output.txt")"
+run_test "codex_footer_near_miss_main_loop_safe_fails_exit_needs_revision" "1" "$_codex_footer_near_miss_main_loop_safe_fails_exit"
+run_test "codex_footer_near_miss_main_loop_safe_fails_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_footer_near_miss_main_loop_safe_fails_output" | grep "^VERDICT:")"
+if printf '%s\n' "$_codex_footer_near_miss_main_loop_safe_fails_output" | grep -q "^INFO: bot response detected"; then
+  _codex_footer_near_miss_main_loop_safe_fails_site="main_loop"
+else
+  _codex_footer_near_miss_main_loop_safe_fails_site="other"
+fi
+run_test "codex_footer_near_miss_main_loop_safe_fails_resolves_at_main_loop" "main_loop" "$_codex_footer_near_miss_main_loop_safe_fails_site"
+rm -rf "$_codex_footer_near_miss_main_loop_safe_fails_mock_dir"
+unset _codex_footer_near_miss_main_loop_safe_fails_mock_dir _codex_footer_near_miss_main_loop_safe_fails_output _codex_footer_near_miss_main_loop_safe_fails_exit _codex_footer_near_miss_main_loop_safe_fails_site
+# Decision-6 verdict-site near-miss #2 of 4 (issue #1491's implementation
+# plan, Codex GitHub finding `3805277351`, P2): the main poll loop's own
+# comment fetches return empty for its entire budget; the near-miss body
+# appears only on the single async-grace poll that follows. Resolves at
+# the ASYNC-ARRIVAL verdict site. NEEDS_REVISION, exit 1 — never
+# VERDICT: TIMED_OUT.
+_codex_footer_near_miss_async_arrival_safe_fails_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_footer_near_miss_async_arrival_safe_fails_mock_dir/comment_calls"
+cat > "$_codex_footer_near_miss_async_arrival_safe_fails_mock_dir/gh" <<'CODEX_FOOTER_NEAR_MISS_ASYNC_ARRIVAL_SAFE_FAILS_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face0000021234567\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":460,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    # Calls 1-2 are the pre-trigger dedup check and the main poll-loop's
+    # bot-response check; both stay empty so execution falls through to
+    # the async-arrival grace poll (call 3), which returns the near-miss
+    # body directly as SHA-pinned terminal evidence.
+    if [ "$calls" -ge 3 ]; then
+      jq -nc '[{id:461,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. **Reviewed commit:** `face000002` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_FOOTER_NEAR_MISS_ASYNC_ARRIVAL_SAFE_FAILS_GH
+chmod +x "$_codex_footer_near_miss_async_arrival_safe_fails_mock_dir/gh"
+
+_codex_footer_near_miss_async_arrival_safe_fails_output=""
+_codex_footer_near_miss_async_arrival_safe_fails_exit=0
+PATH="$_codex_footer_near_miss_async_arrival_safe_fails_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_footer_near_miss_async_arrival_safe_fails_mock_dir/output.txt" 2>&1 || _codex_footer_near_miss_async_arrival_safe_fails_exit=$?
+_codex_footer_near_miss_async_arrival_safe_fails_output="$(cat "$_codex_footer_near_miss_async_arrival_safe_fails_mock_dir/output.txt")"
+run_test "codex_footer_near_miss_async_arrival_safe_fails_exit_needs_revision" "1" "$_codex_footer_near_miss_async_arrival_safe_fails_exit"
+run_test "codex_footer_near_miss_async_arrival_safe_fails_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_footer_near_miss_async_arrival_safe_fails_output" | grep "^VERDICT:")"
+if printf '%s\n' "$_codex_footer_near_miss_async_arrival_safe_fails_output" | grep -q "^INFO: async-arrival bot response detected during grace period"; then
+  _codex_footer_near_miss_async_arrival_safe_fails_site="async_arrival"
+else
+  _codex_footer_near_miss_async_arrival_safe_fails_site="other"
+fi
+run_test "codex_footer_near_miss_async_arrival_safe_fails_resolves_at_async_arrival" "async_arrival" "$_codex_footer_near_miss_async_arrival_safe_fails_site"
+rm -rf "$_codex_footer_near_miss_async_arrival_safe_fails_mock_dir"
+unset _codex_footer_near_miss_async_arrival_safe_fails_mock_dir _codex_footer_near_miss_async_arrival_safe_fails_output _codex_footer_near_miss_async_arrival_safe_fails_exit _codex_footer_near_miss_async_arrival_safe_fails_site
+# Decision-6 verdict-site near-miss #3 of 4 (issue #1491's implementation
+# plan, Codex GitHub finding `3805277351`, P2): the main poll loop returns
+# empty; the first async-grace poll finds only a bare acknowledgement
+# comment (the footer's acknowledgement sentence alone, no
+# **Reviewed commit:** marker — non-terminal, so it cannot resolve the
+# verdict on its own); this triggers the one-shot sleep-and-recheck, and
+# the near-miss body appears only on that second check. Resolves at the
+# ASYNC-FINAL verdict site. NEEDS_REVISION, exit 1 — never
+# VERDICT: TIMED_OUT.
+_codex_footer_near_miss_async_final_safe_fails_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_footer_near_miss_async_final_safe_fails_mock_dir/comment_calls"
+cat > "$_codex_footer_near_miss_async_final_safe_fails_mock_dir/gh" <<'CODEX_FOOTER_NEAR_MISS_ASYNC_FINAL_SAFE_FAILS_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face0000031234567\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":470,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    # Calls 1-2 are the pre-trigger dedup check and the main poll-loop's
+    # bot-response check; both stay empty. Call 3 is the async-arrival
+    # grace poll: a bare, non-terminal acknowledgement comment (gated on
+    # source != "review", Decision 6, so it correctly triggers the
+    # sleep-and-recheck instead of safe-failing here). Call 4+ is the
+    # async-final re-poll: the near-miss body, SHA-pinned terminal
+    # evidence that does not reproduce CODEX_APPROVED_TEMPLATES.
+    if [ "$calls" -ge 4 ]; then
+      jq -nc '[{id:471,created_at:"2026-01-01T00:00:02Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. **Reviewed commit:** `face000003` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    elif [ "$calls" -eq 3 ]; then
+      jq -nc '[{id:472,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".")}]'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_FOOTER_NEAR_MISS_ASYNC_FINAL_SAFE_FAILS_GH
+chmod +x "$_codex_footer_near_miss_async_final_safe_fails_mock_dir/gh"
+
+_codex_footer_near_miss_async_final_safe_fails_output=""
+_codex_footer_near_miss_async_final_safe_fails_exit=0
+PATH="$_codex_footer_near_miss_async_final_safe_fails_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_footer_near_miss_async_final_safe_fails_mock_dir/output.txt" 2>&1 || _codex_footer_near_miss_async_final_safe_fails_exit=$?
+_codex_footer_near_miss_async_final_safe_fails_output="$(cat "$_codex_footer_near_miss_async_final_safe_fails_mock_dir/output.txt")"
+run_test "codex_footer_near_miss_async_final_safe_fails_exit_needs_revision" "1" "$_codex_footer_near_miss_async_final_safe_fails_exit"
+run_test "codex_footer_near_miss_async_final_safe_fails_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_footer_near_miss_async_final_safe_fails_output" | grep "^VERDICT:")"
+if printf '%s\n' "$_codex_footer_near_miss_async_final_safe_fails_output" | grep -q "^INFO: final async bot response detected after acknowledgement wait"; then
+  _codex_footer_near_miss_async_final_safe_fails_site="async_final"
+else
+  _codex_footer_near_miss_async_final_safe_fails_site="other"
+fi
+run_test "codex_footer_near_miss_async_final_safe_fails_resolves_at_async_final" "async_final" "$_codex_footer_near_miss_async_final_safe_fails_site"
+rm -rf "$_codex_footer_near_miss_async_final_safe_fails_mock_dir"
+unset _codex_footer_near_miss_async_final_safe_fails_mock_dir _codex_footer_near_miss_async_final_safe_fails_output _codex_footer_near_miss_async_final_safe_fails_exit _codex_footer_near_miss_async_final_safe_fails_site
+# Decision-6 verdict-site near-miss #4 of 4 (issue #1491's implementation
+# plan, Codex GitHub finding `3805277351`, P2): a thumbs-up reaction is
+# present on the trigger comment from the first poll onward, and every
+# comment fetch returns empty until the final check that follows the
+# reaction-triggered sleep, where the near-miss body appears (as a
+# current-head review, mirroring codex_async_reaction_then_late_review's
+# proven mock sequencing for this same site's positive path). Resolves at
+# the ASYNC-REACTION-FINAL verdict site — this scenario is the negative-
+# path counterpart to codex_async_reaction_then_late_review (Group
+# APPROVED). NEEDS_REVISION, exit 1 — never VERDICT: TIMED_OUT.
+_codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir/review_calls"
+cat > "$_codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir/gh" <<'CODEX_FOOTER_NEAR_MISS_ASYNC_REACTION_FINAL_SAFE_FAILS_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face0000041234567\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":480,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[{"content":"+1","user":{"login":"chatgpt-codex-connector[bot]"}}]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    calls_file="$(dirname "$0")/review_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -ge 3 ]; then
+      jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"face0000041234567",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. **Reviewed commit:** `face000004` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_FOOTER_NEAR_MISS_ASYNC_REACTION_FINAL_SAFE_FAILS_GH
+chmod +x "$_codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir/gh"
+
+_codex_footer_near_miss_async_reaction_final_safe_fails_output=""
+_codex_footer_near_miss_async_reaction_final_safe_fails_exit=0
+PATH="$_codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir/output.txt" 2>&1 || _codex_footer_near_miss_async_reaction_final_safe_fails_exit=$?
+_codex_footer_near_miss_async_reaction_final_safe_fails_output="$(cat "$_codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir/output.txt")"
+run_test "codex_footer_near_miss_async_reaction_final_safe_fails_exit_needs_revision" "1" "$_codex_footer_near_miss_async_reaction_final_safe_fails_exit"
+run_test "codex_footer_near_miss_async_reaction_final_safe_fails_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_footer_near_miss_async_reaction_final_safe_fails_output" | grep "^VERDICT:")"
+if printf '%s\n' "$_codex_footer_near_miss_async_reaction_final_safe_fails_output" | grep -q "^INFO: final async reaction bot response detected via PR reviews endpoint"; then
+  _codex_footer_near_miss_async_reaction_final_safe_fails_site="async_reaction_final"
+else
+  _codex_footer_near_miss_async_reaction_final_safe_fails_site="other"
+fi
+run_test "codex_footer_near_miss_async_reaction_final_safe_fails_resolves_at_async_reaction_final" "async_reaction_final" "$_codex_footer_near_miss_async_reaction_final_safe_fails_site"
+rm -rf "$_codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir"
+unset _codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir _codex_footer_near_miss_async_reaction_final_safe_fails_output _codex_footer_near_miss_async_reaction_final_safe_fails_exit _codex_footer_near_miss_async_reaction_final_safe_fails_site
+
 
 _unlock_pr="80213$$"
 _unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
