@@ -597,12 +597,17 @@ and `[[ ]]`-free POSIX tests). No portable `bash-zsh` snippet is introduced.
       reason. **Each retargeted scenario also has a paired `*_exit_clean` assertion that must retarget in the
       same commit**, from `"0"` to `"1"` — see "Test disposition" for why this pairing matters and how to find
       every instance.
-- [ ] **Append the complete, verbatim vendor footer to the real, existing scenario bodies that must continue
-      to assert `VERDICT: APPROVED`** — see Group APPROVED in "Test disposition." This is a stricter
-      requirement than the prior revision's: under truncate-then-match, a fixture body omitting the footer
-      still matched (the footer was discarded before comparison either way); under whole-body exact matching,
-      the same fixture no longer matches unless the footer text is genuinely present, because nothing is
-      discarded any more.
+- [ ] **Update the bodies of every scenario in Group APPROVED** — see "Test disposition" for the full
+      membership and per-scenario notes. The two template-anchored members need only the complete, verbatim
+      vendor footer appended (their existing verdict sentence and SHA are otherwise correct). The routing-
+      testing members kept in this group need a full body replacement with the exact template's verdict
+      sentence, `**Reviewed commit:**` marker, and complete footer, since their current bodies use different
+      wording entirely — while preserving each one's distinguishing mock sequencing (poll timing or
+      competing-evidence setup), or the routing behavior it tests is no longer exercised. This is a stricter
+      requirement than the prior revision's for the two footer-only members: under truncate-then-match, a
+      fixture body omitting the footer still matched (the footer was discarded before comparison either way);
+      under whole-body exact matching, the same fixture no longer matches unless the footer text is genuinely
+      present, because nothing is discarded any more.
 - [ ] Add the new scenarios listed in "New scenarios" — see that section for the full list and construction
       notes for each.
 - [ ] Consolidate, rather than individually re-litigate, the regression scenarios whose underlying mechanism no
@@ -863,24 +868,74 @@ contains categories a subtraction could silently sweep in.
   footer — both must have the complete, verbatim vendor footer appended, or they no longer match under the new
   whole-body design. Beyond those two, this plan adds new scenarios to cover the boundary cases in
   "New scenarios" below (E1, E7, E12).
-- **Group RETARGETED** — every other real, existing scenario that currently asserts `VERDICT: APPROVED`.
-  Enumerate with `grep 'run_test "codex_' test-pr-review-loop.sh | grep 'VERDICT: APPROVED'`, then remove the
-  two Group APPROVED members above; everything left does not reproduce `CODEX_APPROVED_TEMPLATES`' one entry
-  (verify by inspecting each body directly, not by assumption) and must retarget to `VERDICT: NEEDS_REVISION
-  (unrecognized response format — safe-fail)`. **Two known scenarios in this group are SIGPIPE-safety fixtures**
-  whose long bodies begin with pre-plan block-list-matching text (`No blocking issues found.` / `Codex Review:
-  Didn't find any major issues.` followed by ~200,000 filler characters) — these must retarget along with every
-  other member of this group; do not leave them classified as already-`NEEDS_REVISION` without checking their
-  real, current disposition first.
+  **A further subset of the scenarios that currently assert `VERDICT: APPROVED` belongs in this group too, not
+  in Group RETARGETED, even though their body does not reproduce a template** (Codex GitHub finding
+  `3805127030`, P2). Retargeting is only correct for a scenario whose assertion is really about approval
+  *vocabulary* — whether particular wording, negation, or quoting classifies as clean under the old block-list
+  design. A scenario whose assertion is about verdict *routing* (which verdict site resolves it, and under what
+  timing/evidence-priority conditions) merely uses an approving body incidentally; retargeting it would delete
+  the only coverage for the routing behavior it exists to test, and the routing behavior itself is unaffected
+  by this plan. Determine which is which by reading what each scenario's mock sequencing actually exercises —
+  not by its name — and treat a scenario as routing, not vocabulary, if it does at least one of: resolve only
+  after multiple poll iterations or an async-grace re-check (not on the first evaluation), or assert priority
+  between two competing evidence sources (a review versus a reaction, an environment error, or a stale/older
+  review) rather than testing whether one body's wording alone is approving. Six such scenarios were found this
+  round, each testing routing at a specific verdict site — keep every one asserting `VERDICT: APPROVED`. **Their
+  current bodies use different wording than the template entirely (e.g. `"No blocking issues found."`), so this
+  is a full body replacement with the exact template's verdict sentence, `**Reviewed commit:**` marker, and
+  complete footer — not merely a footer append like the two pre-existing members above** — while preserving
+  each scenario's distinguishing mock sequencing (the poll timing or competing-evidence setup that makes it a
+  routing test, not just its final review/comment payload). Do not touch any of these six scenarios' paired
+  `*_exit_clean` assertions (each correctly stays `"0"`, unaffected):
+  - `codex_reaction_with_current_review` — a current-head review resolves `APPROVED` despite a simultaneous
+    reaction-bearing ancillary comment; confirms the review, not the reaction/acknowledgement noise, wins.
+    Resolves at the main-loop verdict site.
+  - `codex_reaction_then_late_review` — a review arriving on a later main-loop poll iteration (after an
+    earlier iteration saw only a reaction) still resolves `APPROVED`. Resolves at the main-loop verdict site.
+  - `codex_async_reaction_then_late_review` — a review arriving only after the async-grace re-check that
+    follows a detected reaction still resolves `APPROVED`. Resolves at the async-reaction-final verdict site —
+    this is the only scenario in the entire suite that exercises that site's positive path.
+  - `codex_main_loop_env_then_newer_review_supersedes` — a strictly newer review supersedes a previously
+    recorded, now-stale environment error within the same poll. Resolves at the main-loop verdict site.
+  - `codex_latest_current_review` — when multiple reviews are returned, the one at the latest timestamp is
+    selected and resolves `APPROVED`, not an earlier, non-clean one. Resolves at the main-loop verdict site.
+  - `codex_environment_with_current_review` — a current review resolves `APPROVED` despite a simultaneous
+    environment-error notice; confirms evidence-priority, not the environment notice, decides the verdict.
+    Resolves at the main-loop verdict site.
+
+  **Verdict-site coverage after this split**: the main-loop verdict site retains multiple positive-path
+  assertions (the five scenarios above plus Group APPROVED's own two members); the async-reaction-final site
+  retains exactly one (`codex_async_reaction_then_late_review`). **The async-arrival and async-final verdict
+  sites have no positive-path (`VERDICT: APPROVED`) assertion in the suite today, independent of this plan or
+  of this split** — reproduced by running every `VERDICT: APPROVED`-asserting scenario in the current suite and
+  observing which verdict site's `INFO:` trace resolves it; none reaches those two sites before a review or
+  comment arrives. This is a pre-existing gap, not something this plan's retargeting creates or could fix by
+  retargeting decisions alone, and adding new coverage for it is out of scope for this correction — noted here
+  so an implementer does not assume the four sites are symmetrically covered.
+- **Group RETARGETED** — every other real, existing scenario that currently asserts `VERDICT: APPROVED` — that
+  is, every scenario in the enumeration below **except** the two Group APPROVED members and the six
+  routing-testing scenarios named above. Enumerate with `grep 'run_test "codex_' test-pr-review-loop.sh | grep
+  'VERDICT: APPROVED'`, remove those eight, and read each remaining scenario's body directly (not by name
+  pattern) to confirm it is a vocabulary-classification test with no multi-poll or evidence-priority behavior
+  of its own — everything left does not reproduce `CODEX_APPROVED_TEMPLATES`' one entry and must retarget to
+  `VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)`. **Two known scenarios in this group are
+  SIGPIPE-safety fixtures** whose long bodies begin with pre-plan block-list-matching text (`No blocking issues
+  found.` / `Codex Review: Didn't find any major issues.` followed by ~200,000 filler characters) — these are
+  vocabulary-matching artifacts, not routing tests (single-shot, no poll sequencing), and must retarget along
+  with every other member of this group; do not leave them classified as already-`NEEDS_REVISION` without
+  checking their real, current disposition first.
   **Every scenario in this group has a paired `*_exit_clean` assertion** (a second `run_test` line, named
   `<scenario>_exit_clean`, checking the scenario's exit code independently of its verdict string) that
   currently expects exit `0` and must retarget to `1` in the same commit, because `VERDICT: NEEDS_REVISION`
   exits 1, not 0. Enumerate these with `grep '_exit_clean"' test-pr-review-loop.sh` and pair each by name with
   its scenario; do not assume a `*_exit_clean` assertion is part of the "untouched, non-verdict" bucket just
   because it carries no `VERDICT:` string — whether it is untouched depends on whether its paired scenario is
-  retargeting, not on its own text. Also rename any scenario whose name now asserts the opposite of its
-  expectation (suffixes like `…_stays_approved_…`) in the same commit that retargets it, so the name and
-  expectation never disagree on `develop`.
+  retargeting, not on its own text. **A scenario kept in Group APPROVED per the split above (including the six
+  routing-testing scenarios) is not in this group, and its paired `*_exit_clean` assertion does not retarget
+  either** — the exit-clean/verdict pairing tracks the scenario's real group membership, not its former
+  candidacy. Also rename any scenario whose name now asserts the opposite of its expectation (suffixes like
+  `…_stays_approved_…`) in the same commit that retargets it, so the name and expectation never disagree on
+  `develop`.
 - **Group UNCHANGED-NEEDS_REVISION** — every real scenario that already asserts `VERDICT: NEEDS_REVISION` and
   stays that way. Enumerate with `grep 'run_test "codex_' test-pr-review-loop.sh | grep -c 'VERDICT:
   NEEDS_REVISION'`. None of these bodies has ever reproduced, or now reproduces, the evidenced whole-body
@@ -901,12 +956,21 @@ contains categories a subtraction could silently sweep in.
   parsing, and must pass unchanged; any failure among them is a genuine regression, not an intended contract
   change.
 
-**Reconciliation rule**: Group APPROVED's real (pre-existing) members + Group RETARGETED's verdict-string
-members must equal the total `VERDICT: APPROVED` count. Group RETARGETED's verdict members + Group
+**Reconciliation rule**: Group APPROVED's real (pre-existing) verdict-string members — now including the
+routing-testing scenarios kept in that group per the split above, not only the two template-anchored ones —
+plus Group RETARGETED's verdict-string members must equal the total `VERDICT: APPROVED` count. **A second,
+independent equation must also hold and must include every group, Group APPROVED included** (Codex GitHub
+finding `3805127037`, P2 — an earlier revision of this equation omitted Group APPROVED's real, pre-existing
+verdict-string members entirely, so the listed terms summed short of the total by exactly that many): Group
+APPROVED's real (pre-existing) verdict-string members + Group RETARGETED's verdict-string members + Group
 UNCHANGED-NEEDS_REVISION + Group UNTOUCHED's availability/timeout members + Group UNTOUCHED's non-verdict
 members + Group RETARGETED's paired `*_exit_clean` members must equal the total `codex_*` assertion count,
-with every real assertion counted in exactly one group. If the sum does not match the total, re-derive rather
-than adjusting either number to force agreement.
+with every real assertion counted in exactly one group. **Group APPROVED's own paired `*_exit_clean` members
+are not a separate term** — they stay `"0"`, unaffected, and are already inside Group UNTOUCHED's non-verdict
+count (only Group RETARGETED's paired `*_exit_clean` members are excluded from that count, per Group
+UNTOUCHED's definition above). If the sum does not match the total, re-derive rather than adjusting either
+number to force agreement — this is exactly the failure mode both Codex findings this round identified: a
+term silently missing from the list, not a wrong arithmetic operation.
 
 **A scenario that was never implemented**: an earlier revision of this document described a
 `codex_disqualifier_diagnostic_emitted` scenario as scheduled for deletion. It is not, and has never been, in
@@ -1147,8 +1211,10 @@ the classifier. The supported response to a persistent false `NEEDS_REVISION` is
    `test-pr-review-loop.sh`** — this document's scenario-existence claims have been wrong before; do not
    proceed on any scenario list in this document without re-confirming it against the file as it stands at
    implementation time.
-8. **Update the tests**: append the complete real footer to the real Group APPROVED scenario bodies; apply
-   every Group RETARGETED disposition (see "Test disposition" for the derivation method) — **each retargeted
+8. **Update the tests**: update every Group APPROVED scenario body per the split in "Test disposition" (footer
+   append for the two template-anchored members; full body replacement, with mock sequencing preserved, for
+   the routing-testing members kept in that group); apply every Group RETARGETED disposition to the remaining,
+   vocabulary-testing scenarios only (see "Test disposition" for the derivation method) — **each retargeted
    scenario requires two edits, not one**: its `VERDICT: APPROVED` assertion retargets to `VERDICT:
    NEEDS_REVISION (unrecognized response format — safe-fail)`, **and** its paired `*_exit_clean` assertion
    retargets from `"0"` to `"1"` in the same commit; confirm `codex_disqualifier_diagnostic_emitted` is
