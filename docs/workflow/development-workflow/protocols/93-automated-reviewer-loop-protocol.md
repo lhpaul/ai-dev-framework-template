@@ -149,6 +149,19 @@ acknowledgement, since a bare
 acknowledgement carries no information and is never treated as competing
 evidence.
 
+Once terminal evidence is selected, `APPROVED` requires the response to
+reproduce, whitespace aside, one of a small set of exact captured
+clean-response templates covering the entire body — footer included, with no
+truncation step of any kind. Anything else is treated as `NEEDS_REVISION`
+regardless of how close it reads to a genuine approval, including a response
+that carries the real vendor footer but does not exactly match an evidenced
+template (issue #1491's conservative-verdict-classifier implementation
+plan). A bare, non-terminal acknowledgement comment is still routed to
+wait-for-more-evidence as before; that wait is gated on the evidence being
+non-terminal, so a footer-bearing near-miss on genuinely terminal evidence
+always reaches the `NEEDS_REVISION` safe-fail rather than being misrouted to
+a wait/timeout.
+
 When both a SHA-pinned root comment and a submitted review qualify as terminal
 evidence, the strictly newer one wins. On an exact timestamp tie (GitHub
 timestamps are second-resolution), any response that is not a clean approval

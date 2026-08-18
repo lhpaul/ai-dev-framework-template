@@ -572,6 +572,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PR metadata cannot be resolved, and batch merge rechecks preserve explicit
   approvals for unready PRs.
 
+### Changed
+
+- **Conservative Codex verdict classifier** (#1491): `codex-github-reviewer.sh` now requires the response —
+  whitespace-normalized, with no truncation step of any kind — to be an exact match, from its first
+  character to its last, against one of a small set of clean-response templates captured verbatim from real
+  Codex responses (each template including the complete vendor `<details>` footer text), and safe-fails to
+  `NEEDS_REVISION` for anything else, including responses that are plausibly clean but use different
+  wording anywhere in the body. This replaces both the open-ended negated-approval vocabulary enumeration
+  this plan originally targeted and the allow-list/closed-grammar/truncate-then-match designs this plan
+  shipped and then found further false-`APPROVED` gaps in across subsequent review rounds — no vocabulary,
+  grammar, or partial-body match converged, so this revision applies exact literal comparison to the entire
+  response, leaving no discarded byte range for a novel construction to hide in. GitHub's structured
+  `CHANGES_REQUESTED` review-state short-circuit and the blocking classifier are unchanged.
+
 ## [0.42.0] - 2026-08-13
 
 ### Added

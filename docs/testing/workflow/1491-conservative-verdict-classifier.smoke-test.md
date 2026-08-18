@@ -531,24 +531,24 @@ design any earlier revision of this plan shipped there).
 
 | Step | Pass / Fail | Notes |
 | --- | --- | --- |
-| 1 | | |
-| 2 | | |
-| 3 | | |
-| 4 | | |
-| 5 | | |
-| 6 | | |
-| 7 | | |
-| 8 | | |
-| 9 | | |
-| 10 | | |
-| 11 | | |
-| 12 | | |
-| 13 | | |
-| 14 | | |
-| 15 | | |
+| 1 | Pass | `bash scripts/development-workflow/tests/test-pr-review-loop.sh` exits 0, `Tests: 684 passed, 0 failed` |
+| 2 | Pass | Comment-filtered deletion-list search returns nothing; `CODEX_APPROVED_TEMPLATES`/`codex_normalize_whitespace` each show one definition; `codex_response_is_approved` shows no footer-strip/fence/quote/not-only-idiom call; five call sites confirmed (`codex_response_priority` plus the four verdict sites) |
+| 3 | Pass | Comment-filtered `codex_strip_not_only_idiom` count = 2 (definition + one call, inside `codex_response_is_blocking`) |
+| 4 | Pass | Merge base `a0b8f8c7d9b63ea0f2ace945f78990579ceca828` resolved; `CODEX_BLOCKING_PATTERN`/`CODEX_MERGE_REFUSAL_PATTERN`/`CODEX_NEGATION_WORDS` diffs empty; full `codex_response_is_blocking` function-range diff empty (byte-identical) |
+| 5 | Pass | All four `codex_footer_near_miss_*_safe_fails` scenarios exit 1 with the unrecognized-format safe-fail, resolving at their named site per `INFO:` trace; independence verified by reverting only the async-final gate in a scratch copy — only that scenario regressed to `TIMED_OUT`, the other three still passed |
+| 6 | Pass | `No blocking issues found.` root comment exits 1, `VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)` |
+| 7 | Pass | Live-refetched PR #1489 root comment (2026-08-18, repo `26b5dada`) still matches the evidenced template verbatim; `codex_e1_real_pr1489_capture_approved` exits 0, `VERDICT: APPROVED` |
+| 8 | Pass | Live-refetched PR #1490 review body still the generic wrapper with no clean-signal text; `codex_e2_real_pr1490_review_not_approved` (review-sourced, state `COMMENTED`) exits 1, safe-fail |
+| 9 | Pass | `codex_e22_refusal_inside_footer_blocking` exits 1 with plain `VERDICT: NEEDS_REVISION` (blocking branch); isolated `codex_response_is_approved` call on the same body also returns non-zero on its own |
+| 10 | Pass | `codex_e23_footer_opening_line_only_not_approved` exits 1, safe-fail — finding `3803545669`'s construction is rejected |
+| 11 | Pass | `codex_e24a/b/c_footer_byte_mutation_*` (mid-sentence, before `</details>`, inside the URL) all exit 1, safe-fail |
+| 12 | Pass | `codex_e21_filler_composed_hedge_not_approved` (`Looks good, or is it?`) exits 1, safe-fail |
+| 13 | Pass | (a) Group APPROVED's two template-anchored members use distinct valid SHAs (`abcdefab12`, `abcabcabcabc1234567890`) and both exit 0/`APPROVED`; `codex_e7_full_length_sha_approved` (40-char) exits 0/`APPROVED`; (b) `codex_e5_short_sha_not_approved` (6-char, review-sourced), (c) `codex_e6_oversized_sha_not_approved` (41-char, review-sourced), and (d) `codex_e8_non_hex_sha_not_approved` (review-sourced) all exit 1, safe-fail |
+| 14 | Pass | `codex-github.md` gained a "Verdict Classification" section stating the whole-body exact-template contract; Protocol 93's "Codex GitHub terminal evidence" block states the template-reproduction requirement; `CHANGELOG.md` `[Unreleased]` → `### Changed` carries the `**Conservative Codex verdict classifier** (#1491):` entry |
+| 15 | Pass | `markdownlint-cli2` (changed docs + this runbook + `CHANGELOG.md`): 0 errors; `markdown-heuristic-lint.py`: exit 0; `workflow-shell-snippet-lint.py --base-ref origin/develop`: exit 0; `shellcheck --severity=warning` on both changed `.sh` files: only pre-existing, untouched warnings at unrelated lines (1699-1700 of the test file, unchanged by this PR) |
 
-**Platform tested**: (macOS/BSD or Linux/GNU)
+**Platform tested**: macOS/BSD (Darwin 25.5.0)
 
-**Tester**:
+**Tester**: developer agent (issue #1491 implementation)
 
-**Date**:
+**Date**: 2026-08-18

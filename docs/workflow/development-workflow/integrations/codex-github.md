@@ -24,6 +24,33 @@ during the async grace-period poll — is treated as unavailable, not as
 absence of evidence, so it cannot be silently overridden by a clean
 submitted review.
 
+## Verdict Classification
+
+`APPROVED` requires the response — the **entire, untruncated** body,
+whitespace-normalized — to be an **exact** match against one of a small set
+of literal templates captured verbatim from real Codex clean responses, each
+template including the complete vendor `<details>` "About Codex in GitHub"
+footer text. Today exactly one template is evidenced, covering the
+`Codex Review: Didn't find any major issues. Swish!` / `**Reviewed commit:**`
+shape plus the complete footer, with a bounded placeholder only for the
+commit SHA (`[0-9a-f]{7,40}`, git's own documented abbreviated-to-full
+SHA-1 hex-length range). There is no vocabulary list, no grammar, no
+truncation step, and no case-insensitive or punctuation-tolerant matching —
+whitespace normalization (collapsing whitespace runs to a single space,
+trimming the ends) is the only permitted flexibility. Adding a template is
+the only way to widen the approval surface, and it needs a live capture of
+the new wording plus the same review discipline the classifier's earlier,
+now-deleted vocabulary patterns once required.
+
+The deliberate, disclosed trade of this design: a genuinely clean response
+using different wording anywhere in the body — including a cosmetic vendor
+footer rewording — safe-fails to `NEEDS_REVISION` today rather than being
+approved. This failure direction is always safe (more `NEEDS_REVISION`,
+never a false `APPROVED`); recovery is a live capture of the new wording
+added as a new template entry, never a relaxation of the matching
+technique. See issue #1491's implementation plan for the full design
+history and rationale.
+
 ## Prerequisites
 
 Before a repository keeps `codex-github` in `review.on_ready.github`, verify:
