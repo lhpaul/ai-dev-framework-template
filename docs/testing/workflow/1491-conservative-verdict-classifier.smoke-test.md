@@ -61,15 +61,34 @@ figure is explicitly provisional — report the real count here).
 
 **Maps to**: Implementation Order steps 2–5
 
-1. Run:
+1. Run — **corrected this round (Codex GitHub finding `3804088454`, round 9): the unfiltered form is unsound.**
+   `codex_response_is_blocking`'s own unchanged rationale comment names `CODEX_NEGATED_APPROVAL_PATTERN` three
+   times, `codex_strip_quoted_spans`'s comment names `CODEX_APPROVAL_PATTERN`/`CODEX_NEGATED_APPROVAL_PATTERN`
+   once each, and `CODEX_BLOCKING_PATTERN`'s own comment names `CODEX_NEGATED_APPROVAL_PATTERN` twice more — all
+   in functions this plan keeps unchanged. Run today, before implementation (`CODEX_APPROVAL_PATTERN` added to
+   the search set — an earlier revision of this runbook omitted it even though it is on the deletion list):
 
    ```bash
-   grep -nE "CODEX_NEGATED_APPROVAL|CODEX_APPROVAL_PATTERN|CODEX_CLEAN_SIGNAL|CODEX_APPROVAL_(NEGATION|HEDGE|ACTIONABLE|DISQUALIFIER)|CODEX_RESIDUE_FILLER|CODEX_RESIDUE_STARTER|CODEX_VENDOR_FLAVOR|codex_excise_clean_signals|codex_residue_is_closed_grammar|codex_response_first_paragraph|codex_strip_vendor_metadata_lines|CODEX_FOOTER_OPENING_LITERAL|codex_strip_codex_footer" \
+   grep -nE "CODEX_APPROVAL_PATTERN|CODEX_NEGATED_APPROVAL|CODEX_CLEAN_SIGNAL|CODEX_APPROVAL_(NEGATION|HEDGE|ACTIONABLE|DISQUALIFIER)|CODEX_RESIDUE_FILLER|CODEX_RESIDUE_STARTER|CODEX_VENDOR_FLAVOR|codex_excise_clean_signals|codex_residue_is_closed_grammar|codex_response_first_paragraph|codex_strip_vendor_metadata_lines|CODEX_FOOTER_OPENING_LITERAL|codex_strip_codex_footer" \
      scripts/development-workflow/codex-github-reviewer.sh
    ```
 
-   **`codex_strip_not_only_idiom`/`not_only` is deliberately excluded from this search — see Step 3 below.**
-   An earlier revision of this runbook included it here, which is wrong: the function and its call inside
+   → **13** matches today (8 of them comment mentions in functions this plan does not touch; 5 the real code
+   being deleted). Comment-filtered:
+
+   ```bash
+   grep -v '^[[:space:]]*#' scripts/development-workflow/codex-github-reviewer.sh \
+     | grep -nE "CODEX_APPROVAL_PATTERN|CODEX_NEGATED_APPROVAL|CODEX_CLEAN_SIGNAL|CODEX_APPROVAL_(NEGATION|HEDGE|ACTIONABLE|DISQUALIFIER)|CODEX_RESIDUE_FILLER|CODEX_RESIDUE_STARTER|CODEX_VENDOR_FLAVOR|codex_excise_clean_signals|codex_residue_is_closed_grammar|codex_response_first_paragraph|codex_strip_vendor_metadata_lines|CODEX_FOOTER_OPENING_LITERAL|codex_strip_codex_footer"
+   ```
+
+   → **5** matches today, all real code (the `CODEX_APPROVAL_PATTERN`/`CODEX_NEGATED_APPROVAL_PATTERN`/
+   `CODEX_NEGATED_APPROVAL_TARGET_WORDS` definitions and their two call sites inside the old
+   `codex_response_is_approved`). **Use the comment-filtered form as the pass/fail gate** — it must return
+   nothing after a correct implementation. The raw form will still show 8 surviving comment lines after a
+   correct implementation and must not be used as the gate.
+
+   `codex_strip_not_only_idiom`/`not_only` is deliberately excluded from this search — see Step 3 below. An
+   earlier revision of this runbook included it here, which is wrong: the function and its call inside
    `codex_response_is_blocking` are kept (Codex GitHub finding `3803959040`, round 8); only its call inside the
    old `codex_response_is_approved` is gone, as a byproduct of that function's full replacement, not a listed
    deletion.
@@ -89,14 +108,17 @@ figure is explicitly provisional — report the real count here).
    grep -n "codex_response_is_approved" -A 15 scripts/development-workflow/codex-github-reviewer.sh
    ```
 
-**Expected result**: the first command prints nothing — every symbol this plan's five prior revisions ever
-introduced or targeted for deletion is gone, with no dormant leftovers. This includes `CODEX_FOOTER_OPENING_LITERAL`
-and `codex_strip_codex_footer`, which round 6 moved from "keep unchanged" to "delete" (Decision 5) — if either
-still appears anywhere in the file, this step fails even if every other symbol is gone. The second command
-prints at least one definition line for each of the two symbols the final design actually ships. The third
-command's output shows `codex_response_is_approved` normalizing whitespace on `$body` directly and looping
-over `CODEX_APPROVED_TEMPLATES` — no footer-strip call, no fence-marker check, no quote-stripping call, no
-`codex_strip_not_only_idiom` call, and no reference to any of the symbols the first command searched for.
+**Expected result**: the comment-filtered form of the first command prints nothing — every symbol this plan's
+five prior revisions ever introduced or targeted for deletion is gone from the executable code, with no
+dormant leftovers. This includes `CODEX_FOOTER_OPENING_LITERAL` and `codex_strip_codex_footer`, which round 6
+moved from "keep unchanged" to "delete" (Decision 5) — if either still appears in the executable code anywhere
+in the file, this step fails even if every other symbol is gone. The second command prints at least one
+definition line for each of the two symbols the final design actually ships. The third command's output shows
+`codex_response_is_approved` normalizing whitespace on `$body` directly and looping over
+`CODEX_APPROVED_TEMPLATES` — no footer-strip call, no fence-marker check, no quote-stripping call, no
+`codex_strip_not_only_idiom` call, and no executable reference to any of the symbols the first command
+searched for (comments describing the plan's own history, in functions this plan does not touch, are expected
+and are not a failure).
 
 ---
 
@@ -104,11 +126,22 @@ over `CODEX_APPROVED_TEMPLATES` — no footer-strip call, no fence-marker check,
 
 **Maps to**: Decision 4 (corrected round 8, Codex GitHub finding `3803959040`)
 
-1. Run:
+1. Run — **corrected this round (Codex GitHub finding `3804088454`, round 9): a bare `grep -c` counts comment
+   lines too.** `codex_response_is_blocking`'s own rationale comment names `codex_strip_not_only_idiom` twice.
+   Run both forms today (pre-implementation, both call sites still present):
 
    ```bash
    grep -c "codex_strip_not_only_idiom" scripts/development-workflow/codex-github-reviewer.sh
    ```
+
+   → **5** (2 comments + 1 definition + 2 calls).
+
+   ```bash
+   grep -v '^[[:space:]]*#' scripts/development-workflow/codex-github-reviewer.sh \
+     | grep -c "codex_strip_not_only_idiom"
+   ```
+
+   → **3** (1 definition + 2 calls).
 
 2. Run, to confirm which function the one remaining call lives inside:
 
@@ -116,12 +149,15 @@ over `CODEX_APPROVED_TEMPLATES` — no footer-strip call, no fence-marker check,
    grep -n "codex_response_is_blocking\|codex_strip_not_only_idiom" scripts/development-workflow/codex-github-reviewer.sh
    ```
 
-**Expected result**: the first command returns exactly **2** (the function definition, plus its one remaining
-call). If it returns 0, the function was wrongly deleted entirely — a direct regression of Codex GitHub finding
-`3803959040` (a genuinely clean response containing "not only … merge" in one clause, e.g. `This is not only
-safe to merge but looks good.`, will be misclassified as a merge refusal). If it returns 3, the old
-`is_approved`-side call was wrongly left in place. The second command's output shows the one remaining call
-appearing inside `codex_response_is_blocking`'s function body, not inside `codex_response_is_approved`'s.
+**Expected result**: **use the comment-filtered count (step 1's second command) as the pass/fail gate.** It
+must return exactly **2** after a correct implementation (the function definition, plus its one remaining
+call) — not 0, and not 3. If it returns 0, the function was wrongly deleted entirely — a direct regression of
+Codex GitHub finding `3803959040` (a genuinely clean response containing "not only … merge" in one clause, e.g.
+`This is not only safe to merge but looks good.`, will be misclassified as a merge refusal). If it returns 3,
+the old `is_approved`-side call was wrongly left in place. **Do not use the raw (unfiltered) count as the
+gate** — it must read **4** after a correct implementation (2 comments + 1 definition + 1 call), not 2, because
+of the two comment mentions named above. The second command's output shows the one remaining call appearing
+inside `codex_response_is_blocking`'s function body, not inside `codex_response_is_approved`'s.
 
 ---
 
@@ -129,9 +165,15 @@ appearing inside `codex_response_is_blocking`'s function body, not inside `codex
 
 **Maps to**: Decision 4
 
-**Corrected this round (Codex GitHub finding `3803959040`).** An earlier revision of this runbook expected a
-diff here (the removed `codex_strip_not_only_idiom` call). That expectation was itself the bug this round
-fixes: the call is retained, so there must be **no** diff touching `codex_response_is_blocking` at all.
+**Corrected in round 8 (Codex GitHub finding `3803959040`):** an earlier revision expected a diff here (the
+removed `codex_strip_not_only_idiom` call); the call is retained, so there must be **no** functional change to
+`codex_response_is_blocking` at all. **Corrected again this round (Codex GitHub finding `3804088461`, round
+9): a `grep` over a `git diff` cannot establish "this function is unchanged."** `grep` selects only lines that
+match a pattern; any edit on a line that does not contain one of the searched symbols is invisible to it —
+confirmed by execution: removing `-i` from the function's own `grep -qiE "$CODEX_BLOCKING_PATTERN"` call
+produces zero output from the old check, i.e. the mutation passes undetected. Replaced with extraction and
+direct comparison of the complete function range, which cannot have this blind spot because it compares every
+line in the range, not just lines containing a searched substring.
 
 1. Run:
 
@@ -140,23 +182,39 @@ fixes: the call is retained, so there must be **no** diff touching `codex_respon
      scripts/development-workflow/codex-github-reviewer.sh
    ```
 
-2. Compare the printed pattern definitions against the same lines on `develop`:
+2. Extract and diff the three pattern-definition lines directly (not a `grep` over the whole-file diff):
 
    ```bash
-   git diff origin/develop -- scripts/development-workflow/codex-github-reviewer.sh | grep -n "^[-+].*CODEX_BLOCKING_PATTERN\|^[-+].*CODEX_NEGATION_WORDS\|^[-+].*CODEX_MERGE_REFUSAL_PATTERN"
+   diff <(git show origin/develop:scripts/development-workflow/codex-github-reviewer.sh \
+            | grep -n '^CODEX_BLOCKING_PATTERN=\|^CODEX_MERGE_REFUSAL_PATTERN=\|^CODEX_NEGATION_WORDS=') \
+        <(grep -n '^CODEX_BLOCKING_PATTERN=\|^CODEX_MERGE_REFUSAL_PATTERN=\|^CODEX_NEGATION_WORDS=' \
+            scripts/development-workflow/codex-github-reviewer.sh)
    ```
 
-3. Additionally, diff the entire `codex_response_is_blocking` function body specifically:
+   Run today against the real tree: **exit 0, no output** (the three definitions are byte-identical to
+   `origin/develop`, as expected — this plan has not modified the production script yet).
+
+3. Extract and diff the **complete** `codex_response_is_blocking` function range — this is the check that
+   actually proves the function is unchanged, not merely that three unrelated constants above it are unchanged:
 
    ```bash
-   git diff origin/develop -- scripts/development-workflow/codex-github-reviewer.sh | grep -n "codex_response_is_blocking\|codex_strip_not_only_idiom"
+   diff <(git show origin/develop:scripts/development-workflow/codex-github-reviewer.sh \
+            | awk '/^codex_response_is_blocking\(\)/,/^}/') \
+        <(awk '/^codex_response_is_blocking\(\)/,/^}/' scripts/development-workflow/codex-github-reviewer.sh)
    ```
 
-**Expected result**: the three blocking-side pattern definitions are present and the diff from step 2 shows no
-change to their values. **The diff from step 3 shows no change at all inside `codex_response_is_blocking` —
-not even the removal of the `codex_strip_not_only_idiom` call.** If the diff shows that call being removed,
-this is the exact regression Codex GitHub finding `3803959040` identified: `codex_strip_not_only_idiom` and
-its `is_blocking` call site must both be present, unchanged, on `develop` (Step 3 confirms this directly).
+   Run today against the real tree: **exit 0, no output.** Run against a deliberately mutated copy (with `-i`
+   removed from the function's internal `grep -qiE` call, simulating an accidental edit) to confirm the check
+   actually detects a real change: **exit 1**, with output showing exactly the mutated line — confirming this
+   form has no blind spot, unlike the `grep`-over-`git diff` form it replaces (which produced no output at all
+   for the identical mutation, confirmed by execution this round).
+
+**Expected result**: the three blocking-side pattern definitions are present (step 1). Step 2's diff is empty
+(exit 0) — the three pattern definitions are byte-identical to `develop`. **Step 3's diff is empty (exit 0) —
+the entire `codex_response_is_blocking` function, not merely the lines mentioning its name or
+`codex_strip_not_only_idiom`, is byte-identical to `develop`.** If step 3 shows any output, `is_blocking` has
+been edited — whether or not the diff line happens to mention `codex_strip_not_only_idiom`, this form will
+catch it, which is exactly the property the prior `grep`-over-diff form lacked.
 
 ---
 
