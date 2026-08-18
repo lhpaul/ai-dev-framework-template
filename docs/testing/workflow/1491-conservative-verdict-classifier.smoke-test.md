@@ -69,17 +69,28 @@ compared against the pre-change count recorded in the PR description.
 2. Run:
 
    ```bash
-   grep -n "CODEX_CLEAN_SIGNAL_PATTERN\|CODEX_APPROVAL_DISQUALIFIER_PATTERN\|CODEX_RESIDUE_FILLER_WORD_PATTERN\|CODEX_VENDOR_FLAVOR_TOKEN_PATTERN\|codex_strip_codex_footer\|codex_response_first_paragraph\|codex_excise_clean_signals\|codex_residue_is_closed_grammar" \
+   grep -n "CODEX_CLEAN_SIGNAL_PATTERN\|CODEX_APPROVAL_DISQUALIFIER_PATTERN\|CODEX_RESIDUE_FILLER_WORD_PATTERN\|CODEX_VENDOR_FLAVOR_TOKEN_PATTERN\|codex_strip_codex_footer\|codex_strip_vendor_metadata_lines\|codex_response_first_paragraph\|codex_excise_clean_signals\|codex_residue_is_closed_grammar" \
      scripts/development-workflow/codex-github-reviewer.sh
+   ```
+
+3. Run, to confirm the audited filler list does not admit vendor-identity or directive-capable tokens
+   (Codex GitHub findings `3803050745`/`3803050750`):
+
+   ```bash
+   grep -n "^CODEX_RESIDUE_FILLER_WORD_PATTERN=" scripts/development-workflow/codex-github-reviewer.sh \
+     | grep -E "codex|review|reviewed|commit|\bthis\b|\bthat\b"
    ```
 
 **Expected result**: the first command prints nothing (the three originally-superseded symbols, plus
 `CODEX_RESIDUE_STARTER_PATTERN` — added and then deleted again within the same review round after a human
 decision rejected the design it supported — are all removed). The second command prints at least one
-definition line for each of the eight symbols (the original four plus `CODEX_RESIDUE_FILLER_WORD_PATTERN`,
-`CODEX_VENDOR_FLAVOR_TOKEN_PATTERN`, `codex_excise_clean_signals`, and `codex_residue_is_closed_grammar`,
-added during the Step 7 review round for the zero-tolerance closed residue grammar and iterative excision —
-see the implementation plan's Decision 2).
+definition line for each of the nine symbols (the original four plus `CODEX_RESIDUE_FILLER_WORD_PATTERN`,
+`CODEX_VENDOR_FLAVOR_TOKEN_PATTERN`, `codex_strip_vendor_metadata_lines`, `codex_excise_clean_signals`, and
+`codex_residue_is_closed_grammar`, added during the Step 7 review round for the zero-tolerance closed residue
+grammar and iterative excision — see the implementation plan's Decision 2). The third command prints nothing:
+`CODEX_RESIDUE_FILLER_WORD_PATTERN` must not contain `codex`, `review`, `reviewed`, `commit`, `this`, or
+`that` — all six were removed this round because they can function as vendor-identity tokens, imperative
+verbs, or directive-object pronouns (see Decision 2's "governing asymmetry" note).
 
 ---
 
@@ -239,6 +250,45 @@ APPROVED`; zero-tolerance has no sentence-opener exemption, closing this.
 
 ---
 
+### Step 6e: A normal paragraph that merely mentions the footer phrase is not truncated away
+
+**Maps to**: Edge case E23; Decision 6 (Codex GitHub finding `3803050750`) — found after the Step 6b fix
+shipped
+
+1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
+   `Looks good.` followed by a normal paragraph (no `<details>`/`<summary>` tags at all) reading
+   `About Codex in GitHub should mention: remove auth.`, following the mock convention used by Step 4.
+2. Run the reviewer as in Step 4.
+
+**Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
+safe-fail)`. An interim revision of `codex_strip_codex_footer` (the Step 6b fix) anchored on the bare phrase
+`about codex in github` anywhere in the body, so this ordinary paragraph — which has no `<details>`/`<summary>`
+markup at all — was discarded before A3 ever ran, and the response returned `VERDICT: APPROVED`. Closed by
+requiring the actual `<details>`/`<summary>` markup structure containing the marker, not just the phrase.
+
+---
+
+### Step 6f: A vendor-label word used as a directive still safe-fails
+
+**Maps to**: Edge case E24; Decision 2 (Codex GitHub finding `3803050745`) — found after the zero-tolerance
+revision shipped
+
+1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
+   `Looks good. Commit this.`, following the mock convention used by Step 4.
+2. Run the reviewer as in Step 4.
+
+**Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
+safe-fail)`. An interim revision of `CODEX_RESIDUE_FILLER_WORD_PATTERN` admitted `codex`/`review`/`reviewed`/
+`commit` as bare tokens so the vendor's `Codex Review:`/`Reviewed commit:` labels would excise to nothing —
+but `commit` and `review` are also ordinary imperative verbs, and `this` (also filler at the time) is the
+directive's object, so the whole clause excised to an empty residue and the response returned
+`VERDICT: APPROVED`. Closed by removing all of `codex`/`review`/`reviewed`/`commit`/`this`/`that` from the
+filler list and replacing vendor-label handling with `codex_strip_vendor_metadata_lines`, an anchored
+structural strip that removes only the specific literal label text (see Decision 2's "governing asymmetry"
+note) — re-verify Step 2's third command also passes.
+
+---
+
 ### Step 7: Documentation reflects the new contract
 
 **Maps to**: Documentation Updates
@@ -281,6 +331,8 @@ appears under `### Changed`.
 | 6b | | |
 | 6c | | |
 | 6d | | |
+| 6e | | |
+| 6f | | |
 | 7 | | |
 | 8 | | |
 
