@@ -335,7 +335,9 @@ Mitigations) states that condition explicitly.
 - **The failure directions are not symmetric.** A false negative from `is_approved` is safe (extra
   `NEEDS_REVISION`); a false negative from `is_blocking` is unsafe. Protocol 93 and
   `codex_combine_terminal_evidence` both depend on "blocking always wins outright" so that an actionable
-  finding is never hidden behind a usage-limit or environment-error `UNAVAILABLE` verdict. Converting
+  finding is never hidden behind a usage-limit `UNAVAILABLE` verdict or an environment-error `TIMED_OUT`
+  verdict — the two are distinct outcomes with different verdict strings and exit codes (see the
+  Decision-gate matrix). Converting
   `is_blocking` to exact-template matching would mean a genuine refusal in ANY wording other than a captured
   template would be **missed entirely** — the opposite of this plan's goal. Exact matching is only safe to
   apply to the direction where a miss is safe; `is_blocking`'s miss direction is unsafe, so it keeps its
@@ -975,31 +977,49 @@ contains categories a subtraction could silently sweep in.
   parsing, and must pass unchanged; any failure among them is a genuine regression, not an intended contract
   change.
 
-**Reconciliation rule, and exactly when it applies (Codex GitHub finding `3805277339`, P2).** Every term below
-is limited to **pre-existing** assertions — real scenarios already in the file, retargeted or left unchanged —
-plus the newly-updated Group APPROVED bodies. **This equation must be checked once, after Group APPROVED's
-bodies are updated and Group RETARGETED's scenarios are retargeted, and before any scenario from "New
-scenarios" is added** — adding new scenarios first would grow the `codex_*` total past what these terms sum
-to, and the equation could never balance at that point. (Implementation Order step 8 sequences this
-explicitly: the checkpoint below runs at its first `*Verify*`, before the "add the new scenarios" instruction;
-a second, separate check covers the post-addition state — see below.)
+**Reconciliation rule, and exactly when it applies (Codex GitHub finding `3805404998`, P2 — corrects a timing
+bug in the prior round's own fix).** Both equations below are a **pre-edit classification check**: they prove
+the group split (which scenario belongs to Group APPROVED versus Group RETARGETED) is exhaustive and correct
+against the file **exactly as it stands before any scenario in this stage is edited** — before any Group
+APPROVED body is updated and before any Group RETARGETED scenario is retargeted. **Run them first, before
+touching any scenario body or assertion; do not run them after retargeting.** The prior round's fix moved the
+*Verify* step to after the edits, which is wrong for the same reason this round's finding identifies: once
+Group RETARGETED's scenarios are retargeted, the file's current `VERDICT: APPROVED` count drops from the
+pre-edit total to Group APPROVED's count alone (both correctly, by design), so an equation that greps the
+*current* `VERDICT: APPROVED` count and expects it to still include Group RETARGETED's members can never
+balance post-edit. Grepping before any edit avoids this entirely: at that moment, every Group RETARGETED
+candidate still genuinely asserts `VERDICT: APPROVED` in the file, so the count these equations check against
+is the same one the group split was derived from.
 
 Group APPROVED's real (pre-existing) verdict-string members — now including the routing-testing scenarios kept
 in that group per the split above, not only the two template-anchored ones — plus Group RETARGETED's
-verdict-string members must equal the total `VERDICT: APPROVED` count. **A second, independent equation must
-also hold and must include every group, Group APPROVED included** (Codex GitHub finding `3805127037`, P2 — an
-earlier revision of this equation omitted Group APPROVED's real, pre-existing verdict-string members entirely,
-so the listed terms summed short of the total by exactly that many): Group APPROVED's real (pre-existing)
-verdict-string members + Group RETARGETED's verdict-string members + Group UNCHANGED-NEEDS_REVISION + Group
-UNTOUCHED's availability/timeout members + Group UNTOUCHED's non-verdict members + Group RETARGETED's paired
-`*_exit_clean` members must equal the total `codex_*` assertion count **at this checkpoint** (before any new
-scenario is added), with every real assertion counted in exactly one group. **Group APPROVED's own paired
+verdict-string members must equal the total `VERDICT: APPROVED` count **read from the file before any edit in
+this stage**. **A second, independent equation must also hold, read from the same pre-edit file, and must
+include every group, Group APPROVED included** (Codex GitHub finding `3805127037`, P2 — an earlier revision of
+this equation omitted Group APPROVED's real, pre-existing verdict-string members entirely, so the listed terms
+summed short of the total by exactly that many): Group APPROVED's real (pre-existing) verdict-string members +
+Group RETARGETED's verdict-string members + Group UNCHANGED-NEEDS_REVISION + Group UNTOUCHED's
+availability/timeout members + Group UNTOUCHED's non-verdict members + Group RETARGETED's paired
+`*_exit_clean` members must equal the total `codex_*` assertion count **read from the same pre-edit file**,
+with every real assertion counted in exactly one group. (This second equation's terms are all membership
+counts — how many assertions belong to each group — not "what value each currently asserts," so it is in fact
+timing-invariant and would also hold after editing; it is stated as pre-edit here only so both equations share
+one unambiguous checkpoint, not because it individually requires it.) **Group APPROVED's own paired
 `*_exit_clean` members are not a separate term** — they stay `"0"`, unaffected, and are already inside Group
 UNTOUCHED's non-verdict count (only Group RETARGETED's paired `*_exit_clean` members are excluded from that
-count, per Group UNTOUCHED's definition above). If the sum does not match the total at this checkpoint,
-re-derive rather than adjusting either number to force agreement — this is exactly the failure mode both Codex
-findings from the prior round identified: a term silently missing from the list, not a wrong arithmetic
-operation.
+count, per Group UNTOUCHED's definition above). If the sum does not match the total, re-derive rather than
+adjusting either number to force agreement — this is exactly the failure mode every reconciliation finding so
+far has identified: a term silently missing from the list, or an equation asserted against a different file
+state than the one it describes — never a wrong arithmetic operation.
+
+**After the edits are applied, a different, simpler check confirms they landed correctly — do not re-run the
+equations above against the post-edit file; their premise (Group RETARGETED still asserting `APPROVED`) is no
+longer true by design at that point.** Confirm by name: every scenario classified as Group RETARGETED now
+reads `VERDICT: NEEDS_REVISION` and `"1"` for its paired `*_exit_clean` assertion; every scenario classified as
+Group APPROVED (both the two template-anchored members and the routing-testing members kept in that group)
+still reads `VERDICT: APPROVED`; and the full test suite exits 0. This is a membership-correctness check, not
+a count reconciliation — the post-edit `VERDICT: APPROVED` count is *expected* to equal Group APPROVED's count
+alone at this point, not the pre-edit total.
 
 **Post-addition check, separate from the equation above.** After "New scenarios" are added, the `codex_*`
 total necessarily grows — the equation above is not re-applied at this point, because none of its terms
@@ -1296,27 +1316,33 @@ the classifier. The supported response to a persistent false `NEEDS_REVISION` is
    `test-pr-review-loop.sh`** — this document's scenario-existence claims have been wrong before; do not
    proceed on any scenario list in this document without re-confirming it against the file as it stands at
    implementation time.
-8. **Update the tests, in two explicitly sequenced stages — do not interleave them (Codex GitHub finding
-   `3805277339`, P2: the reconciliation equation only balances at the first checkpoint, before new scenarios
-   exist).**
-   1. **First, update only the pre-existing scenarios.** Update every Group APPROVED scenario body per the
-      split in "Test disposition" (footer append for the two template-anchored members; full body replacement,
-      with mock sequencing preserved, for the routing-testing members kept in that group); apply every Group
-      RETARGETED disposition to the remaining, vocabulary-testing scenarios only (see "Test disposition" for
-      the derivation method) — **each retargeted scenario requires two edits, not one**: its `VERDICT:
-      APPROVED` assertion retargets to `VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)`,
-      **and** its paired `*_exit_clean` assertion retargets from `"0"` to `"1"` in the same commit; confirm
-      `codex_disqualifier_diagnostic_emitted` is genuinely absent (no deletion needed — it was never
-      implemented); refresh the comment on each real scenario in Group UNCHANGED-NEEDS_REVISION (do not touch
-      Group UNTOUCHED, per "Test disposition"). **Do not add any new scenario in this stage.**
+8. **Update the tests, in three explicitly sequenced stages — do not interleave them (Codex GitHub findings
+   `3805277339` and `3805404998`, both P2: the reconciliation equations only balance against the file exactly
+   as it stands before any scenario in this step is edited).**
+   1. **Before editing anything, derive the group split and verify the reconciliation equations against the
+      file as it currently stands** (see "Test disposition" for the enumeration commands and both equations).
+      Confirm every scenario currently asserting `VERDICT: APPROVED` is classified into either Group APPROVED
+      or Group RETARGETED, that both reconciliation equations balance against this pre-edit file, and that no
+      scenario body has been touched yet. If either equation does not balance here, the classification is
+      wrong — re-derive it before proceeding; do not adjust either equation's numbers to force agreement, and
+      do not proceed to edit any scenario until it balances.
+   2. **Then, and only then, apply the edits.** Update every Group APPROVED scenario body per the split in
+      "Test disposition" (footer append for the two template-anchored members; full body replacement, with
+      mock sequencing preserved, for the routing-testing members kept in that group); apply every Group
+      RETARGETED disposition to the remaining, vocabulary-testing scenarios only — **each retargeted scenario
+      requires two edits, not one**: its `VERDICT: APPROVED` assertion retargets to `VERDICT: NEEDS_REVISION
+      (unrecognized response format — safe-fail)`, **and** its paired `*_exit_clean` assertion retargets from
+      `"0"` to `"1"` in the same commit; confirm `codex_disqualifier_diagnostic_emitted` is genuinely absent
+      (no deletion needed — it was never implemented); refresh the comment on each real scenario in Group
+      UNCHANGED-NEEDS_REVISION (do not touch Group UNTOUCHED, per "Test disposition"). **Do not add any new
+      scenario in this stage, and do not re-run the equations from stage 1 against the now-edited file** — the
+      "different, simpler check" in "Test disposition" applies instead.
       *Verify*: run `bash scripts/development-workflow/tests/test-pr-review-loop.sh` and confirm it exits 0,
-      that the "Test disposition" reconciliation rule (both equations) holds against the real, current file
-      **at this checkpoint, before any new scenario exists**, and that only the scenarios named by that
-      derivation changed expectation — specifically, every Group RETARGETED scenario changed **both** its
-      `VERDICT:` and its `*_exit_clean` assertion, and no assertion changed anywhere among Group UNTOUCHED's
-      members.
-   2. **Then, and only then, add the new scenarios** from "New scenarios" — including the four verdict-site
-      near-miss routing scenarios described there (Codex GitHub finding `3805277351`, P2).
+      and confirm by name (per the post-edit check in "Test disposition") that every Group RETARGETED scenario
+      now reads `NEEDS_REVISION`/`"1"`, every Group APPROVED scenario still reads `APPROVED`, and no assertion
+      changed anywhere among Group UNTOUCHED's members.
+   3. **Then add the new scenarios** from "New scenarios" — including the four verdict-site near-miss routing
+      scenarios described there (Codex GitHub finding `3805277351`, P2).
       *Verify*: per the "Post-addition check" in "Test disposition" — confirm the `codex_*` total grows by
       exactly the count of `run_test` lines the newly-added scenarios introduce, with every new assertion
       belonging to a scenario named in "New scenarios." Re-run the full suite and confirm it still exits 0.
@@ -1389,15 +1415,20 @@ the classifier. The supported response to a persistent false `NEEDS_REVISION` is
 
 ### Decision-gate matrix
 
+**Every row below is verified against the emitting code path in `codex-github-reviewer.sh` directly, not
+against the row's own prior description** (Codex GitHub finding `3805405005`, P2 — an earlier revision of this
+matrix conflated two rows with genuinely different verdict strings and exit codes; every other row was
+re-checked the same way this round and confirmed to already match its real emitter).
+
 | Gate input | Allowed outcome | Exit code | Required next action | Mirror surface |
 | --- | --- | --- | --- | --- |
-| Review-sourced evidence with `state == CHANGES_REQUESTED` | `NEEDS_REVISION` | 1 | Loop counts unresolved threads; item agent fixes findings | Unchanged in all four verdict sites and in `codex_response_priority` |
-| `codex_response_is_blocking` matches | `NEEDS_REVISION` | 1 | Same as above | Unchanged |
-| Usage-limit or environment-error notice | `UNAVAILABLE` | 3 | Platform reported unavailable; loop applies the configured unavailable policy | Unchanged |
+| Review-sourced evidence with `state == CHANGES_REQUESTED`, or `codex_response_is_blocking` matches | `NEEDS_REVISION` | 1 | Loop counts unresolved threads; item agent fixes findings | Unchanged in all four verdict sites and in `codex_response_priority` — both conditions share one branch and one emission in the real code, confirmed by inspection, so they are correctly one row |
+| Usage-limit notice (`codex_response_is_usage_limit`) | `UNAVAILABLE — Codex GitHub review usage limit reached` | 3 | Platform reported unavailable; loop applies the configured unavailable policy | Unchanged. Emitted by `codex_return_usage_limit` — verified against its real body this round |
+| Environment-setup notice (`codex_response_is_environment_error`) | `TIMED_OUT — Codex GitHub review environment missing (treated as unavailable)` | 2 | Same policy as above, but as a timeout, not a usage-limit notice — **corrected this round from a conflated row that stated `UNAVAILABLE`/exit 3 for this outcome too; the real verdict string and exit code differ from the usage-limit row above** | Unchanged. Emitted by `codex_return_environment_error` — verified against its real body this round, distinct from `codex_return_usage_limit` |
 | The **entire, untruncated** body, whitespace-normalized, exactly matches an entry in `CODEX_APPROVED_TEMPLATES` (footer included, no truncation step) | `APPROVED` | 0 | Platform reported clean | No footer-truncation step precedes the match any more (Decision 1/5); the required literal now includes the complete vendor footer |
 | The entire, untruncated, whitespace-normalized body does not exactly match any template, and evidence is terminal | `NEEDS_REVISION (unrecognized response format — safe-fail)` | 1 | Item agent inspects the response, confirms whether it is a genuinely clean response using new wording — including footer wording — and either re-triggers or (rarely) proposes a new template with a live capture | This is the only false-`NEEDS_REVISION` surface, now also covering a footer wording mismatch; reached even when the acknowledgement phrase is present, because Decision 6 gates that branch on non-terminal evidence |
 | Acknowledgement text present, evidence not yet terminal | wait / re-poll | n/a | Loop continues polling within its budget | Decision 6 — this branch fires only for non-terminal evidence now, not for any body that happens to carry the footer's acknowledgement sentence |
-| No terminal evidence within the poll window | `TIMED_OUT` | 2 | Treated as unavailable | Unchanged |
+| No terminal evidence within the poll window | `TIMED_OUT — no response from '<bot>' after …` | 2 | Treated as unavailable | Unchanged. Every other non-usage-limit unavailable/timeout emitter in the script (auth failure, malformed payloads, API fetch failures, reaction-without-review, head-changed, this final timeout) also uses `VERDICT: TIMED_OUT` at exit 2 — `codex_return_usage_limit`'s `UNAVAILABLE`/exit 3 above is the one exception, not the rule, confirmed by reading every `VERDICT: TIMED_OUT`/`VERDICT: UNAVAILABLE` emission in the file this round |
 
 Example bodies for each changed row are enumerated in the Parser-risk addendum and mapped to named test
 scenarios per "Unit test mapping," so the matrix, the examples, and the tests are the same set.
