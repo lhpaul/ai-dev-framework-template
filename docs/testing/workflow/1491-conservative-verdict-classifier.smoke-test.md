@@ -1,6 +1,6 @@
 # Smoke Test Runbook: Conservative Verdict Classifier
 
-**Feature**: Conservative (allow-list) verdict classifier for `codex-github-reviewer.sh` (Issue #1491)
+**Feature**: Exact-template verdict classifier for `codex-github-reviewer.sh` (Issue #1491)
 **Spec**: None — Refactor path. Work item brief: [Issue #1491](https://github.com/lhpaul/ai-dev-framework-template/issues/1491)
 **Implementation plan**: [`docs/specs/developments/20260817203204_1491-conservative-verdict-classifier/2_1491-conservative-verdict-classifier_implementation-plan.md`](../../specs/developments/20260817203204_1491-conservative-verdict-classifier/2_1491-conservative-verdict-classifier_implementation-plan.md)
 **Created in**: Plan Ready stage
@@ -13,8 +13,8 @@
 Before running this smoke test:
 
 - [ ] The implementation branch for issue #1491 is checked out
-- [ ] `bash`, `grep`, `sed`, `awk`, `jq`, and `gh` are available on `PATH`
-- [ ] `gh auth status` succeeds (needed only for Step 5)
+- [ ] `bash`, `grep`, `sed`, `awk`, `tr`, `jq`, and `gh` are available on `PATH`
+- [ ] `gh auth status` succeeds (needed for Steps 5 and 6)
 - [ ] You know which platform's tooling you are on (macOS/BSD or Linux/GNU) so you can note it in the results
 
 **Design assets**: none. This work item has no `## Design assets` section, no tracker attachments, no linked
@@ -31,7 +31,8 @@ is included, and no visual baseline should be invented.
 | Test harness | `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Integration doc | `docs/workflow/development-workflow/integrations/codex-github.md` |
 | Reviewer loop protocol | `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` |
-| Real clean Codex comment source | PR #1489 in `lhpaul/ai-dev-framework-template` |
+| Real clean Codex root comment source | PR #1489 in `lhpaul/ai-dev-framework-template` |
+| Real Codex review-wrapper source (no clean signal) | PR #1490 in `lhpaul/ai-dev-framework-template` (any of its 12 reviews) |
 | Scratch directory | any writable temporary directory |
 
 ---
@@ -51,64 +52,48 @@ is included, and no visual baseline should be invented.
 2. Read the summary line at the end of the output.
 
 **Expected result**: the run exits 0 and reports zero failures. Note the total assertion count so it can be
-compared against the pre-change count recorded in the PR description.
+compared against the "Reconciled test-disposition counts" table in the implementation plan (that table's
+figure is explicitly provisional — report the real count here).
 
 ---
 
-### Step 2: Removed symbols are actually gone
+### Step 2: Every obsoleted symbol is actually gone, and only the final design's symbols remain
 
-**Maps to**: Implementation Order steps 2 and 5
+**Maps to**: Implementation Order steps 2–5
 
 1. Run:
 
    ```bash
-   grep -n "CODEX_NEGATED_APPROVAL\|not_only\|CODEX_APPROVAL_PATTERN\|CODEX_RESIDUE_STARTER_PATTERN" \
+   grep -nE "CODEX_NEGATED_APPROVAL|CODEX_APPROVAL_PATTERN|CODEX_CLEAN_SIGNAL|CODEX_APPROVAL_(NEGATION|HEDGE|ACTIONABLE|DISQUALIFIER)|CODEX_RESIDUE_FILLER|CODEX_RESIDUE_STARTER|CODEX_VENDOR_FLAVOR|codex_excise_clean_signals|codex_residue_is_closed_grammar|codex_response_first_paragraph|codex_strip_vendor_metadata_lines|not_only" \
      scripts/development-workflow/codex-github-reviewer.sh
    ```
 
 2. Run:
 
    ```bash
-   grep -n "CODEX_CLEAN_SIGNAL_PATTERN\|CODEX_APPROVAL_DISQUALIFIER_PATTERN\|CODEX_RESIDUE_FILLER_WORD_PATTERN\|CODEX_VENDOR_FLAVOR_TOKEN_PATTERN\|CODEX_FOOTER_OPENING_LITERAL\|codex_strip_codex_footer\|codex_strip_vendor_metadata_lines\|codex_response_first_paragraph\|codex_excise_clean_signals\|codex_residue_is_closed_grammar" \
+   grep -n "CODEX_FOOTER_OPENING_LITERAL\|CODEX_APPROVED_TEMPLATES\|codex_strip_codex_footer\|codex_normalize_whitespace" \
      scripts/development-workflow/codex-github-reviewer.sh
    ```
 
-3. Run, to confirm the audited filler list does not admit vendor-identity or directive-capable tokens
-   (Codex GitHub findings `3803050745`/`3803050750`):
+3. Run, to confirm `codex_response_is_approved` itself contains no leftover reference to a deleted symbol or
+   mechanism:
 
    ```bash
-   grep -n "^CODEX_RESIDUE_FILLER_WORD_PATTERN=" scripts/development-workflow/codex-github-reviewer.sh \
-     | grep -E "codex|review|reviewed|commit|\bthis\b|\bthat\b"
+   grep -n "codex_response_is_approved" -A 15 scripts/development-workflow/codex-github-reviewer.sh
    ```
 
-4. Run, to confirm `codex_strip_codex_footer` is an exact byte-literal match, not a regex (Codex GitHub
-   finding `3803189273`):
-
-   ```bash
-   grep -n "codex_strip_codex_footer" -A 2 scripts/development-workflow/codex-github-reviewer.sh
-   ```
-
-**Expected result**: the first command prints nothing (the three originally-superseded symbols, plus
-`CODEX_RESIDUE_STARTER_PATTERN` — added and then deleted again within the same review round after a human
-decision rejected the design it supported — are all removed). The second command prints at least one
-definition line for each of the ten symbols (the original four plus `CODEX_RESIDUE_FILLER_WORD_PATTERN`,
-`CODEX_VENDOR_FLAVOR_TOKEN_PATTERN`, `CODEX_FOOTER_OPENING_LITERAL`, `codex_strip_vendor_metadata_lines`,
-`codex_excise_clean_signals`, and `codex_residue_is_closed_grammar`, added during the Step 7 review round for
-the zero-tolerance closed residue grammar, iterative excision, and exact-literal footer matching — see the
-implementation plan's Decision 2 and Decision 6). The third command prints nothing:
-`CODEX_RESIDUE_FILLER_WORD_PATTERN` must not contain `codex`, `review`, `reviewed`, `commit`, `this`, or
-`that` — all six were removed this round because they can function as vendor-identity tokens, imperative
-verbs, or directive-object pronouns (see Decision 2's "governing asymmetry" note). The fourth command's
-`codex_strip_codex_footer` body must compare `$0` against `$CODEX_FOOTER_OPENING_LITERAL` with `==` — it must
-**not** contain any regex metacharacters like `[^>]*`, `.*`, or `\|` used for matching the footer; if it does,
-the footer strip has regressed back to pattern matching and must be treated as a P1 finding (Decision 6's
-standing rule in Risks & Mitigations).
+**Expected result**: the first command prints nothing — every symbol this plan's four prior revisions ever
+introduced or targeted for deletion is gone, with no dormant leftovers. The second command prints at least one
+definition line for each of the four symbols the final design actually ships. The third command's output
+shows `codex_response_is_approved` calling only `codex_strip_codex_footer`, `codex_normalize_whitespace`, and
+a loop over `CODEX_APPROVED_TEMPLATES` — no fence-marker check, no quote-stripping call, and no reference to
+any of the symbols the first command searched for.
 
 ---
 
 ### Step 3: The blocking classifier is untouched
 
-**Maps to**: Decision 5
+**Maps to**: Decision 4
 
 1. Run:
 
@@ -124,19 +109,18 @@ standing rule in Risks & Mitigations).
    ```
 
 **Expected result**: the three blocking-side pattern definitions are present and the diff shows no change to
-their values. The only diff touching `codex_response_is_blocking` is the removed
-`codex_strip_not_only_idiom` call.
+their values. The only diff touching `codex_response_is_blocking` is the removed `codex_strip_not_only_idiom`
+call (the function itself is deleted this round, not just its call sites — confirm via Step 2's first command).
 
 ---
 
-### Step 4: A clean response with an unrelated negation now safe-fails
+### Step 4: A response that is not, character-for-character, an evidenced template safe-fails
 
-**Maps to**: Test disposition Group C; Operational cost section
+**Maps to**: Group RETARGETED and Group UNCHANGED-NEEDS_REVISION in Test disposition; Operational cost section
 
 1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
-   `Looks good overall; tests were not run.`, following the mock convention used by the neighbouring
-   scenarios in the harness (auth status, `pr view … headRefOid`, empty reviews and inline comments, and the
-   comment payload).
+   `No blocking issues found.`, following the mock convention used by the neighbouring scenarios in the
+   harness (auth status, `pr view … headRefOid`, empty reviews and inline comments, and the comment payload).
 2. Run the reviewer with a short poll budget:
 
    ```bash
@@ -144,19 +128,19 @@ their values. The only diff touching `codex_response_is_blocking` is the removed
      42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0
    ```
 
-**Expected result**: the command exits 1, prints
-`VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)`, and emits an
-`INFO: Codex clean signal present but disqualified` line naming the negation/hedge/actionable reason. Before
-this change the same body returned `VERDICT: APPROVED`; the flip is intended.
+**Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
+safe-fail)`. No stderr diagnostic line is emitted (the final design does not emit one — see Code Samples).
+Before every revision of this plan prior to this round, a body reading `No blocking issues found.` returned
+`VERDICT: APPROVED`; under the final design it never can, because that wording is not one of the currently
+evidenced templates (Decision 2). This is the single most important behavioral fact to internalize about this
+revision: this is now true of nearly every wording that would have previously approved.
 
 ---
 
-### Step 5: A real vendor clean response still approves
+### Step 5: The real vendor clean response still approves, end to end
 
-**Maps to**: Edge case E9; residual verification evidence item 3 — this is the highest-impact check in the
-runbook, and also the check that validates `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` (currently just `swish`) still
-covers the live wire format's sign-off flourish under the zero-tolerance closed residue grammar (A3 check 2)
-— see the implementation plan's Decision 2
+**Maps to**: Edge case E1; residual verification evidence item 3 — this is the highest-impact check in the
+runbook
 
 1. Capture the current real clean-response body:
 
@@ -165,190 +149,92 @@ covers the live wire format's sign-off flourish under the zero-tolerance closed 
      --jq '.[] | select(.user.login | test("codex"; "i")) | .body'
    ```
 
-2. Confirm it still has the shape the plan recorded: a `Codex Review: Didn't find any major issues.` opening
-   line, a `**Reviewed commit:**` marker, and an "About Codex in GitHub" `<details>` footer containing a
-   bulleted list.
-3. Build a mock `gh` that serves that exact body as a SHA-pinned root comment (with the `Reviewed commit`
-   marker rewritten to the mock head SHA) and run the reviewer as in Step 4.
+2. Confirm it still reads, verbatim: `Codex Review: Didn't find any major issues. Swish!`, followed by a
+   `**Reviewed commit:**` marker with a lowercase-hex SHA, followed by the `<details> <summary>ℹ️ About Codex
+   in GitHub</summary>` footer. **If any of these three components has changed even slightly** (different
+   flavor word, different marker format, different footer opening), stop and report it — do not proceed to
+   step 3 assuming the existing `CODEX_APPROVED_TEMPLATES` entry still applies.
+3. Build a mock `gh` that serves that exact body as a SHA-pinned root comment and run the reviewer as in
+   Step 4.
 
-**Expected result**: the command exits 0 and prints `VERDICT: APPROVED`. If the captured body no longer has
-the recorded shape, stop and report it — the allow-list may need a reviewed addition rather than a workaround.
-If it exits 1 with `residue grammar not closed` in the stderr diagnostic, this can now mean either of two
-things (both require re-fetching the live body and comparing byte-for-byte, not guessing): (a) the vendor
-changed its sign-off flourish and `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN` no longer covers it, or (b) the vendor
-changed the footer's exact opening bytes and `CODEX_FOOTER_OPENING_LITERAL` (Decision 6) no longer matches,
-so the whole footer stayed in the residue. Either way, stop and report it rather than loosening the grammar
-or the footer match unreviewed. The correct fix, per Decision 2 / Decision 6, is to add the NEW flourish word
-to `CODEX_VENDOR_FLAVOR_TOKEN_PATTERN`, or update `CODEX_FOOTER_OPENING_LITERAL` to the newly captured exact
-line (verify with `od -c`) — never to invent a broader tolerance or reintroduce a regex for the footer.
+**Expected result**: the command exits 0 and prints `VERDICT: APPROVED`. If it instead exits 1, this is a
+total operational failure of the ready phase (the classifier rejects the one response it exists to accept) —
+stop and report it. The correct fix, per Decision 2, is to re-capture the live body and add or update the
+`CODEX_APPROVED_TEMPLATES` entry with evidence, never to loosen the matching technique (no case-insensitivity,
+no optional clauses, no wildcard placeholders beyond the existing bounded SHA field).
 
 ---
 
-### Step 6: The vendor footer cannot hide a refusal
+### Step 6: The real review-wrapper body (no clean signal) is not misclassified
 
-**Maps to**: Edge case E10; Decision 6
+**Maps to**: Edge case E2
+
+1. Capture a real review body from PR #1490 (any of its 12 reviews):
+
+   ```bash
+   gh api repos/lhpaul/ai-dev-framework-template/pulls/1490/reviews \
+     --jq '.[] | select(.user.login | test("codex"; "i")) | .body' | head -1
+   ```
+
+2. Confirm it reads the generic `### 💡 Codex Review\n\nHere are some automated review suggestions for this
+   pull request.` wrapper, with **no** clean-signal wording in its visible text.
+3. Build a mock `gh` that serves that body via the review endpoint (not the root-comment endpoint) with
+   `state: COMMENTED`, and run the reviewer as in Step 4.
+
+**Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
+safe-fail)`. This body was never eligible to become a template (Decision 2) — its verdict is unaffected by
+this revision, exactly as it was unaffected by every prior revision.
+
+---
+
+### Step 7: The vendor footer cannot hide a refusal from the composed verdict
+
+**Maps to**: Edge case E22; Decision 3/4
 
 1. Take the Step 5 body and insert the sentence `This must not be merged.` **inside** the `<details>` block.
 2. Run the reviewer against it with the same mock setup.
 
 **Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION` (blocking branch, no
-`unrecognized response format` suffix), because `codex_response_is_blocking` scans the untruncated body
-before approval is considered.
+`unrecognized response format` suffix), because `codex_response_is_blocking` (unchanged) scans the untruncated
+body before approval is considered at every verdict site. Note that `codex_response_is_approved` **alone**
+would return `APPROVED` for this exact body (the footer, refusal included, is stripped before matching) — it
+is specifically the composition with `codex_response_is_blocking` that produces the correct final verdict.
 
 ---
 
-### Step 6a: An unenumerated actionable sentence after a clean signal safe-fails (closed residue grammar)
+### Step 8: The round-5 exploit that triggered this design replacement is closed
 
-**Maps to**: Edge case E19; Decision 2 (Codex GitHub finding `3800167486`)
-
-1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
-   `Looks good. Remove the authentication check.`, following the mock convention used by Step 4.
-2. Run the reviewer as in Step 4.
-
-**Expected result**: the command exits 1, prints `VERDICT: NEEDS_REVISION (unrecognized response format —
-safe-fail)`, and emits an `INFO: Codex clean signal present but disqualified (residue grammar not closed)`
-line. Before this review round the same body returned `VERDICT: APPROVED` (the disqualifier scan alone did
-not enumerate `remove` as an actionable verb); the flip is intended and is the fix for the P1/blocking finding
-this smoke step maps to.
-
----
-
-### Step 6b: A non-vendor `<details>` block is not truncated away
-
-**Maps to**: Edge case E20; Decision 6 (Codex GitHub finding `3800167489`)
+**Maps to**: Edge case E21; Decision 2 (Codex GitHub finding `3803306915`)
 
 1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
-   `Looks good.` followed by a **non-vendor** `<details><summary>Notes</summary>` block containing
-   `Rename the unsafe function.` (and a closing `</details>`), following the mock convention used by Step 4.
+   `Looks good, or is it?`, following the mock convention used by Step 4.
 2. Run the reviewer as in Step 4.
 
 **Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
-safe-fail)`. Before this review round `codex_strip_codex_footer` truncated at any `<details` line, silently
-discarding the `<details>` block (and the instruction inside it) before A3 ever ran, which returned
-`VERDICT: APPROVED`; the flip is intended and is the fix for the P1/blocking finding this smoke step maps to.
+safe-fail)`. The prior (residue-grammar) revision of this plan returned `VERDICT: APPROVED` for this body: `or`,
+`is`, and `it` were all closed-class filler words the grammar treated as inert, so the residue reduced to
+nothing even though the sentence, read as a whole, is a hedge that negates the clean signal. The final design
+closes this — and the entire class of construction it represents — trivially: this body is simply not a
+reproduction of any evidenced template.
 
 ---
 
-### Step 6c: An actionable clause fused to the clean signal (no comma/colon/semicolon/period) safe-fails
+### Step 9: The SHA placeholder generalizes within its bound and rejects outside it
 
-**Maps to**: Edge case E21; Decision 2 — a gap found and closed while implementing the human-directed
-zero-tolerance revision, not one of the four originally-filed findings
+**Maps to**: Edge cases E4–E8
 
-1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
-   `Looks good and please remove the entire authentication check now.`, following the mock convention used by
-   Step 4.
-2. Run the reviewer as in Step 4.
+1. Using the mock convention from Step 4, run the reviewer four times against the Step 5 template with the
+   `Reviewed commit:` SHA replaced, in turn, by: (a) a different 10-character valid hex SHA than the one
+   captured live, (b) a 6-character hex SHA, (c) a 41-character hex SHA, and (d) a non-hex string such as
+   `not-a-sha!`.
 
-**Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
-safe-fail)`. An interim revision of A3 check 2 (commit `6e41e260`) exempted an entire sentence whenever any
-part of it carried a clean signal, with no bound on the exempted part, so content fused directly to the
-signal with no intervening punctuation escaped check 2 entirely and returned `VERDICT: APPROVED`; the current
-revision excises and re-checks every clause uniformly, closing this.
+**Expected result**: (a) exits 0, `VERDICT: APPROVED` — confirms the placeholder is not hardcoded to the one
+captured value. (b), (c), and (d) all exit 1, `VERDICT: NEEDS_REVISION` — confirms the `{7,40}` bound (git's
+documented abbreviated-to-full SHA-1 hex-length range, per Decision 2) is enforced, not merely documented.
 
 ---
 
-### Step 6d: A sentence starting with an allow-listed word but carrying unbounded content safe-fails
-
-**Maps to**: Edge case E22; Decision 2 — a gap found and closed while implementing the human-directed
-zero-tolerance revision, not one of the four originally-filed findings
-
-1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
-   `Looks good. The maintainer wants this file removed before merge.`, following the mock convention used by
-   Step 4.
-2. Run the reviewer as in Step 4.
-
-**Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
-safe-fail)`. An interim revision of A3 check 2 (commit `6e41e260`) let a sentence beginning with an enumerated
-subject/determiner ("the") bypass the leftover check regardless of what followed, and none of `wants`,
-`removed`, or `before merge` (without `-ing`) matched an enumerated disqualifier, so it returned `VERDICT:
-APPROVED`; zero-tolerance has no sentence-opener exemption, closing this.
-
----
-
-### Step 6e: A normal paragraph that merely mentions the footer phrase is not truncated away
-
-**Maps to**: Edge case E23; Decision 6 (Codex GitHub finding `3803050750`) — found after the Step 6b fix
-shipped
-
-1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
-   `Looks good.` followed by a normal paragraph (no `<details>`/`<summary>` tags at all) reading
-   `About Codex in GitHub should mention: remove auth.`, following the mock convention used by Step 4.
-2. Run the reviewer as in Step 4.
-
-**Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
-safe-fail)`. An interim revision of `codex_strip_codex_footer` (the Step 6b fix) anchored on the bare phrase
-`about codex in github` anywhere in the body, so this ordinary paragraph — which has no `<details>`/`<summary>`
-markup at all — was discarded before A3 ever ran, and the response returned `VERDICT: APPROVED`. The phrase
-anchor was itself superseded twice more (Steps 6g/6h) and `codex_strip_codex_footer` now uses an exact
-byte-literal line match (Decision 6's "Third correction"): under the current implementation this paragraph
-still correctly stays intact, because it shares no bytes with `CODEX_FOOTER_OPENING_LITERAL`.
-
----
-
-### Step 6f: A vendor-label word used as a directive still safe-fails
-
-**Maps to**: Edge case E24; Decision 2 (Codex GitHub finding `3803050745`) — found after the zero-tolerance
-revision shipped
-
-1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
-   `Looks good. Commit this.`, following the mock convention used by Step 4.
-2. Run the reviewer as in Step 4.
-
-**Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
-safe-fail)`. An interim revision of `CODEX_RESIDUE_FILLER_WORD_PATTERN` admitted `codex`/`review`/`reviewed`/
-`commit` as bare tokens so the vendor's `Codex Review:`/`Reviewed commit:` labels would excise to nothing —
-but `commit` and `review` are also ordinary imperative verbs, and `this` (also filler at the time) is the
-directive's object, so the whole clause excised to an empty residue and the response returned
-`VERDICT: APPROVED`. Closed by removing all of `codex`/`review`/`reviewed`/`commit`/`this`/`that` from the
-filler list and replacing vendor-label handling with `codex_strip_vendor_metadata_lines`, an anchored
-structural strip that removes only the specific literal label text (see Decision 2's "governing asymmetry"
-note) — re-verify Step 2's third command also passes.
-
----
-
-### Step 6g: A footer markup lookalike (wrong tag names) is not truncated away
-
-**Maps to**: Edge case E25; Decision 6 (Codex GitHub finding `3803189273`) — found after the Step 6e fix
-shipped
-
-1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
-   `Looks good.` followed by `<details-not-footer><summary-note>About Codex in GitHub</summary-note>` then
-   `Rename the unsafe function.`, following the mock convention used by Step 4.
-2. Run the reviewer as in Step 4.
-
-**Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
-safe-fail)`. An interim revision of `codex_strip_codex_footer` (the Step 6e fix) still used a regex over tag
-*names* (`<details[^>]*>…<summary[^>]*>…</summary`), which matched this lookalike — a different `<details…>`
-tag followed by a different `<summary…>…</summary` sequence, both containing the marker phrase but neither
-using the real vendor's tag names — so the instruction was discarded and the response returned
-`VERDICT: APPROVED`. This was the third consecutive round a regex over this one helper admitted a lookalike.
-Closed by changing the technique entirely: `codex_strip_codex_footer` now requires exact byte equality
-against `CODEX_FOOTER_OPENING_LITERAL`, so this lookalike — sharing no bytes with the real literal — is left
-intact and correctly rejected by A3.
-
----
-
-### Step 6h: A one-byte deviation from the real footer opening is not truncated away
-
-**Maps to**: Edge case E26; Decision 6 — verifies the exact-literal-match technique fails closed, per the
-accepted trade recorded in Decision 6's "Third correction" note
-
-1. Create a scratch directory and a mock `gh` that returns a SHA-pinned Codex root comment reading
-   `Looks good.` followed by the real footer's opening line with a single character removed
-   (`<details> <summary>ℹ️ About Codex in GitHu</summary>` instead of `...GitHub</summary>`), then
-   `Remove auth.`, following the mock convention used by Step 4.
-2. Run the reviewer as in Step 4.
-
-**Expected result**: the command exits 1 and prints `VERDICT: NEEDS_REVISION (unrecognized response format —
-safe-fail)`. This is not a bug to fix — it is the accepted, documented trade of the exact-literal-match
-technique: any deviation from `CODEX_FOOTER_OPENING_LITERAL`, however small, means the footer is not
-recognized and not truncated, so the response safe-fails rather than risking a silent truncation of genuine
-content. If this step instead returns `VERDICT: APPROVED`, the footer strip has regressed back toward
-pattern-flexible matching and must be treated as a P1 finding, not a minor deviation.
-
----
-
-### Step 7: Documentation reflects the new contract
+### Step 10: Documentation reflects the new contract
 
 **Maps to**: Documentation Updates
 
@@ -358,16 +244,19 @@ pattern-flexible matching and must be treated as a P1 finding, not a minor devia
    "Codex GitHub terminal evidence" block.
 3. Open `CHANGELOG.md` and locate the `[Unreleased]` → `### Changed` entry.
 
-**Expected result**: the integration doc states that `APPROVED` requires an unhedged allow-listed clean signal
-in the opening paragraph and that anything else safe-fails; the protocol block states that SHA-pinned terminal
-evidence is necessary but not sufficient; the CHANGELOG entry uses the `**Bold Title** (#1491):` format and
-appears under `### Changed`.
+**Expected result**: the integration doc states that `APPROVED` requires an exact, whitespace-normalized match
+against a captured clean-response template — no vocabulary list, no grammar, no case-insensitive or
+punctuation-tolerant matching — and names the one currently-evidenced template's shape; the protocol block
+states that the response must reproduce an evidenced template, not merely carry an "unhedged clean signal"
+(the phrase an earlier revision of this plan used); the CHANGELOG entry uses the `**Bold Title** (#1491):`
+format, appears under `### Changed`, and describes the exact-template design (not the allow-list or
+closed-grammar design an earlier revision of this plan shipped there).
 
 ---
 
-### Step 8: Lint gates are clean
+### Step 11: Lint gates are clean
 
-**Maps to**: Implementation Order step 9
+**Maps to**: Implementation Order step 8
 
 1. Run the markdown lint and heuristic lint commands from `AGENTS.md` against the changed markdown files.
 2. Run `python3 scripts/lint/workflow-shell-snippet-lint.py --base-ref origin/develop`.
@@ -386,16 +275,11 @@ appears under `### Changed`.
 | 4 | | |
 | 5 | | |
 | 6 | | |
-| 6a | | |
-| 6b | | |
-| 6c | | |
-| 6d | | |
-| 6e | | |
-| 6f | | |
-| 6g | | |
-| 6h | | |
 | 7 | | |
 | 8 | | |
+| 9 | | |
+| 10 | | |
+| 11 | | |
 
 **Platform tested**: (macOS/BSD or Linux/GNU)
 
