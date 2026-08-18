@@ -44,10 +44,10 @@ top of it and must not modify its commits.
 | Check | Command / query | Result |
 | --- | --- | --- |
 | Repo revision | `git rev-parse --short HEAD` | `55b2df5d` |
-| Reviewer script size | `wc -l scripts/development-workflow/codex-github-reviewer.sh` | 1997 lines |
+| Reviewer script size | `wc -l scripts/development-workflow/codex-github-reviewer.sh` | 1996 lines |
 | Symbols in scope | `grep -rln "CODEX_NEGATED_APPROVAL\|CODEX_APPROVAL_PATTERN\|CODEX_NEGATION_WORDS\|codex_strip_not_only_idiom" .` | `CHANGELOG.md`, `scripts/development-workflow/codex-github-reviewer.sh`, `scripts/development-workflow/tests/test-pr-review-loop.sh` — no agent, skill, protocol, or doc file references these symbols |
 | Test-harness location | `grep -rln "codex_response_is_approved\|codex-github-reviewer" scripts/development-workflow/tests/` | `scripts/development-workflow/tests/test-pr-review-loop.sh` only (single harness) |
-| Assertion inventory | `python3 -c "…count run_test lines…"` on `test-pr-review-loop.sh` | 620 total `run_test` assertions; 247 `codex_*` assertions; 27 assert `VERDICT: APPROVED` |
+| Assertion inventory | `python3 -c "…count run_test lines…"` on `test-pr-review-loop.sh` | 628 total `run_test` assertions; 247 `codex_*` assertions; 27 assert `VERDICT: APPROVED` (re-verified during Step 7a review; independently reproduced by parsing every `run_test "..."` call) |
 | Loop coupling | `grep -n "codex-github-reviewer\|codex_response" scripts/development-workflow/pr-review-loop.sh` | single hit at line 790 (script path resolution). `pr-review-loop.sh` consumes only the verdict line and exit code, so no loop change is required |
 | Real clean Codex root comment | `gh api repos/lhpaul/ai-dev-framework-template/issues/1489/comments --jq '.[] \| select(.user.login\|test("codex";"i")) \| .body'` | `Codex Review: Didn't find any major issues. Swish!` + `**Reviewed commit:** \`87aaefceff\`` + a `<details>` "About Codex in GitHub" footer that contains a **bulleted list** and straight-quoted phrases |
 | Real findings Codex review | `gh api repos/lhpaul/ai-dev-framework-template/pulls/1490/reviews --jq '…'` | body starts `### 💡 Codex Review` (heading marker), `state` is `COMMENTED`, same `<details>` footer |
@@ -119,12 +119,14 @@ judgement call:
 
 - **A1 — Clean signal present in the opening paragraph.** After footer truncation, quoted-span stripping,
   and lowercasing, the **first non-empty paragraph** (lines up to the first blank line, leading blank lines
-  skipped) must contain at least one occurrence of `CODEX_CLEAN_SIGNAL_PATTERN`.
+  skipped) must contain at least one **boundary-anchored** occurrence of `CODEX_CLEAN_SIGNAL_PATTERN` — tested
+  via `CODEX_CLEAN_SIGNAL_EXCISION`, not the raw alternation. A raw substring test would match `approved`
+  inside `unapproved` (edge case E1) and reintroduce a false `APPROVED`.
 - **A2 — No fence marker anywhere.** `codex_response_has_fence_marker` on the **raw, untruncated** body must
   be false. Unchanged from today.
 - **A3 — Disqualifier-free residue.** The **residue** — the whole footer-truncated, quote-stripped,
-  lowercased body with every `CODEX_CLEAN_SIGNAL_PATTERN` occurrence excised — must not match
-  `CODEX_APPROVAL_DISQUALIFIER_PATTERN`.
+  lowercased body with every boundary-anchored `CODEX_CLEAN_SIGNAL_PATTERN` occurrence excised (via
+  `CODEX_CLEAN_SIGNAL_EXCISION`) — must not match `CODEX_APPROVAL_DISQUALIFIER_PATTERN`.
 
 If any condition fails, `codex_response_is_approved` returns non-zero and the caller falls through to the
 existing safe-fail branch (`VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)`), or to the
@@ -260,8 +262,12 @@ and `[[ ]]`-free POSIX tests). No portable `bash-zsh` snippet is introduced.
       `CODEX_NEGATION_WORDS`, `CODEX_MERGE_REFUSAL_PATTERN`, and all four verdict-emission sites.
 - [ ] **Add** `CODEX_CLEAN_SIGNAL_EXCISION` — a portable word-boundary wrapper around the allow-list. It uses
       explicit character classes rather than `\b`, because `\b` is a GNU extension that BSD `sed` (macOS
-      default) does not support. `\b` remains fine in `grep -E`, where the file already documents it as
-      verified across BSD grep, GNU grep, and ugrep.
+      default) does not support, and this wrapper — unlike `CODEX_CLEAN_SIGNAL_PATTERN` itself — is fed to
+      `sed` at the A3 excision site. It is also the pattern used at the A1 grep presence check, not the raw
+      `CODEX_CLEAN_SIGNAL_PATTERN`: `\b` remains fine in `grep -E` in general (the disqualifier patterns below
+      use it, and the file already documents it as verified across BSD grep, GNU grep, and ugrep), but
+      `CODEX_CLEAN_SIGNAL_PATTERN` specifically must stay `\b`-free because it is shared with the sed-facing
+      wrapper — see the code sample and its inline comments.
 - [ ] **Add** `CODEX_APPROVAL_NEGATION_PATTERN`, `CODEX_APPROVAL_HEDGE_PATTERN`,
       `CODEX_APPROVAL_ACTIONABLE_PATTERN`, and the composite `CODEX_APPROVAL_DISQUALIFIER_PATTERN`
       (the three groups plus `CODEX_BLOCKING_PATTERN`). These must be defined **after** the line that appends
@@ -298,9 +304,22 @@ See "Documentation Updates" for exactly what changes in each.
 
 ```bash
 # Illustrative — adapt during implementation.
-# Allow-list: EXACTLY the alternatives CODEX_APPROVAL_PATTERN has today, renamed.
+# Allow-list: the SAME five alternatives CODEX_APPROVAL_PATTERN has today,
+# renamed, with the \b word-boundary anchors on `approved`/`lgtm`/`looks good`
+# LIFTED OUT of the alternation and pushed into the shared boundary wrapper
+# below instead. Do not re-add \b here: this literal is reused verbatim
+# inside CODEX_CLEAN_SIGNAL_EXCISION, which sed also consumes, and BSD sed
+# (macOS default) does not support \b — it neither errors nor matches, so an
+# embedded \b would silently make the A3 excision stop excising genuine clean
+# signals on macOS (verified: `sed -E 's/\bapproved\b/X/' <<< "approved"`
+# leaves the input unchanged on BSD sed). The boundary wrapper below restores
+# equivalent boundary-safety using only portable [^[:alnum:]] classes.
 CODEX_CLEAN_SIGNAL_PATTERN='(approved|lgtm|looks[[:space:]]+good|didn.t find[[:space:]]+any major[[:space:]]+issues|no[[:space:]]+blocking[[:space:]]+issues?)'
-# Portable word-boundary wrapper for sed (no \b — unsupported by BSD sed).
+# Portable word-boundary wrapper (no \b — unsupported by BSD sed). Used at
+# BOTH classifier call sites below: A1's grep presence test AND A3's sed
+# excision. Do not call grep or sed with the raw CODEX_CLEAN_SIGNAL_PATTERN
+# directly at either site — see the A1 comment in codex_response_is_approved
+# for the false-APPROVED gap that reintroduces.
 CODEX_CLEAN_SIGNAL_EXCISION='(^|[^[:alnum:]])'"${CODEX_CLEAN_SIGNAL_PATTERN}"'([^[:alnum:]]|$)'
 
 # Disqualifiers. Deliberately NON-EXHAUSTIVE: see Decision 2. Lowercase-only,
@@ -328,7 +347,19 @@ codex_response_is_approved() {
   lowered=$(LC_ALL=C tr '[:upper:]' '[:lower:]' <<< "$visible")
 
   # A1 — an allow-listed clean signal must appear in the opening paragraph.
-  if ! grep -qE "$CODEX_CLEAN_SIGNAL_PATTERN" \
+  # Uses the boundary-wrapped CODEX_CLEAN_SIGNAL_EXCISION here, NOT the raw
+  # CODEX_CLEAN_SIGNAL_PATTERN alternation: the raw alternation has no word
+  # boundaries (see the note on CODEX_CLEAN_SIGNAL_PATTERN below for why),
+  # so a bare `grep -qE "$CODEX_CLEAN_SIGNAL_PATTERN"` would match "approved"
+  # as a substring of "unapproved" and misclassify "This change remains
+  # unapproved." as having a clean signal — reintroducing the exact
+  # false-APPROVED bug (PR #1490 finding 3789851555) the original \b
+  # boundaries existed to prevent. CODEX_CLEAN_SIGNAL_EXCISION supplies the
+  # same boundary guarantee using only portable [^[:alnum:]] classes, so one
+  # boundary-safe pattern is reused for both the A1 presence test and the A3
+  # excision, and grep is a pure existence test here (the capture groups are
+  # unused).
+  if ! grep -qE "$CODEX_CLEAN_SIGNAL_EXCISION" \
        <<< "$(codex_response_first_paragraph "$lowered")"; then
     return 1
   fi
