@@ -1373,14 +1373,19 @@ the classifier. The supported response to a persistent false `NEEDS_REVISION` is
    parsing" block, any duplicate copy of it inline in the polling loop, and the docstrings of
    `codex_response_has_fence_marker`, `codex_strip_quoted_spans`, and `codex_strip_not_only_idiom`.
    *Verify*: after this step, a search for `codex_response_is_approved` across the file must show only the
-   function's own definition, its real call sites at the four verdict sites (unchanged in count or location —
-   Decision 1 changes `is_approved`'s internals, not its name or call sites), and any comment that correctly
+   function's own definition, its real call sites — **five, not four** (Codex GitHub finding `3805786163`, P2:
+   the four verdict sites — main-loop, async-arrival, async-final, async-reaction-final — plus one more inside
+   `codex_response_priority`, which calls `codex_response_is_approved` to decide whether a body ranks at the
+   approved priority tier when selecting between competing evidence sources; confirmed by direct inspection of
+   the real file, not assumed) — unchanged in count or location by this step (Decision 1 changes
+   `is_approved`'s internals, not its name or any of its five call sites), and any comment that correctly
    describes current or historical behavior — no comment may still claim `codex_response_has_fence_marker`,
    `codex_strip_quoted_spans`, or `codex_strip_not_only_idiom` is "used by" `codex_response_is_approved`. Derive
    the expected post-implementation occurrence count directly from the edits this step itself makes (each
    comment rewrite that removes the phrase from a line reduces the count by one; each comment that is deleted
-   entirely reduces it by one; call sites and the definition are unaffected) — do not carry forward a number
-   from an earlier revision of this document without re-deriving it against the edits actually being made.
+   entirely reduces it by one; all five call sites and the definition are unaffected) — do not carry forward a
+   number from an earlier revision of this document without re-deriving it against the edits actually being
+   made, and do not assume "call sites" means only the four verdict sites.
 7. **Before touching the test file, re-derive which scenarios exist by name against the real, current
    `test-pr-review-loop.sh`** — this document's scenario-existence claims have been wrong before; do not
    proceed on any scenario list in this document without re-confirming it against the file as it stands at

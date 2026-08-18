@@ -126,16 +126,20 @@ directly and looping over `CODEX_APPROVED_TEMPLATES` — no footer-strip call, n
 quote-stripping call, no `codex_strip_not_only_idiom` call, and no executable reference to any of the symbols
 the first command searched for (comments describing the plan's own history, in functions this plan does not
 touch, are expected and are not a failure). The fourth command's output must show only: the function's own
-definition, its real call sites at the four verdict sites (same locations as before this step —
+definition, its real call sites — **five, not four** (Codex GitHub finding `3805786163`, P2 — the four verdict
+sites plus one more inside `codex_response_priority`, which also calls `codex_response_is_approved` to rank a
+body at the approved priority tier; same locations as before this step in both cases —
 `codex_response_is_approved` is still invoked the same way everywhere, only its internals changed), and any
-comment correctly describing current or historical behavior. **No comment may claim
-`codex_response_has_fence_marker`, `codex_strip_quoted_spans`, or `codex_strip_not_only_idiom` is "used by"
-`codex_response_is_approved`** — per Implementation Order step 6's list of locations to fix. If any comment
-still describes `codex_response_is_approved` as stripping quotes, checking fences, or calling the not-only
-idiom, this step fails even if Step 2's commands 1–3 above all pass. Cross-check the fourth command's count
-against Implementation Order step 6's stated arithmetic (each edit that removes the phrase from a line, or
-deletes the line entirely, reduces the count by exactly one) rather than trusting an absolute number from any
-document — if the count and the arithmetic disagree, one of the prescribed edits was skipped or misapplied.
+comment correctly describing current or historical behavior. **Do not read "call sites" as the four verdict
+sites only — a passing result correctly includes the fifth, `codex_response_priority` call, and its absence
+would itself be a regression.** **No comment may claim `codex_response_has_fence_marker`,
+`codex_strip_quoted_spans`, or `codex_strip_not_only_idiom` is "used by" `codex_response_is_approved`** — per
+Implementation Order step 6's list of locations to fix. If any comment still describes
+`codex_response_is_approved` as stripping quotes, checking fences, or calling the not-only idiom, this step
+fails even if Step 2's commands 1–3 above all pass. Cross-check the fourth command's count against
+Implementation Order step 6's stated arithmetic (each edit that removes the phrase from a line, or deletes the
+line entirely, reduces the count by exactly one) rather than trusting an absolute number from any document —
+if the count and the arithmetic disagree, one of the prescribed edits was skipped or misapplied.
 
 ---
 
