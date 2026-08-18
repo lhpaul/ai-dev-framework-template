@@ -13,11 +13,19 @@ a tool's default foreground command timeout:
 <!-- workflow-shell-contract: bash-zsh -->
 
 ```bash
-for f in scripts/development-workflow/tests/test-*.sh; do bash "$f" || echo "FAILED: $f"; done
+( harness_status=0
+  for f in scripts/development-workflow/tests/test-*.sh; do
+    bash "$f" || { echo "FAILED: $f"; harness_status=1; }
+  done
+  exit "$harness_status"
+)
 ```
 
-Individual `test-*.sh` files typically run in a few seconds each and are safe to
-invoke with a default foreground timeout.
+The subshell's exit status reflects the harness as a whole (0 only if every
+`test-*.sh` passed) — checking `$?` after the loop, or running it in CI, is
+enough to detect a failure even though each script's own PASS/FAIL lines keep
+scrolling past. Individual `test-*.sh` files typically run in a few seconds
+each and are safe to invoke with a default foreground timeout.
 
 ## `install-codex-skills.sh`
 

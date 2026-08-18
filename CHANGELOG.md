@@ -584,7 +584,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message text can't drift between the two call sites. The early guard exits
   with status 64, this script's usage-error convention shared by every other
   argument-validation check, rather than the incidental status 1 that used to
-  result from `set -e` propagating the deep check's generic `return 1`.
+  result from `set -e` propagating the deep check's generic `return 1`. A
+  planted-violation proof (both directions, including before/after
+  `git rev-parse HEAD` / `git branch --show-current` / `git for-each-ref` /
+  `git ls-remote` evidence that nothing mutates before the guard fires) and a
+  regression test proving a reverted guard placement turns the suite red are
+  recorded in [PR #1500](https://github.com/lhpaul/ai-dev-framework-template/pull/1500#issuecomment-5335650280).
 
 ### Changed
 

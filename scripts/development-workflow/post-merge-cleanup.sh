@@ -150,6 +150,14 @@ fi
 # argument-validation check above) rather than the incidental exit 1 that
 # resulted from cleanup_remote_implementation_branch()'s `return 1` plus
 # `set -e` when this condition was only checked there.
+#
+# Planted-violation proof (both directions, plus no-mutation evidence:
+# git rev-parse HEAD / git branch --show-current / git for-each-ref /
+# git ls-remote identical before and after the failing invocation) is
+# recorded at https://github.com/lhpaul/ai-dev-framework-template/pull/1500#issuecomment-5335650280
+# Regression coverage lives in
+# scripts/development-workflow/tests/test-post-merge-cleanup.sh
+# (unmerged_guard_fires_before_fetch and friends).
 if [ "$branch_owner_kind" = "implementation" ] && [ -z "$merged_pr_number" ]; then
   emit_pr_number_required_skip "$TO_DELETE"
   exit 64
