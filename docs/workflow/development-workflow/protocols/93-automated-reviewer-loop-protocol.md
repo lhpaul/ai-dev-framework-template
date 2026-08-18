@@ -107,6 +107,66 @@ CLI review found no issues.
 Strict CLI rate-limit policy returns `RESULT=escalate` with
 `REASON=rate_limited`. Treat that like any other platform escalation.
 
+#### Codex GitHub terminal evidence
+
+When `codex-github` is configured, `pr-review-loop.sh` must only treat the
+platform as clean after Codex publishes evidence tied to the current PR head:
+
+- a submitted Codex GitHub review whose `commit_id` matches the current
+  `headRefOid`, or
+- a Codex-authored root PR comment with a `Reviewed commit` marker matching the
+  current `headRefOid`, or
+- current-head Codex inline review comments, treated as findings.
+
+A thumbs-up reaction on the trigger comment is an acknowledgement only. It is
+not SHA-pinned review evidence and must be treated as unavailable, not clean.
+Codex-authored root PR comments without a current-head `Reviewed commit` marker
+are not SHA-pinned clean evidence; use them only for acknowledgement,
+usage-limit, and setup-failure detection.
+Likewise, a Codex response asking the operator to create a cloud environment for
+the repo is setup failure evidence; do not use the empty review/comment from
+that path as a clean result. This recorded environment error cannot be
+silently overridden by a later thumbs-up reaction or by review/comment
+evidence that is not strictly newer than it — but a genuinely fresh,
+strictly newer current-head review (e.g. after the operator creates the
+environment mid-poll) is allowed to supersede it, matching the newest-wins
+rule applied to every other evidence type. A blocking terminal or review
+finding is the one exception to newest-wins: it always wins outright over
+an environment-setup error regardless of timing, so an actionable finding
+can never be hidden behind an "unavailable" verdict. Likewise, a SHA-pinned
+terminal comment is never classified as an environment-setup error even if
+its finding text happens to quote the setup sentence verbatim — terminal
+evidence is never routed through the environment-error classifier. A
+usage-limit notice follows the same PRIORITY rules as an environment-setup
+error for ranking purposes, but NOT the same RETENTION rule: unlike an
+environment-setup error, a usage-limit notice terminates the invocation
+immediately upon detection (exit code 3), rather than being retained
+through the rest of the poll window for a later, strictly newer review to
+potentially supersede it. This applies within a
+single poll as well as across polls: an environment-setup
+error is not silently discarded by a same-fetch or later plain
+acknowledgement, since a bare
+acknowledgement carries no information and is never treated as competing
+evidence.
+
+When both a SHA-pinned root comment and a submitted review qualify as terminal
+evidence, the strictly newer one wins. On an exact timestamp tie (GitHub
+timestamps are second-resolution), any response that is not a clean approval
+must win regardless of which side supplied it — this covers both explicitly
+blocking evidence and an unrecognized-format response (which the verdict
+classifier would otherwise safe-fail to `NEEDS_REVISION`); a clean submitted
+review tied with a blocking or unrecognized-format root comment (or vice
+versa) must resolve away from the clean approval, not to whichever side
+happens to be evaluated first. Selecting the terminal root comment must also
+be independent of the latest root comment overall: a later non-terminal
+acknowledgement or setup-error comment must never discard an earlier
+SHA-pinned blocking root comment.
+
+Root comments are a terminal evidence source, so a failed fetch of Codex root
+PR comments (including during the async grace-period poll) must be treated as
+unavailable and must not let a clean submitted review be accepted before the
+root comments are known. Fail closed, not open.
+
 **Scope note**: This pre-flight checks `review.on_draft.github` and
 `review.on_ready.github` (external reviewers used by Protocol 93 / Step 7). The
 internal reviewer gate in Protocol 91 Step 7a separately checks

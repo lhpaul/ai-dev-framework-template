@@ -2355,7 +2355,7 @@ _docs_is_outdated_filter_count="$(grep -h 'select((.isOutdated // false) == fals
 run_test "manual_readiness_audit_docs_filter_outdated" "5" "$_docs_is_outdated_filter_count"
 unset _manual_audit_fixture _manual_audit_fixture_outdated_only _docs_is_outdated_field_count _docs_is_outdated_filter_count
 
-if grep -q "Codex acknowledgement detected; waiting for thumbs-up reaction or inline review comments" \
+if grep -q "Codex acknowledgement detected; waiting for current-head review or inline review comments" \
     "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh"; then
   _codex_ack_wait_signal="yes"
 else
@@ -2484,7 +2484,7 @@ case "$*" in
   *"pulls/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/reviews"*)
-    printf '[{"submitted_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex review capacity exhausted. Please rerun after quota reset."}]\n'
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abcreview1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex review capacity exhausted. Please rerun after quota reset."}]\n'
     exit 0 ;;
   *"issues/"*"/comments"*)
     printf '[]\n'; exit 0 ;;
@@ -2517,6 +2517,5088 @@ run_test "codex_usage_limit_review_suggestion_count" "SUGGESTION_COUNT=0" \
   "$(printf '%s\n' "$_codex_usage_review_output" | grep "^SUGGESTION_COUNT=")"
 rm -rf "$_codex_usage_review_mock_dir"
 unset _codex_usage_review_mock_dir _codex_usage_review_output _codex_usage_review_exit
+
+_codex_reaction_mock_dir="$(mktemp -d)"
+cat > "$_codex_reaction_mock_dir/gh" <<'CODEX_REACTION_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcreact1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":103,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[{"content":"+1","user":{"login":"chatgpt-codex-connector[bot]"}}]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_REACTION_GH
+chmod +x "$_codex_reaction_mock_dir/gh"
+
+_codex_reaction_output=""
+_codex_reaction_exit=0
+PATH="$_codex_reaction_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_reaction_mock_dir/output.txt" 2>&1 || _codex_reaction_exit=$?
+_codex_reaction_output="$(cat "$_codex_reaction_mock_dir/output.txt")"
+run_test "codex_reaction_only_exit_unavailable" "2" "$_codex_reaction_exit"
+run_test "codex_reaction_only_reason" "REASON=codex-github-reaction-without-review" \
+  "$(printf '%s\n' "$_codex_reaction_output" | grep "^REASON=")"
+rm -rf "$_codex_reaction_mock_dir"
+unset _codex_reaction_mock_dir _codex_reaction_output _codex_reaction_exit
+
+_codex_clean_root_review_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_clean_root_review_comment_mock_dir/gh" <<'CODEX_CLEAN_ROOT_REVIEW_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcdefab1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":118,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":218,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `abcdefab12`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_CLEAN_ROOT_REVIEW_COMMENT_GH
+chmod +x "$_codex_clean_root_review_comment_mock_dir/gh"
+
+_codex_clean_root_review_comment_output=""
+_codex_clean_root_review_comment_exit=0
+PATH="$_codex_clean_root_review_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_clean_root_review_comment_mock_dir/output.txt" 2>&1 || _codex_clean_root_review_comment_exit=$?
+_codex_clean_root_review_comment_output="$(cat "$_codex_clean_root_review_comment_mock_dir/output.txt")"
+run_test "codex_clean_root_review_comment_exit_clean" "0" "$_codex_clean_root_review_comment_exit"
+run_test "codex_clean_root_review_comment_approved" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_clean_root_review_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_clean_root_review_comment_mock_dir"
+unset _codex_clean_root_review_comment_mock_dir _codex_clean_root_review_comment_output _codex_clean_root_review_comment_exit
+
+_codex_full_root_review_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_full_root_review_comment_mock_dir/gh" <<'CODEX_FULL_ROOT_REVIEW_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcabcabcabc1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":126,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":226,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `abcabcabcabc1234567890`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_FULL_ROOT_REVIEW_COMMENT_GH
+chmod +x "$_codex_full_root_review_comment_mock_dir/gh"
+
+_codex_full_root_review_comment_output=""
+_codex_full_root_review_comment_exit=0
+PATH="$_codex_full_root_review_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_full_root_review_comment_mock_dir/output.txt" 2>&1 || _codex_full_root_review_comment_exit=$?
+_codex_full_root_review_comment_output="$(cat "$_codex_full_root_review_comment_mock_dir/output.txt")"
+run_test "codex_full_root_review_comment_exit_clean" "0" "$_codex_full_root_review_comment_exit"
+run_test "codex_full_root_review_comment_approved" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_full_root_review_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_full_root_review_comment_mock_dir"
+unset _codex_full_root_review_comment_mock_dir _codex_full_root_review_comment_output _codex_full_root_review_comment_exit
+
+_codex_stale_root_review_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_stale_root_review_comment_mock_dir/gh" <<'CODEX_STALE_ROOT_REVIEW_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abc123aa1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":119,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":219,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `def456bb12`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_STALE_ROOT_REVIEW_COMMENT_GH
+chmod +x "$_codex_stale_root_review_comment_mock_dir/gh"
+
+_codex_stale_root_review_comment_output=""
+_codex_stale_root_review_comment_exit=0
+PATH="$_codex_stale_root_review_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_stale_root_review_comment_mock_dir/output.txt" 2>&1 || _codex_stale_root_review_comment_exit=$?
+_codex_stale_root_review_comment_output="$(cat "$_codex_stale_root_review_comment_mock_dir/output.txt")"
+run_test "codex_stale_root_review_comment_exit_unavailable" "2" "$_codex_stale_root_review_comment_exit"
+if printf '%s\n' "$_codex_stale_root_review_comment_output" | grep -q "^VERDICT: APPROVED"; then
+  _codex_stale_root_review_comment_approved="yes"
+else
+  _codex_stale_root_review_comment_approved="no"
+fi
+run_test "codex_stale_root_review_comment_not_approved" "no" "$_codex_stale_root_review_comment_approved"
+rm -rf "$_codex_stale_root_review_comment_mock_dir"
+unset _codex_stale_root_review_comment_mock_dir _codex_stale_root_review_comment_output _codex_stale_root_review_comment_exit _codex_stale_root_review_comment_approved
+
+_codex_newer_root_blocks_old_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_newer_root_blocks_old_review_mock_dir/gh" <<'CODEX_NEWER_ROOT_BLOCKS_OLD_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'feed12341234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":123,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"feed12341234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":223,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: newer root finding.\\n\\n**Reviewed commit:** `feed1234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NEWER_ROOT_BLOCKS_OLD_REVIEW_GH
+chmod +x "$_codex_newer_root_blocks_old_review_mock_dir/gh"
+
+_codex_newer_root_blocks_old_review_output=""
+_codex_newer_root_blocks_old_review_exit=0
+PATH="$_codex_newer_root_blocks_old_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_newer_root_blocks_old_review_mock_dir/output.txt" 2>&1 || _codex_newer_root_blocks_old_review_exit=$?
+_codex_newer_root_blocks_old_review_output="$(cat "$_codex_newer_root_blocks_old_review_mock_dir/output.txt")"
+run_test "codex_newer_root_blocks_old_review_exit_needs_revision" "1" "$_codex_newer_root_blocks_old_review_exit"
+run_test "codex_newer_root_blocks_old_review_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_newer_root_blocks_old_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_newer_root_blocks_old_review_mock_dir"
+unset _codex_newer_root_blocks_old_review_mock_dir _codex_newer_root_blocks_old_review_output _codex_newer_root_blocks_old_review_exit
+
+_codex_tied_root_blocks_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_root_blocks_review_mock_dir/gh" <<'CODEX_TIED_ROOT_BLOCKS_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'cafe12341234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":127,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"cafe12341234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":227,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: tied root finding.\\n\\n**Reviewed commit:** `cafe1234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_ROOT_BLOCKS_REVIEW_GH
+chmod +x "$_codex_tied_root_blocks_review_mock_dir/gh"
+
+_codex_tied_root_blocks_review_output=""
+_codex_tied_root_blocks_review_exit=0
+PATH="$_codex_tied_root_blocks_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_root_blocks_review_mock_dir/output.txt" 2>&1 || _codex_tied_root_blocks_review_exit=$?
+_codex_tied_root_blocks_review_output="$(cat "$_codex_tied_root_blocks_review_mock_dir/output.txt")"
+run_test "codex_tied_root_blocks_review_exit_needs_revision" "1" "$_codex_tied_root_blocks_review_exit"
+run_test "codex_tied_root_blocks_review_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_tied_root_blocks_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_root_blocks_review_mock_dir"
+unset _codex_tied_root_blocks_review_mock_dir _codex_tied_root_blocks_review_output _codex_tied_root_blocks_review_exit
+
+# Reverse of codex_tied_root_blocks_review: this time the SHA-pinned root
+# comment is CLEAN and the submitted review (same timestamp) is BLOCKING. The
+# tie-break must be symmetric (blocking wins on ties regardless of which
+# source supplied it), so this must also resolve to NEEDS_REVISION.
+_codex_tied_review_blocks_root_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_review_blocks_root_mock_dir/gh" <<'CODEX_TIED_REVIEW_BLOCKS_ROOT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'beefcafe1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":129,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"beefcafe1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: tied review finding."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":229,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `beefcafe1234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_REVIEW_BLOCKS_ROOT_GH
+chmod +x "$_codex_tied_review_blocks_root_mock_dir/gh"
+
+_codex_tied_review_blocks_root_output=""
+_codex_tied_review_blocks_root_exit=0
+PATH="$_codex_tied_review_blocks_root_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_review_blocks_root_mock_dir/output.txt" 2>&1 || _codex_tied_review_blocks_root_exit=$?
+_codex_tied_review_blocks_root_output="$(cat "$_codex_tied_review_blocks_root_mock_dir/output.txt")"
+run_test "codex_tied_review_blocks_root_exit_needs_revision" "1" "$_codex_tied_review_blocks_root_exit"
+run_test "codex_tied_review_blocks_root_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_tied_review_blocks_root_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_review_blocks_root_mock_dir"
+unset _codex_tied_review_blocks_root_mock_dir _codex_tied_review_blocks_root_output _codex_tied_review_blocks_root_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3787623071): the
+# terminal-evidence tie-break only checked codex_response_is_blocking, so an
+# unrecognized-format submitted review tied with a clean SHA-pinned root
+# comment lost the tie-break and the clean root comment won, returning
+# APPROVED instead of the documented safe-fail NEEDS_REVISION for
+# unrecognized responses. Root comment is a clean approval; tied review body
+# matches neither the blocking nor approval pattern.
+_codex_tied_unrecognized_review_safe_fails_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_unrecognized_review_safe_fails_mock_dir/gh" <<'CODEX_TIED_UNRECOGNIZED_REVIEW_SAFE_FAILS_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'deadfeed1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":131,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deadfeed1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Some ambiguous status update with no recognized marker."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":231,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `deadfeed1234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_UNRECOGNIZED_REVIEW_SAFE_FAILS_GH
+chmod +x "$_codex_tied_unrecognized_review_safe_fails_mock_dir/gh"
+
+_codex_tied_unrecognized_review_safe_fails_output=""
+_codex_tied_unrecognized_review_safe_fails_exit=0
+PATH="$_codex_tied_unrecognized_review_safe_fails_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_unrecognized_review_safe_fails_mock_dir/output.txt" 2>&1 || _codex_tied_unrecognized_review_safe_fails_exit=$?
+_codex_tied_unrecognized_review_safe_fails_output="$(cat "$_codex_tied_unrecognized_review_safe_fails_mock_dir/output.txt")"
+run_test "codex_tied_unrecognized_review_safe_fails_exit_needs_revision" "1" "$_codex_tied_unrecognized_review_safe_fails_exit"
+run_test "codex_tied_unrecognized_review_safe_fails_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_tied_unrecognized_review_safe_fails_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_unrecognized_review_safe_fails_mock_dir"
+unset _codex_tied_unrecognized_review_safe_fails_mock_dir _codex_tied_unrecognized_review_safe_fails_output _codex_tied_unrecognized_review_safe_fails_exit
+
+# A clean submitted review arrives first, then a SHA-pinned BLOCKING root
+# comment, then a newer non-terminal acknowledgement comment. Greedily
+# selecting the latest root comment overall (the ack) would discard the
+# blocking root comment and let the earlier clean review win by default. The
+# terminal SHA-pinned comment must be selected independently of the latest
+# ancillary comment.
+_codex_ack_does_not_erase_blocking_root_mock_dir="$(mktemp -d)"
+cat > "$_codex_ack_does_not_erase_blocking_root_mock_dir/gh" <<'CODEX_ACK_DOES_NOT_ERASE_BLOCKING_ROOT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'dead12341234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":130,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"dead12341234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":231,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: root finding before ack.\\n\\n**Reviewed commit:** `dead12341234`"},{"id":232,"created_at":"2026-01-01T00:00:03Z","user":{"login":"chatgpt-codex-connector"},"body":"If Codex has suggestions, it will comment; otherwise it will react with thumbs up."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ACK_DOES_NOT_ERASE_BLOCKING_ROOT_GH
+chmod +x "$_codex_ack_does_not_erase_blocking_root_mock_dir/gh"
+
+_codex_ack_does_not_erase_blocking_root_output=""
+_codex_ack_does_not_erase_blocking_root_exit=0
+PATH="$_codex_ack_does_not_erase_blocking_root_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_ack_does_not_erase_blocking_root_mock_dir/output.txt" 2>&1 || _codex_ack_does_not_erase_blocking_root_exit=$?
+_codex_ack_does_not_erase_blocking_root_output="$(cat "$_codex_ack_does_not_erase_blocking_root_mock_dir/output.txt")"
+run_test "codex_ack_does_not_erase_blocking_root_exit_needs_revision" "1" "$_codex_ack_does_not_erase_blocking_root_exit"
+run_test "codex_ack_does_not_erase_blocking_root_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_ack_does_not_erase_blocking_root_output" | grep "^VERDICT:")"
+rm -rf "$_codex_ack_does_not_erase_blocking_root_mock_dir"
+unset _codex_ack_does_not_erase_blocking_root_mock_dir _codex_ack_does_not_erase_blocking_root_output _codex_ack_does_not_erase_blocking_root_exit
+
+_codex_async_newer_root_blocks_old_review_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_async_newer_root_blocks_old_review_mock_dir/comment_calls"
+printf '0\n' > "$_codex_async_newer_root_blocks_old_review_mock_dir/review_calls"
+cat > "$_codex_async_newer_root_blocks_old_review_mock_dir/gh" <<'CODEX_ASYNC_NEWER_ROOT_BLOCKS_OLD_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'deaf12341234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":125,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    calls_file="$(dirname "$0")/review_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -ge 2 ]; then
+      printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deaf12341234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -ge 2 ]; then
+      printf '[{"id":225,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: newer async root finding.\\n\\n**Reviewed commit:** `deaf1234`"}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ASYNC_NEWER_ROOT_BLOCKS_OLD_REVIEW_GH
+chmod +x "$_codex_async_newer_root_blocks_old_review_mock_dir/gh"
+
+_codex_async_newer_root_blocks_old_review_output=""
+_codex_async_newer_root_blocks_old_review_exit=0
+PATH="$_codex_async_newer_root_blocks_old_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_async_newer_root_blocks_old_review_mock_dir/output.txt" 2>&1 || _codex_async_newer_root_blocks_old_review_exit=$?
+_codex_async_newer_root_blocks_old_review_output="$(cat "$_codex_async_newer_root_blocks_old_review_mock_dir/output.txt")"
+run_test "codex_async_newer_root_blocks_old_review_exit_needs_revision" "1" "$_codex_async_newer_root_blocks_old_review_exit"
+run_test "codex_async_newer_root_blocks_old_review_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_async_newer_root_blocks_old_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_async_newer_root_blocks_old_review_mock_dir"
+unset _codex_async_newer_root_blocks_old_review_mock_dir _codex_async_newer_root_blocks_old_review_output _codex_async_newer_root_blocks_old_review_exit
+
+# Root comments are a terminal evidence source. If the root-comments fetch
+# fails specifically during the async grace period while the reviews fetch
+# succeeds with a clean review, the failure must be treated as unavailable
+# (fail closed) rather than silently falling through to accept the clean
+# review as if no root evidence existed (fail open). Sequence: idempotency
+# check (call 1, empty) and main-loop poll (call 2, empty) succeed normally;
+# the async-grace root-comments fetch (call 3) fails.
+_codex_async_root_fetch_failure_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_async_root_fetch_failure_mock_dir/comment_calls"
+printf '0\n' > "$_codex_async_root_fetch_failure_mock_dir/review_calls"
+cat > "$_codex_async_root_fetch_failure_mock_dir/gh" <<'CODEX_ASYNC_ROOT_FETCH_FAILURE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'fade12341234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":128,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    calls_file="$(dirname "$0")/review_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -ge 2 ]; then
+      printf '[{"submitted_at":"2026-01-01T00:00:05Z","commit_id":"fade12341234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -ge 3 ]; then
+      echo "simulated transient API failure" >&2
+      exit 1
+    fi
+    printf '[]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ASYNC_ROOT_FETCH_FAILURE_GH
+chmod +x "$_codex_async_root_fetch_failure_mock_dir/gh"
+
+_codex_async_root_fetch_failure_output=""
+_codex_async_root_fetch_failure_exit=0
+PATH="$_codex_async_root_fetch_failure_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_async_root_fetch_failure_mock_dir/output.txt" 2>&1 || _codex_async_root_fetch_failure_exit=$?
+_codex_async_root_fetch_failure_output="$(cat "$_codex_async_root_fetch_failure_mock_dir/output.txt")"
+run_test "codex_async_root_fetch_failure_exit_unavailable" "2" "$_codex_async_root_fetch_failure_exit"
+run_test "codex_async_root_fetch_failure_verdict" \
+  "VERDICT: TIMED_OUT — failed to fetch Codex root comments during async grace period (treated as unavailable)" \
+  "$(printf '%s\n' "$_codex_async_root_fetch_failure_output" | grep "^VERDICT:")"
+if printf '%s\n' "$_codex_async_root_fetch_failure_output" | grep -q "^VERDICT: APPROVED"; then
+  _codex_async_root_fetch_failure_approved="yes"
+else
+  _codex_async_root_fetch_failure_approved="no"
+fi
+run_test "codex_async_root_fetch_failure_not_approved" "no" "$_codex_async_root_fetch_failure_approved"
+rm -rf "$_codex_async_root_fetch_failure_mock_dir"
+unset _codex_async_root_fetch_failure_mock_dir _codex_async_root_fetch_failure_output _codex_async_root_fetch_failure_exit _codex_async_root_fetch_failure_approved
+
+_codex_reaction_with_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_reaction_with_review_mock_dir/gh" <<'CODEX_REACTION_WITH_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcreviewok1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":106,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[{"content":"+1","user":{"login":"chatgpt-codex-connector[bot]"}}]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:00Z","commit_id":"abcreviewok1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":206,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"If Codex has suggestions, it will comment; otherwise it will react with thumbs up."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_REACTION_WITH_REVIEW_GH
+chmod +x "$_codex_reaction_with_review_mock_dir/gh"
+
+_codex_reaction_with_review_output=""
+_codex_reaction_with_review_exit=0
+PATH="$_codex_reaction_with_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_reaction_with_review_mock_dir/output.txt" 2>&1 || _codex_reaction_with_review_exit=$?
+_codex_reaction_with_review_output="$(cat "$_codex_reaction_with_review_mock_dir/output.txt")"
+run_test "codex_reaction_with_current_review_exit_clean" "0" "$_codex_reaction_with_review_exit"
+run_test "codex_reaction_with_current_review_approved" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_reaction_with_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_reaction_with_review_mock_dir"
+unset _codex_reaction_with_review_mock_dir _codex_reaction_with_review_output _codex_reaction_with_review_exit
+
+_codex_reaction_then_review_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_reaction_then_review_mock_dir/review_calls"
+cat > "$_codex_reaction_then_review_mock_dir/gh" <<'CODEX_REACTION_THEN_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcreactlate1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":117,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[{"content":"+1","user":{"login":"chatgpt-codex-connector[bot]"}}]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    calls_file="$(dirname "$0")/review_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -ge 2 ]; then
+      printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abcreactlate1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_REACTION_THEN_REVIEW_GH
+chmod +x "$_codex_reaction_then_review_mock_dir/gh"
+
+_codex_reaction_then_review_output=""
+_codex_reaction_then_review_exit=0
+PATH="$_codex_reaction_then_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 2 --max-retriggers 0 \
+  >"$_codex_reaction_then_review_mock_dir/output.txt" 2>&1 || _codex_reaction_then_review_exit=$?
+_codex_reaction_then_review_output="$(cat "$_codex_reaction_then_review_mock_dir/output.txt")"
+run_test "codex_reaction_then_late_review_exit_clean" "0" "$_codex_reaction_then_review_exit"
+run_test "codex_reaction_then_late_review_approved" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_reaction_then_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_reaction_then_review_mock_dir"
+unset _codex_reaction_then_review_mock_dir _codex_reaction_then_review_output _codex_reaction_then_review_exit
+
+_codex_async_reaction_then_review_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_async_reaction_then_review_mock_dir/review_calls"
+cat > "$_codex_async_reaction_then_review_mock_dir/gh" <<'CODEX_ASYNC_REACTION_THEN_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abc456aa1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":122,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[{"content":"+1","user":{"login":"chatgpt-codex-connector[bot]"}}]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    calls_file="$(dirname "$0")/review_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -ge 3 ]; then
+      printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abc456aa1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ASYNC_REACTION_THEN_REVIEW_GH
+chmod +x "$_codex_async_reaction_then_review_mock_dir/gh"
+
+_codex_async_reaction_then_review_output=""
+_codex_async_reaction_then_review_exit=0
+PATH="$_codex_async_reaction_then_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_async_reaction_then_review_mock_dir/output.txt" 2>&1 || _codex_async_reaction_then_review_exit=$?
+_codex_async_reaction_then_review_output="$(cat "$_codex_async_reaction_then_review_mock_dir/output.txt")"
+run_test "codex_async_reaction_then_late_review_exit_clean" "0" "$_codex_async_reaction_then_review_exit"
+run_test "codex_async_reaction_then_late_review_approved" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_async_reaction_then_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_async_reaction_then_review_mock_dir"
+unset _codex_async_reaction_then_review_mock_dir _codex_async_reaction_then_review_output _codex_async_reaction_then_review_exit
+
+_codex_async_reaction_environment_mock_dir="$(mktemp -d)"
+cat > "$_codex_async_reaction_environment_mock_dir/gh" <<'CODEX_ASYNC_REACTION_ENVIRONMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abc789aa1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":124,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[{"content":"+1","user":{"login":"chatgpt-codex-connector[bot]"}}]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":224,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ASYNC_REACTION_ENVIRONMENT_GH
+chmod +x "$_codex_async_reaction_environment_mock_dir/gh"
+
+_codex_async_reaction_environment_output=""
+_codex_async_reaction_environment_exit=0
+PATH="$_codex_async_reaction_environment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_async_reaction_environment_mock_dir/output.txt" 2>&1 || _codex_async_reaction_environment_exit=$?
+_codex_async_reaction_environment_output="$(cat "$_codex_async_reaction_environment_mock_dir/output.txt")"
+run_test "codex_async_reaction_environment_exit_unavailable" "2" "$_codex_async_reaction_environment_exit"
+run_test "codex_async_reaction_environment_reason" "REASON=codex-github-environment-missing" \
+  "$(printf '%s\n' "$_codex_async_reaction_environment_output" | grep "^REASON=")"
+rm -rf "$_codex_async_reaction_environment_mock_dir"
+unset _codex_async_reaction_environment_mock_dir _codex_async_reaction_environment_output _codex_async_reaction_environment_exit
+
+# Reproduces Codex finding 3786691880-followup (P2, comment id 3787460055):
+# the final acknowledgement re-poll must preserve a recorded environment
+# setup error instead of returning reaction-without-review when a thumbs-up
+# reaction is also present. Sequence: initial async-grace poll finds the
+# acknowledgement comment (no review, no reaction yet) -> sleeps -> final
+# re-poll finds an environment-setup comment (sets SEEN_ENVIRONMENT_ERROR)
+# -> trigger reactions endpoint reports a thumbs-up -> expect
+# codex-github-environment-missing, not codex-github-reaction-without-review.
+_codex_ack_repoll_env_then_reaction_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_ack_repoll_env_then_reaction_mock_dir/comment_calls"
+cat > "$_codex_ack_repoll_env_then_reaction_mock_dir/gh" <<'CODEX_ACK_REPOLL_ENV_THEN_REACTION_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'ackrepoll1234567890a\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":126,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[{"content":"+1","user":{"login":"chatgpt-codex-connector[bot]"}}]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    # Calls 1-2 are the pre-trigger dedup check and the main poll-loop's
+    # bot-response check; both must stay empty so execution falls through
+    # to the async-arrival grace poll (call 3) and its final re-poll
+    # (call 4+).
+    if [ "$calls" -ge 4 ]; then
+      printf '[{"id":227,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    elif [ "$calls" -eq 3 ]; then
+      printf '[{"id":226,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"If Codex has suggestions, it will comment; otherwise it will react with 👍 on this comment."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ACK_REPOLL_ENV_THEN_REACTION_GH
+chmod +x "$_codex_ack_repoll_env_then_reaction_mock_dir/gh"
+
+_codex_ack_repoll_env_then_reaction_output=""
+_codex_ack_repoll_env_then_reaction_exit=0
+PATH="$_codex_ack_repoll_env_then_reaction_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_ack_repoll_env_then_reaction_mock_dir/output.txt" 2>&1 || _codex_ack_repoll_env_then_reaction_exit=$?
+_codex_ack_repoll_env_then_reaction_output="$(cat "$_codex_ack_repoll_env_then_reaction_mock_dir/output.txt")"
+run_test "codex_ack_repoll_env_then_reaction_exit_unavailable" "2" "$_codex_ack_repoll_env_then_reaction_exit"
+run_test "codex_ack_repoll_env_then_reaction_reason" "REASON=codex-github-environment-missing" \
+  "$(printf '%s\n' "$_codex_ack_repoll_env_then_reaction_output" | grep "^REASON=")"
+rm -rf "$_codex_ack_repoll_env_then_reaction_mock_dir"
+unset _codex_ack_repoll_env_then_reaction_mock_dir _codex_ack_repoll_env_then_reaction_output _codex_ack_repoll_env_then_reaction_exit
+
+# Reproduces PR-Agent advisory finding on PR #1490 (main-loop env-error
+# override): the main poll loop recorded an environment setup error on its
+# first iteration (SEEN_ENVIRONMENT_ERROR=1) but a later iteration's
+# same-timestamp-or-older submitted review still exited APPROVED without
+# checking that flag, silently discarding the recorded environment failure.
+# Sequence: iteration 1 finds an environment-setup root comment -> iteration
+# 2 finds no new comment but a clean current-head review AT THE SAME
+# TIMESTAMP as the recorded environment error -> expect
+# codex-github-environment-missing, not APPROVED (ties favor the non-clean
+# evidence, per codex_response_requires_attention's tie-break principle).
+# Covers all four APPROVED exit sites' shared guard, exercised here via the
+# main poll loop. A strictly NEWER review is expected to supersede the
+# stale environment error instead — see
+# codex_main_loop_env_then_newer_review_supersedes below.
+_codex_main_loop_env_then_review_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_main_loop_env_then_review_mock_dir/comment_calls"
+printf '0\n' > "$_codex_main_loop_env_then_review_mock_dir/review_calls"
+cat > "$_codex_main_loop_env_then_review_mock_dir/gh" <<'CODEX_MAIN_LOOP_ENV_THEN_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'mainloopenv1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":130,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    calls_file="$(dirname "$0")/review_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -ge 2 ]; then
+      printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"mainloopenv1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -eq 2 ]; then
+      printf '[{"id":230,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MAIN_LOOP_ENV_THEN_REVIEW_GH
+chmod +x "$_codex_main_loop_env_then_review_mock_dir/gh"
+
+_codex_main_loop_env_then_review_output=""
+_codex_main_loop_env_then_review_exit=0
+PATH="$_codex_main_loop_env_then_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 2 --max-retriggers 0 \
+  >"$_codex_main_loop_env_then_review_mock_dir/output.txt" 2>&1 || _codex_main_loop_env_then_review_exit=$?
+_codex_main_loop_env_then_review_output="$(cat "$_codex_main_loop_env_then_review_mock_dir/output.txt")"
+run_test "codex_main_loop_env_then_review_exit_unavailable" "2" "$_codex_main_loop_env_then_review_exit"
+run_test "codex_main_loop_env_then_review_reason" "REASON=codex-github-environment-missing" \
+  "$(printf '%s\n' "$_codex_main_loop_env_then_review_output" | grep "^REASON=")"
+rm -rf "$_codex_main_loop_env_then_review_mock_dir"
+unset _codex_main_loop_env_then_review_mock_dir _codex_main_loop_env_then_review_output _codex_main_loop_env_then_review_exit
+
+# Reproduces Codex finding on PR #1490 (P2, comment id 3787679406): the
+# environment-error guard must not be permanently sticky — a genuinely
+# fresh (strictly newer timestamp) current-head approved review must
+# supersede a now-stale recorded environment error, so an operator fixing
+# the Codex cloud environment mid-poll can recover within the same
+# invocation. Sequence identical to codex_main_loop_env_then_review above,
+# except the review's submitted_at is strictly newer than the env-error
+# comment's created_at -> expect APPROVED, not environment-missing.
+_codex_main_loop_env_then_newer_review_supersedes_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_main_loop_env_then_newer_review_supersedes_mock_dir/comment_calls"
+printf '0\n' > "$_codex_main_loop_env_then_newer_review_supersedes_mock_dir/review_calls"
+cat > "$_codex_main_loop_env_then_newer_review_supersedes_mock_dir/gh" <<'CODEX_MAIN_LOOP_ENV_THEN_NEWER_REVIEW_SUPERSEDES_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'newerreview1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":132,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    calls_file="$(dirname "$0")/review_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -ge 2 ]; then
+      printf '[{"submitted_at":"2026-01-01T00:00:03Z","commit_id":"newerreview1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -eq 2 ]; then
+      printf '[{"id":230,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    else
+      printf '[]\n'
+    fi
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MAIN_LOOP_ENV_THEN_NEWER_REVIEW_SUPERSEDES_GH
+chmod +x "$_codex_main_loop_env_then_newer_review_supersedes_mock_dir/gh"
+
+_codex_main_loop_env_then_newer_review_supersedes_output=""
+_codex_main_loop_env_then_newer_review_supersedes_exit=0
+PATH="$_codex_main_loop_env_then_newer_review_supersedes_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 2 --max-retriggers 0 \
+  >"$_codex_main_loop_env_then_newer_review_supersedes_mock_dir/output.txt" 2>&1 || _codex_main_loop_env_then_newer_review_supersedes_exit=$?
+_codex_main_loop_env_then_newer_review_supersedes_output="$(cat "$_codex_main_loop_env_then_newer_review_supersedes_mock_dir/output.txt")"
+run_test "codex_main_loop_env_then_newer_review_supersedes_exit_clean" "0" "$_codex_main_loop_env_then_newer_review_supersedes_exit"
+run_test "codex_main_loop_env_then_newer_review_supersedes_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_main_loop_env_then_newer_review_supersedes_output" | grep "^VERDICT:")"
+rm -rf "$_codex_main_loop_env_then_newer_review_supersedes_mock_dir"
+unset _codex_main_loop_env_then_newer_review_supersedes_mock_dir _codex_main_loop_env_then_newer_review_supersedes_output _codex_main_loop_env_then_newer_review_supersedes_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3787679402): the
+# codex_response_requires_attention tie-break helper (added in the prior
+# cycle to fix unrecognized-format ties) checked only the approval pattern,
+# so a mixed response containing BOTH an approval phrase and a blocking
+# marker (e.g. "No blocking issues found. Must fix ...") was misclassified
+# as a clean approval and lost the tie-break to a clean root comment,
+# producing APPROVED instead of the classifier's blocking-first
+# NEEDS_REVISION. Root comment is a clean approval; tied review body
+# contains both an approval phrase and a blocking marker.
+_codex_tied_mixed_blocking_review_wins_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_mixed_blocking_review_wins_mock_dir/gh" <<'CODEX_TIED_MIXED_BLOCKING_REVIEW_WINS_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'deadb00d12345678\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":133,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deadb00d12345678","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. Must fix the typo on line 4."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":234,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `deadb00d1234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_MIXED_BLOCKING_REVIEW_WINS_GH
+chmod +x "$_codex_tied_mixed_blocking_review_wins_mock_dir/gh"
+
+_codex_tied_mixed_blocking_review_wins_output=""
+_codex_tied_mixed_blocking_review_wins_exit=0
+PATH="$_codex_tied_mixed_blocking_review_wins_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_mixed_blocking_review_wins_mock_dir/output.txt" 2>&1 || _codex_tied_mixed_blocking_review_wins_exit=$?
+_codex_tied_mixed_blocking_review_wins_output="$(cat "$_codex_tied_mixed_blocking_review_wins_mock_dir/output.txt")"
+run_test "codex_tied_mixed_blocking_review_wins_exit_needs_revision" "1" "$_codex_tied_mixed_blocking_review_wins_exit"
+run_test "codex_tied_mixed_blocking_review_wins_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_tied_mixed_blocking_review_wins_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_mixed_blocking_review_wins_mock_dir"
+unset _codex_tied_mixed_blocking_review_wins_mock_dir _codex_tied_mixed_blocking_review_wins_output _codex_tied_mixed_blocking_review_wins_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3787786942): a
+# submitted review body that exceeds a pipe buffer's capacity (well within
+# GitHub's ~64KB per-comment limit) causes `jq ... | head -c 5000` to SIGPIPE
+# jq once `head` closes its read end after 5000 bytes; under `set -euo
+# pipefail` this aborts the whole script with exit 141 before any VERDICT
+# line is emitted. Truncation now happens inside jq (codepoint slice)
+# instead of via a piped `head`, eliminating the SIGPIPE entirely. Body is
+# built via jq's own string-repeat operator (200000 chars) rather than a
+# large literal in this file or a python3 dependency.
+_codex_long_review_body_no_sigpipe_mock_dir="$(mktemp -d)"
+cat > "$_codex_long_review_body_no_sigpipe_mock_dir/gh" <<'CODEX_LONG_REVIEW_BODY_NO_SIGPIPE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'longbody1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":140,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"longbody1234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("No blocking issues found. " + ("x" * 200000))}]'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_LONG_REVIEW_BODY_NO_SIGPIPE_GH
+chmod +x "$_codex_long_review_body_no_sigpipe_mock_dir/gh"
+
+_codex_long_review_body_no_sigpipe_output=""
+_codex_long_review_body_no_sigpipe_exit=0
+PATH="$_codex_long_review_body_no_sigpipe_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_long_review_body_no_sigpipe_mock_dir/output.txt" 2>&1 || _codex_long_review_body_no_sigpipe_exit=$?
+_codex_long_review_body_no_sigpipe_output="$(cat "$_codex_long_review_body_no_sigpipe_mock_dir/output.txt")"
+run_test "codex_long_review_body_no_sigpipe_exit_clean" "0" "$_codex_long_review_body_no_sigpipe_exit"
+run_test "codex_long_review_body_no_sigpipe_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_long_review_body_no_sigpipe_output" | grep "^VERDICT:")"
+rm -rf "$_codex_long_review_body_no_sigpipe_mock_dir"
+unset _codex_long_review_body_no_sigpipe_mock_dir _codex_long_review_body_no_sigpipe_output _codex_long_review_body_no_sigpipe_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3787786943): within a
+# single poll, a clean submitted review at T1 and a newer environment-setup
+# root comment at T2 were combined by unconditionally preferring the review
+# (since it wasn't competing against a SHA-pinned terminal comment), so the
+# newer setup failure never had a chance to be recorded as
+# SEEN_ENVIRONMENT_ERROR and the run returned APPROVED. Root comment (env
+# error) is strictly newer than the review in this fixture -> expect
+# codex-github-environment-missing, not APPROVED.
+_codex_same_poll_newer_env_error_wins_mock_dir="$(mktemp -d)"
+cat > "$_codex_same_poll_newer_env_error_wins_mock_dir/gh" <<'CODEX_SAME_POLL_NEWER_ENV_ERROR_WINS_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'samepoll1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":141,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"samepoll1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":242,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_SAME_POLL_NEWER_ENV_ERROR_WINS_GH
+chmod +x "$_codex_same_poll_newer_env_error_wins_mock_dir/gh"
+
+_codex_same_poll_newer_env_error_wins_output=""
+_codex_same_poll_newer_env_error_wins_exit=0
+PATH="$_codex_same_poll_newer_env_error_wins_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_same_poll_newer_env_error_wins_mock_dir/output.txt" 2>&1 || _codex_same_poll_newer_env_error_wins_exit=$?
+_codex_same_poll_newer_env_error_wins_output="$(cat "$_codex_same_poll_newer_env_error_wins_mock_dir/output.txt")"
+run_test "codex_same_poll_newer_env_error_wins_exit_unavailable" "2" "$_codex_same_poll_newer_env_error_wins_exit"
+run_test "codex_same_poll_newer_env_error_wins_reason" "REASON=codex-github-environment-missing" \
+  "$(printf '%s\n' "$_codex_same_poll_newer_env_error_wins_output" | grep "^REASON=")"
+rm -rf "$_codex_same_poll_newer_env_error_wins_mock_dir"
+unset _codex_same_poll_newer_env_error_wins_mock_dir _codex_same_poll_newer_env_error_wins_output _codex_same_poll_newer_env_error_wins_exit
+
+# Reproduces Codex finding on PR #1490 (P2, comment id 3787786945): when the
+# same comments fetch contains an environment-setup error at T1 followed by
+# a plain acknowledgement at T2, codex_scan_comment_evidence previously kept
+# only the LATEST comment overall (the acknowledgement), losing the
+# actionable setup-error text. Combined with a thumbs-up reaction, this
+# produced codex-github-reaction-without-review instead of
+# codex-github-environment-missing. Async-arrival grace path: env-error at
+# T1 and acknowledgement at T2 both appear in the same async-arrival poll's
+# comment fetch, plus a thumbs-up reaction on the trigger comment.
+_codex_env_error_survives_later_ack_mock_dir="$(mktemp -d)"
+cat > "$_codex_env_error_survives_later_ack_mock_dir/gh" <<'CODEX_ENV_ERROR_SURVIVES_LATER_ACK_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'ackenverr1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":142,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[{"content":"+1","user":{"login":"chatgpt-codex-connector[bot]"}}]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":243,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."},{"id":244,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"If Codex has suggestions, it will comment; otherwise it will react with \xf0\x9f\x91\x8d on this comment."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ENV_ERROR_SURVIVES_LATER_ACK_GH
+chmod +x "$_codex_env_error_survives_later_ack_mock_dir/gh"
+
+_codex_env_error_survives_later_ack_output=""
+_codex_env_error_survives_later_ack_exit=0
+PATH="$_codex_env_error_survives_later_ack_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_env_error_survives_later_ack_mock_dir/output.txt" 2>&1 || _codex_env_error_survives_later_ack_exit=$?
+_codex_env_error_survives_later_ack_output="$(cat "$_codex_env_error_survives_later_ack_mock_dir/output.txt")"
+run_test "codex_env_error_survives_later_ack_exit_unavailable" "2" "$_codex_env_error_survives_later_ack_exit"
+run_test "codex_env_error_survives_later_ack_reason" "REASON=codex-github-environment-missing" \
+  "$(printf '%s\n' "$_codex_env_error_survives_later_ack_output" | grep "^REASON=")"
+rm -rf "$_codex_env_error_survives_later_ack_mock_dir"
+unset _codex_env_error_survives_later_ack_mock_dir _codex_env_error_survives_later_ack_output _codex_env_error_survives_later_ack_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3787868727): a clean
+# SHA-pinned terminal root comment at T1 and a strictly newer
+# environment-setup-error comment at T2, both present in the same comments
+# fetch. codex_combine_terminal_evidence previously chose the terminal
+# comment unconditionally whenever no submitted review was present,
+# discarding the newer environment error entirely (that branch never
+# considered it). No review from the reviews endpoint -> expect
+# codex-github-environment-missing, not APPROVED.
+_codex_terminal_comment_vs_newer_env_error_mock_dir="$(mktemp -d)"
+cat > "$_codex_terminal_comment_vs_newer_env_error_mock_dir/gh" <<'CODEX_TERMINAL_COMMENT_VS_NEWER_ENV_ERROR_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'deadf00d12345678\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":150,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":250,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `deadf00d1234`"},{"id":251,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TERMINAL_COMMENT_VS_NEWER_ENV_ERROR_GH
+chmod +x "$_codex_terminal_comment_vs_newer_env_error_mock_dir/gh"
+
+_codex_terminal_comment_vs_newer_env_error_output=""
+_codex_terminal_comment_vs_newer_env_error_exit=0
+PATH="$_codex_terminal_comment_vs_newer_env_error_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_terminal_comment_vs_newer_env_error_mock_dir/output.txt" 2>&1 || _codex_terminal_comment_vs_newer_env_error_exit=$?
+_codex_terminal_comment_vs_newer_env_error_output="$(cat "$_codex_terminal_comment_vs_newer_env_error_mock_dir/output.txt")"
+run_test "codex_terminal_comment_vs_newer_env_error_exit_unavailable" "2" "$_codex_terminal_comment_vs_newer_env_error_exit"
+run_test "codex_terminal_comment_vs_newer_env_error_reason" "REASON=codex-github-environment-missing" \
+  "$(printf '%s\n' "$_codex_terminal_comment_vs_newer_env_error_output" | grep "^REASON=")"
+rm -rf "$_codex_terminal_comment_vs_newer_env_error_mock_dir"
+unset _codex_terminal_comment_vs_newer_env_error_mock_dir _codex_terminal_comment_vs_newer_env_error_output _codex_terminal_comment_vs_newer_env_error_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3787868733): only
+# submitted review bodies were sliced inside jq; a SHA-pinned root-comment
+# body large enough to exceed a pipe buffer's capacity (well within
+# GitHub's ~64KB per-comment limit) still passed through
+# `printf | head -c 10000` in the main loop and all 3 async paths,
+# triggering the same SIGPIPE/exit-141 crash under `set -euo pipefail`.
+# All 4 sites now truncate via `jq -Rrs '.[0:10000]'`, which slurps its
+# entire stdin before producing output so the writer can never receive
+# SIGPIPE regardless of input size.
+_codex_long_root_comment_no_sigpipe_mock_dir="$(mktemp -d)"
+cat > "$_codex_long_root_comment_no_sigpipe_mock_dir/gh" <<'CODEX_LONG_ROOT_COMMENT_NO_SIGPIPE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'deadf00d12345678\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":151,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:260,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'"'"'t find any major issues.\n\n" + ("x" * 200000) + "\n\n**Reviewed commit:** `deadf00d1234`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_LONG_ROOT_COMMENT_NO_SIGPIPE_GH
+chmod +x "$_codex_long_root_comment_no_sigpipe_mock_dir/gh"
+
+_codex_long_root_comment_no_sigpipe_output=""
+_codex_long_root_comment_no_sigpipe_exit=0
+PATH="$_codex_long_root_comment_no_sigpipe_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_long_root_comment_no_sigpipe_mock_dir/output.txt" 2>&1 || _codex_long_root_comment_no_sigpipe_exit=$?
+_codex_long_root_comment_no_sigpipe_output="$(cat "$_codex_long_root_comment_no_sigpipe_mock_dir/output.txt")"
+run_test "codex_long_root_comment_no_sigpipe_exit_clean" "0" "$_codex_long_root_comment_no_sigpipe_exit"
+run_test "codex_long_root_comment_no_sigpipe_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_long_root_comment_no_sigpipe_output" | grep "^VERDICT:")"
+rm -rf "$_codex_long_root_comment_no_sigpipe_mock_dir"
+unset _codex_long_root_comment_no_sigpipe_mock_dir _codex_long_root_comment_no_sigpipe_output _codex_long_root_comment_no_sigpipe_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3787943162): a
+# SHA-pinned terminal root comment reporting a blocking finding at T1,
+# followed by a non-terminal environment-setup comment at T2 in the same
+# fetch. codex_combine_terminal_evidence's final environment-error override
+# previously replaced the blocking COMBINED_BODY whenever it was not
+# strictly newer than the environment-error comment, silently hiding the
+# blocking finding behind an "unavailable" verdict. Blocking terminal
+# evidence must now win outright, regardless of timing. No review from the
+# reviews endpoint -> expect NEEDS_REVISION, not environment-missing.
+_codex_blocking_terminal_beats_env_error_mock_dir="$(mktemp -d)"
+cat > "$_codex_blocking_terminal_beats_env_error_mock_dir/gh" <<'CODEX_BLOCKING_TERMINAL_BEATS_ENV_ERROR_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'beadf00d1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":160,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":270,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the null check.\\n\\n**Reviewed commit:** `beadf00d1234`"},{"id":271,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_BLOCKING_TERMINAL_BEATS_ENV_ERROR_GH
+chmod +x "$_codex_blocking_terminal_beats_env_error_mock_dir/gh"
+
+_codex_blocking_terminal_beats_env_error_output=""
+_codex_blocking_terminal_beats_env_error_exit=0
+PATH="$_codex_blocking_terminal_beats_env_error_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_blocking_terminal_beats_env_error_mock_dir/output.txt" 2>&1 || _codex_blocking_terminal_beats_env_error_exit=$?
+_codex_blocking_terminal_beats_env_error_output="$(cat "$_codex_blocking_terminal_beats_env_error_mock_dir/output.txt")"
+run_test "codex_blocking_terminal_beats_env_error_exit_needs_revision" "1" "$_codex_blocking_terminal_beats_env_error_exit"
+run_test "codex_blocking_terminal_beats_env_error_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_blocking_terminal_beats_env_error_output" | grep "^VERDICT:")"
+rm -rf "$_codex_blocking_terminal_beats_env_error_mock_dir"
+unset _codex_blocking_terminal_beats_env_error_mock_dir _codex_blocking_terminal_beats_env_error_output _codex_blocking_terminal_beats_env_error_exit
+
+# Reproduces Codex finding on PR #1490 (P2, comment id 3787943163): a
+# SHA-pinned terminal root review whose blocking finding text quotes the
+# environment-setup sentence verbatim (e.g. flagging stale docs that
+# reproduce it) was misclassified as an environment-setup error by the
+# unanchored substring matcher, suppressing NEEDS_REVISION. A SHA-pinned
+# TERMINAL comment is now never classified as an environment error,
+# regardless of its text content -> expect NEEDS_REVISION.
+_codex_quoted_setup_sentence_in_blocking_finding_mock_dir="$(mktemp -d)"
+cat > "$_codex_quoted_setup_sentence_in_blocking_finding_mock_dir/gh" <<'CODEX_QUOTED_SETUP_SENTENCE_IN_BLOCKING_FINDING_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'cafebabe1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":161,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":280,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: docs must not claim: To use Codex here, create an environment for this repo.\\n\\n**Reviewed commit:** `cafebabe1234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_QUOTED_SETUP_SENTENCE_IN_BLOCKING_FINDING_GH
+chmod +x "$_codex_quoted_setup_sentence_in_blocking_finding_mock_dir/gh"
+
+_codex_quoted_setup_sentence_in_blocking_finding_output=""
+_codex_quoted_setup_sentence_in_blocking_finding_exit=0
+PATH="$_codex_quoted_setup_sentence_in_blocking_finding_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_quoted_setup_sentence_in_blocking_finding_mock_dir/output.txt" 2>&1 || _codex_quoted_setup_sentence_in_blocking_finding_exit=$?
+_codex_quoted_setup_sentence_in_blocking_finding_output="$(cat "$_codex_quoted_setup_sentence_in_blocking_finding_mock_dir/output.txt")"
+run_test "codex_quoted_setup_sentence_in_blocking_finding_exit_needs_revision" "1" "$_codex_quoted_setup_sentence_in_blocking_finding_exit"
+run_test "codex_quoted_setup_sentence_in_blocking_finding_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_quoted_setup_sentence_in_blocking_finding_output" | grep "^VERDICT:")"
+rm -rf "$_codex_quoted_setup_sentence_in_blocking_finding_mock_dir"
+unset _codex_quoted_setup_sentence_in_blocking_finding_mock_dir _codex_quoted_setup_sentence_in_blocking_finding_output _codex_quoted_setup_sentence_in_blocking_finding_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3788008326): when
+# multiple current-head reviews share GitHub's second-resolution
+# submitted_at timestamp, `sort_by(.submitted_at) | last` discarded every
+# response except whichever the API happened to return last, regardless of
+# content. A blocking review returned BEFORE a tied clean review in the
+# array silently produced APPROVED. The review-poll jq queries now select
+# every review tied at the latest timestamp and codex_select_review_evidence
+# picks the one requiring attention, if any. Fixture: blocking review first
+# in the array, clean review second, both tied at the same timestamp.
+_codex_tied_reviews_blocking_first_survives_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_reviews_blocking_first_survives_mock_dir/gh" <<'CODEX_TIED_REVIEWS_BLOCKING_FIRST_SURVIVES_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'deadbeef1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":170,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deadbeef1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the leak."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deadbeef1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_REVIEWS_BLOCKING_FIRST_SURVIVES_GH
+chmod +x "$_codex_tied_reviews_blocking_first_survives_mock_dir/gh"
+
+_codex_tied_reviews_blocking_first_survives_output=""
+_codex_tied_reviews_blocking_first_survives_exit=0
+PATH="$_codex_tied_reviews_blocking_first_survives_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_reviews_blocking_first_survives_mock_dir/output.txt" 2>&1 || _codex_tied_reviews_blocking_first_survives_exit=$?
+_codex_tied_reviews_blocking_first_survives_output="$(cat "$_codex_tied_reviews_blocking_first_survives_mock_dir/output.txt")"
+run_test "codex_tied_reviews_blocking_first_survives_exit_needs_revision" "1" "$_codex_tied_reviews_blocking_first_survives_exit"
+run_test "codex_tied_reviews_blocking_first_survives_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_tied_reviews_blocking_first_survives_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_reviews_blocking_first_survives_mock_dir"
+unset _codex_tied_reviews_blocking_first_survives_mock_dir _codex_tied_reviews_blocking_first_survives_output _codex_tied_reviews_blocking_first_survives_exit
+
+# Reproduces Codex finding on PR #1490 (P2, comment id 3788008327): only
+# environment-error ancillary comments were retained/compared independently
+# — usage-limit comments were not, so an older clean current-head review
+# and a newer root comment reporting exhausted Codex usage silently
+# resolved to APPROVED instead of the configured unavailable policy.
+# codex_scan_comment_evidence and the final override in
+# codex_combine_terminal_evidence now treat usage-limit comments the same
+# way as environment-error comments.
+_codex_older_review_vs_newer_usage_limit_mock_dir="$(mktemp -d)"
+cat > "$_codex_older_review_vs_newer_usage_limit_mock_dir/gh" <<'CODEX_OLDER_REVIEW_VS_NEWER_USAGE_LIMIT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facefeed1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":180,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facefeed1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":290,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_OLDER_REVIEW_VS_NEWER_USAGE_LIMIT_GH
+chmod +x "$_codex_older_review_vs_newer_usage_limit_mock_dir/gh"
+
+_codex_older_review_vs_newer_usage_limit_output=""
+_codex_older_review_vs_newer_usage_limit_exit=0
+PATH="$_codex_older_review_vs_newer_usage_limit_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_older_review_vs_newer_usage_limit_mock_dir/output.txt" 2>&1 || _codex_older_review_vs_newer_usage_limit_exit=$?
+_codex_older_review_vs_newer_usage_limit_output="$(cat "$_codex_older_review_vs_newer_usage_limit_mock_dir/output.txt")"
+run_test "codex_older_review_vs_newer_usage_limit_exit_unavailable" "3" "$_codex_older_review_vs_newer_usage_limit_exit"
+run_test "codex_older_review_vs_newer_usage_limit_reason" "REASON=codex-github-usage-limit" \
+  "$(printf '%s\n' "$_codex_older_review_vs_newer_usage_limit_output" | grep "^REASON=")"
+rm -rf "$_codex_older_review_vs_newer_usage_limit_mock_dir"
+unset _codex_older_review_vs_newer_usage_limit_mock_dir _codex_older_review_vs_newer_usage_limit_output _codex_older_review_vs_newer_usage_limit_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3788078189): when
+# two current-head terminal root comments share GitHub's second-resolution
+# timestamp, codex_scan_comment_evidence previously overwrote
+# COMMENT_TERMINAL_BODY unconditionally on every terminal comment seen,
+# regardless of content. A blocking terminal comment followed by a tied
+# clean terminal comment silently produced APPROVED. The not-a-clean-
+# approval-first tie-break now decides which tied terminal comment is
+# tracked. Fixture: blocking terminal comment first, clean terminal
+# comment second, both tied at the same timestamp, no review.
+_codex_tied_terminal_comments_blocking_survives_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_terminal_comments_blocking_survives_mock_dir/gh" <<'CODEX_TIED_TERMINAL_COMMENTS_BLOCKING_SURVIVES_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'aceface1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":190,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":300,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the leak.\\n\\n**Reviewed commit:** `aceface1234`"},{"id":301,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `aceface1234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_TERMINAL_COMMENTS_BLOCKING_SURVIVES_GH
+chmod +x "$_codex_tied_terminal_comments_blocking_survives_mock_dir/gh"
+
+_codex_tied_terminal_comments_blocking_survives_output=""
+_codex_tied_terminal_comments_blocking_survives_exit=0
+PATH="$_codex_tied_terminal_comments_blocking_survives_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_terminal_comments_blocking_survives_mock_dir/output.txt" 2>&1 || _codex_tied_terminal_comments_blocking_survives_exit=$?
+_codex_tied_terminal_comments_blocking_survives_output="$(cat "$_codex_tied_terminal_comments_blocking_survives_mock_dir/output.txt")"
+run_test "codex_tied_terminal_comments_blocking_survives_exit_needs_revision" "1" "$_codex_tied_terminal_comments_blocking_survives_exit"
+run_test "codex_tied_terminal_comments_blocking_survives_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_tied_terminal_comments_blocking_survives_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_terminal_comments_blocking_survives_mock_dir"
+unset _codex_tied_terminal_comments_blocking_survives_mock_dir _codex_tied_terminal_comments_blocking_survives_output _codex_tied_terminal_comments_blocking_survives_exit
+
+# Reproduces Codex finding on PR #1490 (P2, comment id 3788078191): the
+# usage-limit check ran before the blocking check in every verdict path, so
+# a current-head submitted review whose blocking finding text mentions
+# "usage limit" as part of the finding itself (e.g. flagging stale docs
+# that describe it) was misrouted to an UNAVAILABLE/usage-limit verdict
+# before the blocking classifier could run, hiding the actionable finding.
+# Blocking is now checked first in every verdict path.
+_codex_blocking_text_mentions_usage_limit_mock_dir="$(mktemp -d)"
+cat > "$_codex_blocking_text_mentions_usage_limit_mock_dir/gh" <<'CODEX_BLOCKING_TEXT_MENTIONS_USAGE_LIMIT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'baadf00d1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":191,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"baadf00d1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: docs incorrectly describe the Codex usage limit for code reviews."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_BLOCKING_TEXT_MENTIONS_USAGE_LIMIT_GH
+chmod +x "$_codex_blocking_text_mentions_usage_limit_mock_dir/gh"
+
+_codex_blocking_text_mentions_usage_limit_output=""
+_codex_blocking_text_mentions_usage_limit_exit=0
+PATH="$_codex_blocking_text_mentions_usage_limit_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_blocking_text_mentions_usage_limit_mock_dir/output.txt" 2>&1 || _codex_blocking_text_mentions_usage_limit_exit=$?
+_codex_blocking_text_mentions_usage_limit_output="$(cat "$_codex_blocking_text_mentions_usage_limit_mock_dir/output.txt")"
+run_test "codex_blocking_text_mentions_usage_limit_exit_needs_revision" "1" "$_codex_blocking_text_mentions_usage_limit_exit"
+run_test "codex_blocking_text_mentions_usage_limit_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_blocking_text_mentions_usage_limit_output" | grep "^VERDICT:")"
+rm -rf "$_codex_blocking_text_mentions_usage_limit_mock_dir"
+unset _codex_blocking_text_mentions_usage_limit_mock_dir _codex_blocking_text_mentions_usage_limit_output _codex_blocking_text_mentions_usage_limit_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3788118857): when
+# the latest timestamp contains a bodyless submitted review tied with a
+# clean SHA-pinned terminal comment, codex_combine_terminal_evidence's
+# presence check `[ -n "$review_body" ]` treated the empty-bodied review as
+# absent, so the clean terminal comment won by default and the script
+# returned APPROVED — even though codex_response_requires_attention
+# correctly classifies an empty body as unrecognized/requires-attention.
+# Presence is now checked via review_time (guaranteed non-empty for any
+# selected review by the poll query's filter), not review_body. Fixture:
+# clean terminal comment, clean submitted review, and an empty submitted
+# review, all tied at the same timestamp -> expect NOT APPROVED (the empty
+# review participates in the tie-break and the script does not silently
+# approve).
+_codex_bodyless_tied_review_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_bodyless_tied_review_not_approved_mock_dir/gh" <<'CODEX_BODYLESS_TIED_REVIEW_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'c0ffee001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":200,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"c0ffee001234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"c0ffee001234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":""}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":310,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `c0ffee001234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_BODYLESS_TIED_REVIEW_NOT_APPROVED_GH
+chmod +x "$_codex_bodyless_tied_review_not_approved_mock_dir/gh"
+
+_codex_bodyless_tied_review_not_approved_output=""
+_codex_bodyless_tied_review_not_approved_exit=0
+PATH="$_codex_bodyless_tied_review_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_bodyless_tied_review_not_approved_mock_dir/output.txt" 2>&1 || _codex_bodyless_tied_review_not_approved_exit=$?
+_codex_bodyless_tied_review_not_approved_output="$(cat "$_codex_bodyless_tied_review_not_approved_mock_dir/output.txt")"
+run_test "codex_bodyless_tied_review_not_approved_verdict_not_approved" "0" \
+  "$(printf '%s\n' "$_codex_bodyless_tied_review_not_approved_output" | grep -c "^VERDICT: APPROVED$" || true)"
+rm -rf "$_codex_bodyless_tied_review_not_approved_mock_dir"
+unset _codex_bodyless_tied_review_not_approved_mock_dir _codex_bodyless_tied_review_not_approved_output _codex_bodyless_tied_review_not_approved_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3788164224): the
+# prior bodyless-tied-review fix made COMBINED_SOURCE/COMBINED_TIME record
+# an empty-bodied review's presence, but the main-loop and async verdict
+# paths still gated the "if -n $BOT_RESPONSE" verdict-parsing entry on the
+# BODY being non-empty, so a bodyless winning review fell through to
+# TIMED_OUT — a permissive-unavailable-policy consumer could treat that
+# more leniently than the documented unrecognized-response safe-fail
+# NEEDS_REVISION. Verdict-parsing entry is now gated on
+# BOT_RESPONSE_TIME (captured from COMBINED_TIME right after combine)
+# instead of BOT_RESPONSE body content. Same fixture as
+# codex_bodyless_tied_review_not_approved, but asserts the exact expected
+# verdict rather than only "not APPROVED".
+_codex_bodyless_tied_review_needs_revision_mock_dir="$(mktemp -d)"
+cat > "$_codex_bodyless_tied_review_needs_revision_mock_dir/gh" <<'CODEX_BODYLESS_TIED_REVIEW_NEEDS_REVISION_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'c0ffee001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":200,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"c0ffee001234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"c0ffee001234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":""}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":310,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex Review: Didn'\''t find any major issues.\\n\\n**Reviewed commit:** `c0ffee001234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_BODYLESS_TIED_REVIEW_NEEDS_REVISION_GH
+chmod +x "$_codex_bodyless_tied_review_needs_revision_mock_dir/gh"
+
+_codex_bodyless_tied_review_needs_revision_output=""
+_codex_bodyless_tied_review_needs_revision_exit=0
+PATH="$_codex_bodyless_tied_review_needs_revision_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_bodyless_tied_review_needs_revision_mock_dir/output.txt" 2>&1 || _codex_bodyless_tied_review_needs_revision_exit=$?
+_codex_bodyless_tied_review_needs_revision_output="$(cat "$_codex_bodyless_tied_review_needs_revision_mock_dir/output.txt")"
+run_test "codex_bodyless_tied_review_needs_revision_exit" "1" "$_codex_bodyless_tied_review_needs_revision_exit"
+run_test "codex_bodyless_tied_review_needs_revision_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_bodyless_tied_review_needs_revision_output" | grep "^VERDICT:")"
+rm -rf "$_codex_bodyless_tied_review_needs_revision_mock_dir"
+unset _codex_bodyless_tied_review_needs_revision_mock_dir _codex_bodyless_tied_review_needs_revision_output _codex_bodyless_tied_review_needs_revision_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3789477520):
+# codex_select_review_evidence's scan stopped at the FIRST tied review
+# that merely "requires attention" (which includes non-blocking types
+# like usage-limit text), so a usage-limit review returned before a
+# blocking review in the same tied timestamp silently discarded the
+# blocker and the script emitted UNAVAILABLE instead of NEEDS_REVISION.
+# Blocking is now scanned and prioritized independently of other
+# attention-requiring types. Fixture: usage-limit review first in the
+# array, blocking review second, both tied at the same timestamp.
+_codex_tied_reviews_blocking_beats_usage_limit_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir/gh" <<'CODEX_TIED_REVIEWS_BLOCKING_BEATS_USAGE_LIMIT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'deadc0de1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":210,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deadc0de1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"deadc0de1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the null check."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_REVIEWS_BLOCKING_BEATS_USAGE_LIMIT_GH
+chmod +x "$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir/gh"
+
+_codex_tied_reviews_blocking_beats_usage_limit_output=""
+_codex_tied_reviews_blocking_beats_usage_limit_exit=0
+PATH="$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir/output.txt" 2>&1 || _codex_tied_reviews_blocking_beats_usage_limit_exit=$?
+_codex_tied_reviews_blocking_beats_usage_limit_output="$(cat "$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir/output.txt")"
+run_test "codex_tied_reviews_blocking_beats_usage_limit_exit_needs_revision" "1" "$_codex_tied_reviews_blocking_beats_usage_limit_exit"
+run_test "codex_tied_reviews_blocking_beats_usage_limit_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_tied_reviews_blocking_beats_usage_limit_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_reviews_blocking_beats_usage_limit_mock_dir"
+unset _codex_tied_reviews_blocking_beats_usage_limit_mock_dir _codex_tied_reviews_blocking_beats_usage_limit_output _codex_tied_reviews_blocking_beats_usage_limit_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3789521036): the
+# shared codex_select_terminal_evidence tie-break only checked the binary
+# requires-attention distinction, so two tied responses that are BOTH
+# "requires attention" (a usage-limit root comment and a blocking
+# submitted review) kept whichever was CURRENT even when the candidate was
+# strictly more severe (blocking). The prior d149 fix addressed only
+# codex_select_review_evidence's own review-vs-review scan; this shared
+# selector (used for terminal-comment-vs-review and terminal-comment-vs-
+# terminal-comment ties) now checks blocking first. Fixture: a SHA-pinned
+# terminal root comment reporting a usage limit, tied with a submitted
+# blocking review, no acknowledgement.
+_codex_terminal_usage_limit_vs_blocking_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_terminal_usage_limit_vs_blocking_review_mock_dir/gh" <<'CODEX_TERMINAL_USAGE_LIMIT_VS_BLOCKING_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":220,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade001234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the null check."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":320,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews.\\n\\n**Reviewed commit:** `facade001234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TERMINAL_USAGE_LIMIT_VS_BLOCKING_REVIEW_GH
+chmod +x "$_codex_terminal_usage_limit_vs_blocking_review_mock_dir/gh"
+
+_codex_terminal_usage_limit_vs_blocking_review_output=""
+_codex_terminal_usage_limit_vs_blocking_review_exit=0
+PATH="$_codex_terminal_usage_limit_vs_blocking_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_terminal_usage_limit_vs_blocking_review_mock_dir/output.txt" 2>&1 || _codex_terminal_usage_limit_vs_blocking_review_exit=$?
+_codex_terminal_usage_limit_vs_blocking_review_output="$(cat "$_codex_terminal_usage_limit_vs_blocking_review_mock_dir/output.txt")"
+run_test "codex_terminal_usage_limit_vs_blocking_review_exit_needs_revision" "1" "$_codex_terminal_usage_limit_vs_blocking_review_exit"
+run_test "codex_terminal_usage_limit_vs_blocking_review_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_terminal_usage_limit_vs_blocking_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_terminal_usage_limit_vs_blocking_review_mock_dir"
+unset _codex_terminal_usage_limit_vs_blocking_review_mock_dir _codex_terminal_usage_limit_vs_blocking_review_output _codex_terminal_usage_limit_vs_blocking_review_exit
+
+# Same finding (3789521036), second reproduction scenario explicitly
+# called out in the finding text: "the same loss occurs between two tied
+# root responses". Two SHA-pinned terminal root comments tied at the same
+# timestamp — one reporting a usage limit, one blocking — no submitted
+# review at all.
+_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir="$(mktemp -d)"
+cat > "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir/gh" <<'CODEX_TWO_TIED_TERMINAL_COMMENTS_USAGE_LIMIT_VS_BLOCKING_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'ba5eba1112345678\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":221,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":330,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews.\\n\\n**Reviewed commit:** `ba5eba111234`"},{"id":331,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: must fix the null check.\\n\\n**Reviewed commit:** `ba5eba111234`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TWO_TIED_TERMINAL_COMMENTS_USAGE_LIMIT_VS_BLOCKING_GH
+chmod +x "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir/gh"
+
+_codex_two_tied_terminal_comments_usage_limit_vs_blocking_output=""
+_codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit=0
+PATH="$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir/output.txt" 2>&1 || _codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit=$?
+_codex_two_tied_terminal_comments_usage_limit_vs_blocking_output="$(cat "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir/output.txt")"
+run_test "codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit_needs_revision" "1" "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit"
+run_test "codex_two_tied_terminal_comments_usage_limit_vs_blocking_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_output" | grep "^VERDICT:")"
+rm -rf "$_codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir"
+unset _codex_two_tied_terminal_comments_usage_limit_vs_blocking_mock_dir _codex_two_tied_terminal_comments_usage_limit_vs_blocking_output _codex_two_tied_terminal_comments_usage_limit_vs_blocking_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3789555934): the
+# earlier mixed-blocking-and-approval fix to codex_response_requires_attention
+# checked only codex_response_is_blocking alongside is_approved, leaving the
+# analogous mixed-usage-limit-and-approval case unguarded. A usage-limit
+# response that ALSO contains an approval phrase (e.g. "No blocking issues
+# could be evaluated because you have reached your Codex usage limits")
+# matched the approval pattern and was classified as NOT requiring
+# attention, so codex_select_review_evidence kept a tied clean review
+# instead, returning APPROVED instead of UNAVAILABLE. requires_attention
+# now also checks codex_response_is_usage_limit. Fixture: clean review
+# first in the array, mixed usage-limit+approval review second, both tied.
+_codex_tied_usage_limit_with_approval_phrase_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_usage_limit_with_approval_phrase_mock_dir/gh" <<'CODEX_TIED_USAGE_LIMIT_WITH_APPROVAL_PHRASE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'feedc0de1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":230,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"feedc0de1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"feedc0de1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues could be evaluated because you have reached your Codex usage limits."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_USAGE_LIMIT_WITH_APPROVAL_PHRASE_GH
+chmod +x "$_codex_tied_usage_limit_with_approval_phrase_mock_dir/gh"
+
+_codex_tied_usage_limit_with_approval_phrase_output=""
+_codex_tied_usage_limit_with_approval_phrase_exit=0
+PATH="$_codex_tied_usage_limit_with_approval_phrase_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_usage_limit_with_approval_phrase_mock_dir/output.txt" 2>&1 || _codex_tied_usage_limit_with_approval_phrase_exit=$?
+_codex_tied_usage_limit_with_approval_phrase_output="$(cat "$_codex_tied_usage_limit_with_approval_phrase_mock_dir/output.txt")"
+run_test "codex_tied_usage_limit_with_approval_phrase_exit_unavailable" "3" "$_codex_tied_usage_limit_with_approval_phrase_exit"
+run_test "codex_tied_usage_limit_with_approval_phrase_verdict" "VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached" \
+  "$(printf '%s\n' "$_codex_tied_usage_limit_with_approval_phrase_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_usage_limit_with_approval_phrase_mock_dir"
+unset _codex_tied_usage_limit_with_approval_phrase_mock_dir _codex_tied_usage_limit_with_approval_phrase_output _codex_tied_usage_limit_with_approval_phrase_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3789597796): the
+# binary requires-attention distinction put usage-limit and unrecognized-
+# format responses into the same generic "attention" tier, so scanning
+# stopped at whichever one was seen first — a usage-limit response
+# (matching an approval phrase too) returned before a genuinely
+# unrecognized-format response silently retained the usage-limit response,
+# emitting UNAVAILABLE instead of the documented unrecognized-response
+# NEEDS_REVISION safe-fail. A permissive unavailable policy could
+# therefore hide a potentially rejecting response. codex_response_priority
+# now ranks unrecognized-format (2) above usage-limit (1) explicitly.
+# Fixture: usage-limit+approval-phrase review first in the array,
+# genuinely unrecognized-format review second, both tied.
+_codex_tied_usage_limit_then_unrecognized_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_usage_limit_then_unrecognized_mock_dir/gh" <<'CODEX_TIED_USAGE_LIMIT_THEN_UNRECOGNIZED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'a1a1a1a1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":240,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"a1a1a1a1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues could be evaluated because you have reached your Codex usage limits."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"a1a1a1a1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Something ambiguous happened here."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_USAGE_LIMIT_THEN_UNRECOGNIZED_GH
+chmod +x "$_codex_tied_usage_limit_then_unrecognized_mock_dir/gh"
+
+_codex_tied_usage_limit_then_unrecognized_output=""
+_codex_tied_usage_limit_then_unrecognized_exit=0
+PATH="$_codex_tied_usage_limit_then_unrecognized_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_usage_limit_then_unrecognized_mock_dir/output.txt" 2>&1 || _codex_tied_usage_limit_then_unrecognized_exit=$?
+_codex_tied_usage_limit_then_unrecognized_output="$(cat "$_codex_tied_usage_limit_then_unrecognized_mock_dir/output.txt")"
+run_test "codex_tied_usage_limit_then_unrecognized_exit" "1" "$_codex_tied_usage_limit_then_unrecognized_exit"
+run_test "codex_tied_usage_limit_then_unrecognized_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_tied_usage_limit_then_unrecognized_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_usage_limit_then_unrecognized_mock_dir"
+unset _codex_tied_usage_limit_then_unrecognized_mock_dir _codex_tied_usage_limit_then_unrecognized_output _codex_tied_usage_limit_then_unrecognized_exit
+
+# Reproduces Codex finding on PR #1490 (P1, comment id 3789634709): the
+# post-combine truncation to 10000 chars ran BEFORE the verdict-parsing
+# classification checks, so a SHA-pinned root review exceeding 10000
+# characters with an approval phrase before the cutoff and a blocking
+# marker after it had its blocker silently cut off, classifying the
+# truncated (approval-only) text as APPROVED. Classification now runs
+# against BOT_RESPONSE_FULL (untruncated); BOT_RESPONSE (truncated) is
+# used only for the script's own "---BEGIN/END BOT RESPONSE---" display.
+# Fixture: a 15000+ char root comment with a clean approval phrase near
+# the start and a blocking marker well past the 10000-char cutoff.
+_codex_long_root_review_blocker_past_cutoff_mock_dir="$(mktemp -d)"
+cat > "$_codex_long_root_review_blocker_past_cutoff_mock_dir/gh" <<'CODEX_LONG_ROOT_REVIEW_BLOCKER_PAST_CUTOFF_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'deadface1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":250,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:340,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("No blocking issues found.\n\n" + ("x" * 15000) + "\n\nBlocking issues: must fix the leak past the cutoff.\n\n**Reviewed commit:** `deadface1234`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_LONG_ROOT_REVIEW_BLOCKER_PAST_CUTOFF_GH
+chmod +x "$_codex_long_root_review_blocker_past_cutoff_mock_dir/gh"
+
+_codex_long_root_review_blocker_past_cutoff_output=""
+_codex_long_root_review_blocker_past_cutoff_exit=0
+PATH="$_codex_long_root_review_blocker_past_cutoff_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_long_root_review_blocker_past_cutoff_mock_dir/output.txt" 2>&1 || _codex_long_root_review_blocker_past_cutoff_exit=$?
+_codex_long_root_review_blocker_past_cutoff_output="$(cat "$_codex_long_root_review_blocker_past_cutoff_mock_dir/output.txt")"
+run_test "codex_long_root_review_blocker_past_cutoff_exit_needs_revision" "1" "$_codex_long_root_review_blocker_past_cutoff_exit"
+run_test "codex_long_root_review_blocker_past_cutoff_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_long_root_review_blocker_past_cutoff_output" | grep "^VERDICT:")"
+rm -rf "$_codex_long_root_review_blocker_past_cutoff_mock_dir"
+unset _codex_long_root_review_blocker_past_cutoff_mock_dir _codex_long_root_review_blocker_past_cutoff_output _codex_long_root_review_blocker_past_cutoff_exit
+
+# Same class of bug as codex_long_root_review_blocker_past_cutoff, but one
+# layer further upstream: the reviews-endpoint jq QUERY itself used to slice
+# the body to 5000 chars (`.[0:5000]`) before the result ever reached
+# BOT_RESPONSE_FULL, so a submitted review with an approval phrase before
+# the cutoff and a blocking marker past it was misclassified as APPROVED
+# even though the shell-level classify-full/truncate-only-for-display fix
+# was already in place (fresh evidence from PR #1490 finding 3789679344).
+# Fixture: a single submitted review whose body is a clean "no blocking
+# issues found" phrase followed by 5000+ chars of padding and then a
+# blocking marker.
+_codex_long_review_blocker_past_query_cutoff_mock_dir="$(mktemp -d)"
+cat > "$_codex_long_review_blocker_past_query_cutoff_mock_dir/gh" <<'CODEX_LONG_REVIEW_BLOCKER_PAST_QUERY_CUTOFF_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":251,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"facade001234567890",user:{login:"chatgpt-codex-connector[bot]"},body:("No blocking issues found.\n\n" + ("x" * 5200) + "\n\nBlocking issues: must fix the leak past the query-level cutoff.")}]'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_LONG_REVIEW_BLOCKER_PAST_QUERY_CUTOFF_GH
+chmod +x "$_codex_long_review_blocker_past_query_cutoff_mock_dir/gh"
+
+_codex_long_review_blocker_past_query_cutoff_output=""
+_codex_long_review_blocker_past_query_cutoff_exit=0
+PATH="$_codex_long_review_blocker_past_query_cutoff_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_long_review_blocker_past_query_cutoff_mock_dir/output.txt" 2>&1 || _codex_long_review_blocker_past_query_cutoff_exit=$?
+_codex_long_review_blocker_past_query_cutoff_output="$(cat "$_codex_long_review_blocker_past_query_cutoff_mock_dir/output.txt")"
+run_test "codex_long_review_blocker_past_query_cutoff_exit_needs_revision" "1" "$_codex_long_review_blocker_past_query_cutoff_exit"
+run_test "codex_long_review_blocker_past_query_cutoff_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_long_review_blocker_past_query_cutoff_output" | grep "^VERDICT:")"
+rm -rf "$_codex_long_review_blocker_past_query_cutoff_mock_dir"
+unset _codex_long_review_blocker_past_query_cutoff_mock_dir _codex_long_review_blocker_past_query_cutoff_output _codex_long_review_blocker_past_query_cutoff_exit
+
+# CODEX_APPROVAL_PATTERN's "approved" alternative is an unbounded substring
+# match, so a SHA-pinned terminal response REJECTING the change by saying
+# "This change is not approved" used to match it unconditionally and get
+# reported as APPROVED instead of falling through to the documented
+# unrecognized-format safe-fail (fresh evidence from PR #1490 finding
+# 3789722818).
+_codex_negated_approval_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_negated_approval_root_comment_mock_dir/gh" <<'CODEX_NEGATED_APPROVAL_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade003a1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":252,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":253,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This change is not approved. Needs more work before it can ship.\\n\\n**Reviewed commit:** `facade003a`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NEGATED_APPROVAL_ROOT_COMMENT_GH
+chmod +x "$_codex_negated_approval_root_comment_mock_dir/gh"
+
+_codex_negated_approval_root_comment_output=""
+_codex_negated_approval_root_comment_exit=0
+PATH="$_codex_negated_approval_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_negated_approval_root_comment_mock_dir/output.txt" 2>&1 || _codex_negated_approval_root_comment_exit=$?
+_codex_negated_approval_root_comment_output="$(cat "$_codex_negated_approval_root_comment_mock_dir/output.txt")"
+run_test "codex_negated_approval_root_comment_exit_needs_revision" "1" "$_codex_negated_approval_root_comment_exit"
+run_test "codex_negated_approval_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_negated_approval_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_negated_approval_root_comment_mock_dir"
+unset _codex_negated_approval_root_comment_mock_dir _codex_negated_approval_root_comment_output _codex_negated_approval_root_comment_exit
+
+# Followup to codex_negated_approval_root_comment: CODEX_NEGATED_APPROVAL_
+# PATTERN only catches SPACE-separated negations ("not approved"). A
+# CONCATENATED negation prefix like "unapproved" or "disapproved" still
+# matched the bare "approved" substring in CODEX_APPROVAL_PATTERN, so a
+# current-head response saying "This change remains unapproved" was still
+# classified APPROVED (fresh evidence from PR #1490 finding 3789851555).
+# CODEX_APPROVAL_PATTERN's positive alternatives now require \b word
+# boundaries, which "un"/"a" and "dis"/"a" do not form.
+_codex_unapproved_prefix_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_unapproved_prefix_root_comment_mock_dir/gh" <<'CODEX_UNAPPROVED_PREFIX_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade005c1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":256,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":257,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This change remains unapproved pending further work.\\n\\n**Reviewed commit:** `facade005c`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_UNAPPROVED_PREFIX_ROOT_COMMENT_GH
+chmod +x "$_codex_unapproved_prefix_root_comment_mock_dir/gh"
+
+_codex_unapproved_prefix_root_comment_output=""
+_codex_unapproved_prefix_root_comment_exit=0
+PATH="$_codex_unapproved_prefix_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_unapproved_prefix_root_comment_mock_dir/output.txt" 2>&1 || _codex_unapproved_prefix_root_comment_exit=$?
+_codex_unapproved_prefix_root_comment_output="$(cat "$_codex_unapproved_prefix_root_comment_mock_dir/output.txt")"
+run_test "codex_unapproved_prefix_root_comment_exit_needs_revision" "1" "$_codex_unapproved_prefix_root_comment_exit"
+run_test "codex_unapproved_prefix_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_unapproved_prefix_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_unapproved_prefix_root_comment_mock_dir"
+unset _codex_unapproved_prefix_root_comment_mock_dir _codex_unapproved_prefix_root_comment_output _codex_unapproved_prefix_root_comment_exit
+
+# Followup to codex_negated_approval_root_comment/codex_unapproved_prefix_
+# root_comment: CODEX_NEGATED_APPROVAL_PATTERN required an unbroken
+# [[:space:]]+ directly between the negation word and the approval word,
+# so GitHub's rendered Markdown bold ("This change is **not** approved")
+# — whose raw text has "**" wedged between "not" and the following
+# space — did not match, and the bare \bapproved\b in
+# CODEX_APPROVAL_PATTERN still did, misclassifying the rejection as
+# APPROVED (fresh evidence from PR #1490 finding 3789878264).
+# CODEX_NEGATED_APPROVAL_PATTERN now tolerates optional Markdown emphasis
+# markers between the negation and approval words.
+_codex_markdown_negated_approval_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_markdown_negated_approval_root_comment_mock_dir/gh" <<'CODEX_MARKDOWN_NEGATED_APPROVAL_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade006d1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":258,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":259,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This change is **not** approved. Needs more work.\\n\\n**Reviewed commit:** `facade006d`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MARKDOWN_NEGATED_APPROVAL_ROOT_COMMENT_GH
+chmod +x "$_codex_markdown_negated_approval_root_comment_mock_dir/gh"
+
+_codex_markdown_negated_approval_root_comment_output=""
+_codex_markdown_negated_approval_root_comment_exit=0
+PATH="$_codex_markdown_negated_approval_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_markdown_negated_approval_root_comment_mock_dir/output.txt" 2>&1 || _codex_markdown_negated_approval_root_comment_exit=$?
+_codex_markdown_negated_approval_root_comment_output="$(cat "$_codex_markdown_negated_approval_root_comment_mock_dir/output.txt")"
+run_test "codex_markdown_negated_approval_root_comment_exit_needs_revision" "1" "$_codex_markdown_negated_approval_root_comment_exit"
+run_test "codex_markdown_negated_approval_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_markdown_negated_approval_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_markdown_negated_approval_root_comment_mock_dir"
+unset _codex_markdown_negated_approval_root_comment_mock_dir _codex_markdown_negated_approval_root_comment_output _codex_markdown_negated_approval_root_comment_exit
+
+# Followup to the space-separated/concatenated-prefix/Markdown-wrapped
+# negation fixes above: a qualifier word interrupting the negation and
+# the approval word (e.g. "This change is not YET approved") still
+# missed the old rigid negation-immediately-adjacent-to-approval
+# requirement (fresh evidence from PR #1490 finding 3789904716).
+# CODEX_NEGATED_APPROVAL_PATTERN now tolerates up to 3 intervening
+# qualifier words.
+_codex_qualifier_negated_approval_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_qualifier_negated_approval_root_comment_mock_dir/gh" <<'CODEX_QUALIFIER_NEGATED_APPROVAL_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade007e1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":260,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":261,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This change is not yet approved. Needs more work.\\n\\n**Reviewed commit:** `facade007e`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_QUALIFIER_NEGATED_APPROVAL_ROOT_COMMENT_GH
+chmod +x "$_codex_qualifier_negated_approval_root_comment_mock_dir/gh"
+
+_codex_qualifier_negated_approval_root_comment_output=""
+_codex_qualifier_negated_approval_root_comment_exit=0
+PATH="$_codex_qualifier_negated_approval_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_qualifier_negated_approval_root_comment_mock_dir/output.txt" 2>&1 || _codex_qualifier_negated_approval_root_comment_exit=$?
+_codex_qualifier_negated_approval_root_comment_output="$(cat "$_codex_qualifier_negated_approval_root_comment_mock_dir/output.txt")"
+run_test "codex_qualifier_negated_approval_root_comment_exit_needs_revision" "1" "$_codex_qualifier_negated_approval_root_comment_exit"
+run_test "codex_qualifier_negated_approval_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_qualifier_negated_approval_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_qualifier_negated_approval_root_comment_mock_dir"
+unset _codex_qualifier_negated_approval_root_comment_mock_dir _codex_qualifier_negated_approval_root_comment_output _codex_qualifier_negated_approval_root_comment_exit
+
+# codex_response_is_usage_limit's broad "codex ... usage limit/quota/
+# capacity" alternative matched ANY mention of those words, with no
+# requirement for accompanying exhaustion/unavailability language. A
+# clean submitted review merely discussing this PR's own usage-limit-
+# detection code (e.g. "No blocking issues found. The Codex usage limit
+# handling looks correct.") was itself misclassified as a usage-limit
+# notice — priority 1 instead of the correct clean-approval priority 0.
+# Tied against a clean SHA-pinned terminal comment (priority 0), the
+# higher (buggy) priority won the tie-break, and the unconditional
+# (non-source-gated) usage-limit check in the verdict classifier then
+# emitted UNAVAILABLE instead of APPROVED for an actually-clean PR (fresh
+# evidence from PR #1490 finding 3789928781). The alternative now
+# requires an exhaustion/unavailability word directly after the noun.
+_codex_usage_limit_topic_mention_not_quota_mock_dir="$(mktemp -d)"
+cat > "$_codex_usage_limit_topic_mention_not_quota_mock_dir/gh" <<'CODEX_USAGE_LIMIT_TOPIC_MENTION_NOT_QUOTA_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade008f1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":262,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade008f1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. The Codex usage limit handling looks correct."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":263,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found.\\n\\n**Reviewed commit:** `facade008f`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_USAGE_LIMIT_TOPIC_MENTION_NOT_QUOTA_GH
+chmod +x "$_codex_usage_limit_topic_mention_not_quota_mock_dir/gh"
+
+_codex_usage_limit_topic_mention_not_quota_output=""
+_codex_usage_limit_topic_mention_not_quota_exit=0
+PATH="$_codex_usage_limit_topic_mention_not_quota_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_usage_limit_topic_mention_not_quota_mock_dir/output.txt" 2>&1 || _codex_usage_limit_topic_mention_not_quota_exit=$?
+_codex_usage_limit_topic_mention_not_quota_output="$(cat "$_codex_usage_limit_topic_mention_not_quota_mock_dir/output.txt")"
+run_test "codex_usage_limit_topic_mention_not_quota_exit_clean" "0" "$_codex_usage_limit_topic_mention_not_quota_exit"
+run_test "codex_usage_limit_topic_mention_not_quota_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_usage_limit_topic_mention_not_quota_output" | grep "^VERDICT:")"
+rm -rf "$_codex_usage_limit_topic_mention_not_quota_mock_dir"
+unset _codex_usage_limit_topic_mention_not_quota_mock_dir _codex_usage_limit_topic_mention_not_quota_output _codex_usage_limit_topic_mention_not_quota_exit
+
+# CODEX_NEGATED_APPROVAL_PATTERN's target alternation only covered
+# "approved"/"lgtm"/"looks good", not "no blocking issues"/"didn't find
+# any major issues" — those are approval SIGNALS in CODEX_APPROVAL_PATTERN
+# too, but were left unguarded. A hedged/uncertain response like "I
+# cannot confirm there are no blocking issues" still matched "no blocking
+# issues" and was classified APPROVED instead of the documented
+# unrecognized-format safe-fail (fresh evidence from PR #1490 finding
+# 3789958775).
+_codex_negated_no_blocking_issues_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_negated_no_blocking_issues_root_comment_mock_dir/gh" <<'CODEX_NEGATED_NO_BLOCKING_ISSUES_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade00911234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":264,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":265,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"I cannot confirm there are no blocking issues. Needs deeper review.\\n\\n**Reviewed commit:** `facade0091`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NEGATED_NO_BLOCKING_ISSUES_ROOT_COMMENT_GH
+chmod +x "$_codex_negated_no_blocking_issues_root_comment_mock_dir/gh"
+
+_codex_negated_no_blocking_issues_root_comment_output=""
+_codex_negated_no_blocking_issues_root_comment_exit=0
+PATH="$_codex_negated_no_blocking_issues_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_negated_no_blocking_issues_root_comment_mock_dir/output.txt" 2>&1 || _codex_negated_no_blocking_issues_root_comment_exit=$?
+_codex_negated_no_blocking_issues_root_comment_output="$(cat "$_codex_negated_no_blocking_issues_root_comment_mock_dir/output.txt")"
+run_test "codex_negated_no_blocking_issues_root_comment_exit_needs_revision" "1" "$_codex_negated_no_blocking_issues_root_comment_exit"
+run_test "codex_negated_no_blocking_issues_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_negated_no_blocking_issues_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_negated_no_blocking_issues_root_comment_mock_dir"
+unset _codex_negated_no_blocking_issues_root_comment_mock_dir _codex_negated_no_blocking_issues_root_comment_output _codex_negated_no_blocking_issues_root_comment_exit
+
+# codex_response_is_usage_limit's second alternative ("codex usage limits
+# for code reviews") had the exact same unguarded-mention gap as the
+# third alternative fixed just above — missed in that first pass since
+# only the third alternative was narrowed. A clean review merely
+# discussing the phrase in the context of docs (e.g. "No blocking issues
+# found. The docs correctly explain Codex usage limits for code
+# reviews.") was itself misclassified as a usage-limit notice (fresh
+# evidence from PR #1490 finding 3789958776).
+_codex_usage_limit_code_reviews_phrase_mention_mock_dir="$(mktemp -d)"
+cat > "$_codex_usage_limit_code_reviews_phrase_mention_mock_dir/gh" <<'CODEX_USAGE_LIMIT_CODE_REVIEWS_PHRASE_MENTION_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade00aa1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":266,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":267,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. The docs correctly explain Codex usage limits for code reviews.\\n\\n**Reviewed commit:** `facade00aa`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_USAGE_LIMIT_CODE_REVIEWS_PHRASE_MENTION_GH
+chmod +x "$_codex_usage_limit_code_reviews_phrase_mention_mock_dir/gh"
+
+_codex_usage_limit_code_reviews_phrase_mention_output=""
+_codex_usage_limit_code_reviews_phrase_mention_exit=0
+PATH="$_codex_usage_limit_code_reviews_phrase_mention_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_usage_limit_code_reviews_phrase_mention_mock_dir/output.txt" 2>&1 || _codex_usage_limit_code_reviews_phrase_mention_exit=$?
+_codex_usage_limit_code_reviews_phrase_mention_output="$(cat "$_codex_usage_limit_code_reviews_phrase_mention_mock_dir/output.txt")"
+run_test "codex_usage_limit_code_reviews_phrase_mention_exit_clean" "0" "$_codex_usage_limit_code_reviews_phrase_mention_exit"
+run_test "codex_usage_limit_code_reviews_phrase_mention_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_usage_limit_code_reviews_phrase_mention_output" | grep "^VERDICT:")"
+rm -rf "$_codex_usage_limit_code_reviews_phrase_mention_mock_dir"
+unset _codex_usage_limit_code_reviews_phrase_mention_mock_dir _codex_usage_limit_code_reviews_phrase_mention_output _codex_usage_limit_code_reviews_phrase_mention_exit
+
+# CODEX_NEGATED_APPROVAL_PATTERN's bounded {0,3} filler-word window (added
+# for finding 3789904716) was itself proven insufficient: 5 intervening
+# words exceed the bound, so the negation went undetected while the
+# approval alternative still matched (fresh evidence from PR #1490
+# finding 3789992792). Replaced with an unbounded same-sentence scope
+# ([^.!?]*) — this is the reviewer's own stated remediation ("avoid
+# relying on a bounded filler-word count").
+_codex_negation_beyond_bounded_window_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_negation_beyond_bounded_window_root_comment_mock_dir/gh" <<'CODEX_NEGATION_BEYOND_BOUNDED_WINDOW_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade00bb1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":268,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":269,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"I cannot confidently confirm that there are no blocking issues.\\n\\n**Reviewed commit:** `facade00bb`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NEGATION_BEYOND_BOUNDED_WINDOW_ROOT_COMMENT_GH
+chmod +x "$_codex_negation_beyond_bounded_window_root_comment_mock_dir/gh"
+
+_codex_negation_beyond_bounded_window_root_comment_output=""
+_codex_negation_beyond_bounded_window_root_comment_exit=0
+PATH="$_codex_negation_beyond_bounded_window_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_negation_beyond_bounded_window_root_comment_mock_dir/output.txt" 2>&1 || _codex_negation_beyond_bounded_window_root_comment_exit=$?
+_codex_negation_beyond_bounded_window_root_comment_output="$(cat "$_codex_negation_beyond_bounded_window_root_comment_mock_dir/output.txt")"
+run_test "codex_negation_beyond_bounded_window_root_comment_exit_needs_revision" "1" "$_codex_negation_beyond_bounded_window_root_comment_exit"
+run_test "codex_negation_beyond_bounded_window_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_negation_beyond_bounded_window_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_negation_beyond_bounded_window_root_comment_mock_dir"
+unset _codex_negation_beyond_bounded_window_root_comment_mock_dir _codex_negation_beyond_bounded_window_root_comment_output _codex_negation_beyond_bounded_window_root_comment_exit
+
+# Positive control for the unbounded [^.!?]* negation scope above: a
+# negation word in one sentence must NOT suppress a clean approval phrase
+# in a later, unrelated sentence — the sentence-terminator exclusion in
+# the character class is what keeps the unbounded window from
+# over-matching across sentence boundaries.
+_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir/gh" <<'CODEX_NEGATION_PRIOR_SENTENCE_DOES_NOT_LEAK_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade00cc1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":270,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":271,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"The variable name is not great. No blocking issues found.\\n\\n**Reviewed commit:** `facade00cc`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NEGATION_PRIOR_SENTENCE_DOES_NOT_LEAK_ROOT_COMMENT_GH
+chmod +x "$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir/gh"
+
+_codex_negation_prior_sentence_does_not_leak_root_comment_output=""
+_codex_negation_prior_sentence_does_not_leak_root_comment_exit=0
+PATH="$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir/output.txt" 2>&1 || _codex_negation_prior_sentence_does_not_leak_root_comment_exit=$?
+_codex_negation_prior_sentence_does_not_leak_root_comment_output="$(cat "$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir/output.txt")"
+run_test "codex_negation_prior_sentence_does_not_leak_root_comment_exit_clean" "0" "$_codex_negation_prior_sentence_does_not_leak_root_comment_exit"
+run_test "codex_negation_prior_sentence_does_not_leak_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_negation_prior_sentence_does_not_leak_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir"
+unset _codex_negation_prior_sentence_does_not_leak_root_comment_mock_dir _codex_negation_prior_sentence_does_not_leak_root_comment_output _codex_negation_prior_sentence_does_not_leak_root_comment_exit
+
+# Two more negation gaps surfaced once the pattern was unbounded: (a) the
+# target alternation had "approved" but not the bare verb "approve", and
+# (b) the pattern only checked negation-THEN-approval order, so an
+# approval phrase appearing BEFORE the negation in the same sentence
+# ("This looks good at first glance, but I cannot approve this change")
+# wasn't caught (fresh evidence from PR #1490 finding 3790023141). Both
+# alternation orders are now checked, and the target list includes the
+# bare verb.
+_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir/gh" <<'CODEX_NEGATION_REVERSE_ORDER_CANNOT_APPROVE_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade00dd1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":272,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":273,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but I cannot approve this change.\\n\\n**Reviewed commit:** `facade00dd`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NEGATION_REVERSE_ORDER_CANNOT_APPROVE_ROOT_COMMENT_GH
+chmod +x "$_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir/gh"
+
+_codex_negation_reverse_order_cannot_approve_root_comment_output=""
+_codex_negation_reverse_order_cannot_approve_root_comment_exit=0
+PATH="$_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir/output.txt" 2>&1 || _codex_negation_reverse_order_cannot_approve_root_comment_exit=$?
+_codex_negation_reverse_order_cannot_approve_root_comment_output="$(cat "$_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir/output.txt")"
+run_test "codex_negation_reverse_order_cannot_approve_root_comment_exit_needs_revision" "1" "$_codex_negation_reverse_order_cannot_approve_root_comment_exit"
+run_test "codex_negation_reverse_order_cannot_approve_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_negation_reverse_order_cannot_approve_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_negation_reverse_order_cannot_approve_root_comment_mock_dir"
+unset _codex_negation_reverse_order_cannot_approve_root_comment_mock_dir _codex_negation_reverse_order_cannot_approve_root_comment_output _codex_negation_reverse_order_cannot_approve_root_comment_exit
+
+# codex_scan_comment_evidence tracked COMMENT_LATEST_BODY without
+# recording whether it was the SAME comment as COMMENT_TERMINAL_BODY. When
+# the only comment is a clean SHA-pinned terminal review whose OWN finding
+# text happens to quote the environment-setup message (e.g. flagging that
+# docs accurately quote it), codex_combine_terminal_evidence's ancillary
+# environment-error/usage-limit override re-classified that SAME terminal
+# comment as if it were a genuinely separate ancillary setup-failure
+# notice, downgrading APPROVED to codex-github-environment-missing (fresh
+# evidence from PR #1490 finding 3790023143). COMMENT_LATEST_IS_TERMINAL
+# now gates that override so it never fires on the terminal comment itself.
+_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir="$(mktemp -d)"
+cat > "$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir/gh" <<'CODEX_TERMINAL_COMMENT_QUOTES_ENV_ERROR_NOT_ANCILLARY_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade00ee1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":274,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":275,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. The docs accurately quote: To use Codex here, create an environment for this repo.\\n\\n**Reviewed commit:** `facade00ee`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TERMINAL_COMMENT_QUOTES_ENV_ERROR_NOT_ANCILLARY_GH
+chmod +x "$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir/gh"
+
+_codex_terminal_comment_quotes_env_error_not_ancillary_output=""
+_codex_terminal_comment_quotes_env_error_not_ancillary_exit=0
+PATH="$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir/output.txt" 2>&1 || _codex_terminal_comment_quotes_env_error_not_ancillary_exit=$?
+_codex_terminal_comment_quotes_env_error_not_ancillary_output="$(cat "$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir/output.txt")"
+run_test "codex_terminal_comment_quotes_env_error_not_ancillary_exit_clean" "0" "$_codex_terminal_comment_quotes_env_error_not_ancillary_exit"
+run_test "codex_terminal_comment_quotes_env_error_not_ancillary_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_terminal_comment_quotes_env_error_not_ancillary_output" | grep "^VERDICT:")"
+rm -rf "$_codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir"
+unset _codex_terminal_comment_quotes_env_error_not_ancillary_mock_dir _codex_terminal_comment_quotes_env_error_not_ancillary_output _codex_terminal_comment_quotes_env_error_not_ancillary_exit
+
+# Positive control for the reverse-order negation alternative that was
+# added for finding 3790023141 and then REMOVED for being over-broad: it
+# matched ANY later negation word in the same sentence regardless of what
+# it actually negated, so a genuinely clean response like "Looks good
+# overall; tests were not run." (the "not" refers to the unrelated "tests
+# were not run" clause, not to the approval) was incorrectly flagged as
+# negated and returned NEEDS_REVISION instead of APPROVED (fresh evidence
+# from PR #1490 finding 3790062089).
+_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir/gh" <<'CODEX_UNRELATED_LATER_NEGATION_STAYS_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade00ff1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":276,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":277,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Looks good overall; tests were not run.\\n\\n**Reviewed commit:** `facade00ff`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_UNRELATED_LATER_NEGATION_STAYS_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir/gh"
+
+_codex_unrelated_later_negation_stays_approved_root_comment_output=""
+_codex_unrelated_later_negation_stays_approved_root_comment_exit=0
+PATH="$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_unrelated_later_negation_stays_approved_root_comment_exit=$?
+_codex_unrelated_later_negation_stays_approved_root_comment_output="$(cat "$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_unrelated_later_negation_stays_approved_root_comment_exit_clean" "0" "$_codex_unrelated_later_negation_stays_approved_root_comment_exit"
+run_test "codex_unrelated_later_negation_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_unrelated_later_negation_stays_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_unrelated_later_negation_stays_approved_root_comment_mock_dir"
+unset _codex_unrelated_later_negation_stays_approved_root_comment_mock_dir _codex_unrelated_later_negation_stays_approved_root_comment_output _codex_unrelated_later_negation_stays_approved_root_comment_exit
+
+# codex_combine_terminal_evidence previously applied the SAME newest-wins
+# comparison to a usage-limit ancillary comment as it does to an
+# environment-setup error, so a clean current-head review returned in the
+# SAME fetch as (and strictly newer than) a usage-limit notice let the
+# review win, and the quota body never reached codex_return_usage_limit —
+# contradicting the documented immediate-termination contract for
+# usage-limit (fresh evidence from PR #1490 finding 3790062091). Fixture:
+# an ancillary (non-terminal) usage-limit comment at T1 and a clean
+# current-head review at T2 > T1, both in the same poll fetch.
+_codex_usage_limit_beats_same_fetch_newer_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_usage_limit_beats_same_fetch_newer_review_mock_dir/gh" <<'CODEX_USAGE_LIMIT_BEATS_SAME_FETCH_NEWER_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":278,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:02Z","commit_id":"facade01001234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":279,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_USAGE_LIMIT_BEATS_SAME_FETCH_NEWER_REVIEW_GH
+chmod +x "$_codex_usage_limit_beats_same_fetch_newer_review_mock_dir/gh"
+
+_codex_usage_limit_beats_same_fetch_newer_review_output=""
+_codex_usage_limit_beats_same_fetch_newer_review_exit=0
+PATH="$_codex_usage_limit_beats_same_fetch_newer_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_usage_limit_beats_same_fetch_newer_review_mock_dir/output.txt" 2>&1 || _codex_usage_limit_beats_same_fetch_newer_review_exit=$?
+_codex_usage_limit_beats_same_fetch_newer_review_output="$(cat "$_codex_usage_limit_beats_same_fetch_newer_review_mock_dir/output.txt")"
+run_test "codex_usage_limit_beats_same_fetch_newer_review_exit_unavailable" "3" "$_codex_usage_limit_beats_same_fetch_newer_review_exit"
+run_test "codex_usage_limit_beats_same_fetch_newer_review_verdict" "VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached" \
+  "$(printf '%s\n' "$_codex_usage_limit_beats_same_fetch_newer_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_usage_limit_beats_same_fetch_newer_review_mock_dir"
+unset _codex_usage_limit_beats_same_fetch_newer_review_mock_dir _codex_usage_limit_beats_same_fetch_newer_review_output _codex_usage_limit_beats_same_fetch_newer_review_exit
+
+# Followup to codex_usage_limit_beats_same_fetch_newer_review: the earlier
+# fix only protected usage-limit precedence INSIDE
+# codex_combine_terminal_evidence, but codex_scan_comment_evidence's
+# upstream tracking could already discard a usage-limit comment in favor
+# of a LATER environment-error comment within the SAME fetch, before
+# combine_terminal_evidence is ever reached — both set is_actionable=1,
+# so the unconditional overwrite let the later setup-error body replace
+# the quota body (fresh evidence from PR #1490 finding 3790092216).
+# Fixture: an ancillary usage-limit comment at T1 followed by an
+# ancillary environment-error comment at T2 > T1, in the same fetch.
+_codex_usage_limit_survives_later_env_error_same_fetch_mock_dir="$(mktemp -d)"
+cat > "$_codex_usage_limit_survives_later_env_error_same_fetch_mock_dir/gh" <<'CODEX_USAGE_LIMIT_SURVIVES_LATER_ENV_ERROR_SAME_FETCH_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01111234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":280,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":281,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."},{"id":282,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_USAGE_LIMIT_SURVIVES_LATER_ENV_ERROR_SAME_FETCH_GH
+chmod +x "$_codex_usage_limit_survives_later_env_error_same_fetch_mock_dir/gh"
+
+_codex_usage_limit_survives_later_env_error_same_fetch_output=""
+_codex_usage_limit_survives_later_env_error_same_fetch_exit=0
+PATH="$_codex_usage_limit_survives_later_env_error_same_fetch_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_usage_limit_survives_later_env_error_same_fetch_mock_dir/output.txt" 2>&1 || _codex_usage_limit_survives_later_env_error_same_fetch_exit=$?
+_codex_usage_limit_survives_later_env_error_same_fetch_output="$(cat "$_codex_usage_limit_survives_later_env_error_same_fetch_mock_dir/output.txt")"
+run_test "codex_usage_limit_survives_later_env_error_same_fetch_exit_unavailable" "3" "$_codex_usage_limit_survives_later_env_error_same_fetch_exit"
+run_test "codex_usage_limit_survives_later_env_error_same_fetch_verdict" "VERDICT: UNAVAILABLE — Codex GitHub review usage limit reached" \
+  "$(printf '%s\n' "$_codex_usage_limit_survives_later_env_error_same_fetch_output" | grep "^VERDICT:")"
+rm -rf "$_codex_usage_limit_survives_later_env_error_same_fetch_mock_dir"
+unset _codex_usage_limit_survives_later_env_error_same_fetch_mock_dir _codex_usage_limit_survives_later_env_error_same_fetch_output _codex_usage_limit_survives_later_env_error_same_fetch_exit
+
+# CODEX_APPROVAL_PATTERN's substring match can't distinguish quotation/
+# discussion of a clean phrase from an actual assertion of it: a
+# SHA-pinned review that REJECTS text while QUOTING a clean signal (e.g.
+# `The documented bot response "No blocking issues found" is inaccurate
+# and should be corrected`) still matched and returned APPROVED instead
+# of the documented unrecognized-format safe-fail (fresh evidence from PR
+# #1490 finding 3790122058). codex_response_is_approved now strips
+# quoted spans before matching.
+_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir/gh" <<'CODEX_QUOTED_CLEAN_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01221234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":283,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:284,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented bot response \"No blocking issues found\" is inaccurate and should be corrected.\n\n**Reviewed commit:** `facade01221`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_QUOTED_CLEAN_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir/gh"
+
+_codex_quoted_clean_phrase_not_approved_root_comment_output=""
+_codex_quoted_clean_phrase_not_approved_root_comment_exit=0
+PATH="$_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_quoted_clean_phrase_not_approved_root_comment_exit=$?
+_codex_quoted_clean_phrase_not_approved_root_comment_output="$(cat "$_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_quoted_clean_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_quoted_clean_phrase_not_approved_root_comment_exit"
+run_test "codex_quoted_clean_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_quoted_clean_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_quoted_clean_phrase_not_approved_root_comment_mock_dir"
+unset _codex_quoted_clean_phrase_not_approved_root_comment_mock_dir _codex_quoted_clean_phrase_not_approved_root_comment_output _codex_quoted_clean_phrase_not_approved_root_comment_exit
+
+# The [^.!?]* negation span only excluded sentence terminators, not
+# clause separators, so an unrelated negation in an earlier semicolon-
+# joined clause of the same sentence still spanned into a later, unrelated
+# clean clause (e.g. "Tests are not required for this documentation-only
+# change; looks good") and was incorrectly flagged as negated (fresh
+# evidence from PR #1490 finding 3790122061). The character class now
+# also excludes `;`.
+_codex_semicolon_scoped_negation_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_semicolon_scoped_negation_root_comment_mock_dir/gh" <<'CODEX_SEMICOLON_SCOPED_NEGATION_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01331234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":285,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":286,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Tests are not required for this documentation-only change; looks good.\\n\\n**Reviewed commit:** `facade01331`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_SEMICOLON_SCOPED_NEGATION_ROOT_COMMENT_GH
+chmod +x "$_codex_semicolon_scoped_negation_root_comment_mock_dir/gh"
+
+_codex_semicolon_scoped_negation_root_comment_output=""
+_codex_semicolon_scoped_negation_root_comment_exit=0
+PATH="$_codex_semicolon_scoped_negation_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_semicolon_scoped_negation_root_comment_mock_dir/output.txt" 2>&1 || _codex_semicolon_scoped_negation_root_comment_exit=$?
+_codex_semicolon_scoped_negation_root_comment_output="$(cat "$_codex_semicolon_scoped_negation_root_comment_mock_dir/output.txt")"
+run_test "codex_semicolon_scoped_negation_root_comment_exit_clean" "0" "$_codex_semicolon_scoped_negation_root_comment_exit"
+run_test "codex_semicolon_scoped_negation_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_semicolon_scoped_negation_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_semicolon_scoped_negation_root_comment_mock_dir"
+unset _codex_semicolon_scoped_negation_root_comment_mock_dir _codex_semicolon_scoped_negation_root_comment_output _codex_semicolon_scoped_negation_root_comment_exit
+
+# codex_response_is_approved only stripped straight-double-quoted spans,
+# not backtick-quoted (Markdown inline code) ones, so a review that
+# quotes a clean phrase using backticks instead of straight quotes (e.g.
+# "The documented response `No blocking issues found` is inaccurate")
+# still matched and returned APPROVED (fresh evidence from PR #1490
+# finding 3793219190, a followup to 3790122058). The shared
+# codex_strip_quoted_spans helper now strips both quoting styles.
+_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir/gh" <<'CODEX_BACKTICK_QUOTED_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01441234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":287,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":288,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"The documented response `No blocking issues found` is inaccurate and should be corrected.\\n\\n**Reviewed commit:** `facade01441`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_BACKTICK_QUOTED_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir/gh"
+
+_codex_backtick_quoted_phrase_not_approved_root_comment_output=""
+_codex_backtick_quoted_phrase_not_approved_root_comment_exit=0
+PATH="$_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_backtick_quoted_phrase_not_approved_root_comment_exit=$?
+_codex_backtick_quoted_phrase_not_approved_root_comment_output="$(cat "$_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_backtick_quoted_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_backtick_quoted_phrase_not_approved_root_comment_exit"
+run_test "codex_backtick_quoted_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_backtick_quoted_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir"
+unset _codex_backtick_quoted_phrase_not_approved_root_comment_mock_dir _codex_backtick_quoted_phrase_not_approved_root_comment_output _codex_backtick_quoted_phrase_not_approved_root_comment_exit
+
+# codex_response_is_approved only quote-stripped before the POSITIVE
+# CODEX_APPROVAL_PATTERN check, not before the NEGATED_APPROVAL_PATTERN
+# check that runs first — so an otherwise-clean response that quotes a
+# rejection phrase from elsewhere (e.g. test/documentation text), such as
+# `No blocking issues found. The tests cover "This change is not
+# approved".`, still tripped the negation check on the unstripped body
+# and safe-failed to NEEDS_REVISION even though the actual review verdict
+# was clean (fresh evidence from PR #1490 finding 3793219192).
+# codex_response_is_approved now strips quoted spans ONCE, before running
+# either check.
+_codex_quoted_rejection_in_clean_review_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir/gh" <<'CODEX_QUOTED_REJECTION_IN_CLEAN_REVIEW_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01551234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":289,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:290,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("No blocking issues found. The tests cover \"This change is not approved\".\n\n**Reviewed commit:** `facade01551`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_QUOTED_REJECTION_IN_CLEAN_REVIEW_ROOT_COMMENT_GH
+chmod +x "$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir/gh"
+
+_codex_quoted_rejection_in_clean_review_root_comment_output=""
+_codex_quoted_rejection_in_clean_review_root_comment_exit=0
+PATH="$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir/output.txt" 2>&1 || _codex_quoted_rejection_in_clean_review_root_comment_exit=$?
+_codex_quoted_rejection_in_clean_review_root_comment_output="$(cat "$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir/output.txt")"
+run_test "codex_quoted_rejection_in_clean_review_root_comment_exit_clean" "0" "$_codex_quoted_rejection_in_clean_review_root_comment_exit"
+run_test "codex_quoted_rejection_in_clean_review_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_quoted_rejection_in_clean_review_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_quoted_rejection_in_clean_review_root_comment_mock_dir"
+unset _codex_quoted_rejection_in_clean_review_root_comment_mock_dir _codex_quoted_rejection_in_clean_review_root_comment_output _codex_quoted_rejection_in_clean_review_root_comment_exit
+
+# Followup to codex_semicolon_scoped_negation_root_comment: the semicolon-
+# only exclusion still let a comma-joined clause cross ("Tests are not
+# required, but looks good") the same way the original unbounded span
+# crossed the semicolon (fresh evidence from PR #1490 finding
+# 3793219193). The character class now also excludes `,`.
+_codex_comma_scoped_negation_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_comma_scoped_negation_root_comment_mock_dir/gh" <<'CODEX_COMMA_SCOPED_NEGATION_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01661234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":291,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":292,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Tests are not required, but looks good.\\n\\n**Reviewed commit:** `facade01661`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_COMMA_SCOPED_NEGATION_ROOT_COMMENT_GH
+chmod +x "$_codex_comma_scoped_negation_root_comment_mock_dir/gh"
+
+_codex_comma_scoped_negation_root_comment_output=""
+_codex_comma_scoped_negation_root_comment_exit=0
+PATH="$_codex_comma_scoped_negation_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_comma_scoped_negation_root_comment_mock_dir/output.txt" 2>&1 || _codex_comma_scoped_negation_root_comment_exit=$?
+_codex_comma_scoped_negation_root_comment_output="$(cat "$_codex_comma_scoped_negation_root_comment_mock_dir/output.txt")"
+run_test "codex_comma_scoped_negation_root_comment_exit_clean" "0" "$_codex_comma_scoped_negation_root_comment_exit"
+run_test "codex_comma_scoped_negation_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_comma_scoped_negation_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_comma_scoped_negation_root_comment_mock_dir"
+unset _codex_comma_scoped_negation_root_comment_mock_dir _codex_comma_scoped_negation_root_comment_output _codex_comma_scoped_negation_root_comment_exit
+
+# The top-level verdict-parsing elif chain's usage-limit check has no
+# source gate (unlike the environment-error check, already safe because
+# it's gated on source == "comment", and a terminal SHA-pinned review
+# always has source == "review" by construction) and was not
+# quote-stripped, so a clean terminal review that merely QUOTES an actual
+# quota message (e.g. "No blocking issues found. The docs accurately
+# quote: You have reached your Codex usage limits.") was reclassified as
+# UNAVAILABLE instead of APPROVED — a case COMMENT_LATEST_IS_TERMINAL
+# does not cover, since that guard only protects the ancillary-evidence
+# combination stage, not this separate final verdict check (fresh
+# evidence from PR #1490 finding 3793259351).
+_codex_terminal_review_quotes_quota_message_mock_dir="$(mktemp -d)"
+cat > "$_codex_terminal_review_quotes_quota_message_mock_dir/gh" <<'CODEX_TERMINAL_REVIEW_QUOTES_QUOTA_MESSAGE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01771234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":293,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":294,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. The docs accurately quote: `You have reached your Codex usage limits.`\\n\\n**Reviewed commit:** `facade01771`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TERMINAL_REVIEW_QUOTES_QUOTA_MESSAGE_GH
+chmod +x "$_codex_terminal_review_quotes_quota_message_mock_dir/gh"
+
+_codex_terminal_review_quotes_quota_message_output=""
+_codex_terminal_review_quotes_quota_message_exit=0
+PATH="$_codex_terminal_review_quotes_quota_message_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_terminal_review_quotes_quota_message_mock_dir/output.txt" 2>&1 || _codex_terminal_review_quotes_quota_message_exit=$?
+_codex_terminal_review_quotes_quota_message_output="$(cat "$_codex_terminal_review_quotes_quota_message_mock_dir/output.txt")"
+run_test "codex_terminal_review_quotes_quota_message_exit_clean" "0" "$_codex_terminal_review_quotes_quota_message_exit"
+run_test "codex_terminal_review_quotes_quota_message_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_terminal_review_quotes_quota_message_output" | grep "^VERDICT:")"
+rm -rf "$_codex_terminal_review_quotes_quota_message_mock_dir"
+unset _codex_terminal_review_quotes_quota_message_mock_dir _codex_terminal_review_quotes_quota_message_output _codex_terminal_review_quotes_quota_message_exit
+
+# "Not only X, (but) Y" is an AFFIRMATIVE intensifier construction (BOTH
+# X and Y are being asserted, not negated), not a negation of X, so
+# CODEX_NEGATION_WORDS' bare "not" alternative — which has no way to
+# distinguish this idiom from a genuine negation — misclassified "Not
+# only does this look good, it is approved" as negated even though both
+# phrases are affirmative (fresh evidence from PR #1490 finding
+# 3793299512). codex_response_is_approved now strips the "not only" idiom
+# before running the negation check.
+_codex_not_only_idiom_stays_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_not_only_idiom_stays_approved_root_comment_mock_dir/gh" <<'CODEX_NOT_ONLY_IDIOM_STAYS_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01881234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":295,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":296,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Not only does this look good, it is approved.\\n\\n**Reviewed commit:** `facade01881`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NOT_ONLY_IDIOM_STAYS_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_not_only_idiom_stays_approved_root_comment_mock_dir/gh"
+
+_codex_not_only_idiom_stays_approved_root_comment_output=""
+_codex_not_only_idiom_stays_approved_root_comment_exit=0
+PATH="$_codex_not_only_idiom_stays_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_not_only_idiom_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_idiom_stays_approved_root_comment_exit=$?
+_codex_not_only_idiom_stays_approved_root_comment_output="$(cat "$_codex_not_only_idiom_stays_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_not_only_idiom_stays_approved_root_comment_exit_clean" "0" "$_codex_not_only_idiom_stays_approved_root_comment_exit"
+run_test "codex_not_only_idiom_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_not_only_idiom_stays_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_not_only_idiom_stays_approved_root_comment_mock_dir"
+unset _codex_not_only_idiom_stays_approved_root_comment_mock_dir _codex_not_only_idiom_stays_approved_root_comment_output _codex_not_only_idiom_stays_approved_root_comment_exit
+
+# codex_strip_not_only_idiom's [Nn]ot/[Oo]nly form only covered Title-Case
+# and lowercase, not a fully uppercase emphasis form like "NOT ONLY does
+# this look good, it is approved" (fresh evidence from PR #1490 finding
+# 3793330278, a followup to 3793299512). Every letter is now
+# bracket-expanded for both cases.
+_codex_not_only_idiom_uppercase_stays_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_not_only_idiom_uppercase_stays_approved_root_comment_mock_dir/gh" <<'CODEX_NOT_ONLY_IDIOM_UPPERCASE_STAYS_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade01991234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":297,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":298,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"NOT ONLY does this look good, it is approved.\\n\\n**Reviewed commit:** `facade01991`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NOT_ONLY_IDIOM_UPPERCASE_STAYS_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_not_only_idiom_uppercase_stays_approved_root_comment_mock_dir/gh"
+
+_codex_not_only_idiom_uppercase_stays_approved_root_comment_output=""
+_codex_not_only_idiom_uppercase_stays_approved_root_comment_exit=0
+PATH="$_codex_not_only_idiom_uppercase_stays_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_not_only_idiom_uppercase_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_idiom_uppercase_stays_approved_root_comment_exit=$?
+_codex_not_only_idiom_uppercase_stays_approved_root_comment_output="$(cat "$_codex_not_only_idiom_uppercase_stays_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_not_only_idiom_uppercase_stays_approved_root_comment_exit_clean" "0" "$_codex_not_only_idiom_uppercase_stays_approved_root_comment_exit"
+run_test "codex_not_only_idiom_uppercase_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_not_only_idiom_uppercase_stays_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_not_only_idiom_uppercase_stays_approved_root_comment_mock_dir"
+unset _codex_not_only_idiom_uppercase_stays_approved_root_comment_mock_dir _codex_not_only_idiom_uppercase_stays_approved_root_comment_output _codex_not_only_idiom_uppercase_stays_approved_root_comment_exit
+
+# "unable to" wasn't in CODEX_NEGATION_WORDS at all, so "I am unable to
+# approve this change" wasn't recognized as a rejection while an earlier
+# "looks good" in the same sentence still matched (fresh evidence from PR
+# #1490 finding 3793367883, same class of gap as "cannot approve" fixed
+# for finding 3790023141, just a different inability phrase).
+_codex_unable_to_approve_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_unable_to_approve_root_comment_mock_dir/gh" <<'CODEX_UNABLE_TO_APPROVE_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":299,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":300,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but I am unable to approve this change.\\n\\n**Reviewed commit:** `facade02001`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_UNABLE_TO_APPROVE_ROOT_COMMENT_GH
+chmod +x "$_codex_unable_to_approve_root_comment_mock_dir/gh"
+
+_codex_unable_to_approve_root_comment_output=""
+_codex_unable_to_approve_root_comment_exit=0
+PATH="$_codex_unable_to_approve_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_unable_to_approve_root_comment_mock_dir/output.txt" 2>&1 || _codex_unable_to_approve_root_comment_exit=$?
+_codex_unable_to_approve_root_comment_output="$(cat "$_codex_unable_to_approve_root_comment_mock_dir/output.txt")"
+run_test "codex_unable_to_approve_root_comment_exit_needs_revision" "1" "$_codex_unable_to_approve_root_comment_exit"
+run_test "codex_unable_to_approve_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_unable_to_approve_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_unable_to_approve_root_comment_mock_dir"
+unset _codex_unable_to_approve_root_comment_mock_dir _codex_unable_to_approve_root_comment_output _codex_unable_to_approve_root_comment_exit
+
+# codex_strip_quoted_spans only stripped straight-double-quoted and
+# backtick-quoted spans, not GitHub-flavored Markdown blockquote lines
+# (a line starting with `>`), so a review discussing a quoted clean
+# phrase via blockquote syntax (e.g. "The documentation claims:\n> No
+# blocking issues found\nThat claim is inaccurate") still matched and
+# returned APPROVED (fresh evidence from PR #1490 finding 3793367885).
+# codex_strip_quoted_spans now also deletes blockquote lines.
+_codex_blockquoted_clean_phrase_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_blockquoted_clean_phrase_not_approved_root_comment_mock_dir/gh" <<'CODEX_BLOCKQUOTED_CLEAN_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02111234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":301,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:302,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documentation claims:\n> No blocking issues found\nThat claim is inaccurate.\n\n**Reviewed commit:** `facade02111`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_BLOCKQUOTED_CLEAN_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_blockquoted_clean_phrase_not_approved_root_comment_mock_dir/gh"
+
+_codex_blockquoted_clean_phrase_not_approved_root_comment_output=""
+_codex_blockquoted_clean_phrase_not_approved_root_comment_exit=0
+PATH="$_codex_blockquoted_clean_phrase_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_blockquoted_clean_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_blockquoted_clean_phrase_not_approved_root_comment_exit=$?
+_codex_blockquoted_clean_phrase_not_approved_root_comment_output="$(cat "$_codex_blockquoted_clean_phrase_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_blockquoted_clean_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_blockquoted_clean_phrase_not_approved_root_comment_exit"
+run_test "codex_blockquoted_clean_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_blockquoted_clean_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_blockquoted_clean_phrase_not_approved_root_comment_mock_dir"
+unset _codex_blockquoted_clean_phrase_not_approved_root_comment_mock_dir _codex_blockquoted_clean_phrase_not_approved_root_comment_output _codex_blockquoted_clean_phrase_not_approved_root_comment_exit
+
+# codex_response_is_blocking was never quote-stripped at all — only the
+# approval/negation checks were — so a quoted blocker token in an
+# otherwise clean review (e.g. "No blocking issues found. The tests
+# correctly cover the `must fix` marker.") still matched
+# CODEX_BLOCKING_PATTERN's "must fix" alternative and returned
+# NEEDS_REVISION for an actually-clean review (fresh evidence from PR
+# #1490 finding 3793367887). codex_response_is_blocking now shares the
+# same codex_strip_quoted_spans normalization as the approval checks.
+_codex_quoted_blocker_token_stays_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_quoted_blocker_token_stays_approved_root_comment_mock_dir/gh" <<'CODEX_QUOTED_BLOCKER_TOKEN_STAYS_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02221234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":303,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found. The tests correctly cover the `must fix` marker."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_QUOTED_BLOCKER_TOKEN_STAYS_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_quoted_blocker_token_stays_approved_root_comment_mock_dir/gh"
+
+_codex_quoted_blocker_token_stays_approved_root_comment_output=""
+_codex_quoted_blocker_token_stays_approved_root_comment_exit=0
+PATH="$_codex_quoted_blocker_token_stays_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_quoted_blocker_token_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_quoted_blocker_token_stays_approved_root_comment_exit=$?
+_codex_quoted_blocker_token_stays_approved_root_comment_output="$(cat "$_codex_quoted_blocker_token_stays_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_quoted_blocker_token_stays_approved_root_comment_exit_clean" "0" "$_codex_quoted_blocker_token_stays_approved_root_comment_exit"
+run_test "codex_quoted_blocker_token_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_quoted_blocker_token_stays_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_quoted_blocker_token_stays_approved_root_comment_mock_dir"
+unset _codex_quoted_blocker_token_stays_approved_root_comment_mock_dir _codex_quoted_blocker_token_stays_approved_root_comment_output _codex_quoted_blocker_token_stays_approved_root_comment_exit
+
+# codex_response_is_blocking briefly gained the same fence-marker bail-out
+# used by is_usage_limit/is_environment_error/is_approved (applied "for
+# consistency" while fixing finding 3796042503), but that guard is unsafe
+# specifically for this classifier: a genuinely asserted blocking finding
+# OUTSIDE a fence, in a review that also happens to contain an unrelated
+# fenced code example elsewhere, must still be detected — Protocol 93's
+# "blocking always wins" invariant depends on is_blocking correctly
+# reporting TRUE for such a review, and bailing out on fence presence let
+# a real blocker fall through to the unrecognized-format safe-fail instead
+# of being reported as a detected blocking finding (fresh evidence from PR
+# #1490 finding 3796396399, a regression introduced by 3796042503's fix).
+# is_blocking must keep detecting a real blocker even when the review also
+# contains an unrelated fenced example, unlike the other three classifiers.
+_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir/gh" <<'CODEX_FENCED_EXAMPLE_OUTSIDE_BLOCKER_STAYS_BLOCKING_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02221234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":303,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This must fix the validation error before merge.\\n\\nExample:\\n```\\nfoo();\\n```"}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_FENCED_EXAMPLE_OUTSIDE_BLOCKER_STAYS_BLOCKING_ROOT_COMMENT_GH
+chmod +x "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir/gh"
+
+_codex_fenced_example_outside_blocker_stays_blocking_root_comment_output=""
+_codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit=0
+PATH="$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir/output.txt" 2>&1 || _codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit=$?
+_codex_fenced_example_outside_blocker_stays_blocking_root_comment_output="$(cat "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir/output.txt")"
+run_test "codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit_needs_revision" "1" "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit"
+run_test "codex_fenced_example_outside_blocker_stays_blocking_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir"
+unset _codex_fenced_example_outside_blocker_stays_blocking_root_comment_mock_dir _codex_fenced_example_outside_blocker_stays_blocking_root_comment_output _codex_fenced_example_outside_blocker_stays_blocking_root_comment_exit
+
+# The reviewer script relied entirely on free-text body parsing
+# (codex_response_is_blocking/is_approved) and never consulted GitHub's
+# own structured review `state` field (APPROVED/CHANGES_REQUESTED/
+# COMMENTED/PENDING/DISMISSED), even though the reviews-endpoint response
+# carries it directly. A submitted review with state CHANGES_REQUESTED
+# but a clean-sounding or ambiguous body ("Looks good overall, but see
+# the note below.") fell through to the unrecognized-format safe-fail
+# instead of being recognized as blocking on GitHub's own authoritative
+# signal (fresh evidence from PR #1490 finding 3796396391).
+# codex_combine_terminal_evidence now threads the review's state through
+# as COMBINED_REVIEW_STATE, and the verdict-parsing chain short-circuits
+# to blocking whenever a winning review's state is CHANGES_REQUESTED,
+# ahead of free-text classification.
+_codex_changes_requested_state_forces_blocking_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_changes_requested_state_forces_blocking_root_comment_mock_dir/gh" <<'CODEX_CHANGES_REQUESTED_STATE_FORCES_BLOCKING_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02221234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":303,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Looks good overall, but see the note below."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_CHANGES_REQUESTED_STATE_FORCES_BLOCKING_ROOT_COMMENT_GH
+chmod +x "$_codex_changes_requested_state_forces_blocking_root_comment_mock_dir/gh"
+
+_codex_changes_requested_state_forces_blocking_root_comment_output=""
+_codex_changes_requested_state_forces_blocking_root_comment_exit=0
+PATH="$_codex_changes_requested_state_forces_blocking_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_changes_requested_state_forces_blocking_root_comment_mock_dir/output.txt" 2>&1 || _codex_changes_requested_state_forces_blocking_root_comment_exit=$?
+_codex_changes_requested_state_forces_blocking_root_comment_output="$(cat "$_codex_changes_requested_state_forces_blocking_root_comment_mock_dir/output.txt")"
+run_test "codex_changes_requested_state_forces_blocking_root_comment_exit_needs_revision" "1" "$_codex_changes_requested_state_forces_blocking_root_comment_exit"
+run_test "codex_changes_requested_state_forces_blocking_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_changes_requested_state_forces_blocking_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_changes_requested_state_forces_blocking_root_comment_mock_dir"
+unset _codex_changes_requested_state_forces_blocking_root_comment_mock_dir _codex_changes_requested_state_forces_blocking_root_comment_output _codex_changes_requested_state_forces_blocking_root_comment_exit
+
+# codex_select_review_evidence's tie-break ranked tied current-head reviews
+# via codex_response_priority(body) alone, which had no notion of the
+# extracted `state` field. Two reviews tied at the same second — a clean
+# one and a CHANGES_REQUESTED one whose body ALSO happens to contain an
+# approval phrase like "Looks good" — both scored priority 0 from body
+# text, so whichever the API returned FIRST kept the selection (only a
+# STRICTLY greater priority replaces it): the clean review is returned
+# first here, so without the fix the CHANGES_REQUESTED review's state was
+# silently discarded and the run returned APPROVED (fresh evidence from
+# PR #1490 finding 3796982553). codex_response_priority now also treats
+# state CHANGES_REQUESTED as blocking-tier, so the tied CHANGES_REQUESTED
+# review wins regardless of array order.
+_codex_tied_changes_requested_wins_priority_tie_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_changes_requested_wins_priority_tie_root_comment_mock_dir/gh" <<'CODEX_TIED_CHANGES_REQUESTED_WINS_PRIORITY_TIE_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02221234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":303,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","state":"COMMENTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Looks good overall."},{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Looks good overall, but see inline comments."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_CHANGES_REQUESTED_WINS_PRIORITY_TIE_ROOT_COMMENT_GH
+chmod +x "$_codex_tied_changes_requested_wins_priority_tie_root_comment_mock_dir/gh"
+
+_codex_tied_changes_requested_wins_priority_tie_root_comment_output=""
+_codex_tied_changes_requested_wins_priority_tie_root_comment_exit=0
+PATH="$_codex_tied_changes_requested_wins_priority_tie_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_changes_requested_wins_priority_tie_root_comment_mock_dir/output.txt" 2>&1 || _codex_tied_changes_requested_wins_priority_tie_root_comment_exit=$?
+_codex_tied_changes_requested_wins_priority_tie_root_comment_output="$(cat "$_codex_tied_changes_requested_wins_priority_tie_root_comment_mock_dir/output.txt")"
+run_test "codex_tied_changes_requested_wins_priority_tie_root_comment_exit_needs_revision" "1" "$_codex_tied_changes_requested_wins_priority_tie_root_comment_exit"
+run_test "codex_tied_changes_requested_wins_priority_tie_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_tied_changes_requested_wins_priority_tie_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_changes_requested_wins_priority_tie_root_comment_mock_dir"
+unset _codex_tied_changes_requested_wins_priority_tie_root_comment_mock_dir _codex_tied_changes_requested_wins_priority_tie_root_comment_output _codex_tied_changes_requested_wins_priority_tie_root_comment_exit
+
+# A review with state DISMISSED still matched the SHA/bot/timestamp
+# filters (dismissal doesn't change commit_id or submitted_at), so its
+# now-stale body text (recorded before it was dismissed) could still be
+# selected as fresh terminal approval evidence on an idempotent rerun —
+# GitHub itself no longer treats a dismissed review as active (fresh
+# evidence from PR #1490 finding 3796982554). The reviews-endpoint jq
+# queries now exclude state DISMISSED entirely, so with no other
+# evidence, the run must fail closed to TIMED_OUT rather than APPROVED.
+_codex_dismissed_review_excluded_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_dismissed_review_excluded_root_comment_mock_dir/gh" <<'CODEX_DISMISSED_REVIEW_EXCLUDED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02221234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":303,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade02221234567890","state":"DISMISSED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_DISMISSED_REVIEW_EXCLUDED_ROOT_COMMENT_GH
+chmod +x "$_codex_dismissed_review_excluded_root_comment_mock_dir/gh"
+
+_codex_dismissed_review_excluded_root_comment_output=""
+_codex_dismissed_review_excluded_root_comment_exit=0
+PATH="$_codex_dismissed_review_excluded_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_dismissed_review_excluded_root_comment_mock_dir/output.txt" 2>&1 || _codex_dismissed_review_excluded_root_comment_exit=$?
+_codex_dismissed_review_excluded_root_comment_output="$(cat "$_codex_dismissed_review_excluded_root_comment_mock_dir/output.txt")"
+run_test "codex_dismissed_review_excluded_root_comment_exit_timed_out" "2" "$_codex_dismissed_review_excluded_root_comment_exit"
+run_test "codex_dismissed_review_excluded_root_comment_verdict_not_approved" "TIMED_OUT" \
+  "$(printf '%s\n' "$_codex_dismissed_review_excluded_root_comment_output" | grep -oE 'VERDICT: (TIMED_OUT|APPROVED)' | grep -oE 'TIMED_OUT|APPROVED')"
+rm -rf "$_codex_dismissed_review_excluded_root_comment_mock_dir"
+unset _codex_dismissed_review_excluded_root_comment_mock_dir _codex_dismissed_review_excluded_root_comment_output _codex_dismissed_review_excluded_root_comment_exit
+
+# codex_select_review_evidence's tie-break (finding 3796982553) was fixed
+# to treat a tied CHANGES_REQUESTED review as blocking-tier regardless of
+# body text, but that fix only covers the review-vs-review tie-break. The
+# SEPARATE comment-vs-review tie-break in codex_select_terminal_evidence
+# (used when a SHA-pinned terminal root comment and a current-head review
+# share the same second-resolution timestamp) still called
+# codex_response_priority with body text only, with no state parameter at
+# all. A clean-looking SHA-pinned root comment ("No blocking issues
+# found.") and a same-timestamp CHANGES_REQUESTED review whose body ALSO
+# reads clean ("Looks good overall, but see inline comments.") both
+# scored priority 0 from body text, and since the comment is always
+# CURRENT in this comparison (set by the terminal-comment block before
+# the review is ever considered), the review never outranked it — the
+# review's CHANGES_REQUESTED state was discarded and the run returned
+# APPROVED (fresh evidence from PR #1490 finding 3797160202, a followup
+# to 3796982553 that fixed the review-vs-review tie-break but missed this
+# separate comment-vs-review one). codex_select_terminal_evidence now
+# accepts current/candidate state params and passes the review's state
+# through, so a same-timestamp CHANGES_REQUESTED review beats a
+# clean-looking root comment regardless of which source is "current".
+_codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir/gh" <<'CODEX_TIED_CHANGES_REQUESTED_REVIEW_BEATS_CLEAN_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'beef00001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":304,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"beef00001234567890","state":"CHANGES_REQUESTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Looks good overall, but see inline comments."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":230,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found.\\n\\n**Reviewed commit:** `beef0000`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TIED_CHANGES_REQUESTED_REVIEW_BEATS_CLEAN_ROOT_COMMENT_GH
+chmod +x "$_codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir/gh"
+
+_codex_tied_changes_requested_review_beats_clean_root_comment_output=""
+_codex_tied_changes_requested_review_beats_clean_root_comment_exit=0
+PATH="$_codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir/output.txt" 2>&1 || _codex_tied_changes_requested_review_beats_clean_root_comment_exit=$?
+_codex_tied_changes_requested_review_beats_clean_root_comment_output="$(cat "$_codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir/output.txt")"
+run_test "codex_tied_changes_requested_review_beats_clean_root_comment_exit_needs_revision" "1" "$_codex_tied_changes_requested_review_beats_clean_root_comment_exit"
+run_test "codex_tied_changes_requested_review_beats_clean_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_tied_changes_requested_review_beats_clean_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir"
+unset _codex_tied_changes_requested_review_beats_clean_root_comment_mock_dir _codex_tied_changes_requested_review_beats_clean_root_comment_output _codex_tied_changes_requested_review_beats_clean_root_comment_exit
+
+# codex_strip_quoted_spans' double-quote stripping ran inside a single sed
+# invocation, which operates per-line by default (each line is its own
+# pattern space) — a straight-double-quote pair that spans a newline (e.g.
+# `The documented response "` / `No blocking issues found` / `" is
+# inaccurate` across three lines) was never stripped at all, since the
+# opening and closing quote are in different sed pattern spaces. The
+# quoted clean phrase reached classification unstripped and matched
+# CODEX_APPROVAL_PATTERN's "no blocking issues" alternative, returning
+# APPROVED instead of the documented unrecognized-format safe-fail (fresh
+# evidence from PR #1490 finding 3797334339, a multi-line followup to the
+# same-line case already covered by codex_quoted_clean_phrase_not_
+# approved_root_comment above). codex_strip_quoted_spans now flattens
+# newlines to a placeholder before the double-/single-quote stripping
+# passes (restoring them immediately after, before the line-oriented
+# backtick pass), so a quote pair can be stripped regardless of how many
+# original lines it spans.
+_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir/gh" <<'CODEX_MULTILINE_QUOTED_CLEAN_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'beef00001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":306,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:307,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented response \"\nNo blocking issues found\n\" is inaccurate and should be corrected.\n\n**Reviewed commit:** `beef0000`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MULTILINE_QUOTED_CLEAN_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir/gh"
+
+_codex_multiline_quoted_clean_phrase_not_approved_root_comment_output=""
+_codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit=0
+PATH="$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit=$?
+_codex_multiline_quoted_clean_phrase_not_approved_root_comment_output="$(cat "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit"
+run_test "codex_multiline_quoted_clean_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir"
+unset _codex_multiline_quoted_clean_phrase_not_approved_root_comment_mock_dir _codex_multiline_quoted_clean_phrase_not_approved_root_comment_output _codex_multiline_quoted_clean_phrase_not_approved_root_comment_exit
+
+# The newline-flattening fix above (codex_multiline_quoted_clean_phrase_
+# not_approved_root_comment) had its own boundary gap: the single-quote
+# pattern's boundary alternatives ((^|[[:space:]]) and
+# ([[:space:].,;:!?]|$)) didn't include the placeholder character, so a
+# single-quoted span occupying an ENTIRE original line by itself (e.g.
+# "The documented response is:" / "'No blocking issues found'" / "That
+# claim is inaccurate" across three lines) has the placeholder — not real
+# whitespace, not true start/end-of-string — immediately before/after the
+# quote once flattened, so neither boundary matched and the span survived
+# unstripped, returning APPROVED (fresh evidence from PR #1490 finding
+# 3798665078). codex_strip_quoted_spans now includes the placeholder as
+# an additional valid boundary character for the single-quote pattern.
+_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir/gh" <<'CODEX_MULTILINE_SINGLE_QUOTED_WHOLE_LINE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'dead00001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":308,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:309,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented response is:\n'"'"'No blocking issues found'"'"'\nThat claim is inaccurate.\n\n**Reviewed commit:** `dead0000`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MULTILINE_SINGLE_QUOTED_WHOLE_LINE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir/gh"
+
+_codex_multiline_single_quoted_whole_line_not_approved_root_comment_output=""
+_codex_multiline_single_quoted_whole_line_not_approved_root_comment_exit=0
+PATH="$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_multiline_single_quoted_whole_line_not_approved_root_comment_exit=$?
+_codex_multiline_single_quoted_whole_line_not_approved_root_comment_output="$(cat "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_multiline_single_quoted_whole_line_not_approved_root_comment_exit_needs_revision" "1" "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_exit"
+run_test "codex_multiline_single_quoted_whole_line_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir"
+unset _codex_multiline_single_quoted_whole_line_not_approved_root_comment_mock_dir _codex_multiline_single_quoted_whole_line_not_approved_root_comment_output _codex_multiline_single_quoted_whole_line_not_approved_root_comment_exit
+
+# codex_strip_quoted_spans deliberately kept backtick-pair stripping
+# line-oriented, reasoning that GFM inline code spans never cross a line
+# — that reasoning was WRONG. CommonMark/GFM inline code spans CAN
+# legitimately span multiple lines (line endings inside a code span are
+# normalized to spaces in the rendered output); only FENCED
+# (triple-backtick) code blocks have line-anchored open/close semantics,
+# a different construct. A single-backtick code span split across lines
+# (e.g. "The documented response `" / "No blocking issues found" / "` is
+# inaccurate") was never stripped, letting the coded clean phrase reach
+# classification unstripped and return APPROVED (fresh evidence from PR
+# #1490 finding 3798665086). Backtick-pair stripping now runs on the same
+# newline-flattened body as the double-/single-quote passes.
+_codex_multiline_backtick_span_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_multiline_backtick_span_not_approved_root_comment_mock_dir/gh" <<'CODEX_MULTILINE_BACKTICK_SPAN_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'beef11121234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":310,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:311,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented response `\nNo blocking issues found\n` is inaccurate and should be corrected.\n\n**Reviewed commit:** `beef1112`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_MULTILINE_BACKTICK_SPAN_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_multiline_backtick_span_not_approved_root_comment_mock_dir/gh"
+
+_codex_multiline_backtick_span_not_approved_root_comment_output=""
+_codex_multiline_backtick_span_not_approved_root_comment_exit=0
+PATH="$_codex_multiline_backtick_span_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_multiline_backtick_span_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_multiline_backtick_span_not_approved_root_comment_exit=$?
+_codex_multiline_backtick_span_not_approved_root_comment_output="$(cat "$_codex_multiline_backtick_span_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_multiline_backtick_span_not_approved_root_comment_exit_needs_revision" "1" "$_codex_multiline_backtick_span_not_approved_root_comment_exit"
+run_test "codex_multiline_backtick_span_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_multiline_backtick_span_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_multiline_backtick_span_not_approved_root_comment_mock_dir"
+unset _codex_multiline_backtick_span_not_approved_root_comment_mock_dir _codex_multiline_backtick_span_not_approved_root_comment_output _codex_multiline_backtick_span_not_approved_root_comment_exit
+
+# CODEX_NEGATION_WORDS was missing "don't"/"do not" entirely — only the
+# third-person singular form ("does not"/"doesn't") was covered, not the
+# base form. A response like "This looks good at first glance, but I
+# don't approve this change." had the negation word absent from the
+# alternation, so the earlier positive phrase ("looks good") won and the
+# response was classified APPROVED instead of falling through to the
+# negated-approval check (fresh evidence from PR #1490 finding
+# 3798756826). "don't"/"do not" is now included alongside every other
+# verb's contracted and space-separated forms.
+_codex_dont_approve_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_dont_approve_not_approved_root_comment_mock_dir/gh" <<'CODEX_DONT_APPROVE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face00001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":312,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:313,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("This looks good at first glance, but I don'"'"'t approve this change.\n\n**Reviewed commit:** `face0000`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_DONT_APPROVE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_dont_approve_not_approved_root_comment_mock_dir/gh"
+
+_codex_dont_approve_not_approved_root_comment_output=""
+_codex_dont_approve_not_approved_root_comment_exit=0
+PATH="$_codex_dont_approve_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_dont_approve_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_dont_approve_not_approved_root_comment_exit=$?
+_codex_dont_approve_not_approved_root_comment_output="$(cat "$_codex_dont_approve_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_dont_approve_not_approved_root_comment_exit_needs_revision" "1" "$_codex_dont_approve_not_approved_root_comment_exit"
+run_test "codex_dont_approve_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_dont_approve_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_dont_approve_not_approved_root_comment_mock_dir"
+unset _codex_dont_approve_not_approved_root_comment_mock_dir _codex_dont_approve_not_approved_root_comment_output _codex_dont_approve_not_approved_root_comment_exit
+
+# codex_strip_quoted_spans' backtick-pair regex (`[^\`]*\`) mishandles
+# CommonMark's actual code-span delimiter-run matching: a code span CAN
+# be delimited by a run of 2+ backticks (not just a single pair), and the
+# naive regex treats an adjacent 2-backtick run as two separate EMPTY
+# single-backtick pairs (each backtick immediately "closes" against its
+# neighbor with zero content between), stripping only the empty delimiter
+# markers and leaving the actual enclosed content fully exposed — e.g. a
+# double-backtick-quoted `` `` No blocking issues found `` `` survived
+# stripping intact and matched CODEX_APPROVAL_PATTERN, returning APPROVED
+# (fresh evidence from PR #1490 finding 3798756834).
+# codex_response_has_fence_marker's backtick threshold is now 2+ (was
+# 3+), so a 2+-backtick run disqualifies the same way a 3+ run always
+# has; single backtick PAIRS are unaffected and still get precise
+# stripping.
+_codex_double_backtick_span_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_double_backtick_span_not_approved_root_comment_mock_dir/gh" <<'CODEX_DOUBLE_BACKTICK_SPAN_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face11121234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":314,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:315,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented response ``No blocking issues found`` is inaccurate and should be corrected.\n\n**Reviewed commit:** `face1112`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_DOUBLE_BACKTICK_SPAN_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_double_backtick_span_not_approved_root_comment_mock_dir/gh"
+
+_codex_double_backtick_span_not_approved_root_comment_output=""
+_codex_double_backtick_span_not_approved_root_comment_exit=0
+PATH="$_codex_double_backtick_span_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_double_backtick_span_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_double_backtick_span_not_approved_root_comment_exit=$?
+_codex_double_backtick_span_not_approved_root_comment_output="$(cat "$_codex_double_backtick_span_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_double_backtick_span_not_approved_root_comment_exit_needs_revision" "1" "$_codex_double_backtick_span_not_approved_root_comment_exit"
+run_test "codex_double_backtick_span_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_double_backtick_span_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_double_backtick_span_not_approved_root_comment_mock_dir"
+unset _codex_double_backtick_span_not_approved_root_comment_mock_dir _codex_double_backtick_span_not_approved_root_comment_output _codex_double_backtick_span_not_approved_root_comment_exit
+
+# The negated-approval mechanism (CODEX_NEGATED_APPROVAL_PATTERN) only
+# fires when a negation word is followed by one of a fixed list of
+# approval-vocabulary target words (approve[ds]?, lgtm, looks good, etc.)
+# within the same sentence. A response like "This looks good at first
+# glance, but this should not be merged until tests pass." negates
+# "merged" — a word outside that target list entirely — so the
+# negated-approval check never matches, and the earlier "looks good"
+# phrase alone wins, returning APPROVED (fresh evidence from PR #1490
+# finding 3798880969, a followup to the "don't approve" fix that closed
+# the adjacent-to-an-approval-word case but not this direct-merge-refusal
+# case). CODEX_BLOCKING_PATTERN now recognizes an explicit
+# should/must-not-be-merged verdict outright, checked before approval in
+# the verdict-parsing chain.
+_codex_should_not_be_merged_blocking_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_should_not_be_merged_blocking_root_comment_mock_dir/gh" <<'CODEX_SHOULD_NOT_BE_MERGED_BLOCKING_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face22221234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":316,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":317,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but this should not be merged until tests pass.\\n\\n**Reviewed commit:** `face2222`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_SHOULD_NOT_BE_MERGED_BLOCKING_ROOT_COMMENT_GH
+chmod +x "$_codex_should_not_be_merged_blocking_root_comment_mock_dir/gh"
+
+_codex_should_not_be_merged_blocking_root_comment_output=""
+_codex_should_not_be_merged_blocking_root_comment_exit=0
+PATH="$_codex_should_not_be_merged_blocking_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_should_not_be_merged_blocking_root_comment_mock_dir/output.txt" 2>&1 || _codex_should_not_be_merged_blocking_root_comment_exit=$?
+_codex_should_not_be_merged_blocking_root_comment_output="$(cat "$_codex_should_not_be_merged_blocking_root_comment_mock_dir/output.txt")"
+run_test "codex_should_not_be_merged_blocking_root_comment_exit_needs_revision" "1" "$_codex_should_not_be_merged_blocking_root_comment_exit"
+run_test "codex_should_not_be_merged_blocking_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_should_not_be_merged_blocking_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_should_not_be_merged_blocking_root_comment_mock_dir"
+unset _codex_should_not_be_merged_blocking_root_comment_mock_dir _codex_should_not_be_merged_blocking_root_comment_output _codex_should_not_be_merged_blocking_root_comment_exit
+
+# The should/must-not-be-merged fix above only covered the PASSIVE form;
+# the IMPERATIVE form ("do not merge"/"don't merge") is a separate,
+# common phrasing that the same gap applies to for the identical reason
+# — "merge" isn't in CODEX_NEGATED_APPROVAL_TARGET_WORDS either, and
+# unlike the passive form's "not be merged", the imperative form's
+# negation word isn't even adjacent to an approval-vocabulary word at
+# all. A response like "This looks good at first glance, but do not
+# merge until tests pass" still returned APPROVED (fresh evidence from PR
+# #1490 finding 3798999561, a followup to the passive-form fix).
+_codex_do_not_merge_blocking_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_do_not_merge_blocking_root_comment_mock_dir/gh" <<'CODEX_DO_NOT_MERGE_BLOCKING_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face33331234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":318,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":319,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but do not merge until tests pass.\\n\\n**Reviewed commit:** `face3333`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_DO_NOT_MERGE_BLOCKING_ROOT_COMMENT_GH
+chmod +x "$_codex_do_not_merge_blocking_root_comment_mock_dir/gh"
+
+_codex_do_not_merge_blocking_root_comment_output=""
+_codex_do_not_merge_blocking_root_comment_exit=0
+PATH="$_codex_do_not_merge_blocking_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_do_not_merge_blocking_root_comment_mock_dir/output.txt" 2>&1 || _codex_do_not_merge_blocking_root_comment_exit=$?
+_codex_do_not_merge_blocking_root_comment_output="$(cat "$_codex_do_not_merge_blocking_root_comment_mock_dir/output.txt")"
+run_test "codex_do_not_merge_blocking_root_comment_exit_needs_revision" "1" "$_codex_do_not_merge_blocking_root_comment_exit"
+run_test "codex_do_not_merge_blocking_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_do_not_merge_blocking_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_do_not_merge_blocking_root_comment_mock_dir"
+unset _codex_do_not_merge_blocking_root_comment_mock_dir _codex_do_not_merge_blocking_root_comment_output _codex_do_not_merge_blocking_root_comment_exit
+
+# Manually enumerating merge-refusal phrasings one at a time in
+# CODEX_BLOCKING_PATTERN ("should/must not be merged", then "do not
+# merge"/"don't merge") kept surfacing the next unenumerated synonym —
+# "cannot be merged" was the third sibling finding in a row (fresh
+# evidence from PR #1490 finding 3799159335, a followup to 3798999561
+# and 3798880969). Rather than add yet another one-off alternative,
+# CODEX_BLOCKING_PATTERN now includes a generalized
+# CODEX_MERGE_REFUSAL_PATTERN built from the existing CODEX_NEGATION_WORDS
+# list (the same construction CODEX_NEGATED_APPROVAL_PATTERN already
+# uses), so any negation word already known to this file — including
+# future additions — automatically covers merge refusals too, without
+# needing its own enumeration round-trip.
+_codex_cannot_be_merged_blocking_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_cannot_be_merged_blocking_root_comment_mock_dir/gh" <<'CODEX_CANNOT_BE_MERGED_BLOCKING_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face44441234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":320,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":321,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but this cannot be merged until tests pass.\\n\\n**Reviewed commit:** `face4444`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_CANNOT_BE_MERGED_BLOCKING_ROOT_COMMENT_GH
+chmod +x "$_codex_cannot_be_merged_blocking_root_comment_mock_dir/gh"
+
+_codex_cannot_be_merged_blocking_root_comment_output=""
+_codex_cannot_be_merged_blocking_root_comment_exit=0
+PATH="$_codex_cannot_be_merged_blocking_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_cannot_be_merged_blocking_root_comment_mock_dir/output.txt" 2>&1 || _codex_cannot_be_merged_blocking_root_comment_exit=$?
+_codex_cannot_be_merged_blocking_root_comment_output="$(cat "$_codex_cannot_be_merged_blocking_root_comment_mock_dir/output.txt")"
+run_test "codex_cannot_be_merged_blocking_root_comment_exit_needs_revision" "1" "$_codex_cannot_be_merged_blocking_root_comment_exit"
+run_test "codex_cannot_be_merged_blocking_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_cannot_be_merged_blocking_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_cannot_be_merged_blocking_root_comment_mock_dir"
+unset _codex_cannot_be_merged_blocking_root_comment_mock_dir _codex_cannot_be_merged_blocking_root_comment_output _codex_cannot_be_merged_blocking_root_comment_exit
+
+# The generalized CODEX_MERGE_REFUSAL_PATTERN reuses CODEX_NEGATION_WORDS'
+# bare "not" alternative combined with an unbounded (except for
+# sentence/clause terminators) span before "merge(d)" — the same
+# clause-scoping already used by CODEX_NEGATED_APPROVAL_PATTERN protects
+# against an unrelated EARLIER negation in a different clause being
+# misread as targeting a LATER, unrelated mention of "merge": a genuinely
+# clean review that discusses an unrelated negation before a separate
+# instruction to merge must still classify as approved.
+_codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir/gh" <<'CODEX_UNRELATED_NEGATION_BEFORE_MERGE_STAYS_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face55551234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":322,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":323,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This is not a blocker; looks good, please merge.\\n\\n**Reviewed commit:** `face5555`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_UNRELATED_NEGATION_BEFORE_MERGE_STAYS_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir/gh"
+
+_codex_unrelated_negation_before_merge_stays_approved_root_comment_output=""
+_codex_unrelated_negation_before_merge_stays_approved_root_comment_exit=0
+PATH="$_codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_unrelated_negation_before_merge_stays_approved_root_comment_exit=$?
+_codex_unrelated_negation_before_merge_stays_approved_root_comment_output="$(cat "$_codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_unrelated_negation_before_merge_stays_approved_root_comment_exit_clean" "0" "$_codex_unrelated_negation_before_merge_stays_approved_root_comment_exit"
+run_test "codex_unrelated_negation_before_merge_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_unrelated_negation_before_merge_stays_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir"
+unset _codex_unrelated_negation_before_merge_stays_approved_root_comment_mock_dir _codex_unrelated_negation_before_merge_stays_approved_root_comment_output _codex_unrelated_negation_before_merge_stays_approved_root_comment_exit
+
+# CODEX_NEGATION_WORDS was missing "shouldn't"/"should not" and
+# "mustn't"/"must not" entirely, so neither the generalized
+# merge-refusal pattern nor the negated-approval pattern recognized a
+# response like "This looks good at first glance, but this shouldn't be
+# merged until tests pass" as a rejection, and the earlier "looks good"
+# phrase alone won, returning APPROVED (fresh evidence from PR #1490
+# finding 3799277919, a followup to the "cannot be merged" fix).
+# "should not"/"shouldn't" and "must not"/"mustn't" are now included in
+# CODEX_NEGATION_WORDS, automatically fixing both the merge-refusal and
+# negated-approval checks at once (the whole point of generalizing
+# merge-refusal detection to reuse this shared word list).
+_codex_shouldnt_be_merged_blocking_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_shouldnt_be_merged_blocking_root_comment_mock_dir/gh" <<'CODEX_SHOULDNT_BE_MERGED_BLOCKING_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face66661234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":324,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":325,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but this shouldn'"'"'t be merged until tests pass.\\n\\n**Reviewed commit:** `face6666`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_SHOULDNT_BE_MERGED_BLOCKING_ROOT_COMMENT_GH
+chmod +x "$_codex_shouldnt_be_merged_blocking_root_comment_mock_dir/gh"
+
+_codex_shouldnt_be_merged_blocking_root_comment_output=""
+_codex_shouldnt_be_merged_blocking_root_comment_exit=0
+PATH="$_codex_shouldnt_be_merged_blocking_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_shouldnt_be_merged_blocking_root_comment_mock_dir/output.txt" 2>&1 || _codex_shouldnt_be_merged_blocking_root_comment_exit=$?
+_codex_shouldnt_be_merged_blocking_root_comment_output="$(cat "$_codex_shouldnt_be_merged_blocking_root_comment_mock_dir/output.txt")"
+run_test "codex_shouldnt_be_merged_blocking_root_comment_exit_needs_revision" "1" "$_codex_shouldnt_be_merged_blocking_root_comment_exit"
+run_test "codex_shouldnt_be_merged_blocking_root_comment_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_shouldnt_be_merged_blocking_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_shouldnt_be_merged_blocking_root_comment_mock_dir"
+unset _codex_shouldnt_be_merged_blocking_root_comment_mock_dir _codex_shouldnt_be_merged_blocking_root_comment_output _codex_shouldnt_be_merged_blocking_root_comment_exit
+
+# CODEX_BLOCKING_PATTERN's generalized merge-refusal alternative
+# (CODEX_MERGE_REFUSAL_PATTERN) reuses CODEX_NEGATION_WORDS' bare "not"
+# alternative the same way CODEX_NEGATED_APPROVAL_PATTERN does, so it
+# inherited the exact same "not only X" affirmative-idiom
+# misclassification that motivated codex_strip_not_only_idiom in the
+# first place — "not only" is an intensifier, not a negation, but a
+# clean response like "This is not only safe to merge but looks good"
+# had "not" followed by "merge" within the same clause and was misread
+# as a merge refusal, returning NEEDS_REVISION for a genuinely clean
+# review (fresh evidence from PR #1490 finding 3799277922).
+# codex_response_is_blocking now applies codex_strip_not_only_idiom the
+# same way codex_response_is_approved already does.
+_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir/gh" <<'CODEX_NOT_ONLY_SAFE_TO_MERGE_STAYS_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face77771234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":326,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":327,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This is not only safe to merge but looks good.\\n\\n**Reviewed commit:** `face7777`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NOT_ONLY_SAFE_TO_MERGE_STAYS_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir/gh"
+
+_codex_not_only_safe_to_merge_stays_approved_root_comment_output=""
+_codex_not_only_safe_to_merge_stays_approved_root_comment_exit=0
+PATH="$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_not_only_safe_to_merge_stays_approved_root_comment_exit=$?
+_codex_not_only_safe_to_merge_stays_approved_root_comment_output="$(cat "$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_not_only_safe_to_merge_stays_approved_root_comment_exit_clean" "0" "$_codex_not_only_safe_to_merge_stays_approved_root_comment_exit"
+run_test "codex_not_only_safe_to_merge_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_not_only_safe_to_merge_stays_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir"
+unset _codex_not_only_safe_to_merge_stays_approved_root_comment_mock_dir _codex_not_only_safe_to_merge_stays_approved_root_comment_output _codex_not_only_safe_to_merge_stays_approved_root_comment_exit
+
+# CODEX_NEGATION_WORDS was missing "would not"/"wouldn't" — the fourth
+# consecutive missing-negation-word finding (don't, should/mustn't, now
+# wouldn't), which prompted a proactive sweep of the remaining common
+# English negation forms (was/were/would/has/have/had, contracted and
+# space-separated) in one pass rather than continuing to fix them one at
+# a time (fresh evidence from PR #1490 finding 3799391883).
+_codex_wouldnt_approve_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_wouldnt_approve_not_approved_root_comment_mock_dir/gh" <<'CODEX_WOULDNT_APPROVE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face88881234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":328,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":329,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"This looks good at first glance, but I wouldn'"'"'t approve this change.\\n\\n**Reviewed commit:** `face8888`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_WOULDNT_APPROVE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_wouldnt_approve_not_approved_root_comment_mock_dir/gh"
+
+_codex_wouldnt_approve_not_approved_root_comment_output=""
+_codex_wouldnt_approve_not_approved_root_comment_exit=0
+PATH="$_codex_wouldnt_approve_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_wouldnt_approve_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_wouldnt_approve_not_approved_root_comment_exit=$?
+_codex_wouldnt_approve_not_approved_root_comment_output="$(cat "$_codex_wouldnt_approve_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_wouldnt_approve_not_approved_root_comment_exit_needs_revision" "1" "$_codex_wouldnt_approve_not_approved_root_comment_exit"
+run_test "codex_wouldnt_approve_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_wouldnt_approve_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_wouldnt_approve_not_approved_root_comment_mock_dir"
+unset _codex_wouldnt_approve_not_approved_root_comment_mock_dir _codex_wouldnt_approve_not_approved_root_comment_output _codex_wouldnt_approve_not_approved_root_comment_exit
+
+# "did not"/"didn't" is DELIBERATELY excluded from the negation-word
+# sweep above (see the comment above CODEX_NEGATION_WORDS): it already
+# appears baked into CODEX_NEGATED_APPROVAL_TARGET_WORDS as part of the
+# atomic phrase "didn't find any major issues" (itself a clean signal,
+# not something to negate). Adding bare "didn.t" as a general negation
+# word was verified during this sweep's own development to introduce a
+# genuine false positive — caught and reverted before ever being
+# committed — where a doubly-reinforced clean response ("Codex didn't
+# find any major issues and looks good.") was misclassified as
+# NEEDS_REVISION because "didn't" matched as a bare negation and reached
+# the separate "looks good" target later in the same unpunctuated
+# sentence. This test guards against that specific regression being
+# silently reintroduced by a future negation-word addition.
+_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir/gh" <<'CODEX_DIDNT_FIND_ISSUES_AND_LOOKS_GOOD_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'face99991234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":330,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":331,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Codex didn'"'"'t find any major issues and looks good.\\n\\n**Reviewed commit:** `face9999`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_DIDNT_FIND_ISSUES_AND_LOOKS_GOOD_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir/gh"
+
+_codex_didnt_find_issues_and_looks_good_approved_root_comment_output=""
+_codex_didnt_find_issues_and_looks_good_approved_root_comment_exit=0
+PATH="$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_didnt_find_issues_and_looks_good_approved_root_comment_exit=$?
+_codex_didnt_find_issues_and_looks_good_approved_root_comment_output="$(cat "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_didnt_find_issues_and_looks_good_approved_root_comment_exit_clean" "0" "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_exit"
+run_test "codex_didnt_find_issues_and_looks_good_approved_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir"
+unset _codex_didnt_find_issues_and_looks_good_approved_root_comment_mock_dir _codex_didnt_find_issues_and_looks_good_approved_root_comment_output _codex_didnt_find_issues_and_looks_good_approved_root_comment_exit
+
+# codex_strip_quoted_spans handled straight-double-quotes, backticks, and
+# blockquotes, but not single-quoted spans — the fourth quoting style
+# found unprotected — so a review discussing a quoted clean phrase in
+# single quotes (e.g. "The documented response 'No blocking issues
+# found' is inaccurate and should be corrected") still matched and
+# returned APPROVED (fresh evidence from PR #1490 finding 3793410331).
+_codex_single_quoted_phrase_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_single_quoted_phrase_not_approved_root_comment_mock_dir/gh" <<'CODEX_SINGLE_QUOTED_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02331234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":304,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf "[{\"id\":305,\"created_at\":\"2026-01-01T00:00:01Z\",\"user\":{\"login\":\"chatgpt-codex-connector[bot]\"},\"body\":\"The documented response 'No blocking issues found' is inaccurate and should be corrected.\\\\n\\\\n**Reviewed commit:** \`facade02331\`\"}]\n"
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_SINGLE_QUOTED_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_single_quoted_phrase_not_approved_root_comment_mock_dir/gh"
+
+_codex_single_quoted_phrase_not_approved_root_comment_output=""
+_codex_single_quoted_phrase_not_approved_root_comment_exit=0
+PATH="$_codex_single_quoted_phrase_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_single_quoted_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_single_quoted_phrase_not_approved_root_comment_exit=$?
+_codex_single_quoted_phrase_not_approved_root_comment_output="$(cat "$_codex_single_quoted_phrase_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_single_quoted_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_single_quoted_phrase_not_approved_root_comment_exit"
+run_test "codex_single_quoted_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_single_quoted_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_single_quoted_phrase_not_approved_root_comment_mock_dir"
+unset _codex_single_quoted_phrase_not_approved_root_comment_mock_dir _codex_single_quoted_phrase_not_approved_root_comment_output _codex_single_quoted_phrase_not_approved_root_comment_exit
+
+# Positive control for the single-quote stripping above: a bare
+# `'[^']*'` pattern would also match the span between two UNRELATED
+# apostrophes in contractions (e.g. the apostrophe in "isn't" and the
+# apostrophe in "it's"), corrupting a genuinely clean review by deleting
+# everything between them. The stricter whitespace/punctuation-boundary
+# requirement must leave contractions untouched.
+_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir/gh" <<'CODEX_CONTRACTION_APOSTROPHES_NOT_MANGLED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02441234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":306,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":307,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"It'\''s fine, doesn'\''t need changes. No blocking issues found.\\n\\n**Reviewed commit:** `facade02441`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_CONTRACTION_APOSTROPHES_NOT_MANGLED_ROOT_COMMENT_GH
+chmod +x "$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir/gh"
+
+_codex_contraction_apostrophes_not_mangled_root_comment_output=""
+_codex_contraction_apostrophes_not_mangled_root_comment_exit=0
+PATH="$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir/output.txt" 2>&1 || _codex_contraction_apostrophes_not_mangled_root_comment_exit=$?
+_codex_contraction_apostrophes_not_mangled_root_comment_output="$(cat "$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir/output.txt")"
+run_test "codex_contraction_apostrophes_not_mangled_root_comment_exit_clean" "0" "$_codex_contraction_apostrophes_not_mangled_root_comment_exit"
+run_test "codex_contraction_apostrophes_not_mangled_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_contraction_apostrophes_not_mangled_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_contraction_apostrophes_not_mangled_root_comment_mock_dir"
+unset _codex_contraction_apostrophes_not_mangled_root_comment_mock_dir _codex_contraction_apostrophes_not_mangled_root_comment_output _codex_contraction_apostrophes_not_mangled_root_comment_exit
+
+# codex_strip_quoted_spans' single-line sed substitutions can't strip a
+# fenced Markdown code block (```...```): a fence marker line has no
+# PAIRED backtick on the same line for the single-backtick-pair
+# substitution to match, and the quoted content between the opening and
+# closing fence spans arbitrarily many separate lines. A review quoting
+# a clean signal inside a fenced block (e.g. "The documented output
+# is:\n```text\nNo blocking issues found\n```\nThat output is
+# inaccurate") was the fifth quoting style found unprotected, after
+# straight-quote, backtick, blockquote, and single-quote (fresh evidence
+# from PR #1490 finding 3793453010). codex_strip_quoted_spans now runs
+# an awk pre-pass that strips entire fenced-code-block regions before
+# the existing single-line substitutions.
+_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir/gh" <<'CODEX_FENCED_CODE_BLOCK_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02551234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":308,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:309,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("The documented output is:\n```text\nNo blocking issues found\n```\nThat output is inaccurate.\n\n**Reviewed commit:** `facade02551`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_FENCED_CODE_BLOCK_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir/gh"
+
+_codex_fenced_code_block_phrase_not_approved_root_comment_output=""
+_codex_fenced_code_block_phrase_not_approved_root_comment_exit=0
+PATH="$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_fenced_code_block_phrase_not_approved_root_comment_exit=$?
+_codex_fenced_code_block_phrase_not_approved_root_comment_output="$(cat "$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_fenced_code_block_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_fenced_code_block_phrase_not_approved_root_comment_exit"
+run_test "codex_fenced_code_block_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_fenced_code_block_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir"
+unset _codex_fenced_code_block_phrase_not_approved_root_comment_mock_dir _codex_fenced_code_block_phrase_not_approved_root_comment_output _codex_fenced_code_block_phrase_not_approved_root_comment_exit
+
+# The original fence-stripping awk pass toggled its "inside fence" state
+# on ANY line with 3+ backticks, with no regard for the LENGTH of the
+# opening delimiter. GitHub-flavored Markdown's actual fence semantics
+# require a delimiter of AT LEAST the opening fence's length to close it
+# — a longer outer fence (e.g. four backticks) can safely quote content
+# that itself contains a shorter (three-backtick) fence. The naive
+# implementation incorrectly closed on the inner three-backtick
+# delimiter, re-exposing the rest of the outer-fenced content —
+# including a quoted clean phrase — to classification (fresh evidence
+# from PR #1490 finding 3793497787, a followup to 3793453010).
+_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir/gh" <<'CODEX_NESTED_FENCE_LENGTH_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02661234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":310,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:311,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Response was:\n````\nHere is an example:\n```\nNo blocking issues found\n```\nThat quoted output is inaccurate.\n````\nAfter the fence.\n\n**Reviewed commit:** `facade02661`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_NESTED_FENCE_LENGTH_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir/gh"
+
+_codex_nested_fence_length_phrase_not_approved_root_comment_output=""
+_codex_nested_fence_length_phrase_not_approved_root_comment_exit=0
+PATH="$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_nested_fence_length_phrase_not_approved_root_comment_exit=$?
+_codex_nested_fence_length_phrase_not_approved_root_comment_output="$(cat "$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_nested_fence_length_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_nested_fence_length_phrase_not_approved_root_comment_exit"
+run_test "codex_nested_fence_length_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_nested_fence_length_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir"
+unset _codex_nested_fence_length_phrase_not_approved_root_comment_mock_dir _codex_nested_fence_length_phrase_not_approved_root_comment_output _codex_nested_fence_length_phrase_not_approved_root_comment_exit
+
+# The delimiter-length fix above checked LENGTH but not the GFM rule that
+# a closing fence must be followed by nothing but optional whitespace: a
+# line like ```` ```not-a-close ```` is, per GFM, a NEW opening fence with
+# an info string, not a close, but a length-only check treated it as
+# closing regardless — re-exposing everything after it, including a
+# quoted clean phrase, to classification (fresh evidence from PR #1490
+# finding following 3793497787/3793453010). This completes GFM's fence
+# spec (open, length, close-only-whitespace) — the awk pass now requires
+# nothing but whitespace after a would-be closing delimiter.
+_codex_fence_close_requires_whitespace_only_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir/gh" <<'CODEX_FENCE_CLOSE_REQUIRES_WHITESPACE_ONLY_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02771234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":312,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:313,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Response was:\n```text\nsome intro\n```not-a-close\nNo blocking issues found\n```\nThat quoted output is inaccurate.\n\n**Reviewed commit:** `facade02771`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_FENCE_CLOSE_REQUIRES_WHITESPACE_ONLY_ROOT_COMMENT_GH
+chmod +x "$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir/gh"
+
+_codex_fence_close_requires_whitespace_only_root_comment_output=""
+_codex_fence_close_requires_whitespace_only_root_comment_exit=0
+PATH="$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir/output.txt" 2>&1 || _codex_fence_close_requires_whitespace_only_root_comment_exit=$?
+_codex_fence_close_requires_whitespace_only_root_comment_output="$(cat "$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir/output.txt")"
+run_test "codex_fence_close_requires_whitespace_only_root_comment_exit_needs_revision" "1" "$_codex_fence_close_requires_whitespace_only_root_comment_exit"
+run_test "codex_fence_close_requires_whitespace_only_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_fence_close_requires_whitespace_only_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_fence_close_requires_whitespace_only_root_comment_mock_dir"
+unset _codex_fence_close_requires_whitespace_only_root_comment_mock_dir _codex_fence_close_requires_whitespace_only_root_comment_output _codex_fence_close_requires_whitespace_only_root_comment_exit
+
+# Four consecutive rounds of precisely re-implementing GFM's fenced-code-
+# block semantics (detect, length, close-only-whitespace) still missed
+# GFM's entirely separate TILDE-delimited fence syntax (~~~...~~~), which
+# a backtick-only implementation never recognized at all, so a quoted
+# clean phrase inside a tilde fence stayed fully exposed to classification
+# (fresh evidence from PR #1490 finding 3795661290). Per the project's
+# explicit direction after this fourth round, codex_strip_quoted_spans no
+# longer attempts precise fence parsing at all: codex_response_is_approved
+# now treats the mere PRESENCE of a fence-opener marker (3+ consecutive
+# backticks OR tildes) anywhere in the response as disqualifying for a
+# clean verdict, closing this whole class of bug in one step rather than
+# chasing the next undiscovered fence-syntax edge case.
+_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir/gh" <<'CODEX_TILDE_FENCE_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02881234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":314,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:315,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Response was:\n~~~text\nNo blocking issues found\n~~~\nThat quoted output is inaccurate.\n\n**Reviewed commit:** `facade02881`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_TILDE_FENCE_PHRASE_NOT_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir/gh"
+
+_codex_tilde_fence_phrase_not_approved_root_comment_output=""
+_codex_tilde_fence_phrase_not_approved_root_comment_exit=0
+PATH="$_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_tilde_fence_phrase_not_approved_root_comment_exit=$?
+_codex_tilde_fence_phrase_not_approved_root_comment_output="$(cat "$_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_tilde_fence_phrase_not_approved_root_comment_exit_needs_revision" "1" "$_codex_tilde_fence_phrase_not_approved_root_comment_exit"
+run_test "codex_tilde_fence_phrase_not_approved_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_tilde_fence_phrase_not_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_tilde_fence_phrase_not_approved_root_comment_mock_dir"
+unset _codex_tilde_fence_phrase_not_approved_root_comment_mock_dir _codex_tilde_fence_phrase_not_approved_root_comment_output _codex_tilde_fence_phrase_not_approved_root_comment_exit
+
+# Positive control for the new fence-marker bail-out above: a single
+# INLINE backtick PAIR on one line (e.g. referencing a filename), which is
+# NOT a 3+-backtick fence marker, must still classify a genuinely clean
+# review as APPROVED. Inline code references are extremely common in
+# legitimate review comments and must not be swept up by the new
+# conservative fence heuristic, which is deliberately scoped to
+# multi-backtick/tilde FENCE markers only.
+_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir/gh" <<'CODEX_INLINE_BACKTICK_PAIR_STAYS_APPROVED_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade02991234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":316,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":317,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"The fix looks good. See `foo.py:42` for a minor nit.\\n\\n**Reviewed commit:** `facade02991`"}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_INLINE_BACKTICK_PAIR_STAYS_APPROVED_ROOT_COMMENT_GH
+chmod +x "$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir/gh"
+
+_codex_inline_backtick_pair_stays_approved_root_comment_output=""
+_codex_inline_backtick_pair_stays_approved_root_comment_exit=0
+PATH="$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir/output.txt" 2>&1 || _codex_inline_backtick_pair_stays_approved_root_comment_exit=$?
+_codex_inline_backtick_pair_stays_approved_root_comment_output="$(cat "$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir/output.txt")"
+run_test "codex_inline_backtick_pair_stays_approved_root_comment_exit_clean" "0" "$_codex_inline_backtick_pair_stays_approved_root_comment_exit"
+run_test "codex_inline_backtick_pair_stays_approved_root_comment_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_inline_backtick_pair_stays_approved_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_inline_backtick_pair_stays_approved_root_comment_mock_dir"
+unset _codex_inline_backtick_pair_stays_approved_root_comment_mock_dir _codex_inline_backtick_pair_stays_approved_root_comment_output _codex_inline_backtick_pair_stays_approved_root_comment_exit
+
+# The fence-marker guard was added to codex_response_is_approved only,
+# but codex_response_is_usage_limit's own callers (the 4 top-level
+# verdict-parsing elif chains) were left unguarded — so a clean SHA-
+# pinned review that quotes a REAL quota notice inside a fenced example
+# (e.g. "No blocking issues found" followed by a ~~~ block containing
+# "You have reached your Codex usage limits") still matched the
+# usage-limit pattern on the unstripped fence content and returned
+# UNAVAILABLE (exit 3) instead of the safe-fail NEEDS_REVISION a fenced
+# response should produce (fresh evidence from PR #1490 finding
+# 3796042503, a followup to 3795661290). The fence-marker guard is now
+# embedded directly inside codex_response_has_fence_marker's callers
+# (usage-limit, environment-error, blocking, approved) rather than at
+# each call site, so every current and future caller benefits
+# automatically — the exact lesson codex_response_is_blocking already
+# taught for quote-stripping (finding 3793367887).
+_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir/gh" <<'CODEX_FENCED_QUOTA_EXAMPLE_NOT_UNAVAILABLE_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade03001234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":318,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:319,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("No blocking issues found\n~~~\nYou have reached your Codex usage limits.\n~~~\n\n**Reviewed commit:** `facade03001`")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_FENCED_QUOTA_EXAMPLE_NOT_UNAVAILABLE_ROOT_COMMENT_GH
+chmod +x "$_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir/gh"
+
+_codex_fenced_quota_example_not_unavailable_root_comment_output=""
+_codex_fenced_quota_example_not_unavailable_root_comment_exit=0
+PATH="$_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir/output.txt" 2>&1 || _codex_fenced_quota_example_not_unavailable_root_comment_exit=$?
+_codex_fenced_quota_example_not_unavailable_root_comment_output="$(cat "$_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir/output.txt")"
+run_test "codex_fenced_quota_example_not_unavailable_root_comment_exit_needs_revision" "1" "$_codex_fenced_quota_example_not_unavailable_root_comment_exit"
+run_test "codex_fenced_quota_example_not_unavailable_root_comment_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_fenced_quota_example_not_unavailable_root_comment_output" | grep "^VERDICT:")"
+rm -rf "$_codex_fenced_quota_example_not_unavailable_root_comment_mock_dir"
+unset _codex_fenced_quota_example_not_unavailable_root_comment_mock_dir _codex_fenced_quota_example_not_unavailable_root_comment_output _codex_fenced_quota_example_not_unavailable_root_comment_exit
+
+# codex_response_priority ranked an ancillary environment-setup-error
+# comment at the same "unrecognized format" tier (2) as a genuine but
+# unrecognized-format submitted review, instead of at the lower
+# availability tier (1) shared with usage-limit notices. Tied at the same
+# timestamp, the setup-error comment then won the tie-break and replaced
+# the review's safe-fail NEEDS_REVISION with an UNAVAILABLE-style
+# codex-github-environment-missing verdict, silently discarding a review
+# that could have been a real rejection (fresh evidence from PR #1490
+# finding 3789722821). Fixture: an ancillary (non-SHA-pinned) environment-
+# setup-error comment and an unrecognized-format submitted review, both
+# timestamped identically.
+_codex_env_error_vs_unrecognized_review_tie_mock_dir="$(mktemp -d)"
+cat > "$_codex_env_error_vs_unrecognized_review_tie_mock_dir/gh" <<'CODEX_ENV_ERROR_VS_UNRECOGNIZED_REVIEW_TIE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'facade004b1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":254,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"facade004b1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Reviewed the changes, nothing further to add at this time."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":255,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ENV_ERROR_VS_UNRECOGNIZED_REVIEW_TIE_GH
+chmod +x "$_codex_env_error_vs_unrecognized_review_tie_mock_dir/gh"
+
+_codex_env_error_vs_unrecognized_review_tie_output=""
+_codex_env_error_vs_unrecognized_review_tie_exit=0
+PATH="$_codex_env_error_vs_unrecognized_review_tie_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_env_error_vs_unrecognized_review_tie_mock_dir/output.txt" 2>&1 || _codex_env_error_vs_unrecognized_review_tie_exit=$?
+_codex_env_error_vs_unrecognized_review_tie_output="$(cat "$_codex_env_error_vs_unrecognized_review_tie_mock_dir/output.txt")"
+run_test "codex_env_error_vs_unrecognized_review_tie_exit_needs_revision" "1" "$_codex_env_error_vs_unrecognized_review_tie_exit"
+run_test "codex_env_error_vs_unrecognized_review_tie_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_env_error_vs_unrecognized_review_tie_output" | grep "^VERDICT:")"
+run_test "codex_env_error_vs_unrecognized_review_tie_reason_not_env_missing" "" \
+  "$(printf '%s\n' "$_codex_env_error_vs_unrecognized_review_tie_output" | grep "^REASON=codex-github-environment-missing")"
+rm -rf "$_codex_env_error_vs_unrecognized_review_tie_mock_dir"
+unset _codex_env_error_vs_unrecognized_review_tie_mock_dir _codex_env_error_vs_unrecognized_review_tie_output _codex_env_error_vs_unrecognized_review_tie_exit
+
+_codex_review_query_failure_mock_dir="$(mktemp -d)"
+cat > "$_codex_review_query_failure_mock_dir/gh" <<'CODEX_REVIEW_QUERY_FAILURE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcreviewfail1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":115,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf 'reviews unavailable\n' >&2
+    exit 1 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_REVIEW_QUERY_FAILURE_GH
+chmod +x "$_codex_review_query_failure_mock_dir/gh"
+
+_codex_review_query_failure_output=""
+_codex_review_query_failure_exit=0
+PATH="$_codex_review_query_failure_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_review_query_failure_mock_dir/output.txt" 2>&1 || _codex_review_query_failure_exit=$?
+_codex_review_query_failure_output="$(cat "$_codex_review_query_failure_mock_dir/output.txt")"
+run_test "codex_review_query_failure_exit_unavailable" "2" "$_codex_review_query_failure_exit"
+run_test "codex_review_query_failure_verdict" "VERDICT: TIMED_OUT — failed to fetch Codex PR reviews (treated as unavailable)" \
+  "$(printf '%s\n' "$_codex_review_query_failure_output" | grep "^VERDICT:")"
+rm -rf "$_codex_review_query_failure_mock_dir"
+unset _codex_review_query_failure_mock_dir _codex_review_query_failure_output _codex_review_query_failure_exit
+
+_codex_latest_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_latest_review_mock_dir/gh" <<'CODEX_LATEST_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abclatestre1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":111,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abclatestre1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: old finding."}]\n'
+    printf '[{"submitted_at":"2026-01-01T00:00:02Z","commit_id":"abclatestre1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_LATEST_REVIEW_GH
+chmod +x "$_codex_latest_review_mock_dir/gh"
+
+_codex_latest_review_output=""
+_codex_latest_review_exit=0
+PATH="$_codex_latest_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_latest_review_mock_dir/output.txt" 2>&1 || _codex_latest_review_exit=$?
+_codex_latest_review_output="$(cat "$_codex_latest_review_mock_dir/output.txt")"
+run_test "codex_latest_current_review_exit_clean" "0" "$_codex_latest_review_exit"
+run_test "codex_latest_current_review_approved" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_latest_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_latest_review_mock_dir"
+unset _codex_latest_review_mock_dir _codex_latest_review_output _codex_latest_review_exit
+
+_codex_stale_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_stale_review_mock_dir/gh" <<'CODEX_STALE_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcstale1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":104,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"oldstale1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_STALE_REVIEW_GH
+chmod +x "$_codex_stale_review_mock_dir/gh"
+
+_codex_stale_review_output=""
+_codex_stale_review_exit=0
+PATH="$_codex_stale_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_stale_review_mock_dir/output.txt" 2>&1 || _codex_stale_review_exit=$?
+_codex_stale_review_output="$(cat "$_codex_stale_review_mock_dir/output.txt")"
+run_test "codex_stale_review_exit_unavailable" "2" "$_codex_stale_review_exit"
+if printf '%s\n' "$_codex_stale_review_output" | grep -q "^VERDICT: APPROVED"; then
+  _codex_stale_review_approved="yes"
+else
+  _codex_stale_review_approved="no"
+fi
+run_test "codex_stale_review_not_approved" "no" "$_codex_stale_review_approved"
+rm -rf "$_codex_stale_review_mock_dir"
+unset _codex_stale_review_mock_dir _codex_stale_review_output _codex_stale_review_exit _codex_stale_review_approved
+
+_codex_stale_inline_mock_dir="$(mktemp -d)"
+cat > "$_codex_stale_inline_mock_dir/gh" <<'CODEX_STALE_INLINE_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcinline1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":112,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[{"created_at":"2026-01-01T00:00:01Z","commit_id":"oldinline1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issue on old head."}]\n'
+    exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_STALE_INLINE_GH
+chmod +x "$_codex_stale_inline_mock_dir/gh"
+
+_codex_stale_inline_output=""
+_codex_stale_inline_exit=0
+PATH="$_codex_stale_inline_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_stale_inline_mock_dir/output.txt" 2>&1 || _codex_stale_inline_exit=$?
+_codex_stale_inline_output="$(cat "$_codex_stale_inline_mock_dir/output.txt")"
+run_test "codex_stale_inline_exit_unavailable" "2" "$_codex_stale_inline_exit"
+if printf '%s\n' "$_codex_stale_inline_output" | grep -q "^VERDICT: NEEDS_REVISION"; then
+  _codex_stale_inline_needs_revision="yes"
+else
+  _codex_stale_inline_needs_revision="no"
+fi
+run_test "codex_stale_inline_not_needs_revision" "no" "$_codex_stale_inline_needs_revision"
+rm -rf "$_codex_stale_inline_mock_dir"
+unset _codex_stale_inline_mock_dir _codex_stale_inline_output _codex_stale_inline_exit _codex_stale_inline_needs_revision
+
+_codex_head_changed_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_head_changed_mock_dir/head_calls"
+cat > "$_codex_head_changed_mock_dir/gh" <<'CODEX_HEAD_CHANGED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    calls_file="$(dirname "$0")/head_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -eq 1 ]; then
+      printf 'abcheadold1234567890\n'
+    else
+      printf 'abcheadnew1234567890\n'
+    fi
+    exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":107,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abcheadold1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_HEAD_CHANGED_GH
+chmod +x "$_codex_head_changed_mock_dir/gh"
+
+_codex_head_changed_output=""
+_codex_head_changed_exit=0
+PATH="$_codex_head_changed_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_head_changed_mock_dir/output.txt" 2>&1 || _codex_head_changed_exit=$?
+_codex_head_changed_output="$(cat "$_codex_head_changed_mock_dir/output.txt")"
+run_test "codex_head_changed_exit_unavailable" "2" "$_codex_head_changed_exit"
+run_test "codex_head_changed_reason" "REASON=codex-github-head-changed" \
+  "$(printf '%s\n' "$_codex_head_changed_output" | grep "^REASON=")"
+rm -rf "$_codex_head_changed_mock_dir"
+unset _codex_head_changed_mock_dir _codex_head_changed_output _codex_head_changed_exit
+
+_codex_environment_with_review_mock_dir="$(mktemp -d)"
+cat > "$_codex_environment_with_review_mock_dir/gh" <<'CODEX_ENVIRONMENT_WITH_REVIEW_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcenvok1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":108,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:02Z","commit_id":"abcenvok1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":207,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ENVIRONMENT_WITH_REVIEW_GH
+chmod +x "$_codex_environment_with_review_mock_dir/gh"
+
+_codex_environment_with_review_output=""
+_codex_environment_with_review_exit=0
+PATH="$_codex_environment_with_review_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_environment_with_review_mock_dir/output.txt" 2>&1 || _codex_environment_with_review_exit=$?
+_codex_environment_with_review_output="$(cat "$_codex_environment_with_review_mock_dir/output.txt")"
+run_test "codex_environment_with_current_review_exit_clean" "0" "$_codex_environment_with_review_exit"
+run_test "codex_environment_with_current_review_approved" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_environment_with_review_output" | grep "^VERDICT:")"
+rm -rf "$_codex_environment_with_review_mock_dir"
+unset _codex_environment_with_review_mock_dir _codex_environment_with_review_output _codex_environment_with_review_exit
+
+_codex_environment_then_clean_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_environment_then_clean_comment_mock_dir/gh" <<'CODEX_ENVIRONMENT_THEN_CLEAN_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcenvcomment1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":109,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":208,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    printf '[{"id":209,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector"},"body":"No blocking issues found."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ENVIRONMENT_THEN_CLEAN_COMMENT_GH
+chmod +x "$_codex_environment_then_clean_comment_mock_dir/gh"
+
+_codex_environment_then_clean_comment_output=""
+_codex_environment_then_clean_comment_exit=0
+PATH="$_codex_environment_then_clean_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_environment_then_clean_comment_mock_dir/output.txt" 2>&1 || _codex_environment_then_clean_comment_exit=$?
+_codex_environment_then_clean_comment_output="$(cat "$_codex_environment_then_clean_comment_mock_dir/output.txt")"
+run_test "codex_environment_then_clean_comment_exit_unavailable" "2" "$_codex_environment_then_clean_comment_exit"
+if printf '%s\n' "$_codex_environment_then_clean_comment_output" | grep -q "^VERDICT: APPROVED"; then
+  _codex_environment_then_clean_comment_approved="yes"
+else
+  _codex_environment_then_clean_comment_approved="no"
+fi
+run_test "codex_environment_then_clean_comment_not_approved" "no" "$_codex_environment_then_clean_comment_approved"
+rm -rf "$_codex_environment_then_clean_comment_mock_dir"
+unset _codex_environment_then_clean_comment_mock_dir _codex_environment_then_clean_comment_output _codex_environment_then_clean_comment_exit _codex_environment_then_clean_comment_approved
+
+_codex_cloud_environment_finding_mock_dir="$(mktemp -d)"
+cat > "$_codex_cloud_environment_finding_mock_dir/gh" <<'CODEX_CLOUD_ENVIRONMENT_FINDING_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abccloudfinding1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":113,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abccloudfinding1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: the Codex cloud environment is missing required secrets."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_CLOUD_ENVIRONMENT_FINDING_GH
+chmod +x "$_codex_cloud_environment_finding_mock_dir/gh"
+
+_codex_cloud_environment_finding_output=""
+_codex_cloud_environment_finding_exit=0
+PATH="$_codex_cloud_environment_finding_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_cloud_environment_finding_mock_dir/output.txt" 2>&1 || _codex_cloud_environment_finding_exit=$?
+_codex_cloud_environment_finding_output="$(cat "$_codex_cloud_environment_finding_mock_dir/output.txt")"
+run_test "codex_cloud_environment_finding_exit_needs_revision" "1" "$_codex_cloud_environment_finding_exit"
+run_test "codex_cloud_environment_finding_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_cloud_environment_finding_output" | grep "^VERDICT:")"
+rm -rf "$_codex_cloud_environment_finding_mock_dir"
+unset _codex_cloud_environment_finding_mock_dir _codex_cloud_environment_finding_output _codex_cloud_environment_finding_exit
+
+_codex_environment_phrase_finding_mock_dir="$(mktemp -d)"
+cat > "$_codex_environment_phrase_finding_mock_dir/gh" <<'CODEX_ENVIRONMENT_PHRASE_FINDING_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcenvphrase1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":114,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abcenvphrase1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Must fix docs that tell users to create an environment for this repo."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ENVIRONMENT_PHRASE_FINDING_GH
+chmod +x "$_codex_environment_phrase_finding_mock_dir/gh"
+
+_codex_environment_phrase_finding_output=""
+_codex_environment_phrase_finding_exit=0
+PATH="$_codex_environment_phrase_finding_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_environment_phrase_finding_mock_dir/output.txt" 2>&1 || _codex_environment_phrase_finding_exit=$?
+_codex_environment_phrase_finding_output="$(cat "$_codex_environment_phrase_finding_mock_dir/output.txt")"
+run_test "codex_environment_phrase_finding_exit_needs_revision" "1" "$_codex_environment_phrase_finding_exit"
+run_test "codex_environment_phrase_finding_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_environment_phrase_finding_output" | grep "^VERDICT:")"
+rm -rf "$_codex_environment_phrase_finding_mock_dir"
+unset _codex_environment_phrase_finding_mock_dir _codex_environment_phrase_finding_output _codex_environment_phrase_finding_exit
+
+_codex_quoted_environment_finding_mock_dir="$(mktemp -d)"
+cat > "$_codex_quoted_environment_finding_mock_dir/gh" <<'CODEX_QUOTED_ENVIRONMENT_FINDING_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcenvquote1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":116,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"submitted_at":"2026-01-01T00:00:01Z","commit_id":"abcenvquote1234567890","user":{"login":"chatgpt-codex-connector[bot]"},"body":"Blocking issues: docs must not claim: To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_QUOTED_ENVIRONMENT_FINDING_GH
+chmod +x "$_codex_quoted_environment_finding_mock_dir/gh"
+
+_codex_quoted_environment_finding_output=""
+_codex_quoted_environment_finding_exit=0
+PATH="$_codex_quoted_environment_finding_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_quoted_environment_finding_mock_dir/output.txt" 2>&1 || _codex_quoted_environment_finding_exit=$?
+_codex_quoted_environment_finding_output="$(cat "$_codex_quoted_environment_finding_mock_dir/output.txt")"
+run_test "codex_quoted_environment_finding_exit_needs_revision" "1" "$_codex_quoted_environment_finding_exit"
+run_test "codex_quoted_environment_finding_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_quoted_environment_finding_output" | grep "^VERDICT:")"
+rm -rf "$_codex_quoted_environment_finding_mock_dir"
+unset _codex_quoted_environment_finding_mock_dir _codex_quoted_environment_finding_output _codex_quoted_environment_finding_exit
+
+_codex_final_ack_clean_comment_mock_dir="$(mktemp -d)"
+printf '0\n' > "$_codex_final_ack_clean_comment_mock_dir/comment_calls"
+cat > "$_codex_final_ack_clean_comment_mock_dir/gh" <<'CODEX_FINAL_ACK_CLEAN_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcfinalcomment1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":110,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    calls_file="$(dirname "$0")/comment_calls"
+    calls="$(cat "$calls_file")"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$calls_file"
+    if [ "$calls" -lt 3 ]; then
+      printf '[{"id":210,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"If Codex has suggestions, it will comment; otherwise it will react with thumbs up."}]\n'
+    else
+      printf '[{"id":210,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"If Codex has suggestions, it will comment; otherwise it will react with thumbs up."},{"id":211,"created_at":"2026-01-01T00:00:02Z","user":{"login":"chatgpt-codex-connector"},"body":"No blocking issues found."}]\n'
+    fi
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_FINAL_ACK_CLEAN_COMMENT_GH
+chmod +x "$_codex_final_ack_clean_comment_mock_dir/gh"
+
+_codex_final_ack_clean_comment_output=""
+_codex_final_ack_clean_comment_exit=0
+PATH="$_codex_final_ack_clean_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_final_ack_clean_comment_mock_dir/output.txt" 2>&1 || _codex_final_ack_clean_comment_exit=$?
+_codex_final_ack_clean_comment_output="$(cat "$_codex_final_ack_clean_comment_mock_dir/output.txt")"
+run_test "codex_final_ack_clean_comment_exit_unavailable" "2" "$_codex_final_ack_clean_comment_exit"
+if printf '%s\n' "$_codex_final_ack_clean_comment_output" | grep -q "^VERDICT: APPROVED"; then
+  _codex_final_ack_clean_comment_approved="yes"
+else
+  _codex_final_ack_clean_comment_approved="no"
+fi
+run_test "codex_final_ack_clean_comment_not_approved" "no" "$_codex_final_ack_clean_comment_approved"
+rm -rf "$_codex_final_ack_clean_comment_mock_dir"
+unset _codex_final_ack_clean_comment_mock_dir _codex_final_ack_clean_comment_output _codex_final_ack_clean_comment_exit _codex_final_ack_clean_comment_approved
+
+_codex_environment_mock_dir="$(mktemp -d)"
+cat > "$_codex_environment_mock_dir/gh" <<'CODEX_ENVIRONMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcenv1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":105,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":205,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ENVIRONMENT_GH
+chmod +x "$_codex_environment_mock_dir/gh"
+
+_codex_environment_output=""
+_codex_environment_exit=0
+PATH="$_codex_environment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_environment_mock_dir/output.txt" 2>&1 || _codex_environment_exit=$?
+_codex_environment_output="$(cat "$_codex_environment_mock_dir/output.txt")"
+run_test "codex_environment_missing_exit_unavailable" "2" "$_codex_environment_exit"
+run_test "codex_environment_missing_reason" "REASON=codex-github-environment-missing" \
+  "$(printf '%s\n' "$_codex_environment_output" | grep "^REASON=")"
+rm -rf "$_codex_environment_mock_dir"
+unset _codex_environment_mock_dir _codex_environment_output _codex_environment_exit
+
+_codex_same_second_root_comment_mock_dir="$(mktemp -d)"
+cat > "$_codex_same_second_root_comment_mock_dir/gh" <<'CODEX_SAME_SECOND_ROOT_COMMENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcsamesecond1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":120,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":119,"created_at":"2026-01-01T00:00:00Z","user":{"login":"chatgpt-codex-connector"},"body":"Older same-second setup response."}]\n'
+    printf '[{"id":121,"created_at":"2026-01-01T00:00:00Z","user":{"login":"chatgpt-codex-connector"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_SAME_SECOND_ROOT_COMMENT_GH
+chmod +x "$_codex_same_second_root_comment_mock_dir/gh"
+
+_codex_same_second_root_comment_output=""
+_codex_same_second_root_comment_exit=0
+PATH="$_codex_same_second_root_comment_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_same_second_root_comment_mock_dir/output.txt" 2>&1 || _codex_same_second_root_comment_exit=$?
+_codex_same_second_root_comment_output="$(cat "$_codex_same_second_root_comment_mock_dir/output.txt")"
+run_test "codex_same_second_root_comment_exit_unavailable" "2" "$_codex_same_second_root_comment_exit"
+run_test "codex_same_second_root_comment_reason" "REASON=codex-github-environment-missing" \
+  "$(printf '%s\n' "$_codex_same_second_root_comment_output" | grep "^REASON=")"
+rm -rf "$_codex_same_second_root_comment_mock_dir"
+unset _codex_same_second_root_comment_mock_dir _codex_same_second_root_comment_output _codex_same_second_root_comment_exit
 
 _unlock_pr="80213$$"
 _unlock_lock_dir="/tmp/pr-review-loop-${_unlock_pr}.lockdir"
