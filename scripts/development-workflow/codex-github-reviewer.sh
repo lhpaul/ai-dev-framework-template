@@ -655,15 +655,25 @@ codex_normalize_whitespace() {
 # (or any construction) to hide in — the entire body, first character to
 # last, must be part of this one literal.
 #
-# The ONE bounded placeholder this design permits is the commit SHA,
-# bound to git's own documented abbreviated-to-full SHA-1 hex-length
-# range (`[0-9a-f]{7,40}`) — NOT to the single length any one capture
-# happens to show. No other field is a placeholder, anywhere in the
-# verdict sentence or the footer. Extending this array requires a live
-# capture of the new wording and the same review discipline the deleted
-# CODEX_APPROVAL_PATTERN once required — it is the ONLY lever that can
-# widen the approval surface, and reintroducing any truncation step
-# before matching is explicitly forbidden (Decision 2/5).
+# This template has exactly TWO bounded placeholders, both anchored at a
+# fixed position between exact literal text on either side, never a
+# general wildcard:
+#
+# 1. The commit SHA, bound to git's own documented abbreviated-to-full
+#    SHA-1 hex-length range (`[0-9a-f]{7,40}`) — NOT to the single
+#    length any one capture happens to show.
+# 2. The "flavor" slot immediately after "Didn't find any major issues. "
+#    — see the dedicated comment block below for its full history and
+#    bound derivation (issue #1491's implementation plan, Decision 2
+#    Addendum).
+#
+# No other field is a placeholder, anywhere in the verdict sentence or
+# the footer. Extending either placeholder's bound, or adding a whole new
+# template, requires a live capture of the new evidence and the same
+# review discipline the deleted CODEX_APPROVAL_PATTERN once required —
+# these are the ONLY levers that can widen the approval surface, and
+# reintroducing any truncation step before matching is explicitly
+# forbidden (Decision 2/5).
 #
 # The footer portion of this literal was verified byte-identical (modulo
 # one API-transport-only trailing newline that whitespace normalization
@@ -677,24 +687,54 @@ codex_normalize_whitespace() {
 # character, which is exactly the kind of unreviewed widening this
 # design forbids.
 #
-# The "flavor" slot immediately after "Didn't find any major issues. " is
-# a bounded, parenthesized alternation of every literal flavor token
-# evidenced by a live Codex response — NOT a single fixed word and NOT a
-# general wildcard/character-class. This was learned the hard way: the
-# single-literal ("Swish!") version of this template shipped on this
-# repository's own PR #1494, whose first Codex review used ":rocket:"
-# instead and safe-failed on real traffic (issue #1491's implementation
-# plan, Decision 2 Addendum). A repository-history sweep of every Codex
-# clean-verdict root comment found 14 distinct tokens; every one is
-# reproduced here as an ERE-escaped literal (note the escaped `.` in
-# "Chef's kiss\." and "Bravo\." and the escaped `+` in ":\+1:" — these
-# MUST stay escaped, or the "." would silently become an any-character
-# wildcard and the "+" a one-or-more quantifier, each exactly the kind of
-# unreviewed widening this design forbids). Extending this alternation
-# with a newly observed token requires the identical live-capture
-# discipline as adding a whole new template — see Decision 2 Addendum.
+# The "flavor" slot's placeholder, `[^*`[:cntrl:]]{1,40}`, and why it
+# replaced a 14-token literal alternation (issue #1491's implementation
+# plan, Decision 2 second addendum — supersedes the first addendum's
+# enumeration approach):
+#
+# History: this template originally hardcoded the single literal
+# "Swish!" here. This repository's own PR #1494 falsified that
+# assumption on its first real-traffic exercise — its Codex review used
+# ":rocket:" instead and safe-failed. A repository-history sweep then
+# found 14 distinct evidenced tokens, not the 1-2 anticipated — single
+# words, full sentences, GitHub emoji shortcodes, inconsistent trailing
+# punctuation. That diversity, discovered from fewer than 50 samples, is
+# LLM-generated variety, not a fixed vocabulary: enumerating it would not
+# converge, reopening issue #1491's original complaint (an open-ended
+# enumeration that keeps finding one more case) on a new axis, just as
+# every disqualifier/vocabulary design earlier in this plan's history
+# already failed to converge for the same structural reason. Attempting a
+# 14-token alternation shipped briefly, then was replaced by this bounded
+# placeholder before merge, once that pattern became clear.
+#
+# Bound derivation: `{1,40}` — 40 is the longest evidenced token's length
+# (31 characters, "More of your lovely PRs please.") rounded up to the
+# nearest 10 with modest headroom, wide enough to admit a somewhat longer
+# genuine flavor phrase without being large enough to admit multi-sentence
+# injected content. `[^*`[:cntrl:]]` excludes only the characters that
+# could let this slot swallow adjacent template structure: `*` (protects
+# the literal `**Reviewed commit:**` bold-marker syntax immediately
+# after this slot), backtick (protects the backtick-delimited SHA field
+# that follows), and every control character including newline/carriage
+# return (defense in depth — whitespace normalization, Decision 1,
+# already guarantees no raw control character survives to this point,
+# but the exclusion is kept explicit rather than relying solely on that
+# guarantee). No apostrophe, colon, comma, period, exclamation mark, or
+# plain space is excluded — every one of those appears in at least one
+# evidenced token and the slot must keep admitting ordinary punctuation.
+#
+# Residual risk, stated plainly rather than claimed away: this is now a
+# genuine (bounded) placeholder, not a literal — a false `APPROVED` is
+# possible if Codex ever asserts "Didn't find any major issues." and then
+# places an actual directive inside this 40-character slot while still
+# reproducing the exact, complete footer verbatim afterward. This
+# requires self-contradictory vendor output (a clean verdict immediately
+# followed by an instruction, inside one otherwise-genuine response) and
+# is treated as an accepted, disclosed trade — see Decision 2 second
+# addendum and Risks & Mitigations for the full accounting — not a zero-
+# risk claim.
 CODEX_APPROVED_TEMPLATES=(
-  '^Codex Review: Didn'"'"'t find any major issues\. (Swish!|:rocket:|Nice work!|Chef'"'"'s kiss\.|You'"'"'re on a roll\.|:tada:|Another round soon, please!|:\+1:|Bravo\.|Keep it up!|Delightful!|Keep them coming!|Can'"'"'t wait for the next one!|More of your lovely PRs please\.) \*\*Reviewed commit:\*\* `[0-9a-f]{7,40}` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> \[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment "@codex review"\. If Codex has suggestions, it will comment; otherwise it will react with 👍\. Codex can also answer questions or update the PR\. Try commenting "@codex address that feedback"\. </details>$'
+  '^Codex Review: Didn'"'"'t find any major issues\. [^*`[:cntrl:]]{1,40} \*\*Reviewed commit:\*\* `[0-9a-f]{7,40}` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> \[Your team has set up Codex to review pull requests in this repo\]\(https://chatgpt\.com/codex/cloud/settings/general\)\. Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment "@codex review"\. If Codex has suggestions, it will comment; otherwise it will react with 👍\. Codex can also answer questions or update the PR\. Try commenting "@codex address that feedback"\. </details>$'
 )
 
 # `APPROVED` requires the ENTIRE, untruncated response — whitespace-

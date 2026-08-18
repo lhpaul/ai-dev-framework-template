@@ -9221,29 +9221,32 @@ unset _codex_footer_near_miss_async_reaction_final_safe_fails_mock_dir _codex_fo
 
 
 # ---------------------------------------------------------------------------
-# Flavor-token enumeration (issue #1491 follow-up, live-evidence correction
-# after PR #1494's own Codex review returned a clean response using
-# ":rocket:" instead of the single "Swish!" literal the shipped template
-# hardcoded — the vendor rotates this one slot through a pool of tokens, not
-# a fixed word. CODEX_APPROVED_TEMPLATES' flavor slot is now a bounded
-# alternation of every token evidenced by a live GitHub capture (comment
-# ids and PR numbers recorded in the implementation plan's Decision 2
-# addendum and the smoke-test runbook) — never an invented token, never a
-# general wildcard. Adding a token here requires the same review discipline
-# as adding a template. codex_e1_real_pr1489_capture_approved above already
-# covers "Swish!" end to end; this block covers every other evidenced token.
+# Bounded flavor-slot placeholder (issue #1491 follow-up, second correction).
+# The first correction (a 14-token literal alternation) was itself replaced
+# before merge: 14 distinct tokens from under 50 samples — single words,
+# full sentences, GitHub emoji shortcodes, inconsistent trailing punctuation
+# — is LLM-generated variety, not a fixed vocabulary, and enumerating it
+# would not converge (issue #1491's original complaint reappearing on a new
+# axis). CODEX_APPROVED_TEMPLATES' flavor slot is now the single bounded
+# placeholder `[^*`[:cntrl:]]{1,40}` — see the production script's own
+# comment above CODEX_APPROVED_TEMPLATES and the implementation plan's
+# Decision 2 second addendum for the full derivation of both the length
+# cap and the excluded-character set. codex_e1_real_pr1489_capture_approved
+# above already covers "Swish!" end to end and is unchanged; this block
+# covers the remaining evidenced tokens plus the placeholder's own
+# structure/length guards.
 # ---------------------------------------------------------------------------
-# Flavor token: 'Nice work!' (issue #1491 follow-up; live evidence swept from repo history)
-_codex_flavor_nice_work_approved_mock_dir="$(mktemp -d)"
-cat > "$_codex_flavor_nice_work_approved_mock_dir/gh" <<'CODEX_FLAVOR_NICE_WORK_APPROVED_GH'
+# Evidenced flavor token: 'Nice work!' (issue #1491 follow-up; approved by the bounded placeholder)
+_codex_placeholder_nice_work_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_nice_work_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_NICE_WORK_APPROVED_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
     exit 0 ;;
   *"pr view"*headRefOid*)
-    printf 'f1a00000011234567890\n'; exit 0 ;;
+    printf 'fa00000011234567890\n'; exit 0 ;;
   *"--method POST"*)
-    printf '{"id":901,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+    printf '{"id":701,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"issues/comments/"*"/reactions"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
@@ -9251,40 +9254,40 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:951,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Nice work! **Reviewed commit:** `f1a0000001` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    jq -nc '[{id:751,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Nice work! **Reviewed commit:** `fa0000001` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_FLAVOR_NICE_WORK_APPROVED_GH
-chmod +x "$_codex_flavor_nice_work_approved_mock_dir/gh"
+CODEX_PLACEHOLDER_NICE_WORK_APPROVED_GH
+chmod +x "$_codex_placeholder_nice_work_approved_mock_dir/gh"
 
-_codex_flavor_nice_work_approved_output=""
-_codex_flavor_nice_work_approved_exit=0
-PATH="$_codex_flavor_nice_work_approved_mock_dir:$PATH" \
+_codex_placeholder_nice_work_approved_output=""
+_codex_placeholder_nice_work_approved_exit=0
+PATH="$_codex_placeholder_nice_work_approved_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_flavor_nice_work_approved_mock_dir/output.txt" 2>&1 || _codex_flavor_nice_work_approved_exit=$?
-_codex_flavor_nice_work_approved_output="$(cat "$_codex_flavor_nice_work_approved_mock_dir/output.txt")"
-run_test "codex_flavor_nice_work_approved_exit_clean" "0" "$_codex_flavor_nice_work_approved_exit"
-run_test "codex_flavor_nice_work_approved_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_flavor_nice_work_approved_output" | grep "^VERDICT:")"
-rm -rf "$_codex_flavor_nice_work_approved_mock_dir"
-unset _codex_flavor_nice_work_approved_mock_dir _codex_flavor_nice_work_approved_output _codex_flavor_nice_work_approved_exit
+  >"$_codex_placeholder_nice_work_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_nice_work_approved_exit=$?
+_codex_placeholder_nice_work_approved_output="$(cat "$_codex_placeholder_nice_work_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_nice_work_approved_exit_clean" "0" "$_codex_placeholder_nice_work_approved_exit"
+run_test "codex_placeholder_nice_work_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_placeholder_nice_work_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_nice_work_approved_mock_dir"
+unset _codex_placeholder_nice_work_approved_mock_dir _codex_placeholder_nice_work_approved_output _codex_placeholder_nice_work_approved_exit
 
-# Flavor token: "Chef's kiss." (issue #1491 follow-up; live evidence swept from repo history)
-_codex_flavor_chefs_kiss_approved_mock_dir="$(mktemp -d)"
-cat > "$_codex_flavor_chefs_kiss_approved_mock_dir/gh" <<'CODEX_FLAVOR_CHEFS_KISS_APPROVED_GH'
+# Evidenced flavor token: "Chef's kiss." (issue #1491 follow-up; approved by the bounded placeholder)
+_codex_placeholder_chefs_kiss_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_chefs_kiss_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_CHEFS_KISS_APPROVED_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
     exit 0 ;;
   *"pr view"*headRefOid*)
-    printf 'f1a00000021234567890\n'; exit 0 ;;
+    printf 'fa00000021234567890\n'; exit 0 ;;
   *"--method POST"*)
-    printf '{"id":902,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+    printf '{"id":702,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"issues/comments/"*"/reactions"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
@@ -9292,40 +9295,40 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:952,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Chef'\''s kiss. **Reviewed commit:** `f1a0000002` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    jq -nc '[{id:752,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Chef'\''s kiss. **Reviewed commit:** `fa0000002` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_FLAVOR_CHEFS_KISS_APPROVED_GH
-chmod +x "$_codex_flavor_chefs_kiss_approved_mock_dir/gh"
+CODEX_PLACEHOLDER_CHEFS_KISS_APPROVED_GH
+chmod +x "$_codex_placeholder_chefs_kiss_approved_mock_dir/gh"
 
-_codex_flavor_chefs_kiss_approved_output=""
-_codex_flavor_chefs_kiss_approved_exit=0
-PATH="$_codex_flavor_chefs_kiss_approved_mock_dir:$PATH" \
+_codex_placeholder_chefs_kiss_approved_output=""
+_codex_placeholder_chefs_kiss_approved_exit=0
+PATH="$_codex_placeholder_chefs_kiss_approved_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_flavor_chefs_kiss_approved_mock_dir/output.txt" 2>&1 || _codex_flavor_chefs_kiss_approved_exit=$?
-_codex_flavor_chefs_kiss_approved_output="$(cat "$_codex_flavor_chefs_kiss_approved_mock_dir/output.txt")"
-run_test "codex_flavor_chefs_kiss_approved_exit_clean" "0" "$_codex_flavor_chefs_kiss_approved_exit"
-run_test "codex_flavor_chefs_kiss_approved_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_flavor_chefs_kiss_approved_output" | grep "^VERDICT:")"
-rm -rf "$_codex_flavor_chefs_kiss_approved_mock_dir"
-unset _codex_flavor_chefs_kiss_approved_mock_dir _codex_flavor_chefs_kiss_approved_output _codex_flavor_chefs_kiss_approved_exit
+  >"$_codex_placeholder_chefs_kiss_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_chefs_kiss_approved_exit=$?
+_codex_placeholder_chefs_kiss_approved_output="$(cat "$_codex_placeholder_chefs_kiss_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_chefs_kiss_approved_exit_clean" "0" "$_codex_placeholder_chefs_kiss_approved_exit"
+run_test "codex_placeholder_chefs_kiss_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_placeholder_chefs_kiss_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_chefs_kiss_approved_mock_dir"
+unset _codex_placeholder_chefs_kiss_approved_mock_dir _codex_placeholder_chefs_kiss_approved_output _codex_placeholder_chefs_kiss_approved_exit
 
-# Flavor token: "You're on a roll." (issue #1491 follow-up; live evidence swept from repo history)
-_codex_flavor_youre_on_a_roll_approved_mock_dir="$(mktemp -d)"
-cat > "$_codex_flavor_youre_on_a_roll_approved_mock_dir/gh" <<'CODEX_FLAVOR_YOURE_ON_A_ROLL_APPROVED_GH'
+# Evidenced flavor token: "You're on a roll." (issue #1491 follow-up; approved by the bounded placeholder)
+_codex_placeholder_youre_on_a_roll_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_youre_on_a_roll_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_YOURE_ON_A_ROLL_APPROVED_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
     exit 0 ;;
   *"pr view"*headRefOid*)
-    printf 'f1a00000031234567890\n'; exit 0 ;;
+    printf 'fa00000031234567890\n'; exit 0 ;;
   *"--method POST"*)
-    printf '{"id":903,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+    printf '{"id":703,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"issues/comments/"*"/reactions"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
@@ -9333,40 +9336,40 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:953,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. You'\''re on a roll. **Reviewed commit:** `f1a0000003` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    jq -nc '[{id:753,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. You'\''re on a roll. **Reviewed commit:** `fa0000003` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_FLAVOR_YOURE_ON_A_ROLL_APPROVED_GH
-chmod +x "$_codex_flavor_youre_on_a_roll_approved_mock_dir/gh"
+CODEX_PLACEHOLDER_YOURE_ON_A_ROLL_APPROVED_GH
+chmod +x "$_codex_placeholder_youre_on_a_roll_approved_mock_dir/gh"
 
-_codex_flavor_youre_on_a_roll_approved_output=""
-_codex_flavor_youre_on_a_roll_approved_exit=0
-PATH="$_codex_flavor_youre_on_a_roll_approved_mock_dir:$PATH" \
+_codex_placeholder_youre_on_a_roll_approved_output=""
+_codex_placeholder_youre_on_a_roll_approved_exit=0
+PATH="$_codex_placeholder_youre_on_a_roll_approved_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_flavor_youre_on_a_roll_approved_mock_dir/output.txt" 2>&1 || _codex_flavor_youre_on_a_roll_approved_exit=$?
-_codex_flavor_youre_on_a_roll_approved_output="$(cat "$_codex_flavor_youre_on_a_roll_approved_mock_dir/output.txt")"
-run_test "codex_flavor_youre_on_a_roll_approved_exit_clean" "0" "$_codex_flavor_youre_on_a_roll_approved_exit"
-run_test "codex_flavor_youre_on_a_roll_approved_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_flavor_youre_on_a_roll_approved_output" | grep "^VERDICT:")"
-rm -rf "$_codex_flavor_youre_on_a_roll_approved_mock_dir"
-unset _codex_flavor_youre_on_a_roll_approved_mock_dir _codex_flavor_youre_on_a_roll_approved_output _codex_flavor_youre_on_a_roll_approved_exit
+  >"$_codex_placeholder_youre_on_a_roll_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_youre_on_a_roll_approved_exit=$?
+_codex_placeholder_youre_on_a_roll_approved_output="$(cat "$_codex_placeholder_youre_on_a_roll_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_youre_on_a_roll_approved_exit_clean" "0" "$_codex_placeholder_youre_on_a_roll_approved_exit"
+run_test "codex_placeholder_youre_on_a_roll_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_placeholder_youre_on_a_roll_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_youre_on_a_roll_approved_mock_dir"
+unset _codex_placeholder_youre_on_a_roll_approved_mock_dir _codex_placeholder_youre_on_a_roll_approved_output _codex_placeholder_youre_on_a_roll_approved_exit
 
-# Flavor token: ':tada:' (issue #1491 follow-up; live evidence swept from repo history)
-_codex_flavor_tada_approved_mock_dir="$(mktemp -d)"
-cat > "$_codex_flavor_tada_approved_mock_dir/gh" <<'CODEX_FLAVOR_TADA_APPROVED_GH'
+# Evidenced flavor token: ':tada:' (issue #1491 follow-up; approved by the bounded placeholder)
+_codex_placeholder_tada_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_tada_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_TADA_APPROVED_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
     exit 0 ;;
   *"pr view"*headRefOid*)
-    printf 'f1a00000041234567890\n'; exit 0 ;;
+    printf 'fa00000041234567890\n'; exit 0 ;;
   *"--method POST"*)
-    printf '{"id":904,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+    printf '{"id":704,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"issues/comments/"*"/reactions"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
@@ -9374,40 +9377,40 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:954,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. :tada: **Reviewed commit:** `f1a0000004` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    jq -nc '[{id:754,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. :tada: **Reviewed commit:** `fa0000004` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_FLAVOR_TADA_APPROVED_GH
-chmod +x "$_codex_flavor_tada_approved_mock_dir/gh"
+CODEX_PLACEHOLDER_TADA_APPROVED_GH
+chmod +x "$_codex_placeholder_tada_approved_mock_dir/gh"
 
-_codex_flavor_tada_approved_output=""
-_codex_flavor_tada_approved_exit=0
-PATH="$_codex_flavor_tada_approved_mock_dir:$PATH" \
+_codex_placeholder_tada_approved_output=""
+_codex_placeholder_tada_approved_exit=0
+PATH="$_codex_placeholder_tada_approved_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_flavor_tada_approved_mock_dir/output.txt" 2>&1 || _codex_flavor_tada_approved_exit=$?
-_codex_flavor_tada_approved_output="$(cat "$_codex_flavor_tada_approved_mock_dir/output.txt")"
-run_test "codex_flavor_tada_approved_exit_clean" "0" "$_codex_flavor_tada_approved_exit"
-run_test "codex_flavor_tada_approved_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_flavor_tada_approved_output" | grep "^VERDICT:")"
-rm -rf "$_codex_flavor_tada_approved_mock_dir"
-unset _codex_flavor_tada_approved_mock_dir _codex_flavor_tada_approved_output _codex_flavor_tada_approved_exit
+  >"$_codex_placeholder_tada_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_tada_approved_exit=$?
+_codex_placeholder_tada_approved_output="$(cat "$_codex_placeholder_tada_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_tada_approved_exit_clean" "0" "$_codex_placeholder_tada_approved_exit"
+run_test "codex_placeholder_tada_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_placeholder_tada_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_tada_approved_mock_dir"
+unset _codex_placeholder_tada_approved_mock_dir _codex_placeholder_tada_approved_output _codex_placeholder_tada_approved_exit
 
-# Flavor token: 'Another round soon, please!' (issue #1491 follow-up; live evidence swept from repo history)
-_codex_flavor_another_round_soon_please_approved_mock_dir="$(mktemp -d)"
-cat > "$_codex_flavor_another_round_soon_please_approved_mock_dir/gh" <<'CODEX_FLAVOR_ANOTHER_ROUND_SOON_PLEASE_APPROVED_GH'
+# Evidenced flavor token: 'Another round soon, please!' (issue #1491 follow-up; approved by the bounded placeholder)
+_codex_placeholder_another_round_soon_please_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_another_round_soon_please_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_ANOTHER_ROUND_SOON_PLEASE_APPROVED_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
     exit 0 ;;
   *"pr view"*headRefOid*)
-    printf 'f1a00000051234567890\n'; exit 0 ;;
+    printf 'fa00000051234567890\n'; exit 0 ;;
   *"--method POST"*)
-    printf '{"id":905,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+    printf '{"id":705,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"issues/comments/"*"/reactions"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
@@ -9415,40 +9418,40 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:955,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Another round soon, please! **Reviewed commit:** `f1a0000005` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    jq -nc '[{id:755,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Another round soon, please! **Reviewed commit:** `fa0000005` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_FLAVOR_ANOTHER_ROUND_SOON_PLEASE_APPROVED_GH
-chmod +x "$_codex_flavor_another_round_soon_please_approved_mock_dir/gh"
+CODEX_PLACEHOLDER_ANOTHER_ROUND_SOON_PLEASE_APPROVED_GH
+chmod +x "$_codex_placeholder_another_round_soon_please_approved_mock_dir/gh"
 
-_codex_flavor_another_round_soon_please_approved_output=""
-_codex_flavor_another_round_soon_please_approved_exit=0
-PATH="$_codex_flavor_another_round_soon_please_approved_mock_dir:$PATH" \
+_codex_placeholder_another_round_soon_please_approved_output=""
+_codex_placeholder_another_round_soon_please_approved_exit=0
+PATH="$_codex_placeholder_another_round_soon_please_approved_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_flavor_another_round_soon_please_approved_mock_dir/output.txt" 2>&1 || _codex_flavor_another_round_soon_please_approved_exit=$?
-_codex_flavor_another_round_soon_please_approved_output="$(cat "$_codex_flavor_another_round_soon_please_approved_mock_dir/output.txt")"
-run_test "codex_flavor_another_round_soon_please_approved_exit_clean" "0" "$_codex_flavor_another_round_soon_please_approved_exit"
-run_test "codex_flavor_another_round_soon_please_approved_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_flavor_another_round_soon_please_approved_output" | grep "^VERDICT:")"
-rm -rf "$_codex_flavor_another_round_soon_please_approved_mock_dir"
-unset _codex_flavor_another_round_soon_please_approved_mock_dir _codex_flavor_another_round_soon_please_approved_output _codex_flavor_another_round_soon_please_approved_exit
+  >"$_codex_placeholder_another_round_soon_please_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_another_round_soon_please_approved_exit=$?
+_codex_placeholder_another_round_soon_please_approved_output="$(cat "$_codex_placeholder_another_round_soon_please_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_another_round_soon_please_approved_exit_clean" "0" "$_codex_placeholder_another_round_soon_please_approved_exit"
+run_test "codex_placeholder_another_round_soon_please_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_placeholder_another_round_soon_please_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_another_round_soon_please_approved_mock_dir"
+unset _codex_placeholder_another_round_soon_please_approved_mock_dir _codex_placeholder_another_round_soon_please_approved_output _codex_placeholder_another_round_soon_please_approved_exit
 
-# Flavor token: ':+1:' (issue #1491 follow-up; live evidence swept from repo history)
-_codex_flavor_plus_one_approved_mock_dir="$(mktemp -d)"
-cat > "$_codex_flavor_plus_one_approved_mock_dir/gh" <<'CODEX_FLAVOR_PLUS_ONE_APPROVED_GH'
+# Evidenced flavor token: ':+1:' (issue #1491 follow-up; approved by the bounded placeholder)
+_codex_placeholder_plus_one_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_plus_one_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_PLUS_ONE_APPROVED_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
     exit 0 ;;
   *"pr view"*headRefOid*)
-    printf 'f1a00000061234567890\n'; exit 0 ;;
+    printf 'fa00000061234567890\n'; exit 0 ;;
   *"--method POST"*)
-    printf '{"id":906,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+    printf '{"id":706,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"issues/comments/"*"/reactions"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
@@ -9456,40 +9459,40 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:956,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. :+1: **Reviewed commit:** `f1a0000006` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    jq -nc '[{id:756,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. :+1: **Reviewed commit:** `fa0000006` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_FLAVOR_PLUS_ONE_APPROVED_GH
-chmod +x "$_codex_flavor_plus_one_approved_mock_dir/gh"
+CODEX_PLACEHOLDER_PLUS_ONE_APPROVED_GH
+chmod +x "$_codex_placeholder_plus_one_approved_mock_dir/gh"
 
-_codex_flavor_plus_one_approved_output=""
-_codex_flavor_plus_one_approved_exit=0
-PATH="$_codex_flavor_plus_one_approved_mock_dir:$PATH" \
+_codex_placeholder_plus_one_approved_output=""
+_codex_placeholder_plus_one_approved_exit=0
+PATH="$_codex_placeholder_plus_one_approved_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_flavor_plus_one_approved_mock_dir/output.txt" 2>&1 || _codex_flavor_plus_one_approved_exit=$?
-_codex_flavor_plus_one_approved_output="$(cat "$_codex_flavor_plus_one_approved_mock_dir/output.txt")"
-run_test "codex_flavor_plus_one_approved_exit_clean" "0" "$_codex_flavor_plus_one_approved_exit"
-run_test "codex_flavor_plus_one_approved_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_flavor_plus_one_approved_output" | grep "^VERDICT:")"
-rm -rf "$_codex_flavor_plus_one_approved_mock_dir"
-unset _codex_flavor_plus_one_approved_mock_dir _codex_flavor_plus_one_approved_output _codex_flavor_plus_one_approved_exit
+  >"$_codex_placeholder_plus_one_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_plus_one_approved_exit=$?
+_codex_placeholder_plus_one_approved_output="$(cat "$_codex_placeholder_plus_one_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_plus_one_approved_exit_clean" "0" "$_codex_placeholder_plus_one_approved_exit"
+run_test "codex_placeholder_plus_one_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_placeholder_plus_one_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_plus_one_approved_mock_dir"
+unset _codex_placeholder_plus_one_approved_mock_dir _codex_placeholder_plus_one_approved_output _codex_placeholder_plus_one_approved_exit
 
-# Flavor token: 'Bravo.' (issue #1491 follow-up; live evidence swept from repo history)
-_codex_flavor_bravo_approved_mock_dir="$(mktemp -d)"
-cat > "$_codex_flavor_bravo_approved_mock_dir/gh" <<'CODEX_FLAVOR_BRAVO_APPROVED_GH'
+# Evidenced flavor token: 'Bravo.' (issue #1491 follow-up; approved by the bounded placeholder)
+_codex_placeholder_bravo_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_bravo_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_BRAVO_APPROVED_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
     exit 0 ;;
   *"pr view"*headRefOid*)
-    printf 'f1a00000071234567890\n'; exit 0 ;;
+    printf 'fa00000071234567890\n'; exit 0 ;;
   *"--method POST"*)
-    printf '{"id":907,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+    printf '{"id":707,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"issues/comments/"*"/reactions"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
@@ -9497,40 +9500,40 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:957,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Bravo. **Reviewed commit:** `f1a0000007` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    jq -nc '[{id:757,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Bravo. **Reviewed commit:** `fa0000007` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_FLAVOR_BRAVO_APPROVED_GH
-chmod +x "$_codex_flavor_bravo_approved_mock_dir/gh"
+CODEX_PLACEHOLDER_BRAVO_APPROVED_GH
+chmod +x "$_codex_placeholder_bravo_approved_mock_dir/gh"
 
-_codex_flavor_bravo_approved_output=""
-_codex_flavor_bravo_approved_exit=0
-PATH="$_codex_flavor_bravo_approved_mock_dir:$PATH" \
+_codex_placeholder_bravo_approved_output=""
+_codex_placeholder_bravo_approved_exit=0
+PATH="$_codex_placeholder_bravo_approved_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_flavor_bravo_approved_mock_dir/output.txt" 2>&1 || _codex_flavor_bravo_approved_exit=$?
-_codex_flavor_bravo_approved_output="$(cat "$_codex_flavor_bravo_approved_mock_dir/output.txt")"
-run_test "codex_flavor_bravo_approved_exit_clean" "0" "$_codex_flavor_bravo_approved_exit"
-run_test "codex_flavor_bravo_approved_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_flavor_bravo_approved_output" | grep "^VERDICT:")"
-rm -rf "$_codex_flavor_bravo_approved_mock_dir"
-unset _codex_flavor_bravo_approved_mock_dir _codex_flavor_bravo_approved_output _codex_flavor_bravo_approved_exit
+  >"$_codex_placeholder_bravo_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_bravo_approved_exit=$?
+_codex_placeholder_bravo_approved_output="$(cat "$_codex_placeholder_bravo_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_bravo_approved_exit_clean" "0" "$_codex_placeholder_bravo_approved_exit"
+run_test "codex_placeholder_bravo_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_placeholder_bravo_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_bravo_approved_mock_dir"
+unset _codex_placeholder_bravo_approved_mock_dir _codex_placeholder_bravo_approved_output _codex_placeholder_bravo_approved_exit
 
-# Flavor token: 'Keep it up!' (issue #1491 follow-up; live evidence swept from repo history)
-_codex_flavor_keep_it_up_approved_mock_dir="$(mktemp -d)"
-cat > "$_codex_flavor_keep_it_up_approved_mock_dir/gh" <<'CODEX_FLAVOR_KEEP_IT_UP_APPROVED_GH'
+# Evidenced flavor token: 'Keep it up!' (issue #1491 follow-up; approved by the bounded placeholder)
+_codex_placeholder_keep_it_up_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_keep_it_up_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_KEEP_IT_UP_APPROVED_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
     exit 0 ;;
   *"pr view"*headRefOid*)
-    printf 'f1a00000081234567890\n'; exit 0 ;;
+    printf 'fa00000081234567890\n'; exit 0 ;;
   *"--method POST"*)
-    printf '{"id":908,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+    printf '{"id":708,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"issues/comments/"*"/reactions"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
@@ -9538,40 +9541,40 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:958,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Keep it up! **Reviewed commit:** `f1a0000008` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    jq -nc '[{id:758,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Keep it up! **Reviewed commit:** `fa0000008` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_FLAVOR_KEEP_IT_UP_APPROVED_GH
-chmod +x "$_codex_flavor_keep_it_up_approved_mock_dir/gh"
+CODEX_PLACEHOLDER_KEEP_IT_UP_APPROVED_GH
+chmod +x "$_codex_placeholder_keep_it_up_approved_mock_dir/gh"
 
-_codex_flavor_keep_it_up_approved_output=""
-_codex_flavor_keep_it_up_approved_exit=0
-PATH="$_codex_flavor_keep_it_up_approved_mock_dir:$PATH" \
+_codex_placeholder_keep_it_up_approved_output=""
+_codex_placeholder_keep_it_up_approved_exit=0
+PATH="$_codex_placeholder_keep_it_up_approved_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_flavor_keep_it_up_approved_mock_dir/output.txt" 2>&1 || _codex_flavor_keep_it_up_approved_exit=$?
-_codex_flavor_keep_it_up_approved_output="$(cat "$_codex_flavor_keep_it_up_approved_mock_dir/output.txt")"
-run_test "codex_flavor_keep_it_up_approved_exit_clean" "0" "$_codex_flavor_keep_it_up_approved_exit"
-run_test "codex_flavor_keep_it_up_approved_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_flavor_keep_it_up_approved_output" | grep "^VERDICT:")"
-rm -rf "$_codex_flavor_keep_it_up_approved_mock_dir"
-unset _codex_flavor_keep_it_up_approved_mock_dir _codex_flavor_keep_it_up_approved_output _codex_flavor_keep_it_up_approved_exit
+  >"$_codex_placeholder_keep_it_up_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_keep_it_up_approved_exit=$?
+_codex_placeholder_keep_it_up_approved_output="$(cat "$_codex_placeholder_keep_it_up_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_keep_it_up_approved_exit_clean" "0" "$_codex_placeholder_keep_it_up_approved_exit"
+run_test "codex_placeholder_keep_it_up_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_placeholder_keep_it_up_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_keep_it_up_approved_mock_dir"
+unset _codex_placeholder_keep_it_up_approved_mock_dir _codex_placeholder_keep_it_up_approved_output _codex_placeholder_keep_it_up_approved_exit
 
-# Flavor token: 'Delightful!' (issue #1491 follow-up; live evidence swept from repo history)
-_codex_flavor_delightful_approved_mock_dir="$(mktemp -d)"
-cat > "$_codex_flavor_delightful_approved_mock_dir/gh" <<'CODEX_FLAVOR_DELIGHTFUL_APPROVED_GH'
+# Evidenced flavor token: 'Delightful!' (issue #1491 follow-up; approved by the bounded placeholder)
+_codex_placeholder_delightful_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_delightful_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_DELIGHTFUL_APPROVED_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
     exit 0 ;;
   *"pr view"*headRefOid*)
-    printf 'f1a00000091234567890\n'; exit 0 ;;
+    printf 'fa00000091234567890\n'; exit 0 ;;
   *"--method POST"*)
-    printf '{"id":909,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+    printf '{"id":709,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"issues/comments/"*"/reactions"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
@@ -9579,40 +9582,40 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:959,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Delightful! **Reviewed commit:** `f1a0000009` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    jq -nc '[{id:759,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Delightful! **Reviewed commit:** `fa0000009` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_FLAVOR_DELIGHTFUL_APPROVED_GH
-chmod +x "$_codex_flavor_delightful_approved_mock_dir/gh"
+CODEX_PLACEHOLDER_DELIGHTFUL_APPROVED_GH
+chmod +x "$_codex_placeholder_delightful_approved_mock_dir/gh"
 
-_codex_flavor_delightful_approved_output=""
-_codex_flavor_delightful_approved_exit=0
-PATH="$_codex_flavor_delightful_approved_mock_dir:$PATH" \
+_codex_placeholder_delightful_approved_output=""
+_codex_placeholder_delightful_approved_exit=0
+PATH="$_codex_placeholder_delightful_approved_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_flavor_delightful_approved_mock_dir/output.txt" 2>&1 || _codex_flavor_delightful_approved_exit=$?
-_codex_flavor_delightful_approved_output="$(cat "$_codex_flavor_delightful_approved_mock_dir/output.txt")"
-run_test "codex_flavor_delightful_approved_exit_clean" "0" "$_codex_flavor_delightful_approved_exit"
-run_test "codex_flavor_delightful_approved_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_flavor_delightful_approved_output" | grep "^VERDICT:")"
-rm -rf "$_codex_flavor_delightful_approved_mock_dir"
-unset _codex_flavor_delightful_approved_mock_dir _codex_flavor_delightful_approved_output _codex_flavor_delightful_approved_exit
+  >"$_codex_placeholder_delightful_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_delightful_approved_exit=$?
+_codex_placeholder_delightful_approved_output="$(cat "$_codex_placeholder_delightful_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_delightful_approved_exit_clean" "0" "$_codex_placeholder_delightful_approved_exit"
+run_test "codex_placeholder_delightful_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_placeholder_delightful_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_delightful_approved_mock_dir"
+unset _codex_placeholder_delightful_approved_mock_dir _codex_placeholder_delightful_approved_output _codex_placeholder_delightful_approved_exit
 
-# Flavor token: 'Keep them coming!' (issue #1491 follow-up; live evidence swept from repo history)
-_codex_flavor_keep_them_coming_approved_mock_dir="$(mktemp -d)"
-cat > "$_codex_flavor_keep_them_coming_approved_mock_dir/gh" <<'CODEX_FLAVOR_KEEP_THEM_COMING_APPROVED_GH'
+# Evidenced flavor token: 'Keep them coming!' (issue #1491 follow-up; approved by the bounded placeholder)
+_codex_placeholder_keep_them_coming_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_keep_them_coming_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_KEEP_THEM_COMING_APPROVED_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
     exit 0 ;;
   *"pr view"*headRefOid*)
-    printf 'f1a000000a1234567890\n'; exit 0 ;;
+    printf 'fa000000a1234567890\n'; exit 0 ;;
   *"--method POST"*)
-    printf '{"id":910,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+    printf '{"id":710,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"issues/comments/"*"/reactions"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
@@ -9620,40 +9623,40 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:960,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Keep them coming! **Reviewed commit:** `f1a000000a` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    jq -nc '[{id:760,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Keep them coming! **Reviewed commit:** `fa000000a` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_FLAVOR_KEEP_THEM_COMING_APPROVED_GH
-chmod +x "$_codex_flavor_keep_them_coming_approved_mock_dir/gh"
+CODEX_PLACEHOLDER_KEEP_THEM_COMING_APPROVED_GH
+chmod +x "$_codex_placeholder_keep_them_coming_approved_mock_dir/gh"
 
-_codex_flavor_keep_them_coming_approved_output=""
-_codex_flavor_keep_them_coming_approved_exit=0
-PATH="$_codex_flavor_keep_them_coming_approved_mock_dir:$PATH" \
+_codex_placeholder_keep_them_coming_approved_output=""
+_codex_placeholder_keep_them_coming_approved_exit=0
+PATH="$_codex_placeholder_keep_them_coming_approved_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_flavor_keep_them_coming_approved_mock_dir/output.txt" 2>&1 || _codex_flavor_keep_them_coming_approved_exit=$?
-_codex_flavor_keep_them_coming_approved_output="$(cat "$_codex_flavor_keep_them_coming_approved_mock_dir/output.txt")"
-run_test "codex_flavor_keep_them_coming_approved_exit_clean" "0" "$_codex_flavor_keep_them_coming_approved_exit"
-run_test "codex_flavor_keep_them_coming_approved_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_flavor_keep_them_coming_approved_output" | grep "^VERDICT:")"
-rm -rf "$_codex_flavor_keep_them_coming_approved_mock_dir"
-unset _codex_flavor_keep_them_coming_approved_mock_dir _codex_flavor_keep_them_coming_approved_output _codex_flavor_keep_them_coming_approved_exit
+  >"$_codex_placeholder_keep_them_coming_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_keep_them_coming_approved_exit=$?
+_codex_placeholder_keep_them_coming_approved_output="$(cat "$_codex_placeholder_keep_them_coming_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_keep_them_coming_approved_exit_clean" "0" "$_codex_placeholder_keep_them_coming_approved_exit"
+run_test "codex_placeholder_keep_them_coming_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_placeholder_keep_them_coming_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_keep_them_coming_approved_mock_dir"
+unset _codex_placeholder_keep_them_coming_approved_mock_dir _codex_placeholder_keep_them_coming_approved_output _codex_placeholder_keep_them_coming_approved_exit
 
-# Flavor token: "Can't wait for the next one!" (issue #1491 follow-up; live evidence swept from repo history)
-_codex_flavor_cant_wait_for_next_one_approved_mock_dir="$(mktemp -d)"
-cat > "$_codex_flavor_cant_wait_for_next_one_approved_mock_dir/gh" <<'CODEX_FLAVOR_CANT_WAIT_FOR_NEXT_ONE_APPROVED_GH'
+# Evidenced flavor token: "Can't wait for the next one!" (issue #1491 follow-up; approved by the bounded placeholder)
+_codex_placeholder_cant_wait_for_next_one_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_cant_wait_for_next_one_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_CANT_WAIT_FOR_NEXT_ONE_APPROVED_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
     exit 0 ;;
   *"pr view"*headRefOid*)
-    printf 'f1a000000b1234567890\n'; exit 0 ;;
+    printf 'fa000000b1234567890\n'; exit 0 ;;
   *"--method POST"*)
-    printf '{"id":911,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+    printf '{"id":711,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"issues/comments/"*"/reactions"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
@@ -9661,40 +9664,40 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:961,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Can'\''t wait for the next one! **Reviewed commit:** `f1a000000b` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    jq -nc '[{id:761,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Can'\''t wait for the next one! **Reviewed commit:** `fa000000b` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_FLAVOR_CANT_WAIT_FOR_NEXT_ONE_APPROVED_GH
-chmod +x "$_codex_flavor_cant_wait_for_next_one_approved_mock_dir/gh"
+CODEX_PLACEHOLDER_CANT_WAIT_FOR_NEXT_ONE_APPROVED_GH
+chmod +x "$_codex_placeholder_cant_wait_for_next_one_approved_mock_dir/gh"
 
-_codex_flavor_cant_wait_for_next_one_approved_output=""
-_codex_flavor_cant_wait_for_next_one_approved_exit=0
-PATH="$_codex_flavor_cant_wait_for_next_one_approved_mock_dir:$PATH" \
+_codex_placeholder_cant_wait_for_next_one_approved_output=""
+_codex_placeholder_cant_wait_for_next_one_approved_exit=0
+PATH="$_codex_placeholder_cant_wait_for_next_one_approved_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_flavor_cant_wait_for_next_one_approved_mock_dir/output.txt" 2>&1 || _codex_flavor_cant_wait_for_next_one_approved_exit=$?
-_codex_flavor_cant_wait_for_next_one_approved_output="$(cat "$_codex_flavor_cant_wait_for_next_one_approved_mock_dir/output.txt")"
-run_test "codex_flavor_cant_wait_for_next_one_approved_exit_clean" "0" "$_codex_flavor_cant_wait_for_next_one_approved_exit"
-run_test "codex_flavor_cant_wait_for_next_one_approved_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_flavor_cant_wait_for_next_one_approved_output" | grep "^VERDICT:")"
-rm -rf "$_codex_flavor_cant_wait_for_next_one_approved_mock_dir"
-unset _codex_flavor_cant_wait_for_next_one_approved_mock_dir _codex_flavor_cant_wait_for_next_one_approved_output _codex_flavor_cant_wait_for_next_one_approved_exit
+  >"$_codex_placeholder_cant_wait_for_next_one_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_cant_wait_for_next_one_approved_exit=$?
+_codex_placeholder_cant_wait_for_next_one_approved_output="$(cat "$_codex_placeholder_cant_wait_for_next_one_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_cant_wait_for_next_one_approved_exit_clean" "0" "$_codex_placeholder_cant_wait_for_next_one_approved_exit"
+run_test "codex_placeholder_cant_wait_for_next_one_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_placeholder_cant_wait_for_next_one_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_cant_wait_for_next_one_approved_mock_dir"
+unset _codex_placeholder_cant_wait_for_next_one_approved_mock_dir _codex_placeholder_cant_wait_for_next_one_approved_output _codex_placeholder_cant_wait_for_next_one_approved_exit
 
-# Flavor token: 'More of your lovely PRs please.' (issue #1491 follow-up; live evidence swept from repo history)
-_codex_flavor_more_lovely_prs_please_approved_mock_dir="$(mktemp -d)"
-cat > "$_codex_flavor_more_lovely_prs_please_approved_mock_dir/gh" <<'CODEX_FLAVOR_MORE_LOVELY_PRS_PLEASE_APPROVED_GH'
+# Evidenced flavor token: 'More of your lovely PRs please.' (issue #1491 follow-up; approved by the bounded placeholder)
+_codex_placeholder_more_lovely_prs_please_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_more_lovely_prs_please_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_MORE_LOVELY_PRS_PLEASE_APPROVED_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
     exit 0 ;;
   *"pr view"*headRefOid*)
-    printf 'f1a000000c1234567890\n'; exit 0 ;;
+    printf 'fa000000c1234567890\n'; exit 0 ;;
   *"--method POST"*)
-    printf '{"id":912,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+    printf '{"id":712,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"issues/comments/"*"/reactions"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
@@ -9702,35 +9705,35 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:962,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. More of your lovely PRs please. **Reviewed commit:** `f1a000000c` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    jq -nc '[{id:762,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. More of your lovely PRs please. **Reviewed commit:** `fa000000c` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_FLAVOR_MORE_LOVELY_PRS_PLEASE_APPROVED_GH
-chmod +x "$_codex_flavor_more_lovely_prs_please_approved_mock_dir/gh"
+CODEX_PLACEHOLDER_MORE_LOVELY_PRS_PLEASE_APPROVED_GH
+chmod +x "$_codex_placeholder_more_lovely_prs_please_approved_mock_dir/gh"
 
-_codex_flavor_more_lovely_prs_please_approved_output=""
-_codex_flavor_more_lovely_prs_please_approved_exit=0
-PATH="$_codex_flavor_more_lovely_prs_please_approved_mock_dir:$PATH" \
+_codex_placeholder_more_lovely_prs_please_approved_output=""
+_codex_placeholder_more_lovely_prs_please_approved_exit=0
+PATH="$_codex_placeholder_more_lovely_prs_please_approved_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_flavor_more_lovely_prs_please_approved_mock_dir/output.txt" 2>&1 || _codex_flavor_more_lovely_prs_please_approved_exit=$?
-_codex_flavor_more_lovely_prs_please_approved_output="$(cat "$_codex_flavor_more_lovely_prs_please_approved_mock_dir/output.txt")"
-run_test "codex_flavor_more_lovely_prs_please_approved_exit_clean" "0" "$_codex_flavor_more_lovely_prs_please_approved_exit"
-run_test "codex_flavor_more_lovely_prs_please_approved_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_flavor_more_lovely_prs_please_approved_output" | grep "^VERDICT:")"
-rm -rf "$_codex_flavor_more_lovely_prs_please_approved_mock_dir"
-unset _codex_flavor_more_lovely_prs_please_approved_mock_dir _codex_flavor_more_lovely_prs_please_approved_output _codex_flavor_more_lovely_prs_please_approved_exit
+  >"$_codex_placeholder_more_lovely_prs_please_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_more_lovely_prs_please_approved_exit=$?
+_codex_placeholder_more_lovely_prs_please_approved_output="$(cat "$_codex_placeholder_more_lovely_prs_please_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_more_lovely_prs_please_approved_exit_clean" "0" "$_codex_placeholder_more_lovely_prs_please_approved_exit"
+run_test "codex_placeholder_more_lovely_prs_please_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_placeholder_more_lovely_prs_please_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_more_lovely_prs_please_approved_mock_dir"
+unset _codex_placeholder_more_lovely_prs_please_approved_mock_dir _codex_placeholder_more_lovely_prs_please_approved_output _codex_placeholder_more_lovely_prs_please_approved_exit
 
-# Flavor token: ":rocket:" — the real, live PR #1494 root comment capture
-# (comment id 5333550055, 2026-08-18) that falsified the single-token
-# assumption in the first place. Verbatim, including its real footer,
-# matching codex_e1_real_pr1489_capture_approved's real-capture style.
-_codex_flavor_rocket_real_pr1494_capture_approved_mock_dir="$(mktemp -d)"
-cat > "$_codex_flavor_rocket_real_pr1494_capture_approved_mock_dir/gh" <<'CODEX_FLAVOR_ROCKET_REAL_PR1494_CAPTURE_APPROVED_GH'
+# Evidenced flavor token: ":rocket:" — the real, live PR #1494 root comment
+# capture (comment id 5333550055, 2026-08-18) that falsified the original
+# single-literal assumption. Verbatim, including its real footer, matching
+# codex_e1_real_pr1489_capture_approved's real-capture style.
+_codex_placeholder_rocket_real_pr1494_capture_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_rocket_real_pr1494_capture_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_ROCKET_REAL_PR1494_CAPTURE_APPROVED_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
@@ -9738,7 +9741,7 @@ case "$*" in
   *"pr view"*headRefOid*)
     printf 'a2a20e7b4836cfb5d20b75e39e01447757434e34\n'; exit 0 ;;
   *"--method POST"*)
-    printf '{"id":999,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+    printf '{"id":799,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"issues/comments/"*"/reactions"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
@@ -9746,7 +9749,7 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:998,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. :rocket:
+    jq -nc '[{id:798,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. :rocket:
 
 **Reviewed commit:** `a2a20e7b48`
 
@@ -9773,37 +9776,36 @@ Codex can also answer questions or update the PR. Try commenting \"@codex addres
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_FLAVOR_ROCKET_REAL_PR1494_CAPTURE_APPROVED_GH
-chmod +x "$_codex_flavor_rocket_real_pr1494_capture_approved_mock_dir/gh"
+CODEX_PLACEHOLDER_ROCKET_REAL_PR1494_CAPTURE_APPROVED_GH
+chmod +x "$_codex_placeholder_rocket_real_pr1494_capture_approved_mock_dir/gh"
 
-_codex_flavor_rocket_real_pr1494_capture_approved_output=""
-_codex_flavor_rocket_real_pr1494_capture_approved_exit=0
-PATH="$_codex_flavor_rocket_real_pr1494_capture_approved_mock_dir:$PATH" \
+_codex_placeholder_rocket_real_pr1494_capture_approved_output=""
+_codex_placeholder_rocket_real_pr1494_capture_approved_exit=0
+PATH="$_codex_placeholder_rocket_real_pr1494_capture_approved_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_flavor_rocket_real_pr1494_capture_approved_mock_dir/output.txt" 2>&1 || _codex_flavor_rocket_real_pr1494_capture_approved_exit=$?
-_codex_flavor_rocket_real_pr1494_capture_approved_output="$(cat "$_codex_flavor_rocket_real_pr1494_capture_approved_mock_dir/output.txt")"
-run_test "codex_flavor_rocket_real_pr1494_capture_approved_exit_clean" "0" "$_codex_flavor_rocket_real_pr1494_capture_approved_exit"
-run_test "codex_flavor_rocket_real_pr1494_capture_approved_verdict" "VERDICT: APPROVED" \
-  "$(printf '%s\n' "$_codex_flavor_rocket_real_pr1494_capture_approved_output" | grep "^VERDICT:")"
-rm -rf "$_codex_flavor_rocket_real_pr1494_capture_approved_mock_dir"
-unset _codex_flavor_rocket_real_pr1494_capture_approved_mock_dir _codex_flavor_rocket_real_pr1494_capture_approved_output _codex_flavor_rocket_real_pr1494_capture_approved_exit
+  >"$_codex_placeholder_rocket_real_pr1494_capture_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_rocket_real_pr1494_capture_approved_exit=$?
+_codex_placeholder_rocket_real_pr1494_capture_approved_output="$(cat "$_codex_placeholder_rocket_real_pr1494_capture_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_rocket_real_pr1494_capture_approved_exit_clean" "0" "$_codex_placeholder_rocket_real_pr1494_capture_approved_exit"
+run_test "codex_placeholder_rocket_real_pr1494_capture_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_placeholder_rocket_real_pr1494_capture_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_rocket_real_pr1494_capture_approved_mock_dir"
+unset _codex_placeholder_rocket_real_pr1494_capture_approved_mock_dir _codex_placeholder_rocket_real_pr1494_capture_approved_output _codex_placeholder_rocket_real_pr1494_capture_approved_exit
 
-# Flavor token regression: an unevidenced flavor phrase ("Fantastic job!")
-# must still safe-fail. Proves the alternation is closed (does not admit
-# arbitrary text in the flavor slot) and that the safe-direction failure
-# (false NEEDS_REVISION on an as-yet-unobserved genuine flavor rotation) is
-# intentional and tested, per the human decision recorded in the plan.
-_codex_flavor_unevidenced_token_not_approved_mock_dir="$(mktemp -d)"
-cat > "$_codex_flavor_unevidenced_token_not_approved_mock_dir/gh" <<'CODEX_FLAVOR_UNEVIDENCED_TOKEN_NOT_APPROVED_GH'
+# Behavior change (the whole point of this correction): a previously
+# unevidenced flavor phrase now APPROVES, because the flavor slot is a
+# bounded placeholder, not a closed enumeration. Proves the design change
+# directly rather than asserting it.
+_codex_placeholder_unevidenced_flavor_now_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_unevidenced_flavor_now_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_UNEVIDENCED_FLAVOR_NOW_APPROVED_GH'
 #!/usr/bin/env bash
 case "$*" in
   *"auth status"*)
     exit 0 ;;
   *"pr view"*headRefOid*)
-    printf 'f1a000000d1234567890\n'; exit 0 ;;
+    printf 'fa000000d1234567890\n'; exit 0 ;;
   *"--method POST"*)
-    printf '{"id":913,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+    printf '{"id":713,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
   *"issues/comments/"*"/reactions"*)
     printf '[]\n'; exit 0 ;;
   *"pulls/"*"/comments"*)
@@ -9811,28 +9813,253 @@ case "$*" in
   *"pulls/"*"/reviews"*)
     printf '[]\n'; exit 0 ;;
   *"issues/"*"/comments"*)
-    jq -nc '[{id:963,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Fantastic job! **Reviewed commit:** `f1a000000d` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    jq -nc '[{id:763,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Fantastic job! **Reviewed commit:** `fa000000d` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
     exit 0 ;;
   *)
     printf 'ERROR=unexpected-gh-invocation\n' >&2
     printf 'ARGS=%q\n' "$*" >&2
     exit 64 ;;
 esac
-CODEX_FLAVOR_UNEVIDENCED_TOKEN_NOT_APPROVED_GH
-chmod +x "$_codex_flavor_unevidenced_token_not_approved_mock_dir/gh"
+CODEX_PLACEHOLDER_UNEVIDENCED_FLAVOR_NOW_APPROVED_GH
+chmod +x "$_codex_placeholder_unevidenced_flavor_now_approved_mock_dir/gh"
 
-_codex_flavor_unevidenced_token_not_approved_output=""
-_codex_flavor_unevidenced_token_not_approved_exit=0
-PATH="$_codex_flavor_unevidenced_token_not_approved_mock_dir:$PATH" \
+_codex_placeholder_unevidenced_flavor_now_approved_output=""
+_codex_placeholder_unevidenced_flavor_now_approved_exit=0
+PATH="$_codex_placeholder_unevidenced_flavor_now_approved_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
-  >"$_codex_flavor_unevidenced_token_not_approved_mock_dir/output.txt" 2>&1 || _codex_flavor_unevidenced_token_not_approved_exit=$?
-_codex_flavor_unevidenced_token_not_approved_output="$(cat "$_codex_flavor_unevidenced_token_not_approved_mock_dir/output.txt")"
-run_test "codex_flavor_unevidenced_token_not_approved_exit_needs_revision" "1" "$_codex_flavor_unevidenced_token_not_approved_exit"
-run_test "codex_flavor_unevidenced_token_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
-  "$(printf '%s\n' "$_codex_flavor_unevidenced_token_not_approved_output" | grep "^VERDICT:")"
-rm -rf "$_codex_flavor_unevidenced_token_not_approved_mock_dir"
-unset _codex_flavor_unevidenced_token_not_approved_mock_dir _codex_flavor_unevidenced_token_not_approved_output _codex_flavor_unevidenced_token_not_approved_exit
+  >"$_codex_placeholder_unevidenced_flavor_now_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_unevidenced_flavor_now_approved_exit=$?
+_codex_placeholder_unevidenced_flavor_now_approved_output="$(cat "$_codex_placeholder_unevidenced_flavor_now_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_unevidenced_flavor_now_approved_exit_clean" "0" "$_codex_placeholder_unevidenced_flavor_now_approved_exit"
+run_test "codex_placeholder_unevidenced_flavor_now_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_placeholder_unevidenced_flavor_now_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_unevidenced_flavor_now_approved_mock_dir"
+unset _codex_placeholder_unevidenced_flavor_now_approved_mock_dir _codex_placeholder_unevidenced_flavor_now_approved_output _codex_placeholder_unevidenced_flavor_now_approved_exit
+
+# Boundary: a flavor slot of exactly 40 characters (the cap, inclusive)
+# still APPROVES — confirms the upper bound is inclusive, not an off-by-one
+# exclusion, matching the SHA field's own inclusive-upper-bound precedent
+# (codex_e7_full_length_sha_approved).
+_codex_placeholder_exactly_cap_length_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_exactly_cap_length_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_EXACTLY_CAP_LENGTH_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'fa000000e1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":714,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:764,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx **Reviewed commit:** `fa000000e` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_PLACEHOLDER_EXACTLY_CAP_LENGTH_APPROVED_GH
+chmod +x "$_codex_placeholder_exactly_cap_length_approved_mock_dir/gh"
+
+_codex_placeholder_exactly_cap_length_approved_output=""
+_codex_placeholder_exactly_cap_length_approved_exit=0
+PATH="$_codex_placeholder_exactly_cap_length_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_placeholder_exactly_cap_length_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_exactly_cap_length_approved_exit=$?
+_codex_placeholder_exactly_cap_length_approved_output="$(cat "$_codex_placeholder_exactly_cap_length_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_exactly_cap_length_approved_exit_clean" "0" "$_codex_placeholder_exactly_cap_length_approved_exit"
+run_test "codex_placeholder_exactly_cap_length_approved_verdict" "VERDICT: APPROVED" \
+  "$(printf '%s\n' "$_codex_placeholder_exactly_cap_length_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_exactly_cap_length_approved_mock_dir"
+unset _codex_placeholder_exactly_cap_length_approved_mock_dir _codex_placeholder_exactly_cap_length_approved_output _codex_placeholder_exactly_cap_length_approved_exit
+
+# Structure/length guard: a flavor slot of 41 characters (one past the cap)
+# safe-fails. Confirms the length cap is enforced, not merely documented.
+_codex_placeholder_exceeds_length_cap_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_exceeds_length_cap_not_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_EXCEEDS_LENGTH_CAP_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'fa000000f1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":715,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:765,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx **Reviewed commit:** `fa000000f` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_PLACEHOLDER_EXCEEDS_LENGTH_CAP_NOT_APPROVED_GH
+chmod +x "$_codex_placeholder_exceeds_length_cap_not_approved_mock_dir/gh"
+
+_codex_placeholder_exceeds_length_cap_not_approved_output=""
+_codex_placeholder_exceeds_length_cap_not_approved_exit=0
+PATH="$_codex_placeholder_exceeds_length_cap_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_placeholder_exceeds_length_cap_not_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_exceeds_length_cap_not_approved_exit=$?
+_codex_placeholder_exceeds_length_cap_not_approved_output="$(cat "$_codex_placeholder_exceeds_length_cap_not_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_exceeds_length_cap_not_approved_exit_needs_revision" "1" "$_codex_placeholder_exceeds_length_cap_not_approved_exit"
+run_test "codex_placeholder_exceeds_length_cap_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_placeholder_exceeds_length_cap_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_exceeds_length_cap_not_approved_mock_dir"
+unset _codex_placeholder_exceeds_length_cap_not_approved_mock_dir _codex_placeholder_exceeds_length_cap_not_approved_output _codex_placeholder_exceeds_length_cap_not_approved_exit
+
+# Structure guard: a flavor slot containing "*" safe-fails. Confirms the
+# excluded-character set protects the literal "**Reviewed commit:**"
+# bold-marker syntax immediately after this slot from being spoofed or
+# absorbed by an overly permissive placeholder.
+_codex_placeholder_asterisk_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_asterisk_not_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_ASTERISK_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'fa00000101234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":716,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:766,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Great **job** **Reviewed commit:** `fa0000010` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_PLACEHOLDER_ASTERISK_NOT_APPROVED_GH
+chmod +x "$_codex_placeholder_asterisk_not_approved_mock_dir/gh"
+
+_codex_placeholder_asterisk_not_approved_output=""
+_codex_placeholder_asterisk_not_approved_exit=0
+PATH="$_codex_placeholder_asterisk_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_placeholder_asterisk_not_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_asterisk_not_approved_exit=$?
+_codex_placeholder_asterisk_not_approved_output="$(cat "$_codex_placeholder_asterisk_not_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_asterisk_not_approved_exit_needs_revision" "1" "$_codex_placeholder_asterisk_not_approved_exit"
+run_test "codex_placeholder_asterisk_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_placeholder_asterisk_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_asterisk_not_approved_mock_dir"
+unset _codex_placeholder_asterisk_not_approved_mock_dir _codex_placeholder_asterisk_not_approved_output _codex_placeholder_asterisk_not_approved_exit
+
+# Structure guard: a flavor slot containing a backtick safe-fails. Confirms
+# the excluded-character set protects the backtick-delimited SHA field that
+# immediately follows this slot.
+_codex_placeholder_backtick_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_backtick_not_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_BACKTICK_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'fa00000111234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":717,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:767,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Nice `work` **Reviewed commit:** `fa0000011` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_PLACEHOLDER_BACKTICK_NOT_APPROVED_GH
+chmod +x "$_codex_placeholder_backtick_not_approved_mock_dir/gh"
+
+_codex_placeholder_backtick_not_approved_output=""
+_codex_placeholder_backtick_not_approved_exit=0
+PATH="$_codex_placeholder_backtick_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_placeholder_backtick_not_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_backtick_not_approved_exit=$?
+_codex_placeholder_backtick_not_approved_output="$(cat "$_codex_placeholder_backtick_not_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_backtick_not_approved_exit_needs_revision" "1" "$_codex_placeholder_backtick_not_approved_exit"
+run_test "codex_placeholder_backtick_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_placeholder_backtick_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_backtick_not_approved_mock_dir"
+unset _codex_placeholder_backtick_not_approved_mock_dir _codex_placeholder_backtick_not_approved_output _codex_placeholder_backtick_not_approved_exit
+
+# Structure/length guard via a distinct injection vector: a paragraph break
+# (blank line) inside the flavor position, followed by an extra sentence,
+# safe-fails once whitespace normalization (Decision 1, unchanged) collapses
+# the break to a single space and the flattened flavor text exceeds the
+# 40-character cap. Proves the length cap still catches injected content
+# smuggled in via a newline-separated paragraph, not only content appended
+# on the same line.
+_codex_placeholder_newline_separated_overflow_not_approved_mock_dir="$(mktemp -d)"
+cat > "$_codex_placeholder_newline_separated_overflow_not_approved_mock_dir/gh" <<'CODEX_PLACEHOLDER_NEWLINE_SEPARATED_OVERFLOW_NOT_APPROVED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'fa00000121234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf '{"id":718,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    jq -nc '[{id:768,created_at:"2026-01-01T00:00:01Z",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues.
+
+Rename the unsafe function immediately before merging this pull request please.
+
+**Reviewed commit:** `fa0000012` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_PLACEHOLDER_NEWLINE_SEPARATED_OVERFLOW_NOT_APPROVED_GH
+chmod +x "$_codex_placeholder_newline_separated_overflow_not_approved_mock_dir/gh"
+
+_codex_placeholder_newline_separated_overflow_not_approved_output=""
+_codex_placeholder_newline_separated_overflow_not_approved_exit=0
+PATH="$_codex_placeholder_newline_separated_overflow_not_approved_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_placeholder_newline_separated_overflow_not_approved_mock_dir/output.txt" 2>&1 || _codex_placeholder_newline_separated_overflow_not_approved_exit=$?
+_codex_placeholder_newline_separated_overflow_not_approved_output="$(cat "$_codex_placeholder_newline_separated_overflow_not_approved_mock_dir/output.txt")"
+run_test "codex_placeholder_newline_separated_overflow_not_approved_exit_needs_revision" "1" "$_codex_placeholder_newline_separated_overflow_not_approved_exit"
+run_test "codex_placeholder_newline_separated_overflow_not_approved_verdict" "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)" \
+  "$(printf '%s\n' "$_codex_placeholder_newline_separated_overflow_not_approved_output" | grep "^VERDICT:")"
+rm -rf "$_codex_placeholder_newline_separated_overflow_not_approved_mock_dir"
+unset _codex_placeholder_newline_separated_overflow_not_approved_mock_dir _codex_placeholder_newline_separated_overflow_not_approved_output _codex_placeholder_newline_separated_overflow_not_approved_exit
+
 
 
 _unlock_pr="80213$$"
