@@ -638,7 +638,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authoritative example was itself bypassing the adaptive default it
   documented, breaking on any board still using `Normal`. `Urgent`,
   `High`, and `Low` are unaffected — those literals are common to both the
-  current and legacy board vocabularies.
+  current and legacy board vocabularies. `README.md` and Protocol 90's
+  abstract Priority ordering rules and summary templates (also caught in
+  code review on this PR) now list `Normal/Medium` as an equal-rank pair
+  instead of only `Normal`, matching `workflow-batch-overlap.sh`'s existing
+  `PRIORITY_RANK` table (which already ranked both names equally) — a real
+  board can now literally carry a `Medium` Priority value after this fix,
+  and the framework's own prioritization docs previously had no rule for it.
   Live reproduction on the real board (see issue #1501) showed `High`
   already worked correctly and the alias/default were the whole defect —
   no separate `High` resolution bug exists.
