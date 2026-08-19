@@ -137,6 +137,17 @@ unknown_json="$(bash "$TARGET_HELPER" --repo-root "$hub_repo" --repo unknown --j
 run_test "unknown_repo_outcome" "unknown_product_repository" "$(jq -r '.routing_outcome' <<< "$unknown_json")"
 run_test "unknown_repo_disallows_mutation" "false" "$(jq -r '.mutation_allowed' <<< "$unknown_json")"
 
+nonexistent_local_hub="$(dirname "$hub_repo")/nonexistent-local-hub"
+cp -R "$hub_repo" "$nonexistent_local_hub"
+cat > "$nonexistent_local_hub/.ai-dev-workflow.local.yaml" <<'YAML'
+product_repos:
+  - name: mobile-app
+    local_path: /definitely/not/here
+YAML
+nonexistent_local_json="$(bash "$TARGET_HELPER" --repo-root "$nonexistent_local_hub" --repo mobile-app --json)"
+run_test "nonexistent_local_path_outcome" "unavailable_product_repository_checkout" "$(jq -r '.routing_outcome' <<< "$nonexistent_local_json")"
+run_test "nonexistent_local_path_disallows_mutation" "false" "$(jq -r '.mutation_allowed' <<< "$nonexistent_local_json")"
+
 rm "$hub_repo/.ai-dev-workflow.local.yaml"
 unavailable_json="$(bash "$TARGET_HELPER" --repo-root "$hub_repo" --repo mobile-app --json)"
 run_test "unavailable_checkout_outcome" "unavailable_product_repository_checkout" "$(jq -r '.routing_outcome' <<< "$unavailable_json")"

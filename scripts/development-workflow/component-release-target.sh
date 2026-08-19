@@ -304,6 +304,12 @@ if [ "$release_owner" != "product_repository" ] || \
   exit 0
 fi
 
+target_local_path="$(jq -r '.TARGET_LOCAL_PATH // ""' <<< "$resolver_output")"
+if [ -n "$target_local_path" ] && [ ! -d "$target_local_path" ]; then
+  emit_stop "unavailable_product_repository_checkout" "configure a local checkout path for the selected product repository" "hub_repository"
+  exit 0
+fi
+
 identity="$(jq -r '.TARGET_GITHUB_REPO // ""' <<< "$resolver_output")"
 if [ -z "$identity" ]; then
   identity="$(jq -r '.TARGET_GIT_URL // .TARGET_REPO_NAME // ""' <<< "$resolver_output")"
