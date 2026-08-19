@@ -604,7 +604,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applies narrowly to the Priority field via a new opt-in `required` mode
   on `update_tracker_named_field_best_effort` — the Type and Size helpers,
   and cases where the tracker provider or project genuinely does not apply,
-  remain best-effort as before. `--priority` help text updated to match.
+  remain best-effort as before. `add-backlog-item.sh` also now validates the
+  effective priority against the board's real Priority field options via the
+  new no-mutation `workflow_tracker_priority_resolvable` check **before**
+  calling `gh issue create`, so an unresolvable value is rejected without
+  ever creating the issue — closing a partial-success window where the
+  post-creation required update could fail after the issue already existed,
+  which a caller retrying on non-zero exit without inspecting stdout could
+  otherwise turn into duplicate issues (caught in code review on this PR).
+  `--priority` help text updated to match.
   Live reproduction on the real board (see issue #1501) showed `High`
   already worked correctly and the alias/default were the whole defect —
   no separate `High` resolution bug exists.

@@ -929,6 +929,47 @@ esac
 run_test "priority_normal_error_message" "errored" "$priority_bad_result"
 run_test "priority_normal_sends_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
 
+echo ""
+echo "=== workflow_tracker_priority_resolvable (issue #1501 code review: pre-flight, no issue required) ==="
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+export MOCK_STATUS_FIELD_MODE=priority_configured
+resolvable_medium_exit=0
+workflow_tracker_priority_resolvable "Medium" || resolvable_medium_exit=$?
+run_test "resolvable_medium_returns_zero" "0" "$resolvable_medium_exit"
+# No issue-specific lookups: no projectItems (issue membership) query is sent.
+run_test "resolvable_check_avoids_issue_lookup" "0" "$(count_log_matches 'projectItems')"
+
+resolvable_bad_exit=0
+workflow_tracker_priority_resolvable "NoSuchPriority" || resolvable_bad_exit=$?
+run_test "resolvable_bad_value_returns_one" "1" "$resolvable_bad_exit"
+unset MOCK_STATUS_FIELD_MODE
+
+reset_log
+export MOCK_TRACKER_PROVIDER=linear
+resolvable_wrong_provider_exit=0
+workflow_tracker_priority_resolvable "AnythingAtAll" || resolvable_wrong_provider_exit=$?
+unset MOCK_TRACKER_PROVIDER
+# A provider that doesn't support GitHub Projects fields has nothing to
+# validate against — must not block (permissive, matches
+# update_tracker_named_field_best_effort's own provider-mismatch handling).
+run_test "resolvable_wrong_provider_returns_zero" "0" "$resolvable_wrong_provider_exit"
+run_test "resolvable_wrong_provider_avoids_api" "0" "$(count_log_matches 'api graphql')"
+
+reset_log
+old_project_number="${GITHUB_PROJECT_NUMBER:-}"
+unset GITHUB_PROJECT_NUMBER
+MOCK_TRACKER_PROJECT_NUMBER=""
+resolvable_no_project_exit=0
+workflow_tracker_priority_resolvable "AnythingAtAll" || resolvable_no_project_exit=$?
+export GITHUB_PROJECT_NUMBER="$old_project_number"
+unset MOCK_TRACKER_PROJECT_NUMBER
+# No project configured — same permissive rule: nothing to validate against.
+run_test "resolvable_no_project_returns_zero" "0" "$resolvable_no_project_exit"
+run_test "resolvable_no_project_avoids_api" "0" "$(count_log_matches 'api graphql')"
+
 reset_log
 __workflow_project_named_field_cache_keys=()
 __workflow_project_named_field_cache_vals=()

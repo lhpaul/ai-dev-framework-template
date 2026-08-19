@@ -2633,6 +2633,66 @@ EOF
   printf '%s' "$field_json"
 }
 
+# workflow_tracker_priority_resolvable <priority_value>
+#
+# Pre-flight check: does <priority_value> resolve against the project's
+# actual Priority field options? Unlike update_tracker_priority_best_effort,
+# this performs no issue-specific lookups and triggers no mutation, so it is
+# safe to call before an issue exists — e.g. before `gh issue create` — to
+# avoid the partial-success window where an issue is created but a required
+# follow-up Priority write then fails (see issue #1501 code review: a caller
+# that retries on non-zero exit without inspecting stdout could otherwise
+# create a duplicate issue).
+#
+# Returns 0 (resolvable / not blocking) when the tracker provider is not
+# github_projects, no project is configured, or the project/field lookup
+# itself fails or is inconclusive — those are the same "genuinely does not
+# apply" or "uncertain" cases update_tracker_named_field_best_effort always
+# treats permissively, and this pre-check must not block issue creation on
+# an environmental failure the authoritative post-creation required check
+# will re-attempt anyway. Returns 1 only when the Priority field was
+# successfully read from a configured project and <priority_value> does not
+# match any of its options — a confirmed, actionable bad value.
+workflow_tracker_priority_resolvable() {
+  local priority_value="$1"
+  local _wtpr_provider project_owner project_number project_id field_json option_id
+
+  _wtpr_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  if [ "$_wtpr_provider" != "github_projects" ]; then
+    return 0
+  fi
+
+  project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
+  if [ -z "$project_number" ]; then
+    return 0
+  fi
+
+  project_owner="$(workflow_resolve_github_project_owner)"
+  if [ -z "$project_owner" ]; then
+    project_owner="$(workflow_resolve_github_repo_owner)"
+  fi
+  if [ -z "$project_owner" ]; then
+    return 0
+  fi
+
+  project_id="$(workflow_github_project_id "$project_owner" "$project_number" 2>/dev/null)"
+  if [ -z "$project_id" ]; then
+    return 0
+  fi
+
+  if ! field_json="$(workflow_github_project_named_field_json "$project_id" "Priority" 2>/dev/null)"; then
+    return 0
+  fi
+
+  option_id="$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
+" "$priority_value" 2>/dev/null)"
+
+  [ -n "$option_id" ]
+}
+
 # update_tracker_named_field_best_effort <issue_number> <field_name> <option_value> [required]
 #
 # Update for any single-select GitHub Projects field by name. Resolves

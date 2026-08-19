@@ -119,6 +119,23 @@ create_cmd() {
       echo "create: --title is required" >&2
       exit 2
     fi
+    # Resolve the effective priority and validate it against the project's
+    # actual Priority field options BEFORE creating the issue. This avoids a
+    # partial-success window: without this pre-check, an invalid/unmigrated
+    # priority value would only be caught by the required post-creation
+    # update below, after `gh issue create` had already created the issue —
+    # so a caller that retries on non-zero exit without inspecting stdout
+    # could create a duplicate issue for every retry (see issue #1501 code
+    # review). workflow_tracker_priority_resolvable is a no-op read-only
+    # check (no mutation); it returns 0 (don't block) whenever the tracker
+    # provider/project don't apply or the check itself is inconclusive, so
+    # this pre-check cannot introduce new false rejections — only a
+    # confirmed-invalid value blocks issue creation here.
+    local effective_priority="${priority:-Medium}"
+    if ! workflow_tracker_priority_resolvable "$effective_priority"; then
+      echo "Error: could not resolve 'Priority' option '${effective_priority}' against the configured GitHub Project; no issue was created. Pass a value from the board's actual Priority field options (see docs/workflow/development-workflow/integrations/github-projects.md), or configure the field, before retrying." >&2
+      exit 1
+    fi
     if [ -n "$body_file" ]; then
       body="$(cat -- "$body_file")"
     fi
@@ -155,16 +172,20 @@ create_cmd() {
     # Ensure the issue is on the project board (adds it with Status=Backlog if absent).
     # The ensure_on_project_board helper is fail-open; it always returns 0.
     ensure_on_project_board "$issue_number" "Backlog"
-    # Update project Type, Priority (default Medium), and Size when GitHub Projects is configured.
+    # Update project Type, Priority, and Size when GitHub Projects is configured.
     # update_tracker_type_best_effort and update_tracker_size_best_effort are fail-open (always
     # return 0). update_tracker_priority_best_effort is a hard error (non-zero exit) when the
     # tracker provider/project are configured but the requested priority value cannot be resolved
     # against the board's actual Priority field options — under `set -euo pipefail` this aborts
-    # the script so a bad or stale priority value is never silently dropped.
+    # the script so a bad or stale priority value is never silently dropped. The common case
+    # (an invalid effective_priority) is already caught by workflow_tracker_priority_resolvable
+    # above, before the issue was created; this call remains a required safety net for the rarer
+    # cases the pre-check cannot see (e.g. the issue unexpectedly missing from the board, or a
+    # transient GraphQL write failure) — those necessarily surface after issue creation, at which
+    # point the issue URL has already been printed to stdout above.
     if [ -n "$type_label" ]; then
       update_tracker_type_best_effort "$issue_number" "$type_label"
     fi
-    local effective_priority="${priority:-Medium}"
     update_tracker_priority_best_effort "$issue_number" "$effective_priority"
     if [ -n "$size" ]; then
       update_tracker_size_best_effort "$issue_number" "$size"

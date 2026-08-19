@@ -208,14 +208,19 @@ run_test "medium_priority_exits_zero" "0" "$(get_exit)"
 run_test "medium_priority_uses_medium_option" "1" "$(count_log_matches 'optionId=OPT_medium')"
 
 echo ""
-echo "=== create: unresolvable priority is a hard error (issue #1501) ==="
+echo "=== create: unresolvable priority is a hard error, and blocks BEFORE issue creation (issue #1501 code review) ==="
 
 run_create "ok" --title "Test" --body "body" --priority "NoSuchPriority"
 run_test "unresolvable_priority_exits_nonzero" "yes" "$([ "$(get_exit)" -ne 0 ] && echo yes || echo no)"
 run_test "unresolvable_priority_sends_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+# Regression for the codex-github review finding on this PR: validating the
+# priority value BEFORE calling `gh issue create` means an invalid value can
+# never leave behind a created-but-unlabeled issue that a blind exit-code
+# retry would duplicate.
+run_test "unresolvable_priority_skips_issue_create" "0" "$(count_log_matches 'issue create')"
 unresolvable_stderr="$(get_stderr)"
 case "$unresolvable_stderr" in
-  *"Error:"*"could not resolve 'Priority' field or option 'NoSuchPriority'"*) unresolvable_error_result="errored" ;;
+  *"Error:"*"could not resolve 'Priority' option 'NoSuchPriority'"*"no issue was created"*) unresolvable_error_result="errored" ;;
   *) unresolvable_error_result="$unresolvable_stderr" ;;
 esac
 run_test "unresolvable_priority_prints_error" "errored" "$unresolvable_error_result"
