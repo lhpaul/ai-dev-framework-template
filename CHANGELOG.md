@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Retrospective follow-ups to batch-merge output and CHANGELOG guidance** (#1520):
+  `batch-merge.sh` no longer pairs a `WARNING: gh pr merge failed` line with
+  `MERGE_RESULT=clean` in the same output. The local merge is authoritative and
+  `gh pr merge` is only an idempotent GitHub-state mirroring step, so a failure
+  there is not a merge failure; the message is now a `NOTE:` that says so
+  explicitly. `usage()` also documents that `recheck-remaining --after-merged-pr`
+  must name a PR that appears in the `--prs` frozen list, which previously was
+  discoverable only by triggering `reason=after_merged_pr_not_in_frozen_list`.
+  `docs/best-practices/2-version-control.md` now states that CHANGELOG entries
+  describe shipped behavior rather than the review history of the PR that produced
+  them — a content rule, not a length rule. No behavior change.
 
 - **Codex GitHub terminal evidence**: `codex-github-reviewer.sh` no longer
   treats a thumbs-up reaction on the trigger comment as a clean review result,
