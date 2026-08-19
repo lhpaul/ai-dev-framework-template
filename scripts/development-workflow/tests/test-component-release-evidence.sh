@@ -144,7 +144,7 @@ run_fails_contains \
     --target-file "$target_file" \
     --binding-file "$binding_file" \
     --release-branch mobile-app/release/v1.18.0 \
-    --release-outcome done \
+    --release-outcome 'done' \
     --ci-outcome passed \
     --deployment-outcome recorded \
     --cleanup-outcome complete \
