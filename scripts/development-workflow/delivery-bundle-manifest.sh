@@ -327,6 +327,15 @@ def component_from_evidence(args):
     ]
     if missing:
         fail("invalid_evidence_identity", "evidence is missing stable identity fields: " + ", ".join(missing))
+    if component["selected_product_repo_key"] != args.component_key:
+        fail(
+            "component_key_repo_mismatch",
+            "--component-key '"
+            + str(args.component_key)
+            + "' does not match evidence selected_product_repo_key '"
+            + str(component["selected_product_repo_key"])
+            + "'",
+        )
     return component_view(component)
 
 

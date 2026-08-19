@@ -211,6 +211,13 @@ run_fails_contains \
   update_component "$manifest" mobile-app "$conflict_evidence" mobile-v1.4.0 1.4.0 1411 1501 "#1356"
 run_test "conflict_preserves_manifest" "$manifest_hash" "$(git hash-object "$manifest")"
 
+manifest_hash="$(git hash-object "$manifest")"
+run_fails_contains \
+  "component_key_repo_mismatch_rejected" \
+  "ERROR_CODE=component_key_repo_mismatch" \
+  update_component "$manifest" web-app "$mobile_evidence" web-v2.8.1 2.8.1 1414 1503 "#1357"
+run_test "component_key_repo_mismatch_preserves_manifest" "$manifest_hash" "$(git hash-object "$manifest")"
+
 stale_revision="$(jq -r '.revision' "$manifest")"
 bash "$HELPER" remove-component \
   --manifest "$manifest" \
