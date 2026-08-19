@@ -630,7 +630,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   independent Type/Size updates that follow it in `create_cmd` (also caught
   in code review on this PR) — every requested field is attempted before
   the exit-5 partial-success signal is raised. `--priority` help text
-  updated to match, including the new documented exit codes.
+  updated to match, including the new documented exit codes. Protocol 00's
+  Priority inference heuristics now tell agents to **omit** `--priority`
+  for the routine/default case instead of hardcoding `--priority Medium`
+  (also caught in code review on this PR): an explicit value is validated
+  against the board's real options and hard-fails if absent, so the
+  authoritative example was itself bypassing the adaptive default it
+  documented, breaking on any board still using `Normal`. `Urgent`,
+  `High`, and `Low` are unaffected — those literals are common to both the
+  current and legacy board vocabularies.
   Live reproduction on the real board (see issue #1501) showed `High`
   already worked correctly and the alias/default were the whole defect —
   no separate `High` resolution bug exists.
