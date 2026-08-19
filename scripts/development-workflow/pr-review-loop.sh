@@ -335,10 +335,10 @@ Outputs stable key=value lines including:
                   fixer for a cycle that a future invocation's cycle count would never see, letting
                   repeated persistence or read failures (e.g. a token that can read but not write
                   comments, or a transient read blip on an otherwise-successful write) slip past both
-                  caps indefinitely. This is a corrected, LATER RESULT/REASON pair — the script's
-                  original (now superseded) RESULT for this cycle was already printed earlier in the
-                  output; callers must read the LAST RESULT= / REASON= line, not the first, matching
-                  this script's existing convention (see the release-guard-summary-failure path).)
+                  caps indefinitely. Persistence is attempted, and this correction applied, BEFORE
+                  RESULT=/REASON= are printed — exactly ONE RESULT= / REASON= pair is ever emitted per
+                  invocation, so this REASON is safe to read with either a "first match" or "last
+                  match" key=value parser.)
 
 Environment variables:
   POST_CLEAN_WAIT=<seconds>          Override the post-clean recheck wait (default: 30). Set to 0 to run immediately.
@@ -7418,17 +7418,17 @@ EOF
   # into $comment_body) was never actually written to the PR. If the caller
   # does not react to this, the next invocation's reviewer_loop_resolve_
   # cycle_counts call re-reads the unchanged, stale ledger — the fixer still
-  # gets dispatched (the caller's own RESULT/REASON for THIS cycle were
-  # already printed before this function ran), but that dispatch is never
-  # counted, and repeated persistence failures (e.g. a token that can read
-  # but not write comments) would let unbounded cycles slip past both caps
-  # (found in review of PR #1507). Return non-zero so callers whose result
-  # was dispatch-triggering (needs_fixes/needs_rerun) can print a corrected
-  # RESULT=escalate / REASON=ledger_persist_failed line and exit escalated
-  # instead — this script's established "last RESULT= line wins" convention
-  # (see the release-guard-summary-failure path and its
-  # mainloop_release_guard_comment_failure_result test) makes this safe for
-  # callers that already read the LAST RESULT= line, not just the first.
+  # gets dispatched, but that dispatch is never counted, and repeated
+  # persistence failures (e.g. a token that can read but not write
+  # comments) would let unbounded cycles slip past both caps (found in
+  # review of PR #1507). Return non-zero so the caller (which invokes this
+  # function BEFORE printing RESULT=/REASON=, specifically so a correction
+  # here happens before anything is emitted — see the call site) can
+  # correct aggregate_result to escalate/ledger_persist_failed and still
+  # emit exactly ONE RESULT=/REASON= pair. An earlier design printed RESULT=
+  # twice and relied on a "last line wins" parsing convention; that was
+  # itself a bug (this script's own kv_value helper reads the FIRST match),
+  # fixed by moving this call before the print instead.
   #
   # ALSO fail closed on a read failure even when the write itself succeeds
   # (see the _existing_read_failed comment above): a read failure means
@@ -7672,13 +7672,13 @@ fi
 # aggregate result in hand, do we check whether either cap has been
 # reached. A "clean" result is never overridden. An already-"escalate"
 # result keeps its own (more specific) reason rather than being relabeled.
-# This MUST run before the compare-mode metrics-row append below: --compare
-# mode's own contract is "the overall exit code and RESULT are identical to
-# what normal mode would produce" (see the script's usage doc), and these
+# This MUST run before the persistence step, compare-mode metrics-row
+# append, and the single RESULT= print below: --compare mode's own
+# contract is "the overall exit code and RESULT are identical to what
+# normal mode would produce" (see the script's usage doc), and these
 # overrides are unconditional (they also apply in --compare mode) — so the
-# metrics row must reflect the post-override result, not a stale pre-cap
-# value, or docs/workflow/retro-metrics-platforms.md would record a
-# different overall result than the summary the script actually reports.
+# metrics row and the printed RESULT must reflect the post-override
+# result, not a stale pre-cap value.
 #
 # Order: unavailable (fail-closed) first, then the per-run cap
 # (max_cycles_exceeded — the Protocol-91-aligned, more specific signal),
@@ -7699,45 +7699,7 @@ elif reviewer_loop_cap_exceeded "$lifetime_cycle_count" "$max_total_cycles" "$ag
   aggregate_reason="max_total_cycles_exceeded"
 fi
 
-# Append compare-mode metrics row after the thread gate AND the max_cycles
-# cap check above, so the recorded aggregate_result reflects the final
-# settled value (thread audit may flip a platform-clean run to needs_fixes
-# or escalate, and the cap check above may further flip needs_fixes/
-# needs_rerun to escalate).
-_compare_metrics_appended=0
-if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
-  set +e
-  _metrics_args=("$pr_number" "$branch_name" "$aggregate_result")
-  _idx=0
-  while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
-    _metrics_args+=("${compare_verdicts[$_idx]}" "${compare_verdicts[$((_idx + 1))]}")
-    _idx=$((_idx + 2))
-  done
-  append_compare_metrics_row "${_metrics_args[@]}" 2>/dev/null && \
-    _compare_metrics_appended=1 || \
-    echo "WARN: append_compare_metrics_row failed — metrics row not written" >&2
-  set -e
-fi
-
-if reviewer_failed_label_required_for_result "$aggregate_result" "$aggregate_reason"; then
-  reviewer_failed_required=1
-fi
-sync_reviewer_failed_label "$pr_number" "$reviewer_failed_required"
-
 advisory_checks_section="$(run_project_advisory_checks "$pr_number")"
-
-print_kv RESULT "$aggregate_result"
-print_kv PLATFORM "$last_platform"
-[ -n "$aggregate_reason" ] && print_kv REASON "$aggregate_reason"
-print_kv COMMENT_COUNT "$total_comment_count"
-print_kv BLOCKING_COUNT "$total_blocking_count"
-print_kv SUGGESTION_COUNT "$total_suggestion_count"
-
-if [ -n "$aggregate_output" ]; then
-  review_comment_id="$(kv_value REVIEW_COMMENT_ID "$aggregate_output")"
-  [ -n "$review_comment_id" ] && print_kv REVIEW_COMMENT_ID "$review_comment_id"
-fi
-
 
 aggregate_possible_issue_eval_outcome="$(kv_value_default POSSIBLE_ISSUE_EVAL_OUTCOME "$aggregate_output" "")"
 if [ "${#phase_after_clean_platforms[@]}" -gt 0 ]; then
@@ -7763,139 +7725,106 @@ fi
 # every needs_fixes exit regardless of this value.
 : "$post_final_summary"
 
-# _reviewer_loop_append_corrected_compare_metrics_row <corrected_result>
+# Persist this cycle's reviewer_loop_history.v1 ledger entry BEFORE
+# printing RESULT/REASON or appending the compare-mode metrics row (#1502
+# dual-cap follow-up, single-RESULT-line fix). Previously this call and its
+# ledger_persist_failed correction happened INSIDE the case statement
+# below, AFTER RESULT/REASON had already been printed once for the
+# pre-correction value — producing a SECOND, contradictory RESULT= line.
+# This script's own kv_value helper returns the FIRST matching key (`{...
+# exit }` on first match), not the last, so a caller using that same
+# convention would read the stale, pre-correction RESULT and could dispatch
+# another fixer despite the script exiting escalated (found in review of
+# PR #1507). Persisting first and correcting aggregate_result BEFORE any
+# print_kv call guarantees exactly one RESULT= / REASON= line is ever
+# emitted, valid under either "first wins" or "last wins" parsing.
 #
-# Appends a SUPPLEMENTARY --compare-mode metrics row reflecting a result
-# correction discovered AFTER the main compare-metrics-row append already
-# ran (i.e. the REASON=ledger_persist_failed override below, which can only
-# be known once _post_review_summary's persistence attempt has actually
-# been made — unlike the cap-override checks earlier, which run and settle
-# before the main append and therefore need no such correction).
-#
-# This is a documented, deliberately incomplete fix, not a full
-# reconciliation: append_compare_metrics_row is APPEND-ONLY (it writes one
-# markdown table row to docs/workflow/retro-metrics-platforms.md per call,
-# with no update-in-place), so this adds a SECOND row with the corrected
-# value rather than replacing the earlier (now-stale) one — a reader of
-# that file sees both the original and the corrected outcome for this
-# cycle rather than a single reconciled row. A fully clean fix would need
-# to either call _post_review_summary twice (once to discover the failure,
-# once more to actually persist the corrected result) or restructure the
-# whole tail of the script so metrics-append happens strictly after
-# _post_review_summary settles — both of which are materially larger,
-# riskier changes than this narrow correction. Given --compare mode is
-# explicitly documented as "for platform evaluation only — not for normal
-# orchestration", and this path additionally requires BOTH --compare mode
-# active AND a total summary-comment persistence failure (an intersection
-# of two already-rare conditions), a supplementary corrective row is the
-# proportionate fix here (found in review of PR #1507).
-_reviewer_loop_append_corrected_compare_metrics_row() {
-  local corrected_result="$1"
-  local _pf_idx _persist_fail_metrics_args
+# Skipped for "skipped" (no ledger entry is ever written for that result —
+# see the not-configured early-exit path above, which never reaches here).
+if [ "$aggregate_result" != "skipped" ]; then
+  _post_summary_exit=0
+  _post_review_summary "$aggregate_result" "$aggregate_reason" \
+    "$_summary_platform_list" \
+    "$total_blocking_count" "$total_suggestion_count" \
+    "$aggregate_advisory_labels" \
+    "$aggregate_possible_issue_eval_outcome" \
+    "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
+    "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
+    "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
+    "$advisory_checks_section" || _post_summary_exit=$?
+  if reviewer_loop_persist_failure_should_escalate "$_post_summary_exit" "$aggregate_result"; then
+    echo "WARN: reviewer-loop summary comment could not be persisted for a dispatch-triggering result ($aggregate_result) — escalating (ledger_persist_failed) rather than letting an uncounted fixer/retry dispatch happen" >&2
+    aggregate_result="escalate"
+    aggregate_reason="ledger_persist_failed"
+  fi
+fi
 
-  [ "$compare_mode" -eq 1 ] || return 0
-  [ "${#compare_verdicts[@]}" -gt 0 ] || return 0
-
+# Append compare-mode metrics row after the thread gate, the cap checks,
+# AND the persistence step above, so the recorded aggregate_result always
+# matches the single RESULT= line printed below — including the
+# ledger_persist_failed correction, which (unlike the earlier cap-override
+# checks) can only be known once _post_review_summary's persistence
+# attempt has actually been made. This makes the previous "supplementary
+# corrected row" workaround for that specific case unnecessary; a reader
+# of docs/workflow/retro-metrics-platforms.md now always sees the single,
+# final, correct outcome for this cycle.
+_compare_metrics_appended=0
+if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
   set +e
-  _persist_fail_metrics_args=("$pr_number" "$branch_name" "$corrected_result")
-  _pf_idx=0
-  while [ "$_pf_idx" -lt "${#compare_verdicts[@]}" ]; do
-    _persist_fail_metrics_args+=("${compare_verdicts[$_pf_idx]}" "${compare_verdicts[$((_pf_idx + 1))]}")
-    _pf_idx=$((_pf_idx + 2))
+  _metrics_args=("$pr_number" "$branch_name" "$aggregate_result")
+  _idx=0
+  while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
+    _metrics_args+=("${compare_verdicts[$_idx]}" "${compare_verdicts[$((_idx + 1))]}")
+    _idx=$((_idx + 2))
   done
-  append_compare_metrics_row "${_persist_fail_metrics_args[@]}" 2>/dev/null \
-    || echo "WARN: append_compare_metrics_row (ledger-persist-failure correction) failed — corrected metrics row not written" >&2
+  append_compare_metrics_row "${_metrics_args[@]}" 2>/dev/null && \
+    _compare_metrics_appended=1 || \
+    echo "WARN: append_compare_metrics_row failed — metrics row not written" >&2
   set -e
-}
+fi
 
+if reviewer_failed_label_required_for_result "$aggregate_result" "$aggregate_reason"; then
+  reviewer_failed_required=1
+fi
+sync_reviewer_failed_label "$pr_number" "$reviewer_failed_required"
+
+print_kv RESULT "$aggregate_result"
+print_kv PLATFORM "$last_platform"
+[ -n "$aggregate_reason" ] && print_kv REASON "$aggregate_reason"
+print_kv COMMENT_COUNT "$total_comment_count"
+print_kv BLOCKING_COUNT "$total_blocking_count"
+print_kv SUGGESTION_COUNT "$total_suggestion_count"
+
+if [ -n "$aggregate_output" ]; then
+  review_comment_id="$(kv_value REVIEW_COMMENT_ID "$aggregate_output")"
+  [ -n "$review_comment_id" ] && print_kv REVIEW_COMMENT_ID "$review_comment_id"
+fi
+
+# _post_review_summary has already run above (using the pre-correction
+# aggregate_result as its own "result"/"reason" arguments intentionally —
+# the persisted ledger entry and the rendered comment reflect what this
+# cycle's review actually found; only the SCRIPT'S OWN reported RESULT/
+# REASON are corrected to escalate/ledger_persist_failed on a persistence
+# failure). This case statement now only selects the exit code for the
+# final (possibly corrected) aggregate_result.
 case "$aggregate_result" in
   clean)
-    # Persistence failure on a "clean" result is not dispatch-relevant (no
-    # fixer will be dispatched either way), so it is not escalated here —
-    # but the call must still be explicitly guarded (|| true) now that
-    # _post_review_summary can return non-zero, or `set -e` would abort the
-    # script on a bare failing statement.
-    _post_review_summary "$aggregate_result" "$aggregate_reason" \
-      "$_summary_platform_list" \
-      "$total_blocking_count" "$total_suggestion_count" \
-      "$aggregate_advisory_labels" \
-      "$aggregate_possible_issue_eval_outcome" \
-      "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
-      "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-      "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
-      "$advisory_checks_section" || true
     exit 0
     ;;
   skipped)
     exit 0
     ;;
   needs_fixes)
-    # Fail closed on persistence failure (#1502 dual-cap follow-up): if this
-    # cycle's ledger entry could not be written, the caller (orchestrator)
-    # is about to dispatch a fixer for a cycle that will never be counted by
-    # either cap on a future invocation. Print a corrected RESULT=escalate /
-    # REASON=ledger_persist_failed line — this script's "last RESULT= line
-    # wins" convention (see mainloop_release_guard_comment_failure_result)
-    # makes a second, later RESULT= line safe for callers that already read
-    # the last one — and escalate instead of returning needs_fixes.
-    _post_summary_exit=0
-    _post_review_summary "$aggregate_result" "$aggregate_reason" \
-      "$_summary_platform_list" \
-      "$total_blocking_count" "$total_suggestion_count" \
-      "$aggregate_advisory_labels" \
-      "$aggregate_possible_issue_eval_outcome" \
-      "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
-      "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-      "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
-      "$advisory_checks_section" || _post_summary_exit=$?
-    if reviewer_loop_persist_failure_should_escalate "$_post_summary_exit" "$aggregate_result"; then
-      echo "WARN: reviewer-loop summary comment could not be persisted for a dispatch-triggering result (needs_fixes) — escalating (ledger_persist_failed) rather than letting an uncounted fixer dispatch happen" >&2
-      _reviewer_loop_append_corrected_compare_metrics_row "escalate"
-      print_kv RESULT escalate
-      print_kv REASON ledger_persist_failed
-      exit 2
-    fi
     exit 1
     ;;
   needs_rerun)
     # PR-Agent "Possible Issue" evaluation pushed a fix; orchestrator must
-    # re-invoke the loop on the new HEAD. Preserve this completed iteration
-    # before exit so retrospective retry metrics do not lose the fix-pushed run.
-    # RESULT=needs_rerun is already emitted by the general print_kv block above.
-    # Same persistence-failure fail-closed handling as needs_fixes above.
-    _post_summary_exit=0
-    _post_review_summary "$aggregate_result" "$aggregate_reason" \
-      "$_summary_platform_list" \
-      "$total_blocking_count" "$total_suggestion_count" \
-      "$aggregate_advisory_labels" \
-      "$aggregate_possible_issue_eval_outcome" \
-      "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
-      "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-      "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
-      "$advisory_checks_section" || _post_summary_exit=$?
-    if reviewer_loop_persist_failure_should_escalate "$_post_summary_exit" "$aggregate_result"; then
-      echo "WARN: reviewer-loop summary comment could not be persisted for a dispatch-triggering result (needs_rerun) — escalating (ledger_persist_failed) rather than letting an uncounted retry happen" >&2
-      _reviewer_loop_append_corrected_compare_metrics_row "escalate"
-      print_kv RESULT escalate
-      print_kv REASON ledger_persist_failed
-      exit 2
-    fi
+    # re-invoke the loop on the new HEAD. This completed iteration was
+    # already persisted above so retrospective retry metrics do not lose
+    # the fix-pushed run.
     exit 3
     ;;
   escalate)
-    # Already escalating — persistence failure here does not change the
-    # dispatch decision (nothing further will be dispatched), but the call
-    # must still be explicitly guarded now that the function can return
-    # non-zero.
-    _post_review_summary "$aggregate_result" "$aggregate_reason" \
-      "$_summary_platform_list" \
-      "$total_blocking_count" "$total_suggestion_count" \
-      "$aggregate_advisory_labels" \
-      "$aggregate_possible_issue_eval_outcome" \
-      "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
-      "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-      "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
-      "$advisory_checks_section" || true
     exit 2
     ;;
   *)

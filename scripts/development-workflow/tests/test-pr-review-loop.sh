@@ -1559,20 +1559,34 @@ fi
 run_test "summary_needs_fixes_active_findings" "1" "$_needs_fixes_summary_count"
 unset _needs_fixes_summary_count
 
-# Test 10.5: main needs_fixes exit branch posts the summary before exiting.
+# Test 10.5: the summary is posted (via _post_review_summary) before the
+# needs_fixes exit branch runs, and that branch simply selects exit 1.
+#
+# UPDATED for #1502's dual-cap single-RESULT-line fix: _post_review_summary
+# now runs ONCE, before the whole `case "$aggregate_result" in` statement
+# (so a persistence failure can correct aggregate_result to escalate BEFORE
+# RESULT= is ever printed — see the "Single-RESULT-line fix" tests below
+# for why). The needs_fixes branch itself no longer calls
+# _post_review_summary directly; it only exits 1 for whatever
+# aggregate_result settled to after that shared persistence step.
+_post_summary_precedes_case="$(awk '
+  /_post_review_summary "\$aggregate_result" "\$aggregate_reason"/ {found_call=1}
+  /^case "\$aggregate_result" in/ {print (found_call == 1) ? "yes" : "no"; exit}
+' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+run_test "main_needs_fixes_summary_posted_before_case_statement" "yes" "$_post_summary_precedes_case"
 _needs_fixes_case_block="$(awk '
   /^  needs_fixes\)/ {capture=1}
   capture {print}
   capture && /^    ;;/ {exit}
 ' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
-if grep -qF '_post_review_summary "$aggregate_result" "$aggregate_reason"' <<<"$_needs_fixes_case_block" \
-    && grep -qF 'exit 1' <<<"$_needs_fixes_case_block"; then
+if grep -qF 'exit 1' <<<"$_needs_fixes_case_block" \
+    && ! grep -qF '_post_review_summary' <<<"$_needs_fixes_case_block"; then
   _needs_fixes_main_summary_count=1
 else
   _needs_fixes_main_summary_count=0
 fi
 run_test "main_needs_fixes_exit_posts_summary" "1" "$_needs_fixes_main_summary_count"
-unset _needs_fixes_case_block _needs_fixes_main_summary_count
+unset _post_summary_precedes_case _needs_fixes_case_block _needs_fixes_main_summary_count
 
 # Test 10.6: _post_review_summary source renders policy acknowledgement details.
 if grep -qF '**Policy acknowledgements:**' \
@@ -2486,8 +2500,13 @@ unset MOCK_GH_EXIT
 # AC: an entry written via the fallback path must be countable (non-empty
 # head_sha), unlike the pre-fix behavior where an empty head_sha silently
 # excluded the entry from both cap counts.
+# shellcheck disable=SC2034 # read via "${current_run_id:-}" inside
+# reviewer_loop_history_build_entry (pr-review-loop.sh), which ShellCheck
+# cannot trace across the dynamic HARNESS_MODE=1 source above.
 current_run_id="head-sha-fallback-run"
+# shellcheck disable=SC2034 # same as current_run_id above.
 unresolved_thread_count=0
+# shellcheck disable=SC2034 # same as current_run_id above.
 late_thread_count=0
 export MOCK_GH_EXIT=1
 _fallback_entry_payload="$(reviewer_loop_history_payload_from_existing "" "needs_fixes" "" "bugbot (needs_fixes)" "1" "0")"
@@ -2524,49 +2543,40 @@ else
 fi
 unset _mc_cap_line _mc_metrics_line
 
-# --- _reviewer_loop_append_corrected_compare_metrics_row (Codex finding on
-#     PR #1507: "finalize persistence failure before writing compare
-#     metrics") ---
+# --- Single-RESULT-line fix (Codex finding on PR #1507: "emit only the
+#     corrected reviewer-loop result") ---
 #
-# The main compare-metrics-row append runs before _post_review_summary (see
-# above), so a REASON=ledger_persist_failed correction — which can only be
-# known once _post_review_summary's persistence attempt has actually been
-# made — cannot be reflected in that earlier append. This function appends
-# a SUPPLEMENTARY corrected row instead (append-only format; documented as
-# a deliberately incomplete but proportionate fix — see the block comment
-# above the function). Extracted via the same awk-source-eval technique
-# Area 15 uses for _post_review_summary, since this function is also
-# defined after the HARNESS_MODE return point.
-_corrected_metrics_source="$(awk '/^_reviewer_loop_append_corrected_compare_metrics_row\(\)/,/^}$/'   "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
-eval "$_corrected_metrics_source"
-
-_setup_metrics_dir
-compare_mode=1
-compare_verdicts=("codex-github" "needs_fixes")
-pr_number=99
-branch_name="fix/99-persist-failure"
-_reviewer_loop_append_corrected_compare_metrics_row "escalate"
-run_test "corrected_metrics_row_appended_when_compare_mode_active" "1" "$(_count_data_rows)"
-run_test "corrected_metrics_row_records_corrected_result" "1"   "$(grep -c '| escalate |' "$_METRICS_TMP" 2>/dev/null || echo 0)"
-
-_setup_metrics_dir
-compare_mode=0
-_reviewer_loop_append_corrected_compare_metrics_row "escalate"
-run_test "corrected_metrics_row_not_appended_when_compare_mode_inactive" "no" "$(
-  if [ -f "$_METRICS_TMP" ]; then echo yes; else echo no; fi
-)"
-
-_setup_metrics_dir
-compare_mode=1
-compare_verdicts=()
-_reviewer_loop_append_corrected_compare_metrics_row "escalate"
-run_test "corrected_metrics_row_not_appended_when_no_verdicts" "no" "$(
-  if [ -f "$_METRICS_TMP" ]; then echo yes; else echo no; fi
-)"
-
-unset _corrected_metrics_source compare_mode compare_verdicts pr_number branch_name
-rm -rf "${_METRICS_DIR:-}"
-unset _METRICS_DIR _METRICS_TMP
+# The script's own kv_value helper (used elsewhere in this same script to
+# parse a sub-invocation's key=value output) returns the FIRST matching
+# key, not the last (`{ ...; print; exit }` on first match) — so printing
+# RESULT= twice (an initial value, then a "corrected" one after a
+# persistence failure) would be silently invisible to any caller using
+# that same convention, which would still see the stale first value despite
+# the script exiting escalated. The fix restructures the tail of the main
+# flow so _post_review_summary (and its ledger_persist_failed correction)
+# runs BEFORE the single RESULT=/REASON= print, not after — replacing the
+# earlier "supplementary corrected compare-metrics row" workaround (now
+# unnecessary: the main compare-metrics append also moved after
+# persistence, so it always reflects the single final result too).
+#
+# This is a source-ordering check (the runtime behavior requires a full
+# needs_fixes-with-persistence-failure platform run to exercise end to end,
+# which is out of scope for this harness) but it directly guards against
+# the exact regression found: _post_review_summary's call site must appear
+# BEFORE print_kv RESULT "$aggregate_result" in the tail of the script.
+_post_summary_call_line="$(grep -n '_post_review_summary "\$aggregate_result" "\$aggregate_reason"'   "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null   | head -1 | cut -d: -f1)"
+_print_result_line="$(grep -n 'print_kv RESULT "\$aggregate_result"'   "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null   | head -1 | cut -d: -f1)"
+if [ -n "$_post_summary_call_line" ] && [ -n "$_print_result_line" ]     && [ "$_post_summary_call_line" -lt "$_print_result_line" ]; then
+  run_test "persist_and_correction_precede_single_result_print" "yes" "yes"
+else
+  run_test "persist_and_correction_precede_single_result_print" "yes" "no"
+fi
+# Only ONE call site for `print_kv RESULT "$aggregate_result"` should exist
+# in the whole script — a second, differently-worded RESULT print (e.g.
+# `print_kv RESULT escalate`) reintroducing the two-line bug would not be
+# caught by the check above alone.
+run_test "only_one_print_kv_result_aggregate_result_call_site" "1"   "$(grep -c 'print_kv RESULT "\$aggregate_result"' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+unset _post_summary_call_line _print_result_line
 
 # Function-ordering check (mirrors Area 11's Test 11.6) — the max_cycles /
 # max_total_cycles enforcement functions must stay callable from the

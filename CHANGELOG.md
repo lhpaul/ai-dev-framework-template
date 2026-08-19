@@ -658,26 +658,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ledger entry now falls back to a guaranteed-unique synthetic identifier
   instead of an empty one (an empty HEAD SHA was excluded from both cap
   counts by design, which a persistent lookup failure could otherwise
-  exploit to grant unlimited uncounted dispatches). Two smaller gaps found
-  in the same review round are also closed: the ledger-fetch retry count
-  (`CYCLE_LEDGER_MAX_RETRIES`) and retry wait (`CYCLE_LEDGER_RETRY_WAIT`)
-  are now bounded the same way as the two cycle-cap variables, since an
-  unbounded value could exceed Bash's signed integer range and make the
-  retry loop's own give-up comparison silently evaluate as false forever
-  instead of failing closed; and a `--compare`-mode metrics row is now
-  additionally appended with the corrected result whenever the new
-  `ledger_persist_failed` escalation fires, so the comparison data used for
-  reviewer graduation reflects the actual outcome rather than only the
-  stale pre-correction value (a supplementary row, since the metrics log
-  is append-only). `REASON=ledger_persist_failed` now also fires when only
-  the pre-write READ of the existing summary comment fails (even if the
-  subsequent write itself succeeds): a read failure previously made the
-  write fall back to posting an "unavailable" stub that silently drops
-  this cycle's own entry (an unavailable-history existing body is never
-  appended onto), so a dispatch could complete, get reported to the caller,
-  and then vanish from both cap counters on the very next successful
-  invocation — repeated occurrences could let true dispatch counts exceed
-  the advertised caps while the recorded counts stayed artificially low.
+  exploit to grant unlimited uncounted dispatches). Three smaller gaps
+  found in the same review round are also closed: the ledger-fetch retry
+  count (`CYCLE_LEDGER_MAX_RETRIES`) and retry wait
+  (`CYCLE_LEDGER_RETRY_WAIT`) are now bounded the same way as the two
+  cycle-cap variables, since an unbounded value could exceed Bash's signed
+  integer range and make the retry loop's own give-up comparison silently
+  evaluate as false forever instead of failing closed; `REASON=ledger_
+  persist_failed` now also fires when only the pre-write READ of the
+  existing summary comment fails (even if the subsequent write itself
+  succeeds): a read failure previously made the write fall back to posting
+  an "unavailable" stub that silently drops this cycle's own entry (an
+  unavailable-history existing body is never appended onto), so a dispatch
+  could complete, get reported to the caller, and then vanish from both
+  cap counters on the very next successful invocation; and the script's
+  tail was restructured so `_post_review_summary` (and any `ledger_
+  persist_failed` correction it triggers) now runs BEFORE `RESULT=`/
+  `REASON=` and the `--compare`-mode metrics row are ever emitted, instead
+  of after — the previous design printed a second, corrected `RESULT=`
+  line following the original one and relied on an assumed "last line
+  wins" parsing convention that the script's own `kv_value` helper does not
+  actually follow (it returns the *first* matching key), so a caller using
+  that same convention would have read the stale, pre-correction `RESULT=`
+  and could still dispatch another fixer despite the script exiting
+  escalated. Exactly one `RESULT=`/`REASON=` pair, and one compare-mode
+  metrics row, are now emitted per invocation, valid under either parsing
+  convention.
 - **Backlog item Priority was silently never set**: `update_tracker_priority_best_effort`
   in `workflow-lib.sh` rewrote `Medium` — the board's actual Priority field
   option — into `Normal`, a value that does not exist on the board, so the
