@@ -2406,6 +2406,17 @@ run_test "cycles_end_to_end_unreadable_ledger_escalates" "yes" "$(
 )"
 unset MOCK_GH_COMMENTS_EXIT CYCLE_LEDGER_RETRY_WAIT
 
+# --- reviewer_loop_persist_failure_should_escalate ---
+# Fail-closed safety check (Codex finding on PR #1507): if this cycle's own
+# ledger entry could not be persisted, a dispatch-triggering result must
+# not silently let the caller dispatch an uncounted fixer.
+
+run_test "persist_failure_escalates_on_needs_fixes" "yes"   "$(reviewer_loop_persist_failure_should_escalate 1 needs_fixes && echo yes || echo no)"
+run_test "persist_failure_escalates_on_needs_rerun" "yes"   "$(reviewer_loop_persist_failure_should_escalate 1 needs_rerun && echo yes || echo no)"
+run_test "persist_failure_does_not_escalate_on_clean" "no"   "$(reviewer_loop_persist_failure_should_escalate 1 clean && echo yes || echo no)"
+run_test "persist_failure_does_not_escalate_on_already_escalate" "no"   "$(reviewer_loop_persist_failure_should_escalate 1 escalate && echo yes || echo no)"
+run_test "persist_failure_does_not_fire_when_persist_succeeded" "no"   "$(reviewer_loop_persist_failure_should_escalate 0 needs_fixes && echo yes || echo no)"
+
 # --- reviewer_loop_history_build_entry writes run_id from the
 #     current_run_id global (same convention already used in that function
 #     for unresolved_thread_count/late_thread_count) ---
@@ -2422,6 +2433,49 @@ run_test "cycles_build_entry_writes_run_id_from_global" "entry-write-test-run" \
   "$(printf '%s\n' "$_entry_write_payload" | jq -r '.entries[0].run_id')"
 unset current_run_id unresolved_thread_count late_thread_count pr_number
 unset MOCK_GH_HEAD_SHA MOCK_GH_UPDATED_AT
+
+# --- reviewer_loop_history_current_head_sha fallback (Codex finding on
+#     PR #1507): a failed/empty HEAD SHA lookup must never silently make an
+#     entry uncountable (empty head_sha is excluded from both cap counts by
+#     reviewer_loop_history_entries_count). A guaranteed-unique synthetic
+#     placeholder keeps the entry countable instead. ---
+
+pr_number=42
+export MOCK_GH_EXIT=1
+run_test "cycles_head_sha_fallback_on_lookup_failure_nonempty" "yes" "$(
+  _hs="$(reviewer_loop_history_current_head_sha 2>/dev/null)"
+  if [ -n "$_hs" ]; then echo yes; else echo no; fi
+)"
+run_test "cycles_head_sha_fallback_on_lookup_failure_has_prefix" "yes" "$(
+  _hs="$(reviewer_loop_history_current_head_sha 2>/dev/null)"
+  if [[ "$_hs" == unknown-* ]]; then echo yes; else echo no; fi
+)"
+run_test "cycles_head_sha_fallback_warns" "yes" "$(
+  _stderr="$(reviewer_loop_history_current_head_sha 2>&1 >/dev/null)"
+  if printf '%s
+' "$_stderr" | grep -q "WARN.*could not resolve current HEAD SHA"; then
+    echo yes
+  else
+    echo no
+  fi
+)"
+unset MOCK_GH_EXIT
+
+# AC: an entry written via the fallback path must be countable (non-empty
+# head_sha), unlike the pre-fix behavior where an empty head_sha silently
+# excluded the entry from both cap counts.
+current_run_id="head-sha-fallback-run"
+unresolved_thread_count=0
+late_thread_count=0
+export MOCK_GH_EXIT=1
+_fallback_entry_payload="$(reviewer_loop_history_payload_from_existing "" "needs_fixes" "" "bugbot (needs_fixes)" "1" "0")"
+run_test "cycles_head_sha_fallback_entry_has_nonempty_head_sha" "yes" "$(
+  _entry_hs="$(printf '%s
+' "$_fallback_entry_payload" | jq -r '.entries[0].head_sha')"
+  if [ -n "$_entry_hs" ]; then echo yes; else echo no; fi
+)"
+unset MOCK_GH_EXIT current_run_id unresolved_thread_count late_thread_count pr_number
+unset _fallback_entry_payload
 
 # --- Regression guard (Codex finding on PR #1507): the max_cycles cap
 # override in the main flow MUST run before the compare-mode metrics-row
@@ -2455,6 +2509,8 @@ for _mc_fn in reviewer_loop_resolve_run_id reviewer_loop_history_entries_count \
     reviewer_loop_history_select_latest_summary_record \
     reviewer_loop_resolve_max_cycles reviewer_loop_resolve_max_total_cycles \
     reviewer_loop_cap_exceeded reviewer_loop_cycle_count_unavailable_should_escalate \
+    reviewer_loop_persist_failure_should_escalate \
+    reviewer_loop_history_current_head_sha \
     reviewer_loop_resolve_cycle_counts; do
   _mc_fn_line="$(grep -n "^${_mc_fn}()" \
     "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
@@ -10829,7 +10885,11 @@ _summary_call_log="$(mktemp)"
 export MOCK_GH_CALL_LOG="$_summary_call_log"
 MOCK_GH_EXIT=1
 export MOCK_GH_EXIT
-_post_review_summary "escalate" "thread-check-failed" "codex-github" "0" "0" 2>/dev/null
+# _post_review_summary now returns non-zero when persistence genuinely
+# fails (#1502 dual-cap follow-up) — guard the bare call with `|| true`
+# since this test only cares about body-file cleanup, not the return code
+# (that contract is covered separately by the persist-failure tests above).
+_post_review_summary "escalate" "thread-check-failed" "codex-github" "0" "0" 2>/dev/null || true
 _body_file="$(awk '/pr comment 42 --body-file / {print $NF}' "$_summary_call_log" | tail -n 1)"
 if [ -n "$_body_file" ] && [ ! -e "$_body_file" ]; then
   _body_file_removed="yes"

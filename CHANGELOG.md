@@ -644,6 +644,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whenever the loop would otherwise still report `needs_fixes` or
   `needs_rerun`, matching this script's existing fail-closed convention for
   other safety-critical audits (e.g. the unresolved-review-thread check).
+  Two further gaps in that fail-closed guarantee, found in later review of
+  the same PR, are also closed: (1) cycle counting now uses a dedicated
+  selector that reads the newest summary comment's own history status
+  (rather than a render-only selector that intentionally falls back to an
+  older "available" snapshot), so a genuinely unreadable newest ledger
+  state can no longer resolve to a stale, silently under-counted prior
+  count; and (2) if this cycle's own ledger entry cannot be persisted at
+  all (both the comment update and the create-fallback fail) for a
+  dispatch-triggering result, the script now escalates with the distinct
+  `REASON=ledger_persist_failed` instead of letting an uncounted fixer
+  dispatch happen, and a failed/empty HEAD SHA lookup while building a
+  ledger entry now falls back to a guaranteed-unique synthetic identifier
+  instead of an empty one (an empty HEAD SHA was excluded from both cap
+  counts by design, which a persistent lookup failure could otherwise
+  exploit to grant unlimited uncounted dispatches).
 - **Backlog item Priority was silently never set**: `update_tracker_priority_best_effort`
   in `workflow-lib.sh` rewrote `Medium` — the board's actual Priority field
   option — into `Normal`, a value that does not exist on the board, so the

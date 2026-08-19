@@ -325,6 +325,17 @@ Outputs stable key=value lines including:
                   — the persisted cycle ledger could not be read after retries — while the loop would
                   otherwise still report needs_fixes or needs_rerun. Fails closed rather than silently
                   disabling both cap backstops indefinitely for this PR.)
+  REASON=ledger_persist_failed (RESULT=escalate, exit 2; emitted when this cycle's own
+                  reviewer_loop_history.v1 ledger entry could not be written — both the PATCH to the
+                  existing summary comment and the create-fallback failed — while this cycle's own
+                  result was needs_fixes or needs_rerun. Without this check, the caller would dispatch
+                  a fixer for a cycle that a future invocation's cycle count would never see, letting
+                  repeated persistence failures (e.g. a token that can read but not write comments)
+                  slip past both caps indefinitely. This is a corrected, LATER RESULT/REASON pair —
+                  the script's original (now superseded) RESULT for this cycle was already printed
+                  earlier in the output; callers must read the LAST RESULT= / REASON= line, not the
+                  first, matching this script's existing convention (see the release-guard-summary
+                  -failure path).)
 
 Environment variables:
   POST_CLEAN_WAIT=<seconds>          Override the post-clean recheck wait (default: 30). Set to 0 to run immediately.
@@ -5503,6 +5514,21 @@ reviewer_loop_history_current_head_sha() {
   if ! head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid // ""' 2>/dev/null)"; then
     head_sha=""
   fi
+  if [ -z "$head_sha" ]; then
+    # Fallback identifier (#1502 dual-cap follow-up): a failed or empty HEAD
+    # SHA lookup must not silently make this ledger entry uncountable.
+    # reviewer_loop_history_entries_count excludes entries with an empty
+    # head_sha from both cap counts (a defensive guard against distinct-
+    # but-unresolved SHAs accidentally collapsing into one bucket) — but
+    # that same guard would let a REPEATED lookup failure (e.g. a
+    # persistent GH API issue affecting only this endpoint) grant an
+    # unlimited number of uncounted dispatches, defeating both caps (found
+    # in review of PR #1507). Generate a guaranteed-unique, non-empty
+    # placeholder so this entry is always countable as its own distinct
+    # event instead of silently vanishing from both counters.
+    head_sha="unknown-$(date +%s 2>/dev/null || printf '0')-$$-${RANDOM:-0}"
+    echo "WARN: could not resolve current HEAD SHA for PR #${pr_number} while building a reviewer-loop history entry; using synthetic placeholder '$head_sha' so this cycle remains countable" >&2
+  fi
   printf '%s\n' "$head_sha"
 }
 
@@ -6146,6 +6172,36 @@ reviewer_loop_cycle_count_unavailable_should_escalate() {
   esac
 
   [ "$cycle_count" -eq -1 ]
+}
+
+# reviewer_loop_persist_failure_should_escalate <post_summary_exit_code> <result>
+#
+# Returns 0 (true — escalate) when this cycle's reviewer_loop_history.v1
+# ledger entry could not be persisted (<post_summary_exit_code> is non-zero
+# — both _post_review_summary's PATCH and create-fallback failed) AND this
+# cycle's own result was needs_fixes or needs_rerun (dispatch-triggering).
+# A "clean" or already-"escalate" result is never affected — no fixer
+# dispatch is at risk of going uncounted in those cases. Fails CLOSED,
+# matching the same rationale as reviewer_loop_cycle_count_unavailable_
+# should_escalate: a persistence failure that silently lets the caller
+# dispatch an uncounted fixer defeats both caps exactly as much as an
+# unreadable ledger does (found in review of PR #1507).
+#
+# Kept as its own pure, directly-testable function (defined before the
+# HARNESS_MODE return point) because _post_review_summary itself is defined
+# after that point (it does real gh API side effects) and is not directly
+# unit-testable from the harness — this function isolates the decision
+# logic so it can be verified without a full main-loop subprocess run.
+reviewer_loop_persist_failure_should_escalate() {
+  local post_summary_exit_code="$1"
+  local result="$2"
+
+  case "$result" in
+    needs_fixes|needs_rerun) : ;;
+    *) return 1 ;;
+  esac
+
+  [ "$post_summary_exit_code" -ne 0 ]
 }
 
 # reviewer_loop_resolve_cycle_counts <pr_number> <run_id>
@@ -7320,13 +7376,37 @@ EOF
     local _body_tmpfile
     _body_tmpfile="$(mktemp)"
     printf '%s' "$comment_body" > "$_body_tmpfile"
-    if ! gh pr comment "$pr_number" --body-file "$_body_tmpfile" >/dev/null 2>&1; then
+    if gh pr comment "$pr_number" --body-file "$_body_tmpfile" >/dev/null 2>&1; then
+      _comment_posted=1
+    else
       echo "WARN: failed to post reviewer loop summary comment for PR ${pr_number}" >&2
     fi
     rm -f "$_body_tmpfile"
   fi
 
   set -e
+
+  # Persistence failure signal (#1502 dual-cap follow-up): when BOTH the
+  # PATCH and the create-fallback fail, this cycle's reviewer_loop_history.v1
+  # entry (built by reviewer_loop_history_append_to_summary above and folded
+  # into $comment_body) was never actually written to the PR. If the caller
+  # does not react to this, the next invocation's reviewer_loop_resolve_
+  # cycle_counts call re-reads the unchanged, stale ledger — the fixer still
+  # gets dispatched (the caller's own RESULT/REASON for THIS cycle were
+  # already printed before this function ran), but that dispatch is never
+  # counted, and repeated persistence failures (e.g. a token that can read
+  # but not write comments) would let unbounded cycles slip past both caps
+  # (found in review of PR #1507). Return non-zero so callers whose result
+  # was dispatch-triggering (needs_fixes/needs_rerun) can print a corrected
+  # RESULT=escalate / REASON=ledger_persist_failed line and exit escalated
+  # instead — this script's established "last RESULT= line wins" convention
+  # (see the release-guard-summary-failure path and its
+  # mainloop_release_guard_comment_failure_result test) makes this safe for
+  # callers that already read the LAST RESULT= line, not just the first.
+  if [ "$_comment_posted" -eq 0 ]; then
+    return 1
+  fi
+  return 0
 }
 
 if [ -z "$last_platform" ]; then
@@ -7651,6 +7731,11 @@ fi
 
 case "$aggregate_result" in
   clean)
+    # Persistence failure on a "clean" result is not dispatch-relevant (no
+    # fixer will be dispatched either way), so it is not escalated here —
+    # but the call must still be explicitly guarded (|| true) now that
+    # _post_review_summary can return non-zero, or `set -e` would abort the
+    # script on a bare failing statement.
     _post_review_summary "$aggregate_result" "$aggregate_reason" \
       "$_summary_platform_list" \
       "$total_blocking_count" "$total_suggestion_count" \
@@ -7659,13 +7744,22 @@ case "$aggregate_result" in
       "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
       "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
       "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
-      "$advisory_checks_section"
+      "$advisory_checks_section" || true
     exit 0
     ;;
   skipped)
     exit 0
     ;;
   needs_fixes)
+    # Fail closed on persistence failure (#1502 dual-cap follow-up): if this
+    # cycle's ledger entry could not be written, the caller (orchestrator)
+    # is about to dispatch a fixer for a cycle that will never be counted by
+    # either cap on a future invocation. Print a corrected RESULT=escalate /
+    # REASON=ledger_persist_failed line — this script's "last RESULT= line
+    # wins" convention (see mainloop_release_guard_comment_failure_result)
+    # makes a second, later RESULT= line safe for callers that already read
+    # the last one — and escalate instead of returning needs_fixes.
+    _post_summary_exit=0
     _post_review_summary "$aggregate_result" "$aggregate_reason" \
       "$_summary_platform_list" \
       "$total_blocking_count" "$total_suggestion_count" \
@@ -7674,7 +7768,13 @@ case "$aggregate_result" in
       "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
       "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
       "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
-      "$advisory_checks_section"
+      "$advisory_checks_section" || _post_summary_exit=$?
+    if reviewer_loop_persist_failure_should_escalate "$_post_summary_exit" "$aggregate_result"; then
+      echo "WARN: reviewer-loop summary comment could not be persisted for a dispatch-triggering result (needs_fixes) — escalating (ledger_persist_failed) rather than letting an uncounted fixer dispatch happen" >&2
+      print_kv RESULT escalate
+      print_kv REASON ledger_persist_failed
+      exit 2
+    fi
     exit 1
     ;;
   needs_rerun)
@@ -7682,6 +7782,8 @@ case "$aggregate_result" in
     # re-invoke the loop on the new HEAD. Preserve this completed iteration
     # before exit so retrospective retry metrics do not lose the fix-pushed run.
     # RESULT=needs_rerun is already emitted by the general print_kv block above.
+    # Same persistence-failure fail-closed handling as needs_fixes above.
+    _post_summary_exit=0
     _post_review_summary "$aggregate_result" "$aggregate_reason" \
       "$_summary_platform_list" \
       "$total_blocking_count" "$total_suggestion_count" \
@@ -7690,10 +7792,20 @@ case "$aggregate_result" in
       "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
       "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
       "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
-      "$advisory_checks_section"
+      "$advisory_checks_section" || _post_summary_exit=$?
+    if reviewer_loop_persist_failure_should_escalate "$_post_summary_exit" "$aggregate_result"; then
+      echo "WARN: reviewer-loop summary comment could not be persisted for a dispatch-triggering result (needs_rerun) — escalating (ledger_persist_failed) rather than letting an uncounted retry happen" >&2
+      print_kv RESULT escalate
+      print_kv REASON ledger_persist_failed
+      exit 2
+    fi
     exit 3
     ;;
   escalate)
+    # Already escalating — persistence failure here does not change the
+    # dispatch decision (nothing further will be dispatched), but the call
+    # must still be explicitly guarded now that the function can return
+    # non-zero.
     _post_review_summary "$aggregate_result" "$aggregate_reason" \
       "$_summary_platform_list" \
       "$total_blocking_count" "$total_suggestion_count" \
@@ -7702,7 +7814,7 @@ case "$aggregate_result" in
       "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
       "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
       "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
-      "$advisory_checks_section"
+      "$advisory_checks_section" || true
     exit 2
     ;;
   *)
