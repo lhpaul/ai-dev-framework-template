@@ -1696,7 +1696,11 @@ echo "=== Area 10b: reviewer-loop history payload ==="
 
 pr_number=42
 branch_name="fix/42-history"
+# shellcheck disable=SC2034 # read via "${unresolved_thread_count:-0}" inside
+# reviewer_loop_history_build_entry (pr-review-loop.sh), which ShellCheck
+# cannot trace across the dynamic HARNESS_MODE=1 source above.
 unresolved_thread_count=0
+# shellcheck disable=SC2034 # same as unresolved_thread_count above.
 late_thread_count=0
 MOCK_GH_HEAD_SHA="abc-history-1"
 MOCK_GH_UPDATED_AT="2026-07-18T00:00:00Z"
@@ -2031,8 +2035,11 @@ run_test "cycles_resolve_max_env_overrides_config" "3" \
 run_test "cycles_resolve_max_invalid_config_defaults" "10" \
   "$(reviewer_loop_resolve_max_cycles "not-a-number" 2>/dev/null)"
 run_test "cycles_resolve_max_invalid_config_warns" "yes" "$(
-  if reviewer_loop_resolve_max_cycles "not-a-number" 2>&1 >/dev/null \
-      | grep -q "WARN.*not a positive integer"; then
+  # Capture stderr into a variable first, then grep the variable (see the
+  # cycles_resolve_count_api_failure_retries_before_giving_up comment for
+  # why piping directly into `grep -q` risks a SIGPIPE false-negative).
+  _mc_warn_stderr="$(reviewer_loop_resolve_max_cycles "not-a-number" 2>&1 >/dev/null)"
+  if printf '%s\n' "$_mc_warn_stderr" | grep -q "WARN.*not a positive integer"; then
     echo yes
   else
     echo no
@@ -2141,16 +2148,59 @@ run_test "cycles_resolve_count_mixed_results_excludes_non_dispatch_entries" "2" 
   "$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
 unset MOCK_GH_COMMENTS_OUTPUT
 
-# API failure while resolving the ledger → -1 (unavailable), and the cap check
-# fails open (never escalates on a read failure alone).
+# API failure while resolving the ledger (after retries) → -1 (unavailable).
+# CYCLE_LEDGER_RETRY_WAIT=0 avoids a real sleep between retry attempts in
+# the test harness; CYCLE_LEDGER_MAX_RETRIES=1 keeps the retry count at its
+# default so the retry path itself is exercised (2 total attempts).
 export MOCK_GH_COMMENTS_EXIT=1
+export CYCLE_LEDGER_RETRY_WAIT=0
 run_test "cycles_resolve_count_api_failure_unavailable" "-1" \
   "$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
-run_test "cycles_cap_check_fails_open_on_read_failure" "no" "$(
+run_test "cycles_resolve_count_api_failure_retries_before_giving_up" "yes" "$(
+  # Capture stderr into a variable first, then grep the variable — piping
+  # directly into `grep -q` risks a SIGPIPE (exit 141) false-negative under
+  # `set -o pipefail` if grep exits after its first match while the
+  # function is still writing a later WARN line.
+  _mc_retry_stderr="$(reviewer_loop_resolve_cycle_count "42" 2>&1 >/dev/null)"
+  if printf '%s\n' "$_mc_retry_stderr" | grep -q "retrying"; then
+    echo yes
+  else
+    echo no
+  fi
+)"
+# reviewer_loop_cap_exceeded itself still fails open on an unknown (-1) count
+# — it is strictly "is the known count at or past the cap"; the fail-closed
+# behavior lives in reviewer_loop_cycle_count_unavailable_should_escalate
+# (tested separately below), which the main flow checks first.
+run_test "cycles_cap_check_still_fails_open_on_unknown_count" "no" "$(
   _cc="$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
   reviewer_loop_cap_exceeded "$_cc" 10 needs_fixes && echo yes || echo no
 )"
-unset MOCK_GH_COMMENTS_EXIT
+unset MOCK_GH_COMMENTS_EXIT CYCLE_LEDGER_RETRY_WAIT
+
+# --- reviewer_loop_cycle_count_unavailable_should_escalate ---
+# Fail-closed safety check (Codex finding on PR #1507): an unreadable cycle
+# ledger must not silently disable the max_cycles backstop forever.
+
+run_test "cycles_unavailable_escalates_on_needs_fixes" "yes" \
+  "$(reviewer_loop_cycle_count_unavailable_should_escalate -1 needs_fixes && echo yes || echo no)"
+run_test "cycles_unavailable_escalates_on_needs_rerun" "yes" \
+  "$(reviewer_loop_cycle_count_unavailable_should_escalate -1 needs_rerun && echo yes || echo no)"
+run_test "cycles_unavailable_does_not_escalate_on_clean" "no" \
+  "$(reviewer_loop_cycle_count_unavailable_should_escalate -1 clean && echo yes || echo no)"
+run_test "cycles_unavailable_does_not_escalate_on_already_escalate" "no" \
+  "$(reviewer_loop_cycle_count_unavailable_should_escalate -1 escalate && echo yes || echo no)"
+run_test "cycles_unavailable_does_not_fire_on_known_count" "no" \
+  "$(reviewer_loop_cycle_count_unavailable_should_escalate 3 needs_fixes && echo yes || echo no)"
+# AC / regression: end-to-end — an unreadable ledger on a PR with a
+# needs_fixes verdict must escalate (fail closed), not silently retry forever.
+export MOCK_GH_COMMENTS_EXIT=1
+export CYCLE_LEDGER_RETRY_WAIT=0
+run_test "cycles_end_to_end_unreadable_ledger_escalates" "yes" "$(
+  _cc="$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
+  reviewer_loop_cycle_count_unavailable_should_escalate "$_cc" needs_fixes && echo yes || echo no
+)"
+unset MOCK_GH_COMMENTS_EXIT CYCLE_LEDGER_RETRY_WAIT
 
 # Regression guard (Codex finding on PR #1507): the max_cycles cap override
 # in the main flow MUST run before the compare-mode metrics-row append.
@@ -2181,7 +2231,8 @@ unset _mc_cap_line _mc_metrics_line
 # enforcement functions must stay callable from the harness after future
 # refactors move code around.
 for _mc_fn in reviewer_loop_history_entries_count reviewer_loop_resolve_max_cycles \
-    reviewer_loop_cap_exceeded reviewer_loop_resolve_cycle_count; do
+    reviewer_loop_cap_exceeded reviewer_loop_cycle_count_unavailable_should_escalate \
+    reviewer_loop_resolve_cycle_count; do
   _mc_fn_line="$(grep -n "^${_mc_fn}()" \
     "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
     | head -1 | cut -d: -f1)"

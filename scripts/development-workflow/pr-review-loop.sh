@@ -302,6 +302,10 @@ Outputs stable key=value lines including:
                   overridden by this check. The cap applies uniformly to every re-invocation of this
                   script regardless of whether the fix that triggered it was applied inline or by a
                   dispatched fixer subagent — there is only one counter.)
+  REASON=cycle_count_unavailable (RESULT=escalate; emitted when CYCLE_COUNT is -1 — the persisted
+                  cycle ledger could not be read after retries — while the loop would otherwise still
+                  report needs_fixes or needs_rerun. Fails closed rather than silently disabling the
+                  max_cycles backstop indefinitely for this PR.)
 
 Environment variables:
   POST_CLEAN_WAIT=<seconds>          Override the post-clean recheck wait (default: 30). Set to 0 to run immediately.
@@ -5891,8 +5895,9 @@ reviewer_loop_resolve_max_cycles() {
 # cycle_count is known (>= 0) and has reached or passed max_cycles. A result
 # of "clean" is never overridden — a genuinely resolved PR is not escalated
 # just because it took many cycles to get there. An unknown cycle_count (-1,
-# from unreadable history) never triggers escalation on its own; the cap
-# fails open rather than false-escalating on a ledger read failure.
+# from unreadable history) is handled separately by
+# reviewer_loop_cycle_count_unavailable_should_escalate below — this
+# function's job is strictly "is the known count at or past the cap".
 reviewer_loop_cap_exceeded() {
   local cycle_count="$1"
   local max_cycles="$2"
@@ -5906,6 +5911,33 @@ reviewer_loop_cap_exceeded() {
   [ "$cycle_count" -ge 0 ] && [ "$cycle_count" -ge "$max_cycles" ]
 }
 
+# reviewer_loop_cycle_count_unavailable_should_escalate <cycle_count> <result>
+#
+# Returns 0 (true — escalate) when the cycle ledger could not be read
+# reliably (cycle_count == -1) and the loop would otherwise keep going
+# (result is needs_fixes or needs_rerun). Fails CLOSED, matching this
+# script's existing convention for other safety-critical audits (see
+# check_unresolved_threads: "we cannot confirm threads are resolved, so
+# RESULT=clean must not be emitted ... never degrade gracefully — a silent
+# bypass ... can allow PRs with unresolved review threads to be labeled
+# ready-for-human-review"). A hard cycle-count backstop that silently goes
+# dark whenever its own state cannot be read would defeat the purpose it
+# exists for exactly as much as if it had never been implemented (found in
+# review of PR #1507) — reviewer_loop_resolve_cycle_count already retries
+# transient failures before returning -1, so a -1 here reflects a
+# genuinely unreadable ledger, not a single flaky API call.
+reviewer_loop_cycle_count_unavailable_should_escalate() {
+  local cycle_count="$1"
+  local result="$2"
+
+  case "$result" in
+    needs_fixes|needs_rerun) : ;;
+    *) return 1 ;;
+  esac
+
+  [ "$cycle_count" -eq -1 ]
+}
+
 # reviewer_loop_resolve_cycle_count <pr_number>
 #
 # Resolves this invocation's cycle number (Protocol 91's `cycle` value, the
@@ -5916,8 +5948,15 @@ reviewer_loop_cap_exceeded() {
 # reviewer_loop_history_entries_count. Prints the resolved cycle count
 # directly (no offset — see reviewer_loop_history_entries_count for why only
 # needs_fixes/needs_rerun entries count), or -1 when the prior count could
-# not be determined reliably (repo slug unresolved, GitHub API failure, or
-# an unreadable/malformed history block) — never guesses.
+# not be determined reliably (repo slug unresolved, GitHub API failure after
+# retries, or an unreadable/malformed history block) — never guesses.
+#
+# The GitHub comments fetch is retried (default: 1 retry, i.e. 2 total
+# attempts) before giving up, so a single transient API blip does not
+# immediately surface as "unavailable" (which reviewer_loop_cycle_count_
+# unavailable_should_escalate treats as a hard escalation). Configurable via
+# CYCLE_LEDGER_MAX_RETRIES (attempts beyond the first) and
+# CYCLE_LEDGER_RETRY_WAIT (seconds between attempts; tests set this to 0).
 #
 # Kept as its own function (defined before the HARNESS_MODE return point, like
 # restore_regression_label_if_missing) so it is directly unit-testable via the
@@ -5926,6 +5965,7 @@ reviewer_loop_cap_exceeded() {
 reviewer_loop_resolve_cycle_count() {
   local pr_number_arg="$1"
   local repo="" record="" body="" count status
+  local max_retries retry_wait attempt
 
   if [ -z "$pr_number_arg" ]; then
     printf '%s\n' -1
@@ -5938,15 +5978,34 @@ reviewer_loop_resolve_cycle_count() {
     return 0
   fi
 
-  if ! record="$(
-      set -o pipefail
-      gh api "repos/$repo/issues/$pr_number_arg/comments" --paginate 2>/dev/null \
-        | reviewer_loop_history_select_summary_record
-    )"; then
-    echo "WARN: failed to fetch existing summary comments for PR ${pr_number_arg} while resolving reviewer cycle count; treating prior cycle count as unavailable" >&2
-    printf '%s\n' -1
-    return 0
+  max_retries="${CYCLE_LEDGER_MAX_RETRIES:-1}"
+  if ! [[ "$max_retries" =~ ^[0-9]+$ ]]; then
+    max_retries=1
   fi
+  retry_wait="${CYCLE_LEDGER_RETRY_WAIT:-2}"
+  if ! [[ "$retry_wait" =~ ^[0-9]+$ ]]; then
+    retry_wait=2
+  fi
+
+  attempt=0
+  record=""
+  while true; do
+    attempt=$((attempt + 1))
+    if record="$(
+        set -o pipefail
+        gh api "repos/$repo/issues/$pr_number_arg/comments" --paginate 2>/dev/null \
+          | reviewer_loop_history_select_summary_record
+      )"; then
+      break
+    fi
+    if [ "$attempt" -gt "$max_retries" ]; then
+      echo "WARN: failed to fetch existing summary comments for PR ${pr_number_arg} while resolving reviewer cycle count (attempt $attempt/$((max_retries + 1))); treating prior cycle count as unavailable" >&2
+      printf '%s\n' -1
+      return 0
+    fi
+    echo "WARN: failed to fetch existing summary comments for PR ${pr_number_arg} while resolving reviewer cycle count (attempt $attempt/$((max_retries + 1))) — retrying" >&2
+    [ "$retry_wait" -gt 0 ] && sleep "$retry_wait"
+  done
 
   body="$(printf '%s\n' "$record" | jq -r '.body // ""' 2>/dev/null)" || body=""
   read -r count status < <(reviewer_loop_history_entries_count "$body")
@@ -7264,7 +7323,11 @@ fi
 # metrics row must reflect the post-override result, not a stale pre-cap
 # value, or docs/workflow/retro-metrics-platforms.md would record a
 # different overall result than the summary the script actually reports.
-if reviewer_loop_cap_exceeded "$cycle_count" "$max_cycles" "$aggregate_result"; then
+if reviewer_loop_cycle_count_unavailable_should_escalate "$cycle_count" "$aggregate_result"; then
+  echo "WARN: reviewer cycle count could not be read (ledger unavailable after retries) with aggregate_result=$aggregate_result — escalating (cycle_count_unavailable) rather than allowing an unbounded number of unverifiable retries" >&2
+  aggregate_result="escalate"
+  aggregate_reason="cycle_count_unavailable"
+elif reviewer_loop_cap_exceeded "$cycle_count" "$max_cycles" "$aggregate_result"; then
   echo "WARN: reviewer cycle count ($cycle_count) reached max_cycles ($max_cycles) with aggregate_result=$aggregate_result — escalating (max_cycles_exceeded)" >&2
   aggregate_result="escalate"
   aggregate_reason="max_cycles_exceeded"

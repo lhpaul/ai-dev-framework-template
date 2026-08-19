@@ -614,7 +614,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `PR_REVIEW_LOOP_MAX_CYCLES` environment variable or `review.max_cycles` in
   `.ai-dev-workflow.yaml`. The current cycle count and configured limit are
   now emitted as `CYCLE_COUNT` / `MAX_CYCLES` in the script's key=value output
-  on every invocation.
+  on every invocation. The ledger fetch retries once on a transient GitHub
+  API failure before giving up; if the ledger still cannot be read reliably,
+  the script fails closed and exits `RESULT=escalate` /
+  `REASON=cycle_count_unavailable` (rather than silently disabling the
+  backstop for that PR indefinitely) whenever the loop would otherwise still
+  report `needs_fixes` or `needs_rerun`, matching this script's existing
+  fail-closed convention for other safety-critical audits (e.g. the
+  unresolved-review-thread check).
 
 ### Changed
 
