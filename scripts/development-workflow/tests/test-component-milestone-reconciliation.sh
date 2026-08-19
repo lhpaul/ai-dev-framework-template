@@ -284,6 +284,21 @@ run_contains "parent_finalized_incomplete_blocker" "finalized_bundle_has_unrelea
 "$HELPER" inspect-parent --parent-issue "$PARENT_ISSUE" --delivery-manifest "$CORRECTED_BUNDLE" --require-finalized --json > "$TMP_ROOT/parent-corrected.json"
 run_test "parent_corrected_outcome" "parent_released" "$(jq -r '.reconciliation_outcome' "$TMP_ROOT/parent-corrected.json")"
 
+# The finalized bundle's parent_ref is "#$PARENT_ISSUE"; a different --parent-issue
+# must not be accepted as released, even though every component is released.
+MISMATCHED_PARENT_ISSUE=999999
+"$HELPER" inspect-parent --parent-issue "$MISMATCHED_PARENT_ISSUE" --delivery-manifest "$FINALIZED_BUNDLE" --require-finalized --json > "$TMP_ROOT/parent-identity-mismatch.json"
+run_test "parent_identity_mismatch_outcome" "parent_blocked" "$(jq -r '.reconciliation_outcome' "$TMP_ROOT/parent-identity-mismatch.json")"
+run_test "parent_identity_mismatch_mutation_not_allowed" "false" "$(jq -r '.mutation_allowed' "$TMP_ROOT/parent-identity-mismatch.json")"
+run_contains "parent_identity_mismatch_blocker" "parent_identity_mismatch" "$(cat "$TMP_ROOT/parent-identity-mismatch.json")"
+
+parent_identity_mismatch_hash_before="$(git hash-object "$FINALIZED_BUNDLE")"
+run_fails_contains \
+  "parent_identity_mismatch_apply_rejected" \
+  "ERROR_CODE=parent_identity_mismatch" \
+  "$HELPER" apply-parent --parent-issue "$MISMATCHED_PARENT_ISSUE" --delivery-manifest "$FINALIZED_BUNDLE" --require-finalized --json
+run_test "parent_identity_mismatch_apply_preserves_manifest" "$parent_identity_mismatch_hash_before" "$(git hash-object "$FINALIZED_BUNDLE")"
+
 "$HELPER" apply-parent --parent-issue "$PARENT_ISSUE" --delivery-manifest "$FINALIZED_BUNDLE" --require-finalized --json > "$TMP_ROOT/parent-apply.json"
 run_test "parent_apply_outcome" "parent_released" "$(jq -r '.reconciliation_outcome' "$TMP_ROOT/parent-apply.json")"
 run_test "parent_apply_status" "released" "$(jq -r '.release_status.state' "$TMP_ROOT/parent-apply.json")"

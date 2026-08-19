@@ -508,6 +508,18 @@ def component_blocker(component: dict[str, Any]) -> str | None:
     return None
 
 
+def parent_ref_issue_number(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        match = re.search(r"\d+", value)
+        if match:
+            return int(match.group(0))
+    return None
+
+
 def load_delivery_manifest(path: str) -> dict[str, Any]:
     manifest = load_json_file(path, "delivery_manifest")
     if manifest is None:
@@ -521,6 +533,9 @@ def inspect_parent_state_from_manifest(args: argparse.Namespace, manifest: dict[
     parent_issue = validate_issue(args.parent_issue, "parent-issue")
     components = [c for c in manifest.get("components", []) if isinstance(c, dict)]
     blockers: list[dict[str, Any]] = []
+    manifest_parent_issue = parent_ref_issue_number(manifest.get("parent_ref"))
+    if manifest_parent_issue is None or manifest_parent_issue != parent_issue:
+        blockers.append({"component_key": None, "blocker": "parent_identity_mismatch"})
     released = 0
     unreleased = 0
     for component in components:
