@@ -612,7 +612,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   partial-success window where the post-creation required update could
   otherwise fail after the issue already existed, which a caller retrying
   on non-zero exit without inspecting stdout could turn into duplicate
-  issues (caught in code review on this PR). The rarer failure modes the
+  issues. The rarer failure modes the
   pre-check cannot see (issue unexpectedly missing from the board, a
   transient GraphQL write failure) still surface after issue creation but
   now exit with a distinct code (`5`) and an explicit "issue was already
@@ -622,25 +622,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   adapts to whatever the configured board actually supports — preferring
   `Medium` (this repo's board), falling back to `Normal` for downstream
   repos whose board is still set up per the framework's pre-#1501 docs
-  (also caught in code review on this PR, since `github-projects.md`
-  previously told every template consumer to create a `Normal` option), and
+  (`github-projects.md` previously told every template consumer to create
+  a `Normal` option), and
   leaving Priority unset (no error) only when a board's Priority field
   confirms neither candidate exists — the same way an omitted `--size` or
   `--type` is left unset. A Priority update failure no longer skips the
-  independent Type/Size updates that follow it in `create_cmd` (also caught
-  in code review on this PR) — every requested field is attempted before
+  independent Type/Size updates that follow it in `create_cmd` — every
+  requested field is attempted before
   the exit-5 partial-success signal is raised. `--priority` help text
   updated to match, including the new documented exit codes. Protocol 00's
   Priority inference heuristics now tell agents to **omit** `--priority`
-  for the routine/default case instead of hardcoding `--priority Medium`
-  (also caught in code review on this PR): an explicit value is validated
+  for the routine/default case instead of hardcoding `--priority Medium`:
+  an explicit value is validated
   against the board's real options and hard-fails if absent, so the
   authoritative example was itself bypassing the adaptive default it
   documented, breaking on any board still using `Normal`. `Urgent`,
   `High`, and `Low` are unaffected — those literals are common to both the
   current and legacy board vocabularies. `README.md` and Protocol 90's
-  abstract Priority ordering rules and summary templates (also caught in
-  code review on this PR) now list `Normal/Medium` as an equal-rank pair
+  abstract Priority ordering rules and summary templates now list
+  `Normal/Medium` as an equal-rank pair
   instead of only `Normal`, matching `workflow-batch-overlap.sh`'s existing
   `PRIORITY_RANK` table (which already ranked both names equally) — a real
   board can now literally carry a `Medium` Priority value after this fix,
