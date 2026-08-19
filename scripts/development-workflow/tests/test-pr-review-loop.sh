@@ -1966,6 +1966,15 @@ run_test "cycles_resolve_max_invalid_config_warns" "yes" "$(
 )"
 run_test "cycles_resolve_max_zero_invalid_defaults" "10" \
   "$(PR_REVIEW_LOOP_MAX_CYCLES=0 reviewer_loop_resolve_max_cycles "" 2>/dev/null)"
+# Out-of-range (> 6 digits) values must fall back to the default instead of
+# being accepted verbatim — an unbounded digit-only value risks exceeding
+# Bash's signed integer range in the later `-ge` comparison in
+# reviewer_loop_cap_exceeded, which would otherwise emit "integer expression
+# expected" and silently evaluate to false, defeating the cap.
+run_test "cycles_resolve_max_out_of_range_defaults" "10" \
+  "$(PR_REVIEW_LOOP_MAX_CYCLES=99999999999999999999 reviewer_loop_resolve_max_cycles "" 2>/dev/null)"
+run_test "cycles_resolve_max_six_digit_boundary_accepted" "999999" \
+  "$(PR_REVIEW_LOOP_MAX_CYCLES=999999 reviewer_loop_resolve_max_cycles "" 2>/dev/null)"
 
 # --- reviewer_loop_cap_exceeded ---
 # AC: "reaching the cap escalates" / "staying under it does not".
@@ -2055,6 +2064,31 @@ run_test "cycles_cap_check_fails_open_on_read_failure" "no" "$(
   reviewer_loop_cap_exceeded "$_cc" 10 needs_fixes && echo yes || echo no
 )"
 unset MOCK_GH_COMMENTS_EXIT
+
+# Regression guard (Codex finding on PR #1507): the max_cycles cap override
+# in the main flow MUST run before the compare-mode metrics-row append.
+# --compare mode's own contract is "the overall exit code and RESULT are
+# identical to what normal mode would produce" — the override is
+# unconditional (applies in --compare mode too), so if the metrics row were
+# appended first, docs/workflow/retro-metrics-platforms.md would record a
+# stale pre-cap value (e.g. needs_fixes) while the script's own final
+# RESULT/summary say escalate, corrupting reviewer-graduation comparison
+# data. This is a source-ordering check (the runtime behavior requires a
+# full --compare-mode platform run to exercise, which is out of scope for
+# this harness) but it directly guards against the exact regression found.
+_mc_cap_line="$(grep -n 'reviewer_loop_cap_exceeded "\$cycle_count" "\$max_cycles" "\$aggregate_result"' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+  | head -1 | cut -d: -f1)"
+_mc_metrics_line="$(grep -n 'append_compare_metrics_row "\${_metrics_args\[@\]}"' \
+  "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+  | head -1 | cut -d: -f1)"
+if [ -n "$_mc_cap_line" ] && [ -n "$_mc_metrics_line" ] \
+    && [ "$_mc_cap_line" -lt "$_mc_metrics_line" ]; then
+  run_test "cycles_cap_override_precedes_compare_metrics_append" "yes" "yes"
+else
+  run_test "cycles_cap_override_precedes_compare_metrics_append" "yes" "no"
+fi
+unset _mc_cap_line _mc_metrics_line
 
 # Function-ordering check (mirrors Area 11's Test 11.6) — the max_cycles
 # enforcement functions must stay callable from the harness after future

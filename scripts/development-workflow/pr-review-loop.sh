@@ -5813,8 +5813,14 @@ reviewer_loop_history_entries_count() {
 #      from .ai-dev-workflow.yaml via workflow_config_review_max_cycles)
 #   3. Default: 10 (Protocol 93's documented value)
 #
-# Any value that is not a positive integer (including an out-of-range or
-# malformed override) falls back to the default with a WARN on stderr.
+# Any value that is not a positive integer, or is outside the supported
+# range (1-999999), falls back to the default with a WARN on stderr. The
+# range is capped at 6 digits — comfortably below any risk of exceeding
+# Bash's signed integer range in the later `[ "$cycle_count" -ge
+# "$max_cycles" ]` comparison in reviewer_loop_cap_exceeded (which would
+# otherwise emit "integer expression expected" and silently evaluate to
+# false, defeating the cap for an absurdly large misconfigured value) — and
+# no sane max_cycles value is anywhere near that large regardless.
 reviewer_loop_resolve_max_cycles() {
   local config_value="${1:-}"
   local configured="${PR_REVIEW_LOOP_MAX_CYCLES:-}"
@@ -5828,8 +5834,8 @@ reviewer_loop_resolve_max_cycles() {
     configured=10
     source="default"
   fi
-  if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
-    echo "WARN: max_cycles value '$configured' (source: $source) is not a positive integer; defaulting to 10" >&2
+  if ! [[ "$configured" =~ ^[1-9][0-9]{0,5}$ ]]; then
+    echo "WARN: max_cycles value '$configured' (source: $source) is not a positive integer within the supported range (1-999999); defaulting to 10" >&2
     configured=10
   fi
   printf '%s\n' "$configured"
@@ -7196,9 +7202,30 @@ if [ "$phase_after_clean_enabled" -eq 1 ]; then
     print_kv PHASE_AFTER_CLEAN_BLOCKING_PLATFORM "$phase_after_clean_blocking_platform"
 fi
 
-# Append compare-mode metrics row after the thread gate so the recorded
-# aggregate_result reflects the final settled value (thread audit may flip
-# a platform-clean run to needs_fixes or escalate).
+# Reviewer cycle cap enforcement (#1502): the just-pushed fix (if any) has
+# already been given its chance to be verified above — this run completed a
+# full review pass like any other. Only now, with the settled aggregate
+# result in hand, do we check whether the cap has been reached. A "clean"
+# result is never overridden. An already-"escalate" result keeps its own
+# (more specific) reason rather than being relabeled max_cycles_exceeded.
+# This MUST run before the compare-mode metrics-row append below: --compare
+# mode's own contract is "the overall exit code and RESULT are identical to
+# what normal mode would produce" (see the script's usage doc), and this
+# override is unconditional (it also applies in --compare mode) — so the
+# metrics row must reflect the post-override result, not a stale pre-cap
+# value, or docs/workflow/retro-metrics-platforms.md would record a
+# different overall result than the summary the script actually reports.
+if reviewer_loop_cap_exceeded "$cycle_count" "$max_cycles" "$aggregate_result"; then
+  echo "WARN: reviewer cycle count ($cycle_count) reached max_cycles ($max_cycles) with aggregate_result=$aggregate_result — escalating (max_cycles_exceeded)" >&2
+  aggregate_result="escalate"
+  aggregate_reason="max_cycles_exceeded"
+fi
+
+# Append compare-mode metrics row after the thread gate AND the max_cycles
+# cap check above, so the recorded aggregate_result reflects the final
+# settled value (thread audit may flip a platform-clean run to needs_fixes
+# or escalate, and the cap check above may further flip needs_fixes/
+# needs_rerun to escalate).
 _compare_metrics_appended=0
 if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
   set +e
@@ -7212,18 +7239,6 @@ if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
     _compare_metrics_appended=1 || \
     echo "WARN: append_compare_metrics_row failed — metrics row not written" >&2
   set -e
-fi
-
-# Reviewer cycle cap enforcement (#1502): the just-pushed fix (if any) has
-# already been given its chance to be verified above — this run completed a
-# full review pass like any other. Only now, with the settled aggregate
-# result in hand, do we check whether the cap has been reached. A "clean"
-# result is never overridden. An already-"escalate" result keeps its own
-# (more specific) reason rather than being relabeled max_cycles_exceeded.
-if reviewer_loop_cap_exceeded "$cycle_count" "$max_cycles" "$aggregate_result"; then
-  echo "WARN: reviewer cycle count ($cycle_count) reached max_cycles ($max_cycles) with aggregate_result=$aggregate_result — escalating (max_cycles_exceeded)" >&2
-  aggregate_result="escalate"
-  aggregate_reason="max_cycles_exceeded"
 fi
 
 if reviewer_failed_label_required_for_result "$aggregate_result" "$aggregate_reason"; then
