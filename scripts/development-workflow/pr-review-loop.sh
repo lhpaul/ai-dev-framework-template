@@ -5844,13 +5844,24 @@ reviewer_loop_history_append_to_summary() {
 # candidates — each such result is exactly the trigger condition for a
 # fixer dispatch (or, for needs_rerun, PR-Agent's equivalent auto-push
 # retry). The initial review and any `clean`/`skipped` entries are excluded.
-# Among candidates, only DISTINCT HEAD SHAs are counted (not raw entry
-# count): a completed fixer cycle is required to push a new commit before
-# the next review runs (Protocol 93's mandatory push-once-per-cycle
-# discipline), so two candidates sharing one HEAD SHA mean no fix was
+# Among candidates, only DISTINCT (HEAD SHA, result) PAIRS are counted (not
+# raw entry count, and not distinct HEAD SHA alone): a completed fixer
+# cycle is required to push a new commit before the next review runs
+# (Protocol 93's mandatory push-once-per-cycle discipline), so two
+# candidates sharing one HEAD SHA AND the SAME result mean no fix was
 # actually applied between them (a restarted runner, a duplicate/retried
 # invocation, or a review re-run before the orchestrator dispatched a
-# fixer) and must not be double-counted.
+# fixer) and must not be double-counted. Deduping by HEAD SHA alone would
+# be too aggressive: a needs_rerun entry (PR-Agent's auto-push evaluation
+# completing a fix cycle) immediately followed by a needs_fixes entry on
+# THAT SAME resulting HEAD SHA (a different reviewer finding a NEW,
+# unrelated issue on the post-auto-fix state) are two genuinely distinct
+# dispatch events, not a duplicate of one — collapsing them into one would
+# let more than the configured number of real fixes happen before either
+# cap fires (found in review of PR #1507). Keying on (head_sha, result)
+# instead of head_sha alone dedupes true duplicates (same head_sha AND
+# same result — no progress since the last check) while still counting a
+# needs_rerun→needs_fixes sequence on the same head_sha as two events.
 #
 # Run-boundary tracking (schema, chosen deliberately as an ADDITIVE field,
 # not a schema version bump): each ledger entry now carries an optional
@@ -5926,15 +5937,22 @@ reviewer_loop_resolve_run_id() {
 # reviewer_loop_history_entries_count <comment_body> <run_id>
 #
 # Prints "<lifetime_count> <run_count> <status>" (space-separated) where:
-#   lifetime_count — number of DISTINCT HEAD SHAs among ALL prior fixer-
-#            dispatch-triggering entries (result == "needs_fixes" or
-#            "needs_rerun", with a non-empty head_sha), regardless of
-#            run_id — i.e. the lifetime-ceiling count — or -1 when that
-#            count cannot be determined reliably.
-#   run_count — the same DISTINCT-HEAD-SHA count, but restricted to entries
-#            whose `run_id` field exactly equals <run_id> — i.e. the
-#            per-run-cap count (Protocol 91's `cycle` value at the start of
-#            this invocation) — or -1 alongside lifetime_count on failure.
+#   lifetime_count — number of DISTINCT (head_sha, result) PAIRS among ALL
+#            prior fixer-dispatch-triggering entries (result ==
+#            "needs_fixes" or "needs_rerun", with a non-empty head_sha),
+#            regardless of run_id — i.e. the lifetime-ceiling count — or -1
+#            when that count cannot be determined reliably. Keying on the
+#            pair rather than head_sha alone counts a needs_rerun entry
+#            immediately followed by a needs_fixes entry on the SAME
+#            resulting head_sha as two distinct dispatches (a completed
+#            auto-fix, then a different NEW issue found on that state) —
+#            see the block comment above for why deduping by head_sha
+#            alone would be too aggressive.
+#   run_count — the same DISTINCT-(head_sha,result)-PAIR count, but
+#            restricted to entries whose `run_id` field exactly equals
+#            <run_id> — i.e. the per-run-cap count (Protocol 91's `cycle`
+#            value at the start of this invocation) — or -1 alongside
+#            lifetime_count on failure.
 #            Entries with no `run_id` (back-compat, pre-dual-cap entries)
 #            never match and are excluded from this count, but ARE still
 #            included in lifetime_count (see the back-compat policy in the
@@ -5989,11 +6007,11 @@ reviewer_loop_history_entries_count() {
           | select((.result // "") == "needs_fixes" or (.result // "") == "needs_rerun")
         ] as $qualifying
         | ($qualifying
-            | [.[] | (.head_sha // "") | select(length > 0)]
+            | [.[] | select((.head_sha // "") | length > 0) | ((.head_sha // "") + "|" + (.result // ""))]
             | unique
             | length) as $lifetime
         | ($qualifying
-            | [.[] | select(($runId | length) > 0 and (.run_id // "") == $runId) | (.head_sha // "") | select(length > 0)]
+            | [.[] | select(($runId | length) > 0 and (.run_id // "") == $runId and ((.head_sha // "") | length > 0)) | ((.head_sha // "") + "|" + (.result // ""))]
             | unique
             | length) as $run
         | "\($lifetime) \($run)"

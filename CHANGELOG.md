@@ -606,11 +606,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separate orchestration runs (a per-run-only cap would give such a PR a
   fresh budget every run, which is exactly the "runs until someone
   notices" failure this issue exists to end). Both caps read the persisted
-  `reviewer_loop_history.v1` ledger, counting only the DISTINCT HEAD SHAs
-  among prior entries whose result is `needs_fixes` or `needs_rerun` — the
-  entries that actually trigger a fixer dispatch, deduped so a restarted
-  runner or a duplicate review invocation on the same unfixed HEAD SHA
-  cannot exhaust either budget without a real fix ever being applied.
+  `reviewer_loop_history.v1` ledger, counting only the DISTINCT (HEAD SHA,
+  result) pairs among prior entries whose result is `needs_fixes` or
+  `needs_rerun` — the entries that actually trigger a fixer dispatch,
+  deduped so a restarted runner or a duplicate review invocation with no
+  progress (same HEAD SHA, same result) cannot exhaust either budget
+  without a real fix ever being applied, while still counting a
+  `needs_rerun` entry immediately followed by a `needs_fixes` entry on the
+  *same* resulting HEAD SHA as two distinct dispatches rather than
+  incorrectly merging them (a completed auto-fix cycle and a different,
+  newly-found issue on that state are not the same event).
   Each ledger entry now also carries an optional `run_id` field (an
   additive, non-breaking change — no schema version bump), resolved once
   per invocation from the new `PR_REVIEW_LOOP_RUN_ID` env var (or a freshly

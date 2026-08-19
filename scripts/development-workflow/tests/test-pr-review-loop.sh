@@ -2007,6 +2007,33 @@ $(printf '%s\n' "$_mc_dup_head_sha_payload" | jq '.')
 run_test "cycles_entries_count_dedups_duplicate_head_sha" "2 2 available" \
   "$(reviewer_loop_history_entries_count "$_mc_dup_head_sha_body" "run-A")"
 
+# AC / regression (Codex finding on PR #1507): a needs_rerun entry
+# IMMEDIATELY FOLLOWED by a needs_fixes entry on the SAME resulting
+# head_sha must count as TWO distinct dispatches, not one — deduping by
+# head_sha alone would incorrectly merge "PR-Agent's auto-push evaluation
+# completed a fix cycle" (needs_rerun) with "a different reviewer found a
+# NEW issue on that same resulting state" (needs_fixes), letting more than
+# the configured number of real fixes happen before either cap fires.
+# Keying on (head_sha, result) instead of head_sha alone fixes this while
+# still deduping TRUE duplicates (same head_sha AND same result).
+_mc_rerun_then_fixes_payload="$(jq -n '{
+  schema: "reviewer_loop_history.v1",
+  history_status: "available",
+  entries: [
+    {iteration: 1, head_sha: "H1", result: "needs_rerun", run_id: "run-A"},
+    {iteration: 2, head_sha: "H1", result: "needs_fixes", run_id: "run-A"}
+  ]
+}')"
+_mc_rerun_then_fixes_body="### Automated Reviewer Loop Summary
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+$(printf '%s
+' "$_mc_rerun_then_fixes_payload" | jq '.')
+\`\`\`"
+run_test "cycles_entries_count_rerun_then_fixes_same_sha_counts_two" "2 2 available" \
+  "$(reviewer_loop_history_entries_count "$_mc_rerun_then_fixes_body" "run-A")"
+
 # An entry with an empty/unresolved head_sha must not be counted at all on
 # either axis.
 _mc_empty_head_sha_payload='{
@@ -2448,6 +2475,7 @@ unset _mc_no_marker_body _mc_marker_no_json_body
 unset _mc_ten_dispatch_payload _mc_ten_dispatch_body _mc_ten_dispatch_comment_json
 unset _mc_mixed_result_payload _mc_mixed_result_body
 unset _mc_dup_head_sha_payload _mc_dup_head_sha_body
+unset _mc_rerun_then_fixes_payload _mc_rerun_then_fixes_body
 unset _mc_empty_head_sha_payload _mc_empty_head_sha_body
 unset _mc_back_compat_payload _mc_back_compat_body _mc_back_compat_comment_json
 unset _mc_persisted_unavailable_body _mc_malformed_body _mc_wrong_schema_body
