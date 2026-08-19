@@ -626,7 +626,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   previously told every template consumer to create a `Normal` option), and
   leaving Priority unset (no error) only when a board's Priority field
   confirms neither candidate exists — the same way an omitted `--size` or
-  `--type` is left unset. `--priority` help text updated to match.
+  `--type` is left unset. A Priority update failure no longer skips the
+  independent Type/Size updates that follow it in `create_cmd` (also caught
+  in code review on this PR) — every requested field is attempted before
+  the exit-5 partial-success signal is raised. `--priority` help text
+  updated to match, including the new documented exit codes.
   Live reproduction on the real board (see issue #1501) showed `High`
   already worked correctly and the alias/default were the whole defect —
   no separate `High` resolution bug exists.

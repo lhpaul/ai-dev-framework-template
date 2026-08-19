@@ -47,7 +47,9 @@ Exit codes (create, GitHub destination):
      actual Priority options; no issue was created.
   5  Partial success: the issue WAS created (see the printed URL) but the
      required post-creation Priority update failed — do not retry issue
-     creation; retry only the Priority update, or set it manually.
+     creation; retry only the Priority update, or set it manually. Type and
+     Size updates (if requested) are attempted independently and are not
+     skipped by a Priority failure.
 EOF
 }
 
@@ -210,18 +212,26 @@ create_cmd() {
     # Those necessarily surface after issue creation, at which point the issue URL has already
     # been printed to stdout above — do not let a failure here look identical to "nothing
     # happened": exit with a distinct code (5) and an explicit message so a caller does not retry
-    # `create` and mint a duplicate issue (see issue #1501 code review).
+    # `create` and mint a duplicate issue (see issue #1501 code review). Field updates are
+    # independent of each other, so a Priority failure must not prevent Type/Size from being
+    # attempted (issue #1501 code review, "Continue requested field updates after Priority
+    # failure") — priority_update_failed defers the exit-5 signal until every requested field
+    # has had its chance to run.
+    local priority_update_failed=0
     if [ -n "$type_label" ]; then
       update_tracker_type_best_effort "$issue_number" "$type_label"
     fi
     if [ -n "$effective_priority" ]; then
       if ! update_tracker_priority_best_effort "$issue_number" "$effective_priority"; then
-        echo "Error: issue #${issue_number} was already created (${issue_url}) — the required post-creation Priority update failed (see the Error above). Do NOT retry issue creation; instead retry only the Priority update for issue #${issue_number}, or set it manually on the project board." >&2
-        exit 5
+        priority_update_failed=1
       fi
     fi
     if [ -n "$size" ]; then
       update_tracker_size_best_effort "$issue_number" "$size"
+    fi
+    if [ "$priority_update_failed" -eq 1 ]; then
+      echo "Error: issue #${issue_number} was already created (${issue_url}) — the required post-creation Priority update failed (see the Error above). Do NOT retry issue creation; instead retry only the Priority update for issue #${issue_number}, or set it manually on the project board." >&2
+      exit 5
     fi
     return 0
   fi

@@ -294,6 +294,20 @@ esac
 run_test "partial_success_prints_explicit_no_retry_message" "explicit" "$partial_message_result"
 
 echo ""
+echo "=== create: Priority failure does not skip independent Type/Size updates (issue #1501 code review) ==="
+
+export MOCK_PRIORITY_UPDATE_MODE=fail
+run_create "ok" --title "Test" --body "body" --size "M" --type "Bug"
+unset MOCK_PRIORITY_UPDATE_MODE
+run_test "partial_success_still_exits_five_with_other_fields" "5" "$(get_exit)"
+# Type and Size are independent field writes and must still be attempted
+# even though Priority failed — a caller following the "retry only
+# Priority" guidance must not find Type/Size permanently unset because this
+# script gave up early.
+run_test "partial_success_still_updates_size" "1" "$(count_log_matches 'fieldId=PVTSSF_size')"
+run_test "partial_success_still_updates_type" "1" "$(count_log_matches 'fieldId=PVTSSF_type')"
+
+echo ""
 echo "=== create: --size flag updates Size field ==="
 
 run_create "ok" --title "Test" --body "body" --size "M"
