@@ -1718,6 +1718,8 @@ The helper script evaluates configured platforms sequentially. For each platform
 
 Initialize `cycle = 0` once per orchestration run for the PR. Increment `cycle` each time a fixer agent is dispatched. Do not reset `cycle` after a fixer push; escalate when the run reaches `max_cycles`.
 
+**`pr-review-loop.sh` now enforces this per-run cap itself (issue #1502), independent of whether the orchestrator's own `cycle` variable is tracked correctly — but only when the script can tell which invocations belong to the same run.** Before the first `pr-review-loop.sh` invocation for this PR in this orchestration run, generate a stable run identifier (any sufficiently unique string, e.g. `"run-$(date +%s)-$$"`) and `export PR_REVIEW_LOOP_RUN_ID=<that value>` for the remainder of this run. Reuse the exact same value across every re-invocation of `pr-review-loop.sh` for this PR within this run — including inline-fix retries (Step 7's fast lane) and subagent-dispatched fixer retries. Generate a **new** value only when a genuinely new orchestration run begins (a fresh session resuming this PR after a prior escalation, after human intervention, or after any gap in continuous execution). If `PR_REVIEW_LOOP_RUN_ID` is left unset, every invocation is treated by the script as its own isolated run and the per-run cap (`CYCLE_COUNT`/`MAX_CYCLES`) will not accumulate across cycles — the separate lifetime ceiling (`TOTAL_CYCLE_COUNT`/`MAX_TOTAL_CYCLES`, see `93-automated-reviewer-loop-protocol.md`) still enforces in that case, but the per-run cap's intended fast, specific signal is lost.
+
 ### PR feedback tracking and comments
 
 Maintain a **PR feedback ledger** alongside the cycle counter. Each entry tracks:

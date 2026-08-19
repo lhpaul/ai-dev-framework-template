@@ -590,6 +590,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `git ls-remote` evidence that nothing mutates before the guard fires) and a
   regression test proving a reverted guard placement turns the suite red are
   recorded in [PR #1500](https://github.com/lhpaul/ai-dev-framework-template/pull/1500#issuecomment-5335650280).
+- **Reviewer-loop cycle caps now enforced (dual cap)** (#1502):
+  `pr-review-loop.sh` previously had no code path that could ever trip
+  Protocol 93's documented hard cycle cap ("a hard limit independent of
+  finding counts") — PR #1492 in this repository reached 18 reviewer-loop
+  cycles against a documented cap of 10 with no escalation. The script now
+  enforces **two independent caps**, per operator decision recorded on PR
+  #1507's review: a **per-run cap** (`CYCLE_COUNT`/`MAX_CYCLES`, default 10)
+  that resets to 0 at each orchestration-run boundary — conforming verbatim
+  to `91-orchestrate-work-protocol.md:1719` ("Initialize `cycle = 0` once
+  per orchestration run ... escalate when the run reaches `max_cycles`") —
+  and a **lifetime ceiling** (`TOTAL_CYCLE_COUNT`/`MAX_TOTAL_CYCLES`, default
+  25) that never resets and counts across the PR's entire review-loop
+  lifetime, as the structural backstop for a PR resumed across many
+  separate orchestration runs (a per-run-only cap would give such a PR a
+  fresh budget every run, which is exactly the "runs until someone
+  notices" failure this issue exists to end). Both caps read the persisted
+  `reviewer_loop_history.v1` ledger, counting only the DISTINCT (HEAD SHA,
+  result) pairs among prior entries whose result is `needs_fixes` or
+  `needs_rerun` — the entries that actually trigger a fixer dispatch,
+  deduped so a restarted runner or a duplicate review invocation with no
+  progress (same HEAD SHA, same result) cannot exhaust either budget
+  without a real fix ever being applied, while still counting a
+  `needs_rerun` entry immediately followed by a `needs_fixes` entry on the
+  *same* resulting HEAD SHA as two distinct dispatches rather than
+  incorrectly merging them (a completed auto-fix cycle and a different,
+  newly-found issue on that state are not the same event).
+  Each ledger entry now also carries an optional `run_id` field (an
+  additive, non-breaking change — no schema version bump), resolved once
+  per invocation from the new `PR_REVIEW_LOOP_RUN_ID` env var (or a freshly
+  generated per-invocation id when unset) and threaded through to scope the
+  per-run count; entries written before this field existed are counted
+  toward the lifetime cap but can never satisfy a per-run query, so an
+  older PR's history does not get artificially reset. Neither cap resets on
+  a HEAD SHA change alone — the counters are cumulative within their
+  respective scope, matching the exact failure pattern that motivated this
+  fix, where nearly every cycle produces a new commit. A "clean" result is
+  never overridden, and the inline-fix retry lane is bounded by the same
+  counters as sub-agent-dispatched retries, with no separate logic needed.
+  Exits `RESULT=escalate` / `REASON=max_cycles_exceeded` when the per-run
+  cap is reached, or the distinct `REASON=max_total_cycles_exceeded` when
+  only the lifetime ceiling is reached, so an operator can tell "one run ran
+  away" apart from "many runs cumulatively ran away". Both limits are
+  configurable via `PR_REVIEW_LOOP_MAX_CYCLES`/`review.max_cycles` and
+  `PR_REVIEW_LOOP_MAX_TOTAL_CYCLES`/`review.max_total_cycles` in
+  `.ai-dev-workflow.yaml`. The current counts and configured limits are
+  emitted as `RUN_ID`/`CYCLE_COUNT`/`MAX_CYCLES`/`TOTAL_CYCLE_COUNT`/
+  `MAX_TOTAL_CYCLES` in the script's key=value output on every invocation.
+  The ledger fetch retries once on a transient GitHub API failure before
+  giving up; if the ledger still cannot be read reliably, the script fails
+  closed and exits `RESULT=escalate` / `REASON=cycle_count_unavailable`
+  (rather than silently disabling both backstops for that PR indefinitely)
+  whenever the loop would otherwise still report `needs_fixes` or
+  `needs_rerun`, matching this script's existing fail-closed convention for
+  other safety-critical audits (e.g. the unresolved-review-thread check).
+  Two further gaps in that fail-closed guarantee, found in later review of
+  the same PR, are also closed: (1) cycle counting now uses a dedicated
+  selector that reads the newest summary comment's own history status
+  (rather than a render-only selector that intentionally falls back to an
+  older "available" snapshot), so a genuinely unreadable newest ledger
+  state can no longer resolve to a stale, silently under-counted prior
+  count; and (2) if this cycle's own ledger entry cannot be persisted at
+  all (both the comment update and the create-fallback fail) for a
+  dispatch-triggering result, the script now escalates with the distinct
+  `REASON=ledger_persist_failed` instead of letting an uncounted fixer
+  dispatch happen, and a failed/empty HEAD SHA lookup while building a
+  ledger entry now falls back to a guaranteed-unique synthetic identifier
+  instead of an empty one (an empty HEAD SHA was excluded from both cap
+  counts by design, which a persistent lookup failure could otherwise
+  exploit to grant unlimited uncounted dispatches). Three smaller gaps
+  found in the same review round are also closed: the ledger-fetch retry
+  count (`CYCLE_LEDGER_MAX_RETRIES`) and retry wait
+  (`CYCLE_LEDGER_RETRY_WAIT`) are now bounded the same way as the two
+  cycle-cap variables, since an unbounded value could exceed Bash's signed
+  integer range and make the retry loop's own give-up comparison silently
+  evaluate as false forever instead of failing closed; `REASON=ledger_
+  persist_failed` now also fires when only the pre-write READ of the
+  existing summary comment fails (even if the subsequent write itself
+  succeeds): a read failure previously made the write fall back to posting
+  an "unavailable" stub that silently drops this cycle's own entry (an
+  unavailable-history existing body is never appended onto), so a dispatch
+  could complete, get reported to the caller, and then vanish from both
+  cap counters on the very next successful invocation; and the script's
+  tail was restructured so `_post_review_summary` (and any `ledger_
+  persist_failed` correction it triggers) now runs BEFORE `RESULT=`/
+  `REASON=` and the `--compare`-mode metrics row are ever emitted, instead
+  of after — the previous design printed a second, corrected `RESULT=`
+  line following the original one and relied on an assumed "last line
+  wins" parsing convention that the script's own `kv_value` helper does not
+  actually follow (it returns the *first* matching key), so a caller using
+  that same convention would have read the stale, pre-correction `RESULT=`
+  and could still dispatch another fixer despite the script exiting
+  escalated. Exactly one `RESULT=`/`REASON=` pair, and one compare-mode
+  metrics row, are now emitted per invocation, valid under either parsing
+  convention.
 - **Backlog item Priority was silently never set**: `update_tracker_priority_best_effort`
   in `workflow-lib.sh` rewrote `Medium` — the board's actual Priority field
   option — into `Normal`, a value that does not exist on the board, so the
