@@ -80,6 +80,14 @@ the same product key and evidence file. Follow
 [repository-mode release contract](repository-modes.md#release-artifact-ownership)
 for cleanup validation rules.
 
+After cleanup and tracker reconciliation complete, keep milestone and parent
+release status updates in the hub. Use
+`component-milestone-reconciliation.sh apply-component` to assign only the
+matching component child issue a `<product-repo>@<component-tag>` milestone.
+Use `inspect-parent` or `apply-parent` with the hub delivery manifest to report
+partial, blocked, or finalized parent release state. Do not create a shared
+suite version, stamp the parent epic, or stamp the delivery bundle issue.
+
 Hub-only workflow improvements, such as updates to orchestration scripts or
 workflow docs, still open implementation PRs in the hub repository.
 

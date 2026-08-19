@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release cleanup validation for workflow hubs.
 - **Add delivery bundle manifest workflow** (#1357): add hub-owned delivery
   bundle issue and manifest tooling for coordinated component delivery evidence.
+- **Add component milestone release statuses** (#1358): add workflow-hub
+  component milestone and parent release-state reconciliation for
+  multi-repository releases.
 
 ## [0.40.0] - 2026-07-30
 
