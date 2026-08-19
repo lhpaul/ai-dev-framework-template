@@ -189,6 +189,25 @@ JSON
           cat <<'JSON'
 {"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_custom_type","name":"Custom Type","options":[{"id":"OPT_workflow_custom","name":"Workflow"}]},{"id":"PVTSSF_configured_type","name":"Configured Type","options":[{"id":"OPT_workflow_configured","name":"Workflow"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
 JSON
+        elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "priority_configured" ]; then
+          # Matches the real board's Priority options verified on issue #1501:
+          # Urgent, High, Medium, Low — there is no "Normal" option.
+          cat <<'JSON'
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_urgent","name":"Urgent"},{"id":"OPT_high","name":"High"},{"id":"OPT_medium","name":"Medium"},{"id":"OPT_low","name":"Low"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+JSON
+        elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "priority_normal_only" ]; then
+          # Simulates a downstream board still configured per the
+          # framework's pre-#1501 docs: Urgent, High, Normal, Low — no
+          # "Medium" option (issue #1501 code review).
+          cat <<'JSON'
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_urgent","name":"Urgent"},{"id":"OPT_high","name":"High"},{"id":"OPT_normal","name":"Normal"},{"id":"OPT_low","name":"Low"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+JSON
+        elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "priority_neither" ]; then
+          # Simulates a board using an entirely different Priority
+          # vocabulary (neither "Medium" nor "Normal" present).
+          cat <<'JSON'
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_p0","name":"P0"},{"id":"OPT_p1","name":"P1"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+JSON
         else
           cat <<'JSON'
 {"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_spec_ready","name":"Spec Ready"},{"id":"OPT_in_development","name":"In Development"},{"id":"OPT_merged","name":"Merged"},{"id":"OPT_released","name":"Released"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_workflow","name":"Workflow"},{"id":"OPT_bug","name":"Bug"},{"id":"OPT_refactor","name":"Refactor"},{"id":"OPT_feature","name":"Feature"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
@@ -860,12 +879,150 @@ run_test "named_field_update_wrong_provider_no_mutation" "0" "$(count_log_matche
 reset_log
 __workflow_project_named_field_cache_keys=()
 __workflow_project_named_field_cache_vals=()
-priority_output="$(update_tracker_priority_best_effort 824 "High" 2>&1)"
+priority_exit=0
+priority_output=""
+priority_output="$(update_tracker_priority_best_effort 824 "High" 2>&1)" || priority_exit=$?
 case "$priority_output" in
-  *"could not read project 'Priority' field metadata"*) priority_result="routed-to-priority" ;;
+  *"Error:"*"could not read project 'Priority' field metadata"*) priority_result="routed-to-priority" ;;
   *) priority_result="$priority_output" ;;
 esac
 run_test "priority_convenience_routes_to_named_field" "routed-to-priority" "$priority_result"
+# Issue #1501: Priority is always passed to update_tracker_named_field_best_effort
+# in "required" mode, so a field that cannot be resolved is a hard error.
+run_test "priority_convenience_required_mode_returns_nonzero" "1" "$priority_exit"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+export MOCK_STATUS_FIELD_MODE=priority_configured
+priority_medium_exit=0
+priority_medium_output=""
+priority_medium_output="$(update_tracker_priority_best_effort 824 "Medium" 2>&1)" || priority_medium_exit=$?
+run_test "priority_medium_resolves_against_real_board_options" "0" "$priority_medium_exit"
+case "$priority_medium_output" in
+  *"Error:"*) priority_medium_output_result="has-error" ;;
+  *) priority_medium_output_result="no-error" ;;
+esac
+run_test "priority_medium_output_has_no_error" "no-error" "$priority_medium_output_result"
+# Regression for issue #1501: assert the requested priority is actually
+# present on the board item afterward — the mutation must carry the Medium
+# option ID resolved from the board's real options, not a hardcoded/aliased
+# value. There is no "Normal" option on the board.
+run_test "priority_medium_mutation_uses_medium_option" "1" "$(count_log_matches 'optionId=OPT_medium')"
+run_test "priority_medium_mutation_avoids_normal_option" "0" "$(count_log_matches 'optionId=OPT_normal')"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+priority_urgent_exit=0
+priority_urgent_output=""
+priority_urgent_output="$(update_tracker_priority_best_effort 824 "Urgent" 2>&1)" || priority_urgent_exit=$?
+run_test "priority_urgent_resolves_against_real_board_options" "0" "$priority_urgent_exit"
+case "$priority_urgent_output" in
+  *"Error:"*) priority_urgent_output_result="has-error" ;;
+  *) priority_urgent_output_result="no-error" ;;
+esac
+run_test "priority_urgent_output_has_no_error" "no-error" "$priority_urgent_output_result"
+run_test "priority_urgent_mutation_uses_urgent_option" "1" "$(count_log_matches 'optionId=OPT_urgent')"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+priority_bad_exit=0
+priority_bad_output=""
+priority_bad_output="$(update_tracker_priority_best_effort 824 "Normal" 2>&1)" || priority_bad_exit=$?
+unset MOCK_STATUS_FIELD_MODE
+# Issue #1501: "Normal" is not a real board option; requesting it must be a
+# hard error, not a silent no-op.
+run_test "priority_normal_is_hard_error" "1" "$priority_bad_exit"
+case "$priority_bad_output" in
+  *"Error:"*"could not resolve 'Priority' field or option 'Normal'"*) priority_bad_result="errored" ;;
+  *) priority_bad_result="$priority_bad_output" ;;
+esac
+run_test "priority_normal_error_message" "errored" "$priority_bad_result"
+run_test "priority_normal_sends_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
+
+echo ""
+echo "=== workflow_tracker_priority_resolvable (issue #1501 code review: pre-flight, no issue required) ==="
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+export MOCK_STATUS_FIELD_MODE=priority_configured
+resolvable_medium_exit=0
+workflow_tracker_priority_resolvable "Medium" || resolvable_medium_exit=$?
+run_test "resolvable_medium_returns_zero" "0" "$resolvable_medium_exit"
+# No issue-specific lookups: no projectItems (issue membership) query is sent.
+run_test "resolvable_check_avoids_issue_lookup" "0" "$(count_log_matches 'projectItems')"
+
+resolvable_bad_exit=0
+workflow_tracker_priority_resolvable "NoSuchPriority" || resolvable_bad_exit=$?
+run_test "resolvable_bad_value_returns_one" "1" "$resolvable_bad_exit"
+unset MOCK_STATUS_FIELD_MODE
+
+reset_log
+export MOCK_TRACKER_PROVIDER=linear
+resolvable_wrong_provider_exit=0
+workflow_tracker_priority_resolvable "AnythingAtAll" || resolvable_wrong_provider_exit=$?
+unset MOCK_TRACKER_PROVIDER
+# A provider that doesn't support GitHub Projects fields has nothing to
+# validate against — must not block (permissive, matches
+# update_tracker_named_field_best_effort's own provider-mismatch handling).
+run_test "resolvable_wrong_provider_returns_zero" "0" "$resolvable_wrong_provider_exit"
+run_test "resolvable_wrong_provider_avoids_api" "0" "$(count_log_matches 'api graphql')"
+
+reset_log
+old_project_number="${GITHUB_PROJECT_NUMBER:-}"
+unset GITHUB_PROJECT_NUMBER
+MOCK_TRACKER_PROJECT_NUMBER=""
+resolvable_no_project_exit=0
+workflow_tracker_priority_resolvable "AnythingAtAll" || resolvable_no_project_exit=$?
+export GITHUB_PROJECT_NUMBER="$old_project_number"
+unset MOCK_TRACKER_PROJECT_NUMBER
+# No project configured — same permissive rule: nothing to validate against.
+run_test "resolvable_no_project_returns_zero" "0" "$resolvable_no_project_exit"
+run_test "resolvable_no_project_avoids_api" "0" "$(count_log_matches 'api graphql')"
+
+echo ""
+echo "=== workflow_tracker_default_priority_value (issue #1501 code review: adaptive default) ==="
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+export MOCK_STATUS_FIELD_MODE=priority_configured
+default_medium_value="$(workflow_tracker_default_priority_value)"
+unset MOCK_STATUS_FIELD_MODE
+run_test "default_prefers_medium_when_present" "Medium" "$default_medium_value"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+export MOCK_STATUS_FIELD_MODE=priority_normal_only
+default_normal_value="$(workflow_tracker_default_priority_value)"
+unset MOCK_STATUS_FIELD_MODE
+# A downstream board still configured per the pre-#1501 docs (no "Medium"
+# option) must keep working exactly as it did before this fix.
+run_test "default_falls_back_to_normal_when_medium_absent" "Normal" "$default_normal_value"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+export MOCK_STATUS_FIELD_MODE=priority_neither
+default_neither_value="$(workflow_tracker_default_priority_value)"
+unset MOCK_STATUS_FIELD_MODE
+# Neither candidate present on a confirmed, successfully-read board — the
+# caller must leave Priority unset (empty), not force a default that will
+# never resolve.
+run_test "default_empty_when_neither_candidate_present" "" "$default_neither_value"
+
+reset_log
+export MOCK_TRACKER_PROVIDER=linear
+default_wrong_provider_value="$(workflow_tracker_default_priority_value)"
+unset MOCK_TRACKER_PROVIDER
+# Provider mismatch is an inconclusive case (nothing to adapt against) —
+# falls back to the static "Medium" literal, same as before this helper
+# existed.
+run_test "default_wrong_provider_returns_medium" "Medium" "$default_wrong_provider_value"
 
 reset_log
 __workflow_project_named_field_cache_keys=()

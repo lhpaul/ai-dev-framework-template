@@ -462,7 +462,9 @@ When no dispatch-eligible work exists, the orchestrator must still evaluate prop
 When multiple items are eligible or proposal-eligible, prioritize as follows:
 
 1. Due date within 2 weeks, earliest first
-2. Priority: Urgent → High → Normal → Low
+2. Priority: Urgent → High → Normal/Medium → Low (`Normal` and `Medium` rank equally
+   — different GitHub Projects boards use one or the other for the same "routine"
+   tier; see `workflow-batch-overlap.sh`'s `PRIORITY_RANK`)
 3. Creation date, earlier first
 
 If a due date conflicts with the abstract priority order, flag it to the human rather than silently choosing.
@@ -851,7 +853,8 @@ held consumer items and their reason (e.g., `held — pending tool-fix merge for
 **Multiple tool-fix items**: When two or more tool-fix items appear in the same candidate batch,
 each is serialized into its own serial sub-batch dispatched one at a time before any consumer
 item is dispatched. The ordering among multiple tool-fix items follows the standard priority
-order — due date within 2 weeks (earliest first), then priority (Urgent → High → Normal → Low),
+order — due date within 2 weeks (earliest first), then priority (Urgent → High →
+Normal/Medium → Low; `Normal` and `Medium` rank equally),
 then creation date (earliest first) — mirroring the Step 2 priority rules.
 
 #### Foundational reviewer-tool merge ordering
@@ -919,7 +922,8 @@ sets share at least one common path. Paths are compared as normalized, repo-root
 moved to the next serial sub-batch. The higher-priority item remains in the current batch.
 Priority is determined by the orchestrator using the following ordered tiebreakers:
 
-1. Item priority level: Urgent > High > Normal > Low (orchestrator applies from tracker data)
+1. Item priority level: Urgent > High > Normal/Medium > Low (`Normal` and `Medium`
+   rank equally; orchestrator applies from tracker data)
 2. Creation date: the older item (earlier creation date) stays in the current batch
    (orchestrator applies from tracker data or development folder timestamp prefix)
 3. Branch name lexicographic order: the lexicographically earlier branch name stays
@@ -2025,8 +2029,8 @@ After all currently eligible items have reached a terminal condition, provide a 
 
 ### Proposed Start Batch
 
-- [Issue #N] — [title] — priority: [Urgent/High/Normal/Low] — next stage: [Spec/Plan] — [parallelization note]
-- [Issue #M] — [title] — priority: [Urgent/High/Normal/Low] — next stage: [Spec/Plan] — [parallelization note]
+- [Issue #N] — [title] — priority: [Urgent/High/Normal/Medium/Low] — next stage: [Spec/Plan] — [parallelization note]
+- [Issue #M] — [title] — priority: [Urgent/High/Normal/Medium/Low] — next stage: [Spec/Plan] — [parallelization note]
 
 Approval required before tracker status changes or branch/PR work starts for these Backlog items.
 

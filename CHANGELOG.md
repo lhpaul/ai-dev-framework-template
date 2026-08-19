@@ -639,6 +639,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whenever the loop would otherwise still report `needs_fixes` or
   `needs_rerun`, matching this script's existing fail-closed convention for
   other safety-critical audits (e.g. the unresolved-review-thread check).
+- **Backlog item Priority was silently never set**: `update_tracker_priority_best_effort`
+  in `workflow-lib.sh` rewrote `Medium` — the board's actual Priority field
+  option — into `Normal`, a value that does not exist on the board, so the
+  mutation could never resolve; the inverted alias is removed, and
+  `add-backlog-item.sh`'s implicit default (used whenever `--priority` is
+  omitted) changes from the nonexistent `Normal` to `Medium`. Priority
+  resolution already read the project's actual field options dynamically
+  (no hardcoded value list to fix there). A requested priority that still
+  cannot be resolved against the board's real options is now a hard error
+  (non-zero exit, `Error:`-prefixed message) instead of a fail-open
+  `Warning:` that let the item get created with no priority at all; this
+  applies narrowly to the Priority field via a new opt-in `required` mode
+  on `update_tracker_named_field_best_effort` — the Type and Size helpers,
+  and cases where the tracker provider or project genuinely does not apply,
+  remain best-effort as before. `add-backlog-item.sh` now validates an
+  explicit `--priority` against the board's real Priority field options via
+  the new no-mutation `workflow_tracker_priority_resolvable` check
+  **before** calling `gh issue create`, so an unresolvable explicit value is
+  rejected without ever creating the issue (exit 1) — closing a
+  partial-success window where the post-creation required update could
+  otherwise fail after the issue already existed, which a caller retrying
+  on non-zero exit without inspecting stdout could turn into duplicate
+  issues. The rarer failure modes the
+  pre-check cannot see (issue unexpectedly missing from the board, a
+  transient GraphQL write failure) still surface after issue creation but
+  now exit with a distinct code (`5`) and an explicit "issue was already
+  created, do not retry" message instead of a generic failure. The
+  implicit **default** (used when `--priority` is omitted) is no longer a
+  single hardcoded literal either: the new `workflow_tracker_default_priority_value`
+  adapts to whatever the configured board actually supports — preferring
+  `Medium` (this repo's board), falling back to `Normal` for downstream
+  repos whose board is still set up per the framework's pre-#1501 docs
+  (`github-projects.md` previously told every template consumer to create
+  a `Normal` option), and
+  leaving Priority unset (no error) only when a board's Priority field
+  confirms neither candidate exists — the same way an omitted `--size` or
+  `--type` is left unset. A Priority update failure no longer skips the
+  independent Type/Size updates that follow it in `create_cmd` — every
+  requested field is attempted before
+  the exit-5 partial-success signal is raised. `--priority` help text
+  updated to match, including the new documented exit codes. Protocol 00's
+  Priority inference heuristics now tell agents to **omit** `--priority`
+  for the routine/default case instead of hardcoding `--priority Medium`:
+  an explicit value is validated
+  against the board's real options and hard-fails if absent, so the
+  authoritative example was itself bypassing the adaptive default it
+  documented, breaking on any board still using `Normal`. `Urgent`,
+  `High`, and `Low` are unaffected — those literals are common to both the
+  current and legacy board vocabularies. `README.md` and Protocol 90's
+  abstract Priority ordering rules and summary templates now list
+  `Normal/Medium` as an equal-rank pair
+  instead of only `Normal`, matching `workflow-batch-overlap.sh`'s existing
+  `PRIORITY_RANK` table (which already ranked both names equally) — a real
+  board can now literally carry a `Medium` Priority value after this fix,
+  and the framework's own prioritization docs previously had no rule for it.
+  Live reproduction on the real board (see issue #1501) showed `High`
+  already worked correctly and the alias/default were the whole defect —
+  no separate `High` resolution bug exists.
 
 ### Changed
 

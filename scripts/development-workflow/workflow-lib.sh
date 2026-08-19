@@ -2708,15 +2708,157 @@ EOF
   printf '%s' "$field_json"
 }
 
-# update_tracker_named_field_best_effort <issue_number> <field_name> <option_value>
+# _workflow_tracker_priority_field_json
 #
-# Best-effort update for any single-select GitHub Projects field by name.
-# Supports github_projects provider only; emits warnings for all other providers.
-# Returns 0 in all warning/failure cases to avoid blocking caller flows.
+# Internal helper shared by workflow_tracker_priority_resolvable and
+# workflow_tracker_default_priority_value. Resolves and prints the
+# project's Priority field JSON (id + options map, see
+# workflow_github_project_named_field_json) when the tracker provider is
+# github_projects, a project is configured, and the field was successfully
+# read. Performs no issue-specific lookups and triggers no mutation, so it
+# is safe to call before an issue exists. Prints nothing and returns 1 in
+# every other case — provider mismatch, no project configured, or the
+# lookup itself failed — which both callers treat uniformly as "nothing to
+# validate/adapt against" (the same "genuinely does not apply" / "uncertain"
+# carve-out update_tracker_named_field_best_effort always treats
+# permissively).
+_workflow_tracker_priority_field_json() {
+  local _wtpfj_provider project_owner project_number project_id field_json
+
+  _wtpfj_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  if [ "$_wtpfj_provider" != "github_projects" ]; then
+    return 1
+  fi
+
+  project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
+  if [ -z "$project_number" ]; then
+    return 1
+  fi
+
+  project_owner="$(workflow_resolve_github_project_owner)"
+  if [ -z "$project_owner" ]; then
+    project_owner="$(workflow_resolve_github_repo_owner)"
+  fi
+  if [ -z "$project_owner" ]; then
+    return 1
+  fi
+
+  project_id="$(workflow_github_project_id "$project_owner" "$project_number" 2>/dev/null)"
+  if [ -z "$project_id" ]; then
+    return 1
+  fi
+
+  if ! field_json="$(workflow_github_project_named_field_json "$project_id" "Priority" 2>/dev/null)"; then
+    return 1
+  fi
+
+  printf '%s' "$field_json"
+}
+
+# workflow_tracker_priority_resolvable <priority_value>
+#
+# Pre-flight check: does <priority_value> resolve against the project's
+# actual Priority field options? Unlike update_tracker_priority_best_effort,
+# this triggers no mutation, so it is safe to call before an issue exists —
+# e.g. before `gh issue create` — to avoid the partial-success window where
+# an issue is created but a required follow-up Priority write then fails
+# (see issue #1501 code review: a caller that retries on non-zero exit
+# without inspecting stdout could otherwise create a duplicate issue).
+#
+# Returns 0 (resolvable / not blocking) whenever
+# _workflow_tracker_priority_field_json cannot produce a confirmed field
+# reading (provider mismatch, no project configured, or an inconclusive
+# lookup) — this pre-check must not block issue creation on an
+# environmental failure the authoritative post-creation required check will
+# re-attempt anyway. Returns 1 only when the Priority field was
+# successfully read from a configured project and <priority_value> does not
+# match any of its options — a confirmed, actionable bad value.
+workflow_tracker_priority_resolvable() {
+  local priority_value="$1"
+  local field_json option_id
+
+  if ! field_json="$(_workflow_tracker_priority_field_json)"; then
+    return 0
+  fi
+
+  option_id="$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
+" "$priority_value" 2>/dev/null)"
+
+  [ -n "$option_id" ]
+}
+
+# workflow_tracker_default_priority_value
+#
+# Resolves the runtime default Priority value used when --priority is
+# omitted, adapting to what the configured board actually supports instead
+# of assuming a single universal literal (issue #1501 code review, P1
+# finding "Preserve compatibility with Normal-priority boards"): prefers
+# "Medium" (this repo's own board), falls back to "Normal" for boards still
+# configured per the framework's pre-#1501 setup docs.
+#
+# When _workflow_tracker_priority_field_json cannot produce a confirmed
+# field reading (provider mismatch, no project configured, or an
+# inconclusive lookup), prints "Medium" unchanged — matching the
+# pre-existing best-effort behavior for those cases; there is nothing more
+# specific to fall back to, and the post-creation update remains a
+# best-effort no-op for a provider that does not support it.
+#
+# Only prints nothing (empty) when the Priority field was successfully read
+# from a configured project and CONFIRMED to contain neither "Medium" nor
+# "Normal". At that point, forcing a hard default would make every routine
+# backlog-item creation on that board fail until manually migrated, so the
+# caller should leave Priority unset instead — the same way an omitted
+# --size or --type is left unset.
+workflow_tracker_default_priority_value() {
+  local field_json resolved
+
+  if ! field_json="$(_workflow_tracker_priority_field_json)"; then
+    printf 'Medium'
+    return 0
+  fi
+
+  resolved="$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+options = data.get('options') or {}
+for candidate in ('Medium', 'Normal'):
+    if options.get(candidate):
+        print(candidate, end='')
+        break
+" 2>/dev/null)"
+
+  printf '%s' "$resolved"
+}
+
+# update_tracker_named_field_best_effort <issue_number> <field_name> <option_value> [required]
+#
+# Update for any single-select GitHub Projects field by name. Resolves
+# <option_value> against the project's actual field options (see
+# workflow_github_project_named_field_json) rather than a hardcoded list.
+# Supports github_projects provider only; emits warnings for all other
+# providers.
+#
+# When the tracker provider is not github_projects, or no GitHub Project is
+# configured, the field genuinely does not apply — there is nothing to
+# resolve <option_value> against — so those two cases always return 0
+# regardless of the [required] argument.
+#
+# For every other failure (item not found on the board, field/option not
+# found, GraphQL read or write failure, etc.): when [required] is the
+# literal string "required", the failure is a hard error (non-zero return,
+# message prefixed "Error:") so an explicitly-requested value that cannot be
+# applied to a configured board does not fail silently. When [required] is
+# omitted (the default), those failures remain best-effort (return 0,
+# message prefixed "Warning:") to avoid blocking caller flows for fields the
+# caller does not depend on.
 update_tracker_named_field_best_effort() {
   local issue_number="$1"
   local field_name="$2"
   local option_value="$3"
+  local required="${4:-}"
   local project_number project_id field_json field_id option_id item_json item_id
 
   local _utnfbe_provider
@@ -2738,6 +2880,10 @@ import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
 print(item.get('item_id') or '', end='')
 "); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse project item ID for issue #${issue_number}; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse project item ID for issue #${issue_number}; skipping tracker '${field_name}' update."
     return 0
   fi
@@ -2746,19 +2892,35 @@ import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
 print(item.get('project_id') or '', end='')
 "); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse project ID for issue #${issue_number}; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse project ID for issue #${issue_number}; skipping tracker '${field_name}' update."
     return 0
   fi
   if [ -z "$item_id" ]; then
+    if [ "$required" = "required" ]; then
+      echo "Error: issue #${issue_number} not found in project #${project_number}; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: issue #${issue_number} not found in project #${project_number}; skipping tracker '${field_name}' update."
     return 0
   fi
   if [ -z "$project_id" ]; then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not resolve project ID for issue #${issue_number}; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not resolve project ID for issue #${issue_number}; skipping tracker '${field_name}' update."
     return 0
   fi
 
   if ! field_json="$(workflow_github_project_named_field_json "$project_id" "$field_name")"; then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not read project '${field_name}' field metadata; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not read project '${field_name}' field metadata; skipping tracker '${field_name}' update."
     return 0
   fi
@@ -2767,6 +2929,10 @@ import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
 print(data.get('field_id') or '', end='')
 "); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse '${field_name}' field metadata; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse '${field_name}' field metadata; skipping tracker '${field_name}' update."
     return 0
   fi
@@ -2775,10 +2941,18 @@ import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
 print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
 " "$option_value"); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse '${field_name}' option '${option_value}'; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse '${field_name}' option '${option_value}'; skipping tracker '${field_name}' update."
     return 0
   fi
   if [ -z "$field_id" ] || [ -z "$option_id" ]; then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not resolve '${field_name}' field or option '${option_value}'; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not resolve '${field_name}' field or option '${option_value}'; skipping tracker '${field_name}' update."
     return 0
   fi
@@ -2804,6 +2978,11 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
     '; then
     printf '%s' "$__workflow_last_gh_stdout"
   else
+    if [ "$required" = "required" ]; then
+      echo "Error: GraphQL mutation failed for issue #${issue_number}; tracker '${field_name}' not updated." >&2
+      workflow_print_captured_gh_stderr
+      return 1
+    fi
     echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker '${field_name}' not updated."
     workflow_print_captured_gh_stderr
   fi
@@ -2811,16 +2990,19 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
 
 # update_tracker_priority_best_effort <issue_number> <priority_value>
 #
-# Best-effort update for the GitHub Projects Priority field.
-# Valid values: Urgent, High, Normal, Low. Medium aliases to Normal.
-# Returns 0 in all failure cases (fail-open).
+# Update for the GitHub Projects Priority field. Resolves <priority_value>
+# against the project's actual Priority field options (see
+# workflow_github_project_named_field_json) — there is no hardcoded alias
+# table. Priority is always explicitly set by add-backlog-item.sh (either
+# user-supplied via --priority, or defaulted), so an unresolvable value is a
+# hard error (non-zero return) whenever the tracker provider and project are
+# configured — see update_tracker_named_field_best_effort's "required" mode.
+# When the provider/project genuinely does not apply, this remains
+# best-effort (returns 0), matching update_tracker_named_field_best_effort.
 update_tracker_priority_best_effort() {
   local issue_number="$1"
   local priority_value="$2"
-  if [ "$priority_value" = "Medium" ]; then
-    priority_value="Normal"
-  fi
-  update_tracker_named_field_best_effort "$issue_number" "Priority" "$priority_value"
+  update_tracker_named_field_best_effort "$issue_number" "Priority" "$priority_value" "required"
 }
 
 # update_tracker_size_best_effort <issue_number> <size_value>

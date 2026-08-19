@@ -371,7 +371,9 @@ Typical tracker fields worth keeping current:
 When multiple items could advance, use this order:
 
 1. Due date within the next two weeks, earliest first.
-2. Priority: Urgent -> High -> Normal -> Low.
+2. Priority: Urgent -> High -> Normal/Medium -> Low. (`Normal` and `Medium` rank
+   equally — different GitHub Projects boards use one or the other for the
+   same "routine" tier; see `workflow-batch-overlap.sh`'s `PRIORITY_RANK`.)
 3. Earlier-created items before newer items.
 
 Dependencies override priority. If a work item depends on another item that is not yet `Merged` or `Released`, it should wait.
