@@ -303,6 +303,38 @@ run_contains \
   "$triple_quote_output"
 
 echo ""
+echo "=== sync_template_scopes: retro-metrics precedence canary (real manifest) ==="
+# Regression guard for issue #1438: docs/workflow/retro-metrics.md and
+# docs/workflow/retro-metrics-platforms.md must remain declared as exact
+# project_specific entries (never re-absorbed into the docs/workflow/
+# always_sync glob), so downstream projects keep their own accumulated
+# history across /sync-template runs.
+real_manifest="$REPO_ROOT/sync-manifest.yaml"
+real_single_output="$(python3 "$SELECTOR" --manifest "$real_manifest" --role single_repo)"
+real_hub_output="$(python3 "$SELECTOR" --manifest "$real_manifest" --role workflow_hub)"
+
+run_contains \
+  "retro_metrics_selected_project_specific_single_repo" \
+  "SELECTED category=project_specific mode_scope=shared path=docs/workflow/retro-metrics.md glob=" \
+  "$real_single_output"
+run_contains \
+  "retro_metrics_platforms_selected_project_specific_single_repo" \
+  "SELECTED category=project_specific mode_scope=shared path=docs/workflow/retro-metrics-platforms.md glob=" \
+  "$real_single_output"
+run_contains \
+  "retro_metrics_selected_project_specific_workflow_hub" \
+  "SELECTED category=project_specific mode_scope=shared path=docs/workflow/retro-metrics.md glob=" \
+  "$real_hub_output"
+run_not_contains \
+  "retro_metrics_not_declared_always_sync" \
+  "category=always_sync mode_scope=shared path=docs/workflow/retro-metrics.md" \
+  "$real_single_output"
+run_not_contains \
+  "retro_metrics_platforms_not_declared_always_sync" \
+  "category=always_sync mode_scope=shared path=docs/workflow/retro-metrics-platforms.md" \
+  "$real_single_output"
+
+echo ""
 echo "sync-template mode-scope tests complete: $PASS_COUNT passed, $FAIL_COUNT failed."
 
 if [ "$FAIL_COUNT" -ne 0 ]; then

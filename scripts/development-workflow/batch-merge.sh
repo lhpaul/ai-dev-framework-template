@@ -14,7 +14,7 @@
 #   ./scripts/development-workflow/batch-merge.sh [--base <branch>] discover --include-checkpointed --prs 101,102,103
 #
 #   # --- Per-PR merge mode ---
-#   ./scripts/development-workflow/batch-merge.sh [--base <branch>] merge --pr 101
+#   ./scripts/development-workflow/batch-merge.sh [--base <branch>] merge --pr 101 --expected-head-sha <sha>
 #
 #   # --- Safe branch deletion (MERGED-state guard) ---
 #   ./scripts/development-workflow/batch-merge.sh [--base <branch>] delete-branch --pr 101
@@ -26,6 +26,7 @@
 #   PR_NUMBER=<n>
 #   PR_TITLE=<title>
 #   PR_BRANCH=<branch>
+#   PR_HEAD_SHA=<headRefOid>
 #   PR_BASE=<base-branch>
 #   PR_LABELS=<label1,label2,...>
 #   PR_READY_LABEL=true|false
@@ -55,6 +56,7 @@
 #   DELETE_PR_NUMBER=<n>
 #   DELETE_RESULT=deleted|skipped|not_found
 #   DELETE_BRANCH=<branch-name>          (absent when metadata fetch fails before branch is known)
+#   DELETE_IS_CROSS_REPOSITORY=true|false
 #   DELETE_PR_STATE=<state>              (only when DELETE_RESULT=skipped due to non-MERGED state)
 #   ERROR_MESSAGE=<text>                 (when DELETE_RESULT=skipped; covers non-MERGED state and push failures)
 #
@@ -87,7 +89,11 @@ usage() {
   cat >&2 <<'EOF'
 Usage:
   batch-merge.sh [--base <branch>] discover [--include-checkpointed] [--prs <num1,num2,...>]
-  batch-merge.sh [--base <branch>] merge --pr <number>
+  batch-merge.sh recheck-remaining --prs <num1,num2,...> --after-merged-pr <number> --base <branch> [--approved-unready-prs <num1,num2,...>]
+          --after-merged-pr must itself be one of the numbers listed in --prs
+          (the frozen in-scope list). Passing a merged PR that is absent from
+          --prs exits with reason=after_merged_pr_not_in_frozen_list.
+  batch-merge.sh [--base <branch>] merge --pr <number> --expected-head-sha <sha>
   batch-merge.sh [--base <branch>] delete-branch --pr <number>
 
   --base  Target integration branch (default: develop).
@@ -99,6 +105,99 @@ Usage:
           refuses that label until checkpoint satisfaction evidence removes it.
 EOF
   exit 2
+}
+
+is_nonnegative_integer() {
+  case "${1:-}" in
+    ''|*[!0-9]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+run_with_timeout() {
+  local seconds="$1"
+  shift
+
+  local output_file pid start now status
+  output_file="$(mktemp)"
+  "$@" >"$output_file" 2>/dev/null &
+  pid=$!
+  start="$(date +%s)"
+
+  while kill -0 "$pid" 2>/dev/null; do
+    now="$(date +%s)"
+    if [ $((now - start)) -ge "$seconds" ]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      rm -f "$output_file"
+      return 124
+    fi
+    sleep 1
+  done
+
+  status=0
+  wait "$pid" || status=$?
+  cat "$output_file"
+  rm -f "$output_file"
+  return "$status"
+}
+
+emit_recheck_record() {
+  jq -cn \
+    --arg record_type "$1" \
+    --arg pr "$2" \
+    --arg original_index "$3" \
+    --arg invalidating_sibling_pr "$4" \
+    --arg base_ref "$5" \
+    --arg head_ref "$6" \
+    --arg merge_state "$7" \
+    --arg checks_state "$8" \
+    --arg classification "$9" \
+    --arg retryable "${10}" \
+    --arg attempts "${11}" \
+    --arg deadline_seconds "${12}" \
+    --arg outcome "${13}" \
+    --arg reason "${14}" '
+      def maybe_number:
+        if . == "" or . == "null" then null
+        elif test("^[0-9]+$") then tonumber
+        else null end;
+      def maybe_string:
+        if . == "" or . == "null" then null else . end;
+      {
+        record_type: $record_type,
+        pr: ($pr | maybe_number),
+        original_index: ($original_index | maybe_number),
+        invalidating_sibling_pr: ($invalidating_sibling_pr | maybe_number),
+        base_ref: ($base_ref | maybe_string),
+        head_ref: ($head_ref | maybe_string),
+        merge_state: ($merge_state | maybe_string),
+        checks_state: ($checks_state | maybe_string),
+        classification: $classification,
+        retryable: ($retryable == "true"),
+        attempts: ($attempts | tonumber),
+        deadline_seconds: ($deadline_seconds | maybe_number),
+        outcome: $outcome,
+        reason: $reason
+      }'
+}
+
+emit_recheck_error() {
+  emit_recheck_record \
+    "error" \
+    "null" \
+    "null" \
+    "${1:-null}" \
+    "null" \
+    "null" \
+    "null" \
+    "null" \
+    "helper_failed" \
+    "false" \
+    "0" \
+    "${2:-null}" \
+    "error" \
+    "$3"
 }
 
 die() {
@@ -113,17 +212,18 @@ fetch_pr_meta() {
 
   local json
   json="$(gh pr view "$pr_num" \
-    --json number,title,headRefName,baseRefName,labels,createdAt,isDraft \
+    --json number,title,headRefName,headRefOid,baseRefName,labels,createdAt,isDraft \
     2>/dev/null)" || {
     echo "FETCH_ERROR=could not fetch PR #${pr_num}" >&2
     return 1
   }
 
-  local number title branch base created_at labels_csv ready_label is_draft has_needs_fixes has_human_checkpoint
+  local number title branch head_sha base created_at labels_csv ready_label is_draft has_needs_fixes has_human_checkpoint
 
   number="$(printf '%s' "$json" | jq -r '.number')"
   title="$(printf '%s' "$json" | jq -r '.title')"
   branch="$(printf '%s' "$json" | jq -r '.headRefName')"
+  head_sha="$(printf '%s' "$json" | jq -r '.headRefOid // ""')"
   base="$(printf '%s' "$json" | jq -r '.baseRefName')"
   created_at="$(printf '%s' "$json" | jq -r '.createdAt')"
   labels_csv="$(printf '%s' "$json" | jq -r '[.labels[].name] | join(",")')"
@@ -153,6 +253,7 @@ fetch_pr_meta() {
   print_kv PR_NUMBER         "$number"
   print_kv_escaped PR_TITLE  "$title"
   print_kv PR_BRANCH         "$branch"
+  print_kv PR_HEAD_SHA       "$head_sha"
   print_kv PR_BASE           "$base"
   print_kv PR_LABELS         "$labels_csv"
   print_kv PR_READY_LABEL    "$ready_label"
@@ -253,6 +354,9 @@ cmd_discover() {
 
     local meta
     if ! meta="$(fetch_pr_meta "$pr_num" 2>&1)"; then
+      if [ -n "$explicit_prs" ]; then
+        die "could not fetch metadata for explicitly requested PR #${pr_num}; aborting explicit batch discovery"
+      fi
       echo "WARNING: skipping PR #${pr_num} — could not fetch metadata" >&2
       continue
     fi
@@ -327,6 +431,414 @@ cmd_discover() {
       echo "---"
     done < <(sort -n "$group_file")
   done
+}
+
+# ---------------------------------------------------------------------------
+# Command: recheck-remaining
+# ---------------------------------------------------------------------------
+
+normalize_checks_state() {
+  local json="$1"
+  printf '%s\n' "$json" | jq -r '
+    def check_name: (.name // .context // .workflowName // "");
+    def check_key:
+      if .__typename == "StatusContext" then check_name
+      else ((.workflowName // .workflow // .app.name // "") + "\u0000" + check_name)
+      end;
+    def state:
+      if .__typename == "StatusContext" then ((.state // "") | ascii_downcase)
+      else
+        (((.status // "") | ascii_downcase) + ":" + ((.conclusion // "") | ascii_downcase))
+      end;
+    (.statusCheckRollup // []) as $checks |
+    (
+      $checks
+      | map(select((check_name | test("^E2E regression \\(placeholder\\)$") | not)))
+      | sort_by(check_key, (.startedAt // .completedAt // .updatedAt // .createdAt // ""))
+      | group_by(check_key)
+      | map(last)
+    ) as $required |
+    if ($checks | length) == 0 then "pending"
+    elif ($required | length) == 0 then "pending"
+    elif ($required | any(.[]; (state | test("failure|error|cancelled|timed_out|action_required|startup_failure")))) then "failure"
+    elif ($required | any(.[]; (state | test("pending|queued|in_progress|waiting|requested|expected")))) then "pending"
+    elif ($required | all(.[]; (state | test("success|completed:success|completed:skipped|completed:neutral")))) then "success"
+    else "unknown" end
+  ' 2>/dev/null
+}
+
+list_contains_number() {
+  local csv="$1"
+  local needle="$2"
+  local token
+  [ -n "$needle" ] || return 1
+  needle="${needle#\#}"
+  csv="${csv},"
+  while [ -n "$csv" ]; do
+    token="${csv%%,*}"
+    csv="${csv#*,}"
+    token="$(printf '%s' "$token" | tr -d '[:space:]')"
+    token="${token#\#}"
+    if [ "$token" = "$needle" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+classify_recheck_json() {
+  local json="$1"
+  local bound_exhausted="$2"
+  local pr_num="${3:-}"
+  local approved_unready_prs="${4:-}"
+
+  local state is_draft base_ref merge_state checks_state labels_type checks_type
+  state="$(printf '%s\n' "$json" | jq -r '.state // ""' 2>/dev/null)" || return 1
+  is_draft="$(printf '%s\n' "$json" | jq -r 'if has("isDraft") then (.isDraft | tostring) else "" end' 2>/dev/null)" || return 1
+  base_ref="$(printf '%s\n' "$json" | jq -r '.baseRefName // ""' 2>/dev/null)" || return 1
+  merge_state="$(printf '%s\n' "$json" | jq -r '.mergeStateStatus // ""' 2>/dev/null)" || return 1
+  checks_state="$(normalize_checks_state "$json")" || return 1
+  labels_type="$(printf '%s\n' "$json" | jq -r 'if has("labels") then (.labels | type) else "" end' 2>/dev/null)" || return 1
+  checks_type="$(printf '%s\n' "$json" | jq -r 'if has("statusCheckRollup") then (.statusCheckRollup | type) else "" end' 2>/dev/null)" || return 1
+
+  if [ -z "$state" ] || [ -z "$is_draft" ] || [ -z "$base_ref" ] ||
+     [ "$labels_type" != "array" ] || [ "$checks_type" != "array" ]; then
+    printf 'helper_failed|false|error|missing_required_field|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
+    return 0
+  fi
+
+  if [ "$state" != "OPEN" ]; then
+    printf 'merge_blocked|false|hold|pr_not_open|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
+    return 0
+  fi
+  if [ "$is_draft" = "true" ]; then
+    printf 'merge_blocked|false|hold|draft_pr|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
+    return 0
+  fi
+  if ! printf '%s\n' "$json" | jq -e '.labels[].name | select(. == "ready-for-human-review")' >/dev/null 2>&1 &&
+     ! list_contains_number "$approved_unready_prs" "$pr_num"; then
+    printf 'merge_blocked|false|hold|label_gate_failed|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
+    return 0
+  fi
+  if printf '%s\n' "$json" | jq -e '.labels[].name | select(. == "needs-fixes" or . == "do-not-merge" or . == "human-checkpoint-required")' >/dev/null 2>&1; then
+    printf 'merge_blocked|false|hold|label_gate_failed|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
+    return 0
+  fi
+  if [ "$base_ref" != "$TARGET_BASE" ]; then
+    printf 'merge_blocked|false|hold|base_ref_mismatch|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
+    return 0
+  fi
+  case "$merge_state" in
+    DIRTY|BLOCKED|BEHIND|UNSTABLE|HAS_HOOKS)
+      printf 'merge_blocked|false|hold|merge_state_non_clean|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
+      return 0
+      ;;
+  esac
+  if [ "$checks_state" = "failure" ]; then
+    printf 'merge_blocked|false|hold|checks_failed|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
+    return 0
+  fi
+  if [ "$checks_state" = "pending" ] || [ "$checks_state" = "unknown" ]; then
+    if [ -n "$bound_exhausted" ]; then
+      printf 'merge_blocked|false|hold|%s|%s|%s|%s\n' "$bound_exhausted" "$base_ref" "$merge_state" "$checks_state"
+    else
+      printf 'retryable|true|hold|checks_not_settled|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
+    fi
+    return 0
+  fi
+
+  case "$merge_state" in
+    CLEAN)
+      printf 'clean|false|continue|refreshed_clean|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
+      ;;
+    ""|UNKNOWN)
+      if [ -n "$bound_exhausted" ]; then
+        printf 'merge_blocked|false|hold|%s|%s|%s|%s\n' "$bound_exhausted" "$base_ref" "$merge_state" "$checks_state"
+      else
+        printf 'retryable|true|hold|merge_state_unknown|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
+      fi
+      ;;
+    *)
+      printf 'helper_failed|false|error|unclassified_state|%s|%s|%s\n' "$base_ref" "$merge_state" "$checks_state"
+      ;;
+  esac
+}
+
+cmd_recheck_remaining() {
+  local explicit_prs=""
+  local after_merged_pr=""
+  local approved_unready_prs="${BATCH_MERGE_APPROVED_UNREADY_PRS:-}"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --prs)
+        [ $# -ge 2 ] && [ -n "${2:-}" ] || {
+          emit_recheck_error "null" "null" "invalid_pr_list"
+          exit 2
+        }
+        explicit_prs="$2"
+        shift 2
+        ;;
+      --after-merged-pr)
+        [ $# -ge 2 ] && [ -n "${2:-}" ] || {
+          emit_recheck_error "null" "null" "missing_after_merged_pr"
+          exit 2
+        }
+        after_merged_pr="$2"
+        shift 2
+        ;;
+      --base)
+        [ $# -ge 2 ] && [ -n "${2:-}" ] || {
+          emit_recheck_error "${after_merged_pr:-null}" "null" "missing_base"
+          exit 2
+        }
+        TARGET_BASE="$2"
+        shift 2
+        ;;
+      --approved-unready-prs)
+        [ $# -ge 2 ] || {
+          emit_recheck_error "${after_merged_pr:-null}" "null" "invalid_approved_unready_prs"
+          exit 2
+        }
+        approved_unready_prs="$2"
+        shift 2
+        ;;
+      *)
+        emit_recheck_error "${after_merged_pr:-null}" "null" "invalid_argument"
+        exit 2
+        ;;
+    esac
+  done
+
+  local attempts_limit sleep_seconds deadline_seconds
+  attempts_limit="${BATCH_MERGE_RECHECK_ATTEMPTS:-3}"
+  sleep_seconds="${BATCH_MERGE_RECHECK_SLEEP_SECONDS:-10}"
+  deadline_seconds="${BATCH_MERGE_RECHECK_DEADLINE_SECONDS:-60}"
+  if ! is_nonnegative_integer "$attempts_limit" || [ "$attempts_limit" -lt 1 ] ||
+     ! is_nonnegative_integer "$sleep_seconds" ||
+     ! is_nonnegative_integer "$deadline_seconds"; then
+    emit_recheck_error "${after_merged_pr:-null}" "${deadline_seconds:-null}" "invalid_retry_config"
+    exit 2
+  fi
+
+  case "$after_merged_pr" in
+    ''|*[!0-9]*)
+      emit_recheck_error "null" "$deadline_seconds" "missing_after_merged_pr"
+      exit 2
+      ;;
+  esac
+  if [ -z "$explicit_prs" ]; then
+    emit_recheck_error "$after_merged_pr" "$deadline_seconds" "invalid_pr_list"
+    exit 2
+  fi
+  case "$explicit_prs" in
+    ,*|*,|*,,*)
+      emit_recheck_error "$after_merged_pr" "$deadline_seconds" "invalid_pr_list"
+      exit 2
+      ;;
+  esac
+  if [ -n "$approved_unready_prs" ]; then
+    case "$approved_unready_prs" in
+      ,*|*,|*,,*)
+        emit_recheck_error "$after_merged_pr" "$deadline_seconds" "invalid_approved_unready_prs"
+        exit 2
+        ;;
+    esac
+  fi
+
+  require_gh
+
+  local pr_file seen_file approved_seen_file
+  pr_file="$(mktemp)"
+  seen_file="$(mktemp)"
+  approved_seen_file="$(mktemp)"
+  # shellcheck disable=SC2064
+  trap "rm -f '$pr_file' '$seen_file' '$approved_seen_file'" EXIT INT TERM
+
+  local raw pr_id index=0
+  IFS=',' read -r -a _recheck_tokens <<< "$explicit_prs"
+  for raw in "${_recheck_tokens[@]}"; do
+    pr_id="${raw#\#}"
+    case "$pr_id" in
+      ''|*[!0-9]*)
+        emit_recheck_error "$after_merged_pr" "$deadline_seconds" "invalid_pr_list"
+        exit 2
+        ;;
+    esac
+    if grep -qx "$pr_id" "$seen_file"; then
+      emit_recheck_error "$after_merged_pr" "$deadline_seconds" "invalid_pr_list"
+      exit 2
+    fi
+    printf '%s\n' "$pr_id" >> "$seen_file"
+    printf '%s\t%s\n' "$index" "$pr_id" >> "$pr_file"
+    index=$((index + 1))
+  done
+
+  if [ -n "$approved_unready_prs" ]; then
+    IFS=',' read -r -a _approved_unready_tokens <<< "$approved_unready_prs"
+    for raw in "${_approved_unready_tokens[@]}"; do
+      pr_id="${raw#\#}"
+      case "$pr_id" in
+        ''|*[!0-9]*)
+          emit_recheck_error "$after_merged_pr" "$deadline_seconds" "invalid_approved_unready_prs"
+          exit 2
+          ;;
+      esac
+      if grep -qx "$pr_id" "$approved_seen_file"; then
+        emit_recheck_error "$after_merged_pr" "$deadline_seconds" "invalid_approved_unready_prs"
+        exit 2
+      fi
+      if ! grep -qx "$pr_id" "$seen_file"; then
+        emit_recheck_error "$after_merged_pr" "$deadline_seconds" "approved_unready_pr_not_in_frozen_list"
+        exit 2
+      fi
+      printf '%s\n' "$pr_id" >> "$approved_seen_file"
+    done
+  fi
+
+  if ! grep -qx "$after_merged_pr" "$seen_file"; then
+    emit_recheck_error "$after_merged_pr" "$deadline_seconds" "after_merged_pr_not_in_frozen_list"
+    exit 2
+  fi
+
+  while IFS="$(printf '\t')" read -r original_index pr_num; do
+    [ "$pr_num" = "$after_merged_pr" ] && continue
+
+    local start_ts attempt json fetch_status classification_line bound_exhausted emitted
+    start_ts="$(date +%s)"
+    attempt=0
+    classification_line=""
+    emitted=""
+
+    while [ "$attempt" -lt "$attempts_limit" ]; do
+      local now elapsed remaining
+      now="$(date +%s)"
+      elapsed=$((now - start_ts))
+      remaining=$((deadline_seconds - elapsed))
+      if [ "$deadline_seconds" -gt 0 ] && [ "$remaining" -le 0 ]; then
+        bound_exhausted="retry_deadline_exhausted"
+        break
+      fi
+      [ "$deadline_seconds" -eq 0 ] && remaining=30
+
+      attempt=$((attempt + 1))
+      json=""
+      fetch_status=0
+      json="$(run_with_timeout "$remaining" gh pr view "$pr_num" --json number,state,isDraft,labels,baseRefName,headRefName,mergeStateStatus,statusCheckRollup)" || fetch_status=$?
+      if [ "$fetch_status" -eq 124 ]; then
+        bound_exhausted="retry_deadline_exhausted"
+        break
+      fi
+      if [ "$fetch_status" -ne 0 ] || [ -z "$json" ]; then
+        emit_recheck_record "error" "$pr_num" "$original_index" "$after_merged_pr" "null" "null" "null" "null" "helper_failed" "false" "$attempt" "$deadline_seconds" "error" "github_query_failed"
+        exit 2
+      fi
+      if [ "$(printf '%s\n' "$json" | jq -r '.state // ""' 2>/dev/null || true)" = "MERGED" ]; then
+        local merged_base_ref merged_head_ref merged_merge_state merged_checks_state
+        merged_base_ref="$(printf '%s\n' "$json" | jq -r '.baseRefName // "null"' 2>/dev/null)" || merged_base_ref="null"
+        merged_head_ref="$(printf '%s\n' "$json" | jq -r '.headRefName // "null"' 2>/dev/null)" || merged_head_ref="null"
+        merged_merge_state="$(printf '%s\n' "$json" | jq -r '.mergeStateStatus // "UNKNOWN"' 2>/dev/null)" || merged_merge_state="UNKNOWN"
+        merged_checks_state="$(normalize_checks_state "$json")" || merged_checks_state="unknown"
+        emit_recheck_record "remaining_pr" "$pr_num" "$original_index" "$after_merged_pr" "$merged_base_ref" "$merged_head_ref" "$merged_merge_state" "$merged_checks_state" "merge_blocked" "false" "$attempt" "$deadline_seconds" "hold" "already_merged"
+        emitted="true"
+        break
+      fi
+
+      if [ "$attempt" -ge "$attempts_limit" ]; then
+        bound_exhausted="retry_attempts_exhausted"
+      else
+        bound_exhausted=""
+      fi
+      classification_line="$(classify_recheck_json "$json" "$bound_exhausted" "$pr_num" "$approved_unready_prs")" || {
+        emit_recheck_record "error" "$pr_num" "$original_index" "$after_merged_pr" "null" "null" "null" "null" "helper_failed" "false" "$attempt" "$deadline_seconds" "error" "malformed_response"
+        exit 2
+      }
+
+      local classification retryable outcome reason base_ref head_ref merge_state checks_state
+      IFS='|' read -r classification retryable outcome reason base_ref merge_state checks_state <<< "$classification_line"
+      head_ref="$(printf '%s\n' "$json" | jq -r '.headRefName // ""' 2>/dev/null)" || head_ref=""
+      if [ "$classification" != "retryable" ]; then
+        emit_recheck_record "remaining_pr" "$pr_num" "$original_index" "$after_merged_pr" "$base_ref" "$head_ref" "$merge_state" "$checks_state" "$classification" "$retryable" "$attempt" "$deadline_seconds" "$outcome" "$reason"
+        emitted="true"
+        if [ "$classification" = "helper_failed" ]; then
+          exit 2
+        fi
+        break
+      fi
+
+      if [ "$attempt" -ge "$attempts_limit" ]; then
+        emit_recheck_record "remaining_pr" "$pr_num" "$original_index" "$after_merged_pr" "$base_ref" "$head_ref" "$merge_state" "$checks_state" "merge_blocked" "false" "$attempt" "$deadline_seconds" "hold" "retry_attempts_exhausted"
+        emitted="true"
+        break
+      fi
+
+      now="$(date +%s)"
+      elapsed=$((now - start_ts))
+      remaining=$((deadline_seconds - elapsed))
+      if [ "$deadline_seconds" -gt 0 ] && [ "$remaining" -le 0 ]; then
+        emit_recheck_record "remaining_pr" "$pr_num" "$original_index" "$after_merged_pr" "$base_ref" "$head_ref" "$merge_state" "$checks_state" "merge_blocked" "false" "$attempt" "$deadline_seconds" "hold" "retry_deadline_exhausted"
+        emitted="true"
+        break
+      fi
+      if [ "$sleep_seconds" -gt 0 ]; then
+        local sleep_for="$sleep_seconds"
+        if [ "$deadline_seconds" -gt 0 ] && [ "$sleep_for" -gt "$remaining" ]; then
+          sleep_for="$remaining"
+        fi
+        [ "$sleep_for" -gt 0 ] && sleep "$sleep_for"
+      fi
+    done
+
+    if [ -z "$emitted" ]; then
+      emit_recheck_record "remaining_pr" "$pr_num" "$original_index" "$after_merged_pr" "null" "null" "UNKNOWN" "unknown" "merge_blocked" "false" "$attempt" "$deadline_seconds" "hold" "${bound_exhausted:-retry_deadline_exhausted}"
+    fi
+  done < "$pr_file"
+
+  local observation_json observation_status observation_timeout
+  observation_timeout="$deadline_seconds"
+  [ "$observation_timeout" -eq 0 ] && observation_timeout=30
+  observation_status=0
+  observation_json="$(run_with_timeout "$observation_timeout" gh pr list --base "$TARGET_BASE" --state open --json number,headRefName,baseRefName,mergeStateStatus,statusCheckRollup 2>/dev/null)" || observation_status=$?
+  if [ "$observation_status" -ne 0 ]; then
+    emit_recheck_error "$after_merged_pr" "$deadline_seconds" "github_query_failed"
+    exit 2
+  fi
+  if [ -z "$observation_json" ]; then
+    emit_recheck_error "$after_merged_pr" "$deadline_seconds" "malformed_response"
+    exit 2
+  fi
+  if ! printf '%s\n' "$observation_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    emit_recheck_error "$after_merged_pr" "$deadline_seconds" "malformed_response"
+    exit 2
+  fi
+
+  local observation_lines
+  observation_lines="$(printf '%s\n' "$observation_json" | jq -c '.[]' 2>/dev/null)" || {
+    emit_recheck_error "$after_merged_pr" "$deadline_seconds" "malformed_response"
+    exit 2
+  }
+
+  local observation_lines_file
+  observation_lines_file="$(mktemp)"
+  printf '%s\n' "$observation_lines" > "$observation_lines_file"
+  while IFS= read -r item; do
+    [ -z "$item" ] && continue
+    local observed_pr observed_base observed_head observed_merge observed_checks
+    if ! printf '%s\n' "$item" | jq -e 'type == "object" and (.number | type == "number")' >/dev/null 2>&1; then
+      rm -f "$observation_lines_file"
+      emit_recheck_error "$after_merged_pr" "$deadline_seconds" "malformed_response"
+      exit 2
+    fi
+    observed_pr="$(printf '%s\n' "$item" | jq -r '.number // ""')"
+    [ -z "$observed_pr" ] && continue
+    grep -qx "$observed_pr" "$seen_file" && continue
+    observed_base="$(printf '%s\n' "$item" | jq -r '.baseRefName // "null"')"
+    observed_head="$(printf '%s\n' "$item" | jq -r '.headRefName // "null"')"
+    observed_merge="$(printf '%s\n' "$item" | jq -r '.mergeStateStatus // "null"')"
+    observed_checks="$(normalize_checks_state "$item")" || observed_checks="unknown"
+    emit_recheck_record "out_of_scope_observation" "$observed_pr" "null" "$after_merged_pr" "$observed_base" "$observed_head" "$observed_merge" "$observed_checks" "out_of_scope_observation" "false" "1" "$deadline_seconds" "observe" "not_in_frozen_scope"
+  done < "$observation_lines_file"
+  rm -f "$observation_lines_file"
 }
 
 # ---------------------------------------------------------------------------
@@ -486,6 +998,7 @@ PYEOF
 
 cmd_merge() {
   local pr_num=""
+  local expected_head_sha=""
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -500,6 +1013,11 @@ cmd_merge() {
         TARGET_BASE="$2"
         shift 2
         ;;
+      --expected-head-sha)
+        [ $# -ge 2 ] && [ -n "${2:-}" ] || die "--expected-head-sha requires a commit SHA value"
+        expected_head_sha="$2"
+        shift 2
+        ;;
       *)
         die "Unknown option: $1"
         ;;
@@ -512,6 +1030,10 @@ cmd_merge() {
   case "$pr_num" in
     ''|*[!0-9]*) die "Invalid PR number '${pr_num}' — must be a positive integer" ;;
   esac
+  [ -n "$expected_head_sha" ] || die "--expected-head-sha is required; pass the reviewed PR headRefOid captured by the readiness gate"
+  if ! [[ "$expected_head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    die "Invalid --expected-head-sha '${expected_head_sha}' — must be a 40-character lowercase commit SHA"
+  fi
 
   require_gh
 
@@ -529,14 +1051,21 @@ cmd_merge() {
 
   # Revalidate the PR immediately before merging. A PR may have been
   # retargeted, closed, or labeled needs-fixes since discovery.
-  local pr_json branch base state is_draft
-  pr_json="$(gh pr view "$pr_num" --json headRefName,baseRefName,state,labels,isDraft 2>/dev/null)" || \
+  local pr_json branch base state is_draft current_head_sha
+  pr_json="$(gh pr view "$pr_num" --json headRefName,headRefOid,baseRefName,state,labels,isDraft 2>/dev/null)" || \
     merge_die "Could not fetch metadata for PR #${pr_num}"
 
   branch="$(printf '%s' "$pr_json" | jq -r '.headRefName')"
+  current_head_sha="$(printf '%s' "$pr_json" | jq -r '.headRefOid // ""')"
   base="$(printf '%s' "$pr_json" | jq -r '.baseRefName')"
   state="$(printf '%s' "$pr_json" | jq -r '.state')"
   is_draft="$(printf '%s' "$pr_json" | jq -r '.isDraft')"
+  if ! [[ "$current_head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    merge_die "Could not determine current headRefOid for PR #${pr_num}"
+  fi
+  if [ "$current_head_sha" != "$expected_head_sha" ]; then
+    merge_die "PR #${pr_num} head changed from reviewed SHA ${expected_head_sha} to ${current_head_sha}; rerun review/CI before merging"
+  fi
 
   [ "$base" = "$TARGET_BASE" ] || \
     merge_die "PR #${pr_num} targets '${base}', not '${TARGET_BASE}'"
@@ -547,6 +1076,10 @@ cmd_merge() {
 
   if printf '%s' "$pr_json" | jq -e '.labels[].name | select(. == "needs-fixes")' >/dev/null 2>&1; then
     merge_die "PR #${pr_num} is labeled needs-fixes"
+  fi
+
+  if printf '%s' "$pr_json" | jq -e '.labels[].name | select(. == "do-not-merge")' >/dev/null 2>&1; then
+    merge_die "PR #${pr_num} is labeled do-not-merge"
   fi
 
   if printf '%s' "$pr_json" | jq -e '.labels[].name | select(. == "human-checkpoint-required")' >/dev/null 2>&1; then
@@ -582,11 +1115,18 @@ cmd_merge() {
   local merge_ref="FETCH_HEAD"
   git fetch origin "$pr_head_ref" >/dev/null 2>&1 || \
     merge_die "Could not fetch ${pr_head_ref} from origin"
+  local fetched_head_sha
+  if ! fetched_head_sha="$(git rev-parse "${merge_ref}^{commit}" 2>/dev/null)"; then
+    fetched_head_sha=""
+  fi
+  if [ "$fetched_head_sha" != "$expected_head_sha" ]; then
+    merge_die "Fetched ${pr_head_ref} resolved to ${fetched_head_sha:-unknown}, expected reviewed SHA ${expected_head_sha}; rerun review/CI before merging"
+  fi
 
   # Attempt the merge (capture output; the 'if' absorbs the non-zero exit code
   # so set -e does not fire on a failed merge).
   local merge_output
-  if merge_output="$(git merge --no-ff --no-edit -m "Merge PR #${pr_num} (${branch})" "$merge_ref" 2>&1)"; then
+  if merge_output="$(git merge --no-ff --no-edit -m "Merge PR #${pr_num} (${branch})" "$expected_head_sha" 2>&1)"; then
     # Post-merge CHANGELOG deduplication guard.
     # A clean git merge can still produce structural CHANGELOG violations when the
     # incoming PR placed its entries under a category header (e.g. ### Fixed) that
@@ -636,11 +1176,11 @@ cmd_merge() {
     # If the call fails (e.g. already-MERGED idempotent case, API error, or
     # auth issue), check the actual PR state.  Only warn when the PR is still
     # not MERGED — the caller's Step 4.2 MERGED-state poll is the safety net.
-    if ! gh pr merge "$pr_num" --merge 2>/dev/null; then
+    if ! gh pr merge "$pr_num" --merge --match-head-commit "$expected_head_sha" 2>/dev/null; then
       local post_state
       post_state="$(gh pr view "$pr_num" --json state --jq '.state' 2>/dev/null)" || post_state=""
       if [ "$post_state" != "MERGED" ]; then
-        echo "WARNING: gh pr merge failed for PR #${pr_num} and PR is in state '${post_state:-unknown}' — caller should verify MERGED state via 'gh pr view ${pr_num} --json state'" >&2
+        echo "WARNING: gh pr merge failed for PR #${pr_num} — the local merge and push to the base branch succeeded, but GitHub has not recorded the PR as merged and it still reads '${post_state:-unknown}'. This is NOT yet resolved: per Protocol 94 Step 4.2 you must poll 'gh pr view ${pr_num} --json state' for MERGED (every 5s, up to 30s). If it converges, the merge is complete. If it does not, report this PR as FAILED and do not delete the remote branch or run cleanup." >&2
       fi
     fi
 
@@ -717,15 +1257,17 @@ cmd_delete_branch() {
     exit 2
   }
 
-  # Fetch the current PR state and branch name.
-  local pr_json branch state
-  pr_json="$(gh pr view "$pr_num" --json headRefName,state 2>/dev/null)" || \
+  # Fetch the current PR state and branch ownership.
+  local pr_json branch state is_cross_repository
+  pr_json="$(gh pr view "$pr_num" --json headRefName,state,isCrossRepository,headRepository,headRepositoryOwner 2>/dev/null)" || \
     delete_die "Could not fetch metadata for PR #${pr_num}"
 
   branch="$(printf '%s' "$pr_json" | jq -r '.headRefName')"
   state="$(printf '%s' "$pr_json" | jq -r '.state')"
+  is_cross_repository="$(printf '%s' "$pr_json" | jq -r '.isCrossRepository // false')"
 
   print_kv DELETE_BRANCH "$branch"
+  print_kv DELETE_IS_CROSS_REPOSITORY "$is_cross_repository"
 
   # Guard: only delete the remote branch when GitHub confirms MERGED state.
   # If the PR is CLOSED (not MERGED) it means the merge push has not been
@@ -736,6 +1278,14 @@ cmd_delete_branch() {
     print_kv DELETE_RESULT   "skipped"
     print_kv DELETE_PR_STATE "$state"
     print_kv_escaped ERROR_MESSAGE "PR #${pr_num} is in state '${state}' (not MERGED) — branch '${branch}' was NOT deleted. Verify the merge push completed and GitHub has updated the PR state before retrying."
+    return 0
+  fi
+
+  if [ "$is_cross_repository" = "true" ]; then
+    echo "INFO: PR #${pr_num} is from a fork — skipping origin branch deletion for head branch '${branch}'." >&2
+    print_kv DELETE_RESULT "skipped"
+    print_kv DELETE_PR_STATE "$state"
+    print_kv_escaped ERROR_MESSAGE "PR #${pr_num} is cross-repository; branch '${branch}' belongs to the head repository, so origin branch deletion was skipped."
     return 0
   fi
 
@@ -790,6 +1340,7 @@ shift
 
 case "$COMMAND" in
   discover)       cmd_discover       "$@" ;;
+  recheck-remaining) cmd_recheck_remaining "$@" ;;
   merge)          cmd_merge          "$@" ;;
   delete-branch)  cmd_delete_branch  "$@" ;;
   *) die "Unknown command: ${COMMAND}" ;;

@@ -100,13 +100,15 @@ Key responsibilities:
   `run-epic-risk-classifier.sh` and `run-epic-delegated-gate.sh`; continue only
   when every normally merged in-scope PR returns `merge_allowed`. If any PR returns
   `exceptional_bypass_authorized`, split it out of the normal batch-merge list
-  and require separate named PR/SHA/fingerprint authorization plus pre-attempt
-  `reviewer-access-bypass` audit before one exact human-authorized
-  `gh pr merge <pr> --admin` attempt. Then route normal candidates into
+  and follow the canonical exceptional-bypass policy in
+  `docs/workflow/development-workflow/guardrails-enforcement.md` Gate 5. Then route normal candidates into
   Protocol 94 batch merge using only the explicit in-scope PR list: run
   `batch-merge.sh discover --prs <comma-separated-in-scope-prs>` and continue
-  through merge, cleanup, and tracker reconciliation. Never use Protocol 94
-  auto-discovery from `/run-items`. If any stage does not allow merge, finish at the
+  through merge, cleanup, post-sibling-merge `recheck-remaining` calls, and
+  tracker reconciliation while keeping that explicit PR list frozen and passing
+  the human-included unready PR list to `--approved-unready-prs`. Apply
+  Protocol 94 Step 4.2 as the source of truth for post-recheck admission
+  semantics. Never use Protocol 94 auto-discovery from `/run-items`. If any stage does not allow merge, finish at the
   `ready-for-human-review` handoff, report the exact
   `stages.<stage>.may_merge_pr: false` guardrail for each affected PR, and tell
   the human to invoke `/batch-merge` or adjust guardrails to permit delegated

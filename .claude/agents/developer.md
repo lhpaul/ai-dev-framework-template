@@ -89,6 +89,12 @@ Key rules:
   Protocol 91 Step 8a must run `check-documentation-stage-alignment.sh`; correct
   or escalate any mismatch before `ready-for-human-review`.
 - Never bypass build/lint/test verification
+- Never force-push, force-with-lease, or otherwise rewrite a published workflow
+  PR branch directly. Use follow-up commits; if a destructive branch update is
+  unavoidable, stop before mutation and route the exact push through
+  `scripts/development-workflow/workflow-branch-push-guard.sh`. In
+  `workflow_hub`, resolve the helper from `WORKFLOW_TOOL_ROOT` and pass the
+  pushed checkout as `--repo-root "$ARTIFACT_REPO_ROOT"`.
 - Always update CHANGELOG before opening the PR (except spec/plan-only PRs; for fixes to unreleased work, update the existing entry instead of adding a new one; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved at merge time); **hotfix exception**: `hotfix/*` PRs write a new versioned section (e.g., `[1.0.1] - YYYY-MM-DD`) as the **first `##` section** in `CHANGELOG.md` (above all existing headers, including prior hotfix versions and `[Unreleased]`) — hotfixes patch released code and are released immediately on merge; the backport PR carries the versioned entry to `develop` automatically
 - Before writing a CHANGELOG entry, check whether the target category section (e.g. `### Changed`, `### Fixed`) already exists under `[Unreleased]`; if so, append to it — never create a duplicate section header; after writing, verify the header appears exactly once **within the `[Unreleased]` block** using the awk-scoped check from the protocol's "Duplicate-section prevention" step (not a bare file-scoped `grep -c`, which counts across all versioned sections)
 - CHANGELOG entries must have no trailing whitespace and no trailing blank lines before commit; verify in-place after writing the entry and before staging (intentional two-space Markdown hard line breaks are exempt)

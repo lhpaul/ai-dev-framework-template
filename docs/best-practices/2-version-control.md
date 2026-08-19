@@ -105,6 +105,15 @@ If an amend was attempted after publication, stop before force-pushing. Preserve
 the published history and use normal follow-up commits for a coherent recovery;
 ask for human direction when no safe recovery path is clear.
 
+Workflow PR branch updates that would rewrite remote history must run through
+`scripts/development-workflow/workflow-branch-push-guard.sh`. General workflow
+approval, delegated review authority, delegated merge authority, and risk
+acceptance are not force-push authorization; the guard requires exact, trusted,
+single-use human authorization for the repository, PR, full branch ref, action,
+operator, expected remote tip, and authorized new tip from a separate GitHub
+`User` with repository `admin` permission. The executing credential cannot
+self-authorize.
+
 ## Safety Rules
 
 The following actions require explicit human approval before executing:
@@ -126,6 +135,7 @@ This project uses [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) forma
   - **Hotfix PRs** (branch prefix `hotfix/*`) — entry goes in a **new versioned section** (e.g., `[1.0.1] - YYYY-MM-DD`), **not** under `[Unreleased]`. A hotfix patches released code on `main` and is itself released immediately on merge. Determine the next patch version from the most recent released section header, then insert the new versioned section **directly below `[Unreleased]`** (above all prior versioned sections). This ensures the auto-tagging workflow extracts the correct version via the first semver header after `[Unreleased]`. Do **not** add an `[Unreleased]` entry for the hotfix; the backport PR carries the versioned entry to `develop` automatically.
   - **Parallel batch items** (when orchestrated by protocol 90): each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved by batch-merge auto-resolution at merge time (see protocol 94 for details).
 - Never defer CHANGELOG entries to release time
+- **Describe shipped behavior, not the PR's review history.** Entries are read by downstream consumers of this template, who have no visibility into any individual PR's review cycles; phrases such as "caught in code review on this PR" or "per reviewer feedback" carry no meaning outside the PR that produced them. Attribute a change to the issue it resolves, not to the round of review that found it. This is a rule about **content, not length** — a thorough entry that explains a subtle behavior change is good.
 - Use the appropriate category: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
 - Release PRs move `[Unreleased]` entries to a versioned section: `[X.Y.Z] - YYYY-MM-DD`
 - **Link reference definitions are mandatory**: every `## [X.Y.Z]` version heading (and `## [Unreleased]` when at least one versioned section exists) must have a corresponding link reference definition line at the bottom of the file following Keep a Changelog convention, for example:

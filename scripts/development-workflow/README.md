@@ -2,6 +2,31 @@
 
 Scripts used by the staged AI development workflow. Referenced by `docs/workflow/development-workflow/` and by the Codex skills in `.agents/skills/` and `.codex/skills/`. Run from the repository root.
 
+## Running the test suite
+
+Each script's tests live alongside it in `scripts/development-workflow/tests/` as
+`test-<script-name>.sh`. To run the full harness (every `test-*.sh` file in that
+directory), expect it to take **more than 2 minutes** as of this writing — invoke
+it with a longer explicit timeout, or in the background, rather than relying on
+a tool's default foreground command timeout:
+
+<!-- workflow-shell-contract: bash-zsh -->
+
+```bash
+( harness_status=0
+  for f in scripts/development-workflow/tests/test-*.sh; do
+    bash "$f" || { echo "FAILED: $f"; harness_status=1; }
+  done
+  exit "$harness_status"
+)
+```
+
+The subshell's exit status reflects the harness as a whole (0 only if every
+`test-*.sh` passed) — checking `$?` after the loop, or running it in CI, is
+enough to detect a failure even though each script's own PASS/FAIL lines keep
+scrolling past. Individual `test-*.sh` files typically run in a few seconds
+each and are safe to invoke with a default foreground timeout.
+
 ## `install-codex-skills.sh`
 
 Installs the repository's bundled Codex skills into the local Codex skill directories by creating symlinks.
@@ -70,6 +95,46 @@ Use this when:
 
 - An agent needs a deterministic destination check before creating a backlog item.
 - You want to create a GitHub issue from a shell environment without manual `gh` typing.
+
+### `workflow-branch-push-guard.sh`
+
+Executes workflow PR branch pushes behind the repository no-force-push policy.
+Use normal follow-up commits for published PR branches whenever possible. If a
+workflow branch update would rewrite remote history, call this helper with the
+canonical repository, full `refs/heads/<branch>` ref, PR number, push mode,
+expected remote tip, authorization JSON, and the exact `git push` arguments
+after `--`.
+
+The helper permits normal pushes, permits first publication only after a fresh
+remote-ref no-match check, and blocks destructive modes unless trusted,
+single-use human authorization matches the current repository, PR, branch ref,
+action, operator, expected remote tip, and authorized new tip. The authorizer
+must be a separate GitHub `User` with repository `admin` permission; the
+executing credential cannot self-authorize, and the trusted authorization
+comment must include the exact `operator_login` so approval cannot be copied to
+another credential. It emits stable
+`PUSH_GUARD_RESULT`, `PUSH_GUARD_REASON`, `BRANCH_REF`,
+`EXPECTED_REMOTE_TIP`, and `AUTHORIZATION_CONSUMED` fields.
+
+### `batch-merge.sh recheck-remaining`
+
+Refreshes mergeability for the frozen in-scope PR list after a sibling PR has
+merged into the target base.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+bash ./scripts/development-workflow/batch-merge.sh recheck-remaining \
+  --prs 101,102,103 \
+  --after-merged-pr 101 \
+  --base develop \
+  --approved-unready-prs "$APPROVED_UNREADY_PRS"
+```
+
+Protocol 94 is the source of truth for frozen scope, record schema, retry
+semantics, observation handling, and exit behavior:
+[`94-batch-merge-protocol.md`](../../docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md).
 
 ### `discover-workflow-state.sh`
 
@@ -462,7 +527,7 @@ Runs one or more automated PR review platforms in order, then classifies finding
 
 Usage:
 
-<!-- workflow-shell-contract: bash -->
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 bash ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch feature/my-branch] [--platform greptile] [--platform devin] [--platform coderabbit] [--platform coderabbit-cli]
 ```
@@ -804,9 +869,14 @@ branch.
 
 Usage:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-./scripts/development-workflow/post-merge-cleanup.sh [--base develop-workflow-hub-mode] [BRANCH]
+./scripts/development-workflow/post-merge-cleanup.sh [--base develop-workflow-hub-mode] [--pr merged-pr-number] [BRANCH]
 ```
+
+- With `--pr`: bind implementation remote branch cleanup to the exact merged PR
+  before deleting any remote branch. Use this after known implementation PR
+  merges.
 
 - No argument: use the current branch (run while still on the merged branch).
 - With `BRANCH`: branch name to delete (e.g. `feature/my-feature`).
@@ -850,6 +920,7 @@ Deterministic merge pipeline for parallel batch PRs. Handles PR discovery (auto 
 
 Usage:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Discovery mode — auto-discover all ready-for-human-review PRs targeting develop
 ./scripts/development-workflow/batch-merge.sh discover
@@ -857,8 +928,8 @@ Usage:
 # Discovery mode — explicit PR list
 ./scripts/development-workflow/batch-merge.sh discover --prs 101,102,103
 
-# Per-PR merge — attempt to merge one PR into develop (called in a loop by the agent)
-./scripts/development-workflow/batch-merge.sh merge --pr 101
+# Per-PR merge — attempt to merge one reviewed PR into develop (called in a loop by the agent)
+./scripts/development-workflow/batch-merge.sh merge --pr 101 --expected-head-sha <reviewed-headRefOid>
 ```
 
 Outputs structured `KEY=VALUE` lines. See the script header for the full output format.

@@ -181,6 +181,6 @@ Agents using Cursor are not detected by the stock agent-context parsers today; t
 
 - [`pr-review-platform.md`](pr-review-platform.md) — Step 7 multi-platform review loop
 - [`haystack-triage.md`](haystack-triage.md) — Haystack triage as a native review platform
-- [`coderabbit.md`](coderabbit.md) — CodeRabbit integration (common default reviewer)
+- [`coderabbit.md`](coderabbit.md) — CodeRabbit integration (opt-in reviewer)
 - Protocol 93 — [`../protocols/93-automated-reviewer-loop-protocol.md`](../protocols/93-automated-reviewer-loop-protocol.md)
 - Protocol 03 — [`../protocols/03-implement-development-protocol.md`](../protocols/03-implement-development-protocol.md) (`gh pr create` steps)

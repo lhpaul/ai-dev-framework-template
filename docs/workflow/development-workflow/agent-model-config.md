@@ -74,6 +74,19 @@ Set models in `.cursor/agents/*.md` so subagents do not inherit the parent Compo
 
 The `fast` economy assignments below are intentional for high-volume orchestration loops where predictable cost and latency matter more than deep reasoning. The remaining `auto` assignments are for lower-risk balanced agents that primarily verify or run checklist-style workflows; Cursor may route those runs to different concrete models over time, so their cost and latency can vary by workspace settings. Balanced agents that author production code or perform deep review stay pinned to Grok 4.5 High to keep complex reasoning capacity predictable.
 
+Cursor Task/subagent runs consume quota for the model selected by the subagent's
+`model` field. Setting the Composer to a cheaper or more expensive model does
+not automatically change a pinned subagent. Treat `fast`, `auto`, pinned IDs,
+and `inherit` as quota controls:
+
+- `fast` is the predictable low-cost path for high-volume coordination.
+- `auto` lets Cursor choose the backing model, so quality, latency, and quota
+  usage can change with workspace settings.
+- A pinned model gives predictable capability and predictable quota class, but
+  it can exhaust that model's quota sooner during long review-fix loops.
+- `inherit` intentionally spends whatever model the Composer currently uses;
+  use it only when that inheritance is the desired override.
+
 | Agent | Tier | Cursor `model` (template default) |
 | ----- | ---- | ----------------------------------- |
 | `orchestrator` | `economy` | `fast` |
@@ -140,6 +153,21 @@ Cursor subagents use the `model` field in `.cursor/agents/<agent>.md`. To overri
 
 - Switch your Composer's model before invoking the subagent (e.g., `/developer`), or
 - Create a duplicate agent file (e.g., `developer-premium.md`) with a different `model` value
+
+Use this decision path before overriding Cursor models:
+
+1. If the task matches the normal workflow role, keep the checked-in subagent
+   model so the tier policy and quota expectations remain stable.
+2. If a run is failing because the selected model lacks reasoning capacity,
+   temporarily move only that role to the next higher tier or a pinned
+   high-reasoning model.
+3. If quota or latency is the blocker and the task is mechanical, temporarily
+   move only that role to `fast` or `auto`.
+4. If you need the subagent to follow the current Composer model for one run,
+   use `inherit` deliberately and record why; do not leave long-running
+   orchestrators, item runners, reviewer loops, or fix-loop agents on `inherit`.
+5. After the one-off run, restore the repository's tier intent unless the team
+   is intentionally changing the default for future work.
 
 **Option 2 — Permanent change:**
 Edit the model configuration for the agent:

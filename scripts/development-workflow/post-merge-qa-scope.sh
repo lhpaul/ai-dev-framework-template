@@ -9,20 +9,28 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/workflow-lib.sh"
+
 usage() {
   cat <<'EOF'
 Usage:
   ./scripts/development-workflow/post-merge-qa-scope.sh --base <develop|develop-slug>
-      [--epic <number>] [--issues <csv>] [--recent-merged-prs <n>] [--json]
+      [--epic <number>] [--issues <csv>] [--tracker-items <csv>]
+      [--recent-merged-prs <n>] [--json]
 
 Read-only: proposes post-merge QA scope for human confirmation.
 List queries are intentionally capped with --limit; confirm or adjust before testing.
+Provider-backed tracker discovery should be performed by the configured tracker
+connector/CLI and passed with --tracker-items. This helper remains provider-neutral.
 EOF
 }
 
 base=""
 epic=""
 issues_arg=""
+tracker_items_arg=""
 recent_merged=0
 json_output=0
 missing_value_option=""
@@ -56,6 +64,16 @@ while [ "$#" -gt 0 ]; do
         missing_value_option="--issues"
       else
         issues_arg="$1"
+        shift
+      fi
+      ;;
+    --tracker-items)
+      shift
+      if [ "$#" -eq 0 ] || [[ "$1" == -* ]]; then
+        tracker_items_arg=""
+        missing_value_option="--tracker-items"
+      else
+        tracker_items_arg="$1"
         shift
       fi
       ;;
@@ -97,6 +115,16 @@ if [ -z "$base" ]; then
   exit 64
 fi
 
+scope_flag_count=0
+[ -n "$epic" ] && scope_flag_count=$((scope_flag_count + 1))
+[ -n "$issues_arg" ] && scope_flag_count=$((scope_flag_count + 1))
+[ -n "$tracker_items_arg" ] && scope_flag_count=$((scope_flag_count + 1))
+[ "$recent_merged" != "0" ] && scope_flag_count=$((scope_flag_count + 1))
+if [ "$scope_flag_count" -gt 1 ]; then
+  echo "--epic, --issues, --tracker-items, and --recent-merged-prs cannot be combined" >&2
+  exit 64
+fi
+
 if ! printf '%s\n' "$base" | grep -Eq '^develop(-[A-Za-z0-9][A-Za-z0-9._-]*)?$'; then
   echo "Disallowed base '$base'. Allowed: develop or develop-<slug>." >&2
   exit 64
@@ -126,19 +154,36 @@ candidates_file="$tmp_dir/candidates.jsonl"
 notes_file="$tmp_dir/notes.jsonl"
 : > "$notes_file"
 
+effective_config_file="$(workflow_effective_config_file 2>/dev/null || true)"
+tracker_provider_raw=""
+if [ -n "$effective_config_file" ]; then
+  tracker_provider_raw="$(workflow_config_provider issue_tracker "$effective_config_file")"
+fi
+tracker_provider="$(workflow_normalize_issue_tracker_provider "$tracker_provider_raw")"
+tracker_discovery_required=false
+if [ "$base" = "develop" ] && [ -n "$tracker_provider" ] && [ "$tracker_provider" != "none" ]; then
+  tracker_discovery_required=true
+fi
+
 append_note() {
   jq -nc --arg note "$1" '{note: $note}' >> "$notes_file"
 }
 
 append_candidate() {
-  local kind="$1" number="$2" title="$3" url="$4" reason="$5"
+  local kind="$1" identifier="$2" title="$3" url="$4" reason="$5"
   jq -nc \
     --arg kind "$kind" \
-    --argjson number "$number" \
+    --arg id "$identifier" \
     --arg title "$title" \
     --arg url "$url" \
     --arg reason "$reason" \
-    '{kind: $kind, number: $number, title: $title, url: $url, reason: $reason}' \
+    '{
+      kind: $kind,
+      id: $id,
+      title: $title,
+      url: $url,
+      reason: $reason
+    } + (if ($id | test("^[1-9][0-9]*$")) then {number: ($id | tonumber)} else {} end)' \
     >> "$candidates_file"
 }
 
@@ -175,10 +220,31 @@ append_rows_from_json_array() {
   done < <(jq -c '.[]' "$json_file")
 }
 
+# Keep only GitHub issues explicitly associated with a merged implementation PR.
+# Closing references are unavailable for non-default PR bases, so accept either
+# an issue reference in the title/body or a canonical workflow branch identifier.
+filter_issues_referenced_by_merged_prs() {
+  local issues_file="$1" merged_prs_file="$2" output_file="$3"
+  jq --slurpfile merged_prs "$merged_prs_file" \
+    '[.[] | .number as $number | select(any($merged_prs[0][]?; . as $pr | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/")) and (((($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/([A-Za-z][A-Za-z0-9]{0,7}-)?" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^[:alnum:]])#" + ($number | tostring) + "([^[:alnum:]]|$)"))))))]' \
+    "$issues_file" > "$output_file"
+}
+
+filter_merged_prs_for_issues() {
+  local merged_prs_file="$1" issues_file="$2" output_file="$3"
+  jq --slurpfile issues "$issues_file" \
+    '($issues[0] | map(.number)) as $issue_numbers | [.[] | . as $pr | select((($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/")) and any($issue_numbers[]; . as $number | (($pr.headRefName // "") | test("^(feature|fix|refactor|hotfix)/([A-Za-z][A-Za-z0-9]{0,7}-)?" + ($number | tostring) + "(-|$)")) or ((($pr.title // "") + "\n" + ($pr.body // "")) | test("(^|[^[:alnum:]])#" + ($number | tostring) + "([^[:alnum:]]|$)"))))]' \
+    "$merged_prs_file" > "$output_file"
+}
+
 # Explicit issues (file-backed loop — exits abort the main script)
 if [ -n "$issues_arg" ]; then
   issues_list="$tmp_dir/issues-list.txt"
   printf '%s\n' "$issues_arg" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | awk 'NF' > "$issues_list"
+  if [ ! -s "$issues_list" ]; then
+    echo "--issues must contain at least one issue" >&2
+    exit 64
+  fi
   while IFS= read -r issue; do
     if ! printf '%s\n' "$issue" | grep -Eq '^[1-9][0-9]*$'; then
       echo "Invalid issue in --issues: $issue" >&2
@@ -195,6 +261,25 @@ if [ -n "$issues_arg" ]; then
   done < "$issues_list"
 fi
 
+# Provider-backed tracker items resolved outside this helper. Keep this generic:
+# Linear, Jira, ClickUp, GitHub Projects, and other trackers use different APIs.
+if [ -n "$tracker_items_arg" ]; then
+  tracker_items_list="$tmp_dir/tracker-items-list.txt"
+  printf '%s\n' "$tracker_items_arg" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | awk 'NF' > "$tracker_items_list"
+  if [ ! -s "$tracker_items_list" ]; then
+    echo "--tracker-items must contain at least one tracker item" >&2
+    exit 64
+  fi
+  while IFS= read -r tracker_item; do
+    if ! printf '%s\n' "$tracker_item" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._:-]*$'; then
+      echo "Invalid tracker item in --tracker-items: $tracker_item" >&2
+      exit 64
+    fi
+    append_candidate "tracker_item" "$tracker_item" "$tracker_item" "" "explicit provider-backed tracker item input"
+  done < "$tracker_items_list"
+  append_note "Tracker items were supplied explicitly after provider-backed discovery outside this helper."
+fi
+
 # Recent merged PRs into base (intentionally capped; human confirms)
 if [ "$recent_merged" -gt 0 ]; then
   if ! gh pr list --base "$base" --state merged --limit "$recent_merged" \
@@ -206,6 +291,7 @@ if [ "$recent_merged" -gt 0 ]; then
   append_note "Merged-PR proposal is capped at --recent-merged-prs=$recent_merged (not fully paginated)."
 fi
 
+epic_discovery_degraded=false
 # Epic association (best-effort)
 if [ -n "$epic" ]; then
   if ! gh issue view "$epic" --json number,title,url,labels,body > "$tmp_dir/epic.json" 2>/dev/null; then
@@ -224,9 +310,25 @@ if [ -n "$epic" ]; then
     fi
     if gh issue list --label "$integration_label" --state all --limit 50 \
       --json number,title,url > "$tmp_dir/epic-issues.json" 2>/dev/null; then
-      append_rows_from_json_array "$tmp_dir/epic-issues.json" "issue" "epic #$epic via $integration_label (limit 50)" "$epic"
-      append_note "Epic issue list is capped at 50 (not fully paginated)."
+      if gh pr list --base "$base" --state merged --limit 50 \
+        --json number,title,url,mergedAt,headRefName,body > "$tmp_dir/epic-merged-prs.json"; then
+        if ! filter_issues_referenced_by_merged_prs "$tmp_dir/epic-issues.json" "$tmp_dir/epic-merged-prs.json" "$tmp_dir/epic-merged-issues.json"; then
+          echo "Failed to match epic issues to merged PRs for base '$base'" >&2
+          exit 1
+        fi
+        append_rows_from_json_array "$tmp_dir/epic-merged-issues.json" "issue" "epic #$epic via $integration_label and merged PR references (limit 50)" "$epic"
+        if ! filter_merged_prs_for_issues "$tmp_dir/epic-merged-prs.json" "$tmp_dir/epic-merged-issues.json" "$tmp_dir/epic-associated-prs.json"; then
+          echo "Failed to match merged PRs to epic issues for base '$base'" >&2
+          exit 1
+        fi
+        append_rows_from_json_array "$tmp_dir/epic-associated-prs.json" "pull_request" "epic #$epic associated merged PRs into $base (limit 50)"
+        append_note "Epic issue and merged-PR lists are capped at 50 and include only explicitly associated items."
+      else
+        epic_discovery_degraded=true
+        append_note "Could not list merged PRs for epic #$epic on $base; no label-only items were proposed."
+      fi
     else
+      epic_discovery_degraded=true
       append_note "Could not list issues for label $integration_label; ask the human to supply --issues."
     fi
   else
@@ -235,17 +337,38 @@ if [ -n "$epic" ]; then
 fi
 
 # Default: if no filters produced candidates, suggest recent merged
-if [ ! -s "$candidates_file" ] && [ "$recent_merged" -eq 0 ] && [ -z "$issues_arg" ] && [ -z "$epic" ]; then
-  if ! gh pr list --base "$base" --state merged --limit 10 \
-    --json number,title,url,mergedAt > "$tmp_dir/default-merged.json"; then
-    echo "Failed to list default merged PRs for base '$base'" >&2
-    exit 1
+integration_discovery_degraded=false
+if [ ! -s "$candidates_file" ] && [ "$recent_merged" -eq 0 ] && [ -z "$issues_arg" ] && [ -z "$tracker_items_arg" ] && [ -z "$epic" ]; then
+  if [ "$tracker_discovery_required" = true ]; then
+    append_note "Configured issue tracker '$tracker_provider' requires provider-backed post-merge discovery on develop. Resolve eligible items and pass them with --tracker-items before human confirmation; PR-derived fallback was not proposed."
+  else
+    if ! gh pr list --base "$base" --state merged --limit 10 \
+      --json number,title,url,mergedAt,headRefName,body > "$tmp_dir/default-merged.json"; then
+      echo "Failed to list default merged PRs for base '$base'" >&2
+      exit 1
+    fi
+    if [[ "$base" =~ ^develop-(.+)$ ]]; then
+      integration_slug="$(printf '%s' "$base" | sed 's/^develop-//')"
+      integration_label="integration-branch:$integration_slug"
+      if gh issue list --label "$integration_label" --state all --limit 50 \
+        --json number,title,url > "$tmp_dir/default-integration-label-issues.json" 2>/dev/null; then
+        filter_issues_referenced_by_merged_prs "$tmp_dir/default-integration-label-issues.json" "$tmp_dir/default-merged.json" "$tmp_dir/default-integration-issues.json" || {
+          echo "Failed to match integration-branch issues to merged PRs for base '$base'" >&2
+          exit 1
+        }
+        append_rows_from_json_array "$tmp_dir/default-integration-issues.json" "issue" "default integration branch via $integration_label and merged PR references (limit 50)"
+        append_note "Integration-branch issue list is capped at 50 and includes only items explicitly referenced by merged PR title, body, or canonical branch name."
+      else
+        integration_discovery_degraded=true
+        append_note "Could not list issues for label $integration_label; the default proposal includes only merged PRs."
+      fi
+    fi
+    append_rows_from_json_array "$tmp_dir/default-merged.json" "pull_request" "default: up to 10 recent merged PRs into $base"
+    append_note "No explicit scope flags; proposed up to 10 recent merged PRs into $base (capped, not fully paginated). Confirm or adjust before testing."
   fi
-  append_rows_from_json_array "$tmp_dir/default-merged.json" "pull_request" "default: up to 10 recent merged PRs into $base"
-  append_note "No explicit scope flags; proposed up to 10 recent merged PRs into $base (capped, not fully paginated). Confirm or adjust before testing."
 fi
 
-candidates_json="$(if [ -s "$candidates_file" ]; then jq -e -s 'unique_by(.kind + ":" + (.number|tostring))' "$candidates_file"; else printf '[]\n'; fi)" || {
+candidates_json="$(if [ -s "$candidates_file" ]; then jq -e -s 'unique_by(.kind + ":" + .id)' "$candidates_file"; else printf '[]\n'; fi)" || {
   echo "Failed to build candidates JSON" >&2
   exit 1
 }
@@ -254,17 +377,72 @@ notes_json="$(if [ -s "$notes_file" ]; then jq -e -s '[.[].note]' "$notes_file";
   exit 1
 }
 
+scope_source="merged-prs"
+provider_backed=false
+fallback=true
+if [ -n "$tracker_items_arg" ]; then
+  scope_source="tracker-post-merge"
+  provider_backed=true
+  fallback=false
+elif [ -n "$issues_arg" ]; then
+  scope_source="explicit"
+  fallback=false
+elif [ -n "$epic" ]; then
+  scope_source="epic"
+  if [ "$epic_discovery_degraded" = true ]; then
+    fallback=true
+  else
+    fallback=false
+  fi
+elif [ "$recent_merged" -gt 0 ]; then
+  scope_source="explicit"
+  fallback=false
+elif [ "$base" != "develop" ]; then
+  if [ "$integration_discovery_degraded" = true ]; then
+    scope_source="merged-prs"
+  else
+    scope_source="integration-branch"
+    fallback=false
+  fi
+elif [ "$tracker_discovery_required" = true ]; then
+  scope_source="tracker-post-merge"
+  fallback=false
+fi
+
+confirmation_required=true
+discovery_required=false
+empty_scope_stop="If the human confirms an empty scope, stop without preflight, flows, or a fix PR."
+if [ "$tracker_discovery_required" = true ] && [ ! -s "$candidates_file" ] && [ "$recent_merged" -eq 0 ] && [ -z "$issues_arg" ] && [ -z "$tracker_items_arg" ] && [ -z "$epic" ]; then
+  confirmation_required=false
+  discovery_required=true
+  empty_scope_stop="Provider-backed tracker discovery is required before QA scope can be confirmed."
+elif [ "$epic_discovery_degraded" = true ] && [ ! -s "$candidates_file" ]; then
+  confirmation_required=false
+  discovery_required=true
+  empty_scope_stop="Epic discovery failed before a concrete QA scope could be confirmed; supply --issues, --tracker-items, or rerun discovery."
+fi
+
 result="$(jq -n \
   --arg base "$base" \
+  --arg scope_source "$scope_source" \
+  --argjson provider_backed "$provider_backed" \
+  --argjson fallback "$fallback" \
+  --argjson confirmation_required "$confirmation_required" \
+  --argjson discovery_required "$discovery_required" \
   --argjson candidates "$candidates_json" \
   --argjson notes "$notes_json" \
+  --arg empty_scope_stop "$empty_scope_stop" \
   '{
     base: $base,
+    scopeSource: $scope_source,
+    providerBacked: $provider_backed,
+    fallback: $fallback,
     candidateCount: ($candidates | length),
     candidates: $candidates,
     notes: $notes,
-    confirmationRequired: true,
-    emptyScopeStop: "If the human confirms an empty scope, stop without preflight, flows, or a fix PR.",
+    confirmationRequired: $confirmation_required,
+    discoveryRequired: $discovery_required,
+    emptyScopeStop: $empty_scope_stop,
     readOnlyGuarantee: "No tracker updates, branch creation, PR edits, merges, issue closure, or flow exercise were performed."
   }')" || {
   echo "Failed to build scope proposal JSON" >&2
@@ -275,9 +453,16 @@ if [ "$json_output" -eq 1 ]; then
   printf '%s\n' "$result"
 else
   printf 'QA base: %s\n' "$base"
+  printf 'Scope source: %s\n' "$(printf '%s' "$result" | jq -er '.scopeSource')"
+  printf 'Provider-backed: %s\n' "$(printf '%s' "$result" | jq -er '.providerBacked')"
+  printf 'Fallback: %s\n' "$(printf '%s' "$result" | jq -er '.fallback')"
   printf 'Candidates: %s\n' "$(printf '%s' "$result" | jq -er '.candidateCount')"
-  printf '%s\n' "$result" | jq -r '.candidates[]? | "- [\(.kind) #\(.number)] \(.title) — \(.reason)"'
+  printf '%s\n' "$result" | jq -r '.candidates[]? | "- [\(.kind) #\(.number // .id)] \(.title) — \(.reason)"'
   printf '%s\n' "$result" | jq -r '.notes[]? | "Note: \(.)"'
-  echo "Confirmation required before exercising flows."
+  if [ "$(printf '%s' "$result" | jq -er '.confirmationRequired')" = true ]; then
+    echo "Confirmation required before exercising flows."
+  else
+    printf '%s\n' "$result" | jq -er '.emptyScopeStop'
+  fi
   echo "Read-only guarantee: No tracker updates, branch creation, PR edits, merges, issue closure, or flow exercise were performed."
 fi

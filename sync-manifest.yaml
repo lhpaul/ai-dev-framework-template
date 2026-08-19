@@ -17,6 +17,15 @@
 #                       both template-owned and project-owned sections separated by
 #                       annotation markers (see annotation_scheme below).
 #
+# Precedence: a project_specific entry for an exact file path always takes
+# precedence over any always_sync (or special_handling) directory entry whose
+# glob would otherwise match that same path. When enumerating an always_sync
+# directory (e.g. docs/workflow/**/*), skip any path that also appears as an
+# exact project_specific path — do not apply the always_sync classification to
+# it. This lets the manifest carve narrowly-scoped project-owned files (e.g.
+# append-only logs) out of an otherwise template-owned directory tree without
+# needing a separate glob-exclusion syntax.
+#
 # Mode scopes:
 #   shared                  - File applies across supported repository roles.
 #   hub_only                - File belongs only in a workflow hub repository.
@@ -214,6 +223,19 @@ categories:
     - path: GEMINI.md
       mode_scope: shared
       note: symlink to AGENTS.md; project-specific
+    - path: docs/workflow/retro-metrics.md
+      mode_scope: shared
+      note: >
+        append-only per-batch retrospective metrics log; each project's own history.
+        Takes precedence over the enclosing docs/workflow/ always_sync glob (see
+        Precedence note above) — never overwrite with the template's own rows.
+    - path: docs/workflow/retro-metrics-platforms.md
+      mode_scope: shared
+      note: >
+        append-only reviewer-platform comparison metrics log; each project's own
+        history. Takes precedence over the enclosing docs/workflow/ always_sync
+        glob (see Precedence note above) — never overwrite with the template's
+        own rows.
 
 # migration_notes: versioned manual steps required when syncing across a breaking structural change.
 #
@@ -244,6 +266,26 @@ migration_notes:
       - "Check whether the old directory exists: ls docs/ai/ 2>/dev/null && echo 'exists' || echo 'already renamed'"
       - "If it exists, rename it: git mv docs/ai docs/workflow"
       - "Commit the rename before applying template file updates: git add -A && git commit -m 'refactor: rename docs/ai to docs/workflow (template migration to v0.23.0)'"
+  - version: "0.41.1"
+    title: "docs/workflow/retro-metrics.md and retro-metrics-platforms.md may contain inherited template history"
+    description: >
+      Before this fix, docs/workflow/retro-metrics.md and
+      docs/workflow/retro-metrics-platforms.md were swept into the docs/workflow/
+      always_sync glob for every repository role, including single_repo and
+      workflow_hub. Projects bootstrapped from the template (via a literal copy,
+      not this sync flow) may already carry the template repository's own
+      populated rows in one or both files, describing PR/batch history that
+      belongs to the template project, not this one. If left in place, this
+      inherited data silently pollutes docs/workflow/development-workflow/protocols/06b-meta-retrospective-protocol.md
+      trend analysis, and every completed retrospective's own rows get appended
+      after it with no marker distinguishing the two.
+    applies_if_syncing_from_before: "0.41.1"
+    manual_steps:
+      - "Count existing data rows in each file (a freshly-initialized file has 0; retro-metrics-platforms.md can have more than one header/separator block if platform configuration changed over time, so this locates the MOST RECENT '|---|' separator line and counts only the rows below it, and reports missing files explicitly instead of silently skipping them): for f in docs/workflow/retro-metrics.md docs/workflow/retro-metrics-platforms.md; do if [ -f \"$f\" ]; then last_sep=$(grep -nE '^\\| *-+' \"$f\" | tail -1 | cut -d: -f1); if [ -z \"$last_sep\" ]; then echo \"$f: no table header found yet (0 data rows)\"; else echo \"$f: $(( $(wc -l < \"$f\" | tr -d ' ') - last_sep )) existing data row(s)\"; fi; else echo \"$f: not found\"; fi; done"
+      - "If either count is 0, no action is needed — skip the remaining steps for that file."
+      - "For a non-zero count, first confirm the rows genuinely predate this project's own retrospective history (for example, cross-check a PR number or date mentioned in an early row against this project's own PR history) rather than assuming every existing row is inherited."
+      - "If confirmed inherited, archive each file (do not delete history) before resetting it, refusing to overwrite an existing same-day archive and stopping before any reset if archiving fails: for f in retro-metrics retro-metrics-platforms; do archive=\"docs/workflow/${f}.inherited-$(date +%Y-%m-%d).md\"; if [ -e \"$archive\" ]; then echo \"ERROR: $archive already exists\" >&2; exit 1; fi; cp \"docs/workflow/${f}.md\" \"$archive\" || exit 1; done"
+      - "Reset each file to keep only the preamble and the MOST RECENT header/separator block (the current schema — keeping only the first block would orphan a later, currently-active header), dropping every data row below it, then stage and commit: for f in docs/workflow/retro-metrics.md docs/workflow/retro-metrics-platforms.md; do last_sep=$(grep -nE '^\\| *-+' \"$f\" | tail -1 | cut -d: -f1); if [ -z \"$last_sep\" ]; then echo \"ERROR: no table header separator found in $f\" >&2; exit 1; fi; sed -n \"1,${last_sep}p\" \"$f\" > \"$f.tmp\" && mv \"$f.tmp\" \"$f\"; done && git add docs/workflow/retro-metrics.md docs/workflow/retro-metrics-platforms.md \"docs/workflow/retro-metrics.inherited-$(date +%Y-%m-%d).md\" \"docs/workflow/retro-metrics-platforms.inherited-$(date +%Y-%m-%d).md\" && git commit -m 'chore: reset inherited retro-metrics logs to this project'\\''s own header-only baseline'"
 
 # rename_detections: directories previously used for always-sync content that were renamed
 # in the template. The sync-template skill checks each entry during Step 2: if old_path

@@ -39,6 +39,11 @@ Report instead of fixing when:
 - Multiple valid fixes exist and the tradeoff is material
 - The request would expand scope beyond the approved work
 
+### Verification Discipline
+
+- **Planted-violation proof**: any PR that adds or materially modifies an automated check, guard, lint rule, or CI job must prove — at a concrete file and line — that the check fails when the violation it targets is present, and passes once the violation is removed. Both directions are required. A check that is only described, without a demonstrated failing case, is a declared-but-unverified control and must not be trusted as evidence the check works. Pure refactors of already-proven validation logic, with no behavior change, are exempt from re-proof. See `Code Review Checklist` → Pass 2 → "PRs that add or modify an automated check, guard, lint rule, or CI job" for the enforceable checklist entry, and `docs/best-practices/3-testing.md` → "Planted-Violation Proofs" for the implementer-facing version of this rule.
+- **E2E fixture contract**: any PR that adds a feature, in a repository that has a committed (non-placeholder) E2E/functional test suite, must extend the suite's seed/fixture data with the feature's edge cases in the same PR, keeping the functional suite able to reach the new states the feature introduces. The fixture's initial state must remain deterministic and versioned — rebuilding it from the same seed inputs produces a byte-identical result. This rule is not applicable in repositories without a committed E2E suite yet (including this template's own placeholder `E2E regression (placeholder)` CI job). See `Code Review Checklist` → Pass 2 → "PRs that add a feature (when a committed E2E suite exists)" for the applicability gate and enforceable checklist entry, and `docs/best-practices/3-testing.md` → "E2E Fixture Contract" for the implementer-facing version of this rule.
+
 ### PR Readiness
 
 A PR is ready for human review only when all of the following are true:
@@ -261,6 +266,7 @@ Additional checks for **PRs that add or modify guardrails enforcement behavior**
 - **Delegated merge/review/backlog-start/completion gates**: confirm the orchestration path (Protocol 90, 91, or 95) enforces each of these gates before the relevant decision point (opening a PR, making a review decision, merging, marking complete), not after.
 - **Audit recording**: when `audit.pr_disposition_record` or `audit.work_item_ledger_record` is required, confirm the stable audit markers (`<!-- run-epic:pr-disposition -->` and `<!-- run-epic:epic-ledger -->`) are used so reruns update rather than duplicate records.
 - **Conservative defaults declared**: the load+report step must state "conservative defaults in effect" when no `guardrails` section is present, and must enumerate each default value (mode=`manual`, `may_merge_pr: false`, `max_merge_risk: low`, backlog starts confirmation-gated, no audit requirements).
+- **Security-advisory carve-out (BR5)**: confirm the changed code or documented behavior never lets a delegated agent record `human-accepted` / `human-rejected` for a security-sensitive advisory finding — only a fixed commit or a verified human decision resolves it.
 
 Additional checks for **PRs that add or modify branch creation, PR creation, or nested/stage-agent dispatch behavior**:
 
@@ -309,6 +315,29 @@ Additional checks for **PRs that add new filter parameters to a tool schema** (Z
 - **Canary test presence** (blocking): confirm a canary test is present that calls the tool with the new filter set to a value that narrows results, calls the tool again without the filter (or with a meaningfully different value), and asserts the two result sets differ. A canary test that produces identical results for both invocations does not satisfy this requirement.
 - **Same-PR inclusion** (blocking): confirm the canary test is part of this PR, not deferred to a follow-up.
 - **Exemption**: this check applies to new filter parameters only. Modifications to existing filter parameters that do not change the schema contract are exempt.
+
+Additional checks for **PRs that add or modify an automated check, guard, lint rule, or CI job** (any change that introduces or strengthens an automated validation gate):
+
+- **Planted-violation proof presence** (blocking): confirm the PR evidence includes, for each new or materially modified check, a demonstrated run at a concrete file and line showing (a) the check fails when the targeted violation is present at that location, and (b) the check passes once the violation is removed. A description of intended behavior without both demonstrated runs does not satisfy this requirement.
+- **Location specificity** (blocking): confirm the cited location is an actual file path and line number (or an equivalent addressable location for non-file checks, e.g. a specific command invocation or config key) — not a paraphrase or hypothetical example.
+- **Same-PR inclusion** (blocking): confirm the proof is part of this PR's evidence, not deferred to a follow-up PR or assumed from a prior similar change.
+- **Exemption**: pure refactors of already-proven validation logic, with no behavior change, are exempt from re-proof; the PR evidence should state the exemption rationale.
+
+Additional checks for **PRs that add or modify user-facing copy in a
+project with a configured i18n / catalogue convention** (see
+[`docs/best-practices/stack/i18n.md`](docs/best-practices/stack/i18n.md)):
+
+- **Applicability gate**: this check applies only to a downstream project that has adopted an i18n / catalogue convention for user-facing copy. When a project has not adopted this convention, this check is not applicable; do not treat it as a blanket requirement for every PR in every repository.
+- **Enforcement is active** (blocking when applicable): confirm the project's no-hardcoded-string enforcement mechanism (a lint rule or equivalent machine check) is configured and currently enabled, not merely documented as a convention.
+- **Catalogue parity** (blocking when applicable): confirm every catalogue/locale file the project ships is updated together in this PR — no locale is left with a missing or stale key that another locale added.
+- **Planted-violation proof for enforcement changes**: when this PR adds or materially modifies the enforcement mechanism itself (the lint rule config, a custom key-extraction scanner, or equivalent), apply the "PRs that add or modify an automated check, guard, lint rule, or CI job" block above in full, including explicit coverage of any dynamic/non-literal key argument form the scanner is meant to reject — this block does not restate that requirement, it delegates to it.
+
+Additional checks for **PRs that add a feature (when a committed E2E suite exists)**:
+
+- **Applicability gate**: this check applies only when the repository has a committed, non-placeholder E2E/functional suite (i.e., `docs/testing/README.md` Section 2's "committed automated spec" path is filled in, and the repo's E2E CI job runs real tests rather than this template's placeholder). When no such suite exists yet, this check is not applicable; record the not-applicable rationale rather than silently skipping it.
+- **Fixture/seed extension** (blocking when applicable): confirm the PR extends the suite's seed/fixture data with the new feature's edge cases in the same PR, so the functional suite can reach the new states the feature introduces.
+- **Deterministic, versioned initial state** (blocking when applicable): confirm the seed/fixture rebuild is deterministic — the same seed inputs produce a byte-identical initial state — and that the fixture change ships in the same PR as the code change it supports, not as a manually applied, undocumented data edit.
+- **Silent deferral is a finding**: a feature PR that skips fixture extension without invoking the applicability gate above is an `important` finding by default, and `blocking` if the feature's new states are otherwise unreachable by the functional suite.
 
 Additional checks for **shell scripts** (`*.sh`):
 

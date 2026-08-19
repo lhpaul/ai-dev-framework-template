@@ -462,7 +462,9 @@ When no dispatch-eligible work exists, the orchestrator must still evaluate prop
 When multiple items are eligible or proposal-eligible, prioritize as follows:
 
 1. Due date within 2 weeks, earliest first
-2. Priority: Urgent → High → Normal → Low
+2. Priority: Urgent → High → Normal/Medium → Low (`Normal` and `Medium` rank equally
+   — different GitHub Projects boards use one or the other for the same "routine"
+   tier; see `workflow-batch-overlap.sh`'s `PRIORITY_RANK`)
 3. Creation date, earlier first
 
 If a due date conflicts with the abstract priority order, flag it to the human rather than silently choosing.
@@ -851,7 +853,8 @@ held consumer items and their reason (e.g., `held — pending tool-fix merge for
 **Multiple tool-fix items**: When two or more tool-fix items appear in the same candidate batch,
 each is serialized into its own serial sub-batch dispatched one at a time before any consumer
 item is dispatched. The ordering among multiple tool-fix items follows the standard priority
-order — due date within 2 weeks (earliest first), then priority (Urgent → High → Normal → Low),
+order — due date within 2 weeks (earliest first), then priority (Urgent → High →
+Normal/Medium → Low; `Normal` and `Medium` rank equally),
 then creation date (earliest first) — mirroring the Step 2 priority rules.
 
 #### Foundational reviewer-tool merge ordering
@@ -919,7 +922,8 @@ sets share at least one common path. Paths are compared as normalized, repo-root
 moved to the next serial sub-batch. The higher-priority item remains in the current batch.
 Priority is determined by the orchestrator using the following ordered tiebreakers:
 
-1. Item priority level: Urgent > High > Normal > Low (orchestrator applies from tracker data)
+1. Item priority level: Urgent > High > Normal/Medium > Low (`Normal` and `Medium`
+   rank equally; orchestrator applies from tracker data)
 2. Creation date: the older item (earlier creation date) stays in the current batch
    (orchestrator applies from tracker data or development folder timestamp prefix)
 3. Branch name lexicographic order: the lexicographically earlier branch name stays
@@ -1372,12 +1376,13 @@ gh pr list --state all --head <branch> --json number,state --jq '.[0] | .number'
 
 1. List every stale / orphaned branch with its category, lifecycle, merged PR context, and a suggested cleanup command:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    # Category A — stale local workflow branch (upstream PR merged):
    git branch -D <branch>
 
    # Category A — remote implementation branch still present after merge:
-   ./scripts/development-workflow/post-merge-cleanup.sh --base <base> <branch>
+   ./scripts/development-workflow/post-merge-cleanup.sh --base <base> --pr <merged-pr-number> <branch>
 
    # Category B — orphaned worktree-agent branch (no remote, no PR):
    git branch -D <branch>
@@ -1711,7 +1716,17 @@ gh pr view <pr_number> --json isDraft,labels,comments \
 
 **Summary-comment recency (verifying the summary matches the _latest_ commit)**: The presence checks above confirm a reviewer-loop summary _exists_, but to confirm Step 7 ran against the **current** head commit (e.g., after a fix push or a rebase), compare the summary comment's **`updated_at`** to the latest commit's timestamp — **never `created_at`**. `pr-review-loop.sh` maintains a **single** summary comment and **updates it in place** on each run, so `created_at` reflects the _first_ run and a `created_at`-based freshness check produces false "stale / incomplete" verdicts for PRs whose summary was legitimately refreshed. Fetch `updated_at` via REST (`gh api repos/{owner}/{repo}/issues/{n}/comments`), since `gh pr view --json comments` does not expose it:
 
+**No-force-push supervision**: Batch supervision must not authorize, imply, or
+perform a force-push to any in-scope PR branch. If a sub-runner reports that a
+workflow PR branch update would require `--force`, `--force-with-lease`, a
+force refspec, or another shared-history rewrite, stop that item before remote
+mutation and require `workflow-branch-push-guard.sh` with exact trusted
+single-use human authorization. Delegated batch merge authority remains
+separate from branch-history rewrite authorization.
+
+<!-- workflow-shell-contract: bash -->
 ```bash
+bash <<'BASH'
 # Newest summary comment's updated_at, normalized to epoch seconds, vs the
 # branch's latest commit time.
 COMMIT_EPOCH=$(git log -1 --format=%ct "origin/<branch>")
@@ -1732,6 +1747,7 @@ PY
 # A summary whose updated_at epoch is >= COMMIT_EPOCH corresponds to the current
 # head; an older updated_at means Step 7 has not re-run on the latest commit
 # (genuinely stale).
+BASH
 ```
 
 **Classification table** (evaluate in order; first matching row wins):
@@ -1947,14 +1963,14 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
    the integration branch.
 
 2. **Revalidate readiness from discovery output**:
-   - If any PR returned `PR_READY_LABEL=false`, warn the human and require an explicit include-or-skip decision before proceeding. Remove any skipped PRs from the merge list and carry them forward as `skipped_not_ready` for the final summary. Do not proceed silently with any unready PR.
+   - If any PR returned `PR_READY_LABEL=false`, warn the human and require an explicit include-or-skip decision before proceeding. Remove any skipped PRs from the merge list and carry them forward as `skipped_not_ready` for the final summary. Record every explicitly included unready PR in `APPROVED_UNREADY_PRS` for the Protocol 94 recheck handoff. Do not proceed silently with any unready PR.
    - If any PR's `PR_LABELS` still contains `needs-fixes`, stop the handoff and return to Step 5 supervision for that PR. A `needs-fixes` PR must not be merged even if human supervision approved the batch earlier.
 
 3. **Present the validated merge plan to the human** and require explicit approval before any merge starts. The human must confirm before the orchestrator invokes `94-batch-merge-protocol.md`.
 
-4. **Once the human approves**, follow `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` starting from **Step 3.5** (the pre-merge clean-state check and sequential merge loop). The merge plan confirmation (Protocol 94 Step 3) has already been satisfied by Step 5.5.3 above, but Step 3.5 has **not** been satisfied and must still run. Pass only the approved ordered PR list after Step 5.5.2 filtering, and include skipped entries in the final summary.
+4. **Once the human approves**, follow `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` starting from **Step 3.5** (the pre-merge clean-state check and sequential merge loop). The merge plan confirmation (Protocol 94 Step 3) has already been satisfied by Step 5.5.3 above, but Step 3.5 has **not** been satisfied and must still run. Pass only the approved ordered PR list after Step 5.5.2 filtering, keep that list frozen for every `recheck-remaining --prs <list>` call after sibling merges, pass the recorded `APPROVED_UNREADY_PRS` value to every `recheck-remaining --approved-unready-prs` call, require the Protocol 94 post-recheck admission gate before each next merge or readiness claim, and include skipped entries in the final summary.
 
-5. **Include the batch-merge summary** (Step 5 of Protocol 94) in the orchestrator's Step 6 summary output.
+5. **Include the batch-merge summary** (Step 5 of Protocol 94) in the orchestrator's Step 6 summary output. For any remaining PR held by a post-sibling-merge recheck, report terminal outcome `merge_blocked` with the invalidating sibling PR, refreshed merge state, refreshed checks state, and reason from the helper JSONL record. For any read-only out-of-scope observation, report `out_of_scope` without mutating that PR.
 
 ### Batch-merge routing rule (mandatory)
 
@@ -2013,8 +2029,8 @@ After all currently eligible items have reached a terminal condition, provide a 
 
 ### Proposed Start Batch
 
-- [Issue #N] — [title] — priority: [Urgent/High/Normal/Low] — next stage: [Spec/Plan] — [parallelization note]
-- [Issue #M] — [title] — priority: [Urgent/High/Normal/Low] — next stage: [Spec/Plan] — [parallelization note]
+- [Issue #N] — [title] — priority: [Urgent/High/Normal/Medium/Low] — next stage: [Spec/Plan] — [parallelization note]
+- [Issue #M] — [title] — priority: [Urgent/High/Normal/Medium/Low] — next stage: [Spec/Plan] — [parallelization note]
 
 Approval required before tracker status changes or branch/PR work starts for these Backlog items.
 

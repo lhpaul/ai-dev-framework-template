@@ -6,6 +6,7 @@ Platform-specific setup lives in each platform's own integration doc. See:
 
 - [`integrations/bugbot.md`](bugbot.md)
 - [`integrations/claude-code-action.md`](claude-code-action.md)
+- [`integrations/codex-github.md`](codex-github.md)
 - [`integrations/coderabbit.md`](coderabbit.md) for both `coderabbit` and
   `coderabbit-cli`
 - [`integrations/greptile.md`](greptile.md)
@@ -86,10 +87,11 @@ review:
     # - claude-code-action
   on_ready:
     github:
-    # haystack: Haystack triage CLI reviewer. Requires `haystack` CLI installed
-    # and authenticated via `haystack setup`. No GitHub App required.
-    # See integrations/haystack-triage.md for setup instructions.
-      - haystack
+      - codex-github
+    # CodeRabbit remains supported as an opt-in reviewer, but is intentionally
+    # not a default ready-phase gate because vendor rate limits/spending caps
+    # can block otherwise-clean PRs.
+    # - coderabbit
     # coderabbit-cli: CodeRabbit CLI reviewer. Requires `cr` or `coderabbit`
     # installed and authenticated locally. No GitHub App required. Missing CLI
     # or auth emits RESULT=skipped, not clean review evidence.

@@ -114,6 +114,8 @@ For each candidate PR:
    > - Type **skip** to exclude it from this run (outcome: `skipped_not_ready`).
 
    Record the human's decision. If the human does not respond or exits, treat as **skip**.
+   Keep a comma-separated `APPROVED_UNREADY_PRS` list containing every unready PR
+   the human explicitly included. If none were included, keep it empty.
 
 3. Do not silently skip or silently include an unready PR. The human must explicitly decide.
 
@@ -191,7 +193,7 @@ Process PRs one at a time in the approved order.
 
 ### 4.1 Per-PR merge attempt
 
-> **Critical sequencing rule**: Call `batch-merge.sh merge --pr N` for **exactly one PR at a
+> **Critical sequencing rule**: Call `batch-merge.sh merge --pr N --expected-head-sha <reviewed-headRefOid>` for **exactly one PR at a
 > time**, inspect `MERGE_RESULT`, and fully resolve the outcome (merge success, conflict
 > resolution, or abort) **before** advancing to the next PR. Never wrap multiple merge
 > calls in a single non-interactive shell loop (e.g., `for pr in …; do … merge --pr $pr; done`)
@@ -205,16 +207,24 @@ For each PR in the approved order:
 
 > Merging PR #N: _title_ (branch: _branch_)...
 
-**b. Run the merge script:**
+**b. Capture the reviewed PR head SHA from the readiness evidence:**
 
+Use the `headRefOid` captured during the latest readiness/review gate for this
+PR. `batch-merge.sh discover` emits this as `PR_HEAD_SHA` in each candidate
+record for handoff into the merge command. If that SHA is missing or stale, stop
+and rerun the review/CI readiness gate before merging.
+
+**c. Run the merge script with the reviewed SHA:**
+
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Standard (merging into develop):
-./scripts/development-workflow/batch-merge.sh merge --pr <number>
+./scripts/development-workflow/batch-merge.sh merge --pr <number> --expected-head-sha <reviewed-headRefOid>
 
 # Integration-branch override (merging into develop-<slug> or other base):
-./scripts/development-workflow/batch-merge.sh --base develop-<slug> merge --pr <number>
+./scripts/development-workflow/batch-merge.sh --base develop-<slug> merge --pr <number> --expected-head-sha <reviewed-headRefOid>
 # Equivalent using the env var form:
-# TARGET_BASE=develop-<slug> ./scripts/development-workflow/batch-merge.sh merge --pr <number>
+# TARGET_BASE=develop-<slug> ./scripts/development-workflow/batch-merge.sh merge --pr <number> --expected-head-sha <reviewed-headRefOid>
 ```
 
 Parse the output:
@@ -258,7 +268,7 @@ After a clean or resolved merge, in order:
 
    Expected output: `MERGED`.
    - If the state is not `MERGED` after up to 30 seconds (poll every 5 s): report `failed` for this PR, do not delete the remote branch or run cleanup, and continue with the next PR.
-   - If the script emitted a `WARNING: gh pr merge failed` line to stderr, that is a signal that this MERGED-state check is especially important — the push succeeded but the GitHub merge-mark may have failed.
+   - If the script emitted a `WARNING: gh pr merge failed` line to stderr, that is a signal that this MERGED-state check is especially important — the local merge and push to the base branch succeeded, but the GitHub merge-mark may have failed. `MERGE_RESULT=clean` on the same run refers to the local merge only and does **not** mean this PR is done: the poll above is what decides. If it does not converge to `MERGED` within 30 s, this PR is `failed` even though `MERGE_RESULT=clean` was printed.
 
    > **Failure mode — CLOSED instead of MERGED (historical context)**: Before issue
    > #412 was fixed, `batch-merge.sh` did a local `git merge` but neither pushed nor
@@ -271,7 +281,7 @@ After a clean or resolved merge, in order:
    > **Exceptional reviewer access bypass**: If a PR was excluded from the
    > normal batch route because `run-epic-delegated-gate.sh` returned
    > `exceptional_bypass_authorized`, do not merge it through `batch-merge.sh`.
-   > The runner must use the exact named `gh pr merge <pr> --admin` command only
+   > The runner must use the exact named `gh pr merge <pr> --admin --match-head-commit <authorized-head-sha>` command only
    > after verifying the PR/SHA/fingerprint authorization and pre-attempt
    > `reviewer-access-bypass` audit marker. After the one attempt, verify
    > GitHub's live PR state, update the same audit marker, fetch the refreshed
@@ -316,20 +326,78 @@ After a clean or resolved merge, in order:
    via `origin/<branch>` without creating a local tracking branch, create a
    temporary local branch first:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
-   BRANCH="$(gh pr view <number> --json headRefName --jq '.headRefName')"
+   PR_NUMBER="<number>"
+   BRANCH="$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')" || {
+     printf 'ERROR: could not resolve head branch for PR #%s\n' "$PR_NUMBER" >&2
+     exit 1
+   }
+   [ -n "$BRANCH" ] || {
+     printf 'ERROR: PR #%s has no head branch\n' "$PR_NUMBER" >&2
+     exit 1
+   }
    BASE_BRANCH="${TARGET_BASE:-develop}"
    # Try origin/<branch> first; fall back to HEAD~1 if the remote branch was
    # already deleted (e.g., repo has auto-delete enabled). HEAD~1 points to the
    # pre-merge develop commit, not the PR's tip, but post-merge-cleanup.sh only
    # needs the branch *name* to delete it — the commit it points to is irrelevant.
    git branch "$BRANCH" "origin/$BRANCH" 2>/dev/null || git branch "$BRANCH" HEAD~1 2>/dev/null || true
-   ./scripts/development-workflow/post-merge-cleanup.sh --base "$BASE_BRANCH" "$BRANCH"
+   ./scripts/development-workflow/post-merge-cleanup.sh --base "$BASE_BRANCH" --pr "$PR_NUMBER" "$BRANCH"
    ```
 
    If cleanup fails: report the failure but **do not halt remaining merges**. The human can re-run cleanup manually.
 
-5. Report the per-PR outcome immediately (see outcome codes in Step 5).
+5. **Recheck remaining in-scope PRs before selecting the next merge.**
+
+   When the approved batch has any unmerged in-scope PRs after this merge,
+   prior mergeability evidence for those PRs is stale. Run:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   bash ./scripts/development-workflow/batch-merge.sh recheck-remaining \
+     --prs <comma-separated-approved-pr-list> \
+     --after-merged-pr <number> \
+     --base "$BASE_BRANCH" \
+     --approved-unready-prs "$APPROVED_UNREADY_PRS"
+   ```
+
+   `APPROVED_UNREADY_PRS` must be the same explicit include list recorded in
+   Step 2, not recomputed from current labels. The helper validates that every
+   approved-unready PR is still part of the frozen approved PR list.
+
+   Treat the recheck output as an admission gate before attempting another
+   merge or reporting readiness:
+   - The helper must exit `0`.
+   - The output must include one fresh `remaining_pr` record for every
+     remaining unmerged PR in the frozen approved list.
+   - Only PRs with `classification=clean` and `outcome=continue` may remain in
+     the merge candidate set.
+   - Any missing record means the PR was not rechecked. Record/report
+     `merge_blocked` for that PR with reason `missing_recheck_record`, stop
+     before the next merge attempt, and report the coverage gap.
+
+   Parse each JSONL record before attempting another merge:
+   - `classification=clean` and `outcome=continue` means the PR may remain in
+     the candidate set, subject to the existing order and guardrails.
+   - The helper supervises pending or unknown state internally and emits only
+     terminal records; retryable state is not an externally consumable
+     admission result.
+   - `classification=merge_blocked` means record the PR outcome as
+     `merge_blocked`, including `invalidating_sibling_pr`, `merge_state`,
+     `checks_state`, and `reason`, then skip that PR without reordering.
+   - `classification=out_of_scope_observation` is read-only information. Do
+     not label, merge, retry for mutation, or add that PR to the frozen list.
+   - `classification=helper_failed` or a non-zero helper exit is batch-fatal
+     for the current sequence; stop before any further merge attempt and report
+     the helper reason.
+
+   The helper preserves the frozen `--prs` order and emits terminal records for
+   every sibling PR it rechecks, including PRs that are already merged. Continue
+   only with remaining in-scope PRs that independently recheck clean after the
+   latest sibling merge.
+
+6. Report the per-PR outcome immediately (see outcome codes in Step 5).
 
 ### 4.3 Conflict classification
 
@@ -458,8 +526,10 @@ Batch Merge Summary
  #103  │ fix: conflict fix            │ merged_human
  #104  │ feat: missing label          │ skipped_not_ready
  #105  │ fix: bad conflict            │ skipped_conflict
+ #106  │ feat: invalidated sibling    │ merge_blocked
+ #107  │ feat: outside frozen scope    │ out_of_scope
 ──────────────────────────────────────────────────────────────────────────────
-Merged: 3  |  Skipped: 2  |  Failed: 0  |  Not attempted: 0
+Merged: 3  |  Skipped: 2  |  Blocked: 1  |  Observed: 1  |  Failed: 0  |  Not attempted: 0
 ```
 
 **Outcome codes**:
@@ -471,10 +541,12 @@ Merged: 3  |  Skipped: 2  |  Failed: 0  |  Not attempted: 0
 | `merged_human`      | Merged after human resolved non-trivial conflict(s)                                      |
 | `skipped_not_ready` | Skipped because PR lacked `ready-for-human-review` and human chose to exclude it         |
 | `skipped_conflict`  | Skipped because human aborted conflict resolution; `develop` returned to pre-merge state |
+| `merge_blocked`     | Held because a post-sibling-merge recheck found non-clean or exhausted retry state       |
+| `out_of_scope`      | Observed during recheck but outside the frozen approved PR list; no mutation performed   |
 | `failed`            | Merge failed for an unexpected reason                                                    |
 | `not_attempted`     | PR was not processed when human aborted the entire batch                                 |
 
-Include details of any auto-resolved conflicts in the summary (which files, what entries were combined).
+Include details of any auto-resolved conflicts in the summary (which files, what entries were combined). For `merge_blocked`, include the invalidating sibling PR, refreshed merge state, refreshed checks state, and helper reason.
 
 ---
 
@@ -484,7 +556,7 @@ When called from the Portfolio Orchestrator (Protocol 90), the same flow applies
 
 - The orchestrator passes the PR list discovered from the batch.
 - The merge plan is printed for visibility at Step 3, then execution proceeds immediately.
-- The orchestrator must NOT skip or auto-approve the readiness gate (Step 2) for any unready PR.
+- The orchestrator must NOT skip or auto-approve the readiness gate (Step 2) for any unready PR. It must pass the Step 2 `APPROVED_UNREADY_PRS` value to every `recheck-remaining --approved-unready-prs` call.
 - Non-trivial conflicts still require human resolution at Step 4.3.
 
 The orchestrator should include the batch-merge summary in its overall `Step 6: Notify Humans` output.
@@ -496,5 +568,9 @@ The orchestrator should include the batch-merge summary in its overall `Step 6: 
 - **The base branch must never be left in a conflicted state.** Every code path that encounters a conflict has either a resolution path or a `git merge --abort` fallback.
 - **Do not use `gh pr close`.** The merge must be recognized by GitHub as a real merge, not a closed-unmerged PR.
 - **Do not force-push** or rebase PR branches.
+- If conflict recovery or remaining-PR supervision would require rewriting a
+  workflow PR branch, stop before mutation and route the exact operation through
+  `scripts/development-workflow/workflow-branch-push-guard.sh`; batch merge
+  approval does not authorize a force-push.
 - **Already-merged PRs stay merged** even if the human aborts the batch mid-run.
 - If `post-merge-cleanup` fails, report the failure and continue — do not halt remaining merges.

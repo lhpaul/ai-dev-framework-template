@@ -57,10 +57,10 @@ This is the Codex command-style alias for Claude Code `/run-epic`.
    scope, reviewer, CI, risk, and audit evidence; pass `--policy <file>` when
    the resolver policy is captured separately. Merge only when the gate reports
    `merge_allowed`.
-   If it reports `exceptional_bypass_authorized`, verify the separate named
-   PR/SHA/fingerprint authorization and pre-attempt `reviewer-access-bypass`
-   audit marker before one exact human-authorized `gh pr merge <pr> --admin`
-   attempt; delegated epic policy does not authorize `--admin`.
+   If it reports `exceptional_bypass_authorized`, follow the canonical
+   exceptional-bypass policy in
+   `docs/workflow/development-workflow/guardrails-enforcement.md` Gate 5;
+   delegated epic policy does not authorize `--admin`.
    After `merge_allowed`, follow Protocol 95 Step 11 through merge, merge
    verification, branch deletion/pruning, `post-merge-cleanup.sh`, live tracker
    verification, audit update, rediscovery, and the continuation result before

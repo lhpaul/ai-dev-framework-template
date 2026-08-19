@@ -108,6 +108,18 @@ the approved work through the normal PR path. Do not force-push, rebase, reset,
 or otherwise rewrite shared history. After pushing the replacement, verify that
 its normal push-triggered checks start; escalate if they do not.
 
+### Workflow PR Branch Push Guard
+
+For implementation and review-fix branches, use focused follow-up commits after
+a branch has been published. Before any workflow PR branch update that would use
+`--force`, `--force-with-lease`, a `+<src>:<dst>` refspec, or another remote
+history rewrite, run
+`scripts/development-workflow/workflow-branch-push-guard.sh` and let the helper
+perform the push. General workflow confirmation, delegated review authority,
+delegated merge authority, and risk acceptance are not authorization for a
+shared-history rewrite. If the guard blocks, stop before mutation and report the
+safe follow-up commit path or the exact human authorization evidence required.
+
 ## Scope-Residual Evidence Gate
 
 When the item title, body, spec, or plan describes sweep, batch, helper
@@ -943,25 +955,31 @@ Skip this check only when no review platforms are configured and the reviewer lo
 
 Step 1.2 — Confirm all automated-reviewer threads are resolved:
 
+<!-- workflow-shell-contract: bash-zsh -->
+
 ```bash
 # Must return empty output. Any line of output means unresolved bot threads exist — do not apply ready-for-regression.
+CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
+CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
+
 gh api graphql -f query='
   query($owner:String!, $repo:String!, $number:Int!) {
     repository(owner:$owner, name:$repo) {
       pullRequest(number:$number) {
         reviewThreads(first: 100) {
-          nodes { isResolved comments(first: 1) { nodes { author { login } body } } }
+          nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
         }
       }
     }
   }' -f owner=<owner> -f repo=<repo> -F number=<pr_number> \
-  | jq '.data.repository.pullRequest.reviewThreads.nodes[]
+  | jq --arg codex_bot "$CODEX_BOT_LOGIN" '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
-        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps"] | index($a) != null)
+        | select((.isOutdated // false) == false)
+        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps",$codex_bot] | index($a) != null)
         | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)'
 ```
 
-Pass condition: empty output. If non-empty: resolve or address each reported thread before proceeding.
+Pass condition: empty output. If non-empty: resolve or address each reported thread before proceeding. Outdated threads are non-blocking because GitHub marked the finding's original diff location stale after a fix.
 
 Step 1.3 — Apply `ready-for-regression`:
 
@@ -1542,25 +1560,31 @@ Skip this check only when no review platforms are configured and the reviewer lo
 
 Step 1.2 — Confirm all automated-reviewer threads are resolved:
 
+<!-- workflow-shell-contract: bash-zsh -->
+
 ```bash
 # Must return empty output. Any line of output means unresolved bot threads exist — do not apply ready-for-regression.
+CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
+CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
+
 gh api graphql -f query='
   query($owner:String!, $repo:String!, $number:Int!) {
     repository(owner:$owner, name:$repo) {
       pullRequest(number:$number) {
         reviewThreads(first: 100) {
-          nodes { isResolved comments(first: 1) { nodes { author { login } body } } }
+          nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
         }
       }
     }
   }' -f owner=<owner> -f repo=<repo> -F number=<pr_number> \
-  | jq '.data.repository.pullRequest.reviewThreads.nodes[]
+  | jq --arg codex_bot "$CODEX_BOT_LOGIN" '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
-        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps"] | index($a) != null)
+        | select((.isOutdated // false) == false)
+        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps",$codex_bot] | index($a) != null)
         | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)'
 ```
 
-Pass condition: empty output. If non-empty: resolve or address each reported thread before proceeding.
+Pass condition: empty output. If non-empty: resolve or address each reported thread before proceeding. Outdated threads are non-blocking because GitHub marked the finding's original diff location stale after a fix.
 
 Step 1.3 — Apply `ready-for-regression`:
 

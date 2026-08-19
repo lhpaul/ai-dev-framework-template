@@ -23,13 +23,33 @@ create
   When DESTINATION_KIND is github, creates one GitHub issue via gh (requires gh auth).
   For linear, other, or none, exits non-zero with guidance (agents follow 00-add-backlog-item-protocol.md).
 
-  --priority <value>  Optional. Set the project Priority field. Valid values: Urgent, High, Normal, Low.
-                      Medium is accepted as a backward-compatible alias for Normal.
-                      When omitted, defaults to Normal for GitHub Projects.
+  --priority <value>  Optional. Set the project Priority field. The value is
+                      resolved against the project's actual Priority field
+                      options (see docs/workflow/development-workflow/integrations/github-projects.md);
+                      typical boards use Urgent, High, Medium, Low.
+                      When given explicitly, it is validated BEFORE the issue
+                      is created; a value that cannot be resolved against the
+                      board's Priority options is a hard error (exit 1) and no
+                      issue is created.
+                      When omitted, the default adapts to the configured
+                      board: "Medium" if present, else "Normal" (for boards
+                      still set up per the framework's pre-#1501 docs), else
+                      left unset — never a hard error for the default case.
   --size <value>      Optional. Set the project Size field. Valid values: XS, S, M, L, XL.
                       When omitted, the Size field is left unset.
   --type <value>      Optional. Set the project classification field. Valid values: Feature, Bug,
                       Refactor, Workflow. When omitted, the Type field is left unset.
+
+Exit codes (create, GitHub destination):
+  0  Success (including a resolved-value tracker-field skip when the tracker
+     provider/project genuinely does not apply).
+  1  A value passed to --priority could not be resolved against the board's
+     actual Priority options; no issue was created.
+  5  Partial success: the issue WAS created (see the printed URL) but the
+     required post-creation Priority update failed — do not retry issue
+     creation; retry only the Priority update, or set it manually. Type and
+     Size updates (if requested) are attempted independently and are not
+     skipped by a Priority failure.
 EOF
 }
 
@@ -115,6 +135,35 @@ create_cmd() {
       echo "create: --title is required" >&2
       exit 2
     fi
+    # Resolve the effective priority BEFORE creating the issue.
+    #
+    # Explicit --priority: validated against the project's actual Priority
+    # field options before `gh issue create` runs. Without this pre-check,
+    # an invalid/unmigrated value would only be caught by the required
+    # post-creation update further below, after the issue had already been
+    # created — so a caller that retries on non-zero exit without
+    # inspecting stdout could create a duplicate issue for every retry (see
+    # issue #1501 code review). workflow_tracker_priority_resolvable is a
+    # no-op read-only check (no mutation); it returns 0 (don't block)
+    # whenever the tracker provider/project don't apply or the check itself
+    # is inconclusive, so this pre-check cannot introduce new false
+    # rejections — only a confirmed-invalid explicit value blocks issue
+    # creation here.
+    #
+    # Omitted --priority: adapts to whatever the configured board actually
+    # supports (preferring "Medium", falling back to "Normal" for boards
+    # still set up per the framework's pre-#1501 docs) instead of assuming
+    # a single universal literal. This never blocks issue creation — an
+    # unresolvable default just leaves Priority unset, the same way an
+    # omitted --size or --type is left unset (see issue #1501 code review,
+    # "Preserve compatibility with Normal-priority boards").
+    local effective_priority="$priority"
+    if [ -z "$effective_priority" ]; then
+      effective_priority="$(workflow_tracker_default_priority_value)"
+    elif ! workflow_tracker_priority_resolvable "$effective_priority"; then
+      echo "Error: could not resolve 'Priority' option '${effective_priority}' against the configured GitHub Project; no issue was created. Pass a value from the board's actual Priority field options (see docs/workflow/development-workflow/integrations/github-projects.md), or configure the field, before retrying." >&2
+      exit 1
+    fi
     if [ -n "$body_file" ]; then
       body="$(cat -- "$body_file")"
     fi
@@ -151,15 +200,38 @@ create_cmd() {
     # Ensure the issue is on the project board (adds it with Status=Backlog if absent).
     # The ensure_on_project_board helper is fail-open; it always returns 0.
     ensure_on_project_board "$issue_number" "Backlog"
-    # Update project Type, Priority (default Normal), and Size when GitHub Projects is configured.
-    # The update_tracker_*_best_effort helpers are fail-open; they always return 0.
+    # Update project Type, Priority, and Size when GitHub Projects is configured.
+    # update_tracker_type_best_effort and update_tracker_size_best_effort are fail-open (always
+    # return 0). effective_priority is empty only when the default adapter above found no safe
+    # value (see its docstring) — skip the call entirely in that case, same as omitted --size/--type.
+    #
+    # When effective_priority is non-empty, update_tracker_priority_best_effort runs in required
+    # mode: the common failure case (an invalid value) was already ruled out above, before the
+    # issue was created, so this call is a safety net for the rarer cases the pre-check cannot see
+    # (e.g. the issue unexpectedly missing from the board, or a transient GraphQL write failure).
+    # Those necessarily surface after issue creation, at which point the issue URL has already
+    # been printed to stdout above — do not let a failure here look identical to "nothing
+    # happened": exit with a distinct code (5) and an explicit message so a caller does not retry
+    # `create` and mint a duplicate issue (see issue #1501 code review). Field updates are
+    # independent of each other, so a Priority failure must not prevent Type/Size from being
+    # attempted (issue #1501 code review, "Continue requested field updates after Priority
+    # failure") — priority_update_failed defers the exit-5 signal until every requested field
+    # has had its chance to run.
+    local priority_update_failed=0
     if [ -n "$type_label" ]; then
       update_tracker_type_best_effort "$issue_number" "$type_label"
     fi
-    local effective_priority="${priority:-Normal}"
-    update_tracker_priority_best_effort "$issue_number" "$effective_priority"
+    if [ -n "$effective_priority" ]; then
+      if ! update_tracker_priority_best_effort "$issue_number" "$effective_priority"; then
+        priority_update_failed=1
+      fi
+    fi
     if [ -n "$size" ]; then
       update_tracker_size_best_effort "$issue_number" "$size"
+    fi
+    if [ "$priority_update_failed" -eq 1 ]; then
+      echo "Error: issue #${issue_number} was already created (${issue_url}) — the required post-creation Priority update failed (see the Error above). Do NOT retry issue creation; instead retry only the Priority update for issue #${issue_number}, or set it manually on the project board." >&2
+      exit 5
     fi
     return 0
   fi

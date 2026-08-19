@@ -365,6 +365,29 @@ run_test "hard_blockers_take_precedence" "blocked" "$(printf '%s\n' "$blocked_ou
 run_test "blocked_not_mergeable" "false" "$(printf '%s\n' "$blocked_output" | jq -r '.merge_permitted')"
 run_test "hard_blocker_count" "yes" "$(printf '%s\n' "$blocked_output" | jq -e '.blockers | length >= 8' >/dev/null && echo yes || echo no)"
 
+authorized_push_blocker_fixture="$(write_fixture authorized-push-blocker '{
+  "pr_number": 15,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+  "changed_files": ["docs/README.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0},
+  "force_push_required": true,
+  "destructive_action_required": true,
+  "branch_push_authorization": {
+    "authorization_id": "auth-1",
+    "canonical_repo": "lhpaul/ai-dev-framework-template",
+    "branch_ref": "refs/heads/feature/test",
+    "action": "force-with-lease",
+    "expected_remote_tip": "abc123",
+    "single_use": true
+  }
+}')"
+authorized_push_blocker_output="$(classify_fixture "$authorized_push_blocker_fixture" high)"
+run_test "push_authorization_does_not_clear_force_blocker" "yes" "$(printf '%s\n' "$authorized_push_blocker_output" | jq -e '.blockers[] | select(. == "force-push is required")' >/dev/null && echo yes || echo no)"
+run_test "push_authorization_does_not_clear_destructive_blocker" "yes" "$(printf '%s\n' "$authorized_push_blocker_output" | jq -e '.blockers[] | select(. == "destructive action is required")' >/dev/null && echo yes || echo no)"
+run_test "push_authorization_still_blocks_merge" "false" "$(printf '%s\n' "$authorized_push_blocker_output" | jq -r '.merge_permitted')"
+
 missing_check_fixture="$(write_fixture missing-check '{
   "pr_number": 6,
   "merge_state": "CLEAN",

@@ -209,6 +209,7 @@ The following stop conditions are always in force:
 | `high_risk_change`                    | The classified PR risk exceeds the stage's configured `max_merge_risk`.                |
 | `destructive_action`                  | The action would delete branches, data, releases, or other non-recoverable artifacts.  |
 | `human_checkpoint_required`           | A declared stage-scoped human checkpoint is still pending for the PR's work item.      |
+| `security_sensitive_advisory_pending` | A security-sensitive advisory finding (per the classifier in `scripts/development-workflow/security-advisory-classifier.sh`) lacks a fixed commit or a verified human accept/reject decision at the PR's current head SHA. |
 | `missing_tracker_context`             | The work item is missing required tracker metadata (status, type, or linked spec).     |
 | `missing_required_secret_or_permission` | A required credential or GitHub permission is absent.                                |
 

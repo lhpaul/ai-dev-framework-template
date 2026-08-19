@@ -14,6 +14,7 @@ ROOTS = ("AGENTS.md", "docs/workflow/", "docs/best-practices/", ".agents/skills/
 FENCE = re.compile(r"^\s*```(?P<lang>[A-Za-z0-9_-]+)?\s*$", re.I)
 CONTRACT = re.compile(r"^\s*<!--\s*workflow-shell-contract:\s*(bash|bash-zsh)\s*-->\s*$")
 SHELL_SIGNAL = re.compile(r"(?m)^\s*(?:git|gh|bash|zsh|for|while|set|if|cd|export|source)\b")
+SHELL_LANGS = {"bash", "sh", "shell", "zsh"}
 PORTABLE_FOR = re.compile(r"\bfor\s+\w+\s+in\s+\$[A-Za-z_][A-Za-z0-9_]*\b")
 PORTABLE_SET = re.compile(r"\bset\s+--\s+\$[A-Za-z_][A-Za-z0-9_]*\b")
 BASH_ONLY = re.compile(r"BASH_SOURCE|<\(|\[\[|\$\{![^}]+\}|\b(?:readarray|mapfile)\b|\w+=\(")
@@ -107,7 +108,17 @@ def lint(path: str, changed: set[int]) -> list[Finding]:
         changed_here = any(index <= number < closer + 1 for number in changed)
         language = (opener.group("lang") or "").lower()
         content = "\n".join(fence_lines)
-        executable = language in {"bash", "sh", "shell", "zsh"} or bool(SHELL_SIGNAL.search(content))
+        # A fence with an explicit language tag is authoritative: an explicit
+        # shell tag (bash/sh/shell/zsh) is always executable, and any other
+        # explicit tag (ts, typescript, python, json, ...) is never executable
+        # shell, regardless of whether its content happens to contain a line
+        # that starts with a SHELL_SIGNAL keyword (e.g. idiomatic TypeScript
+        # `export`/`if` statements). Only an untagged fence is genuinely
+        # ambiguous and falls back to the content heuristic.
+        if language:
+            executable = language in SHELL_LANGS
+        else:
+            executable = bool(SHELL_SIGNAL.search(content))
         if changed_here and executable:
             contract = contract_before(lines, index)
             line = index + 1

@@ -32,7 +32,7 @@ product_repos:
 # - set `review.on_draft.runner` to `cursor` while running `/run-work` from
 #   Cursor so Step 7a dispatches the Cursor review agents instead of Codex
 # - override GitHub/App reviewer lists to match the tools available on this
-#   machine, for example PR Agent during draft and Cursor Bugbot after ready
+#   machine, for example PR Agent during draft and Codex GitHub after ready
 # - keep `internal_reviewers_unavailable_policy: warn` unless you explicitly
 #   want unavailable local reviewers to hard-fail the gate
 review:
@@ -43,7 +43,7 @@ review:
       - pr-agent
   on_ready:
     github:
-      - bugbot
+      - codex-github
   internal_reviewers_unavailable_policy: warn
 
 tools:

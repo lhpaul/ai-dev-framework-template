@@ -572,6 +572,7 @@ readiness can continue.
 After candidate discovery and a clean nested-artifact guard, validate the exact
 expected branch against the run's approved base:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/validate-branch-reuse.sh \
   --issue "$ISSUE_NUMBER" \
@@ -600,6 +601,15 @@ the approved-base decision. The runner must not automatically delete, reset,
 rebase, check out, force-push, or otherwise rewrite an incompatible or
 unverifiable branch. Any destructive cleanup or different recovery path
 requires a separate explicit human decision.
+
+If a spec, plan, implementation, or review-fix update would rewrite a published
+workflow PR branch, stop before mutation and run
+`scripts/development-workflow/workflow-branch-push-guard.sh`. Only the guard may
+execute an authorized destructive PR branch update, and only after matching
+trusted, single-use human authorization for the exact repository, PR, full
+branch ref, action, operator, expected remote tip, and authorized new tip from
+a separate GitHub `User` with repository `admin` permission. The executing
+credential cannot self-authorize.
 
 Record one of `fresh_branch`, `compatible_reuse`,
 `incompatible_reuse_blocked`, or `reuse_verification_blocked` in the Work Item
@@ -1697,13 +1707,18 @@ If one or more automated code review platforms are configured (see [`integration
 
 **Standalone use:** This step (and Step 8) can be run for a single PR without full orchestration — see [`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md) and the `/run-reviewer-loop` command (Cursor) or `automated-reviewer-loop` agent (Claude Code) or `workflow-reviewer-loop` skill (Codex).
 
-**Important:** Run Step 7 **to completion** and use its result before running Step 8. Do not run Step 7 in the background while proceeding to Step 8. The review loop can take several minutes (poll interval × wait for bot). Only when the script exits with `clean` or `skipped` may you continue to Step 8.
+**Important — run in the foreground, to completion, in the same turn:** This rule has two distinct parts, and both failures are prohibited, not just one:
+
+1. **Do not race ahead.** Do not run Step 7 in the background while proceeding to Step 8 without its result.
+2. **Do not background-and-yield.** Do not start `pr-review-loop.sh` in the background and then **end your turn** to wait for it. A backgrounded process's completion notification is delivered to whatever dispatched *you* (the parent orchestrator, or a human) — never back to you. If you end your turn while the loop is still running in the background, you park permanently: not blocked, not escalated, not dead, just structurally unable to ever observe your own process finishing. A parked runner is indistinguishable from a terminated one from the outside, which means it will not be recovered automatically. Run Step 7 in the foreground, or if you must background it, keep polling it yourself **in the same turn** until it returns. The review loop can take several minutes (poll interval × wait for bot); that is expected — stay with it. Only when the script exits with `clean` or `skipped`, observed by you in-turn, may you continue to Step 8.
 
 The helper script evaluates configured platforms sequentially. For each platform it checks for **existing** blocking findings from the bot (e.g. from a review that already ran on PR open) before posting a new trigger. If it finds any, it exits with `needs_fixes` without moving on to later platforms — so the fixer addresses them first; after a push, the next run starts again from the first configured platform. Supported platforms include `greptile`, `devin`, `coderabbit`, and `codex-github` (Codex GitHub App — async bot reviewer handled deterministically by `pr-review-loop.sh`).
 
 > **CodeRabbit silence patterns**: CodeRabbit occasionally does not respond after a push — either because reviews are auto-paused after many commits ("Reviews paused" comment) or because it silently fails to auto-trigger. `pr-review-loop.sh` handles both cases automatically by posting `@coderabbitai review`. If the loop appears stalled with no CodeRabbit activity, see the [CodeRabbit silence patterns section in Protocol 93](93-automated-reviewer-loop-protocol.md#coderabbit-silence-patterns) for diagnostic steps and escalation criteria before intervening manually.
 
 Initialize `cycle = 0` once per orchestration run for the PR. Increment `cycle` each time a fixer agent is dispatched. Do not reset `cycle` after a fixer push; escalate when the run reaches `max_cycles`.
+
+**`pr-review-loop.sh` now enforces this per-run cap itself (issue #1502), independent of whether the orchestrator's own `cycle` variable is tracked correctly — but only when the script can tell which invocations belong to the same run.** Before the first `pr-review-loop.sh` invocation for this PR in this orchestration run, generate a stable run identifier (any sufficiently unique string, e.g. `"run-$(date +%s)-$$"`) and `export PR_REVIEW_LOOP_RUN_ID=<that value>` for the remainder of this run. Reuse the exact same value across every re-invocation of `pr-review-loop.sh` for this PR within this run — including inline-fix retries (Step 7's fast lane) and subagent-dispatched fixer retries. Generate a **new** value only when a genuinely new orchestration run begins (a fresh session resuming this PR after a prior escalation, after human intervention, or after any gap in continuous execution). If `PR_REVIEW_LOOP_RUN_ID` is left unset, every invocation is treated by the script as its own isolated run and the per-run cap (`CYCLE_COUNT`/`MAX_CYCLES`) will not accumulate across cycles — the separate lifetime ceiling (`TOTAL_CYCLE_COUNT`/`MAX_TOTAL_CYCLES`, see `93-automated-reviewer-loop-protocol.md`) still enforces in that case, but the per-run cap's intended fast, specific signal is lost.
 
 ### PR feedback tracking and comments
 
@@ -2105,12 +2120,28 @@ is `true` in the effective guardrails, assemble the evidence object and run:
 ./scripts/development-workflow/run-epic-delegated-gate.sh --input <evidence-file>
 ```
 
+**Security-sensitive advisory evidence (BR8, BR9, AC8, AC9)**: the assembled
+evidence file must include `.securityAdvisories[]` (the reconciled tracker
+output from `security-advisory-tracker.sh reconcile`) and
+`.securityAdvisoryDecisionEvents[]` (raw candidate decision-comment
+references) identically whether the caller is `/run-item`, `/run-items`, or
+`/run-epic` — this requirement is not conditioned on a resolved `/run-epic`
+scope and is evaluated as part of the gate's normal reasons cascade, not a
+new short-circuit. When any `.securityAdvisories[]` entry's reconciled
+status is `pending`, `run-epic-delegated-gate.sh` returns `decision:
+"human_required"` with a `security_sensitive_advisory_pending` reason and
+blocks delegated merge regardless of `mode`, `may_merge_pr`, or unrelated
+checkpoint state (see the "Security-sensitive advisory classification"
+subsection of [`93-automated-reviewer-loop-protocol.md`](93-automated-reviewer-loop-protocol.md)
+for how that evidence is produced, and the `security-advisory-decision-required`
+label that mirrors it on the PR itself).
+
 Merge through the normal repository path only when the gate returns
 `merge_allowed` **and** every required-evidence check in section 3 Gate 5 of
 `guardrails-enforcement.md` passes. If the gate reports
 `exceptional_bypass_authorized`, do not treat it as normal delegated merge
-authority: verify the pre-attempt `reviewer-access-bypass` audit marker, execute
-exactly the named `gh pr merge <pr> --admin` command once, immediately verify
+authority: follow the canonical exceptional-bypass policy in
+[`guardrails-enforcement.md`](../guardrails-enforcement.md) Gate 5, immediately verify
 the live PR state, and update the same audit marker with `merged` or `failed`.
 Any head SHA, fingerprint, CI, reviewer, or check-state drift returns to Gate 5
 for fresh authorization. For medium-risk decisions, include a complete "why safe
@@ -2143,6 +2174,8 @@ the live tracker verification described in Step 10 before reporting the item
 terminal.
 
 **Only after Step 7 (and Step 7b for implementation PRs) has completed**, wait for required checks to settle.
+
+**Same foreground rule as Step 7 applies here.** Do not start `pr-ci-loop.sh` in the background and end your turn to wait for it — the completion notification is delivered to your dispatcher, not to you, and ending your turn while it runs parks you permanently, indistinguishable from a dead runner. Run it in the foreground, or poll it yourself in the same turn until it returns a terminal result.
 
 Prefer the helper script:
 
@@ -2782,26 +2815,32 @@ gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comme
 
 For the `reviewThreads` resolution check, `gh pr view --json` does not expose `reviewThreads`; use the GraphQL API directly. **This query is mandatory — do not skip it or rely on self-tracked thread state:**
 
+<!-- workflow-shell-contract: bash-zsh -->
+
 ```bash
+CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
+CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
+
 gh api graphql -f query='
   query($owner:String!, $repo:String!, $number:Int!) {
     repository(owner:$owner, name:$repo) {
       pullRequest(number:$number) {
         reviewThreads(first: 100) {
-          nodes { isResolved comments(first: 1) { nodes { author { login } body } } }
+          nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
         }
       }
     }
   }' -f owner=<owner> -f repo=<repo> -F number=<pr_number> \
-  | jq '.data.repository.pullRequest.reviewThreads.nodes[]
+  | jq --arg codex_bot "$CODEX_BOT_LOGIN" '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
-        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps"] | index($a) != null)
+        | select((.isOutdated // false) == false)
+        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps",$codex_bot] | index($a) != null)
         | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)'
 ```
 
-The bot login list above is a superset covering all platforms supported by `pr-review-loop.sh` (`coderabbit`, `devin`, `greptile`). The current default GitHub reviewer config in `.ai-dev-workflow.yaml` uses `review.on_draft.github: [pr-agent]` and `review.on_ready.github: [haystack]`. Update the list if your project uses different or additional review bots.
+The bot login list above is a superset covering all async review-bot platforms supported by `pr-review-loop.sh` (`coderabbit`, `devin`, `greptile`, `codex-github`). The current default GitHub reviewer config in `.ai-dev-workflow.yaml` uses `review.on_draft.github: [pr-agent]` and `review.on_ready.github: [codex-github]`. Update the list if your project uses different or additional review bots.
 
-The output must contain no unresolved threads from configured bot reviewers (e.g. `coderabbitai`, `devin-ai-integration`) before this step passes. A thread is considered resolved when `isResolved: true` **or** the first comment body contains `✅ Addressed` (CodeRabbit appends this when a fix commit lands). Any unresolved bot-authored thread that does not meet either condition — regardless of severity, including Nitpick and Trivial — blocks this check. For PRs with more than 100 threads, implement cursor-based pagination: add `pageInfo { hasNextPage endCursor }` to the `reviewThreads` field selection, capture `endCursor` from each response, and repeat the query with `reviewThreads(first: 100, after: $cursor)` until `hasNextPage` is false.
+The output must contain no unresolved, non-outdated threads from configured bot reviewers (e.g. `coderabbitai`, `devin-ai-integration`, `chatgpt-codex-connector`) before this step passes. A thread is considered non-blocking when `isResolved: true`, `isOutdated: true`, or the first comment body contains `✅ Addressed` (CodeRabbit appends this when a fix commit lands). Any unresolved, non-outdated bot-authored thread that does not meet those conditions — regardless of severity, including Nitpick and Trivial — blocks this check. For PRs with more than 100 threads, implement cursor-based pagination: add `pageInfo { hasNextPage endCursor }` to the `reviewThreads` field selection, capture `endCursor` from each response, and repeat the query with `reviewThreads(first: 100, after: $cursor)` until `hasNextPage` is false.
 
 Verify all of the following. If any check fails, **do not report ready** — treat it the same as `needs-fixes` and re-enter the fix loop from Step 7a:
 
@@ -2883,8 +2922,9 @@ state according to this table:
   base explicitly when it is not the repository default. In `workflow_hub` mode,
   pass `--repo <product-repo>` for product-owned implementation branches:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> <merged-branch>
+./scripts/development-workflow/post-merge-cleanup.sh [--repo <product-repo>] --base <base-branch> --pr <merged-pr-number> <merged-branch>
 ```
 
 - After cleanup, re-read the live tracker status and Project status. If the live

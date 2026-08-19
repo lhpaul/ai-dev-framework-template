@@ -15,6 +15,8 @@ This protocol is **standalone**: it can be invoked for any open PR (or set of PR
 
 > **Release PR exemption**: The automated reviewer loop applies only to develop-targeting PRs (feature, fix, refactor, hotfix backport). PRs whose head branch matches `release/*` or `hotfix/*` are **exempt** — `pr-review-loop.sh` automatically exits with `RESULT=skipped` and `REASON=release_pr` for these PRs. All changes in a release PR were already reviewed when their individual feature/fix PRs merged into `develop`. For release PR readiness, follow [`05-prepare-release-protocol.md`](05-prepare-release-protocol.md) Step 7 instead.
 
+> **Run in the foreground — do not background-and-yield**: This protocol reuses Step 7 and Step 8 of [`91-orchestrate-work-protocol.md`](91-orchestrate-work-protocol.md) as-is, including the mandatory foreground-execution rule defined in those steps ("run in the foreground, never background-and-yield"). See that document for the full rule and rationale; it applies here exactly as written there.
+
 ---
 
 ## Scope: which PR(s)
@@ -52,7 +54,8 @@ gate. Run `review.on_draft.github` first, then let `pr-review-loop.sh` convert
 the PR at the ready-phase boundary before dispatching `review.on_ready.github`.
 Protocol 91 Step 7a is the source of truth for the reviewer-to-draft-restriction
 mapping; see its "Draft-state pre-check" section for the full table. For
-CodeRabbit specifically, check `.coderabbit.yaml`:
+CodeRabbit specifically, when it is explicitly configured as an opt-in reviewer,
+check `.coderabbit.yaml`:
 
 ```bash
 grep -E '^\s*drafts:\s*false' .coderabbit.yaml
@@ -103,6 +106,79 @@ CLI review found no issues.
 
 Strict CLI rate-limit policy returns `RESULT=escalate` with
 `REASON=rate_limited`. Treat that like any other platform escalation.
+
+#### Codex GitHub terminal evidence
+
+When `codex-github` is configured, `pr-review-loop.sh` must only treat the
+platform as clean after Codex publishes evidence tied to the current PR head:
+
+- a submitted Codex GitHub review whose `commit_id` matches the current
+  `headRefOid`, or
+- a Codex-authored root PR comment with a `Reviewed commit` marker matching the
+  current `headRefOid`, or
+- current-head Codex inline review comments, treated as findings.
+
+A thumbs-up reaction on the trigger comment is an acknowledgement only. It is
+not SHA-pinned review evidence and must be treated as unavailable, not clean.
+Codex-authored root PR comments without a current-head `Reviewed commit` marker
+are not SHA-pinned clean evidence; use them only for acknowledgement,
+usage-limit, and setup-failure detection.
+Likewise, a Codex response asking the operator to create a cloud environment for
+the repo is setup failure evidence; do not use the empty review/comment from
+that path as a clean result. This recorded environment error cannot be
+silently overridden by a later thumbs-up reaction or by review/comment
+evidence that is not strictly newer than it — but a genuinely fresh,
+strictly newer current-head review (e.g. after the operator creates the
+environment mid-poll) is allowed to supersede it, matching the newest-wins
+rule applied to every other evidence type. A blocking terminal or review
+finding is the one exception to newest-wins: it always wins outright over
+an environment-setup error regardless of timing, so an actionable finding
+can never be hidden behind an "unavailable" verdict. Likewise, a SHA-pinned
+terminal comment is never classified as an environment-setup error even if
+its finding text happens to quote the setup sentence verbatim — terminal
+evidence is never routed through the environment-error classifier. A
+usage-limit notice follows the same PRIORITY rules as an environment-setup
+error for ranking purposes, but NOT the same RETENTION rule: unlike an
+environment-setup error, a usage-limit notice terminates the invocation
+immediately upon detection (exit code 3), rather than being retained
+through the rest of the poll window for a later, strictly newer review to
+potentially supersede it. This applies within a
+single poll as well as across polls: an environment-setup
+error is not silently discarded by a same-fetch or later plain
+acknowledgement, since a bare
+acknowledgement carries no information and is never treated as competing
+evidence.
+
+Once terminal evidence is selected, `APPROVED` requires the response to
+reproduce, whitespace aside, one of a small set of exact captured
+clean-response templates covering the entire body — footer included, with no
+truncation step of any kind. Anything else is treated as `NEEDS_REVISION`
+regardless of how close it reads to a genuine approval, including a response
+that carries the real vendor footer but does not exactly match an evidenced
+template (issue #1491's conservative-verdict-classifier implementation
+plan). A bare, non-terminal acknowledgement comment is still routed to
+wait-for-more-evidence as before; that wait is gated on the evidence being
+non-terminal, so a footer-bearing near-miss on genuinely terminal evidence
+always reaches the `NEEDS_REVISION` safe-fail rather than being misrouted to
+a wait/timeout.
+
+When both a SHA-pinned root comment and a submitted review qualify as terminal
+evidence, the strictly newer one wins. On an exact timestamp tie (GitHub
+timestamps are second-resolution), any response that is not a clean approval
+must win regardless of which side supplied it — this covers both explicitly
+blocking evidence and an unrecognized-format response (which the verdict
+classifier would otherwise safe-fail to `NEEDS_REVISION`); a clean submitted
+review tied with a blocking or unrecognized-format root comment (or vice
+versa) must resolve away from the clean approval, not to whichever side
+happens to be evaluated first. Selecting the terminal root comment must also
+be independent of the latest root comment overall: a later non-terminal
+acknowledgement or setup-error comment must never discard an earlier
+SHA-pinned blocking root comment.
+
+Root comments are a terminal evidence source, so a failed fetch of Codex root
+PR comments (including during the async grace-period poll) must be treated as
+unavailable and must not let a clean submitted review be accepted before the
+root comments are known. Fail closed, not open.
 
 **Scope note**: This pre-flight checks `review.on_draft.github` and
 `review.on_ready.github` (external reviewers used by Protocol 93 / Step 7). The
@@ -437,12 +513,26 @@ elapses, the loop times out and exits `escalate`.
 no "Reviews paused" comment, and no rate-limit comment. CodeRabbit stays silent with no
 visible signal.
 
-**Script behavior**: After `CODERABBIT_NO_TRIGGER_TIMEOUT` seconds of silence (default: 600 s)
-with no activity, no "Reviews paused" comment, and no rate-limit comment, `pr-review-loop.sh`
-posts `@coderabbitai review` to force a fresh review. The `coderabbit_no_trigger_retriggers`
+**Script behavior**: After `CODERABBIT_NO_TRIGGER_TIMEOUT` seconds of silence with no
+activity, no "Reviews paused" comment, and no rate-limit comment, `pr-review-loop.sh` posts
+`@coderabbitai review` to force a fresh review. The `coderabbit_no_trigger_retriggers`
 counter is incremented; `CODERABBIT_RATE_LIMIT_MAX_RETRIES` is the combined cap for total
 retrigger attempts across both this mechanism and the rate-limit retry path. The elapsed
 timer resets after posting so the triggered review has a full polling window.
+
+**Default timeout (issue #1433)**: reduced from a fixed 600 s to a computed default via
+`coderabbit_no_trigger_timeout_default` in `pr-review-loop.sh`, following this effective-timeout
+rule based on the invocation's `--max-wait`:
+
+| `--max-wait`          | Effective `CODERABBIT_NO_TRIGGER_TIMEOUT` default                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| >= 360 s (e.g. the 1200 s script default, or the 2400 s large-diff default) | 180 s — the hardcoded default; the half-`max_wait` cap does not bind.                                    |
+| 60 s – 359 s            | `floor(max_wait / 2)` — the cap binds and is always less than `max_wait`, guaranteeing room for a subsequent poll cycle before the outer timeout. |
+| < 60 s (e.g. the 180 s spec/\*/implementation-plan/\* doc-branch default) | `max(30 s, floor(max_wait / 2))` — a 30 s floor takes precedence over the halved cap; for `max_wait` at or below ~30 s this can leave little or no room before the outer timeout, but this repo never configures `--max-wait` below 180 s, so this is a defensive edge case rather than a realistic operating point. |
+
+An explicit `CODERABBIT_NO_TRIGGER_TIMEOUT` env var override is honored as-is (uncapped);
+`coderabbit_resolve_no_trigger_timeout` validates it and falls back to the computed default
+(with a `WARN` message) only when the override is not a positive integer.
 
 **Trigger condition**: Allowed up to `CODERABBIT_RATE_LIMIT_MAX_RETRIES` times total. If
 the cap is reached and CodeRabbit still has not responded, the loop exits `escalate`.
@@ -450,7 +540,9 @@ the cap is reached and CodeRabbit still has not responded, the loop exits `escal
 #### Diagnosing a stalled loop (manual polling)
 
 When an agent is polling manually — or when `pr-review-loop.sh` has been running for more
-than 10 minutes with no CodeRabbit activity — check these markers before escalating:
+than the effective `CODERABBIT_NO_TRIGGER_TIMEOUT` window with no CodeRabbit activity (180 s
+on the default 1200 s `--max-wait` invocation; see the effective-timeout table above for
+other `--max-wait` values) — check these markers before escalating:
 
 1. **Check for a "Reviews paused" comment**: run:
 
@@ -466,9 +558,10 @@ than 10 minutes with no CodeRabbit activity — check these markers before escal
    current HEAD push. If the script already posted the retrigger, wait for the full
    `max_wait` window before concluding CodeRabbit is unresponsive.
 
-3. **If neither marker is present and >10 min have elapsed with no activity**, Pattern 2
-   (silent non-trigger) is likely. The script will post the retrigger automatically once
-   `CODERABBIT_NO_TRIGGER_TIMEOUT` (default: 600 s) elapses.
+3. **If neither marker is present and the effective `CODERABBIT_NO_TRIGGER_TIMEOUT` window has
+   elapsed with no activity** (see the effective-timeout table above), Pattern 2 (silent
+   non-trigger) is likely. The script will post the retrigger automatically once that window
+   elapses.
 
 #### When to escalate vs. wait
 
@@ -585,7 +678,11 @@ Use the **PR feedback ledger** (keyed by `(platform, path, body_snippet)`) to de
 
 2. **Finding reappears after fix**: If a finding that was marked `resolved` in a previous cycle reappears in the ledger (same `(platform, path, body_snippet)` key, status reverts to `open`), the fix did not hold. After one reappearance, dispatch the fixer once more. If it reappears again in the following cycle, flag as potentially unfixable and escalate to human.
 
-3. **Maximum cycle count**: As specified in `91-orchestrate-work-protocol.md`, escalate when `cycle >= max_cycles` (default: 10). This is a hard limit independent of finding counts.
+3. **Maximum cycle count**: As specified in `91-orchestrate-work-protocol.md`, escalate when `cycle >= max_cycles` (default: 10). This is a hard limit independent of finding counts. `pr-review-loop.sh` itself also enforces this directly (issue #1502) with **two independent caps**, per operator decision recorded on PR #1507's review:
+   - **Per-run cap** (`CYCLE_COUNT` / `MAX_CYCLES`, default 10): resets to 0 at each orchestration-run boundary, conforming to this protocol's `91-orchestrate-work-protocol.md:1719` instruction verbatim ("Initialize `cycle = 0` once per orchestration run for the PR ... escalate when the run reaches `max_cycles`"). The run boundary is whatever the caller's `PR_REVIEW_LOOP_RUN_ID` env var identifies; when the caller does not set a stable run id, every invocation is its own isolated run and this cap effectively never trips on its own. Exits `RESULT=escalate` / `REASON=max_cycles_exceeded`.
+   - **Lifetime ceiling** (`TOTAL_CYCLE_COUNT` / `MAX_TOTAL_CYCLES`, default 25): never resets, counts across the PR's entire review-loop lifetime regardless of run boundaries — the structural backstop for the case where a per-run-only cap would leave total effort unbounded across many resumed orchestration runs (the downstream ~50-cycle / 18-hour incident cited in issue #1502 plausibly spanned multiple runs). Exits `RESULT=escalate` / `REASON=max_total_cycles_exceeded` (checked only after the per-run cap does not fire, so the two are distinguishable).
+
+   Neither cap resets on a HEAD SHA change alone (see the comment above `reviewer_loop_history_entries_count` in the script for the reset-semantic rationale — a reset-on-push design would make both caps dead code for the exact motivating failure, PR #1492's 18-cycle loop). The heuristic above remains a useful earlier-warning signal (it can fire before either hard cap is reached), but orchestrators and fixer agents must not rely on their own manual cycle counting as the enforcement mechanism — the script is now the source of truth for both axes. Configurable via `PR_REVIEW_LOOP_MAX_CYCLES` / `review.max_cycles` (per-run) and `PR_REVIEW_LOOP_MAX_TOTAL_CYCLES` / `review.max_total_cycles` (lifetime) in `.ai-dev-workflow.yaml`. Orchestrators that want the per-run cap to accumulate correctly across multiple `pr-review-loop.sh` invocations within one continuous run must export a stable `PR_REVIEW_LOOP_RUN_ID` for the duration of that run.
 
 4. **PR-Agent low-confidence Security Concern loop**: If PR-Agent applies
    `Security Concern` in two or more consecutive cycles while another configured
@@ -710,6 +807,87 @@ code-reviewer agent or re-invoke the loop because of these labels. Continue to r
 advisory dispositions in the post-clean summary flow defined below.
 
 ---
+
+### Security-sensitive advisory classification (mandatory before disposition)
+
+Before recording any disposition for an advisory finding (see "Advisory
+finding dispositions (post-clean)" below), classify it against
+`scripts/development-workflow/security-advisory-classifier.sh`. This applies
+to every advisory finding regardless of which platform or extraction
+mechanism produced it — `ADVISORY_LABELS` is PR-Agent-only today, but this
+classification step applies platform-agnostically, matching the
+platform-agnostic disposition procedure documented below it.
+
+**Procedure**:
+
+1. For each advisory finding, fetch its linked comment via `gh api` to get
+   the finding text, its resolved file `path`, and, when present, its
+   `diff_hunk`. `path`/`diff_hunk` are present for inline PR review comments
+   and absent for PR-level issue comments — in the latter case pass
+   `--file-path ""` and `--diff-hunk ""`; Part B of the classifier always
+   fails by construction for those.
+2. Run:
+
+   <!-- workflow-shell-contract: bash-zsh -->
+
+   ```bash
+   scripts/development-workflow/security-advisory-classifier.sh classify \
+     --finding-text "<finding text>" --file-path "<path|empty>" --diff-hunk "<diff_hunk|empty>"
+   ```
+
+3. When `securitySensitive: true`, the finding is **security-sensitive**
+   (BR1) and the following apply instead of the normal disposition menu:
+   - **Disposition menu restriction (BR5, AC4)**: only **Fixed** (cite the
+     resulting commit) or **Pending Human Decision** are available. The
+     runner never itself records **Accepted**, **Deferred**, or **Rejected**
+     for a security-sensitive finding.
+   - **Compute verified human decisions**: fetch this PR's candidate
+     decision comments (any comment posted since the finding was first
+     tracked matching the decision-recording template shape below) and run
+     `run-epic-delegated-gate.sh verify-security-advisory-decisions --input
+     <evidence-json>` against them — this reuses the exact same BR6
+     verification Gate 5 applies, so verification logic exists in one place.
+   - **Reconcile and persist**: run `security-advisory-tracker.sh reconcile`
+     against the PR's existing `<!-- security-sensitive-advisory-findings -->`
+     tracking comment (BR7) and the verified decisions just computed
+     (`--decision-events`), then `render` + `apply` to upsert the marker
+     comment — this is what makes a verified human decision actually persist
+     into the tracking record, not only exist as an in-memory Gate 5
+     evaluation.
+   - **Label mutation**: after `reconcile`, run `gh pr edit --add-label
+     security-advisory-decision-required` when any tracked finding's
+     reconciled status is `pending`, or `gh pr edit --remove-label
+     security-advisory-decision-required` when zero tracked findings are
+     `pending`. `security-advisory-tracker.sh apply` only upserts the marker
+     comment; it never touches this label, and this step never touches
+     `human-checkpoint-required` (BR4, AC7) — the two labels are unrelated.
+   - **Decision-template notification**: when reconciliation newly produces
+     (or re-produces, per BR7's `superseded_by_new_commit` case) at least one
+     `pending` entry, upsert (find-by-marker-then-PATCH-or-POST, not
+     duplicate) a PR comment marked
+     `<!-- security-sensitive-advisory-decision-template -->` containing the
+     exact expected decision-recording text for every currently `pending`
+     finding, so a human reviewer can copy it verbatim:
+
+     ```text
+     I record a human decision for security-sensitive advisory finding <finding-id> on PR #<pr> at head <head-sha>: <accept|reject> — <rationale>
+     ```
+
+     This comment is left in place with a "no findings pending" note once
+     zero tracked findings are `pending` (it is not deleted).
+4. When `securitySensitive: false`, the finding follows the existing
+   general advisory fix/accept/rationale disposition path unchanged (see
+   below).
+
+**Why this is distinct from the checkpoint lifecycle (BR4)**: the
+`security-advisory-decision-required` label and the
+`security_sensitive_advisory_pending` stop condition never read, write, or
+otherwise participate in the `human-checkpoint-required` /
+`human_checkpoint_required` pending/satisfied/waived lifecycle. A blanket
+checkpoint waiver recorded earlier in a run — even one covering this same
+PR's item — has no effect on a pending security-sensitive advisory finding,
+because the finding is discovered later during this loop, after any earlier
+waiver was recorded.
 
 ### Advisory finding dispositions (post-clean)
 

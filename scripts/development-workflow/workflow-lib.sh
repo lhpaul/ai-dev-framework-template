@@ -103,6 +103,70 @@ repo_slug() {
   gh repo view --json nameWithOwner --jq '.nameWithOwner'
 }
 
+gh_api_timeout_seconds() {
+  local value="${WORKFLOW_GH_API_TIMEOUT_SECONDS:-30}"
+  if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+    value=30
+  fi
+  printf '%s\n' "$value"
+}
+
+gh_api_bounded() {
+  local timeout_seconds
+  timeout_seconds="$(gh_api_timeout_seconds)"
+  if command -v timeout >/dev/null 2>&1 && timeout --help 2>&1 | grep -q -- '--kill-after'; then
+    local status
+    status=0
+    timeout --kill-after=1 "$timeout_seconds" gh api "$@" || status=$?
+    if [ "$status" -eq 137 ]; then
+      return 124
+    fi
+    return "$status"
+  fi
+
+  local output_file pid elapsed status process_group
+  output_file="$(mktemp)" || return 1
+  process_group=0
+  if command -v setsid >/dev/null 2>&1; then
+    setsid gh api "$@" >"$output_file" &
+    process_group=1
+  else
+    gh api "$@" >"$output_file" &
+  fi
+  pid=$!
+  elapsed=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$elapsed" -ge "$timeout_seconds" ]; then
+      if [ "$process_group" -eq 1 ]; then
+        kill -TERM "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+      else
+        kill "$pid" 2>/dev/null || true
+      fi
+      sleep 1
+      if kill -0 "$pid" 2>/dev/null; then
+        if [ "$process_group" -eq 1 ]; then
+          kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+        else
+          kill -KILL "$pid" 2>/dev/null || true
+        fi
+      fi
+      wait "$pid" 2>/dev/null || true
+      rm -f "$output_file"
+      return 124
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  status=0
+  wait "$pid" || status=$?
+  cat "$output_file"
+  rm -f "$output_file"
+  if ! [[ "$status" =~ ^[0-9]+$ ]]; then
+    status=1
+  fi
+  return "$status"
+}
+
 workflow_context_value() {
   local key="$1"
   local context="${2:-}"
@@ -449,6 +513,22 @@ is_bugbot_disabled_message() {
   return 1
 }
 
+is_bugbot_explicit_skip_message() {
+  if [ "$#" -ne 1 ]; then
+    echo "ERROR: is_bugbot_explicit_skip_message requires exactly 1 argument." >&2
+    return 1
+  fi
+
+  local body="$1"
+
+  case "$body" in
+    *"Skipping Bugbot:"*|*"Bugbot skipped"*|*"Bugbot was skipped"*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 is_bugbot_usage_limit_message() {
   local body="$1"
 
@@ -744,6 +824,81 @@ workflow_config_review_platforms() {
 
   workflow_config_review_on_draft_github "$config_file"
   workflow_config_review_on_ready_github "$config_file"
+}
+
+# _workflow_config_review_scalar <config_file> <key>
+#
+# Internal helper shared by workflow_config_review_max_cycles and
+# workflow_config_review_max_total_cycles (and any future direct scalar
+# under the top-level `review:` section): reads review.<key> and prints the
+# raw string value found, or empty when the file, section, or key is
+# absent. Not intended to be called directly by other scripts — use one of
+# the named wrappers below so call sites stay self-documenting.
+_workflow_config_review_scalar() {
+  local config_file="$1"
+  local key="$2"
+
+  [ -f "$config_file" ] || return 0
+
+  awk -v key="$key" '
+    function trim(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^["'"'"']|["'"'"']$/, "", value)
+      return value
+    }
+
+    /^review:[[:space:]]*(#.*)?$/ {
+      in_review = 1
+      next
+    }
+
+    in_review && /^[^[:space:]#]/ {
+      in_review = 0
+    }
+
+    in_review && $0 ~ ("^[[:space:]][[:space:]]" key ":[[:space:]]*") {
+      line = $0
+      sub(/^[[:space:]]*[^[:space:]]*:[[:space:]]*/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      print trim(line)
+      exit
+    }
+  ' "$config_file"
+}
+
+# workflow_config_review_max_cycles [config_file]
+#
+# Reads review.max_cycles — a direct scalar key under the top-level `review:`
+# section in .ai-dev-workflow.yaml, sibling to on_draft/on_ready — and prints
+# the raw string value found, or empty when the file, section, or key is
+# absent. Callers must validate the value is a positive integer and apply
+# their own default; this reader does not know callers' defaults.
+#
+# Consumed by scripts/development-workflow/pr-review-loop.sh
+# (reviewer_loop_resolve_max_cycles) to configure Protocol 93's documented
+# PER-RUN reviewer-loop cycle cap (default: 10; see issue #1502).
+workflow_config_review_max_cycles() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  _workflow_config_review_scalar "$config_file" max_cycles
+}
+
+# workflow_config_review_max_total_cycles [config_file]
+#
+# Reads review.max_total_cycles — a direct scalar key under the top-level
+# `review:` section, sibling to max_cycles — and prints the raw string value
+# found, or empty when the file, section, or key is absent. Callers must
+# validate the value is a positive integer and apply their own default.
+#
+# Consumed by scripts/development-workflow/pr-review-loop.sh
+# (reviewer_loop_resolve_max_total_cycles) to configure the reviewer-loop
+# LIFETIME cycle ceiling (default: 25) — a separate, never-reset cap on top
+# of max_cycles' per-orchestration-run cap; see issue #1502 (dual-cap
+# follow-up per operator decision on PR #1507's review).
+workflow_config_review_max_total_cycles() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  _workflow_config_review_scalar "$config_file" max_total_cycles
 }
 
 workflow_config_review_phase_after_clean_platforms() {
@@ -2553,15 +2708,157 @@ EOF
   printf '%s' "$field_json"
 }
 
-# update_tracker_named_field_best_effort <issue_number> <field_name> <option_value>
+# _workflow_tracker_priority_field_json
 #
-# Best-effort update for any single-select GitHub Projects field by name.
-# Supports github_projects provider only; emits warnings for all other providers.
-# Returns 0 in all warning/failure cases to avoid blocking caller flows.
+# Internal helper shared by workflow_tracker_priority_resolvable and
+# workflow_tracker_default_priority_value. Resolves and prints the
+# project's Priority field JSON (id + options map, see
+# workflow_github_project_named_field_json) when the tracker provider is
+# github_projects, a project is configured, and the field was successfully
+# read. Performs no issue-specific lookups and triggers no mutation, so it
+# is safe to call before an issue exists. Prints nothing and returns 1 in
+# every other case — provider mismatch, no project configured, or the
+# lookup itself failed — which both callers treat uniformly as "nothing to
+# validate/adapt against" (the same "genuinely does not apply" / "uncertain"
+# carve-out update_tracker_named_field_best_effort always treats
+# permissively).
+_workflow_tracker_priority_field_json() {
+  local _wtpfj_provider project_owner project_number project_id field_json
+
+  _wtpfj_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  if [ "$_wtpfj_provider" != "github_projects" ]; then
+    return 1
+  fi
+
+  project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
+  if [ -z "$project_number" ]; then
+    return 1
+  fi
+
+  project_owner="$(workflow_resolve_github_project_owner)"
+  if [ -z "$project_owner" ]; then
+    project_owner="$(workflow_resolve_github_repo_owner)"
+  fi
+  if [ -z "$project_owner" ]; then
+    return 1
+  fi
+
+  project_id="$(workflow_github_project_id "$project_owner" "$project_number" 2>/dev/null)"
+  if [ -z "$project_id" ]; then
+    return 1
+  fi
+
+  if ! field_json="$(workflow_github_project_named_field_json "$project_id" "Priority" 2>/dev/null)"; then
+    return 1
+  fi
+
+  printf '%s' "$field_json"
+}
+
+# workflow_tracker_priority_resolvable <priority_value>
+#
+# Pre-flight check: does <priority_value> resolve against the project's
+# actual Priority field options? Unlike update_tracker_priority_best_effort,
+# this triggers no mutation, so it is safe to call before an issue exists —
+# e.g. before `gh issue create` — to avoid the partial-success window where
+# an issue is created but a required follow-up Priority write then fails
+# (see issue #1501 code review: a caller that retries on non-zero exit
+# without inspecting stdout could otherwise create a duplicate issue).
+#
+# Returns 0 (resolvable / not blocking) whenever
+# _workflow_tracker_priority_field_json cannot produce a confirmed field
+# reading (provider mismatch, no project configured, or an inconclusive
+# lookup) — this pre-check must not block issue creation on an
+# environmental failure the authoritative post-creation required check will
+# re-attempt anyway. Returns 1 only when the Priority field was
+# successfully read from a configured project and <priority_value> does not
+# match any of its options — a confirmed, actionable bad value.
+workflow_tracker_priority_resolvable() {
+  local priority_value="$1"
+  local field_json option_id
+
+  if ! field_json="$(_workflow_tracker_priority_field_json)"; then
+    return 0
+  fi
+
+  option_id="$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
+" "$priority_value" 2>/dev/null)"
+
+  [ -n "$option_id" ]
+}
+
+# workflow_tracker_default_priority_value
+#
+# Resolves the runtime default Priority value used when --priority is
+# omitted, adapting to what the configured board actually supports instead
+# of assuming a single universal literal (issue #1501 code review, P1
+# finding "Preserve compatibility with Normal-priority boards"): prefers
+# "Medium" (this repo's own board), falls back to "Normal" for boards still
+# configured per the framework's pre-#1501 setup docs.
+#
+# When _workflow_tracker_priority_field_json cannot produce a confirmed
+# field reading (provider mismatch, no project configured, or an
+# inconclusive lookup), prints "Medium" unchanged — matching the
+# pre-existing best-effort behavior for those cases; there is nothing more
+# specific to fall back to, and the post-creation update remains a
+# best-effort no-op for a provider that does not support it.
+#
+# Only prints nothing (empty) when the Priority field was successfully read
+# from a configured project and CONFIRMED to contain neither "Medium" nor
+# "Normal". At that point, forcing a hard default would make every routine
+# backlog-item creation on that board fail until manually migrated, so the
+# caller should leave Priority unset instead — the same way an omitted
+# --size or --type is left unset.
+workflow_tracker_default_priority_value() {
+  local field_json resolved
+
+  if ! field_json="$(_workflow_tracker_priority_field_json)"; then
+    printf 'Medium'
+    return 0
+  fi
+
+  resolved="$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+options = data.get('options') or {}
+for candidate in ('Medium', 'Normal'):
+    if options.get(candidate):
+        print(candidate, end='')
+        break
+" 2>/dev/null)"
+
+  printf '%s' "$resolved"
+}
+
+# update_tracker_named_field_best_effort <issue_number> <field_name> <option_value> [required]
+#
+# Update for any single-select GitHub Projects field by name. Resolves
+# <option_value> against the project's actual field options (see
+# workflow_github_project_named_field_json) rather than a hardcoded list.
+# Supports github_projects provider only; emits warnings for all other
+# providers.
+#
+# When the tracker provider is not github_projects, or no GitHub Project is
+# configured, the field genuinely does not apply — there is nothing to
+# resolve <option_value> against — so those two cases always return 0
+# regardless of the [required] argument.
+#
+# For every other failure (item not found on the board, field/option not
+# found, GraphQL read or write failure, etc.): when [required] is the
+# literal string "required", the failure is a hard error (non-zero return,
+# message prefixed "Error:") so an explicitly-requested value that cannot be
+# applied to a configured board does not fail silently. When [required] is
+# omitted (the default), those failures remain best-effort (return 0,
+# message prefixed "Warning:") to avoid blocking caller flows for fields the
+# caller does not depend on.
 update_tracker_named_field_best_effort() {
   local issue_number="$1"
   local field_name="$2"
   local option_value="$3"
+  local required="${4:-}"
   local project_number project_id field_json field_id option_id item_json item_id
 
   local _utnfbe_provider
@@ -2583,6 +2880,10 @@ import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
 print(item.get('item_id') or '', end='')
 "); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse project item ID for issue #${issue_number}; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse project item ID for issue #${issue_number}; skipping tracker '${field_name}' update."
     return 0
   fi
@@ -2591,19 +2892,35 @@ import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
 print(item.get('project_id') or '', end='')
 "); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse project ID for issue #${issue_number}; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse project ID for issue #${issue_number}; skipping tracker '${field_name}' update."
     return 0
   fi
   if [ -z "$item_id" ]; then
+    if [ "$required" = "required" ]; then
+      echo "Error: issue #${issue_number} not found in project #${project_number}; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: issue #${issue_number} not found in project #${project_number}; skipping tracker '${field_name}' update."
     return 0
   fi
   if [ -z "$project_id" ]; then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not resolve project ID for issue #${issue_number}; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not resolve project ID for issue #${issue_number}; skipping tracker '${field_name}' update."
     return 0
   fi
 
   if ! field_json="$(workflow_github_project_named_field_json "$project_id" "$field_name")"; then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not read project '${field_name}' field metadata; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not read project '${field_name}' field metadata; skipping tracker '${field_name}' update."
     return 0
   fi
@@ -2612,6 +2929,10 @@ import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
 print(data.get('field_id') or '', end='')
 "); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse '${field_name}' field metadata; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse '${field_name}' field metadata; skipping tracker '${field_name}' update."
     return 0
   fi
@@ -2620,10 +2941,18 @@ import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
 print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
 " "$option_value"); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse '${field_name}' option '${option_value}'; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse '${field_name}' option '${option_value}'; skipping tracker '${field_name}' update."
     return 0
   fi
   if [ -z "$field_id" ] || [ -z "$option_id" ]; then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not resolve '${field_name}' field or option '${option_value}'; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not resolve '${field_name}' field or option '${option_value}'; skipping tracker '${field_name}' update."
     return 0
   fi
@@ -2649,6 +2978,11 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
     '; then
     printf '%s' "$__workflow_last_gh_stdout"
   else
+    if [ "$required" = "required" ]; then
+      echo "Error: GraphQL mutation failed for issue #${issue_number}; tracker '${field_name}' not updated." >&2
+      workflow_print_captured_gh_stderr
+      return 1
+    fi
     echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker '${field_name}' not updated."
     workflow_print_captured_gh_stderr
   fi
@@ -2656,16 +2990,19 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
 
 # update_tracker_priority_best_effort <issue_number> <priority_value>
 #
-# Best-effort update for the GitHub Projects Priority field.
-# Valid values: Urgent, High, Normal, Low. Medium aliases to Normal.
-# Returns 0 in all failure cases (fail-open).
+# Update for the GitHub Projects Priority field. Resolves <priority_value>
+# against the project's actual Priority field options (see
+# workflow_github_project_named_field_json) — there is no hardcoded alias
+# table. Priority is always explicitly set by add-backlog-item.sh (either
+# user-supplied via --priority, or defaulted), so an unresolvable value is a
+# hard error (non-zero return) whenever the tracker provider and project are
+# configured — see update_tracker_named_field_best_effort's "required" mode.
+# When the provider/project genuinely does not apply, this remains
+# best-effort (returns 0), matching update_tracker_named_field_best_effort.
 update_tracker_priority_best_effort() {
   local issue_number="$1"
   local priority_value="$2"
-  if [ "$priority_value" = "Medium" ]; then
-    priority_value="Normal"
-  fi
-  update_tracker_named_field_best_effort "$issue_number" "Priority" "$priority_value"
+  update_tracker_named_field_best_effort "$issue_number" "Priority" "$priority_value" "required"
 }
 
 # update_tracker_size_best_effort <issue_number> <size_value>

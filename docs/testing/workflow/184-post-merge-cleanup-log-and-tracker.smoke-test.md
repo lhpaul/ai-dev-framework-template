@@ -15,6 +15,7 @@ Before running this smoke test:
 - [ ] `gh` CLI is authenticated: `gh auth status`
 - [ ] `shellcheck` is available (optional but recommended): `shellcheck --version`
 - [ ] **The implementation from this plan must already be landed before running this smoke test.** `scripts/development-workflow/post-merge-cleanup.sh` must contain the unified `BRANCH_TYPE`/`ISSUE_NUMBER` extraction, the `update_tracker_status` helper, and the `Spec Ready` / `Plan Ready` / `Merged` status transitions described in the plan. This runbook validates post-implementation behavior; running it against the current `develop` state (where the script is unchanged) will fail Steps 1–5 because the expected output does not yet exist
+- [ ] For Steps 3 and 5, you have a real merged implementation PR whose head branch is `feature/184-smoke-test-dummy`; export its number as `MERGED_FEATURE_PR_NUMBER`. Implementation branch remote cleanup is intentionally bound to the exact merged PR.
 - [ ] For Step 5 (tracker update), you have access to a GitHub Projects v2 project with Status options: `Spec Ready`, `Plan Ready`, `Merged`
 
 > **Important**: Steps 1–4 can be run without a real GitHub Projects setup by checking only the log output and return code. Step 5 requires a live project. Use `GITHUB_PROJECT_NUMBER` and `GITHUB_PROJECT_OWNER` environment variables to point at a test project if needed.
@@ -113,7 +114,7 @@ echo "Exit code: $exit_code"
 
 ```bash
 git branch feature/184-smoke-test-dummy 2>/dev/null || true
-output=$(./scripts/development-workflow/post-merge-cleanup.sh feature/184-smoke-test-dummy 2>&1)
+output=$(./scripts/development-workflow/post-merge-cleanup.sh --pr "$MERGED_FEATURE_PR_NUMBER" feature/184-smoke-test-dummy 2>&1)
 exit_code=$?
 echo "$output"
 echo "Exit code: $exit_code"
@@ -159,7 +160,7 @@ echo "Exit code: $exit_code"
 # Temporarily unset project env vars to simulate missing config
 git branch feature/184-smoke-test-dummy 2>/dev/null || true
 output=$(GITHUB_PROJECT_NUMBER="" GITHUB_PROJECT_OWNER="" \
-  ./scripts/development-workflow/post-merge-cleanup.sh feature/184-smoke-test-dummy 2>&1)
+  ./scripts/development-workflow/post-merge-cleanup.sh --pr "$MERGED_FEATURE_PR_NUMBER" feature/184-smoke-test-dummy 2>&1)
 exit_code=$?
 echo "$output"
 echo "Exit code: $exit_code"
