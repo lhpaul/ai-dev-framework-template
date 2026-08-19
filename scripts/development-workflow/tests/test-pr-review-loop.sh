@@ -1899,6 +1899,11 @@ echo ""
 echo "=== Area 10c: reviewer-loop max_cycles enforcement (#1502) ==="
 
 # --- reviewer_loop_history_entries_count ---
+# Counts Protocol 91's `cycle` value: only prior entries whose result is
+# needs_fixes or needs_rerun (the entries that actually trigger a fixer
+# dispatch). clean/skipped/other-result entries must NOT inflate the count
+# (Codex finding on PR #1507 — counting every ledger entry indiscriminately
+# off-by-ones the cap and lets non-fixer entries exhaust the budget).
 
 run_test "cycles_entries_count_empty_body" "0 available" \
   "$(reviewer_loop_history_entries_count "")"
@@ -1912,22 +1917,45 @@ _mc_marker_no_json_body=$'### Automated Reviewer Loop Summary\n<!-- reviewer-loo
 run_test "cycles_entries_count_marker_no_json" "-1 unavailable" \
   "$(reviewer_loop_history_entries_count "$_mc_marker_no_json_body")"
 
-# 9 entries, each with a DISTINCT head_sha — mirrors the real fix-push cycle
-# pattern (a new commit/HEAD SHA on nearly every cycle). This is also the
-# fixture used below to demonstrate the reset-on-new-head-SHA decision.
-_mc_nine_entry_payload="$(jq -n '{
+# 10 fixer-dispatch-triggering entries (result=needs_fixes), each with a
+# DISTINCT head_sha — mirrors the real fix-push cycle pattern (a new
+# commit/HEAD SHA on nearly every cycle). This is also the fixture used
+# below to demonstrate the reset-on-new-head-SHA decision, and to prove
+# reaching the default cap (10) escalates.
+_mc_ten_dispatch_payload="$(jq -n '{
   schema: "reviewer_loop_history.v1",
   history_status: "available",
-  entries: [range(1;10) | {iteration: ., head_sha: ("sha-" + (.|tostring))}]
+  entries: [range(1;11) | {iteration: ., head_sha: ("sha-" + (.|tostring)), result: "needs_fixes"}]
 }')"
-_mc_nine_entry_body="### Automated Reviewer Loop Summary
+_mc_ten_dispatch_body="### Automated Reviewer Loop Summary
 
 <!-- reviewer-loop-history:v1 -->
 \`\`\`json
-$(printf '%s\n' "$_mc_nine_entry_payload" | jq '.')
+$(printf '%s\n' "$_mc_ten_dispatch_payload" | jq '.')
 \`\`\`"
-run_test "cycles_entries_count_nine_entries_distinct_head_shas" "9 available" \
-  "$(reviewer_loop_history_entries_count "$_mc_nine_entry_body")"
+run_test "cycles_entries_count_ten_dispatch_entries_distinct_head_shas" "10 available" \
+  "$(reviewer_loop_history_entries_count "$_mc_ten_dispatch_body")"
+
+# Mixed-result ledger: 2 needs_fixes + 1 clean + 1 skipped = 4 total entries,
+# but only the 2 needs_fixes entries represent an actual fixer dispatch.
+_mc_mixed_result_payload="$(jq -n '{
+  schema: "reviewer_loop_history.v1",
+  history_status: "available",
+  entries: [
+    {iteration: 1, head_sha: "sha-1", result: "needs_fixes"},
+    {iteration: 2, head_sha: "sha-1", result: "clean"},
+    {iteration: 3, head_sha: "sha-2", result: "skipped"},
+    {iteration: 4, head_sha: "sha-3", result: "needs_fixes"}
+  ]
+}')"
+_mc_mixed_result_body="### Automated Reviewer Loop Summary
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+$(printf '%s\n' "$_mc_mixed_result_payload" | jq '.')
+\`\`\`"
+run_test "cycles_entries_count_only_counts_fixer_dispatch_results" "2 available" \
+  "$(reviewer_loop_history_entries_count "$_mc_mixed_result_body")"
 
 _mc_persisted_unavailable_body=$'### Automated Reviewer Loop Summary\n<!-- reviewer-loop-history:v1 -->\n```json\n{"schema":"reviewer_loop_history.v1","history_status":"unavailable","history_unavailable_reason":"comment_read_failed","entries":[]}\n```\n'
 run_test "cycles_entries_count_persisted_unavailable" "-1 unavailable" \
@@ -2002,22 +2030,23 @@ run_test "cycles_resolve_count_no_pr_number" "-1" \
   "$(reviewer_loop_resolve_cycle_count "")"
 
 export MOCK_GH_COMMENTS_OUTPUT="[]"
-run_test "cycles_resolve_count_first_run_is_cycle_1" "1" \
+run_test "cycles_resolve_count_first_run_is_cycle_zero" "0" \
   "$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
 unset MOCK_GH_COMMENTS_OUTPUT
 
-# 9 prior entries recorded → this invocation is cycle 10 (the configured
-# default cap). Wrap the fixture built above in a full summary-comment record
-# exactly as reviewer_loop_history_select_summary_record expects.
-_mc_nine_entry_comment_json="$(jq -n --arg body "$_mc_nine_entry_body" \
+# 10 prior fixer-dispatch entries recorded → this invocation's cycle count is
+# 10, matching the configured default cap. Wrap the fixture built above in a
+# full summary-comment record exactly as
+# reviewer_loop_history_select_summary_record expects.
+_mc_ten_dispatch_comment_json="$(jq -n --arg body "$_mc_ten_dispatch_body" \
   '[{id: 1, created_at: "2026-08-18T00:00:00Z",
      body: ("### Automated Reviewer Loop Summary\n\n*Posted automatically by `pr-review-loop.sh`.*\n\n" + $body)}]')"
-export MOCK_GH_COMMENTS_OUTPUT="$_mc_nine_entry_comment_json"
-run_test "cycles_resolve_count_nine_prior_is_cycle_ten" "10" \
+export MOCK_GH_COMMENTS_OUTPUT="$_mc_ten_dispatch_comment_json"
+run_test "cycles_resolve_count_ten_prior_dispatches_is_cycle_ten" "10" \
   "$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
 # AC: end-to-end — this cycle count against the default cap (10) with a
 # needs_fixes verdict must trip the escalation.
-run_test "cycles_end_to_end_ninth_prior_reaches_cap_escalates" "yes" "$(
+run_test "cycles_end_to_end_tenth_dispatch_reaches_cap_escalates" "yes" "$(
   _cc="$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
   _mx="$(reviewer_loop_resolve_max_cycles "" 2>/dev/null)"
   reviewer_loop_cap_exceeded "$_cc" "$_mx" needs_fixes && echo yes || echo no
@@ -2025,33 +2054,45 @@ run_test "cycles_end_to_end_ninth_prior_reaches_cap_escalates" "yes" "$(
 unset MOCK_GH_COMMENTS_OUTPUT
 
 # Reset-semantic demonstration (AC: "the chosen reset-on-new-head behavior"):
-# the 9 recorded entries above each carry a DISTINCT head_sha (sha-1..sha-9),
+# the 10 recorded entries above each carry a DISTINCT head_sha (sha-1..sha-10),
 # exactly mirroring a real sequence of fix-push cycles. The resolved cycle
 # count is still 10 (cumulative) — proving the counter is deliberately NOT
 # reset when the HEAD SHA changes. A reset-on-new-head design would report
-# cycle 1 here instead, defeating the cap for its own motivating case (PR
+# cycle 0 here instead, defeating the cap for its own motivating case (PR
 # #1492: 18 cycles, nearly all with a new HEAD SHA after each fix push).
 run_test "cycles_reset_semantic_is_cumulative_across_distinct_head_shas" "10" \
-  "$(export MOCK_GH_COMMENTS_OUTPUT="$_mc_nine_entry_comment_json"; reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
+  "$(export MOCK_GH_COMMENTS_OUTPUT="$_mc_ten_dispatch_comment_json"; reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
 unset MOCK_GH_COMMENTS_OUTPUT
 
-# 3 prior entries → cycle 4, well under the default cap of 10 → not exceeded.
-_mc_three_entry_payload="$(jq -n '{
+# 3 prior fixer-dispatch entries → cycle 3, well under the default cap of 10
+# → not exceeded.
+_mc_three_dispatch_payload="$(jq -n '{
   schema: "reviewer_loop_history.v1",
   history_status: "available",
-  entries: [range(1;4) | {iteration: ., head_sha: ("sha-" + (.|tostring))}]
+  entries: [range(1;4) | {iteration: ., head_sha: ("sha-" + (.|tostring)), result: "needs_fixes"}]
 }')"
-_mc_three_entry_comment_json="$(jq -n --arg body "$(printf '%s\n' "$_mc_three_entry_payload" | jq '.')" \
+_mc_three_dispatch_comment_json="$(jq -n --arg body "$(printf '%s\n' "$_mc_three_dispatch_payload" | jq '.')" \
   '[{id: 2, created_at: "2026-08-18T00:00:00Z",
      body: ("### Automated Reviewer Loop Summary\n\n*Posted automatically by `pr-review-loop.sh`.*\n\n<!-- reviewer-loop-history:v1 -->\n```json\n" + $body + "\n```")}]')"
-export MOCK_GH_COMMENTS_OUTPUT="$_mc_three_entry_comment_json"
-run_test "cycles_resolve_count_three_prior_is_cycle_four" "4" \
+export MOCK_GH_COMMENTS_OUTPUT="$_mc_three_dispatch_comment_json"
+run_test "cycles_resolve_count_three_prior_dispatches_is_cycle_three" "3" \
   "$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
 run_test "cycles_end_to_end_under_cap_does_not_escalate" "no" "$(
   _cc="$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
   _mx="$(reviewer_loop_resolve_max_cycles "" 2>/dev/null)"
   reviewer_loop_cap_exceeded "$_cc" "$_mx" needs_fixes && echo yes || echo no
 )"
+unset MOCK_GH_COMMENTS_OUTPUT
+
+# Non-fixer entries (clean/skipped) interspersed with fixer-dispatch entries
+# must not push the count to the cap prematurely: 2 needs_fixes + 1 clean +
+# 1 skipped = 4 ledger entries, but cycle count is 2 (well under cap 10).
+_mc_mixed_result_comment_json="$(jq -n --arg body "$_mc_mixed_result_body" \
+  '[{id: 3, created_at: "2026-08-18T00:00:00Z",
+     body: ("### Automated Reviewer Loop Summary\n\n*Posted automatically by `pr-review-loop.sh`.*\n\n" + $body)}]')"
+export MOCK_GH_COMMENTS_OUTPUT="$_mc_mixed_result_comment_json"
+run_test "cycles_resolve_count_mixed_results_excludes_non_dispatch_entries" "2" \
+  "$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
 unset MOCK_GH_COMMENTS_OUTPUT
 
 # API failure while resolving the ledger → -1 (unavailable), and the cap check
@@ -2111,9 +2152,10 @@ done
 unset _mc_fn _mc_fn_line _mc_harness_return_line
 
 unset _mc_no_marker_body _mc_marker_no_json_body
-unset _mc_nine_entry_payload _mc_nine_entry_body _mc_nine_entry_comment_json
+unset _mc_ten_dispatch_payload _mc_ten_dispatch_body _mc_ten_dispatch_comment_json
+unset _mc_mixed_result_payload _mc_mixed_result_body _mc_mixed_result_comment_json
 unset _mc_persisted_unavailable_body _mc_malformed_body _mc_wrong_schema_body
-unset _mc_three_entry_payload _mc_three_entry_comment_json
+unset _mc_three_dispatch_payload _mc_three_dispatch_comment_json
 
 # ---------------------------------------------------------------------------
 # Area 11: Step 7b regression-label auto-restore (Option C, issue #805)
