@@ -7,6 +7,7 @@ Related references:
 
 - [Repository modes](repository-modes.md)
 - [Workflow hub setup](workflow-hub-setup.md)
+- [Multi-repository release adoption](multi-repo-release-adoption.md)
 - [Sync-template command](../../../.claude/commands/sync-template.md)
 - [Sync manifest](../../../sync-manifest.yaml)
 - [Product repository injection skeleton](../../../template/product-repo-injection/README.md)
@@ -91,6 +92,11 @@ evidence:
 These files are product release runtime surfaces, not hub coordination state.
 Historical specs, implementation plans, workflow protocols, hub orchestration
 scripts, delivery coordination runbooks, and hub tracker state remain excluded.
+
+For multi-repository release adoption, product repositories provide
+product-owned release, CI, deployment, and cleanup evidence to the hub. They do
+not receive the hub adoption runbook, historical hub baselines, or delivery
+coordination state through product repository injection.
 
 ## Apply Injection Safely
 

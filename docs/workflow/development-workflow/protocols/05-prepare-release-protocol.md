@@ -79,6 +79,16 @@ Single-repository releases keep the existing current-repository ownership model
 and may use `RELEASE_BASE=develop` and
 `RELEASE_BRANCH_PATTERN=release/v{version}` with an empty `PRODUCT_REPO_NAME`.
 
+For workflow-hub multi-repository adoption, collect release self-review
+assurance from
+[Multi-repository release adoption](../multi-repo-release-adoption.md) before
+release mutation. A previously adopted release may reuse persisted validation
+only when the selected product contract, fixture inputs, and historical
+baselines have not changed since that validation. Otherwise rerun assurance.
+The evidence must show `adoption_status=validated` and unchanged hub-owned and
+product-owned historical baselines, or stop with the reported owner action. It
+is not required for unchanged `single_repo` releases.
+
 ---
 
 ## Pre-flight Checks

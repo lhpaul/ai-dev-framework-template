@@ -6,6 +6,7 @@ workflow items for one or more product repositories.
 Related references:
 
 - [Repository modes](repository-modes.md)
+- [Multi-repository release adoption](multi-repo-release-adoption.md)
 - [Workflow Hub GitHub App Authentication](integrations/workflow-hub-github-app.md)
 - [Orchestrate Work Protocol](protocols/90-batch-orchestrate-work-protocol.md)
 - [Work Item Orchestration Protocol](protocols/91-orchestrate-work-protocol.md)
@@ -156,6 +157,13 @@ scripts/development-workflow/hub-preflight-product-repos.sh --repo faind-mobile-
 Product repositories with no GitHub Actions workflows must declare
 `ci_policy: none` on the hub `workflow_hub.product_repos[]` entry, or preflight
 fails with guidance before orchestration reaches delegated merge gates.
+
+Before a workflow hub starts multi-repository release mutation, follow
+[Multi-repository release adoption](multi-repo-release-adoption.md) and record
+assurance evidence. Adoption validation must pass before release mutation unless
+the release remains in the existing `single_repo` path. Continue only when
+`adoption_status=validated` and the assurance evidence shows unchanged
+historical no-rewrite results for both hub-owned and product-owned baselines.
 
 Run the non-secret workflow-hub smoke fixture:
 

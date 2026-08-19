@@ -110,6 +110,14 @@ selected product repository still uses the namespaced component milestone and
 delivery bundle finalization path. Plain `vX.Y.Z` milestone stamping remains the
 non-hub `single_repo` compatibility path.
 
+Multi-repository release adoption is prospective. Follow
+[Multi-repository release adoption](multi-repo-release-adoption.md) before a
+workflow hub treats routed product release evidence as adopted. The adoption
+assurance must preserve historical no-rewrite baselines for hub-owned delivery
+records and product-owned release records; it must not change prior tags,
+changelog entries, milestones, delivery records, or tracker release state.
+Release mutation stops until assurance returns `adoption_status=validated`.
+
 In `single_repo` mode, all artifact ownership stays exactly as it works today:
 the tracker item, spec, plan, implementation branch, PR, CI, reviewer loop, smoke
 runbook, and release evidence are all handled in the same repository.

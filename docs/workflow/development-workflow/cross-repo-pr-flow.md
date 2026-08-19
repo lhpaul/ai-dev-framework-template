@@ -8,6 +8,7 @@ Related references:
 - [Workflow hub setup](workflow-hub-setup.md)
 - [Product repository injection](product-repo-injection.md)
 - [Repository modes](repository-modes.md)
+- [Multi-repository release adoption](multi-repo-release-adoption.md)
 - [Workflow Hub GitHub App Authentication](integrations/workflow-hub-github-app.md)
 - [Batch Orchestration Protocol](protocols/90-batch-orchestrate-work-protocol.md)
 - [Work Item Orchestration Protocol](protocols/91-orchestrate-work-protocol.md)
@@ -90,6 +91,14 @@ suite version, stamp the parent epic, or stamp the delivery bundle issue.
 
 Hub-only workflow improvements, such as updates to orchestration scripts or
 workflow docs, still open implementation PRs in the hub repository.
+
+For adopted multi-repository releases, attach release assurance evidence from
+[Multi-repository release adoption](multi-repo-release-adoption.md) to the
+release runbook or PR self-review. The evidence must show
+`adoption_status=validated` and unchanged hub-owned and product-owned
+historical baseline results before release mutation proceeds. Use the
+[Runbook Evidence](multi-repo-release-adoption.md#runbook-evidence) section for
+the canonical evidence field list. The existing `single_repo` path is exempt.
 
 ## Route The Work Item
 
