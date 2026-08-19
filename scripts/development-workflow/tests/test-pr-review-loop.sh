@@ -1672,7 +1672,11 @@ MOCK_GH_EXIT=0
 MOCK_GH_COMMENTS_EXIT=1
 MOCK_GH_UPDATED_AT="2026-07-18T00:10:00Z"
 export MOCK_GH_EXIT MOCK_GH_COMMENTS_EXIT MOCK_GH_UPDATED_AT
-_post_review_summary "clean" "" "bugbot (clean)" "0" "0"
+# _post_review_summary now returns non-zero on a read failure too (#1502
+# dual-cap follow-up), even when the write succeeds — guard the bare call
+# with `|| true` since this test only cares about the rendered body, not
+# the return code (covered separately by the read-failure-return tests).
+_post_review_summary "clean" "" "bugbot (clean)" "0" "0" || true
 if [ -n "${_summary_read_failed_body_capture:-}" ] \
     && grep -q "comment_read_failed" "$_summary_read_failed_body_capture"; then
   _summary_read_failed_history="yes"
@@ -1681,6 +1685,24 @@ else
 fi
 run_test "summary_comment_read_failure_history_unavailable" "yes" "$_summary_read_failed_history"
 rm -f "$_summary_read_failed_body_capture"
+
+# AC / regression (Codex finding on PR #1507: "preserve dispatches across
+# unavailable-ledger recovery"): _post_review_summary must return non-zero
+# on a READ failure even when the WRITE succeeds (MOCK_GH_EXIT=0 above), not
+# only when the write itself fails. A read failure means this cycle's own
+# entry may have been silently folded into an "unavailable" stub that never
+# gets appended (append_safe=0), even though the stub POST succeeds — the
+# write succeeding is not sufficient evidence the cycle is countable.
+if ! _summary_read_failed_body_capture_2="$(mktemp)"; then
+  echo "ERROR: failed to allocate second read-failure summary body capture temp file" >&2
+  exit 1
+fi
+export MOCK_GH_BODY_CAPTURE="$_summary_read_failed_body_capture_2"
+_post_summary_read_failure_exit=0
+_post_review_summary "needs_fixes" "haystack_blocking_findings" "haystack (needs_fixes)" "1" "0"   || _post_summary_read_failure_exit=$?
+run_test "summary_read_failure_returns_nonzero_even_when_write_succeeds" "1"   "$_post_summary_read_failure_exit"
+rm -f "$_summary_read_failed_body_capture_2"
+unset _summary_read_failed_body_capture_2 _post_summary_read_failure_exit
 unset MOCK_GH_CALL_LOG MOCK_GH_BODY_CAPTURE MOCK_GH_EXIT MOCK_GH_COMMENTS_OUTPUT MOCK_GH_COMMENTS_EXIT MOCK_GH_UPDATED_AT
 unset _summary_advisory_split _summary_project_advisory_order _post_summary_source
 unset _summary_read_failed_body_capture _summary_read_failed_history

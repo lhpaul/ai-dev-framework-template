@@ -326,16 +326,19 @@ Outputs stable key=value lines including:
                   otherwise still report needs_fixes or needs_rerun. Fails closed rather than silently
                   disabling both cap backstops indefinitely for this PR.)
   REASON=ledger_persist_failed (RESULT=escalate, exit 2; emitted when this cycle's own
-                  reviewer_loop_history.v1 ledger entry could not be written — both the PATCH to the
-                  existing summary comment and the create-fallback failed — while this cycle's own
-                  result was needs_fixes or needs_rerun. Without this check, the caller would dispatch
-                  a fixer for a cycle that a future invocation's cycle count would never see, letting
-                  repeated persistence failures (e.g. a token that can read but not write comments)
-                  slip past both caps indefinitely. This is a corrected, LATER RESULT/REASON pair —
-                  the script's original (now superseded) RESULT for this cycle was already printed
-                  earlier in the output; callers must read the LAST RESULT= / REASON= line, not the
-                  first, matching this script's existing convention (see the release-guard-summary
-                  -failure path).)
+                  reviewer_loop_history.v1 ledger entry could not be reliably written — either
+                  because both the PATCH to the existing summary comment and the create-fallback
+                  failed, OR because the pre-write READ of the existing comment failed (which makes
+                  the write fall back to an "unavailable" stub that silently drops this cycle's entry
+                  even when the stub itself is posted successfully) — while this cycle's own result
+                  was needs_fixes or needs_rerun. Without this check, the caller would dispatch a
+                  fixer for a cycle that a future invocation's cycle count would never see, letting
+                  repeated persistence or read failures (e.g. a token that can read but not write
+                  comments, or a transient read blip on an otherwise-successful write) slip past both
+                  caps indefinitely. This is a corrected, LATER RESULT/REASON pair — the script's
+                  original (now superseded) RESULT for this cycle was already printed earlier in the
+                  output; callers must read the LAST RESULT= / REASON= line, not the first, matching
+                  this script's existing convention (see the release-guard-summary-failure path).)
 
 Environment variables:
   POST_CLEAN_WAIT=<seconds>          Override the post-clean recheck wait (default: 30). Set to 0 to run immediately.
@@ -7343,8 +7346,21 @@ EOF
   local _existing_comment_body=""
   local _repo
   local _existing_comment_record=""
+  # Tracked separately from the write outcome below (#1502 dual-cap
+  # follow-up): when this READ fails, the code falls back to an
+  # "unavailable" stub as the existing body, which reviewer_loop_history_
+  # payload_from_existing then refuses to append this cycle's entry onto
+  # (append_safe=0 for a persisted "unavailable" history_status) — so the
+  # WRITE below can succeed (posting the stub) while this cycle's entry is
+  # still never actually recorded. A later "clean" cycle's OWN posting-time
+  # read can then recover an OLDER available snapshot via reviewer_loop_
+  # history_select_summary_record's deliberate render-continuity fallback
+  # and patch over the stub, permanently losing this cycle's dispatch from
+  # both cap counters (found in review of PR #1507). Treat a failed READ
+  # here the same as a failed WRITE for fail-closed purposes.
+  local _existing_read_failed=0
   _repo="$(repo_slug 2>/dev/null)" \
-    || { echo "WARN: repo_slug failed in _post_review_summary; will post new comment without update-in-place check" >&2; _repo=""; }
+    || { echo "WARN: repo_slug failed in _post_review_summary; will post new comment without update-in-place check" >&2; _repo=""; _existing_read_failed=1; }
   if [ -n "$_repo" ]; then
     _existing_comment_record="$(
       set -o pipefail
@@ -7355,6 +7371,7 @@ EOF
         echo "WARN: failed to fetch existing summary comments for PR ${pr_number}; will create a new comment with unavailable history" >&2
         _existing_comment_record=""
         _existing_comment_body="$(reviewer_loop_history_unavailable_stub_body comment_read_failed)"
+        _existing_read_failed=1
       }
     if [ -n "$_existing_comment_record" ]; then
       _existing_comment_id="$(printf '%s\n' "$_existing_comment_record" | jq -r '.id // empty' 2>/dev/null)" || _existing_comment_id=""
@@ -7412,7 +7429,15 @@ EOF
   # (see the release-guard-summary-failure path and its
   # mainloop_release_guard_comment_failure_result test) makes this safe for
   # callers that already read the LAST RESULT= line, not just the first.
-  if [ "$_comment_posted" -eq 0 ]; then
+  #
+  # ALSO fail closed on a read failure even when the write itself succeeds
+  # (see the _existing_read_failed comment above): a read failure means
+  # this cycle's entry may have been silently dropped (folded into an
+  # "unavailable" stub that reviewer_loop_history_payload_from_existing
+  # refuses to append onto) even though the comment POST succeeded — the
+  # write succeeding is not sufficient evidence that this cycle is
+  # actually countable.
+  if [ "$_comment_posted" -eq 0 ] || [ "$_existing_read_failed" -eq 1 ]; then
     return 1
   fi
   return 0

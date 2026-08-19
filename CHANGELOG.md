@@ -669,7 +669,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ledger_persist_failed` escalation fires, so the comparison data used for
   reviewer graduation reflects the actual outcome rather than only the
   stale pre-correction value (a supplementary row, since the metrics log
-  is append-only).
+  is append-only). `REASON=ledger_persist_failed` now also fires when only
+  the pre-write READ of the existing summary comment fails (even if the
+  subsequent write itself succeeds): a read failure previously made the
+  write fall back to posting an "unavailable" stub that silently drops
+  this cycle's own entry (an unavailable-history existing body is never
+  appended onto), so a dispatch could complete, get reported to the caller,
+  and then vanish from both cap counters on the very next successful
+  invocation — repeated occurrences could let true dispatch counts exceed
+  the advertised caps while the recorded counts stayed artificially low.
 - **Backlog item Priority was silently never set**: `update_tracker_priority_best_effort`
   in `workflow-lib.sh` rewrote `Medium` — the board's actual Priority field
   option — into `Normal`, a value that does not exist on the board, so the
