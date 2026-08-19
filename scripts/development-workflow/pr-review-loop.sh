@@ -291,6 +291,16 @@ Outputs stable key=value lines including:
   PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (compatibility alias for READY_PHASE_NET_NEW_BLOCKER)
   POST_CLEAN_RECHECK=0|1 (1 when the post-clean wait-and-recheck ran)
   LATE_THREADS_FOUND=<N> (count of newly-found unresolved threads; -1 on audit failure; 0 when POST_CLEAN_RECHECK=0)
+  CYCLE_COUNT=<n> (this invocation's cumulative reviewer-loop cycle number, read from the
+                  persisted reviewer_loop_history.v1 ledger on the PR; -1 when the ledger could
+                  not be read reliably. Not reset when the HEAD SHA changes — see max_cycles below.)
+  MAX_CYCLES=<n> (the configured cycle cap; default 10, see PR_REVIEW_LOOP_MAX_CYCLES below)
+  REASON=max_cycles_exceeded (RESULT=escalate; emitted when CYCLE_COUNT reaches MAX_CYCLES while the
+                  loop would otherwise still report needs_fixes or needs_rerun — Protocol 93's hard
+                  cycle cap, "a hard limit independent of finding counts". A "clean" result is never
+                  overridden by this check. The cap applies uniformly to every re-invocation of this
+                  script regardless of whether the fix that triggered it was applied inline or by a
+                  dispatched fixer subagent — there is only one counter.)
 
 Environment variables:
   POST_CLEAN_WAIT=<seconds>          Override the post-clean recheck wait (default: 30). Set to 0 to run immediately.
@@ -300,6 +310,9 @@ Environment variables:
                                      coderabbit_status_success_fallback (default: 60). CodeRabbit can set a
                                      SUCCESS commit status before finishing its async inline-thread posting; this
                                      wait lets those threads arrive so the audit does not produce a false-clean.
+  PR_REVIEW_LOOP_MAX_CYCLES=<n>      Override the reviewer-loop cycle cap (default: 10, matching Protocol 93's
+                                     documented value). Also configurable via review.max_cycles in
+                                     .ai-dev-workflow.yaml; this env var takes precedence over the config file.
 EOF
 }
 
@@ -5707,6 +5720,193 @@ reviewer_loop_history_append_to_summary() {
 }
 
 # ---------------------------------------------------------------------------
+# reviewer-loop max_cycles enforcement (#1502)
+#
+# Protocol 93 documents a hard cycle cap ("a hard limit independent of
+# finding counts") but nothing enforced it — the loop relied entirely on the
+# calling orchestrator/agent to count cycles and escalate manually. Evidence:
+# PR #1492 in this repository reached 18 reviewer-loop iterations against a
+# documented cap of 10 (see reviewer_loop_history.v1 on that PR) with no
+# max_cycles escalation. This block makes the script itself the source of
+# truth for the cycle count and the enforcement point, independent of
+# whatever the caller does or fails to do.
+#
+# Reset semantic (deliberately NOT reset-on-new-head-SHA): the counter is
+# cumulative across the PR's entire review-loop lifetime, not reset when the
+# HEAD SHA changes after a fix push. This is the opposite of the "reset on
+# new push" option the originating issue offered as an alternative, and the
+# choice is deliberate: the motivating failure (PR #1492, 18 cycles) involved
+# a new HEAD SHA on nearly every cycle, because each cycle's fix is a new
+# commit. A reset-on-head-change design would set the counter back to 1 on
+# almost every invocation and would never have caught that exact case — it
+# would make the cap dead code for the failure mode it exists to catch. The
+# cumulative design also matches the pre-existing reviewer_loop_history.v1
+# ledger, which already accumulates one entry per cycle across HEAD SHA
+# changes (see the "history_same_sha_duplicate_appends" test and the general
+# "iteration = length + 1" rule in reviewer_loop_history_payload_from_existing)
+# — this block reuses that same ledger as its source of truth rather than
+# introducing a second, divergent counter.
+#
+# The inline-fix retry lane (Protocol 93's "fast lane" for mechanical fixes)
+# is bounded by the same counter without any extra logic: every re-invocation
+# of this script — whether triggered by an inline fix or a dispatched fixer
+# subagent — reads the same persisted ledger and is subject to the same cap.
+# ---------------------------------------------------------------------------
+
+# reviewer_loop_history_entries_count <comment_body>
+#
+# Prints "<count> <status>" (space-separated) where:
+#   count  — number of entries recorded in the most recent
+#            reviewer_loop_history.v1 JSON block found in <comment_body>, or
+#            -1 when that count cannot be determined reliably.
+#   status — "available" when <count> can be trusted, "unavailable" otherwise
+#            (missing/malformed JSON, wrong schema, or a persisted history
+#            block that itself already recorded history_status=unavailable).
+#
+# An empty <comment_body>, or a body with no history marker at all, is the
+# normal "no prior reviewer-loop run" state and returns "0 available" (this
+# run will be cycle 1) — it is not an error condition.
+reviewer_loop_history_entries_count() {
+  local body="${1:-}"
+  local json count
+
+  if [ -z "$body" ]; then
+    printf '%s %s\n' 0 available
+    return 0
+  fi
+
+  json="$(printf '%s\n' "$body" | reviewer_loop_history_extract_latest_json)"
+  if [ -z "$json" ]; then
+    if printf '%s\n' "$body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
+      # Marker present but no parseable ```json block — history is present
+      # but unreadable; do not silently treat it as zero cycles.
+      printf '%s %s\n' -1 unavailable
+    else
+      printf '%s %s\n' 0 available
+    fi
+    return 0
+  fi
+
+  if ! printf '%s\n' "$json" | jq -e --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" '
+        .schema == $schema
+        and (.entries | type) == "array"
+        and ((.history_status // "available") == "available")
+      ' >/dev/null 2>&1; then
+    printf '%s %s\n' -1 unavailable
+    return 0
+  fi
+
+  count="$(printf '%s\n' "$json" | jq '.entries | length' 2>/dev/null)" || count=""
+  if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+    printf '%s %s\n' -1 unavailable
+    return 0
+  fi
+
+  printf '%s %s\n' "$count" available
+}
+
+# reviewer_loop_resolve_max_cycles <config_value>
+#
+# Resolves the effective max_cycles limit. Precedence:
+#   1. PR_REVIEW_LOOP_MAX_CYCLES env var
+#   2. <config_value> (caller passes the raw review.max_cycles string read
+#      from .ai-dev-workflow.yaml via workflow_config_review_max_cycles)
+#   3. Default: 10 (Protocol 93's documented value)
+#
+# Any value that is not a positive integer (including an out-of-range or
+# malformed override) falls back to the default with a WARN on stderr.
+reviewer_loop_resolve_max_cycles() {
+  local config_value="${1:-}"
+  local configured="${PR_REVIEW_LOOP_MAX_CYCLES:-}"
+  local source="env"
+
+  if [ -z "$configured" ]; then
+    configured="$config_value"
+    source="config (review.max_cycles)"
+  fi
+  if [ -z "$configured" ]; then
+    configured=10
+    source="default"
+  fi
+  if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
+    echo "WARN: max_cycles value '$configured' (source: $source) is not a positive integer; defaulting to 10" >&2
+    configured=10
+  fi
+  printf '%s\n' "$configured"
+}
+
+# reviewer_loop_cap_exceeded <cycle_count> <max_cycles> <result>
+#
+# Returns 0 (true — cap exceeded, caller should escalate) only when the loop
+# would otherwise keep going (result is needs_fixes or needs_rerun) and
+# cycle_count is known (>= 0) and has reached or passed max_cycles. A result
+# of "clean" is never overridden — a genuinely resolved PR is not escalated
+# just because it took many cycles to get there. An unknown cycle_count (-1,
+# from unreadable history) never triggers escalation on its own; the cap
+# fails open rather than false-escalating on a ledger read failure.
+reviewer_loop_cap_exceeded() {
+  local cycle_count="$1"
+  local max_cycles="$2"
+  local result="$3"
+
+  case "$result" in
+    needs_fixes|needs_rerun) : ;;
+    *) return 1 ;;
+  esac
+
+  [ "$cycle_count" -ge 0 ] && [ "$cycle_count" -ge "$max_cycles" ]
+}
+
+# reviewer_loop_resolve_cycle_count <pr_number>
+#
+# Resolves this invocation's cycle number by reading the persisted
+# reviewer_loop_history.v1 ledger from the PR's "Automated Reviewer Loop
+# Summary" comment (the same ledger written by
+# reviewer_loop_history_append_to_summary / _post_review_summary). Prints the
+# resolved cycle number (prior entry count + 1), or -1 when the prior count
+# could not be determined reliably (repo slug unresolved, GitHub API failure,
+# or an unreadable/malformed history block) — never guesses.
+#
+# Kept as its own function (defined before the HARNESS_MODE return point, like
+# restore_regression_label_if_missing) so it is directly unit-testable via the
+# MOCK_GH_COMMENTS_OUTPUT / MOCK_GH_COMMENTS_EXIT harness conventions, without
+# requiring a full main-loop subprocess run.
+reviewer_loop_resolve_cycle_count() {
+  local pr_number_arg="$1"
+  local repo="" record="" body="" count status
+
+  if [ -z "$pr_number_arg" ]; then
+    printf '%s\n' -1
+    return 0
+  fi
+
+  if ! repo="$(repo_slug 2>/dev/null)" || [ -z "$repo" ]; then
+    echo "WARN: could not resolve repo slug while resolving reviewer cycle count for PR #${pr_number_arg}; treating prior cycle count as unavailable" >&2
+    printf '%s\n' -1
+    return 0
+  fi
+
+  if ! record="$(
+      set -o pipefail
+      gh api "repos/$repo/issues/$pr_number_arg/comments" --paginate 2>/dev/null \
+        | reviewer_loop_history_select_summary_record
+    )"; then
+    echo "WARN: failed to fetch existing summary comments for PR ${pr_number_arg} while resolving reviewer cycle count; treating prior cycle count as unavailable" >&2
+    printf '%s\n' -1
+    return 0
+  fi
+
+  body="$(printf '%s\n' "$record" | jq -r '.body // ""' 2>/dev/null)" || body=""
+  read -r count status < <(reviewer_loop_history_entries_count "$body")
+
+  if [ "$status" = "available" ]; then
+    printf '%s\n' "$((count + 1))"
+  else
+    printf '%s\n' -1
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # _check_release_pr_guard <pr_number> [<branch_name>]
 #
 # Determines whether the given PR is a release or hotfix PR that should skip
@@ -6236,6 +6436,23 @@ if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
   restore_regression_label_if_missing "$pr_number" "${branch_name:-}"
 fi
 
+# --- Reviewer cycle cap (max_cycles) resolution (#1502) ---
+# Read the persisted reviewer_loop_history.v1 ledger (the same one written by
+# _post_review_summary/reviewer_loop_history_append_to_summary below) to
+# determine how many review cycles have already completed on this PR, then
+# resolve the configured cap. See the "reviewer-loop max_cycles enforcement"
+# comment block above reviewer_loop_history_entries_count for the reset-
+# semantic decision (deliberately cumulative — not reset on new HEAD SHA).
+#
+# cycle_count (this invocation's cycle number) is -1 when the prior ledger
+# could not be read reliably; the cap check fails open in that case (see
+# reviewer_loop_cap_exceeded) rather than false-escalating on a read failure.
+max_cycles="$(reviewer_loop_resolve_max_cycles "$(workflow_config_review_max_cycles "${config_file:-$(workflow_config_file)}" 2>/dev/null || true)")"
+cycle_count=-1
+if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
+  cycle_count="$(reviewer_loop_resolve_cycle_count "$pr_number")"
+fi
+
 aggregate_result="skipped"
 aggregate_reason=""
 last_platform=""
@@ -6289,6 +6506,12 @@ print_kv PHASE_AFTER_CLEAN_ENABLED "$phase_after_clean_enabled"
   print_kv PHASE_AFTER_CLEAN_PLATFORM_LIST "$(IFS=,; printf '%s' "${phase_after_clean_platforms[*]}")"
 print_kv CHANGED_FILES_COUNT "${changed_files_count:--1}"
 [ "$large_diff_extended" -eq 1 ] && print_kv LARGE_DIFF_EXTENDED 1
+# Reviewer cycle cap telemetry (#1502): CYCLE_COUNT is this invocation's
+# cumulative cycle number (-1 when the prior ledger could not be read), so a
+# supervising runner can see how close the loop is to MAX_CYCLES before it
+# trips, independent of whether this cycle ends up escalating.
+print_kv CYCLE_COUNT "$cycle_count"
+print_kv MAX_CYCLES "$max_cycles"
 
 for index in "${!platforms[@]}"; do
   platform_index=$((index + 1))
@@ -6989,6 +7212,18 @@ if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
     _compare_metrics_appended=1 || \
     echo "WARN: append_compare_metrics_row failed — metrics row not written" >&2
   set -e
+fi
+
+# Reviewer cycle cap enforcement (#1502): the just-pushed fix (if any) has
+# already been given its chance to be verified above — this run completed a
+# full review pass like any other. Only now, with the settled aggregate
+# result in hand, do we check whether the cap has been reached. A "clean"
+# result is never overridden. An already-"escalate" result keeps its own
+# (more specific) reason rather than being relabeled max_cycles_exceeded.
+if reviewer_loop_cap_exceeded "$cycle_count" "$max_cycles" "$aggregate_result"; then
+  echo "WARN: reviewer cycle count ($cycle_count) reached max_cycles ($max_cycles) with aggregate_result=$aggregate_result — escalating (max_cycles_exceeded)" >&2
+  aggregate_result="escalate"
+  aggregate_reason="max_cycles_exceeded"
 fi
 
 if reviewer_failed_label_required_for_result "$aggregate_result" "$aggregate_reason"; then

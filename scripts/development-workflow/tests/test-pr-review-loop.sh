@@ -1883,6 +1883,205 @@ unset MOCK_GH_HEAD_SHA MOCK_GH_UPDATED_AT
 unset pr_number branch_name unresolved_thread_count late_thread_count
 
 # ---------------------------------------------------------------------------
+# Area 10c: reviewer-loop max_cycles enforcement (issue #1502)
+#
+# reviewer_loop_history_entries_count, reviewer_loop_resolve_max_cycles,
+# reviewer_loop_cap_exceeded, and reviewer_loop_resolve_cycle_count are all
+# defined before the HARNESS_MODE return point and are therefore callable
+# directly, like restore_regression_label_if_missing in Area 11.
+#
+# Protocol 93 documents "a hard limit independent of finding counts" but
+# nothing enforced it (PR #1492 reached 18 reviewer-loop cycles against a
+# documented cap of 10, with no max_cycles escalation). These tests exercise
+# the actual enforcement functions, not simulated logic.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 10c: reviewer-loop max_cycles enforcement (#1502) ==="
+
+# --- reviewer_loop_history_entries_count ---
+
+run_test "cycles_entries_count_empty_body" "0 available" \
+  "$(reviewer_loop_history_entries_count "")"
+
+_mc_no_marker_body="### Automated Reviewer Loop Summary
+*Posted automatically by \`pr-review-loop.sh\`.*"
+run_test "cycles_entries_count_no_marker" "0 available" \
+  "$(reviewer_loop_history_entries_count "$_mc_no_marker_body")"
+
+_mc_marker_no_json_body=$'### Automated Reviewer Loop Summary\n<!-- reviewer-loop-history:v1 -->\nNo fenced JSON block here.'
+run_test "cycles_entries_count_marker_no_json" "-1 unavailable" \
+  "$(reviewer_loop_history_entries_count "$_mc_marker_no_json_body")"
+
+# 9 entries, each with a DISTINCT head_sha — mirrors the real fix-push cycle
+# pattern (a new commit/HEAD SHA on nearly every cycle). This is also the
+# fixture used below to demonstrate the reset-on-new-head-SHA decision.
+_mc_nine_entry_payload="$(jq -n '{
+  schema: "reviewer_loop_history.v1",
+  history_status: "available",
+  entries: [range(1;10) | {iteration: ., head_sha: ("sha-" + (.|tostring))}]
+}')"
+_mc_nine_entry_body="### Automated Reviewer Loop Summary
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+$(printf '%s\n' "$_mc_nine_entry_payload" | jq '.')
+\`\`\`"
+run_test "cycles_entries_count_nine_entries_distinct_head_shas" "9 available" \
+  "$(reviewer_loop_history_entries_count "$_mc_nine_entry_body")"
+
+_mc_persisted_unavailable_body=$'### Automated Reviewer Loop Summary\n<!-- reviewer-loop-history:v1 -->\n```json\n{"schema":"reviewer_loop_history.v1","history_status":"unavailable","history_unavailable_reason":"comment_read_failed","entries":[]}\n```\n'
+run_test "cycles_entries_count_persisted_unavailable" "-1 unavailable" \
+  "$(reviewer_loop_history_entries_count "$_mc_persisted_unavailable_body")"
+
+_mc_malformed_body=$'### Automated Reviewer Loop Summary\n<!-- reviewer-loop-history:v1 -->\n```json\n{ not json\n```\n'
+run_test "cycles_entries_count_malformed" "-1 unavailable" \
+  "$(reviewer_loop_history_entries_count "$_mc_malformed_body")"
+
+_mc_wrong_schema_body=$'### Automated Reviewer Loop Summary\n<!-- reviewer-loop-history:v1 -->\n```json\n{"schema":"other.v1","entries":[]}\n```\n'
+run_test "cycles_entries_count_wrong_schema" "-1 unavailable" \
+  "$(reviewer_loop_history_entries_count "$_mc_wrong_schema_body")"
+
+# --- reviewer_loop_resolve_max_cycles ---
+# PR_REVIEW_LOOP_MAX_CYCLES must be unset (not just empty) in this shell for
+# the "no override" cases — `env -u` cannot be used here because
+# reviewer_loop_resolve_max_cycles is a shell function, not an external
+# command, and env only executes external programs.
+unset PR_REVIEW_LOOP_MAX_CYCLES
+
+run_test "cycles_resolve_max_default" "10" \
+  "$(reviewer_loop_resolve_max_cycles "" 2>/dev/null)"
+run_test "cycles_resolve_max_from_config" "7" \
+  "$(reviewer_loop_resolve_max_cycles "7" 2>/dev/null)"
+run_test "cycles_resolve_max_env_overrides_config" "3" \
+  "$(PR_REVIEW_LOOP_MAX_CYCLES=3 reviewer_loop_resolve_max_cycles "7" 2>/dev/null)"
+run_test "cycles_resolve_max_invalid_config_defaults" "10" \
+  "$(reviewer_loop_resolve_max_cycles "not-a-number" 2>/dev/null)"
+run_test "cycles_resolve_max_invalid_config_warns" "yes" "$(
+  if reviewer_loop_resolve_max_cycles "not-a-number" 2>&1 >/dev/null \
+      | grep -q "WARN.*not a positive integer"; then
+    echo yes
+  else
+    echo no
+  fi
+)"
+run_test "cycles_resolve_max_zero_invalid_defaults" "10" \
+  "$(PR_REVIEW_LOOP_MAX_CYCLES=0 reviewer_loop_resolve_max_cycles "" 2>/dev/null)"
+
+# --- reviewer_loop_cap_exceeded ---
+# AC: "reaching the cap escalates" / "staying under it does not".
+
+run_test "cycles_cap_under_not_exceeded" "no" \
+  "$(reviewer_loop_cap_exceeded 9 10 needs_fixes && echo yes || echo no)"
+run_test "cycles_cap_at_limit_exceeded" "yes" \
+  "$(reviewer_loop_cap_exceeded 10 10 needs_fixes && echo yes || echo no)"
+run_test "cycles_cap_over_limit_exceeded" "yes" \
+  "$(reviewer_loop_cap_exceeded 11 10 needs_fixes && echo yes || echo no)"
+run_test "cycles_cap_needs_rerun_bounded_by_same_counter" "yes" \
+  "$(reviewer_loop_cap_exceeded 10 10 needs_rerun && echo yes || echo no)"
+run_test "cycles_cap_clean_never_overridden" "no" \
+  "$(reviewer_loop_cap_exceeded 999 10 clean && echo yes || echo no)"
+run_test "cycles_cap_already_escalate_not_retriggered" "no" \
+  "$(reviewer_loop_cap_exceeded 999 10 escalate && echo yes || echo no)"
+run_test "cycles_cap_unknown_count_fails_open" "no" \
+  "$(reviewer_loop_cap_exceeded -1 10 needs_fixes && echo yes || echo no)"
+
+# --- reviewer_loop_resolve_cycle_count (mocked gh) ---
+
+unset MOCK_GH_COMMENTS_OUTPUT MOCK_GH_COMMENTS_EXIT MOCK_GH_EXIT
+
+run_test "cycles_resolve_count_no_pr_number" "-1" \
+  "$(reviewer_loop_resolve_cycle_count "")"
+
+export MOCK_GH_COMMENTS_OUTPUT="[]"
+run_test "cycles_resolve_count_first_run_is_cycle_1" "1" \
+  "$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
+unset MOCK_GH_COMMENTS_OUTPUT
+
+# 9 prior entries recorded → this invocation is cycle 10 (the configured
+# default cap). Wrap the fixture built above in a full summary-comment record
+# exactly as reviewer_loop_history_select_summary_record expects.
+_mc_nine_entry_comment_json="$(jq -n --arg body "$_mc_nine_entry_body" \
+  '[{id: 1, created_at: "2026-08-18T00:00:00Z",
+     body: ("### Automated Reviewer Loop Summary\n\n*Posted automatically by `pr-review-loop.sh`.*\n\n" + $body)}]')"
+export MOCK_GH_COMMENTS_OUTPUT="$_mc_nine_entry_comment_json"
+run_test "cycles_resolve_count_nine_prior_is_cycle_ten" "10" \
+  "$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
+# AC: end-to-end — this cycle count against the default cap (10) with a
+# needs_fixes verdict must trip the escalation.
+run_test "cycles_end_to_end_ninth_prior_reaches_cap_escalates" "yes" "$(
+  _cc="$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
+  _mx="$(reviewer_loop_resolve_max_cycles "" 2>/dev/null)"
+  reviewer_loop_cap_exceeded "$_cc" "$_mx" needs_fixes && echo yes || echo no
+)"
+unset MOCK_GH_COMMENTS_OUTPUT
+
+# Reset-semantic demonstration (AC: "the chosen reset-on-new-head behavior"):
+# the 9 recorded entries above each carry a DISTINCT head_sha (sha-1..sha-9),
+# exactly mirroring a real sequence of fix-push cycles. The resolved cycle
+# count is still 10 (cumulative) — proving the counter is deliberately NOT
+# reset when the HEAD SHA changes. A reset-on-new-head design would report
+# cycle 1 here instead, defeating the cap for its own motivating case (PR
+# #1492: 18 cycles, nearly all with a new HEAD SHA after each fix push).
+run_test "cycles_reset_semantic_is_cumulative_across_distinct_head_shas" "10" \
+  "$(export MOCK_GH_COMMENTS_OUTPUT="$_mc_nine_entry_comment_json"; reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
+unset MOCK_GH_COMMENTS_OUTPUT
+
+# 3 prior entries → cycle 4, well under the default cap of 10 → not exceeded.
+_mc_three_entry_payload="$(jq -n '{
+  schema: "reviewer_loop_history.v1",
+  history_status: "available",
+  entries: [range(1;4) | {iteration: ., head_sha: ("sha-" + (.|tostring))}]
+}')"
+_mc_three_entry_comment_json="$(jq -n --arg body "$(printf '%s\n' "$_mc_three_entry_payload" | jq '.')" \
+  '[{id: 2, created_at: "2026-08-18T00:00:00Z",
+     body: ("### Automated Reviewer Loop Summary\n\n*Posted automatically by `pr-review-loop.sh`.*\n\n<!-- reviewer-loop-history:v1 -->\n```json\n" + $body + "\n```")}]')"
+export MOCK_GH_COMMENTS_OUTPUT="$_mc_three_entry_comment_json"
+run_test "cycles_resolve_count_three_prior_is_cycle_four" "4" \
+  "$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
+run_test "cycles_end_to_end_under_cap_does_not_escalate" "no" "$(
+  _cc="$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
+  _mx="$(reviewer_loop_resolve_max_cycles "" 2>/dev/null)"
+  reviewer_loop_cap_exceeded "$_cc" "$_mx" needs_fixes && echo yes || echo no
+)"
+unset MOCK_GH_COMMENTS_OUTPUT
+
+# API failure while resolving the ledger → -1 (unavailable), and the cap check
+# fails open (never escalates on a read failure alone).
+export MOCK_GH_COMMENTS_EXIT=1
+run_test "cycles_resolve_count_api_failure_unavailable" "-1" \
+  "$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
+run_test "cycles_cap_check_fails_open_on_read_failure" "no" "$(
+  _cc="$(reviewer_loop_resolve_cycle_count "42" 2>/dev/null)"
+  reviewer_loop_cap_exceeded "$_cc" 10 needs_fixes && echo yes || echo no
+)"
+unset MOCK_GH_COMMENTS_EXIT
+
+# Function-ordering check (mirrors Area 11's Test 11.6) — the max_cycles
+# enforcement functions must stay callable from the harness after future
+# refactors move code around.
+for _mc_fn in reviewer_loop_history_entries_count reviewer_loop_resolve_max_cycles \
+    reviewer_loop_cap_exceeded reviewer_loop_resolve_cycle_count; do
+  _mc_fn_line="$(grep -n "^${_mc_fn}()" \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+    | head -1 | cut -d: -f1)"
+  _mc_harness_return_line="$(grep -n '_HARNESS_MODE_EFFECTIVE.*return 0' \
+    "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh" 2>/dev/null \
+    | head -1 | cut -d: -f1)"
+  if [ -n "$_mc_fn_line" ] && [ -n "$_mc_harness_return_line" ] \
+      && [ "$_mc_fn_line" -lt "$_mc_harness_return_line" ]; then
+    run_test "cycles_fn_defined_before_harness_return_${_mc_fn}" "yes" "yes"
+  else
+    run_test "cycles_fn_defined_before_harness_return_${_mc_fn}" "yes" "no"
+  fi
+done
+unset _mc_fn _mc_fn_line _mc_harness_return_line
+
+unset _mc_no_marker_body _mc_marker_no_json_body
+unset _mc_nine_entry_payload _mc_nine_entry_body _mc_nine_entry_comment_json
+unset _mc_persisted_unavailable_body _mc_malformed_body _mc_wrong_schema_body
+unset _mc_three_entry_payload _mc_three_entry_comment_json
+
+# ---------------------------------------------------------------------------
 # Area 11: Step 7b regression-label auto-restore (Option C, issue #805)
 #
 # restore_regression_label_if_missing() is defined before the HARNESS_MODE

@@ -53,6 +53,18 @@ review:
     # are clean and the PR has been converted with `gh pr ready`.
     github:
       - codex-github
+
+  # Optional: reviewer-loop cycle cap enforced by pr-review-loop.sh. When the
+  # cumulative reviewer-loop cycle count for a PR reaches this value while the
+  # loop would otherwise still report needs_fixes/needs_rerun, the script
+  # exits RESULT=escalate / REASON=max_cycles_exceeded on its own rather than
+  # relying on the calling orchestrator to notice (issue #1502). The counter
+  # is cumulative across the PR's whole review-loop lifetime — it is not
+  # reset when the HEAD SHA changes after a fix push (see the comment above
+  # reviewer_loop_history_entries_count in pr-review-loop.sh for why).
+  # PR_REVIEW_LOOP_MAX_CYCLES env var overrides this value.
+  # Uncomment to override the default:
+  # max_cycles: 10
   #
   # CodeRabbit remains supported as an opt-in reviewer (`coderabbit` for the
   # GitHub App, `coderabbit-cli` for the local CLI), but it is not a default

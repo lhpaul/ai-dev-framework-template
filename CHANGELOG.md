@@ -590,6 +590,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `git ls-remote` evidence that nothing mutates before the guard fires) and a
   regression test proving a reverted guard placement turns the suite red are
   recorded in [PR #1500](https://github.com/lhpaul/ai-dev-framework-template/pull/1500#issuecomment-5335650280).
+- **Reviewer-loop `max_cycles` cap now enforced** (#1502): `pr-review-loop.sh`
+  previously had no code path that could ever trip Protocol 93's documented
+  hard cycle cap ("a hard limit independent of finding counts") — PR #1492 in
+  this repository reached 18 reviewer-loop cycles against a documented cap of
+  10 with no escalation. The script now tracks the cumulative reviewer-loop
+  cycle count for a PR by reading the persisted `reviewer_loop_history.v1`
+  ledger, and exits `RESULT=escalate` / `REASON=max_cycles_exceeded` on its
+  own once the configured limit is reached while the loop would otherwise
+  still report `needs_fixes` or `needs_rerun`. The counter is deliberately
+  *not* reset when the HEAD SHA changes after a fix push — it is cumulative
+  across the PR's whole review-loop lifetime, matching the pre-existing
+  documented orchestrator-level counter semantics and the exact failure
+  pattern that motivated this fix, where nearly every cycle produces a new
+  commit. A "clean" result is never overridden, and the inline-fix retry lane
+  is bounded by the same counter as sub-agent-dispatched retries, with no
+  separate logic needed. The limit defaults to 10 and is configurable via the
+  `PR_REVIEW_LOOP_MAX_CYCLES` environment variable or `review.max_cycles` in
+  `.ai-dev-workflow.yaml`. The current cycle count and configured limit are
+  now emitted as `CYCLE_COUNT` / `MAX_CYCLES` in the script's key=value output
+  on every invocation.
 
 ### Changed
 
