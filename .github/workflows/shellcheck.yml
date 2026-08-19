@@ -49,8 +49,49 @@ jobs:
       - name: Run workflow shell guard lint tests
         run: bash scripts/lint/tests/test-workflow-shell-guard-lint.sh
 
+      # zsh is only needed by the cross-shell snippet tests below. This step
+      # previously hung indefinitely (issue #1517): `apt-get` blocks waiting on
+      # the dpkg/apt lock held by the runner image's `unattended-upgrades`
+      # background job, and with no timeout the job inherited the 6-hour
+      # Actions default while ShellCheck itself had already passed. Bound it,
+      # wait for the lock explicitly, and retry transient mirror failures.
       - name: Install zsh for cross-shell snippet tests
-        run: sudo apt-get update && sudo apt-get install --yes zsh
+        timeout-minutes: 5
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+
+          if command -v zsh >/dev/null 2>&1; then
+            echo "zsh already present: $(zsh --version)"
+            exit 0
+          fi
+
+          # Wait (bounded) for any apt/dpkg lock holder to finish rather than
+          # blocking forever inside apt-get itself.
+          for _ in $(seq 1 30); do
+            if sudo fuser /var/lib/dpkg/lock-frontend \
+                          /var/lib/apt/lists/lock \
+                          /var/cache/apt/archives/lock >/dev/null 2>&1; then
+              echo "apt/dpkg lock held; waiting 5s..."
+              sleep 5
+            else
+              break
+            fi
+          done
+
+          for attempt in 1 2 3; do
+            if sudo apt-get update -o Acquire::Retries=3 \
+              && sudo apt-get install --yes --no-install-recommends zsh; then
+              echo "zsh installed: $(zsh --version)"
+              exit 0
+            fi
+            echo "apt-get attempt ${attempt} failed; retrying in 10s..." >&2
+            sleep 10
+          done
+
+          echo "ERROR: could not install zsh after 3 attempts." >&2
+          exit 1
 
       - name: Run workflow shell snippet lint tests
         run: bash scripts/lint/tests/test-workflow-shell-snippet-lint.sh

@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **ShellCheck CI no longer hangs indefinitely installing zsh** (#1517):
+  the `Install zsh for cross-shell snippet tests` step in
+  `.github/workflows/shellcheck.yml` was observed hanging on three PRs, and
+  reproducibly on two consecutive runs of the same commit — 24 minutes before
+  manual cancellation, with `Run ShellCheck` itself already passed. The step
+  declared no timeout, so the job inherited the 6-hour Actions default and held
+  the PR's merge state `UNSTABLE` for that entire window. The step now bounds
+  itself with `timeout-minutes: 5`, skips entirely when `zsh` is already present,
+  waits explicitly (bounded) for any `dpkg`/`apt` lock holder such as the runner
+  image's `unattended-upgrades` job instead of blocking inside `apt-get`, sets
+  `DEBIAN_FRONTEND=noninteractive`, and retries up to three times before failing
+  with a clear error. A stall now surfaces as a fast, legible failure rather than
+  a silent multi-hour block.
 - **Retrospective follow-ups to batch-merge output and CHANGELOG guidance** (#1520):
   `batch-merge.sh`'s `WARNING: gh pr merge failed` message now explains what
   `MERGE_RESULT=clean` does and does not cover, instead of leaving the two
