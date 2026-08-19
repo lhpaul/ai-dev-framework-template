@@ -826,23 +826,21 @@ workflow_config_review_platforms() {
   workflow_config_review_on_ready_github "$config_file"
 }
 
-# workflow_config_review_max_cycles [config_file]
+# _workflow_config_review_scalar <config_file> <key>
 #
-# Reads review.max_cycles — a direct scalar key under the top-level `review:`
-# section in .ai-dev-workflow.yaml, sibling to on_draft/on_ready — and prints
-# the raw string value found, or empty when the file, section, or key is
-# absent. Callers must validate the value is a positive integer and apply
-# their own default; this reader does not know callers' defaults.
-#
-# Consumed by scripts/development-workflow/pr-review-loop.sh
-# (reviewer_loop_resolve_max_cycles) to configure Protocol 93's documented
-# reviewer-loop cycle cap (default: 10; see issue #1502).
-workflow_config_review_max_cycles() {
-  local config_file="${1:-$(workflow_config_file)}"
+# Internal helper shared by workflow_config_review_max_cycles and
+# workflow_config_review_max_total_cycles (and any future direct scalar
+# under the top-level `review:` section): reads review.<key> and prints the
+# raw string value found, or empty when the file, section, or key is
+# absent. Not intended to be called directly by other scripts — use one of
+# the named wrappers below so call sites stay self-documenting.
+_workflow_config_review_scalar() {
+  local config_file="$1"
+  local key="$2"
 
   [ -f "$config_file" ] || return 0
 
-  awk '
+  awk -v key="$key" '
     function trim(value) {
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
       gsub(/^["'"'"']|["'"'"']$/, "", value)
@@ -858,7 +856,7 @@ workflow_config_review_max_cycles() {
       in_review = 0
     }
 
-    in_review && /^[[:space:]][[:space:]]max_cycles:[[:space:]]*/ {
+    in_review && $0 ~ ("^[[:space:]][[:space:]]" key ":[[:space:]]*") {
       line = $0
       sub(/^[[:space:]]*[^[:space:]]*:[[:space:]]*/, "", line)
       sub(/[[:space:]]+#.*$/, "", line)
@@ -866,6 +864,41 @@ workflow_config_review_max_cycles() {
       exit
     }
   ' "$config_file"
+}
+
+# workflow_config_review_max_cycles [config_file]
+#
+# Reads review.max_cycles — a direct scalar key under the top-level `review:`
+# section in .ai-dev-workflow.yaml, sibling to on_draft/on_ready — and prints
+# the raw string value found, or empty when the file, section, or key is
+# absent. Callers must validate the value is a positive integer and apply
+# their own default; this reader does not know callers' defaults.
+#
+# Consumed by scripts/development-workflow/pr-review-loop.sh
+# (reviewer_loop_resolve_max_cycles) to configure Protocol 93's documented
+# PER-RUN reviewer-loop cycle cap (default: 10; see issue #1502).
+workflow_config_review_max_cycles() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  _workflow_config_review_scalar "$config_file" max_cycles
+}
+
+# workflow_config_review_max_total_cycles [config_file]
+#
+# Reads review.max_total_cycles — a direct scalar key under the top-level
+# `review:` section, sibling to max_cycles — and prints the raw string value
+# found, or empty when the file, section, or key is absent. Callers must
+# validate the value is a positive integer and apply their own default.
+#
+# Consumed by scripts/development-workflow/pr-review-loop.sh
+# (reviewer_loop_resolve_max_total_cycles) to configure the reviewer-loop
+# LIFETIME cycle ceiling (default: 25) — a separate, never-reset cap on top
+# of max_cycles' per-orchestration-run cap; see issue #1502 (dual-cap
+# follow-up per operator decision on PR #1507's review).
+workflow_config_review_max_total_cycles() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  _workflow_config_review_scalar "$config_file" max_total_cycles
 }
 
 workflow_config_review_phase_after_clean_platforms() {

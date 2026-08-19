@@ -291,21 +291,40 @@ Outputs stable key=value lines including:
   PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (compatibility alias for READY_PHASE_NET_NEW_BLOCKER)
   POST_CLEAN_RECHECK=0|1 (1 when the post-clean wait-and-recheck ran)
   LATE_THREADS_FOUND=<N> (count of newly-found unresolved threads; -1 on audit failure; 0 when POST_CLEAN_RECHECK=0)
-  CYCLE_COUNT=<n> (Protocol 91's `cycle` value at the start of this invocation — the number of
-                  fixer dispatches already issued for this PR, read from the persisted
+  RUN_ID=<id> (this invocation's resolved orchestration-run identifier — either PR_REVIEW_LOOP_RUN_ID
+                  verbatim, or a freshly generated "auto-<epoch>-<pid>-<random>" id when unset. See
+                  PR_REVIEW_LOOP_RUN_ID below for why callers should set this explicitly to make the
+                  per-run cap meaningful across multiple invocations.)
+  CYCLE_COUNT=<n> (PER-RUN cap count — Protocol 91's `cycle` value at the start of this invocation:
+                  the number of fixer dispatches already issued for RUN_ID, read from the persisted
                   reviewer_loop_history.v1 ledger; -1 when the ledger could not be read reliably.
-                  Not reset when the HEAD SHA changes — see max_cycles below.)
-  MAX_CYCLES=<n> (the configured cycle cap; default 10, see PR_REVIEW_LOOP_MAX_CYCLES below)
-  REASON=max_cycles_exceeded (RESULT=escalate; emitted when CYCLE_COUNT reaches MAX_CYCLES while the
-                  loop would otherwise still report needs_fixes or needs_rerun — Protocol 93's hard
-                  cycle cap, "a hard limit independent of finding counts". A "clean" result is never
-                  overridden by this check. The cap applies uniformly to every re-invocation of this
-                  script regardless of whether the fix that triggered it was applied inline or by a
-                  dispatched fixer subagent — there is only one counter.)
-  REASON=cycle_count_unavailable (RESULT=escalate; emitted when CYCLE_COUNT is -1 — the persisted
-                  cycle ledger could not be read after retries — while the loop would otherwise still
-                  report needs_fixes or needs_rerun. Fails closed rather than silently disabling the
-                  max_cycles backstop indefinitely for this PR.)
+                  Resets to 0 at each orchestration-run boundary (i.e. whenever RUN_ID changes).
+                  Never reset by a HEAD SHA change alone — see max_cycles below.)
+  MAX_CYCLES=<n> (the configured PER-RUN cycle cap; default 10, see PR_REVIEW_LOOP_MAX_CYCLES below)
+  TOTAL_CYCLE_COUNT=<n> (LIFETIME ceiling count — the same distinct-HEAD-SHA fixer-dispatch count as
+                  CYCLE_COUNT, but across the PR's ENTIRE review-loop lifetime regardless of RUN_ID;
+                  never resets. -1 when the ledger could not be read reliably (always -1 exactly when
+                  CYCLE_COUNT is also -1 — both come from the same ledger read).)
+  MAX_TOTAL_CYCLES=<n> (the configured LIFETIME cycle ceiling; default 25, see
+                  PR_REVIEW_LOOP_MAX_TOTAL_CYCLES below)
+  REASON=max_cycles_exceeded (RESULT=escalate; emitted when CYCLE_COUNT reaches MAX_CYCLES (the
+                  PER-RUN cap) while the loop would otherwise still report needs_fixes or needs_rerun
+                  — Protocol 91:1719's cap, conforming verbatim: "Initialize cycle = 0 once per
+                  orchestration run ... escalate when the run reaches max_cycles". A "clean" result is
+                  never overridden by this check. The cap applies uniformly to every re-invocation of
+                  this script within the same RUN_ID regardless of whether the fix that triggered it
+                  was applied inline or by a dispatched fixer subagent — there is only one per-run
+                  counter.)
+  REASON=max_total_cycles_exceeded (RESULT=escalate; emitted when TOTAL_CYCLE_COUNT reaches
+                  MAX_TOTAL_CYCLES (the LIFETIME ceiling, which never resets) while the loop would
+                  otherwise still report needs_fixes or needs_rerun. Checked only after the per-run
+                  cap does not fire, so this REASON specifically signals "many separate orchestration
+                  runs, each individually under the per-run cap, cumulatively exceeded the lifetime
+                  budget" — distinct from max_cycles_exceeded so an operator can tell the two apart.)
+  REASON=cycle_count_unavailable (RESULT=escalate; emitted when CYCLE_COUNT/TOTAL_CYCLE_COUNT are -1
+                  — the persisted cycle ledger could not be read after retries — while the loop would
+                  otherwise still report needs_fixes or needs_rerun. Fails closed rather than silently
+                  disabling both cap backstops indefinitely for this PR.)
 
 Environment variables:
   POST_CLEAN_WAIT=<seconds>          Override the post-clean recheck wait (default: 30). Set to 0 to run immediately.
@@ -315,9 +334,19 @@ Environment variables:
                                      coderabbit_status_success_fallback (default: 60). CodeRabbit can set a
                                      SUCCESS commit status before finishing its async inline-thread posting; this
                                      wait lets those threads arrive so the audit does not produce a false-clean.
-  PR_REVIEW_LOOP_MAX_CYCLES=<n>      Override the reviewer-loop cycle cap (default: 10, matching Protocol 93's
-                                     documented value). Also configurable via review.max_cycles in
-                                     .ai-dev-workflow.yaml; this env var takes precedence over the config file.
+  PR_REVIEW_LOOP_MAX_CYCLES=<n>      Override the PER-RUN reviewer-loop cycle cap (default: 10, matching
+                                     Protocol 91:1719's documented value). Also configurable via review.max_cycles
+                                     in .ai-dev-workflow.yaml; this env var takes precedence over the config file.
+  PR_REVIEW_LOOP_MAX_TOTAL_CYCLES=<n> Override the LIFETIME reviewer-loop cycle ceiling (default: 25). Also
+                                     configurable via review.max_total_cycles in .ai-dev-workflow.yaml; this env
+                                     var takes precedence over the config file.
+  PR_REVIEW_LOOP_RUN_ID=<id>         Set by an orchestrator to group multiple pr-review-loop.sh invocations
+                                     under one Protocol-91-style "orchestration run", so the per-run cap
+                                     (CYCLE_COUNT/MAX_CYCLES) accumulates correctly across those invocations and
+                                     resets when the orchestrator starts a genuinely new run with a new id. When
+                                     unset, each invocation is treated as its own isolated run for per-run-cap
+                                     purposes (CYCLE_COUNT effectively stays 0) — the LIFETIME ceiling
+                                     (TOTAL_CYCLE_COUNT/MAX_TOTAL_CYCLES) still enforces regardless.
 EOF
 }
 
@@ -5506,10 +5535,19 @@ reviewer_loop_history_build_entry() {
   head_sha="$(reviewer_loop_history_current_head_sha)"
   recorded_at="$(reviewer_loop_history_recorded_at)"
 
+  # run_id (#1502 dual-cap follow-up): read from the current_run_id global,
+  # following the same convention already used in this function for
+  # unresolved_thread_count/late_thread_count (set by the caller before
+  # invoking, not passed as a positional argument, to avoid growing an
+  # already-long parameter list). Resolved once per invocation by
+  # reviewer_loop_resolve_run_id in the main flow; tests set it directly.
+  # Empty when unset, which jq below distinguishes from a present run_id
+  # via the back-compat "(.run_id // "")" pattern used at read time.
   jq -n \
     --argjson iteration "$iteration" \
     --arg recordedAt "$recorded_at" \
     --arg headSha "$head_sha" \
+    --arg runId "${current_run_id:-}" \
     --arg result "$result" \
     --arg reason "$reason" \
     --argjson platforms "$platforms_json" \
@@ -5526,6 +5564,7 @@ reviewer_loop_history_build_entry() {
       iteration: $iteration,
       recorded_at: $recordedAt,
       head_sha: $headSha,
+      run_id: $runId,
       result: $result,
       reason: $reason,
       platforms: $platforms,
@@ -5725,7 +5764,7 @@ reviewer_loop_history_append_to_summary() {
 }
 
 # ---------------------------------------------------------------------------
-# reviewer-loop max_cycles enforcement (#1502)
+# reviewer-loop max_cycles enforcement (#1502, dual-cap follow-up)
 #
 # Protocol 93 documents a hard cycle cap ("a hard limit independent of
 # finding counts") but nothing enforced it — the loop relied entirely on the
@@ -5736,80 +5775,151 @@ reviewer_loop_history_append_to_summary() {
 # truth for the cycle count and the enforcement point, independent of
 # whatever the caller does or fails to do.
 #
-# What is counted: fixer-dispatch-triggering cycles, matching Protocol 91's
-# `cycle` counter exactly ("Initialize cycle = 0 once per orchestration run
-# ... Increment cycle each time a fixer agent is dispatched ... escalate when
-# the run reaches max_cycles"). Only prior ledger entries whose `result` is
-# `needs_fixes` or `needs_rerun` are candidates — each such result is exactly
-# the trigger condition for a fixer dispatch (or, for needs_rerun, PR-Agent's
-# equivalent auto-push retry). The initial review (before any fix has been
-# requested), and any `clean`/`skipped` ledger entries, are excluded —
-# counting every ledger entry indiscriminately would both off-by-one the cap
-# (the first review is not itself a fixer dispatch) and let non-fixer
-# entries exhaust the budget without the configured number of actual fixes
-# ever being attempted (found in review of PR #1507).
+# TWO independent caps, per operator decision on PR #1507's review:
 #
-# Among those candidates, only DISTINCT HEAD SHAs are counted (not raw entry
-# count). A completed fixer cycle is required to push a new commit before
+#   1. Per-run cap (CYCLE_COUNT / MAX_CYCLES, review.max_cycles, default 10):
+#      resets to 0 at each orchestration-run boundary. This conforms to
+#      Protocol 91:1719 verbatim: "Initialize cycle = 0 once per
+#      orchestration run for the PR. Increment cycle each time a fixer
+#      agent is dispatched. Do not reset cycle after a fixer push; escalate
+#      when the run reaches max_cycles." Escalates with
+#      REASON=max_cycles_exceeded.
+#   2. Lifetime ceiling (TOTAL_CYCLE_COUNT / MAX_TOTAL_CYCLES,
+#      review.max_total_cycles, default 25): never resets, counts across
+#      the PR's entire review-loop lifetime regardless of run boundaries.
+#      Escalates with the distinct REASON=max_total_cycles_exceeded.
+#
+# Why both, not either/or: a per-run-only cap leaves total effort unbounded
+# — a PR resumed across many separate orchestration runs gets a fresh
+# budget every time, which is exactly the "runs until someone notices"
+# failure #1502 exists to end (the ~50-cycle / 18-hour downstream incident
+# cited in #1502 plausibly spanned multiple runs). A lifetime-only cap
+# contradicts Protocol 91:1719's explicit "initialize cycle = 0 once per
+# orchestration run" instruction. Both together satisfy each: the per-run
+# cap matches the protocol exactly, and the lifetime ceiling is the
+# structural backstop that does not depend on every caller correctly
+# threading a stable run identifier through every invocation.
+#
+# What is counted (both caps): fixer-dispatch-triggering cycles. Only prior
+# ledger entries whose `result` is `needs_fixes` or `needs_rerun` are
+# candidates — each such result is exactly the trigger condition for a
+# fixer dispatch (or, for needs_rerun, PR-Agent's equivalent auto-push
+# retry). The initial review and any `clean`/`skipped` entries are excluded.
+# Among candidates, only DISTINCT HEAD SHAs are counted (not raw entry
+# count): a completed fixer cycle is required to push a new commit before
 # the next review runs (Protocol 93's mandatory push-once-per-cycle
-# discipline, verified by post-push SHA checks) — so two candidate entries
-# sharing the same HEAD SHA mean no fix was actually applied between them
-# (a restarted runner, a duplicate/retried invocation, or a review re-run
-# before the orchestrator got around to dispatching a fixer). Deduping by
-# HEAD SHA prevents that scenario from exhausting max_cycles without the
-# configured number of real fixes ever being attempted (second finding on
-# PR #1507's review of this same code). This is a refinement of, not a
-# reversal of, the reset semantic below: a genuinely NEW HEAD SHA still
-# always adds to the cumulative count — only an EXACT REPEAT of an already-
-# counted HEAD SHA is deduplicated.
+# discipline), so two candidates sharing one HEAD SHA mean no fix was
+# actually applied between them (a restarted runner, a duplicate/retried
+# invocation, or a review re-run before the orchestrator dispatched a
+# fixer) and must not be double-counted.
 #
-# Reset semantic (deliberately NOT reset-on-new-head-SHA): the counter is
-# cumulative across the PR's entire review-loop lifetime, not reset when the
-# HEAD SHA changes after a fix push. This is the opposite of the "reset on
-# new push" option the originating issue offered as an alternative, and the
-# choice is deliberate: the motivating failure (PR #1492, 18 cycles) involved
-# a new HEAD SHA on nearly every cycle, because each cycle's fix is a new
-# commit. A reset-on-head-change design would set the counter back to 0 on
-# almost every invocation and would never have caught that exact case — it
-# would make the cap dead code for the failure mode it exists to catch. This
-# also matches Protocol 91's own documented instruction: "Do not reset cycle
-# after a fixer push."
+# Run-boundary tracking (schema, chosen deliberately as an ADDITIVE field,
+# not a schema version bump): each ledger entry now carries an optional
+# `run_id` string, resolved once per invocation by
+# reviewer_loop_resolve_run_id and threaded into
+# reviewer_loop_history_build_entry via the `current_run_id` global (the
+# same pattern already used for `unresolved_thread_count`/`late_thread_count`
+# in that function — no signature change needed). An additive optional
+# field (not a `reviewer_loop_history.v2` schema bump) was chosen because:
+#   - It is fully backward- and forward-compatible: every existing
+#     `.schema == "reviewer_loop_history.v1"` check across this script
+#     continues to validate unchanged, and no in-flight PR's already-
+#     recorded history needs migrating mid-flight.
+#   - The field is genuinely optional at read time (see back-compat policy
+#     below), so there is no ambiguity a version bump would need to resolve.
+#
+# Back-compat policy for entries with no `run_id` (written by the
+# pre-dual-cap version of this script — this literally happened on PR #1507
+# itself, cycles 1-5, before this field existed): such entries ARE counted
+# toward the LIFETIME ceiling (they represent real historical fixer
+# dispatches — the lifetime cap must not blind itself to real prior
+# effort), but they can NEVER satisfy any specific per-run count, because
+# an entry with no `run_id` cannot match any current invocation's
+# (non-empty) resolved run_id. This means an old PR does not get an
+# artificially reset per-run budget just because its early history predates
+# run-id tracking — the lifetime ceiling still sees that history — while
+# the per-run counter correctly starts fresh for the first run-id-aware
+# invocation (since no prior entry could possibly match a brand-new run id).
+#
+# Reset semantic per axis (deliberately NOT reset-on-new-head-SHA on
+# EITHER axis): a genuinely new HEAD SHA always adds to both counts; this
+# is the opposite of the "reset on new push" option the originating issue
+# offered as an alternative, and the choice is deliberate on this axis
+# specifically: the motivating failure (PR #1492, 18 cycles) involved a new
+# HEAD SHA on nearly every cycle, because each cycle's fix is a new commit.
+# A reset-on-head-change design would set both counters back to 0 on almost
+# every invocation and would never have caught that exact case.
 #
 # The inline-fix retry lane (Protocol 93's "fast lane" for mechanical fixes)
-# is bounded by the same counter without any extra logic: every re-invocation
-# of this script — whether triggered by an inline fix or a dispatched fixer
-# subagent — reads the same persisted ledger and is subject to the same cap.
+# is bounded by the same two counters without any extra logic: every
+# re-invocation of this script — whether triggered by an inline fix or a
+# dispatched fixer subagent — reads the same persisted ledger and is
+# subject to the same caps.
 # ---------------------------------------------------------------------------
 
-# reviewer_loop_history_entries_count <comment_body>
+# reviewer_loop_resolve_run_id
 #
-# Prints "<count> <status>" (space-separated) where:
-#   count  — number of DISTINCT HEAD SHAs among prior fixer-dispatch-
-#            triggering entries (result == "needs_fixes" or "needs_rerun",
-#            with a non-empty head_sha) recorded in the most recent
-#            reviewer_loop_history.v1 JSON block found in <comment_body> —
-#            i.e. Protocol 91's `cycle` value at the start of this
-#            invocation — or -1 when that count cannot be determined
-#            reliably. `clean`, `skipped`, and any other result values are
-#            not counted; they never trigger a fixer dispatch. Repeated
-#            entries sharing the same head_sha (no fix actually applied
-#            between them — see above) count once, not once per entry.
-#            An entry with an empty/unresolved head_sha is excluded from the
-#            count entirely (fails open rather than risk a false collapse of
-#            distinct-but-unresolved SHAs into one bucket).
-#   status — "available" when <count> can be trusted, "unavailable" otherwise
-#            (missing/malformed JSON, wrong schema, or a persisted history
-#            block that itself already recorded history_status=unavailable).
+# Resolves the run identifier for this invocation. Precedence:
+#   1. PR_REVIEW_LOOP_RUN_ID env var — set by an orchestrator that wants to
+#      group multiple pr-review-loop.sh invocations under one
+#      Protocol-91-style "orchestration run" (so the per-run cap
+#      accumulates correctly across those invocations, and resets when the
+#      orchestrator starts a genuinely new run with a new id).
+#   2. A freshly generated id (`auto-<epoch seconds>-<pid>-<$RANDOM>`) when
+#      the env var is not set. Each such auto-generated invocation is, by
+#      construction, its own isolated "run" for per-run cap purposes — no
+#      prior ledger entry can share a freshly generated id — so the per-run
+#      cap effectively becomes a no-op unless the caller opts in by setting
+#      PR_REVIEW_LOOP_RUN_ID consistently across a session. The LIFETIME
+#      ceiling is unaffected by this and still enforces regardless of
+#      caller participation, which is exactly why both caps exist together.
+reviewer_loop_resolve_run_id() {
+  local configured="${PR_REVIEW_LOOP_RUN_ID:-}"
+
+  if [ -n "$configured" ]; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+
+  printf 'auto-%s-%s-%s\n' "$(date +%s)" "$$" "$RANDOM"
+}
+
+# reviewer_loop_history_entries_count <comment_body> <run_id>
+#
+# Prints "<lifetime_count> <run_count> <status>" (space-separated) where:
+#   lifetime_count — number of DISTINCT HEAD SHAs among ALL prior fixer-
+#            dispatch-triggering entries (result == "needs_fixes" or
+#            "needs_rerun", with a non-empty head_sha), regardless of
+#            run_id — i.e. the lifetime-ceiling count — or -1 when that
+#            count cannot be determined reliably.
+#   run_count — the same DISTINCT-HEAD-SHA count, but restricted to entries
+#            whose `run_id` field exactly equals <run_id> — i.e. the
+#            per-run-cap count (Protocol 91's `cycle` value at the start of
+#            this invocation) — or -1 alongside lifetime_count on failure.
+#            Entries with no `run_id` (back-compat, pre-dual-cap entries)
+#            never match and are excluded from this count, but ARE still
+#            included in lifetime_count (see the back-compat policy in the
+#            comment block above). An empty <run_id> never matches anything
+#            — including another entry whose own run_id is also empty/
+#            absent — so querying with an empty run_id always yields
+#            run_count 0 rather than accidentally matching every back-
+#            compat entry via "empty == empty".
+#   status — "available" when both counts can be trusted, "unavailable"
+#            otherwise (missing/malformed JSON, wrong schema, or a
+#            persisted history block that itself already recorded
+#            history_status=unavailable).
 #
 # An empty <comment_body>, or a body with no history marker at all, is the
-# normal "no prior reviewer-loop run" state and returns "0 available" (cycle
-# 0, matching Protocol 91's initial value) — it is not an error condition.
+# normal "no prior reviewer-loop run" state and returns "0 0 available"
+# (cycle 0 on both axes, matching Protocol 91's initial value) — it is not
+# an error condition.
 reviewer_loop_history_entries_count() {
   local body="${1:-}"
-  local json count
+  local run_id="${2:-}"
+  local json counts lifetime_count run_count
 
   if [ -z "$body" ]; then
-    printf '%s %s\n' 0 available
+    printf '%s %s %s\n' 0 0 available
     return 0
   fi
 
@@ -5818,9 +5928,9 @@ reviewer_loop_history_entries_count() {
     if printf '%s\n' "$body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
       # Marker present but no parseable ```json block — history is present
       # but unreadable; do not silently treat it as zero cycles.
-      printf '%s %s\n' -1 unavailable
+      printf '%s %s %s\n' -1 -1 unavailable
     else
-      printf '%s %s\n' 0 available
+      printf '%s %s %s\n' 0 0 available
     fi
     return 0
   fi
@@ -5830,31 +5940,39 @@ reviewer_loop_history_entries_count() {
         and (.entries | type) == "array"
         and ((.history_status // "available") == "available")
       ' >/dev/null 2>&1; then
-    printf '%s %s\n' -1 unavailable
+    printf '%s %s %s\n' -1 -1 unavailable
     return 0
   fi
 
-  count="$(printf '%s\n' "$json" | jq '
+  counts="$(printf '%s\n' "$json" | jq -r --arg runId "$run_id" '
         [
           .entries[]?
           | select((.result // "") == "needs_fixes" or (.result // "") == "needs_rerun")
-          | (.head_sha // "")
-          | select(length > 0)
-        ]
-        | unique
-        | length
-      ' 2>/dev/null)" || count=""
-  if ! [[ "$count" =~ ^[0-9]+$ ]]; then
-    printf '%s %s\n' -1 unavailable
+        ] as $qualifying
+        | ($qualifying
+            | [.[] | (.head_sha // "") | select(length > 0)]
+            | unique
+            | length) as $lifetime
+        | ($qualifying
+            | [.[] | select(($runId | length) > 0 and (.run_id // "") == $runId) | (.head_sha // "") | select(length > 0)]
+            | unique
+            | length) as $run
+        | "\($lifetime) \($run)"
+      ' 2>/dev/null)" || counts=""
+  read -r lifetime_count run_count <<<"$counts"
+
+  if ! [[ "${lifetime_count:-}" =~ ^[0-9]+$ ]] || ! [[ "${run_count:-}" =~ ^[0-9]+$ ]]; then
+    printf '%s %s %s\n' -1 -1 unavailable
     return 0
   fi
 
-  printf '%s %s\n' "$count" available
+  printf '%s %s %s\n' "$lifetime_count" "$run_count" available
 }
 
 # reviewer_loop_resolve_max_cycles <config_value>
 #
-# Resolves the effective max_cycles limit. Precedence:
+# Resolves the effective PER-RUN cap (Protocol 91:1719's `max_cycles`).
+# Precedence:
 #   1. PR_REVIEW_LOOP_MAX_CYCLES env var
 #   2. <config_value> (caller passes the raw review.max_cycles string read
 #      from .ai-dev-workflow.yaml via workflow_config_review_max_cycles)
@@ -5888,8 +6006,41 @@ reviewer_loop_resolve_max_cycles() {
   printf '%s\n' "$configured"
 }
 
+# reviewer_loop_resolve_max_total_cycles <config_value>
+#
+# Resolves the effective LIFETIME ceiling. Precedence:
+#   1. PR_REVIEW_LOOP_MAX_TOTAL_CYCLES env var
+#   2. <config_value> (caller passes the raw review.max_total_cycles string
+#      read from .ai-dev-workflow.yaml via
+#      workflow_config_review_max_total_cycles)
+#   3. Default: 25
+#
+# Same validation rule as reviewer_loop_resolve_max_cycles (positive
+# integer, 1-999999) for the same reasons.
+reviewer_loop_resolve_max_total_cycles() {
+  local config_value="${1:-}"
+  local configured="${PR_REVIEW_LOOP_MAX_TOTAL_CYCLES:-}"
+  local source="env"
+
+  if [ -z "$configured" ]; then
+    configured="$config_value"
+    source="config (review.max_total_cycles)"
+  fi
+  if [ -z "$configured" ]; then
+    configured=25
+    source="default"
+  fi
+  if ! [[ "$configured" =~ ^[1-9][0-9]{0,5}$ ]]; then
+    echo "WARN: max_total_cycles value '$configured' (source: $source) is not a positive integer within the supported range (1-999999); defaulting to 25" >&2
+    configured=25
+  fi
+  printf '%s\n' "$configured"
+}
+
 # reviewer_loop_cap_exceeded <cycle_count> <max_cycles> <result>
 #
+# Generic cap check reused for BOTH axes (call once with the per-run count
+# and per-run limit, and again with the lifetime count and lifetime limit).
 # Returns 0 (true — cap exceeded, caller should escalate) only when the loop
 # would otherwise keep going (result is needs_fixes or needs_rerun) and
 # cycle_count is known (>= 0) and has reached or passed max_cycles. A result
@@ -5923,9 +6074,11 @@ reviewer_loop_cap_exceeded() {
 # ready-for-human-review"). A hard cycle-count backstop that silently goes
 # dark whenever its own state cannot be read would defeat the purpose it
 # exists for exactly as much as if it had never been implemented (found in
-# review of PR #1507) — reviewer_loop_resolve_cycle_count already retries
+# review of PR #1507) — reviewer_loop_resolve_cycle_counts already retries
 # transient failures before returning -1, so a -1 here reflects a
-# genuinely unreadable ledger, not a single flaky API call.
+# genuinely unreadable ledger, not a single flaky API call. Both the
+# per-run and lifetime counts always fail together (they come from the same
+# ledger read), so this is checked once against either count.
 reviewer_loop_cycle_count_unavailable_should_escalate() {
   local cycle_count="$1"
   local result="$2"
@@ -5938,17 +6091,16 @@ reviewer_loop_cycle_count_unavailable_should_escalate() {
   [ "$cycle_count" -eq -1 ]
 }
 
-# reviewer_loop_resolve_cycle_count <pr_number>
+# reviewer_loop_resolve_cycle_counts <pr_number> <run_id>
 #
-# Resolves this invocation's cycle number (Protocol 91's `cycle` value, the
-# number of fixer dispatches already issued for this PR) by reading the
-# persisted reviewer_loop_history.v1 ledger from the PR's "Automated
+# Resolves BOTH this invocation's per-run cycle count (Protocol 91's `cycle`
+# value, scoped to <run_id>) and the PR's lifetime cycle count, by reading
+# the persisted reviewer_loop_history.v1 ledger from the PR's "Automated
 # Reviewer Loop Summary" comment (the same ledger written by
 # reviewer_loop_history_append_to_summary / _post_review_summary) via
-# reviewer_loop_history_entries_count. Prints the resolved cycle count
-# directly (no offset — see reviewer_loop_history_entries_count for why only
-# needs_fixes/needs_rerun entries count), or -1 when the prior count could
-# not be determined reliably (repo slug unresolved, GitHub API failure after
+# reviewer_loop_history_entries_count. Prints "<lifetime_count> <run_count>"
+# (space-separated), or "-1 -1" when the prior counts could not be
+# determined reliably (repo slug unresolved, GitHub API failure after
 # retries, or an unreadable/malformed history block) — never guesses.
 #
 # The GitHub comments fetch is retried (default: 1 retry, i.e. 2 total
@@ -5962,19 +6114,20 @@ reviewer_loop_cycle_count_unavailable_should_escalate() {
 # restore_regression_label_if_missing) so it is directly unit-testable via the
 # MOCK_GH_COMMENTS_OUTPUT / MOCK_GH_COMMENTS_EXIT harness conventions, without
 # requiring a full main-loop subprocess run.
-reviewer_loop_resolve_cycle_count() {
+reviewer_loop_resolve_cycle_counts() {
   local pr_number_arg="$1"
-  local repo="" record="" body="" count status
+  local run_id_arg="${2:-}"
+  local repo="" record="" body="" lifetime_count run_count status
   local max_retries retry_wait attempt
 
   if [ -z "$pr_number_arg" ]; then
-    printf '%s\n' -1
+    printf '%s %s\n' -1 -1
     return 0
   fi
 
   if ! repo="$(repo_slug 2>/dev/null)" || [ -z "$repo" ]; then
-    echo "WARN: could not resolve repo slug while resolving reviewer cycle count for PR #${pr_number_arg}; treating prior cycle count as unavailable" >&2
-    printf '%s\n' -1
+    echo "WARN: could not resolve repo slug while resolving reviewer cycle counts for PR #${pr_number_arg}; treating prior cycle counts as unavailable" >&2
+    printf '%s %s\n' -1 -1
     return 0
   fi
 
@@ -5999,23 +6152,24 @@ reviewer_loop_resolve_cycle_count() {
       break
     fi
     if [ "$attempt" -gt "$max_retries" ]; then
-      echo "WARN: failed to fetch existing summary comments for PR ${pr_number_arg} while resolving reviewer cycle count (attempt $attempt/$((max_retries + 1))); treating prior cycle count as unavailable" >&2
-      printf '%s\n' -1
+      echo "WARN: failed to fetch existing summary comments for PR ${pr_number_arg} while resolving reviewer cycle counts (attempt $attempt/$((max_retries + 1))); treating prior cycle counts as unavailable" >&2
+      printf '%s %s\n' -1 -1
       return 0
     fi
-    echo "WARN: failed to fetch existing summary comments for PR ${pr_number_arg} while resolving reviewer cycle count (attempt $attempt/$((max_retries + 1))) — retrying" >&2
+    echo "WARN: failed to fetch existing summary comments for PR ${pr_number_arg} while resolving reviewer cycle counts (attempt $attempt/$((max_retries + 1))) — retrying" >&2
     [ "$retry_wait" -gt 0 ] && sleep "$retry_wait"
   done
 
   body="$(printf '%s\n' "$record" | jq -r '.body // ""' 2>/dev/null)" || body=""
-  read -r count status < <(reviewer_loop_history_entries_count "$body")
+  read -r lifetime_count run_count status < <(reviewer_loop_history_entries_count "$body" "$run_id_arg")
 
   if [ "$status" = "available" ]; then
-    printf '%s\n' "$count"
+    printf '%s %s\n' "$lifetime_count" "$run_count"
   else
-    printf '%s\n' -1
+    printf '%s %s\n' -1 -1
   fi
 }
+
 
 # ---------------------------------------------------------------------------
 # _check_release_pr_guard <pr_number> [<branch_name>]
@@ -6263,6 +6417,16 @@ if [ -n "$repo_selector" ]; then
   export GH_REPO="$target_github_repo"
   print_kv REPO "$target_github_repo"
 fi
+
+# --- Reviewer-loop run identifier (#1502 follow-up: dual cap) ---
+# Resolved as early as possible (pr_number is now stable) so every code path
+# that can append a reviewer_loop_history.v1 ledger entry for this PR --
+# including the release-guard and not-configured skip paths below -- writes
+# a consistent run_id. See reviewer_loop_resolve_run_id for the resolution
+# rule (explicit PR_REVIEW_LOOP_RUN_ID env var, else a freshly generated
+# per-invocation id).
+current_run_id="$(reviewer_loop_resolve_run_id)"
+print_kv RUN_ID "$current_run_id"
 
 # --- Release PR early-exit guard ---
 # Release PRs (release/* -> main) and hotfix PRs (hotfix/* -> main) carry
@@ -6547,23 +6711,29 @@ if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
   restore_regression_label_if_missing "$pr_number" "${branch_name:-}"
 fi
 
-# --- Reviewer cycle cap (max_cycles) resolution (#1502) ---
+# --- Reviewer cycle cap (max_cycles / max_total_cycles) resolution (#1502) ---
 # Read the persisted reviewer_loop_history.v1 ledger (the same one written by
 # _post_review_summary/reviewer_loop_history_append_to_summary below) to
-# determine how many fixer dispatches have already occurred for this PR
-# (Protocol 91's `cycle` counter), then resolve the configured cap. See the
-# "reviewer-loop max_cycles enforcement" comment block above
-# reviewer_loop_history_entries_count for what is counted (only
-# needs_fixes/needs_rerun entries) and the reset-semantic decision
-# (deliberately cumulative — not reset on new HEAD SHA).
+# determine, for THIS invocation's run_id (current_run_id, resolved above),
+# how many fixer dispatches have already occurred this run (Protocol 91's
+# `cycle` counter) AND across the PR's whole lifetime, then resolve both
+# configured caps. See the "reviewer-loop max_cycles enforcement" comment
+# block above reviewer_loop_history_entries_count for what is counted (only
+# needs_fixes/needs_rerun entries, deduped by distinct HEAD SHA) and the
+# dual-cap rationale (per-run resets at the orchestration-run boundary;
+# lifetime never resets).
 #
-# cycle_count is -1 when the prior ledger could not be read reliably; the
-# cap check fails open in that case (see reviewer_loop_cap_exceeded) rather
-# than false-escalating on a read failure.
+# Both counts are -1 together when the prior ledger could not be read
+# reliably; the cap checks fail open in that case (see
+# reviewer_loop_cap_exceeded) — reviewer_loop_cycle_count_unavailable_
+# should_escalate below handles failing CLOSED instead when the loop would
+# otherwise keep going.
 max_cycles="$(reviewer_loop_resolve_max_cycles "$(workflow_config_review_max_cycles "${config_file:-$(workflow_config_file)}" 2>/dev/null || true)")"
+max_total_cycles="$(reviewer_loop_resolve_max_total_cycles "$(workflow_config_review_max_total_cycles "${config_file:-$(workflow_config_file)}" 2>/dev/null || true)")"
+lifetime_cycle_count=-1
 cycle_count=-1
 if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
-  cycle_count="$(reviewer_loop_resolve_cycle_count "$pr_number")"
+  read -r lifetime_cycle_count cycle_count < <(reviewer_loop_resolve_cycle_counts "$pr_number" "$current_run_id")
 fi
 
 aggregate_result="skipped"
@@ -6619,13 +6789,17 @@ print_kv PHASE_AFTER_CLEAN_ENABLED "$phase_after_clean_enabled"
   print_kv PHASE_AFTER_CLEAN_PLATFORM_LIST "$(IFS=,; printf '%s' "${phase_after_clean_platforms[*]}")"
 print_kv CHANGED_FILES_COUNT "${changed_files_count:--1}"
 [ "$large_diff_extended" -eq 1 ] && print_kv LARGE_DIFF_EXTENDED 1
-# Reviewer cycle cap telemetry (#1502): CYCLE_COUNT is the number of fixer
-# dispatches already issued for this PR (-1 when the prior ledger could not
-# be read), so a supervising runner can see how close the loop is to
-# MAX_CYCLES before it trips, independent of whether this cycle ends up
-# escalating.
+# Reviewer cycle cap telemetry (#1502, dual-cap): CYCLE_COUNT is the number
+# of fixer dispatches already issued THIS ORCHESTRATION RUN (resets to 0 at
+# each run boundary — see RUN_ID above); TOTAL_CYCLE_COUNT is the same
+# distinct-HEAD-SHA count across the PR's ENTIRE lifetime and never resets.
+# Both are -1 when the prior ledger could not be read. Emitted so a
+# supervising runner can see how close the loop is to either cap before it
+# trips, independent of whether this cycle ends up escalating.
 print_kv CYCLE_COUNT "$cycle_count"
 print_kv MAX_CYCLES "$max_cycles"
+print_kv TOTAL_CYCLE_COUNT "$lifetime_cycle_count"
+print_kv MAX_TOTAL_CYCLES "$max_total_cycles"
 
 for index in "${!platforms[@]}"; do
   platform_index=$((index + 1))
@@ -7310,27 +7484,37 @@ if [ "$phase_after_clean_enabled" -eq 1 ]; then
     print_kv PHASE_AFTER_CLEAN_BLOCKING_PLATFORM "$phase_after_clean_blocking_platform"
 fi
 
-# Reviewer cycle cap enforcement (#1502): the just-pushed fix (if any) has
-# already been given its chance to be verified above — this run completed a
-# full review pass like any other. Only now, with the settled aggregate
-# result in hand, do we check whether the cap has been reached. A "clean"
-# result is never overridden. An already-"escalate" result keeps its own
-# (more specific) reason rather than being relabeled max_cycles_exceeded.
+# Reviewer cycle cap enforcement (#1502, dual-cap): the just-pushed fix (if
+# any) has already been given its chance to be verified above — this run
+# completed a full review pass like any other. Only now, with the settled
+# aggregate result in hand, do we check whether either cap has been
+# reached. A "clean" result is never overridden. An already-"escalate"
+# result keeps its own (more specific) reason rather than being relabeled.
 # This MUST run before the compare-mode metrics-row append below: --compare
 # mode's own contract is "the overall exit code and RESULT are identical to
-# what normal mode would produce" (see the script's usage doc), and this
-# override is unconditional (it also applies in --compare mode) — so the
+# what normal mode would produce" (see the script's usage doc), and these
+# overrides are unconditional (they also apply in --compare mode) — so the
 # metrics row must reflect the post-override result, not a stale pre-cap
 # value, or docs/workflow/retro-metrics-platforms.md would record a
 # different overall result than the summary the script actually reports.
-if reviewer_loop_cycle_count_unavailable_should_escalate "$cycle_count" "$aggregate_result"; then
-  echo "WARN: reviewer cycle count could not be read (ledger unavailable after retries) with aggregate_result=$aggregate_result — escalating (cycle_count_unavailable) rather than allowing an unbounded number of unverifiable retries" >&2
+#
+# Order: unavailable (fail-closed) first, then the per-run cap
+# (max_cycles_exceeded — the Protocol-91-aligned, more specific signal),
+# then the lifetime ceiling (max_total_cycles_exceeded — the structural
+# backstop). Both counts fail together (-1/-1) when the ledger could not be
+# read, so the unavailable check only needs to inspect one of them.
+if reviewer_loop_cycle_count_unavailable_should_escalate "$lifetime_cycle_count" "$aggregate_result"; then
+  echo "WARN: reviewer cycle counts could not be read (ledger unavailable after retries) with aggregate_result=$aggregate_result — escalating (cycle_count_unavailable) rather than allowing an unbounded number of unverifiable retries" >&2
   aggregate_result="escalate"
   aggregate_reason="cycle_count_unavailable"
 elif reviewer_loop_cap_exceeded "$cycle_count" "$max_cycles" "$aggregate_result"; then
-  echo "WARN: reviewer cycle count ($cycle_count) reached max_cycles ($max_cycles) with aggregate_result=$aggregate_result — escalating (max_cycles_exceeded)" >&2
+  echo "WARN: reviewer per-run cycle count ($cycle_count) reached max_cycles ($max_cycles) for run_id=$current_run_id with aggregate_result=$aggregate_result — escalating (max_cycles_exceeded)" >&2
   aggregate_result="escalate"
   aggregate_reason="max_cycles_exceeded"
+elif reviewer_loop_cap_exceeded "$lifetime_cycle_count" "$max_total_cycles" "$aggregate_result"; then
+  echo "WARN: reviewer lifetime cycle count ($lifetime_cycle_count) reached max_total_cycles ($max_total_cycles) with aggregate_result=$aggregate_result — escalating (max_total_cycles_exceeded)" >&2
+  aggregate_result="escalate"
+  aggregate_reason="max_total_cycles_exceeded"
 fi
 
 # Append compare-mode metrics row after the thread gate AND the max_cycles

@@ -590,38 +590,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `git ls-remote` evidence that nothing mutates before the guard fires) and a
   regression test proving a reverted guard placement turns the suite red are
   recorded in [PR #1500](https://github.com/lhpaul/ai-dev-framework-template/pull/1500#issuecomment-5335650280).
-- **Reviewer-loop `max_cycles` cap now enforced** (#1502): `pr-review-loop.sh`
-  previously had no code path that could ever trip Protocol 93's documented
-  hard cycle cap ("a hard limit independent of finding counts") — PR #1492 in
-  this repository reached 18 reviewer-loop cycles against a documented cap of
-  10 with no escalation. The script now tracks the number of fixer dispatches
-  already issued for a PR (Protocol 91's `cycle` counter) by reading the
-  persisted `reviewer_loop_history.v1` ledger, counting only the DISTINCT
-  HEAD SHAs among prior entries whose result is `needs_fixes` or
-  `needs_rerun` — the entries that actually trigger a fixer dispatch, deduped
-  so a restarted runner or a duplicate review invocation on the same
-  unfixed HEAD SHA cannot exhaust the budget without a real fix ever being
-  applied — and exits `RESULT=escalate` / `REASON=max_cycles_exceeded` on its
-  own once the configured limit is reached while the loop would otherwise
-  still report `needs_fixes` or `needs_rerun`. The counter is deliberately
-  *not* reset when the HEAD SHA changes after a fix push — it is cumulative
-  across the PR's whole review-loop lifetime, matching the pre-existing
-  documented orchestrator-level counter semantics and the exact failure
-  pattern that motivated this fix, where nearly every cycle produces a new
-  commit. A "clean" result is never overridden, and the inline-fix retry lane
-  is bounded by the same counter as sub-agent-dispatched retries, with no
-  separate logic needed. The limit defaults to 10 and is configurable via the
-  `PR_REVIEW_LOOP_MAX_CYCLES` environment variable or `review.max_cycles` in
-  `.ai-dev-workflow.yaml`. The current cycle count and configured limit are
-  now emitted as `CYCLE_COUNT` / `MAX_CYCLES` in the script's key=value output
-  on every invocation. The ledger fetch retries once on a transient GitHub
-  API failure before giving up; if the ledger still cannot be read reliably,
-  the script fails closed and exits `RESULT=escalate` /
-  `REASON=cycle_count_unavailable` (rather than silently disabling the
-  backstop for that PR indefinitely) whenever the loop would otherwise still
-  report `needs_fixes` or `needs_rerun`, matching this script's existing
-  fail-closed convention for other safety-critical audits (e.g. the
-  unresolved-review-thread check).
+- **Reviewer-loop cycle caps now enforced (dual cap)** (#1502):
+  `pr-review-loop.sh` previously had no code path that could ever trip
+  Protocol 93's documented hard cycle cap ("a hard limit independent of
+  finding counts") — PR #1492 in this repository reached 18 reviewer-loop
+  cycles against a documented cap of 10 with no escalation. The script now
+  enforces **two independent caps**, per operator decision recorded on PR
+  #1507's review: a **per-run cap** (`CYCLE_COUNT`/`MAX_CYCLES`, default 10)
+  that resets to 0 at each orchestration-run boundary — conforming verbatim
+  to `91-orchestrate-work-protocol.md:1719` ("Initialize `cycle = 0` once
+  per orchestration run ... escalate when the run reaches `max_cycles`") —
+  and a **lifetime ceiling** (`TOTAL_CYCLE_COUNT`/`MAX_TOTAL_CYCLES`, default
+  25) that never resets and counts across the PR's entire review-loop
+  lifetime, as the structural backstop for a PR resumed across many
+  separate orchestration runs (a per-run-only cap would give such a PR a
+  fresh budget every run, which is exactly the "runs until someone
+  notices" failure this issue exists to end). Both caps read the persisted
+  `reviewer_loop_history.v1` ledger, counting only the DISTINCT HEAD SHAs
+  among prior entries whose result is `needs_fixes` or `needs_rerun` — the
+  entries that actually trigger a fixer dispatch, deduped so a restarted
+  runner or a duplicate review invocation on the same unfixed HEAD SHA
+  cannot exhaust either budget without a real fix ever being applied.
+  Each ledger entry now also carries an optional `run_id` field (an
+  additive, non-breaking change — no schema version bump), resolved once
+  per invocation from the new `PR_REVIEW_LOOP_RUN_ID` env var (or a freshly
+  generated per-invocation id when unset) and threaded through to scope the
+  per-run count; entries written before this field existed are counted
+  toward the lifetime cap but can never satisfy a per-run query, so an
+  older PR's history does not get artificially reset. Neither cap resets on
+  a HEAD SHA change alone — the counters are cumulative within their
+  respective scope, matching the exact failure pattern that motivated this
+  fix, where nearly every cycle produces a new commit. A "clean" result is
+  never overridden, and the inline-fix retry lane is bounded by the same
+  counters as sub-agent-dispatched retries, with no separate logic needed.
+  Exits `RESULT=escalate` / `REASON=max_cycles_exceeded` when the per-run
+  cap is reached, or the distinct `REASON=max_total_cycles_exceeded` when
+  only the lifetime ceiling is reached, so an operator can tell "one run ran
+  away" apart from "many runs cumulatively ran away". Both limits are
+  configurable via `PR_REVIEW_LOOP_MAX_CYCLES`/`review.max_cycles` and
+  `PR_REVIEW_LOOP_MAX_TOTAL_CYCLES`/`review.max_total_cycles` in
+  `.ai-dev-workflow.yaml`. The current counts and configured limits are
+  emitted as `RUN_ID`/`CYCLE_COUNT`/`MAX_CYCLES`/`TOTAL_CYCLE_COUNT`/
+  `MAX_TOTAL_CYCLES` in the script's key=value output on every invocation.
+  The ledger fetch retries once on a transient GitHub API failure before
+  giving up; if the ledger still cannot be read reliably, the script fails
+  closed and exits `RESULT=escalate` / `REASON=cycle_count_unavailable`
+  (rather than silently disabling both backstops for that PR indefinitely)
+  whenever the loop would otherwise still report `needs_fixes` or
+  `needs_rerun`, matching this script's existing fail-closed convention for
+  other safety-critical audits (e.g. the unresolved-review-thread check).
 
 ### Changed
 

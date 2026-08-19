@@ -54,17 +54,41 @@ review:
     github:
       - codex-github
 
-  # Optional: reviewer-loop cycle cap enforced by pr-review-loop.sh. When the
-  # cumulative reviewer-loop cycle count for a PR reaches this value while the
-  # loop would otherwise still report needs_fixes/needs_rerun, the script
-  # exits RESULT=escalate / REASON=max_cycles_exceeded on its own rather than
-  # relying on the calling orchestrator to notice (issue #1502). The counter
-  # is cumulative across the PR's whole review-loop lifetime — it is not
-  # reset when the HEAD SHA changes after a fix push (see the comment above
-  # reviewer_loop_history_entries_count in pr-review-loop.sh for why).
+  # Optional: TWO independent reviewer-loop cycle caps enforced by
+  # pr-review-loop.sh (issue #1502; dual-cap decision recorded on PR #1507's
+  # review). Neither cap resets on a HEAD SHA change alone (see the comment
+  # above reviewer_loop_history_entries_count in pr-review-loop.sh for why:
+  # a reset-on-push design would make both caps dead code for the exact
+  # motivating failure, PR #1492's 18-cycle loop, where nearly every cycle
+  # produced a new commit).
+  #
+  # max_cycles (PER-RUN cap, default 10): resets to 0 at each orchestration-
+  # run boundary. Conforms to Protocol 91:1719 verbatim ("Initialize cycle
+  # = 0 once per orchestration run ... escalate when the run reaches
+  # max_cycles"). The "run boundary" is whatever the caller's
+  # PR_REVIEW_LOOP_RUN_ID env var identifies — see pr-review-loop.sh's usage
+  # doc for RUN_ID / PR_REVIEW_LOOP_RUN_ID. When the caller does not set a
+  # stable run id, every invocation is its own isolated run, and this cap
+  # effectively never trips on its own (the lifetime ceiling below still
+  # protects in that case). Escalates with REASON=max_cycles_exceeded.
   # PR_REVIEW_LOOP_MAX_CYCLES env var overrides this value.
-  # Uncomment to override the default:
+  #
+  # max_total_cycles (LIFETIME ceiling, default 25): never resets, counts
+  # across the PR's entire review-loop lifetime regardless of run
+  # boundaries. This is the structural backstop that does not depend on
+  # every caller correctly threading a stable run id through every
+  # invocation — a per-run-only cap would leave total effort unbounded for
+  # a PR resumed across many separate orchestration runs, which is exactly
+  # the "runs until someone notices" failure #1502 exists to end. Escalates
+  # with the distinct REASON=max_total_cycles_exceeded, checked only after
+  # the per-run cap does not fire, so an operator can tell "one run ran
+  # away" (max_cycles_exceeded) apart from "many runs cumulatively ran
+  # away" (max_total_cycles_exceeded). PR_REVIEW_LOOP_MAX_TOTAL_CYCLES env
+  # var overrides this value.
+  #
+  # Uncomment to override the defaults:
   # max_cycles: 10
+  # max_total_cycles: 25
   #
   # CodeRabbit remains supported as an opt-in reviewer (`coderabbit` for the
   # GitHub App, `coderabbit-cli` for the local CLI), but it is not a default
