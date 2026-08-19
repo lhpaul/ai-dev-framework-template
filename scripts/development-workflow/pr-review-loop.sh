@@ -6255,12 +6255,21 @@ reviewer_loop_resolve_cycle_counts() {
     return 0
   fi
 
+  # Bounded the same way as reviewer_loop_resolve_max_cycles/
+  # reviewer_loop_resolve_max_total_cycles (1-999999, up to 6 digits): an
+  # unbounded ^[0-9]+$ regex would accept a digit-only value outside Bash's
+  # signed integer range, and the later `[ "$attempt" -gt "$max_retries" ]`
+  # comparison would then emit "integer expression expected" and evaluate
+  # as false every time (a `[ ]` failure inside an `if` condition does not
+  # trigger `set -e`) — so the retry loop would never reach its "give up"
+  # branch and retry indefinitely instead of failing closed (found in
+  # review of PR #1507).
   max_retries="${CYCLE_LEDGER_MAX_RETRIES:-1}"
-  if ! [[ "$max_retries" =~ ^[0-9]+$ ]]; then
+  if ! [[ "$max_retries" =~ ^[0-9]{1,6}$ ]]; then
     max_retries=1
   fi
   retry_wait="${CYCLE_LEDGER_RETRY_WAIT:-2}"
-  if ! [[ "$retry_wait" =~ ^[0-9]+$ ]]; then
+  if ! [[ "$retry_wait" =~ ^[0-9]{1,6}$ ]]; then
     retry_wait=2
   fi
 
@@ -7729,6 +7738,51 @@ fi
 # every needs_fixes exit regardless of this value.
 : "$post_final_summary"
 
+# _reviewer_loop_append_corrected_compare_metrics_row <corrected_result>
+#
+# Appends a SUPPLEMENTARY --compare-mode metrics row reflecting a result
+# correction discovered AFTER the main compare-metrics-row append already
+# ran (i.e. the REASON=ledger_persist_failed override below, which can only
+# be known once _post_review_summary's persistence attempt has actually
+# been made — unlike the cap-override checks earlier, which run and settle
+# before the main append and therefore need no such correction).
+#
+# This is a documented, deliberately incomplete fix, not a full
+# reconciliation: append_compare_metrics_row is APPEND-ONLY (it writes one
+# markdown table row to docs/workflow/retro-metrics-platforms.md per call,
+# with no update-in-place), so this adds a SECOND row with the corrected
+# value rather than replacing the earlier (now-stale) one — a reader of
+# that file sees both the original and the corrected outcome for this
+# cycle rather than a single reconciled row. A fully clean fix would need
+# to either call _post_review_summary twice (once to discover the failure,
+# once more to actually persist the corrected result) or restructure the
+# whole tail of the script so metrics-append happens strictly after
+# _post_review_summary settles — both of which are materially larger,
+# riskier changes than this narrow correction. Given --compare mode is
+# explicitly documented as "for platform evaluation only — not for normal
+# orchestration", and this path additionally requires BOTH --compare mode
+# active AND a total summary-comment persistence failure (an intersection
+# of two already-rare conditions), a supplementary corrective row is the
+# proportionate fix here (found in review of PR #1507).
+_reviewer_loop_append_corrected_compare_metrics_row() {
+  local corrected_result="$1"
+  local _pf_idx _persist_fail_metrics_args
+
+  [ "$compare_mode" -eq 1 ] || return 0
+  [ "${#compare_verdicts[@]}" -gt 0 ] || return 0
+
+  set +e
+  _persist_fail_metrics_args=("$pr_number" "$branch_name" "$corrected_result")
+  _pf_idx=0
+  while [ "$_pf_idx" -lt "${#compare_verdicts[@]}" ]; do
+    _persist_fail_metrics_args+=("${compare_verdicts[$_pf_idx]}" "${compare_verdicts[$((_pf_idx + 1))]}")
+    _pf_idx=$((_pf_idx + 2))
+  done
+  append_compare_metrics_row "${_persist_fail_metrics_args[@]}" 2>/dev/null \
+    || echo "WARN: append_compare_metrics_row (ledger-persist-failure correction) failed — corrected metrics row not written" >&2
+  set -e
+}
+
 case "$aggregate_result" in
   clean)
     # Persistence failure on a "clean" result is not dispatch-relevant (no
@@ -7771,6 +7825,7 @@ case "$aggregate_result" in
       "$advisory_checks_section" || _post_summary_exit=$?
     if reviewer_loop_persist_failure_should_escalate "$_post_summary_exit" "$aggregate_result"; then
       echo "WARN: reviewer-loop summary comment could not be persisted for a dispatch-triggering result (needs_fixes) — escalating (ledger_persist_failed) rather than letting an uncounted fixer dispatch happen" >&2
+      _reviewer_loop_append_corrected_compare_metrics_row "escalate"
       print_kv RESULT escalate
       print_kv REASON ledger_persist_failed
       exit 2
@@ -7795,6 +7850,7 @@ case "$aggregate_result" in
       "$advisory_checks_section" || _post_summary_exit=$?
     if reviewer_loop_persist_failure_should_escalate "$_post_summary_exit" "$aggregate_result"; then
       echo "WARN: reviewer-loop summary comment could not be persisted for a dispatch-triggering result (needs_rerun) — escalating (ledger_persist_failed) rather than letting an uncounted retry happen" >&2
+      _reviewer_loop_append_corrected_compare_metrics_row "escalate"
       print_kv RESULT escalate
       print_kv REASON ledger_persist_failed
       exit 2

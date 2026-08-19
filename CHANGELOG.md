@@ -658,7 +658,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ledger entry now falls back to a guaranteed-unique synthetic identifier
   instead of an empty one (an empty HEAD SHA was excluded from both cap
   counts by design, which a persistent lookup failure could otherwise
-  exploit to grant unlimited uncounted dispatches).
+  exploit to grant unlimited uncounted dispatches). Two smaller gaps found
+  in the same review round are also closed: the ledger-fetch retry count
+  (`CYCLE_LEDGER_MAX_RETRIES`) and retry wait (`CYCLE_LEDGER_RETRY_WAIT`)
+  are now bounded the same way as the two cycle-cap variables, since an
+  unbounded value could exceed Bash's signed integer range and make the
+  retry loop's own give-up comparison silently evaluate as false forever
+  instead of failing closed; and a `--compare`-mode metrics row is now
+  additionally appended with the corrected result whenever the new
+  `ledger_persist_failed` escalation fires, so the comparison data used for
+  reviewer graduation reflects the actual outcome rather than only the
+  stale pre-correction value (a supplementary row, since the metrics log
+  is append-only).
 - **Backlog item Priority was silently never set**: `update_tracker_priority_best_effort`
   in `workflow-lib.sh` rewrote `Medium` — the board's actual Priority field
   option — into `Normal`, a value that does not exist on the board, so the

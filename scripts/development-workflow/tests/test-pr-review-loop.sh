@@ -2502,6 +2502,50 @@ else
 fi
 unset _mc_cap_line _mc_metrics_line
 
+# --- _reviewer_loop_append_corrected_compare_metrics_row (Codex finding on
+#     PR #1507: "finalize persistence failure before writing compare
+#     metrics") ---
+#
+# The main compare-metrics-row append runs before _post_review_summary (see
+# above), so a REASON=ledger_persist_failed correction — which can only be
+# known once _post_review_summary's persistence attempt has actually been
+# made — cannot be reflected in that earlier append. This function appends
+# a SUPPLEMENTARY corrected row instead (append-only format; documented as
+# a deliberately incomplete but proportionate fix — see the block comment
+# above the function). Extracted via the same awk-source-eval technique
+# Area 15 uses for _post_review_summary, since this function is also
+# defined after the HARNESS_MODE return point.
+_corrected_metrics_source="$(awk '/^_reviewer_loop_append_corrected_compare_metrics_row\(\)/,/^}$/'   "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+eval "$_corrected_metrics_source"
+
+_setup_metrics_dir
+compare_mode=1
+compare_verdicts=("codex-github" "needs_fixes")
+pr_number=99
+branch_name="fix/99-persist-failure"
+_reviewer_loop_append_corrected_compare_metrics_row "escalate"
+run_test "corrected_metrics_row_appended_when_compare_mode_active" "1" "$(_count_data_rows)"
+run_test "corrected_metrics_row_records_corrected_result" "1"   "$(grep -c '| escalate |' "$_METRICS_TMP" 2>/dev/null || echo 0)"
+
+_setup_metrics_dir
+compare_mode=0
+_reviewer_loop_append_corrected_compare_metrics_row "escalate"
+run_test "corrected_metrics_row_not_appended_when_compare_mode_inactive" "no" "$(
+  if [ -f "$_METRICS_TMP" ]; then echo yes; else echo no; fi
+)"
+
+_setup_metrics_dir
+compare_mode=1
+compare_verdicts=()
+_reviewer_loop_append_corrected_compare_metrics_row "escalate"
+run_test "corrected_metrics_row_not_appended_when_no_verdicts" "no" "$(
+  if [ -f "$_METRICS_TMP" ]; then echo yes; else echo no; fi
+)"
+
+unset _corrected_metrics_source compare_mode compare_verdicts pr_number branch_name
+rm -rf "${_METRICS_DIR:-}"
+unset _METRICS_DIR _METRICS_TMP
+
 # Function-ordering check (mirrors Area 11's Test 11.6) — the max_cycles /
 # max_total_cycles enforcement functions must stay callable from the
 # harness after future refactors move code around.
