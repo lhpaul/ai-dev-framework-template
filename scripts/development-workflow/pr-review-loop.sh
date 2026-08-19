@@ -5738,6 +5738,45 @@ reviewer_loop_history_select_summary_record() {
   '
 }
 
+# reviewer_loop_history_select_latest_summary_record
+#
+# Like reviewer_loop_history_select_summary_record, but WITHOUT the
+# render-continuity fallback to an older "available" history body when the
+# newest summary comment's own history is unavailable. Selects strictly the
+# newest "Automated Reviewer Loop Summary" comment by created_at and returns
+# ITS OWN body verbatim, regardless of whether its embedded history block
+# says available or unavailable.
+#
+# Use this selector for CYCLE-COUNTING purposes (reviewer_loop_resolve_
+# cycle_counts) — reviewer_loop_history_select_summary_record's older-
+# history fallback exists to keep the VISIBLE summary comment's rendered
+# history table from regressing when a transient write failure marks the
+# newest entry unavailable, but that same fallback would silently return a
+# STALE (and possibly under-counted) cycle count to the cap-enforcement
+# logic while masking the fact that the newest ledger state is actually
+# unreadable — defeating the fail-closed guarantee in reviewer_loop_
+# cycle_count_unavailable_should_escalate (found in review of PR #1507).
+# Counting must always see the newest ledger's true status, even when that
+# status is "unavailable".
+reviewer_loop_history_select_latest_summary_record() {
+  jq -rs '
+    (add // []) as $all
+    | [
+        $all[]
+        | select(
+            (.body // "" | contains("### Automated Reviewer Loop Summary")) and
+            (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
+          )
+      ]
+    | sort_by(.created_at)
+    | last
+    | {
+        id: (.id // ""),
+        body: (.body // "")
+      }
+  '
+}
+
 reviewer_loop_history_append_to_summary() {
   local comment_body="$1"
   local existing_body="${2:-}"
@@ -6110,6 +6149,17 @@ reviewer_loop_cycle_count_unavailable_should_escalate() {
 # CYCLE_LEDGER_MAX_RETRIES (attempts beyond the first) and
 # CYCLE_LEDGER_RETRY_WAIT (seconds between attempts; tests set this to 0).
 #
+# Uses reviewer_loop_history_select_latest_summary_record (NOT
+# reviewer_loop_history_select_summary_record) — the newest summary
+# comment's own history status must govern counting, even when it is
+# "unavailable". reviewer_loop_history_select_summary_record's older-
+# history fallback exists for the render path only (so the visible summary
+# comment's history table does not regress on a transient write failure);
+# using it here would let a genuinely unreadable newest ledger state
+# silently resolve to a stale (and possibly under-counted) prior count
+# instead of -1, masking a real dispatch from both caps and defeating the
+# fail-closed guarantee (found in review of PR #1507).
+#
 # Kept as its own function (defined before the HARNESS_MODE return point, like
 # restore_regression_label_if_missing) so it is directly unit-testable via the
 # MOCK_GH_COMMENTS_OUTPUT / MOCK_GH_COMMENTS_EXIT harness conventions, without
@@ -6147,7 +6197,7 @@ reviewer_loop_resolve_cycle_counts() {
     if record="$(
         set -o pipefail
         gh api "repos/$repo/issues/$pr_number_arg/comments" --paginate 2>/dev/null \
-          | reviewer_loop_history_select_summary_record
+          | reviewer_loop_history_select_latest_summary_record
       )"; then
       break
     fi

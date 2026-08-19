@@ -2165,6 +2165,56 @@ run_test "cycles_resolve_counts_first_run_is_zero_zero" "0 0" \
   "$(reviewer_loop_resolve_cycle_counts "42" "run-x" 2>/dev/null)"
 unset MOCK_GH_COMMENTS_OUTPUT
 
+# AC / regression (Codex finding on PR #1507): when the OLDEST of two
+# summary comments has available history (3 needs_fixes entries) but the
+# NEWEST has history_status=unavailable, reviewer_loop_resolve_cycle_counts
+# must report "-1 -1" (fail closed on the newest ledger's true status) —
+# NOT fall back to the older comment's stale 3/3 count the way the RENDER
+# path's reviewer_loop_history_select_summary_record intentionally does.
+_mc_stale_available_payload="$(jq -n '{
+  schema: "reviewer_loop_history.v1", history_status: "available",
+  entries: [range(1;4) | {iteration: ., head_sha: ("sha-" + (.|tostring)), result: "needs_fixes", run_id: "run-A"}]
+}')"
+_mc_old_comment_body="$(cat <<EOF_OLD_COMMENT
+### Automated Reviewer Loop Summary
+
+*Posted automatically by \`pr-review-loop.sh\`.*
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+$(printf '%s\n' "$_mc_stale_available_payload" | jq '.')
+\`\`\`
+EOF_OLD_COMMENT
+)"
+_mc_new_comment_body="$(cat <<'EOF_NEW_COMMENT'
+### Automated Reviewer Loop Summary
+
+*Posted automatically by `pr-review-loop.sh`.*
+
+<!-- reviewer-loop-history:v1 -->
+```json
+{"schema":"reviewer_loop_history.v1","history_status":"unavailable","history_unavailable_reason":"comment_read_failed","entries":[]}
+```
+EOF_NEW_COMMENT
+)"
+_mc_two_comment_json="$(jq -n \
+  --arg oldBody "$_mc_old_comment_body" \
+  --arg newBody "$_mc_new_comment_body" \
+  '[
+    {id: 10, created_at: "2026-08-19T00:00:00Z", body: $oldBody},
+    {id: 11, created_at: "2026-08-19T01:00:00Z", body: $newBody}
+  ]')"
+export MOCK_GH_COMMENTS_OUTPUT="$_mc_two_comment_json"
+run_test "cycles_resolve_counts_newest_unavailable_fails_closed_not_stale" "-1 -1" \
+  "$(reviewer_loop_resolve_cycle_counts "42" "run-A" 2>/dev/null)"
+run_test "cycles_end_to_end_newest_unavailable_escalates" "yes" "$(
+  read -r _lc _rc < <(reviewer_loop_resolve_cycle_counts "42" "run-A" 2>/dev/null)
+  reviewer_loop_cycle_count_unavailable_should_escalate "$_lc" needs_fixes && echo yes || echo no
+)"
+unset MOCK_GH_COMMENTS_OUTPUT
+unset _mc_stale_available_payload _mc_old_comment_body
+unset _mc_new_comment_body _mc_two_comment_json
+
 # 10 prior fixer-dispatch entries under run_id "run-A" → resolving with
 # run_id "run-A" yields lifetime=10 run=10, matching the default per-run
 # cap of 10.
@@ -2375,6 +2425,7 @@ unset _mc_cap_line _mc_metrics_line
 # max_total_cycles enforcement functions must stay callable from the
 # harness after future refactors move code around.
 for _mc_fn in reviewer_loop_resolve_run_id reviewer_loop_history_entries_count \
+    reviewer_loop_history_select_latest_summary_record \
     reviewer_loop_resolve_max_cycles reviewer_loop_resolve_max_total_cycles \
     reviewer_loop_cap_exceeded reviewer_loop_cycle_count_unavailable_should_escalate \
     reviewer_loop_resolve_cycle_counts; do
