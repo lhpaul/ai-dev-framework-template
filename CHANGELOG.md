@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Retrospective follow-ups to batch-merge output and CHANGELOG guidance** (#1520):
-  `batch-merge.sh` no longer pairs a `WARNING: gh pr merge failed` line with
-  `MERGE_RESULT=clean` in the same output. The local merge is authoritative and
-  `gh pr merge` is only an idempotent GitHub-state mirroring step, so a failure
-  there is not a merge failure; the message is now a `NOTE:` that says so
-  explicitly. `usage()` also documents that `recheck-remaining --after-merged-pr`
+  `batch-merge.sh`'s `WARNING: gh pr merge failed` message now explains what
+  `MERGE_RESULT=clean` does and does not cover, instead of leaving the two
+  looking contradictory: the local merge and push succeeded, but GitHub has not
+  recorded the PR as merged, and per Protocol 94 Step 4.2 the PR is `failed`
+  unless the MERGED-state poll converges within 30s. The `WARNING:` prefix is
+  deliberately retained — Protocol 94 Step 4.2 references that exact string —
+  and the protocol wording is updated to match. `usage()` also documents that `recheck-remaining --after-merged-pr`
   must name a PR that appears in the `--prs` frozen list, which previously was
   discoverable only by triggering `reason=after_merged_pr_not_in_frozen_list`.
   `docs/best-practices/2-version-control.md` now states that CHANGELOG entries

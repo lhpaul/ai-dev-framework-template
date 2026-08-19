@@ -1180,7 +1180,7 @@ cmd_merge() {
       local post_state
       post_state="$(gh pr view "$pr_num" --json state --jq '.state' 2>/dev/null)" || post_state=""
       if [ "$post_state" != "MERGED" ]; then
-        echo "NOTE: the local merge for PR #${pr_num} already succeeded and is authoritative; only the follow-up GitHub-state mirroring step (gh pr merge) did not complete, and the PR still reads '${post_state:-unknown}'. This is not a merge failure. Confirm GitHub caught up via 'gh pr view ${pr_num} --json state' (the caller's Step 4.2 MERGED-state poll is the safety net)." >&2
+        echo "WARNING: gh pr merge failed for PR #${pr_num} — the local merge and push to the base branch succeeded, but GitHub has not recorded the PR as merged and it still reads '${post_state:-unknown}'. This is NOT yet resolved: per Protocol 94 Step 4.2 you must poll 'gh pr view ${pr_num} --json state' for MERGED (every 5s, up to 30s). If it converges, the merge is complete. If it does not, report this PR as FAILED and do not delete the remote branch or run cleanup." >&2
       fi
     fi
 
