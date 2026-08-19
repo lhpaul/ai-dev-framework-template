@@ -94,15 +94,18 @@ assets or a fidelity baseline.
 
 ### Priority and Size inference heuristics (GitHub Projects)
 
-**Priority** — default `Normal` unless there is explicit urgency signal.
-`Medium` remains accepted by helper scripts as a backward-compatible alias for
-`Normal`:
+**Priority** — default `Medium` unless there is explicit urgency signal. The
+value must match one of the board's actual Priority field options (see
+[`github-projects.md`](../integrations/github-projects.md)); typical boards
+use `Urgent`, `High`, `Medium`, `Low`. A value that does not resolve against
+the board's Priority options is a hard error from the helper script (see
+below), not a silent no-op:
 
 | Signal | Priority |
 | ------ | -------- |
 | Human uses words like "urgent", "blocking", "ASAP", "critical", or "production issue" | `Urgent` or `High` |
 | Item blocks another in-progress item or a pending release | `High` |
-| Standard new feature, improvement, or process fix | `Normal` (default) |
+| Standard new feature, improvement, or process fix | `Medium` (default) |
 | Nice-to-have, polish, or exploratory work | `Low` |
 
 **Size** — infer from the scope of the change implied by the request:
@@ -121,11 +124,11 @@ Pass inferred values directly to the helper:
 ./scripts/development-workflow/add-backlog-item.sh create \
   --title "..." \
   --body-file - \
-  --priority Normal \
+  --priority Medium \
   --size S
 ```
 
-When the scope is genuinely unclear after reading the request, omit `--size` (leave it unset) rather than guessing. Do not omit `--priority` — the script defaults to `Normal` when the flag is absent.
+When the scope is genuinely unclear after reading the request, omit `--size` (leave it unset) rather than guessing. Do not omit `--priority` — the script defaults to `Medium` when the flag is absent.
 
 ---
 

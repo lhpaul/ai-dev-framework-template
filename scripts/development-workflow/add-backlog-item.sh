@@ -23,9 +23,13 @@ create
   When DESTINATION_KIND is github, creates one GitHub issue via gh (requires gh auth).
   For linear, other, or none, exits non-zero with guidance (agents follow 00-add-backlog-item-protocol.md).
 
-  --priority <value>  Optional. Set the project Priority field. Valid values: Urgent, High, Normal, Low.
-                      Medium is accepted as a backward-compatible alias for Normal.
-                      When omitted, defaults to Normal for GitHub Projects.
+  --priority <value>  Optional. Set the project Priority field. The value is
+                      resolved against the project's actual Priority field
+                      options (see docs/workflow/development-workflow/integrations/github-projects.md);
+                      typical boards use Urgent, High, Medium, Low.
+                      When omitted, defaults to Medium for GitHub Projects.
+                      A value that cannot be resolved against the board's
+                      Priority options is a hard error (non-zero exit).
   --size <value>      Optional. Set the project Size field. Valid values: XS, S, M, L, XL.
                       When omitted, the Size field is left unset.
   --type <value>      Optional. Set the project classification field. Valid values: Feature, Bug,
@@ -151,12 +155,16 @@ create_cmd() {
     # Ensure the issue is on the project board (adds it with Status=Backlog if absent).
     # The ensure_on_project_board helper is fail-open; it always returns 0.
     ensure_on_project_board "$issue_number" "Backlog"
-    # Update project Type, Priority (default Normal), and Size when GitHub Projects is configured.
-    # The update_tracker_*_best_effort helpers are fail-open; they always return 0.
+    # Update project Type, Priority (default Medium), and Size when GitHub Projects is configured.
+    # update_tracker_type_best_effort and update_tracker_size_best_effort are fail-open (always
+    # return 0). update_tracker_priority_best_effort is a hard error (non-zero exit) when the
+    # tracker provider/project are configured but the requested priority value cannot be resolved
+    # against the board's actual Priority field options — under `set -euo pipefail` this aborts
+    # the script so a bad or stale priority value is never silently dropped.
     if [ -n "$type_label" ]; then
       update_tracker_type_best_effort "$issue_number" "$type_label"
     fi
-    local effective_priority="${priority:-Normal}"
+    local effective_priority="${priority:-Medium}"
     update_tracker_priority_best_effort "$issue_number" "$effective_priority"
     if [ -n "$size" ]; then
       update_tracker_size_best_effort "$issue_number" "$size"

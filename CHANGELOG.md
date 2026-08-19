@@ -590,6 +590,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `git ls-remote` evidence that nothing mutates before the guard fires) and a
   regression test proving a reverted guard placement turns the suite red are
   recorded in [PR #1500](https://github.com/lhpaul/ai-dev-framework-template/pull/1500#issuecomment-5335650280).
+- **Backlog item Priority was silently never set**: `update_tracker_priority_best_effort`
+  in `workflow-lib.sh` rewrote `Medium` — the board's actual Priority field
+  option — into `Normal`, a value that does not exist on the board, so the
+  mutation could never resolve; the inverted alias is removed, and
+  `add-backlog-item.sh`'s implicit default (used whenever `--priority` is
+  omitted) changes from the nonexistent `Normal` to `Medium`. Priority
+  resolution already read the project's actual field options dynamically
+  (no hardcoded value list to fix there). A requested priority that still
+  cannot be resolved against the board's real options is now a hard error
+  (non-zero exit, `Error:`-prefixed message) instead of a fail-open
+  `Warning:` that let the item get created with no priority at all; this
+  applies narrowly to the Priority field via a new opt-in `required` mode
+  on `update_tracker_named_field_best_effort` — the Type and Size helpers,
+  and cases where the tracker provider or project genuinely does not apply,
+  remain best-effort as before. `--priority` help text updated to match.
+  Live reproduction on the real board (see issue #1501) showed `High`
+  already worked correctly and the alias/default were the whole defect —
+  no separate `High` resolution bug exists.
 
 ### Changed
 

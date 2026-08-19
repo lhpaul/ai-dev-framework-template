@@ -189,6 +189,12 @@ JSON
           cat <<'JSON'
 {"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_custom_type","name":"Custom Type","options":[{"id":"OPT_workflow_custom","name":"Workflow"}]},{"id":"PVTSSF_configured_type","name":"Configured Type","options":[{"id":"OPT_workflow_configured","name":"Workflow"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
 JSON
+        elif [ "${MOCK_STATUS_FIELD_MODE:-existing}" = "priority_configured" ]; then
+          # Matches the real board's Priority options verified on issue #1501:
+          # Urgent, High, Medium, Low — there is no "Normal" option.
+          cat <<'JSON'
+{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_urgent","name":"Urgent"},{"id":"OPT_high","name":"High"},{"id":"OPT_medium","name":"Medium"},{"id":"OPT_low","name":"Low"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+JSON
         else
           cat <<'JSON'
 {"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_status","name":"Status","options":[{"id":"OPT_spec_ready","name":"Spec Ready"},{"id":"OPT_in_development","name":"In Development"},{"id":"OPT_merged","name":"Merged"},{"id":"OPT_released","name":"Released"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_workflow","name":"Workflow"},{"id":"OPT_bug","name":"Bug"},{"id":"OPT_refactor","name":"Refactor"},{"id":"OPT_feature","name":"Feature"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
@@ -860,12 +866,68 @@ run_test "named_field_update_wrong_provider_no_mutation" "0" "$(count_log_matche
 reset_log
 __workflow_project_named_field_cache_keys=()
 __workflow_project_named_field_cache_vals=()
-priority_output="$(update_tracker_priority_best_effort 824 "High" 2>&1)"
+priority_exit=0
+priority_output=""
+priority_output="$(update_tracker_priority_best_effort 824 "High" 2>&1)" || priority_exit=$?
 case "$priority_output" in
-  *"could not read project 'Priority' field metadata"*) priority_result="routed-to-priority" ;;
+  *"Error:"*"could not read project 'Priority' field metadata"*) priority_result="routed-to-priority" ;;
   *) priority_result="$priority_output" ;;
 esac
 run_test "priority_convenience_routes_to_named_field" "routed-to-priority" "$priority_result"
+# Issue #1501: Priority is always passed to update_tracker_named_field_best_effort
+# in "required" mode, so a field that cannot be resolved is a hard error.
+run_test "priority_convenience_required_mode_returns_nonzero" "1" "$priority_exit"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+export MOCK_STATUS_FIELD_MODE=priority_configured
+priority_medium_exit=0
+priority_medium_output=""
+priority_medium_output="$(update_tracker_priority_best_effort 824 "Medium" 2>&1)" || priority_medium_exit=$?
+run_test "priority_medium_resolves_against_real_board_options" "0" "$priority_medium_exit"
+case "$priority_medium_output" in
+  *"Error:"*) priority_medium_output_result="has-error" ;;
+  *) priority_medium_output_result="no-error" ;;
+esac
+run_test "priority_medium_output_has_no_error" "no-error" "$priority_medium_output_result"
+# Regression for issue #1501: assert the requested priority is actually
+# present on the board item afterward — the mutation must carry the Medium
+# option ID resolved from the board's real options, not a hardcoded/aliased
+# value. There is no "Normal" option on the board.
+run_test "priority_medium_mutation_uses_medium_option" "1" "$(count_log_matches 'optionId=OPT_medium')"
+run_test "priority_medium_mutation_avoids_normal_option" "0" "$(count_log_matches 'optionId=OPT_normal')"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+priority_urgent_exit=0
+priority_urgent_output=""
+priority_urgent_output="$(update_tracker_priority_best_effort 824 "Urgent" 2>&1)" || priority_urgent_exit=$?
+run_test "priority_urgent_resolves_against_real_board_options" "0" "$priority_urgent_exit"
+case "$priority_urgent_output" in
+  *"Error:"*) priority_urgent_output_result="has-error" ;;
+  *) priority_urgent_output_result="no-error" ;;
+esac
+run_test "priority_urgent_output_has_no_error" "no-error" "$priority_urgent_output_result"
+run_test "priority_urgent_mutation_uses_urgent_option" "1" "$(count_log_matches 'optionId=OPT_urgent')"
+
+reset_log
+__workflow_project_named_field_cache_keys=()
+__workflow_project_named_field_cache_vals=()
+priority_bad_exit=0
+priority_bad_output=""
+priority_bad_output="$(update_tracker_priority_best_effort 824 "Normal" 2>&1)" || priority_bad_exit=$?
+unset MOCK_STATUS_FIELD_MODE
+# Issue #1501: "Normal" is not a real board option; requesting it must be a
+# hard error, not a silent no-op.
+run_test "priority_normal_is_hard_error" "1" "$priority_bad_exit"
+case "$priority_bad_output" in
+  *"Error:"*"could not resolve 'Priority' field or option 'Normal'"*) priority_bad_result="errored" ;;
+  *) priority_bad_result="$priority_bad_output" ;;
+esac
+run_test "priority_normal_error_message" "errored" "$priority_bad_result"
+run_test "priority_normal_sends_no_mutation" "0" "$(count_log_matches 'updateProjectV2ItemFieldValue')"
 
 reset_log
 __workflow_project_named_field_cache_keys=()
