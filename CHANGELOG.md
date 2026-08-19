@@ -787,6 +787,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Live reproduction on the real board (see issue #1501) showed `High`
   already worked correctly and the alias/default were the whole defect —
   no separate `High` resolution bug exists.
+- **Multi-repository release tooling hardening**: the prepare-release
+  protocol now documents a one-PR flow for product repositories whose
+  resolved release base is `main` — the previous two-PR instructions could
+  not be followed for that configuration, since the production and backport
+  PRs would need identical head and base branches.
+  `delivery-bundle-manifest.sh` now rejects `add-component`/`update-component`
+  calls whose `--component-key` does not match the evidence file's
+  `selected_product_repo_key`, instead of silently binding mismatched
+  evidence into the wrong component slot.
+  `component-milestone-reconciliation.sh`'s `inspect-parent`/`apply-parent`
+  now validate that `--parent-issue` matches the delivery manifest's
+  `parent_ref` before evaluating component readiness, instead of allowing an
+  unrelated issue to be recorded as released.
+  `component-release-target.sh` now verifies the resolved product repository
+  checkout directory actually exists on disk before reporting
+  `mutation_allowed=true`, instead of trusting an unreachable configured
+  `local_path`.
+  `workflow-config-resolver.py`'s branch-name validation now applies git's
+  ref-format component rules (no leading dot, no trailing dot, no `.lock`
+  suffix) in addition to the existing character allowlist, so names such as
+  `release/v1.2.3.lock` or `release/v1.2.3.` are rejected instead of accepted
+  as portable branch names.
 
 ### Changed
 
