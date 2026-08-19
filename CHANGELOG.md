@@ -604,15 +604,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applies narrowly to the Priority field via a new opt-in `required` mode
   on `update_tracker_named_field_best_effort` — the Type and Size helpers,
   and cases where the tracker provider or project genuinely does not apply,
-  remain best-effort as before. `add-backlog-item.sh` also now validates the
-  effective priority against the board's real Priority field options via the
-  new no-mutation `workflow_tracker_priority_resolvable` check **before**
-  calling `gh issue create`, so an unresolvable value is rejected without
-  ever creating the issue — closing a partial-success window where the
-  post-creation required update could fail after the issue already existed,
-  which a caller retrying on non-zero exit without inspecting stdout could
-  otherwise turn into duplicate issues (caught in code review on this PR).
-  `--priority` help text updated to match.
+  remain best-effort as before. `add-backlog-item.sh` now validates an
+  explicit `--priority` against the board's real Priority field options via
+  the new no-mutation `workflow_tracker_priority_resolvable` check
+  **before** calling `gh issue create`, so an unresolvable explicit value is
+  rejected without ever creating the issue (exit 1) — closing a
+  partial-success window where the post-creation required update could
+  otherwise fail after the issue already existed, which a caller retrying
+  on non-zero exit without inspecting stdout could turn into duplicate
+  issues (caught in code review on this PR). The rarer failure modes the
+  pre-check cannot see (issue unexpectedly missing from the board, a
+  transient GraphQL write failure) still surface after issue creation but
+  now exit with a distinct code (`5`) and an explicit "issue was already
+  created, do not retry" message instead of a generic failure. The
+  implicit **default** (used when `--priority` is omitted) is no longer a
+  single hardcoded literal either: the new `workflow_tracker_default_priority_value`
+  adapts to whatever the configured board actually supports — preferring
+  `Medium` (this repo's board), falling back to `Normal` for downstream
+  repos whose board is still set up per the framework's pre-#1501 docs
+  (also caught in code review on this PR, since `github-projects.md`
+  previously told every template consumer to create a `Normal` option), and
+  leaving Priority unset (no error) only when a board's Priority field
+  confirms neither candidate exists — the same way an omitted `--size` or
+  `--type` is left unset. `--priority` help text updated to match.
   Live reproduction on the real board (see issue #1501) showed `High`
   already worked correctly and the alias/default were the whole defect —
   no separate `High` resolution bug exists.

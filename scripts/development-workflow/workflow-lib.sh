@@ -2633,38 +2633,31 @@ EOF
   printf '%s' "$field_json"
 }
 
-# workflow_tracker_priority_resolvable <priority_value>
+# _workflow_tracker_priority_field_json
 #
-# Pre-flight check: does <priority_value> resolve against the project's
-# actual Priority field options? Unlike update_tracker_priority_best_effort,
-# this performs no issue-specific lookups and triggers no mutation, so it is
-# safe to call before an issue exists — e.g. before `gh issue create` — to
-# avoid the partial-success window where an issue is created but a required
-# follow-up Priority write then fails (see issue #1501 code review: a caller
-# that retries on non-zero exit without inspecting stdout could otherwise
-# create a duplicate issue).
-#
-# Returns 0 (resolvable / not blocking) when the tracker provider is not
-# github_projects, no project is configured, or the project/field lookup
-# itself fails or is inconclusive — those are the same "genuinely does not
-# apply" or "uncertain" cases update_tracker_named_field_best_effort always
-# treats permissively, and this pre-check must not block issue creation on
-# an environmental failure the authoritative post-creation required check
-# will re-attempt anyway. Returns 1 only when the Priority field was
-# successfully read from a configured project and <priority_value> does not
-# match any of its options — a confirmed, actionable bad value.
-workflow_tracker_priority_resolvable() {
-  local priority_value="$1"
-  local _wtpr_provider project_owner project_number project_id field_json option_id
+# Internal helper shared by workflow_tracker_priority_resolvable and
+# workflow_tracker_default_priority_value. Resolves and prints the
+# project's Priority field JSON (id + options map, see
+# workflow_github_project_named_field_json) when the tracker provider is
+# github_projects, a project is configured, and the field was successfully
+# read. Performs no issue-specific lookups and triggers no mutation, so it
+# is safe to call before an issue exists. Prints nothing and returns 1 in
+# every other case — provider mismatch, no project configured, or the
+# lookup itself failed — which both callers treat uniformly as "nothing to
+# validate/adapt against" (the same "genuinely does not apply" / "uncertain"
+# carve-out update_tracker_named_field_best_effort always treats
+# permissively).
+_workflow_tracker_priority_field_json() {
+  local _wtpfj_provider project_owner project_number project_id field_json
 
-  _wtpr_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
-  if [ "$_wtpr_provider" != "github_projects" ]; then
-    return 0
+  _wtpfj_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  if [ "$_wtpfj_provider" != "github_projects" ]; then
+    return 1
   fi
 
   project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
   if [ -z "$project_number" ]; then
-    return 0
+    return 1
   fi
 
   project_owner="$(workflow_resolve_github_project_owner)"
@@ -2672,15 +2665,44 @@ workflow_tracker_priority_resolvable() {
     project_owner="$(workflow_resolve_github_repo_owner)"
   fi
   if [ -z "$project_owner" ]; then
-    return 0
+    return 1
   fi
 
   project_id="$(workflow_github_project_id "$project_owner" "$project_number" 2>/dev/null)"
   if [ -z "$project_id" ]; then
-    return 0
+    return 1
   fi
 
   if ! field_json="$(workflow_github_project_named_field_json "$project_id" "Priority" 2>/dev/null)"; then
+    return 1
+  fi
+
+  printf '%s' "$field_json"
+}
+
+# workflow_tracker_priority_resolvable <priority_value>
+#
+# Pre-flight check: does <priority_value> resolve against the project's
+# actual Priority field options? Unlike update_tracker_priority_best_effort,
+# this triggers no mutation, so it is safe to call before an issue exists —
+# e.g. before `gh issue create` — to avoid the partial-success window where
+# an issue is created but a required follow-up Priority write then fails
+# (see issue #1501 code review: a caller that retries on non-zero exit
+# without inspecting stdout could otherwise create a duplicate issue).
+#
+# Returns 0 (resolvable / not blocking) whenever
+# _workflow_tracker_priority_field_json cannot produce a confirmed field
+# reading (provider mismatch, no project configured, or an inconclusive
+# lookup) — this pre-check must not block issue creation on an
+# environmental failure the authoritative post-creation required check will
+# re-attempt anyway. Returns 1 only when the Priority field was
+# successfully read from a configured project and <priority_value> does not
+# match any of its options — a confirmed, actionable bad value.
+workflow_tracker_priority_resolvable() {
+  local priority_value="$1"
+  local field_json option_id
+
+  if ! field_json="$(_workflow_tracker_priority_field_json)"; then
     return 0
   fi
 
@@ -2691,6 +2713,49 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
 " "$priority_value" 2>/dev/null)"
 
   [ -n "$option_id" ]
+}
+
+# workflow_tracker_default_priority_value
+#
+# Resolves the runtime default Priority value used when --priority is
+# omitted, adapting to what the configured board actually supports instead
+# of assuming a single universal literal (issue #1501 code review, P1
+# finding "Preserve compatibility with Normal-priority boards"): prefers
+# "Medium" (this repo's own board), falls back to "Normal" for boards still
+# configured per the framework's pre-#1501 setup docs.
+#
+# When _workflow_tracker_priority_field_json cannot produce a confirmed
+# field reading (provider mismatch, no project configured, or an
+# inconclusive lookup), prints "Medium" unchanged — matching the
+# pre-existing best-effort behavior for those cases; there is nothing more
+# specific to fall back to, and the post-creation update remains a
+# best-effort no-op for a provider that does not support it.
+#
+# Only prints nothing (empty) when the Priority field was successfully read
+# from a configured project and CONFIRMED to contain neither "Medium" nor
+# "Normal". At that point, forcing a hard default would make every routine
+# backlog-item creation on that board fail until manually migrated, so the
+# caller should leave Priority unset instead — the same way an omitted
+# --size or --type is left unset.
+workflow_tracker_default_priority_value() {
+  local field_json resolved
+
+  if ! field_json="$(_workflow_tracker_priority_field_json)"; then
+    printf 'Medium'
+    return 0
+  fi
+
+  resolved="$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+options = data.get('options') or {}
+for candidate in ('Medium', 'Normal'):
+    if options.get(candidate):
+        print(candidate, end='')
+        break
+" 2>/dev/null)"
+
+  printf '%s' "$resolved"
 }
 
 # update_tracker_named_field_best_effort <issue_number> <field_name> <option_value> [required]

@@ -78,11 +78,31 @@ case "$*" in
         printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_item_123","project":{"id":"PVT_project_1","number":1},"status":{"name":"Backlog"},"type":{"name":"Feature"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n'
         ;;
       *"fields(first:"*)
-        # Matches the real board's Priority options verified on issue #1501:
-        # Urgent, High, Medium, Low — there is no "Normal" option.
-        printf '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_urgent","name":"Urgent"},{"id":"OPT_high","name":"High"},{"id":"OPT_medium","name":"Medium"},{"id":"OPT_low","name":"Low"}]},{"id":"PVTSSF_size","name":"Size","options":[{"id":"OPT_size_xs","name":"XS"},{"id":"OPT_size_s","name":"S"},{"id":"OPT_size_m","name":"M"},{"id":"OPT_size_l","name":"L"},{"id":"OPT_size_xl","name":"XL"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_type_feature","name":"Feature"},{"id":"OPT_type_bug","name":"Bug"},{"id":"OPT_type_refactor","name":"Refactor"},{"id":"OPT_type_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
+        case "${MOCK_PRIORITY_FIELD_MODE:-medium}" in
+          normal_only)
+            # Simulates a downstream board still configured per the
+            # framework's pre-#1501 docs: Urgent, High, Normal, Low — no
+            # "Medium" option (issue #1501 code review, "Preserve
+            # compatibility with Normal-priority boards").
+            printf '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_urgent","name":"Urgent"},{"id":"OPT_high","name":"High"},{"id":"OPT_normal","name":"Normal"},{"id":"OPT_low","name":"Low"}]},{"id":"PVTSSF_size","name":"Size","options":[{"id":"OPT_size_xs","name":"XS"},{"id":"OPT_size_s","name":"S"},{"id":"OPT_size_m","name":"M"},{"id":"OPT_size_l","name":"L"},{"id":"OPT_size_xl","name":"XL"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_type_feature","name":"Feature"},{"id":"OPT_type_bug","name":"Bug"},{"id":"OPT_type_refactor","name":"Refactor"},{"id":"OPT_type_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
+            ;;
+          neither)
+            # Simulates a board using an entirely different Priority
+            # vocabulary (neither "Medium" nor "Normal" present).
+            printf '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_p0","name":"P0"},{"id":"OPT_p1","name":"P1"}]},{"id":"PVTSSF_size","name":"Size","options":[{"id":"OPT_size_xs","name":"XS"},{"id":"OPT_size_s","name":"S"},{"id":"OPT_size_m","name":"M"},{"id":"OPT_size_l","name":"L"},{"id":"OPT_size_xl","name":"XL"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_type_feature","name":"Feature"},{"id":"OPT_type_bug","name":"Bug"},{"id":"OPT_type_refactor","name":"Refactor"},{"id":"OPT_type_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
+            ;;
+          *)
+            # Matches the real board's Priority options verified on issue
+            # #1501: Urgent, High, Medium, Low — there is no "Normal" option.
+            printf '{"data":{"node":{"fields":{"nodes":[{"id":"PVTSSF_priority","name":"Priority","options":[{"id":"OPT_urgent","name":"Urgent"},{"id":"OPT_high","name":"High"},{"id":"OPT_medium","name":"Medium"},{"id":"OPT_low","name":"Low"}]},{"id":"PVTSSF_size","name":"Size","options":[{"id":"OPT_size_xs","name":"XS"},{"id":"OPT_size_s","name":"S"},{"id":"OPT_size_m","name":"M"},{"id":"OPT_size_l","name":"L"},{"id":"OPT_size_xl","name":"XL"}]},{"id":"PVTSSF_type","name":"Type","options":[{"id":"OPT_type_feature","name":"Feature"},{"id":"OPT_type_bug","name":"Bug"},{"id":"OPT_type_refactor","name":"Refactor"},{"id":"OPT_type_workflow","name":"Workflow"}]}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}\n'
+            ;;
+        esac
         ;;
       *"updateProjectV2ItemFieldValue"*)
+        if [ "${MOCK_PRIORITY_UPDATE_MODE:-ok}" = "fail" ]; then
+          printf 'transient GraphQL write failure\n' >&2
+          exit 42
+        fi
         printf '{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_item_123"}}}}\n'
         ;;
       *)
@@ -224,6 +244,54 @@ case "$unresolvable_stderr" in
   *) unresolvable_error_result="$unresolvable_stderr" ;;
 esac
 run_test "unresolvable_priority_prints_error" "errored" "$unresolvable_error_result"
+
+echo ""
+echo "=== create: default priority adapts to a Normal-only board (issue #1501 code review) ==="
+
+export MOCK_PRIORITY_FIELD_MODE=normal_only
+run_create "ok" --title "Test" --body "body"
+unset MOCK_PRIORITY_FIELD_MODE
+run_test "normal_only_board_default_exits_zero" "0" "$(get_exit)"
+run_test "normal_only_board_default_creates_issue" "1" "$(count_log_matches 'issue create')"
+run_test "normal_only_board_default_uses_normal_option" "1" "$(count_log_matches 'optionId=OPT_normal')"
+run_test "normal_only_board_default_avoids_medium_option" "0" "$(count_log_matches 'optionId=OPT_medium')"
+
+echo ""
+echo "=== create: default priority left unset on a board with neither Medium nor Normal (issue #1501 code review) ==="
+
+export MOCK_PRIORITY_FIELD_MODE=neither
+run_create "ok" --title "Test" --body "body"
+unset MOCK_PRIORITY_FIELD_MODE
+# The unresolvable-default case must NOT block issue creation the way an
+# unresolvable EXPLICIT --priority does — Priority is simply left unset,
+# the same way an omitted --size or --type is left unset.
+run_test "neither_board_default_exits_zero" "0" "$(get_exit)"
+run_test "neither_board_default_creates_issue" "1" "$(count_log_matches 'issue create')"
+run_test "neither_board_default_sends_no_priority_mutation" "0" "$(count_log_matches 'fieldId=PVTSSF_priority')"
+
+echo ""
+echo "=== create: post-creation Priority failure is a distinct partial-success exit, not a generic failure (issue #1501 code review) ==="
+
+export MOCK_PRIORITY_UPDATE_MODE=fail
+run_create "ok" --title "Test" --body "body"
+unset MOCK_PRIORITY_UPDATE_MODE
+partial_stdout="$(get_stdout)"
+partial_stderr="$(get_stderr)"
+run_test "partial_success_exit_code_is_five" "5" "$(get_exit)"
+# The issue WAS created — its URL must still be visible on stdout, and
+# `gh issue create` must have actually run (not been skipped), proving this
+# is a genuine partial success rather than the pre-flight blocking path.
+run_test "partial_success_creates_issue" "1" "$(count_log_matches 'issue create')"
+case "$partial_stdout" in
+  *"https://github.com/lhpaul/test-repo/issues/123"*) partial_url_result="printed" ;;
+  *) partial_url_result="$partial_stdout" ;;
+esac
+run_test "partial_success_prints_issue_url" "printed" "$partial_url_result"
+case "$partial_stderr" in
+  *"already created"*"Do NOT retry issue creation"*) partial_message_result="explicit" ;;
+  *) partial_message_result="$partial_stderr" ;;
+esac
+run_test "partial_success_prints_explicit_no_retry_message" "explicit" "$partial_message_result"
 
 echo ""
 echo "=== create: --size flag updates Size field ==="
