@@ -262,14 +262,25 @@ chore(release): v[X.Y.Z]
 
 ---
 
-## Step 6: Push and Open Two PRs
+## Step 6: Push and Open Release PR(s)
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 git push -u origin "$RELEASE_BRANCH"
 ```
 
-Open **two** PRs from the release branch using `gh pr create`:
+**If `RELEASE_BASE` is `main`** (the resolved release base for a trunk-based
+product repository — for example a product with `default_branch: main` and no
+explicit `release.base` override), the production and backport targets are
+identical. Opening a second PR with the same head and base as the first is
+impossible (`gh pr create` fails: a PR from `RELEASE_BRANCH` to `main` already
+exists) and there is no separate branch to keep in sync. Use the **one-PR
+flow**: open only the production PR below, skip the backport PR entirely, and
+treat every later step that references the backport PR (§7.5, Step 8 backport
+merge, Step 9 two-merged-PR checks) as satisfied by that single PR. Continue to
+Step 7.
+
+Otherwise, open **two** PRs from the release branch using `gh pr create`:
 
 | PR                 | Target    | Purpose                                                      |
 | ------------------ | --------- | ------------------------------------------------------------ |
@@ -285,7 +296,7 @@ Example:
 # 1) Production release PR (configured release branch -> main)
 gh pr create --base main --title "chore(release): v[X.Y.Z]" --body-file /tmp/release-notes.md
 
-# 2) Backport PR (configured release branch -> release base)
+# 2) Backport PR (configured release branch -> release base) — skip when RELEASE_BASE=main
 gh pr create --base "$RELEASE_BASE" --title "chore(release): v[X.Y.Z]" --body-file /tmp/release-notes.md
 ```
 
@@ -375,13 +386,21 @@ Run `pr-ci-loop.sh` and wait until required checks settle (including the e2e/reg
 
 ### 7.5 Backport PR (`RELEASE_BASE` target)
 
-Do **not** require `ready-for-regression` on the backport PR as part of this protocol. It may proceed on its own CI; merge order remains: **merge `main` first**, then backport.
+Skip this step under the one-PR flow (`RELEASE_BASE=main`, §Step 6) — there is
+no separate backport PR to drive.
+
+Otherwise: do **not** require `ready-for-regression` on the backport PR as part of this protocol. It may proceed on its own CI; merge order remains: **merge `main` first**, then backport.
 
 ---
 
 ## Step 8: Inform the Human
 
-When the production PR is ready (or clearly escalated):
+Under the one-PR flow (`RELEASE_BASE=main`), there is only one PR to merge:
+
+1. **Merge the production PR** — the tag `v[X.Y.Z]` is created automatically by CI on merge (`.github/workflows/auto-tag-release.yml`)
+2. Run Step 9 post-merge cleanup after it is merged
+
+Otherwise, when the production PR is ready (or clearly escalated):
 
 1. **Merge the `main` PR first** — the tag `v[X.Y.Z]` is created automatically by CI on merge (`.github/workflows/auto-tag-release.yml`)
 2. Then merge the `RELEASE_BASE` backport PR
@@ -395,14 +414,16 @@ If Step 7 escalated or CI timed out, report status and blockers before merge.
 
 ## Step 9: Post-Merge Cleanup (Branch + Tracker)
 
-Run this step only after both release PRs from `RELEASE_BRANCH` are merged.
+Run this step only after the release PR(s) from `RELEASE_BRANCH` are merged:
+both PRs under the normal two-PR flow, or the single production PR under the
+one-PR flow (`RELEASE_BASE=main`).
 
 ### 9.1 Verify merged state before deletion
 
 Confirm the release branch has:
 
 - One merged PR to `main`
-- One merged PR to `RELEASE_BASE`
+- One merged PR to `RELEASE_BASE` (the same PR as above under the one-PR flow — `RELEASE_BASE=main` reuses the production PR)
 - No remaining open PRs to either base
 
 If either merged PR is missing, or one PR is still open, stop. Do **not** delete the release branch and do **not** run release stamping or tracker release transitions.
