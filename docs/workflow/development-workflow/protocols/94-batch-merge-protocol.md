@@ -251,7 +251,7 @@ After a clean or resolved merge, in order:
 
    Expected output: `MERGED`.
    - If the state is not `MERGED` after up to 30 seconds (poll every 5 s): report `failed` for this PR, do not delete the remote branch or run cleanup, and continue with the next PR.
-   - If the script emitted a `WARNING: gh pr merge failed` line to stderr, that is a signal that this MERGED-state check is especially important — the push succeeded but the GitHub merge-mark may have failed.
+   - If the script emitted a `WARNING: gh pr merge failed` line to stderr, that is a signal that this MERGED-state check is especially important — the local merge and push to the base branch succeeded, but the GitHub merge-mark may have failed. `MERGE_RESULT=clean` on the same run refers to the local merge only and does **not** mean this PR is done: the poll above is what decides. If it does not converge to `MERGED` within 30 s, this PR is `failed` even though `MERGE_RESULT=clean` was printed.
 
    > **Failure mode — CLOSED instead of MERGED (historical context)**: Before issue
    > #412 was fixed, `batch-merge.sh` did a local `git merge` but neither pushed nor

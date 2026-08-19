@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **ShellCheck CI no longer hangs indefinitely installing zsh** (#1517):
+  the `Install zsh for cross-shell snippet tests` step in
+  `.github/workflows/shellcheck.yml` was observed hanging on three PRs, and
+  reproducibly on two consecutive runs of the same commit — 24 minutes before
+  manual cancellation, with `Run ShellCheck` itself already passed. The step
+  declared no timeout, so the job inherited the 6-hour Actions default and held
+  the PR's merge state `UNSTABLE` for that entire window. The step now bounds
+  itself with `timeout-minutes: 5`, skips entirely when `zsh` is already present,
+  waits explicitly (bounded) for any `dpkg`/`apt` lock holder such as the runner
+  image's `unattended-upgrades` job instead of blocking inside `apt-get`, sets
+  `DEBIAN_FRONTEND=noninteractive`, and retries up to three times before failing
+  with a clear error. A stall now surfaces as a fast, legible failure rather than
+  a silent multi-hour block.
+- **Retrospective follow-ups to batch-merge output and CHANGELOG guidance** (#1520):
+  `batch-merge.sh`'s `WARNING: gh pr merge failed` message now explains what
+  `MERGE_RESULT=clean` does and does not cover, instead of leaving the two
+  looking contradictory: the local merge and push succeeded, but GitHub has not
+  recorded the PR as merged, and per Protocol 94 Step 4.2 the PR is `failed`
+  unless the MERGED-state poll converges within 30s. The `WARNING:` prefix is
+  deliberately retained — Protocol 94 Step 4.2 references that exact string —
+  and the protocol wording is updated to match. `usage()` also documents that `recheck-remaining --after-merged-pr`
+  must name a PR that appears in the `--prs` frozen list, which previously was
+  discoverable only by triggering `reason=after_merged_pr_not_in_frozen_list`.
+  `docs/best-practices/2-version-control.md` now states that CHANGELOG entries
+  describe shipped behavior rather than the review history of the PR that produced
+  them — a content rule, not a length rule. No behavior change.
 
 - **Codex GitHub terminal evidence**: `codex-github-reviewer.sh` no longer
   treats a thumbs-up reaction on the trigger comment as a clean review result,

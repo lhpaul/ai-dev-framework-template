@@ -90,6 +90,9 @@ usage() {
 Usage:
   batch-merge.sh [--base <branch>] discover [--include-checkpointed] [--prs <num1,num2,...>]
   batch-merge.sh recheck-remaining --prs <num1,num2,...> --after-merged-pr <number> --base <branch> [--approved-unready-prs <num1,num2,...>]
+          --after-merged-pr must itself be one of the numbers listed in --prs
+          (the frozen in-scope list). Passing a merged PR that is absent from
+          --prs exits with reason=after_merged_pr_not_in_frozen_list.
   batch-merge.sh [--base <branch>] merge --pr <number> --expected-head-sha <sha>
   batch-merge.sh [--base <branch>] delete-branch --pr <number>
 
@@ -1177,7 +1180,7 @@ cmd_merge() {
       local post_state
       post_state="$(gh pr view "$pr_num" --json state --jq '.state' 2>/dev/null)" || post_state=""
       if [ "$post_state" != "MERGED" ]; then
-        echo "WARNING: gh pr merge failed for PR #${pr_num} and PR is in state '${post_state:-unknown}' — caller should verify MERGED state via 'gh pr view ${pr_num} --json state'" >&2
+        echo "WARNING: gh pr merge failed for PR #${pr_num} — the local merge and push to the base branch succeeded, but GitHub has not recorded the PR as merged and it still reads '${post_state:-unknown}'. This is NOT yet resolved: per Protocol 94 Step 4.2 you must poll 'gh pr view ${pr_num} --json state' for MERGED (every 5s, up to 30s). If it converges, the merge is complete. If it does not, report this PR as FAILED and do not delete the remote branch or run cleanup." >&2
       fi
     fi
 
