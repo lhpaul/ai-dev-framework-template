@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Route component releases to selected product repositories** (#1356): add
   canonical component release target and evidence helpers, plus product-aware
   release cleanup validation for workflow hubs.
+- **Add delivery bundle manifest workflow** (#1357): add hub-owned delivery
+  bundle issue and manifest tooling for coordinated component delivery evidence.
 
 ## [0.40.0] - 2026-07-30
 
