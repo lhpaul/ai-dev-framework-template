@@ -5736,16 +5736,28 @@ reviewer_loop_history_append_to_summary() {
 # `cycle` counter exactly ("Initialize cycle = 0 once per orchestration run
 # ... Increment cycle each time a fixer agent is dispatched ... escalate when
 # the run reaches max_cycles"). Only prior ledger entries whose `result` is
-# `needs_fixes` or `needs_rerun` are counted — each such result is exactly
+# `needs_fixes` or `needs_rerun` are candidates — each such result is exactly
 # the trigger condition for a fixer dispatch (or, for needs_rerun, PR-Agent's
 # equivalent auto-push retry). The initial review (before any fix has been
-# requested), and any `clean`/`skipped`/duplicate-retry ledger entries that
-# do not represent a genuine fixer dispatch, are excluded — counting every
-# ledger entry indiscriminately would both off-by-one the cap (the first
-# review is not itself a fixer dispatch) and let non-fixer entries (a
-# transient retry on the same HEAD SHA, a duplicate invocation, an
-# interstitial clean check) exhaust the budget without the configured number
-# of actual fixes ever being attempted (found in review of PR #1507).
+# requested), and any `clean`/`skipped` ledger entries, are excluded —
+# counting every ledger entry indiscriminately would both off-by-one the cap
+# (the first review is not itself a fixer dispatch) and let non-fixer
+# entries exhaust the budget without the configured number of actual fixes
+# ever being attempted (found in review of PR #1507).
+#
+# Among those candidates, only DISTINCT HEAD SHAs are counted (not raw entry
+# count). A completed fixer cycle is required to push a new commit before
+# the next review runs (Protocol 93's mandatory push-once-per-cycle
+# discipline, verified by post-push SHA checks) — so two candidate entries
+# sharing the same HEAD SHA mean no fix was actually applied between them
+# (a restarted runner, a duplicate/retried invocation, or a review re-run
+# before the orchestrator got around to dispatching a fixer). Deduping by
+# HEAD SHA prevents that scenario from exhausting max_cycles without the
+# configured number of real fixes ever being attempted (second finding on
+# PR #1507's review of this same code). This is a refinement of, not a
+# reversal of, the reset semantic below: a genuinely NEW HEAD SHA still
+# always adds to the cumulative count — only an EXACT REPEAT of an already-
+# counted HEAD SHA is deduplicated.
 #
 # Reset semantic (deliberately NOT reset-on-new-head-SHA): the counter is
 # cumulative across the PR's entire review-loop lifetime, not reset when the
@@ -5768,13 +5780,19 @@ reviewer_loop_history_append_to_summary() {
 # reviewer_loop_history_entries_count <comment_body>
 #
 # Prints "<count> <status>" (space-separated) where:
-#   count  — number of prior fixer-dispatch-triggering entries (result ==
-#            "needs_fixes" or "needs_rerun") recorded in the most recent
+#   count  — number of DISTINCT HEAD SHAs among prior fixer-dispatch-
+#            triggering entries (result == "needs_fixes" or "needs_rerun",
+#            with a non-empty head_sha) recorded in the most recent
 #            reviewer_loop_history.v1 JSON block found in <comment_body> —
 #            i.e. Protocol 91's `cycle` value at the start of this
 #            invocation — or -1 when that count cannot be determined
 #            reliably. `clean`, `skipped`, and any other result values are
-#            not counted; they never trigger a fixer dispatch.
+#            not counted; they never trigger a fixer dispatch. Repeated
+#            entries sharing the same head_sha (no fix actually applied
+#            between them — see above) count once, not once per entry.
+#            An entry with an empty/unresolved head_sha is excluded from the
+#            count entirely (fails open rather than risk a false collapse of
+#            distinct-but-unresolved SHAs into one bucket).
 #   status — "available" when <count> can be trusted, "unavailable" otherwise
 #            (missing/malformed JSON, wrong schema, or a persisted history
 #            block that itself already recorded history_status=unavailable).
@@ -5813,7 +5831,13 @@ reviewer_loop_history_entries_count() {
   fi
 
   count="$(printf '%s\n' "$json" | jq '
-        [.entries[]? | select((.result // "") == "needs_fixes" or (.result // "") == "needs_rerun")]
+        [
+          .entries[]?
+          | select((.result // "") == "needs_fixes" or (.result // "") == "needs_rerun")
+          | (.head_sha // "")
+          | select(length > 0)
+        ]
+        | unique
         | length
       ' 2>/dev/null)" || count=""
   if ! [[ "$count" =~ ^[0-9]+$ ]]; then

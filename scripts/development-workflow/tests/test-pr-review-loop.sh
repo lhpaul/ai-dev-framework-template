@@ -1957,6 +1957,52 @@ $(printf '%s\n' "$_mc_mixed_result_payload" | jq '.')
 run_test "cycles_entries_count_only_counts_fixer_dispatch_results" "2 available" \
   "$(reviewer_loop_history_entries_count "$_mc_mixed_result_body")"
 
+# Duplicate-head-sha dedup (second Codex finding on PR #1507): 3 needs_fixes
+# entries, but 2 of them share the same head_sha (no fix was actually applied
+# between them — e.g. a restarted runner or a duplicate invocation before the
+# orchestrator got around to dispatching a fixer). A completed fixer cycle
+# always pushes a new commit before the next review runs, so two candidate
+# entries sharing one head_sha cannot represent two real dispatches. The
+# distinct-head-sha count must be 2, not 3.
+_mc_dup_head_sha_payload="$(jq -n '{
+  schema: "reviewer_loop_history.v1",
+  history_status: "available",
+  entries: [
+    {iteration: 1, head_sha: "sha-A", result: "needs_fixes"},
+    {iteration: 2, head_sha: "sha-A", result: "needs_fixes"},
+    {iteration: 3, head_sha: "sha-B", result: "needs_fixes"}
+  ]
+}')"
+_mc_dup_head_sha_body="### Automated Reviewer Loop Summary
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+$(printf '%s\n' "$_mc_dup_head_sha_payload" | jq '.')
+\`\`\`"
+run_test "cycles_entries_count_dedups_duplicate_head_sha" "2 available" \
+  "$(reviewer_loop_history_entries_count "$_mc_dup_head_sha_body")"
+
+# An entry with an empty/unresolved head_sha must not be counted at all
+# (fails open rather than risk collapsing distinct-but-unresolved SHAs into
+# one bucket, or inflating the count from repeated empty strings).
+_mc_empty_head_sha_payload='{
+  "schema": "reviewer_loop_history.v1",
+  "history_status": "available",
+  "entries": [
+    {"iteration": 1, "head_sha": "", "result": "needs_fixes"},
+    {"iteration": 2, "head_sha": "", "result": "needs_fixes"},
+    {"iteration": 3, "head_sha": "sha-C", "result": "needs_fixes"}
+  ]
+}'
+_mc_empty_head_sha_body="### Automated Reviewer Loop Summary
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+$(printf '%s\n' "$_mc_empty_head_sha_payload" | jq '.')
+\`\`\`"
+run_test "cycles_entries_count_excludes_empty_head_sha" "1 available" \
+  "$(reviewer_loop_history_entries_count "$_mc_empty_head_sha_body")"
+
 _mc_persisted_unavailable_body=$'### Automated Reviewer Loop Summary\n<!-- reviewer-loop-history:v1 -->\n```json\n{"schema":"reviewer_loop_history.v1","history_status":"unavailable","history_unavailable_reason":"comment_read_failed","entries":[]}\n```\n'
 run_test "cycles_entries_count_persisted_unavailable" "-1 unavailable" \
   "$(reviewer_loop_history_entries_count "$_mc_persisted_unavailable_body")"
@@ -2154,6 +2200,8 @@ unset _mc_fn _mc_fn_line _mc_harness_return_line
 unset _mc_no_marker_body _mc_marker_no_json_body
 unset _mc_ten_dispatch_payload _mc_ten_dispatch_body _mc_ten_dispatch_comment_json
 unset _mc_mixed_result_payload _mc_mixed_result_body _mc_mixed_result_comment_json
+unset _mc_dup_head_sha_payload _mc_dup_head_sha_body
+unset _mc_empty_head_sha_payload _mc_empty_head_sha_body
 unset _mc_persisted_unavailable_body _mc_malformed_body _mc_wrong_schema_body
 unset _mc_three_dispatch_payload _mc_three_dispatch_comment_json
 

@@ -596,12 +596,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   this repository reached 18 reviewer-loop cycles against a documented cap of
   10 with no escalation. The script now tracks the number of fixer dispatches
   already issued for a PR (Protocol 91's `cycle` counter) by reading the
-  persisted `reviewer_loop_history.v1` ledger, counting only prior entries
-  whose result is `needs_fixes` or `needs_rerun` — the entries that actually
-  trigger a fixer dispatch — and exits `RESULT=escalate` /
-  `REASON=max_cycles_exceeded` on its own once the configured limit is
-  reached while the loop would otherwise still report `needs_fixes` or
-  `needs_rerun`. The counter is deliberately
+  persisted `reviewer_loop_history.v1` ledger, counting only the DISTINCT
+  HEAD SHAs among prior entries whose result is `needs_fixes` or
+  `needs_rerun` — the entries that actually trigger a fixer dispatch, deduped
+  so a restarted runner or a duplicate review invocation on the same
+  unfixed HEAD SHA cannot exhaust the budget without a real fix ever being
+  applied — and exits `RESULT=escalate` / `REASON=max_cycles_exceeded` on its
+  own once the configured limit is reached while the loop would otherwise
+  still report `needs_fixes` or `needs_rerun`. The counter is deliberately
   *not* reset when the HEAD SHA changes after a fix push — it is cumulative
   across the PR's whole review-loop lifetime, matching the pre-existing
   documented orchestrator-level counter semantics and the exact failure
