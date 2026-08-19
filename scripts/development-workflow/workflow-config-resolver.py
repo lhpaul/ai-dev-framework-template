@@ -340,7 +340,19 @@ def validate_branch_name(value: str, shared_path: Path, field_path: str) -> str:
     ):
         raise ConfigError(f"{shared_path}: {field_path} is not a portable branch name")
     for segment in value.split("/"):
-        if not segment or not re.match(r"^[A-Za-z0-9._-]+$", segment):
+        # Mirror git's ref-format component rules (see git-check-ref-format(1))
+        # beyond the plain character allowlist: a component cannot start with
+        # a dot, cannot end with the sequence ".lock", and cannot end with a
+        # dot. Names such as "release/v1.2.3.lock", "release/v1.2.3.", or a
+        # segment beginning with "." pass the character class but are
+        # rejected by git as branch names.
+        if (
+            not segment
+            or not re.match(r"^[A-Za-z0-9._-]+$", segment)
+            or segment.startswith(".")
+            or segment.endswith(".lock")
+            or segment.endswith(".")
+        ):
             raise ConfigError(f"{shared_path}: {field_path} is not a portable branch name")
     return value
 

@@ -373,6 +373,75 @@ run_fails_contains \
   "workflow_hub.product_repos[1].release.base is not a portable branch name" \
   python3 "$RESOLVER" resolve --repo-root "$bad_release_branch_dir" --repo mobile-app
 
+# git-check-ref-format(1) rejects these even though they pass a plain
+# [A-Za-z0-9._-]+ character allowlist per segment: a segment ending in
+# ".lock", a segment ending in a bare ".", and a segment starting with ".".
+dot_lock_branch_dir="$(fixture_dir dot-lock-branch)"
+cat > "$dot_lock_branch_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        base: "release/v1.2.3.lock"
+YAML
+run_fails_contains \
+  "workflow_hub_release_rejects_dot_lock_suffix" \
+  "workflow_hub.product_repos[1].release.base is not a portable branch name" \
+  python3 "$RESOLVER" resolve --repo-root "$dot_lock_branch_dir" --repo mobile-app
+
+trailing_dot_branch_dir="$(fixture_dir trailing-dot-branch)"
+cat > "$trailing_dot_branch_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        base: "release/v1.2.3."
+YAML
+run_fails_contains \
+  "workflow_hub_release_rejects_trailing_dot" \
+  "workflow_hub.product_repos[1].release.base is not a portable branch name" \
+  python3 "$RESOLVER" resolve --repo-root "$trailing_dot_branch_dir" --repo mobile-app
+
+leading_dot_branch_dir="$(fixture_dir leading-dot-branch)"
+cat > "$leading_dot_branch_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        base: ".hidden/release"
+YAML
+run_fails_contains \
+  "workflow_hub_release_rejects_leading_dot_segment" \
+  "workflow_hub.product_repos[1].release.base is not a portable branch name" \
+  python3 "$RESOLVER" resolve --repo-root "$leading_dot_branch_dir" --repo mobile-app
+
+valid_dotted_branch_dir="$(fixture_dir valid-dotted-branch)"
+cat > "$valid_dotted_branch_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        base: "release/v1.2.3"
+YAML
+valid_dotted_branch_output="$(python3 "$RESOLVER" resolve --repo-root "$valid_dotted_branch_dir" --repo mobile-app)"
+run_contains "workflow_hub_release_accepts_valid_dotted_base" "TARGET_RELEASE_BASE=release/v1.2.3" "$valid_dotted_branch_output"
+
 bad_release_pattern_dir="$(fixture_dir bad-release-pattern)"
 cat > "$bad_release_pattern_dir/.ai-dev-workflow.yaml" <<'YAML'
 schema_version: 2
