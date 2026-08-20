@@ -809,6 +809,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suffix) in addition to the existing character allowlist, so names such as
   `release/v1.2.3.lock` or `release/v1.2.3.` are rejected instead of accepted
   as portable branch names.
+  `component-milestone-reconciliation.sh apply-component`/`inspect-component`
+  now accept `--hub-tracker-reconciliation-outcome` and `--child-release-state`
+  as explicit flags (mirroring `delivery-bundle-manifest.sh`'s existing
+  flags) and treat a schema-correct evidence file with no `evidence_state` as
+  verified, instead of requiring three fields the evidence producer,
+  `component-release-evidence.sh`, never emits — the documented
+  producer-to-consumer handoff between those two scripts could not
+  previously complete.
+  `delivery-bundle-manifest.sh update-component` now rejects a
+  `component_tag`/`component_version` change for an already-accepted
+  component when the `release_pr` is unchanged, instead of silently
+  overwriting the accepted release composition; a different `release_pr`
+  still accepts a new tag/version as the documented re-tag/re-release flow.
+  `workflow-next-action.sh --pr` in `workflow_hub` mode now reads the PR's
+  branch name before classifying it, instead of after, so hub-only spec,
+  plan, and hub-owned implementation PRs resolve directly instead of always
+  requiring a product-repository selection.
+  `prepare-release-post-merge-cleanup.sh` now validates a resolved product
+  checkout and locates its cleanup lock directory with
+  `git rev-parse --is-inside-work-tree`/`--git-dir` instead of a bare
+  `.git`-is-a-directory test, so a linked git worktree checkout (whose
+  `.git` is a file, not a directory) is recognized instead of rejected.
 
 ### Changed
 
