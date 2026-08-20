@@ -273,8 +273,22 @@ def classify_component(args: argparse.Namespace) -> dict[str, Any]:
         )
         return result
 
+    # Require the evidence to bind the component tag rather than treating a
+    # missing evidence.component_tag as a match for any caller-supplied
+    # --component-tag: component-release-evidence.sh emits component_tag
+    # only when --component-tag was supplied to it, so evidence rendered
+    # without that flag previously let apply-component stamp an arbitrary,
+    # unverified milestone tag.
     evidence_tag = evidence.get("component_tag")
-    if evidence_tag not in (None, "", component_tag):
+    if not evidence_tag:
+        result.update(
+            reconciliation_outcome="component_target_mismatch",
+            child_release_state="blocked",
+            required_next_action="render component release evidence with --component-tag before mutation",
+            blockers=["component_tag_unbound"],
+        )
+        return result
+    if evidence_tag != component_tag:
         result.update(
             reconciliation_outcome="component_target_mismatch",
             child_release_state="blocked",

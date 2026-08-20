@@ -9,6 +9,7 @@ TARGET_FILE=""
 BINDING_FILE=""
 OUTPUT_FILE=""
 RELEASE_BRANCH=""
+COMPONENT_TAG=""
 RELEASE_OUTCOME=""
 CI_OUTCOME=""
 DEPLOYMENT_OUTCOME=""
@@ -18,7 +19,7 @@ JSON_OUTPUT=false
 
 usage() {
   cat >&2 <<'EOF'
-Usage: component-release-evidence.sh --target-file PATH --binding-file PATH --release-branch BRANCH --release-outcome OUTCOME --ci-outcome OUTCOME --deployment-outcome OUTCOME --cleanup-outcome OUTCOME --hub-tracker-ref REF [--output PATH] [--json]
+Usage: component-release-evidence.sh --target-file PATH --binding-file PATH --release-branch BRANCH --release-outcome OUTCOME --ci-outcome OUTCOME --deployment-outcome OUTCOME --cleanup-outcome OUTCOME --hub-tracker-ref REF [--component-tag TAG] [--output PATH] [--json]
 EOF
 }
 
@@ -87,6 +88,11 @@ while [ "$#" -gt 0 ]; do
       RELEASE_BRANCH="$2"
       shift 2
       ;;
+    --component-tag)
+      [ "$#" -ge 2 ] || { usage; exit 2; }
+      COMPONENT_TAG="$2"
+      shift 2
+      ;;
     --ci-outcome)
       [ "$#" -ge 2 ] || { usage; exit 2; }
       CI_OUTCOME="$2"
@@ -153,6 +159,36 @@ if ! jq -e '.mutation_allowed == true' "$TARGET_FILE" >/dev/null; then
   exit 1
 fi
 
+# Reject a --release-branch that is syntactically valid but does not match
+# the target binding's release_branch_pattern (e.g. "totally/wrong" when the
+# contract requires "{product_repo}/release/v{version}"). Without this,
+# downstream reconciliation accepted evidence for a branch that could not
+# possibly be the product's actual release branch.
+release_branch_pattern="$(jq -r '.release_branch_pattern // ""' "$TARGET_FILE")"
+selected_product_repo_key="$(jq -r '.selected_product_repo_key // ""' "$TARGET_FILE")"
+if [ -n "$release_branch_pattern" ]; then
+  if ! python3 - "$release_branch_pattern" "$selected_product_repo_key" "$RELEASE_BRANCH" <<'INNERPY'
+import re
+import sys
+
+pattern, repo, branch = sys.argv[1], sys.argv[2], sys.argv[3]
+parts = []
+for token in re.split(r"(\{product_repo\}|\{version\})", pattern):
+    if token == "{product_repo}":
+        parts.append(re.escape(repo))
+    elif token == "{version}":
+        parts.append(r"[^/]+")
+    else:
+        parts.append(re.escape(token))
+regex = "^" + "".join(parts) + "$"
+sys.exit(0 if re.match(regex, branch) else 1)
+INNERPY
+  then
+    echo "--release-branch '$RELEASE_BRANCH' does not match the target release_branch_pattern '$release_branch_pattern'" >&2
+    exit 1
+  fi
+fi
+
 compare_field '.routing_outcome'
 compare_field '.selected_product_repo_key'
 compare_field '.canonical_repository_identity'
@@ -168,6 +204,7 @@ evidence="$(jq -cnS \
   --arg deployment_outcome "$DEPLOYMENT_OUTCOME" \
   --arg cleanup_outcome "$CLEANUP_OUTCOME" \
   --arg hub_tracker_ref "$HUB_TRACKER_REF" \
+  --arg component_tag "$COMPONENT_TAG" \
   '{
     schema_version:"component_release_evidence.v1",
     target_binding:$target[0],
@@ -182,7 +219,8 @@ evidence="$(jq -cnS \
     ci_outcome:$ci_outcome,
     deployment_outcome:$deployment_outcome,
     cleanup_outcome:$cleanup_outcome,
-    hub_tracker_ref:$hub_tracker_ref
+    hub_tracker_ref:$hub_tracker_ref,
+    component_tag:(if ($component_tag | length) > 0 then $component_tag else null end)
   }')"
 
 if [ -n "$OUTPUT_FILE" ]; then

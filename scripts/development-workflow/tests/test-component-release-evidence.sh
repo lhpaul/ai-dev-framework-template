@@ -93,6 +93,7 @@ evidence_json="$(bash "$EVIDENCE_HELPER" \
   --deployment-outcome recorded \
   --cleanup-outcome complete \
   --hub-tracker-ref "#1356" \
+  --component-tag mobile-v1.18.0 \
   --output "$evidence_file" \
   --json)"
 
@@ -104,7 +105,69 @@ run_test "evidence_release_branch" "mobile-app/release/v1.18.0" "$(jq -r '.relea
 run_test "evidence_release_outcome" "completed" "$(jq -r '.release_outcome' <<< "$evidence_json")"
 run_test "evidence_ci_outcome" "passed" "$(jq -r '.ci_outcome' <<< "$evidence_json")"
 run_test "evidence_cleanup_outcome" "complete" "$(jq -r '.cleanup_outcome' <<< "$evidence_json")"
+run_test "evidence_component_tag" "mobile-v1.18.0" "$(jq -r '.component_tag' <<< "$evidence_json")"
 run_test "evidence_written" "component_release_evidence.v1" "$(jq -r '.schema_version' "$evidence_file")"
+
+# Reject a Git-valid but unrelated release branch instead of accepting it
+# just because it passes git check-ref-format.
+run_fails_contains \
+  "evidence_rejects_branch_pattern_mismatch" \
+  "does not match the target release_branch_pattern" \
+  bash "$EVIDENCE_HELPER" \
+    --target-file "$target_file" \
+    --binding-file "$binding_file" \
+    --release-branch "totally/wrong" \
+    --release-outcome completed \
+    --ci-outcome passed \
+    --deployment-outcome recorded \
+    --cleanup-outcome complete \
+    --hub-tracker-ref "#1356" \
+    --json
+
+# Reproduce the fabricated-milestone gap: evidence rendered without
+# --component-tag (the legacy/optional path -- still supported) never binds
+# a tag, so apply-component/inspect-component must not accept an arbitrary
+# caller-supplied --component-tag against it.
+untagged_evidence_file="$TMP_ROOT/untagged-evidence.json"
+bash "$EVIDENCE_HELPER" \
+  --target-file "$target_file" \
+  --binding-file "$binding_file" \
+  --release-branch mobile-app/release/v1.18.0 \
+  --release-outcome completed \
+  --ci-outcome passed \
+  --deployment-outcome recorded \
+  --cleanup-outcome complete \
+  --hub-tracker-ref "#1356" \
+  --output "$untagged_evidence_file" \
+  --json >/dev/null
+run_test "untagged_evidence_has_no_component_tag" "null" "$(jq -r '.component_tag' "$untagged_evidence_file")"
+
+fabricated_milestone_output="$(bash "$MILESTONE_HELPER" inspect-component \
+  --issue 1358 \
+  --target-kind component_child \
+  --product-repo mobile-app \
+  --component-tag "fabricated-v99.0.0" \
+  --evidence-file "$untagged_evidence_file" \
+  --hub-tracker-reconciliation-outcome complete \
+  --child-release-state released \
+  --json)"
+run_test "fabricated_tag_rejected_outcome" "component_target_mismatch" "$(jq -r '.reconciliation_outcome' <<< "$fabricated_milestone_output")"
+run_test "fabricated_tag_rejected_mutation_disallowed" "false" "$(jq -r '.mutation_allowed' <<< "$fabricated_milestone_output")"
+run_contains "fabricated_tag_rejected_blocker" "component_tag_unbound" "$fabricated_milestone_output"
+
+# A caller-supplied tag that disagrees with a real, bound evidence tag must
+# still be rejected (not just the "no tag at all" case above).
+mismatched_tag_output="$(bash "$MILESTONE_HELPER" inspect-component \
+  --issue 1358 \
+  --target-kind component_child \
+  --product-repo mobile-app \
+  --component-tag "fabricated-v99.0.0" \
+  --evidence-file "$evidence_file" \
+  --hub-tracker-reconciliation-outcome complete \
+  --child-release-state released \
+  --json)"
+run_test "mismatched_bound_tag_rejected_outcome" "component_target_mismatch" "$(jq -r '.reconciliation_outcome' <<< "$mismatched_tag_output")"
+run_contains "mismatched_bound_tag_rejected_blocker" "component_tag_mismatch" "$mismatched_tag_output"
 
 mismatch_file="$TMP_ROOT/mismatch.json"
 jq '.contract_revision = "sha256:mismatch"' "$binding_file" > "$mismatch_file"
