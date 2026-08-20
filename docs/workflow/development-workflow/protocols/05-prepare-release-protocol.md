@@ -132,11 +132,26 @@ RELEASE_BRANCH="${RELEASE_BRANCH//\{product_repo\}/$PRODUCT_REPO_NAME}"
 If `RELEASE_BRANCH` is empty or differs from the validated pattern semantics,
 stop before branch creation.
 
-For workflow-hub component releases, persist a component release evidence
-record before opening release PRs. The evidence must be derived from the target
-binding produced by `component-release-target.sh` and must preserve
-`selected_product_repo_key`, `canonical_repository_identity`,
-`artifact_owners`, `release_correlation_key`, and `contract_revision`:
+For workflow-hub component releases, re-resolve `TARGET_BINDING_FILE` now that
+`RELEASE_BRANCH` is known, passing it as `--release-branch`. The release
+correlation key is otherwise derived only from static contract fields
+(product repository, release base, branch pattern, contract revision), so
+without a per-attempt identifier every release of the same product and
+unchanged contract — for example `v1.2.3` and a later `v1.2.4` — would collide
+on the same `release_correlation_key`, conflating separate releases in
+cleanup locking, conflict detection, and audit records:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+scripts/development-workflow/component-release-target.sh   --repo "$TARGET_REPO_KEY"   --release-branch "$RELEASE_BRANCH"   --json > "$TARGET_BINDING_TMP"
+mv "$TARGET_BINDING_TMP" "$TARGET_BINDING_FILE"
+```
+
+Persist a component release evidence record before opening release PRs. The
+evidence must be derived from the target binding produced by
+`component-release-target.sh` and must preserve `selected_product_repo_key`,
+`canonical_repository_identity`, `artifact_owners`, `release_correlation_key`,
+and `contract_revision`:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash

@@ -387,7 +387,7 @@ product_repos:
 YAML
   (
     cd "$path"
-    target_json="$(./scripts/development-workflow/component-release-target.sh --repo-root "$path" --repo mobile-app --json)"
+    target_json="$(./scripts/development-workflow/component-release-target.sh --repo-root "$path" --repo mobile-app --release-branch mobile-app/release/v1.18.0 --json)"
     jq -nS --argjson target "$target_json" \
       '{
         schema_version:"component_release_evidence.v1",
@@ -426,7 +426,7 @@ run_contains "component_cleanup_complete_idempotent" "Component release cleanup 
 run_contains "component_cleanup_complete_json" '"cleanup_outcome":"already_complete"' "$output"
 
 target_json="$repo_component_cleanup/component-release-target.json"
-(cd "$repo_component_cleanup" && ./scripts/development-workflow/component-release-target.sh --repo-root "$repo_component_cleanup" --repo mobile-app --json > "$target_json")
+(cd "$repo_component_cleanup" && ./scripts/development-workflow/component-release-target.sh --repo-root "$repo_component_cleanup" --repo mobile-app --release-branch mobile-app/release/v1.18.0 --json > "$target_json")
 lock_key="$(printf '%s' "$(jq -r '.release_correlation_key' "$target_json")" | tr -c 'A-Za-z0-9._-' '_')"
 mkdir -p "$TMP_ROOT/mobile-app/.git/component-release-cleanup-locks/$lock_key.lock"
 result="$(run_cleanup "$repo_component_cleanup" --repo mobile-app --repo-root "$repo_component_cleanup" --evidence-file "$repo_component_cleanup/component-release-evidence.json" --issue LEA-213 --best-effort)"
@@ -453,7 +453,7 @@ path.write_text(text.replace("github_repo: example/mobile-app", "github_repo: ba
 PY
 (
   cd "$repo_invalid_identity"
-  target_json="$(./scripts/development-workflow/component-release-target.sh --repo-root "$repo_invalid_identity" --repo mobile-app --json)"
+  target_json="$(./scripts/development-workflow/component-release-target.sh --repo-root "$repo_invalid_identity" --repo mobile-app --release-branch mobile-app/release/v1.18.0 --json)"
   jq -nS --argjson target "$target_json" \
     '{
       schema_version:"component_release_evidence.v1",

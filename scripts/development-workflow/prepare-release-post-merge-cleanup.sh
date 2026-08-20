@@ -180,9 +180,17 @@ validate_component_release_cleanup() {
     exit 2
   fi
 
+  # Read release_branch before re-resolving the target and pass it as
+  # --release-branch so the freshly resolved target reproduces the same
+  # per-attempt release_correlation_key recorded in the persisted evidence,
+  # instead of a contract-only key shared by every release of this product.
+  evidence_branch="$(json_field "$EVIDENCE_FILE" '.release_branch')"
+
   COMPONENT_TARGET_FILE="$(mktemp "${TMPDIR:-/tmp}/component-release-target.XXXXXX")"
   trap cleanup_component_lock EXIT
-  if ! "$SCRIPT_DIR/component-release-target.sh" --repo-root "$hub_root" --repo "$PRODUCT_REPO" --json > "$COMPONENT_TARGET_FILE"; then
+  component_target_args=(--repo-root "$hub_root" --repo "$PRODUCT_REPO")
+  [ -n "$evidence_branch" ] && component_target_args+=(--release-branch "$evidence_branch")
+  if ! "$SCRIPT_DIR/component-release-target.sh" "${component_target_args[@]}" --json > "$COMPONENT_TARGET_FILE"; then
     echo "Could not resolve current component release target for '$PRODUCT_REPO'." >&2
     exit 1
   fi
@@ -221,7 +229,6 @@ validate_component_release_cleanup() {
     *) target_git_dir="$target_path/$target_git_dir" ;;
   esac
 
-  evidence_branch="$(json_field "$EVIDENCE_FILE" '.release_branch')"
   if [ -z "$RELEASE_INPUT" ] && [ -n "$evidence_branch" ]; then
     RELEASE_INPUT="$evidence_branch"
   fi

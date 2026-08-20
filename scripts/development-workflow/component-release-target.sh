@@ -12,10 +12,11 @@ REPO_ROOT="$(pwd)"
 PRODUCT_REPO=""
 JSON_OUTPUT=false
 REQUIRE_LOCAL=true
+RELEASE_ATTEMPT_BRANCH=""
 
 usage() {
   cat >&2 <<'EOF'
-Usage: component-release-target.sh [--repo-root PATH] [--repo NAME] [--require-local|--no-require-local] [--json]
+Usage: component-release-target.sh [--repo-root PATH] [--repo NAME] [--release-branch BRANCH] [--require-local|--no-require-local] [--json]
 EOF
 }
 
@@ -52,6 +53,18 @@ emit_target() {
   local contract_revision="${15}"
   local human_action="${16}"
 
+  # The release attempt branch (--release-branch, e.g. the resolved
+  # "mobile-app/release/v1.2.3" branch name once a version is known) is
+  # folded into the correlation key so separate release attempts for the
+  # same product and unchanged contract (e.g. v1.2.3 vs v1.2.4) get distinct
+  # release_correlation_key values, as the component release evidence record
+  # contract requires ("One value per attempted component release"). When
+  # omitted (routing-only calls made before a version is known), the key is
+  # computed exactly as before -- callers that need a per-attempt key supply
+  # --release-branch once the release branch is known and reuse that output
+  # for the rest of the release lifecycle, including re-verification at
+  # cleanup time, so the key stays stable and reproducible within one
+  # attempt.
   local correlation_input release_correlation_key
   correlation_input="$(jq -cn \
     --arg schema_version "component_release_correlation.v1" \
@@ -61,7 +74,8 @@ emit_target() {
     --arg release_base "$release_base" \
     --arg release_branch_pattern "$release_branch_pattern" \
     --arg contract_revision "$contract_revision" \
-    '{schema_version:$schema_version,routing_outcome:$routing_outcome,selected_product_repo_key:$selected_key,canonical_repository_identity:$identity,release_base:$release_base,release_branch_pattern:$release_branch_pattern,contract_revision:$contract_revision}')"
+    --arg release_attempt_branch "$RELEASE_ATTEMPT_BRANCH" \
+    '{schema_version:$schema_version,routing_outcome:$routing_outcome,selected_product_repo_key:$selected_key,canonical_repository_identity:$identity,release_base:$release_base,release_branch_pattern:$release_branch_pattern,contract_revision:$contract_revision,release_attempt_branch:$release_attempt_branch}')"
   release_correlation_key="sha256:$(printf '%s' "$correlation_input" | sha256_string)"
 
   if [ "$JSON_OUTPUT" = "true" ]; then
@@ -183,6 +197,11 @@ while [ "$#" -gt 0 ]; do
       else
         PRODUCT_REPO="$2"
       fi
+      shift 2
+      ;;
+    --release-branch)
+      [ "$#" -ge 2 ] || { usage; exit 2; }
+      RELEASE_ATTEMPT_BRANCH="$2"
       shift 2
       ;;
     --require-local)

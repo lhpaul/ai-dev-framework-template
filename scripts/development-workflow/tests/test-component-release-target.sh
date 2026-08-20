@@ -109,6 +109,19 @@ component_json_repeat="$(bash "$TARGET_HELPER" --repo-root "$hub_repo" --repo mo
 run_test "component_contract_revision_stable" "$(jq -r '.contract_revision' <<< "$component_json")" "$(jq -r '.contract_revision' <<< "$component_json_repeat")"
 run_test "component_correlation_key_stable" "$(jq -r '.release_correlation_key' <<< "$component_json")" "$(jq -r '.release_correlation_key' <<< "$component_json_repeat")"
 
+# Two separate release attempts (different resolved release branches) for the
+# same product and unchanged contract must get distinct correlation keys --
+# the release-evidence contract requires "one value per attempted component
+# release" so cleanup locking, conflict detection, and audit records do not
+# conflate v1.2.3 with v1.2.4. Without --release-branch (used before a
+# version is confirmed), the key stays contract-only and unchanged.
+attempt_v1_json="$(bash "$TARGET_HELPER" --repo-root "$hub_repo" --repo mobile-app --release-branch mobile-app/release/v1.2.3 --json)"
+attempt_v1_repeat_json="$(bash "$TARGET_HELPER" --repo-root "$hub_repo" --repo mobile-app --release-branch mobile-app/release/v1.2.3 --json)"
+attempt_v2_json="$(bash "$TARGET_HELPER" --repo-root "$hub_repo" --repo mobile-app --release-branch mobile-app/release/v1.2.4 --json)"
+run_not_equal "component_correlation_key_differs_per_attempt"   "$(jq -r '.release_correlation_key' <<< "$attempt_v1_json")"   "$(jq -r '.release_correlation_key' <<< "$attempt_v2_json")"
+run_test "component_correlation_key_stable_within_attempt"   "$(jq -r '.release_correlation_key' <<< "$attempt_v1_json")"   "$(jq -r '.release_correlation_key' <<< "$attempt_v1_repeat_json")"
+run_not_equal "component_correlation_key_attempt_differs_from_unscoped"   "$(jq -r '.release_correlation_key' <<< "$attempt_v1_json")"   "$(jq -r '.release_correlation_key' <<< "$component_json")"
+
 variant_hub="$(dirname "$hub_repo")/revision-variant-hub"
 cp -R "$hub_repo" "$variant_hub"
 python3 - "$variant_hub/.ai-dev-workflow.yaml" <<'PY'
