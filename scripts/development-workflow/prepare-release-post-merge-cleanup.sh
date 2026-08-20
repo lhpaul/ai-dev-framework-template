@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Post-merge cleanup for a release branch:
-# - verifies release PRs to main and develop are both merged
+# - verifies release PRs to main and the configured backport base are both merged
 # - deletes remote release branch (if present)
 # - deletes local release branch (switching away first if needed)
 # - stamps scoped issue numbers with the release version
@@ -9,7 +9,7 @@
 #   fail-closed tracker handoff when shell automation cannot complete them
 #
 # Usage:
-#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort]
+#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh <version|release-branch> [--repo NAME --repo-root PATH --evidence-file PATH] [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort]
 #
 # Examples:
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh 1.2.3
@@ -17,6 +17,7 @@
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh release/v1.2.3 --issues 232,240
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh v1.2.3 --from-changelog
 #   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh release/v1.2.3 --issues 232,240 --best-effort
+#   ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh mobile-app/release/v1.2.3 --backport-base release
 #
 # Exit codes for tracker cleanup (unless --best-effort is passed):
 #   0  At least one issue was updated (or already in Released status) and no hard failures
@@ -34,7 +35,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./workflow-lib.sh
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
 . "$SCRIPT_DIR/workflow-lib.sh"
 
 cd_workflow_repo_root
@@ -47,12 +48,26 @@ TRACKER_PROVIDER="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_
 MERGED_LABEL="${GITHUB_PROJECT_STATUS_MERGED:-Merged}"
 RELEASED_LABEL="${GITHUB_PROJECT_STATUS_RELEASED:-Released}"
 RELEASE_INPUT=""
+BACKPORT_BASE="${RELEASE_BACKPORT_BASE:-develop}"
+BACKPORT_BASE_OVERRIDE=""
 BEST_EFFORT=false
 FROM_CHANGELOG=false
+PRODUCT_REPO=""
+REPO_ROOT_OVERRIDE=""
+EVIDENCE_FILE=""
+JSON_OUTPUT=false
+COMPONENT_TARGET_FILE=""
+COMPONENT_LOCK_DIR=""
+COMPONENT_LOCK_CREATED=false
+# Set to "true" once component mode (--evidence-file) and --json are both
+# confirmed. When true, cleanup_log() routes progress/diagnostic output to
+# stderr so stdout carries only the final JSON summary the documented
+# component-release smoke flow parses with jq -- see cleanup_log() below.
+COMPONENT_JSON_MODE=false
 declare -a ISSUE_NUMBERS=()
 
 usage() {
-  echo "Usage: $0 <version|release-branch> [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort]" >&2
+  echo "Usage: $0 <version|release-branch> [--repo NAME --repo-root PATH --evidence-file PATH] [--backport-base BRANCH] [--from-changelog] [--issue N]... [--issues N,N,...] [--best-effort] [--json]" >&2
 }
 
 normalize_release_branch() {
@@ -60,10 +75,291 @@ normalize_release_branch() {
   value="${value#refs/heads/}"
   case "$value" in
     release/v*) printf '%s\n' "$value" ;;
+    release/*/*) printf '%s\n' "$value" ;;
     release/*) printf 'release/v%s\n' "${value#release/}" ;;
+    */*) printf '%s\n' "$value" ;;
     v*) printf 'release/%s\n' "$value" ;;
     *) printf 'release/v%s\n' "$value" ;;
   esac
+}
+
+release_version_from_branch() {
+  local value="$1"
+  printf '%s\n' "${value##*/}"
+}
+
+validate_portable_branch_name() {
+  local label="$1"
+  local value="$2"
+  if [ -z "$value" ]; then
+    echo "Invalid ${label} branch name: value is empty" >&2
+    exit 2
+  fi
+  if ! git check-ref-format --branch "$value" >/dev/null 2>&1; then
+    echo "Invalid ${label} branch name: $value" >&2
+    exit 2
+  fi
+}
+
+canonical_dir() {
+  local path="$1"
+  (CDPATH='' cd -- "$path" && pwd -P)
+}
+
+cleanup_component_lock() {
+  if [ "$COMPONENT_LOCK_CREATED" = "true" ] && [ -n "$COMPONENT_LOCK_DIR" ] && [ -d "$COMPONENT_LOCK_DIR" ]; then
+    rmdir "$COMPONENT_LOCK_DIR" 2>/dev/null || true
+  fi
+  if [ -n "$COMPONENT_TARGET_FILE" ] && [ -f "$COMPONENT_TARGET_FILE" ]; then
+    rm -f "$COMPONENT_TARGET_FILE"
+  fi
+}
+
+json_field() {
+  local path="$1"
+  local query="$2"
+  jq -r "$query // \"\"" "$path"
+}
+
+# Prints progress/diagnostic output. In COMPONENT_JSON_MODE this goes to
+# stderr instead of stdout, so a single final JSON object (see the end of
+# the component cleanup success path) is the only thing on stdout for
+# --json callers -- otherwise identical to a plain echo.
+cleanup_log() {
+  if [ "$COMPONENT_JSON_MODE" = "true" ]; then
+    printf '%s\n' "$*" >&2
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+# Emits the single JSON summary object for a component cleanup run (only
+# called when COMPONENT_JSON_MODE is true). Reflects what this script
+# actually did this run: branch deletion and tracker mutation outcomes.
+# Known gap: this script does not delete a release tag (no tag-deletion
+# logic exists) and never writes cleanup_outcome back to the evidence file
+# on disk -- cleanup_evidence.status here reports this run's own outcome,
+# not a persisted evidence-file field.
+emit_component_cleanup_json() {
+  local cleanup_outcome="$1"
+  local after_product_cleanup="$2"
+  local cleanup_evidence_status="$3"
+  local required_next_action="${4:-}"
+  local lock_key issues_csv already_complete
+  lock_key="$(json_field "$COMPONENT_TARGET_FILE" '.release_correlation_key')"
+  issues_csv=""
+  if [ "${#ISSUE_NUMBERS[@]}" -gt 0 ]; then
+    issues_csv="$(IFS=,; printf '%s' "${ISSUE_NUMBERS[*]}")"
+  fi
+  already_complete="false"
+  if [ "${REMOTE_BRANCH_DELETED:-false}" != "true" ] && [ "${LOCAL_BRANCH_DELETED:-false}" != "true" ]; then
+    already_complete="true"
+  fi
+  jq -cnS \
+    --arg schema_version "component_release_cleanup.v1" \
+    --arg cleanup_outcome "$cleanup_outcome" \
+    --arg product_repo "$PRODUCT_REPO" \
+    --argjson remote_branch_deleted "${REMOTE_BRANCH_DELETED:-false}" \
+    --argjson local_branch_deleted "${LOCAL_BRANCH_DELETED:-false}" \
+    --argjson already_complete "$already_complete" \
+    --arg lock_owner "hub" \
+    --arg release_correlation_key "$lock_key" \
+    --arg tracker_owner "hub_repository" \
+    --arg issues_csv "$issues_csv" \
+    --argjson after_product_cleanup "$after_product_cleanup" \
+    --arg cleanup_evidence_status "$cleanup_evidence_status" \
+    --arg required_next_action "$required_next_action" \
+    '{
+      schema_version:$schema_version,
+      cleanup_outcome:$cleanup_outcome,
+      product_cleanup:{
+        repository_key:$product_repo,
+        remote_branch_deleted:$remote_branch_deleted,
+        local_branch_deleted:$local_branch_deleted,
+        already_complete:$already_complete
+      },
+      cleanup_lock:{
+        owner:$lock_owner,
+        release_correlation_key:$release_correlation_key
+      },
+      tracker_mutation:{
+        repository_owner:$tracker_owner,
+        issues:(if ($issues_csv|length) > 0 then ($issues_csv | split(",")) else [] end),
+        after_product_cleanup:$after_product_cleanup
+      },
+      cleanup_evidence:{
+        status:$cleanup_evidence_status
+      }
+    } + (if ($required_next_action|length) > 0 then {required_next_action:$required_next_action} else {} end)'
+}
+
+cleanup_git() {
+  if [ -n "$COMPONENT_TARGET_FILE" ]; then
+    git -C "$(json_field "$COMPONENT_TARGET_FILE" '.local_checkout.path')" "$@"
+  else
+    git "$@"
+  fi
+}
+
+cleanup_gh_pr_list() {
+  local identity
+  if [ -n "$COMPONENT_TARGET_FILE" ]; then
+    identity="$(json_field "$COMPONENT_TARGET_FILE" '.canonical_repository_identity')"
+    if ! workflow_is_valid_github_repo_slug "$identity"; then
+      echo "COMPONENT_CLEANUP_ERROR=invalid_repository_identity IDENTITY=${identity:-<empty>}" >&2
+      return 1
+    fi
+    gh pr list --repo "$identity" "$@"
+    return $?
+  fi
+  gh pr list "$@"
+}
+
+compare_component_field() {
+  local field="$1"
+  local current
+  local recorded
+  current="$(jq -c "$field" "$COMPONENT_TARGET_FILE")"
+  recorded="$(jq -c ".target_binding${field}" "$EVIDENCE_FILE")"
+  if [ "$current" != "$recorded" ]; then
+    echo "Component release evidence mismatch for $field: current=$current evidence=$recorded" >&2
+    exit 1
+  fi
+}
+
+validate_component_release_cleanup() {
+  local hub_root="$1"
+  local target_path target_outcome evidence_schema evidence_cleanup lock_key lock_parent safe_lock_key evidence_branch contract_base hub_git_dir
+
+  if [ -z "$PRODUCT_REPO" ] && [ -z "$EVIDENCE_FILE" ]; then
+    return 0
+  fi
+  if [ -z "$PRODUCT_REPO" ]; then
+    echo "--repo is required when --evidence-file is supplied for component release cleanup." >&2
+    exit 2
+  fi
+  if [ -z "$EVIDENCE_FILE" ]; then
+    echo "--evidence-file is required for component release cleanup in workflow_hub mode." >&2
+    exit 2
+  fi
+  if [ ! -f "$EVIDENCE_FILE" ]; then
+    echo "Component release evidence file not found: $EVIDENCE_FILE" >&2
+    exit 2
+  fi
+  if ! jq -e 'type == "object"' "$EVIDENCE_FILE" >/dev/null 2>&1; then
+    echo "Component release evidence file must contain a JSON object: $EVIDENCE_FILE" >&2
+    exit 2
+  fi
+
+  evidence_schema="$(json_field "$EVIDENCE_FILE" '.schema_version')"
+  if [ "$evidence_schema" != "component_release_evidence.v1" ]; then
+    echo "Component release evidence must use schema_version component_release_evidence.v1." >&2
+    exit 2
+  fi
+
+  # Read release_branch before re-resolving the target and pass it as
+  # --release-branch so the freshly resolved target reproduces the same
+  # per-attempt release_correlation_key recorded in the persisted evidence,
+  # instead of a contract-only key shared by every release of this product.
+  evidence_branch="$(json_field "$EVIDENCE_FILE" '.release_branch')"
+
+  COMPONENT_TARGET_FILE="$(mktemp "${TMPDIR:-/tmp}/component-release-target.XXXXXX")"
+  trap cleanup_component_lock EXIT
+  component_target_args=(--repo-root "$hub_root" --repo "$PRODUCT_REPO")
+  [ -n "$evidence_branch" ] && component_target_args+=(--release-branch "$evidence_branch")
+  if ! "$SCRIPT_DIR/component-release-target.sh" "${component_target_args[@]}" --json > "$COMPONENT_TARGET_FILE"; then
+    echo "Could not resolve current component release target for '$PRODUCT_REPO'." >&2
+    exit 1
+  fi
+  target_outcome="$(json_field "$COMPONENT_TARGET_FILE" '.routing_outcome')"
+  if [ "$target_outcome" != "component_release_routed" ]; then
+    echo "Component release target is not mutation-allowed: $target_outcome" >&2
+    exit 1
+  fi
+
+  compare_component_field '.routing_outcome'
+  compare_component_field '.selected_product_repo_key'
+  compare_component_field '.canonical_repository_identity'
+  compare_component_field '.artifact_owners'
+  compare_component_field '.release_correlation_key'
+  compare_component_field '.contract_revision'
+
+  target_path="$(json_field "$COMPONENT_TARGET_FILE" '.local_checkout.path')"
+  if [ -z "$target_path" ] || [ ! -d "$target_path" ]; then
+    echo "Resolved product checkout is unavailable: ${target_path:-<empty>}" >&2
+    exit 1
+  fi
+  # Use "git rev-parse --is-inside-work-tree"/"--git-dir" instead of a bare
+  # ".git is a directory" test: a linked git worktree (as used by this
+  # workflow's per-item isolation) has a ".git" regular file pointing at the
+  # main checkout's worktree metadata, not a ".git" directory, so the
+  # directory test rejects a perfectly valid checkout. target_git_dir is also
+  # reused below for the cleanup lock directory, since "$target_path/.git"
+  # is not writable (or even a directory) for a linked worktree either.
+  if ! git -C "$target_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "Resolved product checkout is not a git repository: $target_path" >&2
+    exit 1
+  fi
+  target_git_dir="$(git -C "$target_path" rev-parse --git-dir)"
+  case "$target_git_dir" in
+    /*) : ;;
+    *) target_git_dir="$target_path/$target_git_dir" ;;
+  esac
+
+  if [ -z "$RELEASE_INPUT" ] && [ -n "$evidence_branch" ]; then
+    RELEASE_INPUT="$evidence_branch"
+  fi
+  if [ -z "$RELEASE_INPUT" ]; then
+    echo "Component release cleanup requires a release branch/version argument or evidence.release_branch." >&2
+    exit 2
+  fi
+  if [ -n "$evidence_branch" ] && [ "$(normalize_release_branch "$RELEASE_INPUT")" != "$evidence_branch" ]; then
+    echo "Component release evidence release_branch mismatch: input=$(normalize_release_branch "$RELEASE_INPUT") evidence=$evidence_branch" >&2
+    exit 1
+  fi
+
+  evidence_cleanup="$(json_field "$EVIDENCE_FILE" '.cleanup_outcome')"
+  if [ "$evidence_cleanup" = "complete" ]; then
+    cleanup_log "Component release cleanup evidence is already complete; exiting idempotently."
+    if [ "$JSON_OUTPUT" = "true" ]; then
+      jq -cnS --slurpfile evidence "$EVIDENCE_FILE" '{cleanup_outcome:"already_complete", evidence:$evidence[0]}'
+    fi
+    exit 0
+  fi
+
+  lock_key="$(json_field "$COMPONENT_TARGET_FILE" '.release_correlation_key')"
+  safe_lock_key="$(printf '%s' "$lock_key" | tr -c 'A-Za-z0-9._-' '_')"
+  # Key the lock under the HUB checkout's git-dir, not the product checkout's
+  # (target_git_dir): the hub is the single coordination point in
+  # workflow_hub mode, and this makes the lock mutually exclusive across
+  # cleanup runs that resolve the product repo to different local
+  # checkouts (e.g. a stale local_path override vs. checkout_root) as long
+  # as they share one hub checkout. This is a bounded mitigation, not a
+  # fully shared cross-machine lease -- see the note below.
+  hub_git_dir="$(git -C "$hub_root" rev-parse --git-dir)"
+  case "$hub_git_dir" in
+    /*) : ;;
+    *) hub_git_dir="$hub_root/$hub_git_dir" ;;
+  esac
+  lock_parent="$hub_git_dir/component-release-cleanup-locks"
+  mkdir -p "$lock_parent"
+  COMPONENT_LOCK_DIR="$lock_parent/$safe_lock_key.lock"
+  if ! mkdir "$COMPONENT_LOCK_DIR" 2>/dev/null; then
+    echo "Component release cleanup lock is already held for $lock_key at $COMPONENT_LOCK_DIR." >&2
+    echo "KNOWN LIMITATION: this lock is local to the hub checkout at '$hub_root'." >&2
+    echo "It does not exclude a concurrent run from a different hub clone or linked worktree of the same hub repository." >&2
+    exit 1
+  fi
+  COMPONENT_LOCK_CREATED=true
+
+  cleanup_log "Component release target: $PRODUCT_REPO ($(json_field "$COMPONENT_TARGET_FILE" '.canonical_repository_identity'))"
+  cleanup_log "Component checkout: $target_path"
+  contract_base="$(json_field "$COMPONENT_TARGET_FILE" '.release_base')"
+  if [ -n "$BACKPORT_BASE_OVERRIDE" ] && [ "$BACKPORT_BASE_OVERRIDE" != "$contract_base" ]; then
+    echo "--backport-base '$BACKPORT_BASE_OVERRIDE' conflicts with the component release contract base '$contract_base'." >&2
+    exit 2
+  fi
+  BACKPORT_BASE="$contract_base"
 }
 
 # Returns 0 (true) if the token is a valid issue identifier for the current
@@ -693,12 +989,49 @@ while [ $# -gt 0 ]; do
       parse_issue_csv "$2"
       shift 2
       ;;
+    --backport-base)
+      if [ $# -lt 2 ]; then
+        usage
+        exit 2
+      fi
+      BACKPORT_BASE="$2"
+      BACKPORT_BASE_OVERRIDE="$2"
+      shift 2
+      ;;
     --from-changelog)
       FROM_CHANGELOG=true
       shift
       ;;
     --best-effort)
       BEST_EFFORT=true
+      shift
+      ;;
+    --repo)
+      if [ $# -lt 2 ]; then
+        usage
+        exit 2
+      fi
+      PRODUCT_REPO="$2"
+      shift 2
+      ;;
+    --repo-root)
+      if [ $# -lt 2 ]; then
+        usage
+        exit 2
+      fi
+      REPO_ROOT_OVERRIDE="$2"
+      shift 2
+      ;;
+    --evidence-file)
+      if [ $# -lt 2 ]; then
+        usage
+        exit 2
+      fi
+      EVIDENCE_FILE="$2"
+      shift 2
+      ;;
+    --json)
+      JSON_OUTPUT=true
       shift
       ;;
     -h|--help)
@@ -722,19 +1055,41 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+HUB_REPO_ROOT="$PWD"
+if [ -n "$REPO_ROOT_OVERRIDE" ]; then
+  if [ ! -d "$REPO_ROOT_OVERRIDE" ]; then
+    echo "--repo-root does not exist or is not a directory: $REPO_ROOT_OVERRIDE" >&2
+    exit 2
+  fi
+  if [ "$(canonical_dir "$REPO_ROOT_OVERRIDE")" != "$(canonical_dir "$HUB_REPO_ROOT")" ]; then
+    echo "--repo-root must point at the current workflow hub checkout for release tracker cleanup." >&2
+    exit 2
+  fi
+  HUB_REPO_ROOT="$(canonical_dir "$REPO_ROOT_OVERRIDE")"
+fi
+
+if [ "$JSON_OUTPUT" = "true" ] && [ -n "$EVIDENCE_FILE" ]; then
+  COMPONENT_JSON_MODE=true
+fi
+
+validate_component_release_cleanup "$HUB_REPO_ROOT"
+
 if [ -z "$RELEASE_INPUT" ]; then
   usage
   exit 2
 fi
 
 RELEASE_BRANCH="$(normalize_release_branch "$RELEASE_INPUT")"
-RELEASE_VERSION="${RELEASE_BRANCH#release/}"
-echo "Release branch: $RELEASE_BRANCH"
-echo "Release version: $RELEASE_VERSION"
+RELEASE_VERSION="$(release_version_from_branch "$RELEASE_BRANCH")"
+validate_portable_branch_name "release" "$RELEASE_BRANCH"
+validate_portable_branch_name "backport base" "$BACKPORT_BASE"
+cleanup_log "Release branch: $RELEASE_BRANCH"
+cleanup_log "Release version: $RELEASE_VERSION"
+cleanup_log "Backport base: $BACKPORT_BASE"
 
 if [ "$FROM_CHANGELOG" = "true" ]; then
   if ! append_issues_from_changelog "$RELEASE_VERSION"; then
-    echo "TRACKER_INCOMPLETE=1 REASON=changelog_scope_unavailable"
+    cleanup_log "TRACKER_INCOMPLETE=1 REASON=changelog_scope_unavailable"
     if [ "$BEST_EFFORT" != "true" ]; then
       exit 1
     fi
@@ -748,63 +1103,82 @@ if [ "$FROM_CHANGELOG" = "true" ]; then
   dedupe_issue_numbers
 fi
 
-echo "Verifying merged PRs for release branch..."
-MAIN_PR=$(gh pr list --state merged --head "$RELEASE_BRANCH" --base main --json number --jq '.[0].number // empty')
-DEVELOP_PR=$(gh pr list --state merged --head "$RELEASE_BRANCH" --base develop --json number --jq '.[0].number // empty')
-OPEN_MAIN_PR=$(gh pr list --state open --head "$RELEASE_BRANCH" --base main --json number --jq '.[0].number // empty')
-OPEN_DEVELOP_PR=$(gh pr list --state open --head "$RELEASE_BRANCH" --base develop --json number --jq '.[0].number // empty')
+cleanup_log "Verifying merged PRs for release branch..."
+MAIN_PR=$(cleanup_gh_pr_list --state merged --head "$RELEASE_BRANCH" --base main --json number --jq '.[0].number // empty')
+DEVELOP_PR=$(cleanup_gh_pr_list --state merged --head "$RELEASE_BRANCH" --base "$BACKPORT_BASE" --json number --jq '.[0].number // empty')
+OPEN_MAIN_PR=$(cleanup_gh_pr_list --state open --head "$RELEASE_BRANCH" --base main --json number --jq '.[0].number // empty')
+OPEN_DEVELOP_PR=$(cleanup_gh_pr_list --state open --head "$RELEASE_BRANCH" --base "$BACKPORT_BASE" --json number --jq '.[0].number // empty')
 
 if [ -n "$OPEN_MAIN_PR" ] || [ -n "$OPEN_DEVELOP_PR" ]; then
-  echo "Release PRs are still open (main: ${OPEN_MAIN_PR:-none}, develop: ${OPEN_DEVELOP_PR:-none})."
+  cleanup_log "Release PRs are still open (main: ${OPEN_MAIN_PR:-none}, ${BACKPORT_BASE}: ${OPEN_DEVELOP_PR:-none})."
   echo "Do not run post-merge cleanup until both PRs are merged." >&2
   exit 1
 fi
 
 if [ -z "$MAIN_PR" ] || [ -z "$DEVELOP_PR" ]; then
   echo "Both merged PRs are required before cleanup." >&2
-  echo "Detected merged PRs - main: ${MAIN_PR:-none}, develop: ${DEVELOP_PR:-none}" >&2
+  echo "Detected merged PRs - main: ${MAIN_PR:-none}, ${BACKPORT_BASE}: ${DEVELOP_PR:-none}" >&2
   exit 1
 fi
 
-echo "Merged PRs verified (main #$MAIN_PR, develop #$DEVELOP_PR)."
+cleanup_log "Merged PRs verified (main #$MAIN_PR, ${BACKPORT_BASE} #$DEVELOP_PR)."
 
-echo "Fetching origin refs..."
-git fetch origin --prune
+cleanup_log "Fetching origin refs..."
+cleanup_git fetch origin --prune
 
-if git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
-  echo "Deleting remote branch '$RELEASE_BRANCH'..."
-  git push origin --delete "$RELEASE_BRANCH"
+REMOTE_BRANCH_DELETED=false
+LOCAL_BRANCH_DELETED=false
+if cleanup_git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
+  cleanup_log "Deleting remote branch '$RELEASE_BRANCH'..."
+  cleanup_git push origin --delete "$RELEASE_BRANCH"
+  REMOTE_BRANCH_DELETED=true
 else
-  echo "Remote branch '$RELEASE_BRANCH' is already absent; skipping remote delete."
+  cleanup_log "Remote branch '$RELEASE_BRANCH' is already absent; skipping remote delete."
 fi
 
-if git show-ref --quiet "refs/heads/$RELEASE_BRANCH"; then
-  CURRENT_BRANCH="$(git branch --show-current)"
+if cleanup_git show-ref --quiet "refs/heads/$RELEASE_BRANCH"; then
+  CURRENT_BRANCH="$(cleanup_git branch --show-current)"
   if [ "$CURRENT_BRANCH" = "$RELEASE_BRANCH" ]; then
-    echo "Local branch '$RELEASE_BRANCH' is currently checked out; switching to develop first..."
-    git switch develop
+    cleanup_log "Local branch '$RELEASE_BRANCH' is currently checked out; switching to '$BACKPORT_BASE' first..."
+    cleanup_git switch "$BACKPORT_BASE"
   fi
 
-  echo "Deleting local branch '$RELEASE_BRANCH'..."
+  cleanup_log "Deleting local branch '$RELEASE_BRANCH'..."
   # -D is intentional: squash/rebase merges often make -d fail despite merged PRs.
-  if ! git branch -D "$RELEASE_BRANCH"; then
+  # git branch -D prints "Deleted branch ... (was ...)." to its own stdout
+  # (unlike fetch/push/switch, which use stderr for progress) -- route that
+  # to stderr in component JSON mode so it cannot land ahead of/inside the
+  # final JSON object, same as cleanup_log's own routing.
+  if [ "$COMPONENT_JSON_MODE" = "true" ]; then
+    branch_delete_status=0
+    cleanup_git branch -D "$RELEASE_BRANCH" >&2 || branch_delete_status=$?
+  else
+    branch_delete_status=0
+    cleanup_git branch -D "$RELEASE_BRANCH" || branch_delete_status=$?
+  fi
+  if [ "$branch_delete_status" -ne 0 ]; then
     echo "Could not delete local branch '$RELEASE_BRANCH' cleanly." >&2
     echo "If it is checked out elsewhere, switch away in that worktree and retry." >&2
     exit 1
   fi
+  LOCAL_BRANCH_DELETED=true
 else
-  echo "Local branch '$RELEASE_BRANCH' is already absent; skipping local delete."
+  cleanup_log "Local branch '$RELEASE_BRANCH' is already absent; skipping local delete."
 fi
 
 if [ "${#ISSUE_NUMBERS[@]}" -eq 0 ]; then
-  echo "TRACKER_INCOMPLETE=1 REASON=no_issue_scope"
-  echo "No issues supplied; release tracker transitions are incomplete."
-  echo "Rerun with --from-changelog or explicit --issue/--issues after confirming the shipped issue scope."
+  cleanup_log "TRACKER_INCOMPLETE=1 REASON=no_issue_scope"
+  cleanup_log "No issues supplied; release tracker transitions are incomplete."
+  cleanup_log "Rerun with --from-changelog or explicit --issue/--issues after confirming the shipped issue scope."
   if [ "$BEST_EFFORT" != "true" ]; then
     echo "Pass --best-effort to keep branch cleanup as the only completed action and exit 0." >&2
     exit 1
   fi
-  echo "Release post-merge cleanup complete."
+  if [ "$COMPONENT_JSON_MODE" = "true" ]; then
+    emit_component_cleanup_json "incomplete" "false" "incomplete" \
+      "provide --from-changelog or --issue/--issues before tracker reconciliation can complete"
+  fi
+  cleanup_log "Release post-merge cleanup complete."
   exit 0
 fi
 
@@ -812,16 +1186,16 @@ fi
 # (they require MCP/API access). Emit per-issue manual action guidance and
 # exit cleanly rather than silently skipping or failing with UPDATED=0.
 if [ "$TRACKER_PROVIDER" = "linear" ]; then
-  echo "Recording release stamp guidance for Linear issue(s)..."
+  cleanup_log "Recording release stamp guidance for Linear issue(s)..."
   LINEAR_STAMPED=0
   LINEAR_STAMP_SKIPPED=0
   LINEAR_STAMP_FAILED=0
   for issue in "${ISSUE_NUMBERS[@]}"; do
     if ! STAMP_OUT="$(record_release_for_issue_best_effort "$issue" "$RELEASE_VERSION")"; then
-      echo "Warning: release-stamp helper failed for issue #$issue; counting as stamp failure."
+      cleanup_log "Warning: release-stamp helper failed for issue #$issue; counting as stamp failure."
       STAMP_OUT="RELEASE_STAMP_FAILED issue=${issue} version=${RELEASE_VERSION} provider=${TRACKER_PROVIDER:-unknown} reason=helper_failed"
     fi
-    echo "$STAMP_OUT"
+    cleanup_log "$STAMP_OUT"
     if echo "$STAMP_OUT" | grep -q "^RELEASE_STAMPED "; then
       LINEAR_STAMPED=$((LINEAR_STAMPED + 1))
     elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_FAILED "; then
@@ -829,30 +1203,34 @@ if [ "$TRACKER_PROVIDER" = "linear" ]; then
     elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_SKIPPED "; then
       LINEAR_STAMP_SKIPPED=$((LINEAR_STAMP_SKIPPED + 1))
     else
-      echo "Warning: unrecognized release-stamp output for issue #$issue; counting as stamp failure."
+      cleanup_log "Warning: unrecognized release-stamp output for issue #$issue; counting as stamp failure."
       LINEAR_STAMP_FAILED=$((LINEAR_STAMP_FAILED + 1))
     fi
   done
-  echo "Linear tracker detected: automatic '$MERGED_LABEL' -> '$RELEASED_LABEL' transitions are not supported by this script."
-  echo "Manually transition the following issue(s) to '$RELEASED_LABEL' in Linear (via MCP server or API):"
+  cleanup_log "Linear tracker detected: automatic '$MERGED_LABEL' -> '$RELEASED_LABEL' transitions are not supported by this script."
+  cleanup_log "Manually transition the following issue(s) to '$RELEASED_LABEL' in Linear (via MCP server or API):"
   for issue in "${ISSUE_NUMBERS[@]}"; do
-    echo "  - Issue $issue: set status to '$RELEASED_LABEL'"
+    cleanup_log "  - Issue $issue: set status to '$RELEASED_LABEL'"
   done
-  echo "TRACKER_ACTION=linear_mcp_or_api_required"
-  echo "TRACKER_INCOMPLETE=1 REASON=linear_status_transition_required"
-  echo "TRACKER_ISSUES=$(IFS=,; printf '%s' "${ISSUE_NUMBERS[*]}")"
-  echo "See docs/workflow/development-workflow/integrations/linear.md for guidance."
-  echo "STAMPED=$LINEAR_STAMPED STAMP_SKIPPED=$LINEAR_STAMP_SKIPPED STAMP_FAILED=$LINEAR_STAMP_FAILED UPDATED=0 SKIPPED=0 FAILED=0"
+  cleanup_log "TRACKER_ACTION=linear_mcp_or_api_required"
+  cleanup_log "TRACKER_INCOMPLETE=1 REASON=linear_status_transition_required"
+  cleanup_log "TRACKER_ISSUES=$(IFS=,; printf '%s' "${ISSUE_NUMBERS[*]}")"
+  cleanup_log "See docs/workflow/development-workflow/integrations/linear.md for guidance."
+  cleanup_log "STAMPED=$LINEAR_STAMPED STAMP_SKIPPED=$LINEAR_STAMP_SKIPPED STAMP_FAILED=$LINEAR_STAMP_FAILED UPDATED=0 SKIPPED=0 FAILED=0"
   if [ "$BEST_EFFORT" != "true" ]; then
     echo "Release tracker transitions are incomplete until Linear issues are moved to '$RELEASED_LABEL'." >&2
     echo "Pass --best-effort only when a human explicitly accepts completing tracker transitions outside this script." >&2
     exit 1
   fi
-  echo "Release post-merge cleanup complete."
+  if [ "$COMPONENT_JSON_MODE" = "true" ]; then
+    emit_component_cleanup_json "incomplete" "false" "incomplete" \
+      "manually transition the scoped issue(s) to '$RELEASED_LABEL' in Linear (via MCP server or API)"
+  fi
+  cleanup_log "Release post-merge cleanup complete."
   exit 0
 fi
 
-echo "Transitioning scoped issues from '$MERGED_LABEL' to '$RELEASED_LABEL'..."
+cleanup_log "Transitioning scoped issues from '$MERGED_LABEL' to '$RELEASED_LABEL'..."
 RELEASE_STAMPED=0
 RELEASE_STAMP_SKIPPED=0
 RELEASE_STAMP_FAILED=0
@@ -862,10 +1240,10 @@ TRACKER_FAILED=0
 
 for issue in "${ISSUE_NUMBERS[@]}"; do
   if ! STAMP_OUT="$(record_release_for_issue_best_effort "$issue" "$RELEASE_VERSION")"; then
-    echo "Warning: release-stamp helper failed for issue #$issue; counting as stamp failure."
+    cleanup_log "Warning: release-stamp helper failed for issue #$issue; counting as stamp failure."
     STAMP_OUT="RELEASE_STAMP_FAILED issue=${issue} version=${RELEASE_VERSION} provider=${TRACKER_PROVIDER:-unknown} reason=helper_failed"
   fi
-  echo "$STAMP_OUT"
+  cleanup_log "$STAMP_OUT"
   if echo "$STAMP_OUT" | grep -q "^RELEASE_STAMPED "; then
     RELEASE_STAMPED=$((RELEASE_STAMPED + 1))
   elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_FAILED "; then
@@ -873,13 +1251,13 @@ for issue in "${ISSUE_NUMBERS[@]}"; do
   elif echo "$STAMP_OUT" | grep -q "^RELEASE_STAMP_SKIPPED "; then
     RELEASE_STAMP_SKIPPED=$((RELEASE_STAMP_SKIPPED + 1))
   else
-    echo "Warning: unrecognized release-stamp output for issue #$issue; counting as stamp failure."
+    cleanup_log "Warning: unrecognized release-stamp output for issue #$issue; counting as stamp failure."
     RELEASE_STAMP_FAILED=$((RELEASE_STAMP_FAILED + 1))
   fi
 
   ISSUE_STATE=$(gh issue view "$issue" --json state --jq '.state' 2>/dev/null || true)
   if [ -z "$ISSUE_STATE" ]; then
-    echo "Warning: could not read issue #$issue; skipping tracker update."
+    cleanup_log "Warning: could not read issue #$issue; skipping tracker update."
     TRACKER_SKIPPED=$((TRACKER_SKIPPED + 1))
     continue
   fi
@@ -894,7 +1272,7 @@ for issue in "${ISSUE_NUMBERS[@]}"; do
   # status" message because the current status is already 'Released' (not 'Merged').
   # Treat that as a no-op success so that UPDATED=0 only signals a real failure.
   TRACKER_OUT=$(update_tracker_status_best_effort "$issue" "$RELEASED_LABEL" "$MERGED_LABEL" 2>&1)
-  echo "$TRACKER_OUT"
+  cleanup_log "$TRACKER_OUT"
   if echo "$TRACKER_OUT" | grep -q "^Updating tracker status"; then
     if echo "$TRACKER_OUT" | grep -q "Warning: GraphQL mutation failed"; then
       TRACKER_FAILED=$((TRACKER_FAILED + 1))
@@ -908,7 +1286,7 @@ for issue in "${ISSUE_NUMBERS[@]}"; do
   elif echo "$TRACKER_OUT" | grep -q "current status '${RELEASED_LABEL}'"; then
     # Issue is already in the target Released status (set by GitHub project automation).
     # This is a no-op success — not a failure or a skip that warrants an error exit.
-    echo "Issue #$issue is already in '$RELEASED_LABEL' status; counting as success."
+    cleanup_log "Issue #$issue is already in '$RELEASED_LABEL' status; counting as success."
     TRACKER_UPDATED=$((TRACKER_UPDATED + 1))
   elif echo "$TRACKER_OUT" | grep -q "Warning:"; then
     TRACKER_SKIPPED=$((TRACKER_SKIPPED + 1))
@@ -918,7 +1296,7 @@ for issue in "${ISSUE_NUMBERS[@]}"; do
   fi
 done
 
-echo "STAMPED=$RELEASE_STAMPED STAMP_SKIPPED=$RELEASE_STAMP_SKIPPED STAMP_FAILED=$RELEASE_STAMP_FAILED UPDATED=$TRACKER_UPDATED SKIPPED=$TRACKER_SKIPPED FAILED=$TRACKER_FAILED"
+cleanup_log "STAMPED=$RELEASE_STAMPED STAMP_SKIPPED=$RELEASE_STAMP_SKIPPED STAMP_FAILED=$RELEASE_STAMP_FAILED UPDATED=$TRACKER_UPDATED SKIPPED=$TRACKER_SKIPPED FAILED=$TRACKER_FAILED"
 
 if [ "$BEST_EFFORT" != "true" ]; then
   if [ "$TRACKER_FAILED" -gt 0 ]; then
@@ -932,13 +1310,17 @@ if [ "$BEST_EFFORT" != "true" ]; then
       github_projects|github-projects|github_issues|github-issues)
         ;;
       *)
-        echo "No shell-supported tracker transitions ran for provider '${TRACKER_PROVIDER:-none}'; release-stamp handling completed."
-        echo "Release post-merge cleanup complete."
+        if [ "$COMPONENT_JSON_MODE" = "true" ]; then
+          emit_component_cleanup_json "incomplete" "false" "incomplete" \
+            "no shell-supported tracker transitions exist for provider '${TRACKER_PROVIDER:-none}'"
+        fi
+        cleanup_log "No shell-supported tracker transitions ran for provider '${TRACKER_PROVIDER:-none}'; release-stamp handling completed."
+        cleanup_log "Release post-merge cleanup complete."
         exit 0
         ;;
     esac
     if [ "$RELEASE_STAMPED" -gt 0 ] && [ "$TRACKER_SKIPPED" -gt 0 ] && [ "$TRACKER_FAILED" -eq 0 ]; then
-      echo "Release stamping succeeded, but tracker status transitions were skipped; treating cleanup as successful because no transition failed."
+      cleanup_log "Release stamping succeeded, but tracker status transitions were skipped; treating cleanup as successful because no transition failed."
     else
       echo "Error: no tracker transitions succeeded (UPDATED=0) for release $RELEASE_BRANCH." >&2
       echo "Pass --best-effort to suppress this error and exit 0 regardless of transition outcomes." >&2
@@ -958,4 +1340,7 @@ if [ "$RELEASE_STAMPED" -gt 0 ]; then
   fi
 fi
 
-echo "Release post-merge cleanup complete."
+if [ "$COMPONENT_JSON_MODE" = "true" ]; then
+  emit_component_cleanup_json "complete" "true" "complete"
+fi
+cleanup_log "Release post-merge cleanup complete."

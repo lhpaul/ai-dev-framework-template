@@ -6,6 +6,7 @@ workflow items for one or more product repositories.
 Related references:
 
 - [Repository modes](repository-modes.md)
+- [Multi-repository release adoption](multi-repo-release-adoption.md)
 - [Workflow Hub GitHub App Authentication](integrations/workflow-hub-github-app.md)
 - [Orchestrate Work Protocol](protocols/90-batch-orchestrate-work-protocol.md)
 - [Work Item Orchestration Protocol](protocols/91-orchestrate-work-protocol.md)
@@ -39,6 +40,15 @@ workflow_hub:
       github_repo: example/faind-mobile-app
       default_branch: main
       ci_policy: required
+      release:
+        base: main
+        branch_pattern: release/v{version}
+        changelog_owner: product_repo
+        tag_owner: product_repo
+        github_release_owner: product_repo
+        deployment_evidence_owner: product_repo
+        cleanup_evidence_owner: product_repo
+        tracker_reconciliation_owner: hub
       github_app:
         app_id: "12345"
         installation_id: "999999"
@@ -52,6 +62,40 @@ workflow_hub:
 
 Keep this file free of local paths, private key paths, token values, and secret
 material.
+
+The `release` block is the product release contract. It may contain only
+non-secret, portable release metadata. `base` defaults to the product
+repository's `default_branch`, `branch_pattern` defaults to
+`release/v{version}`, and product-owned release artifacts default to
+`product_repo` while tracker reconciliation defaults to `hub`.
+
+Before creating product-owned changelog entries, release branches, tags, GitHub
+Releases, deployment evidence, or cleanup evidence, run:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+TARGET_REPO_KEY="faind-mobile-app"
+TARGET_BINDING_SAFE_KEY="$(printf '%s' "$TARGET_REPO_KEY" | tr -c 'A-Za-z0-9._-' '_')"
+TARGET_BINDING_FILE="$(mktemp "${TMPDIR:-/tmp}/component-release-target.${TARGET_BINDING_SAFE_KEY}.XXXXXX")"
+TARGET_BINDING_TMP="${TARGET_BINDING_FILE}.$$"
+scripts/development-workflow/component-release-target.sh \
+  --repo "$TARGET_REPO_KEY" \
+  --json > "$TARGET_BINDING_TMP"
+mv "$TARGET_BINDING_TMP" "$TARGET_BINDING_FILE"
+```
+
+Continue only when the helper reports `component_release_routed` and
+`mutation_allowed=true`. See
+[Repository modes](repository-modes.md#release-artifact-ownership) for the
+canonical routing outcomes, validation rules, and binding fields.
+The versioned release contract must still exclude local checkout paths,
+credentials, token values, secret names, secret values, and
+environment-specific account details.
+
+After resolving a component release target, store the generated target binding
+with the release evidence record. The local checkout path comes only from
+`.ai-dev-workflow.local.yaml`; never add checkout paths or secret references to
+the versioned `release` block.
 
 ## Local Hub Config
 
@@ -113,6 +157,13 @@ scripts/development-workflow/hub-preflight-product-repos.sh --repo faind-mobile-
 Product repositories with no GitHub Actions workflows must declare
 `ci_policy: none` on the hub `workflow_hub.product_repos[]` entry, or preflight
 fails with guidance before orchestration reaches delegated merge gates.
+
+Before a workflow hub starts multi-repository release mutation, follow
+[Multi-repository release adoption](multi-repo-release-adoption.md) and record
+assurance evidence. Adoption validation must pass before release mutation unless
+the release remains in the existing `single_repo` path. Continue only when
+`adoption_status=validated` and the assurance evidence shows unchanged
+historical no-rewrite results for both hub-owned and product-owned baselines.
 
 Run the non-secret workflow-hub smoke fixture:
 

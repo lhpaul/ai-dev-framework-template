@@ -153,6 +153,236 @@ Use this when:
 - You want a quick view of what work is already in progress
 - The orchestrator needs a deterministic summary before choosing the next stage
 
+### `component-release-target.sh`
+
+Resolves the canonical release target before a single-repo or workflow-hub
+component release mutates changelog entries, branches, tags, release evidence,
+or tracker state.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/component-release-target.sh --json
+./scripts/development-workflow/component-release-target.sh --repo mobile-app --json
+```
+
+What it does:
+
+- Emits `component_release_target.v1` in shell or JSON form.
+- Reports one routing outcome, `mutation_allowed`, artifact owners,
+  `release_correlation_key`, and `contract_revision`.
+- Fails closed for missing, multiple, unknown, ambiguous, invalid, unavailable,
+  or unsupported component release targets before mutation.
+- Uses the canonical component release contract documented in
+  `docs/workflow/development-workflow/repository-modes.md`.
+
+### `component-release-evidence.sh`
+
+Renders deterministic component release evidence from an independent target
+binding and rejects mismatched repository identity, artifact owners,
+`release_correlation_key`, or `contract_revision`.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/component-release-evidence.sh \
+  --target-file /tmp/component-release-target.json \
+  --binding-file /tmp/component-release-target.json \
+  --release-branch mobile-app/release/v1.2.3 \
+  --release-outcome pending \
+  --ci-outcome pending \
+  --deployment-outcome pending \
+  --cleanup-outcome not_started \
+  --hub-tracker-ref "#123" \
+  --output /tmp/component-release-evidence.json
+```
+
+### `multi-repo-release-assurance.sh`
+
+Validates deterministic workflow-hub adoption fixtures before a
+multi-repository release is treated as adopted.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/tests/setup-multi-repo-release-assurance-fixture.sh \
+  --output-dir /tmp/multi-repo-release-assurance \
+  --json > /tmp/multi-repo-release-assurance-fixtures.json &&
+
+./scripts/development-workflow/multi-repo-release-assurance.sh \
+  --fixture-dir /tmp/multi-repo-release-assurance/valid \
+  --json
+```
+
+What it does:
+
+- Emits `multi_repo_release_assurance.v1`.
+- Reads explicit fixture directories containing scenario inputs and historical
+  before/after baselines.
+- Writes JSON to stdout; redirect it to the release runbook or self-review
+  evidence path chosen by the operator.
+- Aggregates scenario outcomes into `adoption_status` using the canonical
+  contract in
+  `docs/workflow/development-workflow/multi-repo-release-adoption.md`.
+- Compares hub-owned and product-owned historical no-rewrite baselines.
+- Emits `owner_actions[]` and `required_next_action` for release runbook
+  evidence.
+
+Run focused coverage with:
+
+<!-- workflow-shell-contract: bash -->
+```bash
+bash scripts/development-workflow/tests/test-multi-repo-release-assurance.sh
+```
+
+### `delivery-bundle-manifest.sh`
+
+Creates and updates hub-owned delivery bundle manifests that compose
+independently released product components into one customer-facing delivery.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/delivery-bundle-manifest.sh create \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --title "Mobile and Web July delivery" \
+  --purpose "Coordinated customer-facing delivery" \
+  --parent-ref "#1352" \
+  --component mobile-app \
+  --component web-app \
+  --child-item "#1356" \
+  --finalization-owner "@workflow-operator" \
+  --json
+
+./scripts/development-workflow/delivery-bundle-manifest.sh update-component \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --expected-revision 1 \
+  --component-key mobile-app \
+  --evidence-file /tmp/component-release-evidence.json \
+  --component-tag mobile-v1.4.0 \
+  --component-version 1.4.0 \
+  --source-pr 1411 \
+  --release-pr 1501 \
+  --hub-tracker-reconciliation-outcome complete \
+  --child-item "#1356" \
+  --child-release-state merged \
+  --json
+
+./scripts/development-workflow/delivery-bundle-manifest.sh add-component \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --expected-revision 2 \
+  --component-key web-app \
+  --json
+
+./scripts/development-workflow/delivery-bundle-manifest.sh remove-component \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --expected-revision 3 \
+  --component-key web-app \
+  --reason "Moved to a later delivery" \
+  --json
+
+./scripts/development-workflow/delivery-bundle-manifest.sh inspect \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --json
+
+./scripts/development-workflow/delivery-bundle-manifest.sh finalize \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --expected-revision 4 \
+  --json
+```
+
+| Subcommand | Required flags beyond `--manifest` and `--bundle-key` |
+| --- | --- |
+| `create` | `--title`, `--purpose`, `--parent-ref`, `--component`, `--finalization-owner` |
+| `add-component` | `--expected-revision`, `--component-key` |
+| `update-component` | `--expected-revision`, `--component-key`, `--evidence-file`, `--component-tag`, `--source-pr`, `--release-pr`, `--child-item`, `--child-release-state` |
+| `remove-component` | `--expected-revision`, `--component-key`, `--reason` |
+| `inspect` | none |
+| `finalize` | `--expected-revision` |
+
+What it does:
+
+- Emits and validates `delivery_bundle_manifest.v1`.
+- Requires both `--manifest` and immutable `--bundle-key` so a temporary file
+  path is never the only delivery identity.
+- Preserves component release evidence and records stable identity fields,
+  component tags, PR references, release outcomes, cleanup outcomes, hub
+  tracker reconciliation, child release state, readiness, and audit events in
+  the hub manifest.
+- Uses a manifest lock, expected-revision checks, staged JSON validation, and
+  atomic replacement for accepted mutations.
+- Records lock owner metadata in `<manifest>.lock/owner.json`; if a process is
+  killed mid-mutation, inspect that file and remove the lock directory only
+  after confirming the owner process is no longer active.
+- Fails closed with stable `ERROR_CODE=<code>` stderr for stale revisions,
+  conflicting evidence, malformed JSON, missing component tags, incomplete
+  evidence, and blocked finalization outcomes.
+- Finalizes only when every declared current component is complete and never
+  creates a shared suite version or shared release branch.
+
+### `component-milestone-reconciliation.sh`
+
+Reconciles hub-owned component release status after component evidence and,
+when present, delivery bundle evidence are available.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/component-milestone-reconciliation.sh inspect-component \
+  --issue 1358 \
+  --target-kind component_child \
+  --product-repo mobile-app \
+  --component-tag mobile-v1.4.0 \
+  --evidence-file /tmp/component-release-evidence.json \
+  --json
+
+./scripts/development-workflow/component-milestone-reconciliation.sh apply-component \
+  --issue 1358 \
+  --target-kind component_child \
+  --product-repo mobile-app \
+  --component-tag mobile-v1.4.0 \
+  --evidence-file /tmp/component-release-evidence.json \
+  --json
+
+./scripts/development-workflow/component-milestone-reconciliation.sh inspect-parent \
+  --parent-issue 1352 \
+  --delivery-manifest /tmp/delivery-bundle.json \
+  --require-finalized \
+  --json
+
+./scripts/development-workflow/component-milestone-reconciliation.sh apply-parent \
+  --parent-issue 1352 \
+  --delivery-manifest /tmp/delivery-bundle.json \
+  --require-finalized \
+  --json
+```
+
+What it does:
+
+- Emits `component_milestone_reconciliation.v1`.
+- In `workflow_hub` mode, creates or reuses a namespaced component milestone
+  titled `<product-repo>@<component-tag>` and assigns it only to the matching
+  component child issue after complete matching `component_release_evidence.v1`.
+- Rejects `parent_epic` and `delivery_bundle` milestone writes before any
+  GitHub mutation.
+- Reports parent release states from `delivery_bundle_manifest.v1` as
+  `not_released`, `partially_released`, `blocked`, or `released`.
+- Persists parent `release_status` and an audit event in the delivery bundle
+  manifest only when finalized bundle evidence allows `parent_released`.
+- Preserves non-hub compatibility with the existing plain `vX.Y.Z` milestone
+  path via `--mode single_repo --version <version>`.
+
 ### `check-workflow-branch.sh`
 
 Checks whether a specific workflow branch already exists locally, remotely, or in an active worktree.

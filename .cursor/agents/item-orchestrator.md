@@ -32,15 +32,22 @@ Follow the **`/run-item`** bounded command contract:
 ## Repository Mode Context
 
 Before implementation mutation in `workflow_hub`, state the selected product
-repository, local path or remote identity, artifact owner, and mutation target.
-Stop before file edits, branch creation, commits, or implementation PR creation
-when product repository context is missing or ambiguous. Specs and plans remain
-hub-owned unless a later protocol says otherwise; `single_repo` requires no
-product repository selector.
+repository, local path or remote identity, artifact owner, mutation target,
+routing outcome, and routing fingerprint. Continue only when
+`ROUTING_CONTINUE_ALLOWED=true`. Stop before file edits, branch creation, commits, or implementation PR creation when product repository context is
+missing, ambiguous, or selects multiple product repositories. Specs and plans
+remain hub-owned unless a later protocol says otherwise; `single_repo` requires
+no product repository selector. `hub_only` with
+`ROUTING_ARTIFACT_OWNER=hub_repository` routes to the hub with no selected
+product repository.
 
 Before dispatching any stage agent that may create a branch or open a PR, pass
 the expected branch, expected worktree when known, approved base, and
-artifact-owning repo root. The stage path must run
+artifact-owning repo root. For `workflow_hub` implementation handoffs, also
+pass `ROUTING_CONTINUE_ALLOWED`, `ROUTING_OUTCOME_CODE`,
+`ROUTING_ARTIFACT_OWNER`, `ROUTING_SELECTED_PRODUCT_REPO_KEY`, and
+`ROUTING_FINGERPRINT`, or explicitly require the implementer to run a fresh
+classifier before mutation. The stage path must run
 `run-nested-artifact-guard.sh --mode <pre-create|pre-pr> --issue <number> --expected-branch <branch> --approved-base <branch> --repo-root "$ARTIFACT_REPO_ROOT"` before mutation
 and stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`.
 For substantial or multi-part mutating stage work, also instruct the stage agent

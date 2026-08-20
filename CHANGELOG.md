@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Artifact ownership and product release contract** (#1353): documents and
+  validates multi-repository release artifact ownership and product release
+  configuration for workflow hubs.
+- **One product repository per implementation item** (#1354): enforce
+  one-target workflow-hub routing before product implementation mutation.
+- **Route component releases to selected product repositories** (#1356): add
+  canonical component release target and evidence helpers, plus product-aware
+  release cleanup validation for workflow hubs.
+- **Add delivery bundle manifest workflow** (#1357): add hub-owned delivery
+  bundle issue and manifest tooling for coordinated component delivery evidence.
+- **Add component milestone release statuses** (#1358): add workflow-hub
+  component milestone and parent release-state reconciliation for
+  multi-repository releases.
+- **Add multi-repository release adoption assurance** (#1359): add
+  workflow-hub adoption guidance and deterministic assurance coverage for
+  multi-repository releases.
+
 ### Fixed
 - **ShellCheck CI no longer hangs indefinitely installing zsh** (#1517):
   the `Install zsh for cross-shell snippet tests` step in
@@ -768,6 +787,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Live reproduction on the real board (see issue #1501) showed `High`
   already worked correctly and the alias/default were the whole defect —
   no separate `High` resolution bug exists.
+- **Multi-repository release tooling hardening**: the prepare-release
+  protocol now documents a one-PR flow for product repositories whose
+  resolved release base is `main` — the previous two-PR instructions could
+  not be followed for that configuration, since the production and backport
+  PRs would need identical head and base branches.
+  `delivery-bundle-manifest.sh` now rejects `add-component`/`update-component`
+  calls whose `--component-key` does not match the evidence file's
+  `selected_product_repo_key`, instead of silently binding mismatched
+  evidence into the wrong component slot.
+  `component-milestone-reconciliation.sh`'s `inspect-parent`/`apply-parent`
+  now validate that `--parent-issue` matches the delivery manifest's
+  `parent_ref` before evaluating component readiness, instead of allowing an
+  unrelated issue to be recorded as released.
+  `component-release-target.sh` now verifies the resolved product repository
+  checkout directory actually exists on disk before reporting
+  `mutation_allowed=true`, instead of trusting an unreachable configured
+  `local_path`.
+  `workflow-config-resolver.py`'s branch-name validation now applies git's
+  ref-format component rules (no leading dot, no trailing dot, no `.lock`
+  suffix) in addition to the existing character allowlist, so names such as
+  `release/v1.2.3.lock` or `release/v1.2.3.` are rejected instead of accepted
+  as portable branch names.
+  `component-milestone-reconciliation.sh apply-component`/`inspect-component`
+  now accept `--hub-tracker-reconciliation-outcome` and `--child-release-state`
+  as explicit flags (mirroring `delivery-bundle-manifest.sh`'s existing
+  flags) and treat a schema-correct evidence file with no `evidence_state` as
+  verified, instead of requiring three fields the evidence producer,
+  `component-release-evidence.sh`, never emits — the documented
+  producer-to-consumer handoff between those two scripts could not
+  previously complete.
+  `delivery-bundle-manifest.sh update-component` now rejects a
+  `component_tag`/`component_version` change for an already-accepted
+  component when the `release_pr` is unchanged, instead of silently
+  overwriting the accepted release composition; a different `release_pr`
+  still accepts a new tag/version as the documented re-tag/re-release flow.
+  `workflow-next-action.sh --pr` in `workflow_hub` mode now reads the PR's
+  branch name before classifying it, instead of after, so hub-only spec,
+  plan, and hub-owned implementation PRs resolve directly instead of always
+  requiring a product-repository selection.
+  `prepare-release-post-merge-cleanup.sh` now validates a resolved product
+  checkout and locates its cleanup lock directory with
+  `git rev-parse --is-inside-work-tree`/`--git-dir` instead of a bare
+  `.git`-is-a-directory test, so a linked git worktree checkout (whose
+  `.git` is a file, not a directory) is recognized instead of rejected.
+  `component-release-target.sh` now accepts an optional `--release-branch`
+  flag and folds it into `release_correlation_key`, so two release attempts
+  for the same product and unchanged contract (for example `v1.2.3` and a
+  later `v1.2.4`) get distinct correlation keys instead of colliding on the
+  same key and conflating separate releases in cleanup locking, conflict
+  detection, and audit records; `prepare-release-post-merge-cleanup.sh` and
+  the prepare-release protocol now pass it once the release branch is known,
+  so re-resolution at cleanup time reproduces the same key.
+  `component-release-evidence.sh` now rejects a `--release-branch` that does
+  not match the target binding's `release_branch_pattern` (for example an
+  unrelated branch such as `totally/wrong`) instead of accepting any
+  syntactically valid branch name, and now accepts an optional
+  `--component-tag` flag so rendered evidence can bind a component tag.
+  `component-milestone-reconciliation.sh` now requires evidence to bind a
+  matching `component_tag` before treating a component as released, instead
+  of treating a missing evidence tag as a match for any caller-supplied
+  `--component-tag` — closing a gap where `apply-component` could stamp an
+  arbitrary, unverified release milestone.
+  `workflow-next-action.sh --pr` in `workflow_hub` mode now gates the
+  implementation-only repository-routing preflight on the branch actually
+  being an implementation branch, instead of running it unconditionally, so
+  spec and plan PRs (and other hub-owned, non-implementation branches)
+  resolve directly instead of always requiring a product-repository
+  selection.
+  `multi-repo-release-assurance.sh` now validates that required evidence
+  values match the established format for the artifact they claim to
+  represent (a component/delivery-bundle schema string, a `sha256:`-prefixed
+  contract revision, a product repository key, a GitHub `owner/repo` slug,
+  or a `<product-repo>@<component-tag>` milestone title) instead of only
+  checking that the value is non-empty, so fabricated evidence such as
+  `release_contract:"garbage"` is rejected instead of producing
+  `adoption_status:"validated"`.
+  `delivery-bundle-manifest.sh update-component` now requires evidence to
+  bind a matching `component_tag` before accepting it, the same fix applied
+  to `component-milestone-reconciliation.sh` in the prior fix, closing the
+  same gap in this second consumer; `create` now rejects a repeated
+  `--component` instead of silently writing duplicate component entries
+  that `update-component` could only ever update the first of.
+  `prepare-release-post-merge-cleanup.sh` now emits its documented
+  structured `--json` summary on every component-release cleanup run
+  (previously only the already-complete shortcut path did), routing
+  progress output to stderr so it cannot corrupt the JSON on stdout; and
+  its per-release cleanup lock is now keyed under the hub checkout's git
+  directory instead of the product checkout's, so two cleanup runs that
+  resolve the product repository to different local checkouts of the same
+  hub no longer both proceed for the same release.
 
 ### Changed
 

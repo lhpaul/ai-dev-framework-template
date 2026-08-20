@@ -106,6 +106,24 @@ categories:
       glob: "**/*"
       mode_scope: hub_only
       note: workflow helper scripts (state inspection, PR/CI loops, etc.)
+    - path: scripts/development-workflow/workflow-config-resolver.py
+      mode_scope: product_repo_injection
+      note: product-repo runtime helper for repository mode and release contract resolution
+    - path: scripts/development-workflow/validate-workflow-config.sh
+      mode_scope: product_repo_injection
+      note: product-repo runtime helper for non-secret workflow configuration validation
+    - path: scripts/development-workflow/workflow-lib.sh
+      mode_scope: product_repo_injection
+      note: shared shell helpers required by product-repo runtime scripts
+    - path: scripts/development-workflow/pr-review-loop.sh
+      mode_scope: product_repo_injection
+      note: product-repo runtime reviewer loop for product-owned PRs
+    - path: scripts/development-workflow/pr-ci-loop.sh
+      mode_scope: product_repo_injection
+      note: product-repo runtime CI loop for product-owned PRs
+    - path: scripts/development-workflow/post-merge-cleanup.sh
+      mode_scope: product_repo_injection
+      note: product-repo cleanup helper for product-owned branch and PR evidence
     - path: scripts/lint/
       glob: "**/*"
       mode_scope: shared

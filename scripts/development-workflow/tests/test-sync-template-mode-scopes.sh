@@ -112,6 +112,10 @@ categories:
     - path: template/product-repo-injection/
       glob: "**/*"
       mode_scope: product_repo_injection
+    - path: scripts/development-workflow/validate-workflow-config.sh
+      mode_scope: product_repo_injection
+    - path: scripts/development-workflow/pr-ci-loop.sh
+      mode_scope: product_repo_injection
   special_handling:
     - path: .github/workflows/e2e-regression.yml
       mode_scope: shared
@@ -144,7 +148,7 @@ echo ""
 echo "=== sync_template_scopes: single_repo compatibility ==="
 
 run_contains "single_role_reported" "ROLE=single_repo" "$single_output"
-run_contains "single_selects_all_entries" "SELECTED_COUNT=10" "$single_output"
+run_contains "single_selects_all_entries" "SELECTED_COUNT=12" "$single_output"
 run_contains "single_skips_no_entries" "SKIPPED_COUNT=0" "$single_output"
 run_contains "single_preserves_quoted_hash_path" "SELECTED category=always_sync mode_scope=shared path=docs/hash#file.md glob=" "$single_output"
 run_contains "single_keeps_hub_scope" "SELECTED category=always_sync mode_scope=hub_only path=docs/workflow/ glob=**/*" "$single_output"
@@ -155,19 +159,22 @@ echo "=== sync_template_scopes: workflow_hub selection ==="
 
 run_contains "hub_role_reported" "ROLE=workflow_hub" "$hub_output"
 run_contains "hub_selected_count" "SELECTED_COUNT=7" "$hub_output"
-run_contains "hub_skipped_count" "SKIPPED_COUNT=3" "$hub_output"
+run_contains "hub_skipped_count" "SKIPPED_COUNT=5" "$hub_output"
 run_contains "hub_selects_shared" "SELECTED category=always_sync mode_scope=shared path=REVIEW.md glob=" "$hub_output"
 run_contains "hub_selects_hub_only" "SELECTED category=always_sync mode_scope=hub_only path=docs/workflow/ glob=**/*" "$hub_output"
 run_contains "hub_reports_product_scope_skipped" "SKIPPED category=always_sync mode_scope=product_repo_injection path=template/product-repo-injection/ glob=**/* mixed_content= annotation_scheme= reason=scope_not_applicable" "$hub_output"
+run_contains "hub_skips_product_release_runtime" "SKIPPED category=always_sync mode_scope=product_repo_injection path=scripts/development-workflow/validate-workflow-config.sh glob=" "$hub_output"
 
 echo ""
 echo "=== sync_template_scopes: product_repo selection ==="
 
 run_contains "product_role_reported" "ROLE=product_repo" "$product_output"
-run_contains "product_selected_count" "SELECTED_COUNT=7" "$product_output"
+run_contains "product_selected_count" "SELECTED_COUNT=9" "$product_output"
 run_contains "product_skipped_count" "SKIPPED_COUNT=3" "$product_output"
 run_contains "product_selects_shared" "SELECTED category=always_sync mode_scope=shared path=REVIEW.md glob=" "$product_output"
 run_contains "product_selects_injection" "SELECTED category=always_sync mode_scope=product_repo_injection path=template/product-repo-injection/ glob=**/*" "$product_output"
+run_contains "product_selects_release_validation_runtime" "SELECTED category=always_sync mode_scope=product_repo_injection path=scripts/development-workflow/validate-workflow-config.sh glob=" "$product_output"
+run_contains "product_selects_product_ci_runtime" "SELECTED category=always_sync mode_scope=product_repo_injection path=scripts/development-workflow/pr-ci-loop.sh glob=" "$product_output"
 run_contains "product_reports_hub_scope_skipped" "SKIPPED category=always_sync mode_scope=hub_only path=docs/workflow/ glob=**/* mixed_content= annotation_scheme= reason=scope_not_applicable" "$product_output"
 run_not_contains "product_does_not_select_hub_protocols" "SELECTED category=always_sync mode_scope=hub_only path=docs/workflow/" "$product_output"
 

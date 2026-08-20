@@ -10,6 +10,24 @@
 # docs/workflow/development-workflow/repository-modes.md. Omit `mode` to keep
 # the default `single_repo` behavior.
 #
+# Product release contracts are optional non-secret metadata under either
+# `workflow_hub.product_repos[].release` or `product_repo.release`. Supported
+# fields are:
+#
+#   release:
+#     base: main                         # optional; defaults to default_branch
+#     branch_pattern: release/v{version} # optional; may use {version} and {product_repo}
+#     changelog_owner: product_repo      # product_repo|hub|current_repo|hub_reference|not_applicable
+#     tag_owner: product_repo
+#     github_release_owner: product_repo
+#     deployment_evidence_owner: product_repo
+#     cleanup_evidence_owner: product_repo
+#     tracker_reconciliation_owner: hub
+#
+# Never store local checkout paths, credentials, token values, secret names,
+# secret values, or environment-specific account details in the versioned
+# release contract. Use `.ai-dev-workflow.local.yaml` for machine-local values.
+#
 # See docs/workflow/development-workflow/README.md and
 # docs/workflow/development-workflow/integrations/ for integration-specific setup.
 #
