@@ -204,10 +204,22 @@ validate_component_release_cleanup() {
     echo "Resolved product checkout is unavailable: ${target_path:-<empty>}" >&2
     exit 1
   fi
-  if [ ! -d "$target_path/.git" ]; then
+  # Use "git rev-parse --is-inside-work-tree"/"--git-dir" instead of a bare
+  # ".git is a directory" test: a linked git worktree (as used by this
+  # workflow's per-item isolation) has a ".git" regular file pointing at the
+  # main checkout's worktree metadata, not a ".git" directory, so the
+  # directory test rejects a perfectly valid checkout. target_git_dir is also
+  # reused below for the cleanup lock directory, since "$target_path/.git"
+  # is not writable (or even a directory) for a linked worktree either.
+  if ! git -C "$target_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo "Resolved product checkout is not a git repository: $target_path" >&2
     exit 1
   fi
+  target_git_dir="$(git -C "$target_path" rev-parse --git-dir)"
+  case "$target_git_dir" in
+    /*) : ;;
+    *) target_git_dir="$target_path/$target_git_dir" ;;
+  esac
 
   evidence_branch="$(json_field "$EVIDENCE_FILE" '.release_branch')"
   if [ -z "$RELEASE_INPUT" ] && [ -n "$evidence_branch" ]; then
@@ -233,7 +245,7 @@ validate_component_release_cleanup() {
 
   lock_key="$(json_field "$COMPONENT_TARGET_FILE" '.release_correlation_key')"
   safe_lock_key="$(printf '%s' "$lock_key" | tr -c 'A-Za-z0-9._-' '_')"
-  lock_parent="$target_path/.git/component-release-cleanup-locks"
+  lock_parent="$target_git_dir/component-release-cleanup-locks"
   mkdir -p "$lock_parent"
   COMPONENT_LOCK_DIR="$lock_parent/$safe_lock_key.lock"
   if ! mkdir "$COMPONENT_LOCK_DIR" 2>/dev/null; then

@@ -137,6 +137,12 @@ case "$*" in
   "show-ref --quiet refs/heads/release/v1.18.0")
     exit 1
     ;;
+  -C\ */mobile-app\ rev-parse\ --is-inside-work-tree)
+    printf 'true\n'
+    ;;
+  -C\ */mobile-app\ rev-parse\ --git-dir)
+    printf '.git\n'
+    ;;
   -C\ */mobile-app\ fetch\ origin\ --prune)
     exit 0
     ;;
@@ -173,6 +179,11 @@ case "$*" in
     ;;
 esac
 MOCK_GIT
+
+# Captured before the mock git below shadows PATH, so the linked-worktree
+# regression test after "=== Prepare-release tracker cleanup ===" can invoke
+# real git explicitly (git -C <path> ...) regardless of the mock.
+REAL_GIT="$(command -v git)"
 
 chmod +x "$MOCK_BIN/gh" "$MOCK_BIN/git"
 export PATH="$MOCK_BIN:$PATH"
@@ -249,6 +260,59 @@ run_cleanup() {
 
 echo ""
 echo "=== Prepare-release tracker cleanup ==="
+
+# Regression test for the linked-worktree checkout fix: a linked git worktree
+# (as used by this workflow's per-item isolation) has a ".git" regular file,
+# not a ".git" directory, pointing at the main checkout's per-worktree
+# metadata directory. Exercise the exact resolution
+# prepare-release-post-merge-cleanup.sh now uses (git rev-parse
+# --is-inside-work-tree / --git-dir) against a real linked worktree, proving
+# both that the old bare "[ -d .git ]" checkout validity test would have
+# wrongly rejected it, and that the old bare
+# "$target_path/.git/component-release-cleanup-locks" lock path would have
+# failed to mkdir under a file. Uses $REAL_GIT (captured above, before the
+# mock git took over PATH) so this is real, unmocked git.
+worktree_main="$TMP_ROOT/worktree-fixture/main"
+mkdir -p "$worktree_main"
+# Resolve symlinks (e.g. macOS /var -> /private/var) so the path comparisons
+# below match what git itself reports for --git-dir.
+worktree_main="$(CDPATH='' cd -- "$worktree_main" && pwd -P)"
+worktree_linked="$(dirname "$worktree_main")/linked"
+"$REAL_GIT" -C "$worktree_main" init -q -b main
+"$REAL_GIT" -C "$worktree_main" config user.email test@example.com
+"$REAL_GIT" -C "$worktree_main" config user.name test
+"$REAL_GIT" -C "$worktree_main" commit -q --allow-empty -m init
+"$REAL_GIT" -C "$worktree_main" worktree add -q -b worktree-branch "$worktree_linked" >/dev/null
+
+run_test "worktree_git_is_not_a_directory" "0" "$([ -d "$worktree_linked/.git" ] && echo 1 || echo 0)"
+run_test "worktree_rev_parse_is_inside_work_tree" "true" "$("$REAL_GIT" -C "$worktree_linked" rev-parse --is-inside-work-tree)"
+
+worktree_git_dir="$("$REAL_GIT" -C "$worktree_linked" rev-parse --git-dir)"
+case "$worktree_git_dir" in
+  /*) : ;;
+  *) worktree_git_dir="$worktree_linked/$worktree_git_dir" ;;
+esac
+case "$worktree_git_dir" in
+  "$worktree_main"/.git/worktrees/*) worktree_git_dir_outside_worktree=1 ;;
+  *) worktree_git_dir_outside_worktree=0 ;;
+esac
+run_test "worktree_git_dir_resolves_outside_worktree" "1" "$worktree_git_dir_outside_worktree"
+
+old_style_lock_parent="$worktree_linked/.git/component-release-cleanup-locks"
+if mkdir -p "$old_style_lock_parent" 2>/dev/null; then
+  old_style_lock_status=0
+else
+  old_style_lock_status=$?
+fi
+run_test "worktree_old_style_lock_mkdir_fails" "1" "$([ "$old_style_lock_status" -eq 0 ] && echo 0 || echo 1)"
+
+fixed_lock_parent="$worktree_git_dir/component-release-cleanup-locks"
+if mkdir -p "$fixed_lock_parent" 2>/dev/null; then
+  fixed_lock_status=0
+else
+  fixed_lock_status=$?
+fi
+run_test "worktree_fixed_lock_mkdir_succeeds" "0" "$fixed_lock_status"
 
 repo_from_changelog="$(fixture_repo from-changelog)"
 result="$(run_cleanup "$repo_from_changelog" v1.17.0 --from-changelog)"
