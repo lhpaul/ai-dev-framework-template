@@ -199,6 +199,8 @@ scripts/development-workflow/component-milestone-reconciliation.sh apply-compone
   --product-repo "${TARGET_REPO_KEY:?}" \
   --component-tag "${COMPONENT_TAG:?}" \
   --evidence-file /path/to/component-release-evidence.json \
+  --hub-tracker-reconciliation-outcome complete \
+  --child-release-state merged \
   --json
 
 scripts/development-workflow/component-milestone-reconciliation.sh inspect-parent \

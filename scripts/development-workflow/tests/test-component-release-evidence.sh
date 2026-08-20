@@ -7,6 +7,7 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
 TARGET_HELPER="$REPO_ROOT/scripts/development-workflow/component-release-target.sh"
 EVIDENCE_HELPER="$REPO_ROOT/scripts/development-workflow/component-release-evidence.sh"
+MILESTONE_HELPER="$REPO_ROOT/scripts/development-workflow/component-milestone-reconciliation.sh"
 FIXTURE_HELPER="$REPO_ROOT/scripts/development-workflow/tests/setup-component-release-fixture.sh"
 
 TMP_ROOT="$(mktemp -d)"
@@ -166,6 +167,23 @@ run_fails_contains \
     --cleanup-outcome blocked \
     --hub-tracker-ref "#1356" \
     --json
+
+# Real producer -> consumer handoff: feed the evidence file rendered above by
+# the actual component-release-evidence.sh producer straight into
+# component-milestone-reconciliation.sh (the consumer), instead of a
+# hand-built fixture that could accidentally embed fields the real producer
+# never emits (evidence_state, hub_tracker_reconciliation_outcome,
+# child_release_state) and hide a broken handoff. Use inspect-component
+# (read-only, does not call gh) so this test never touches a real repository.
+handoff_no_flags="$(bash "$MILESTONE_HELPER" inspect-component   --issue 1358   --target-kind component_child   --product-repo mobile-app   --component-tag mobile-v1.18.0   --evidence-file "$evidence_file"   --json)"
+run_test "handoff_no_flags_evidence_state_not_missing" "false"   "$(jq '([.blockers[]] | index("evidence_state_missing")) != null' <<< "$handoff_no_flags")"
+run_contains "handoff_no_flags_still_needs_hub_state" "hub_tracker_reconciliation_missing" "$handoff_no_flags"
+run_contains "handoff_no_flags_still_needs_child_state" "child_release_state_missing" "$handoff_no_flags"
+
+handoff_with_flags="$(bash "$MILESTONE_HELPER" inspect-component   --issue 1358   --target-kind component_child   --product-repo mobile-app   --component-tag mobile-v1.18.0   --evidence-file "$evidence_file"   --hub-tracker-reconciliation-outcome complete   --child-release-state released   --json)"
+run_test "handoff_outcome" "component_released" "$(jq -r '.reconciliation_outcome' <<< "$handoff_with_flags")"
+run_test "handoff_mutation_allowed" "true" "$(jq -r '.mutation_allowed' <<< "$handoff_with_flags")"
+run_test "handoff_no_blockers" "0" "$(jq '.blockers | length' <<< "$handoff_with_flags")"
 
 if [ "$FAIL_COUNT" -ne 0 ]; then
   echo "FAILURES: $FAIL_COUNT"

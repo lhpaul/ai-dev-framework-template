@@ -180,6 +180,19 @@ def evidence_state(evidence: dict[str, Any]) -> str:
     raw = evidence.get("evidence_state")
     if isinstance(raw, str) and raw:
         return raw
+    # component-release-evidence.sh (the canonical evidence producer) never
+    # emits evidence_state itself: by the time it successfully renders a
+    # component_release_evidence.v1 file, it has already verified the
+    # evidence's identity fields (routing_outcome, selected_product_repo_key,
+    # canonical_repository_identity, artifact_owners, release_correlation_key,
+    # contract_revision) against an independent target binding. Treat a
+    # schema-correct evidence file with no explicit evidence_state as
+    # verified rather than blocking on a field the producer never sets.
+    # Consumers that need to flag stale/conflicting evidence (for example a
+    # delivery bundle manifest component view) still set evidence_state
+    # explicitly and that value continues to win above.
+    if evidence.get("schema_version") == EVIDENCE_SCHEMA:
+        return "verified"
     return ""
 
 
@@ -290,8 +303,20 @@ def classify_component(args: argparse.Namespace) -> dict[str, Any]:
     ci = evidence.get("ci_outcome")
     deployment = evidence.get("deployment_outcome")
     cleanup = evidence.get("cleanup_outcome")
-    hub_reconciliation = evidence.get("hub_tracker_reconciliation_outcome") or evidence.get("hub_tracker_reconciliation")
-    child_state = evidence.get("child_release_state")
+    # hub_tracker_reconciliation_outcome and child_release_state describe hub
+    # tracker/child-issue state, not the product release itself, so
+    # component-release-evidence.sh (which only knows about the product
+    # repository's release/ci/deployment/cleanup outcomes) never emits them.
+    # Accept them as explicit CLI flags, matching delivery-bundle-manifest.sh's
+    # --hub-tracker-reconciliation-outcome/--child-release-state, and fall
+    # back to the evidence file only for callers that already embed them
+    # there (for example a manifest-derived component view).
+    hub_reconciliation = (
+        getattr(args, "hub_tracker_reconciliation_outcome", None)
+        or evidence.get("hub_tracker_reconciliation_outcome")
+        or evidence.get("hub_tracker_reconciliation")
+    )
+    child_state = getattr(args, "child_release_state", None) or evidence.get("child_release_state")
     state = evidence_state(evidence)
 
     blockers: list[str] = []
@@ -694,6 +719,10 @@ def add_component_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--product-repo", dest="product_repo")
     parser.add_argument("--component-tag", dest="component_tag")
     parser.add_argument("--evidence-file", dest="evidence_file")
+    parser.add_argument(
+        "--hub-tracker-reconciliation-outcome", dest="hub_tracker_reconciliation_outcome"
+    )
+    parser.add_argument("--child-release-state", dest="child_release_state")
     parser.add_argument("--version")
     parser.add_argument("--json", action="store_true")
 
