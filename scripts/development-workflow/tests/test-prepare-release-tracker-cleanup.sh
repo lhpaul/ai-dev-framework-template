@@ -143,6 +143,16 @@ case "$*" in
   -C\ */mobile-app\ rev-parse\ --git-dir)
     printf '.git\n'
     ;;
+  -C\ *\ rev-parse\ --is-inside-work-tree)
+    # Generic fallback for hub fixture checkouts (component-cleanup,
+    # component-invalid-identity, etc.): validate_component_release_cleanup
+    # now also resolves the hub checkout's own git-dir for the shared
+    # cleanup lock.
+    printf 'true\n'
+    ;;
+  -C\ *\ rev-parse\ --git-dir)
+    printf '.git\n'
+    ;;
   -C\ */mobile-app\ fetch\ origin\ --prune)
     exit 0
     ;;
@@ -428,13 +438,41 @@ run_contains "component_cleanup_complete_json" '"cleanup_outcome":"already_compl
 target_json="$repo_component_cleanup/component-release-target.json"
 (cd "$repo_component_cleanup" && ./scripts/development-workflow/component-release-target.sh --repo-root "$repo_component_cleanup" --repo mobile-app --release-branch mobile-app/release/v1.18.0 --json > "$target_json")
 lock_key="$(printf '%s' "$(jq -r '.release_correlation_key' "$target_json")" | tr -c 'A-Za-z0-9._-' '_')"
-mkdir -p "$TMP_ROOT/mobile-app/.git/component-release-cleanup-locks/$lock_key.lock"
+mkdir -p "$repo_component_cleanup/.git/component-release-cleanup-locks/$lock_key.lock"
 result="$(run_cleanup "$repo_component_cleanup" --repo mobile-app --repo-root "$repo_component_cleanup" --evidence-file "$repo_component_cleanup/component-release-evidence.json" --issue LEA-213 --best-effort)"
 status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
 run_test "component_cleanup_lock_exits_nonzero" "1" "$status"
 run_contains "component_cleanup_lock_rejected" "Component release cleanup lock is already held" "$output"
-rmdir "$TMP_ROOT/mobile-app/.git/component-release-cleanup-locks/$lock_key.lock"
+rmdir "$repo_component_cleanup/.git/component-release-cleanup-locks/$lock_key.lock"
+
+# The lock is keyed under the hub checkout's git-dir, not the product
+# checkout's, so it excludes a concurrent run that resolves the product repo
+# to a *different* local checkout of the same hub (e.g. a second clone or
+# worktree) -- not just a second run against the identical product path.
+# Build a second, distinct product checkout for the same hub and evidence
+# (same release_correlation_key) and confirm the pre-held hub-scoped lock
+# still blocks it.
+second_product_checkout="$TMP_ROOT/mobile-app-checkout-b"
+mkdir -p "$second_product_checkout/.git"
+second_local_override="$repo_component_cleanup/.ai-dev-workflow.local.yaml"
+cp "$second_local_override" "$second_local_override.orig"
+cat > "$second_local_override" <<YAML
+product_repos:
+  - name: mobile-app
+    local_path: $second_product_checkout
+YAML
+mkdir -p "$repo_component_cleanup/.git/component-release-cleanup-locks/$lock_key.lock"
+result="$(run_cleanup "$repo_component_cleanup" --repo mobile-app --repo-root "$repo_component_cleanup" --evidence-file "$repo_component_cleanup/component-release-evidence.json" --issue LEA-2131 --best-effort)"
+status="$(printf '%s
+' "$result" | sed -n '1p')"
+output="$(printf '%s
+' "$result" | sed '1d')"
+echo "DEBUG_OUTPUT: $output" >&2
+run_test "component_cleanup_shared_lock_exits_nonzero" "1" "$status"
+run_contains "component_cleanup_shared_lock_rejected" "Component release cleanup lock is already held" "$output"
+rmdir "$repo_component_cleanup/.git/component-release-cleanup-locks/$lock_key.lock"
+mv "$second_local_override.orig" "$second_local_override"
 
 result="$(run_cleanup "$repo_component_cleanup" mobile-app/release/v9.9.9 --repo mobile-app --repo-root "$repo_component_cleanup" --evidence-file "$repo_component_cleanup/component-release-evidence.json" --issue LEA-214 --best-effort)"
 status="$(printf '%s\n' "$result" | sed -n '1p')"
@@ -592,6 +630,171 @@ status="$(printf '%s\n' "$result" | sed -n '1p')"
 output="$(printf '%s\n' "$result" | sed '1d')"
 run_test "stub_skipped_exits_zero" "0" "$status"
 run_contains "stub_skipped_counter" "UPDATED=0 SKIPPED=1 FAILED=0" "$output"
+
+echo ""
+echo "=== Component cleanup --json (real end-to-end, not a fixture) ==="
+#
+# Reproduces the documented component-release smoke flow
+# (docs/testing/workflow/1356-route-component-releases-to-selected-product-repository.smoke-test.md)
+# end to end: a real product repo + real bare remote (real git branch
+# create/delete, not mocked git), real component-release-target.sh /
+# evidence JSON, and only gh + workflow-lib.sh's tracker calls stubbed
+# (github_projects tracker mutation requires live GitHub API access this
+# harness cannot provide). This is the level of fixture-avoidance the
+# reported bug needed to surface: a hand-built fixture masked it before.
+
+e2e_root="$TMP_ROOT/component-json-e2e"
+mkdir -p "$e2e_root"
+"$REAL_GIT" init -q --bare "$e2e_root/origin.git"
+mkdir -p "$e2e_root/mobile-app"
+"$REAL_GIT" -C "$e2e_root/mobile-app" init -q -b main
+"$REAL_GIT" -C "$e2e_root/mobile-app" config user.email test@example.com
+"$REAL_GIT" -C "$e2e_root/mobile-app" config user.name test
+"$REAL_GIT" -C "$e2e_root/mobile-app" commit -q --allow-empty -m init
+"$REAL_GIT" -C "$e2e_root/mobile-app" remote add origin "$e2e_root/origin.git"
+"$REAL_GIT" -C "$e2e_root/mobile-app" push -q origin main
+"$REAL_GIT" -C "$e2e_root/mobile-app" checkout -q -b release-base
+"$REAL_GIT" -C "$e2e_root/mobile-app" push -q origin release-base
+"$REAL_GIT" -C "$e2e_root/mobile-app" checkout -q -b mobile-app/release/v1.0.0
+"$REAL_GIT" -C "$e2e_root/mobile-app" commit -q --allow-empty -m release
+"$REAL_GIT" -C "$e2e_root/mobile-app" push -q origin mobile-app/release/v1.0.0
+"$REAL_GIT" -C "$e2e_root/mobile-app" checkout -q main
+
+mkdir -p "$e2e_root/hub/scripts/development-workflow" "$e2e_root/hub/bin"
+"$REAL_GIT" init -q "$e2e_root/hub"
+cp "$REPO_ROOT/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"   "$e2e_root/hub/scripts/development-workflow/prepare-release-post-merge-cleanup.sh"
+cp "$REPO_ROOT/scripts/development-workflow/component-release-target.sh"   "$e2e_root/hub/scripts/development-workflow/component-release-target.sh"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-config-resolver.py"   "$e2e_root/hub/scripts/development-workflow/workflow-config-resolver.py"
+chmod +x "$e2e_root/hub/scripts/development-workflow/"*.sh
+
+cat > "$e2e_root/hub/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+issue_tracker:
+  provider: github_projects
+  project_number: 1
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      default_branch: release-base
+      release:
+        base: release-base
+        branch_pattern: "{product_repo}/release/v{version}"
+        changelog_owner: product_repo
+        tag_owner: product_repo
+        github_release_owner: product_repo
+        deployment_evidence_owner: product_repo
+        cleanup_evidence_owner: product_repo
+        tracker_reconciliation_owner: hub
+YAML
+cat > "$e2e_root/hub/.ai-dev-workflow.local.yaml" <<YAML
+product_repos:
+  - name: mobile-app
+    local_path: ../mobile-app
+YAML
+
+cat > "$e2e_root/hub/bin/gh" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  "pr list --repo example/mobile-app --state merged --head mobile-app/release/v1.0.0 --base main --json number --jq .[0].number // empty")
+    printf '900
+' ;;
+  "pr list --repo example/mobile-app --state merged --head mobile-app/release/v1.0.0 --base release-base --json number --jq .[0].number // empty")
+    printf '901
+' ;;
+  "pr list --repo example/mobile-app --state open --head mobile-app/release/v1.0.0 --base main --json number --jq .[0].number // empty")
+    printf '
+' ;;
+  "pr list --repo example/mobile-app --state open --head mobile-app/release/v1.0.0 --base release-base --json number --jq .[0].number // empty")
+    printf '
+' ;;
+  "issue view 1358 --json state --jq .state")
+    printf 'OPEN
+' ;;
+  *)
+    echo "unexpected gh invocation: $*" >&2
+    exit 64
+    ;;
+esac
+SH
+chmod +x "$e2e_root/hub/bin/gh"
+
+cat > "$e2e_root/hub/scripts/development-workflow/workflow-lib.sh" <<'STUB'
+#!/usr/bin/env bash
+cd_workflow_repo_root() { return 0; }
+require_gh() { return 0; }
+workflow_issue_tracker_provider_raw() { printf 'github_projects
+'; }
+workflow_normalize_issue_tracker_provider() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+workflow_issue_tracker_project_number() { printf '1
+'; }
+workflow_is_valid_github_owner() {
+  case "$1" in
+    ''|-*|*-|*[!A-Za-z0-9-]*) return 1 ;;
+  esac
+  return 0
+}
+workflow_is_valid_github_repo_name() {
+  case "$1" in
+    ''|'.'|'..'|*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  return 0
+}
+workflow_is_valid_github_repo_slug() {
+  local repo_slug="$1"
+  local owner="${repo_slug%%/*}"
+  local repo_name="${repo_slug#*/}"
+  [ "$owner/$repo_name" = "$repo_slug" ] || return 1
+  workflow_is_valid_github_owner "$owner" || return 1
+  workflow_is_valid_github_repo_name "$repo_name" || return 1
+  return 0
+}
+record_release_for_issue_best_effort() {
+  local issue="$1" version="$2"
+  printf 'RELEASE_STAMP_SKIPPED issue=%s version=%s provider=github_projects reason=no_milestone\n' "$issue" "$version"
+}
+update_tracker_status_best_effort() {
+  printf 'Updating tracker status for issue %s to Released...\n' "$1"
+}
+STUB
+
+(
+  cd "$e2e_root/hub"
+  e2e_target_json="$(./scripts/development-workflow/component-release-target.sh --repo-root "$PWD" --repo mobile-app --release-branch mobile-app/release/v1.0.0 --json)"
+  jq -nS --argjson target "$e2e_target_json"     '{schema_version:"component_release_evidence.v1",target_binding:$target,release_branch:"mobile-app/release/v1.0.0",
+      release_outcome:"completed",ci_outcome:"passed",deployment_outcome:"recorded",cleanup_outcome:"not_started",
+      hub_tracker_ref:"#1356",component_tag:"mobile-v1.0.0"}' > component-release-evidence.json
+)
+
+e2e_output="$e2e_root/hub/cleanup-output.json"
+e2e_stderr="$e2e_root/hub/cleanup-stderr.log"
+e2e_status=0
+(
+  cd "$e2e_root/hub"
+  PATH="$(dirname "$REAL_GIT"):$PWD/bin:$PATH" WORKFLOW_SKIP_FETCH=1 ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh     mobile-app/release/v1.0.0 --repo mobile-app --repo-root "$PWD"     --evidence-file "$PWD/component-release-evidence.json" --issue 1358 --json
+) > "$e2e_output" 2> "$e2e_stderr" || e2e_status=$?
+
+run_test "e2e_json_exits_zero" "0" "$e2e_status"
+run_test "e2e_json_stdout_is_valid_json" "0" "$(jq empty "$e2e_output" >/dev/null 2>&1; echo $?)"
+run_test "e2e_json_cleanup_outcome" "complete" "$(jq -r '.cleanup_outcome' "$e2e_output")"
+run_test "e2e_json_remote_branch_deleted" "true" "$(jq -r '.product_cleanup.remote_branch_deleted' "$e2e_output")"
+run_test "e2e_json_local_branch_deleted" "true" "$(jq -r '.product_cleanup.local_branch_deleted' "$e2e_output")"
+run_test "e2e_json_tracker_after_product_cleanup" "true" "$(jq -r '.tracker_mutation.after_product_cleanup' "$e2e_output")"
+run_test "e2e_json_tracker_repository_owner" "hub_repository" "$(jq -r '.tracker_mutation.repository_owner' "$e2e_output")"
+run_test "e2e_json_no_stray_stdout_text" "0" "$(grep -c '^[A-Za-z].*[^}]$' "$e2e_output" 2>/dev/null || true)"
+
+# Rerun: no new branch action needed (already deleted), still valid JSON,
+# reported as an idempotent no-op cleanup.
+e2e_rerun_output="$e2e_root/hub/cleanup-rerun-output.json"
+(
+  cd "$e2e_root/hub"
+  PATH="$(dirname "$REAL_GIT"):$PWD/bin:$PATH" WORKFLOW_SKIP_FETCH=1 ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh     mobile-app/release/v1.0.0 --repo mobile-app --repo-root "$PWD"     --evidence-file "$PWD/component-release-evidence.json" --issue 1358 --json
+) > "$e2e_rerun_output" 2>/dev/null || true
+run_test "e2e_json_rerun_valid_json" "0" "$(jq empty "$e2e_rerun_output" >/dev/null 2>&1; echo $?)"
+run_test "e2e_json_rerun_already_complete" "true" "$(jq -r '.product_cleanup.already_complete' "$e2e_rerun_output")"
+run_test "e2e_json_rerun_no_new_remote_delete" "false" "$(jq -r '.product_cleanup.remote_branch_deleted' "$e2e_rerun_output")"
 
 echo "=== Milestone stamping fix: uses API number not title ==="
 

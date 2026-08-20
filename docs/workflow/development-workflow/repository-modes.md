@@ -77,7 +77,15 @@ Release cleanup reruns must compare the current target binding to the persisted
 evidence before deleting product release branches, tags, cleanup evidence, or
 updating hub tracker state. Duplicate cleanup attempts use a per-release lease
 keyed by `release_correlation_key`; a completed evidence record is the
-idempotent rerun signal.
+idempotent rerun signal. The lease directory lives under the hub checkout's
+own git directory, so it excludes concurrent cleanup runs that share one hub
+checkout even when they resolve the product repository to different local
+checkouts. It does not exclude a concurrent run from a *different* hub clone
+or linked worktree of the same hub repository -- that would require a
+remotely shared lease, which is out of scope today. A concurrent run from a
+different hub checkout fails closed with a clear "lock is already held"
+error from whichever process loses the race, rather than silently
+proceeding; it does not detect or block the other process's checkout.
 
 `scripts/development-workflow/delivery-bundle-manifest.sh` manages hub-owned
 `delivery_bundle_manifest.v1` records for coordinated customer-facing
