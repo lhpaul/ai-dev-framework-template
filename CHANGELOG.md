@@ -863,6 +863,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checking that the value is non-empty, so fabricated evidence such as
   `release_contract:"garbage"` is rejected instead of producing
   `adoption_status:"validated"`.
+  `delivery-bundle-manifest.sh update-component` now requires evidence to
+  bind a matching `component_tag` before accepting it, the same fix applied
+  to `component-milestone-reconciliation.sh` in the prior fix, closing the
+  same gap in this second consumer; `create` now rejects a repeated
+  `--component` instead of silently writing duplicate component entries
+  that `update-component` could only ever update the first of.
+  `prepare-release-post-merge-cleanup.sh` now emits its documented
+  structured `--json` summary on every component-release cleanup run
+  (previously only the already-complete shortcut path did), routing
+  progress output to stderr so it cannot corrupt the JSON on stdout; and
+  its per-release cleanup lock is now keyed under the hub checkout's git
+  directory instead of the product checkout's, so two cleanup runs that
+  resolve the product repository to different local checkouts of the same
+  hub no longer both proceed for the same release.
 
 ### Changed
 
