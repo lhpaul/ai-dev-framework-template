@@ -336,6 +336,29 @@ def component_from_evidence(args):
             + str(component["selected_product_repo_key"])
             + "'",
         )
+    # Require the evidence to bind the component tag rather than trusting
+    # --component-tag on its own: component-release-evidence.sh renders
+    # component_tag only when --component-tag was supplied to it, so this
+    # assignment previously accepted any caller-supplied --component-tag
+    # (including one that disagreed with, or was never verified against,
+    # what the evidence actually recorded), letting a bundle finalize with a
+    # fabricated shipped version. Same defect and fix as
+    # component-milestone-reconciliation.sh's evidence_tag check.
+    evidence_tag = evidence.get("component_tag")
+    if not evidence_tag:
+        fail(
+            "component_tag_unbound",
+            "evidence does not bind a component_tag; render evidence with --component-tag before mutation",
+        )
+    if evidence_tag != args.component_tag:
+        fail(
+            "component_tag_mismatch",
+            "--component-tag '"
+            + str(args.component_tag)
+            + "' does not match evidence component_tag '"
+            + str(evidence_tag)
+            + "'",
+        )
     return component_view(component)
 
 
@@ -366,6 +389,16 @@ def cmd_create(args):
     validate_bundle_key(args.bundle_key)
     if not args.component:
         fail("missing_component", "at least one --component is required", 2)
+    duplicate_components = sorted({key for key in args.component if args.component.count(key) > 1})
+    if duplicate_components:
+        fail(
+            "duplicate_component",
+            "--component was repeated for: " + ", ".join(duplicate_components)
+            + " (each declared component must be unique; a repeated --component"
+            + " likely indicates operator error rather than an intentional"
+            + " duplicate declaration)",
+            2,
+        )
     def mutate(current):
         if current is not None:
             fail("manifest_already_exists", "manifest already exists")

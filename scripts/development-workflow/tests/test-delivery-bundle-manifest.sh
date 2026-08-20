@@ -85,6 +85,7 @@ write_evidence() {
   local ci_outcome="${5:-passed}"
   local deployment_outcome="${6:-recorded}"
   local cleanup_outcome="${7:-complete}"
+  local component_tag="${8:-}"
   jq -cnS \
     --arg repo_key "$repo_key" \
     --arg identity "$identity" \
@@ -92,6 +93,7 @@ write_evidence() {
     --arg ci_outcome "$ci_outcome" \
     --arg deployment_outcome "$deployment_outcome" \
     --arg cleanup_outcome "$cleanup_outcome" \
+    --arg component_tag "$component_tag" \
     '{
       schema_version:"component_release_evidence.v1",
       target_binding:{
@@ -110,7 +112,8 @@ write_evidence() {
       ci_outcome:$ci_outcome,
       deployment_outcome:$deployment_outcome,
       cleanup_outcome:$cleanup_outcome,
-      hub_tracker_ref:"#1357"
+      hub_tracker_ref:"#1357",
+      component_tag:(if ($component_tag | length) > 0 then $component_tag else null end)
     }' > "$path"
 }
 
@@ -162,8 +165,10 @@ echo "=== Delivery bundle manifest ==="
 manifest="$TMP_ROOT/delivery-bundle.json"
 mobile_evidence="$TMP_ROOT/mobile-evidence.json"
 web_evidence="$TMP_ROOT/web-evidence.json"
-write_evidence "$mobile_evidence" mobile-app example/mobile-app
-write_evidence "$web_evidence" web-app example/web-app
+write_evidence "$mobile_evidence" mobile-app example/mobile-app completed passed recorded complete mobile-v1.4.0
+write_evidence "$web_evidence" web-app example/web-app completed passed recorded complete web-v2.8.1
+mobile_evidence_retag="$TMP_ROOT/mobile-evidence-v1.4.1.json"
+write_evidence "$mobile_evidence_retag" mobile-app example/mobile-app completed passed recorded complete mobile-v1.4.1
 
 create_bundle "$manifest"
 run_test "create_schema" "delivery_bundle_manifest.v1" "$(jq -r '.schema_version' "$manifest")"
@@ -174,6 +179,28 @@ run_test "create_components" "2" "$(jq -r '.components | length' "$manifest")"
 nested_manifest="$TMP_ROOT/nested/path/delivery-bundle.json"
 create_bundle "$nested_manifest"
 run_test "create_nested_manifest_directory" "delivery_bundle_manifest.v1" "$(jq -r '.schema_version' "$nested_manifest")"
+
+# A repeated --component likely indicates operator error rather than an
+# intentional duplicate declaration (create is not the idempotent-replay
+# path -- update-component/re-applying identical evidence is). Reject it
+# instead of silently writing two components with the same key, which
+# update-component would only ever update the first of, leaving the
+# duplicate permanently stuck in a missing-evidence state.
+duplicate_component_manifest="$TMP_ROOT/duplicate-component.json"
+run_fails_contains \
+  "duplicate_component_rejected" \
+  "ERROR_CODE=duplicate_component" \
+  bash "$HELPER" create \
+    --manifest "$duplicate_component_manifest" \
+    --bundle-key mobile-web-july-delivery \
+    --title "Mobile and Web July delivery" \
+    --purpose "Coordinated customer-facing July workflow-hub delivery" \
+    --parent-ref "#1352" \
+    --component mobile-app \
+    --component mobile-app \
+    --finalization-owner "@workflow-operator" \
+    --json
+run_test "duplicate_component_manifest_not_created" "0" "$([ -e "$duplicate_component_manifest" ] && echo 1 || echo 0)"
 
 shell_manifest="$TMP_ROOT/shell-output.json"
 shell_output="$(bash "$HELPER" create \
@@ -218,20 +245,43 @@ run_fails_contains \
   update_component "$manifest" web-app "$mobile_evidence" web-v2.8.1 2.8.1 1414 1503 "#1357"
 run_test "component_key_repo_mismatch_preserves_manifest" "$manifest_hash" "$(git hash-object "$manifest")"
 
+# Reproduces the reported gap: evidence records a real component_tag
+# ("mobile-v1.4.0" here, via write_evidence's component_tag argument), but
+# update-component previously trusted --component-tag on its own without
+# comparing it. A fabricated --component-tag must be rejected even though
+# every other field (identity, correlation key, contract revision) matches.
+manifest_hash="$(git hash-object "$manifest")"
+run_fails_contains \
+  "fabricated_component_tag_rejected" \
+  "ERROR_CODE=component_tag_mismatch" \
+  update_component "$manifest" mobile-app "$mobile_evidence" fabricated-v99.0.0 99.0.0 1411 1501 "#1356"
+run_test "fabricated_component_tag_preserves_manifest" "$manifest_hash" "$(git hash-object "$manifest")"
+
+# Evidence rendered without a bound component_tag (the pre-#1356-round-3
+# optional path) must not be treated as matching any caller-supplied tag.
+untagged_evidence="$TMP_ROOT/mobile-untagged-evidence.json"
+write_evidence "$untagged_evidence" mobile-app example/mobile-app
+manifest_hash="$(git hash-object "$manifest")"
+run_fails_contains \
+  "unbound_component_tag_rejected" \
+  "ERROR_CODE=component_tag_unbound" \
+  update_component "$manifest" mobile-app "$untagged_evidence" mobile-v1.4.0 1.4.0 1411 1501 "#1356"
+run_test "unbound_component_tag_preserves_manifest" "$manifest_hash" "$(git hash-object "$manifest")"
+
 # A different component_tag/component_version under the *same* release_pr is
 # a conflicting version claim for one release (Acceptance Criterion 6: "...
 # conflicts with existing stable identity fields, version state, release
 # correlation key, or release contract revision"), not a legitimate re-tag,
 # and must be rejected without mutating the manifest.
 manifest_hash="$(git hash-object "$manifest")"
-run_fails_contains   "same_release_pr_version_conflict_rejected"   "ERROR_CODE=conflicting_component_evidence"   update_component "$manifest" mobile-app "$mobile_evidence" mobile-v1.4.1 1.4.1 1411 1501 "#1356"
+run_fails_contains   "same_release_pr_version_conflict_rejected"   "ERROR_CODE=conflicting_component_evidence"   update_component "$manifest" mobile-app "$mobile_evidence_retag" mobile-v1.4.1 1.4.1 1411 1501 "#1356"
 run_test "same_release_pr_version_conflict_preserves_manifest" "$manifest_hash" "$(git hash-object "$manifest")"
 
 # A different component_tag/component_version under a *new* release_pr is the
 # documented re-tag/re-release flow (see
 # docs/testing/workflow/1357-delivery-bundle-issue-manifest-workflow.smoke-test.md,
 # Acceptance Criterion 9) and must still be accepted as a normal update.
-update_component "$manifest" mobile-app "$mobile_evidence" mobile-v1.4.1 1.4.1 1411 1502 "#1356" >/dev/null
+update_component "$manifest" mobile-app "$mobile_evidence_retag" mobile-v1.4.1 1.4.1 1411 1502 "#1356" >/dev/null
 run_test "new_release_pr_retag_accepted" "mobile-v1.4.1" "$(jq -r '.components[] | select(.component_key == "mobile-app") | .component_tag' "$manifest")"
 
 stale_revision="$(jq -r '.revision' "$manifest")"
