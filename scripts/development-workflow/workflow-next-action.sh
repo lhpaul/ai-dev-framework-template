@@ -310,6 +310,7 @@ github_repo_args_for_action() {
 if [ -n "$pr_number" ]; then
   require_gh
   pr_hub_probe_json=""
+  pr_probe_needs_implementation_routing=true
   if [ "$workflow_mode" = "workflow_hub" ] && [ -z "$target_repo" ]; then
     # Opportunistically read the PR from the current (hub) checkout before
     # routing classification runs. Routing needs branch_name to derive the
@@ -325,7 +326,25 @@ if [ -n "$pr_number" ]; then
     # exactly as it did before this probe was added.
     if pr_hub_probe_json="$(gh pr view "$pr_number" --json headRefName,labels,isDraft,comments 2>/dev/null)"; then
       branch_name="$(printf '%s\n' "$pr_hub_probe_json" | jq -er '.headRefName | strings | select(length > 0)' 2>/dev/null)" || branch_name=""
+      # implementation_issue_number()/implementation_item_is_hub_only() (and
+      # thus this implementation-only preflight) only recognize
+      # feature|fix|refactor|hotfix branches. Once the probe tells us the
+      # branch is some other kind (spec/*, implementation-plan/*, etc.),
+      # skip the implementation preflight entirely -- it requires no product
+      # repository selection and is classified correctly by the branch-kind
+      # switch further below. When the probe fails (a genuine product-repo
+      # PR, branch_name still unknown), keep requiring implementation
+      # routing as before, since that is the common case this preflight
+      # exists for.
+      if [ -n "$branch_name" ]; then
+        case "$(branch_prefix "$branch_name")" in
+          feature|refactor|fix|hotfix) pr_probe_needs_implementation_routing=true ;;
+          *) pr_probe_needs_implementation_routing=false ;;
+        esac
+      fi
     fi
+  fi
+  if [ "$workflow_mode" = "workflow_hub" ] && [ -z "$target_repo" ] && [ "$pr_probe_needs_implementation_routing" = "true" ]; then
     set +e
     pr_action_context="$(repository_context_for_action implementation 2>&1)"
     pr_action_status=$?

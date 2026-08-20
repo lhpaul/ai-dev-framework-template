@@ -411,6 +411,34 @@ run_contains "workflow_pr_without_repo_hub_only_continues" "ROUTING_CONTINUE_ALL
 run_contains "workflow_pr_without_repo_hub_owned" "ACTION_REPOSITORY_KIND=hub_owned" "$workflow_pr_output"
 run_contains "workflow_pr_without_repo_no_selection_required" "NEXT_ACTION=resolve-pr-readiness" "$workflow_pr_output"
 
+# A spec or plan PR (or any hub-owned implementation branch) without --repo
+# must resolve directly too: the implementation-only preflight used to run
+# unconditionally for every --pr invocation, and implementation_issue_number()
+# only recognizes feature|fix|refactor|hotfix branches, so a spec/*
+# headRefName always fell through to missing_target/resolve-repository-selection
+# even after branch_name was known. No product-repo routing is exercised at
+# all here (no tracker/gh call beyond the single gh pr view read), since a
+# non-implementation branch is classified as hub-owned without calling the
+# routing classifier.
+workflow_pr_spec_output="$(
+  GH_PR_VIEW_JSON='{"headRefName":"spec/950-example","labels":[],"isDraft":false,"comments":[],"statusCheckRollup":[]}' \
+  PATH="$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$typed_hub_dir" \
+    --pr 950
+)"
+run_contains "workflow_pr_spec_without_repo_hub_owned" "ACTION_REPOSITORY_KIND=hub_owned" "$workflow_pr_spec_output"
+run_contains "workflow_pr_spec_without_repo_no_selection_required" "NEXT_ACTION=resolve-pr-readiness" "$workflow_pr_spec_output"
+run_equals "workflow_pr_spec_without_repo_no_routing_outcome" "0" "$(grep -c '^ROUTING_OUTCOME_CODE=' <<< "$workflow_pr_spec_output" || true)"
+
+workflow_pr_plan_output="$(
+  GH_PR_VIEW_JSON='{"headRefName":"implementation-plan/950-example","labels":[],"isDraft":false,"comments":[],"statusCheckRollup":[]}' \
+  PATH="$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$typed_hub_dir" \
+    --pr 951
+)"
+run_contains "workflow_pr_plan_without_repo_hub_owned" "ACTION_REPOSITORY_KIND=hub_owned" "$workflow_pr_plan_output"
+run_contains "workflow_pr_plan_without_repo_no_selection_required" "NEXT_ACTION=resolve-pr-readiness" "$workflow_pr_plan_output"
+
 workflow_pr_selected_repo_output="$(
   GH_PR_VIEW_JSON='{"headRefName":"feature/901-routing","labels":[],"isDraft":false,"comments":[],"statusCheckRollup":[]}' \
   PATH="$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
