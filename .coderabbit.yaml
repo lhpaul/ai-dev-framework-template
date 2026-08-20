@@ -3,11 +3,15 @@
 # This file controls CodeRabbit's behavior for this repository.
 # Docs: https://docs.coderabbit.ai/reference/configuration
 #
-# CodeRabbit is disabled by default so repository review policy remains
-# explicit in .ai-dev-workflow.yaml. To opt in to CodeRabbit GitHub App review:
-# - set reviews.auto_review.enabled to true
-# - add "coderabbit" to review.on_draft.github or review.on_ready.github
-# - keep drafts false unless the repository intentionally wants draft PR review
+# This repository has OPTED IN to CodeRabbit GitHub App review (issue #1531).
+# CodeRabbit runs as the ready-phase reviewer via review.on_ready.github in
+# .ai-dev-workflow.yaml (or .ai-dev-workflow.local.yaml). The two files must stay
+# consistent: listing "coderabbit" in a lifecycle bucket that auto_review below
+# does not cover makes CodeRabbit post a "Review skipped" banner instead of a
+# review, which pr-review-loop.sh escalates as REASON=review_skipped_banner.
+#
+# This file is NOT in sync-manifest.yaml, so it is repository-local and does not
+# change the CodeRabbit defaults inherited by projects created from this template.
 
 reviews:
   tools:
@@ -15,11 +19,24 @@ reviews:
       enabled: true
       timeout_ms: 600000
   auto_review:
-    enabled: false
+    enabled: true
+    # drafts stays false on purpose: CodeRabbit is configured as the *ready-phase*
+    # reviewer only (review.on_ready.github), and pr-agent covers the draft phase.
+    # Reviewing drafts would spend hourly quota on revisions that are still moving.
     drafts: false
-    auto_pause_after_reviewed_commits: 1
+    # Raised from 1. CodeRabbit pauses auto review after this many reviewed commits
+    # arrive without human interaction; at 1, every reviewer-loop fix commit tripped
+    # the pause banner and cost a full poll cycle for pr-review-loop.sh to post
+    # "@coderabbitai resume". Reviewer-loop convergence routinely needs several fix
+    # rounds, so the cap has to sit above a normal round count.
+    auto_pause_after_reviewed_commits: 10
+    # Both the integration branch (develop) and epic integration branches
+    # (develop-<slug>, per protocol 05b) must be listed. A sub-item PR whose base is
+    # absent here gets a "Review skipped" banner rather than a review — the exact
+    # false-clean that issue #1531 fixed the loop to catch. Entries are regexes.
     base_branches:
       - develop
+      - develop-.*
   path_filters:
     - "!dist/**"
     - "!**/*.generated.*"

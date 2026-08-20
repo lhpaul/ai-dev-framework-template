@@ -12885,6 +12885,156 @@ run_test "no_trigger_resolve_zero_override_falls_back_to_default" "180" "$actual
 unset CODERABBIT_NO_TRIGGER_TIMEOUT
 
 # ---------------------------------------------------------------------------
+# Area: CodeRabbit "Review skipped" banner is not review activity (issue #1531)
+#
+# CodeRabbit posts a "Review skipped" banner instead of a review whenever it
+# declines by configuration rather than by capacity (auto_review.enabled false,
+# drafts excluded, or base_branches not matching the PR base). Before this fix
+# the activity probe in run_coderabbit_review excluded only the pause,
+# rate-limit, and resume markers, so the skip banner read as "CodeRabbit posted
+# something", broke the poll loop into Phase 3, and Phase 3 returned
+# RESULT=clean after collecting zero inline comments — a clean verdict on a PR
+# CodeRabbit never looked at.
+#
+# The end-to-end case runs with poll_interval=1, max_wait=3 and
+# CODERABBIT_NO_TRIGGER_TIMEOUT=1 so the loop exercises the explicit-nudge path
+# and then its timeout branch — where the skip-banner guard lives — within a few
+# seconds of real sleep.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area: CodeRabbit skip-banner false-clean (issue #1531) ==="
+
+unset MOCK_GH_OUTPUT MOCK_GH_POST_EXIT MOCK_GH_POST_OUTPUT MOCK_GH_CALL_LOG MOCK_GH_EXIT
+
+# The exact banner CodeRabbit posts when reviews.auto_review.enabled is false,
+# quoted from an observed comment on this repository (PR #1527).
+_CR_SKIP_BANNER_1531='> [!IMPORTANT]\n> ## Review skipped\n> \n> Auto reviews are disabled on this repository. Please check the settings in the CodeRabbit UI or the `.coderabbit.yaml` file in this repository. To trigger a single review, invoke the `@coderabbitai review` command.'
+
+# --- AC-1: the regex classifies banners, not genuine reviews ------------------
+_cr_re_matches_1531() {
+  printf '%s' "$1" \
+    | jq -Rs --arg skip_re "$CODERABBIT_SKIP_BANNER_RE" \
+        'if test($skip_re; "i") then "yes" else "no" end' -r
+}
+
+run_test "cr_skip_banner_re_matches_auto_reviews_disabled" "yes" \
+  "$(_cr_re_matches_1531 "$_CR_SKIP_BANNER_1531")"
+
+# The "Review skipped" half must match on its own: CodeRabbit uses the same
+# heading for the drafts-excluded and base-branch-mismatch variants, whose
+# bodies never contain the "auto reviews are disabled" sentence.
+run_test "cr_skip_banner_re_matches_review_skipped_alone" "yes" \
+  "$(_cr_re_matches_1531 '## Review skipped
+
+Draft detected. Set `reviews.auto_review.drafts` to true to review draft PRs.')"
+
+# CONTROL: a genuine CodeRabbit walkthrough must NOT match, or the fix would
+# suppress real reviews and hang every loop until timeout.
+run_test "cr_skip_banner_re_ignores_genuine_walkthrough" "no" \
+  "$(_cr_re_matches_1531 '## Walkthrough
+
+The changes update the reviewer loop. Estimated code review effort: 3.')"
+
+# CONTROL: the word "skipped" in ordinary review prose must not match either.
+run_test "cr_skip_banner_re_ignores_prose_use_of_skipped" "no" \
+  "$(_cr_re_matches_1531 'Nitpick: this branch is skipped when the list is empty.')"
+
+# --- AC-1: the activity probe returns 0 for a banner-only comment set ---------
+# Mirrors the production jq expression in run_coderabbit_review so a future edit
+# that drops the $skip_re clause is caught here.
+_cr_activity_count_1531() {
+  printf '%s' "$1" \
+    | jq -s --arg bot "coderabbitai[bot]" --arg since "2020-01-01T00:00:00Z" \
+         --arg skip_re "$CODERABBIT_SKIP_BANNER_RE" '
+        [.[].[] | select(
+            .user.login == $bot and
+            .created_at > $since and
+            ((.body // "") | test("Reviews paused|review paused"; "i") | not) and
+            ((.body // "") | test("rate.?limit"; "i") | not) and
+            ((.body // "") | test("reviews resumed"; "i") | not) and
+            ((.body // "") | test($skip_re; "i") | not)
+        )] | length
+      '
+}
+
+run_test "cr_activity_probe_skip_banner_not_activity" "0" \
+  "$(_cr_activity_count_1531 "$(jq -cn --arg b "$_CR_SKIP_BANNER_1531" \
+       '[{user:{login:"coderabbitai[bot]"},created_at:"2020-01-01T00:00:01Z",body:$b}]')")"
+
+run_test "cr_activity_probe_genuine_review_is_activity" "1" \
+  "$(_cr_activity_count_1531 "$(jq -cn \
+       '[{user:{login:"coderabbitai[bot]"},created_at:"2020-01-01T00:00:01Z",body:"## Walkthrough\n\nLGTM."}]')")"
+
+# --- AC-2 / AC-3: end-to-end escalation instead of a clean verdict ------------
+_cr_mock_dir_1531="$(mktemp -d)"
+_cr_call_log_1531="$_cr_mock_dir_1531/calls.log"
+cat > "$_cr_mock_dir_1531/gh" <<'CR_GH_1531'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CR_CALL_LOG"
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc1531sha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  # An empty, successful thread audit. Without this the audit errors against the
+  # default "[]" and the run escalates as review_thread_audit_failed — which would
+  # make the RESULT=escalate assertion below pass for the wrong reason, and hide
+  # the fact that the unfixed code returns RESULT=clean here.
+  *"api graphql"*)
+    printf '%s\n' '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}'
+    exit 0 ;;
+  *"issues/42/comments"*)
+    printf '%s\n' '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:00:01Z","updated_at":"2020-01-01T00:00:01Z","body":"## Review skipped — Auto reviews are disabled on this repository."}]'
+    exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+CR_GH_1531
+chmod +x "$_cr_mock_dir_1531/gh"
+
+actual_output="$(
+  PATH="$_cr_mock_dir_1531:$PATH" CR_CALL_LOG="$_cr_call_log_1531" \
+    CODERABBIT_NO_TRIGGER_TIMEOUT=1 \
+    run_coderabbit_review "42" "fix/42-test" "1" "3" 2>/dev/null || true
+)"
+
+# The planted violation: before the fix this asserted RESULT=clean.
+run_test "cr_skip_banner_escalates_not_clean" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+
+# A distinct REASON from rate_limit_max_retries — the operator fix is a
+# .coderabbit.yaml change, not waiting out a vendor quota.
+run_test "cr_skip_banner_reason_is_review_skipped_banner" "REASON=review_skipped_banner" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+
+# AC-2: the loop must still have nudged CodeRabbit with an explicit trigger
+# before giving up, since "@coderabbitai review" works even when auto review is
+# disabled. Without the activity-probe fix the loop broke out immediately and
+# never reached the retrigger path.
+_cr_trigger_count_1531="$(grep_count_or_zero "pr comment 42 --body @coderabbitai review" "$_cr_call_log_1531")"
+run_test "cr_skip_banner_posts_explicit_review_trigger" "yes" \
+  "$([ "$_cr_trigger_count_1531" -ge 1 ] && echo yes || echo no)"
+
+# The nudge must stay bounded by CODERABBIT_RATE_LIMIT_MAX_RETRIES rather than
+# firing on every poll iteration — an unbounded nudge would spam the PR and burn
+# vendor quota on a PR CodeRabbit is configured never to review.
+run_test "cr_skip_banner_trigger_is_capped" "yes" \
+  "$([ "$_cr_trigger_count_1531" -le 4 ] && echo yes || echo no)"
+unset _cr_trigger_count_1531
+
+rm -rf "$_cr_mock_dir_1531"
+unset _cr_mock_dir_1531 _cr_call_log_1531 actual_output _CR_SKIP_BANNER_1531
+
+# --- AC-4: rate-limit tolerance spans an hourly vendor quota reset ------------
+# Asserted against the script source: the defaults are function-locals, so there
+# is no accessor to read them from, and the whole point of the change is that
+# the shipped numbers (not just the env overrides) are large enough.
+run_test "cr_rate_limit_default_retries_is_four" "1" \
+  "$(grep_count_or_zero 'CODERABBIT_RATE_LIMIT_MAX_RETRIES:-4' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+run_test "cr_rate_limit_default_wait_is_900" "1" \
+  "$(grep_count_or_zero 'CODERABBIT_RATE_LIMIT_WAIT:-900' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

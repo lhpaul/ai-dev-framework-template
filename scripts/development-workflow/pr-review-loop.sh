@@ -20,6 +20,27 @@ fi
 
 BUGBOT_HANDLED_SKIP_RC=3
 
+# CODERABBIT_SKIP_BANNER_RE — matches the CodeRabbit "Review skipped" banner.
+#
+# CodeRabbit posts this banner instead of a review whenever it declines to review a
+# PR by configuration rather than by capacity: `reviews.auto_review.enabled: false`
+# ("Auto reviews are disabled on this repository"), `auto_review.drafts: false` on a
+# draft PR, or an `auto_review.base_branches` list that does not match the PR base
+# (e.g. only `develop` listed while the PR targets a `develop-<slug>` integration
+# branch).
+#
+# It must never be counted as review activity. Before this constant existed, the
+# activity probe in run_coderabbit_review excluded only the pause, rate-limit, and
+# resume markers, so the skip banner satisfied "CodeRabbit posted something" and
+# broke the poll loop into Phase 3 — which then collected zero inline comments and
+# zero CHANGES_REQUESTED reviews and returned RESULT=clean for a PR CodeRabbit had
+# never looked at. Same false-clean class as #1437 (rate-limited SUCCESS status) and
+# the PR #650 pause-banner incident, both already fixed for their own banner shapes.
+#
+# Passed into jq as --arg skip_re and applied with test($skip_re; "i"), so it must
+# stay a case-insensitive-safe Oniguruma alternation with no anchors.
+CODERABBIT_SKIP_BANNER_RE='review skipped|auto reviews are disabled'
+
 # --- unlock subcommand ---
 # Must run before the single-instance lock guard so stale-lock recovery always
 # works: if a previous invocation crashed, the lock guard would re-acquire the
@@ -4048,9 +4069,13 @@ coderabbit_success_status_count() {
 # loop, so the silent-non-trigger safety net never had a chance to fire at
 # all on those branches.
 #
-# Fix: default to 180 s — the same already-vetted "give CodeRabbit time,
-# then nudge" cadence CODERABBIT_RATE_LIMIT_WAIT already uses elsewhere in
-# this script for the analogous rate-limit retry path.
+# Fix: default to 180 s — the "give CodeRabbit time, then nudge" cadence
+# CODERABBIT_RATE_LIMIT_WAIT originally shared. The two knobs have since
+# diverged deliberately and must not be re-coupled: this one waits out a
+# *silent* CodeRabbit (nothing posted at all), where 3 minutes is ample and a
+# longer wait is pure idle latency, while CODERABBIT_RATE_LIMIT_WAIT waits out
+# an *acknowledged* vendor quota block whose reset is hourly, so it is now
+# sized in quarter-hours (see its declaration in run_coderabbit_review).
 #
 # Effective-timeout rule (piecewise, by max_wait):
 #   - max_wait >= 360 s: effective = 180 s (the hardcoded default; the half-
@@ -4325,8 +4350,14 @@ run_coderabbit_review() {
   # Initialize retrigger flag from Phase 0 so Phase 2 does not double-post a resume.
   local coderabbit_retrigger_attempted=$coderabbit_phase0_retrigger
   local coderabbit_rate_limit_retries=0
-  local coderabbit_rate_limit_max_retries="${CODERABBIT_RATE_LIMIT_MAX_RETRIES:-2}"
-  local coderabbit_rate_limit_wait="${CODERABBIT_RATE_LIMIT_WAIT:-180}"
+  # Defaults are sized against CodeRabbit's *hourly* quota reset: 4 retries x 900 s
+  # covers 60 minutes of waiting, so a loop that hits the cap early in an hour can
+  # still succeed once the vendor window rolls over. The previous 2 x 180 s (~6 min)
+  # exhausted its retries roughly 54 minutes before the vendor could possibly answer
+  # and escalated PRs that had nothing wrong with them — the dominant failure mode
+  # for unattended overnight runs. Both env vars still override.
+  local coderabbit_rate_limit_max_retries="${CODERABBIT_RATE_LIMIT_MAX_RETRIES:-4}"
+  local coderabbit_rate_limit_wait="${CODERABBIT_RATE_LIMIT_WAIT:-900}"
   # See coderabbit_resolve_no_trigger_timeout / coderabbit_no_trigger_timeout_default
   # (issue #1433) for why the default is computed from max_wait rather than a
   # fixed constant, and for env var override / validation-fallback handling
@@ -4335,12 +4366,12 @@ run_coderabbit_review() {
   coderabbit_no_trigger_timeout="$(coderabbit_resolve_no_trigger_timeout "$max_wait")"
   local coderabbit_no_trigger_retriggers=0
   if ! [[ "$coderabbit_rate_limit_max_retries" =~ ^[0-9]+$ ]]; then
-    echo "WARN: CODERABBIT_RATE_LIMIT_MAX_RETRIES must be a non-negative integer; defaulting to 2" >&2
-    coderabbit_rate_limit_max_retries=2
+    echo "WARN: CODERABBIT_RATE_LIMIT_MAX_RETRIES must be a non-negative integer; defaulting to 4" >&2
+    coderabbit_rate_limit_max_retries=4
   fi
   if ! [[ "$coderabbit_rate_limit_wait" =~ ^[0-9]+$ ]] || [ "$coderabbit_rate_limit_wait" -le 0 ]; then
-    echo "WARN: CODERABBIT_RATE_LIMIT_WAIT must be a positive integer; defaulting to 180" >&2
-    coderabbit_rate_limit_wait=180
+    echo "WARN: CODERABBIT_RATE_LIMIT_WAIT must be a positive integer; defaulting to 900" >&2
+    coderabbit_rate_limit_wait=900
   fi
 
   while :; do
@@ -4367,19 +4398,22 @@ run_coderabbit_review() {
     # Filter by since_iso so historical comments from prior pushes do not incorrectly
     # mark this HEAD cycle as having activity (which would suppress stale-findings recovery).
     # Exclude "Reviews paused" comments (pause marker), "rate limit" comments (rate-limit
-    # marker), and "Reviews resumed" acknowledgement comments — none of these represent a
+    # marker), "Reviews resumed" acknowledgement comments, and "Review skipped" banners
+    # (skip marker — see CODERABBIT_SKIP_BANNER_RE) — none of these represent a
     # completed review and must not trigger an early break from the poll loop.
     if [ "$coderabbit_any_activity" -eq 0 ]; then
       local activity_count
       activity_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-          | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
+          | jq -s --arg bot "$bot_login" --arg since "$since_iso" \
+               --arg skip_re "$CODERABBIT_SKIP_BANNER_RE" '
               [.[].[] | select(
                   .user.login == $bot and
                   .created_at > $since and
                   ((.body // "") | test("Reviews paused|review paused"; "i") | not) and
                   ((.body // "") | test("rate.?limit"; "i") | not) and
-                  ((.body // "") | test("reviews resumed"; "i") | not)
+                  ((.body // "") | test("reviews resumed"; "i") | not) and
+                  ((.body // "") | test($skip_re; "i") | not)
               )] | length
             '
       )"
@@ -4689,6 +4723,38 @@ run_coderabbit_review() {
                 )] | length
               '
         )"
+        # A "Review skipped" banner is a distinct terminal non-review outcome from a
+        # rate limit or a pause: CodeRabbit consciously declined to review this PR
+        # (auto_review disabled, drafts excluded, or base_branches not matching) rather
+        # than being unable to. It is counted separately so the escalation REASON tells
+        # the operator which knob to turn — review_skipped_banner points at
+        # .coderabbit.yaml, rate_limit_max_retries points at vendor quota.
+        local timeout_skip_banner_count
+        timeout_skip_banner_count="$(
+          gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+            | jq -s --arg bot "$bot_login" --arg since "$since_iso" \
+                 --arg skip_re "$CODERABBIT_SKIP_BANNER_RE" '
+                [.[].[] | select(
+                    .user.login == $bot and
+                    (.created_at > $since or .updated_at > $since) and
+                    ((.body // "") | test($skip_re; "i"))
+                )] | length
+              '
+        )"
+        if [ "${timeout_skip_banner_count:-0}" -gt 0 ]; then
+          echo "ERROR: CodeRabbit posted a 'Review skipped' banner and never reviewed HEAD $head_sha — escalating instead of returning clean. Check reviews.auto_review.enabled / .drafts / .base_branches in .coderabbit.yaml against this PR's draft state and base branch." >&2
+          print_kv RESULT escalate
+          print_kv REASON review_skipped_banner
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv REVIEW_COMMENT_ID ""
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT 0
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT 0
+          return 2
+        fi
         if [ "${timeout_incomplete_count:-0}" -gt 0 ] || [ "$coderabbit_phase0_retrigger" -eq 1 ]; then
           echo "INFO: CodeRabbit rate-limit or pause still unresolved at timeout (incomplete_count=${timeout_incomplete_count:-0}, phase0_retrigger=$coderabbit_phase0_retrigger) — escalating instead of returning clean" >&2
           print_kv RESULT escalate

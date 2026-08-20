@@ -27,6 +27,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **CodeRabbit "Review skipped" banner no longer reports an unreviewed PR as
+  clean** (#1531): `run_coderabbit_review` in
+  `scripts/development-workflow/pr-review-loop.sh` counted any CodeRabbit issue
+  comment as evidence of a completed review, excluding only the pause,
+  rate-limit, and resume markers. CodeRabbit's fourth non-review banner —
+  `Review skipped`, posted whenever it declines by configuration rather than by
+  capacity (`auto_review.enabled: false`, `drafts: false` on a draft PR, or an
+  `auto_review.base_branches` list that omits the PR's base) — satisfied that
+  check, broke the poll loop into Phase 3, and returned `RESULT=clean` after
+  collecting zero inline comments. The banner is now matched by
+  `CODERABBIT_SKIP_BANNER_RE`, excluded from the activity probe so the existing
+  silent-non-trigger path nudges CodeRabbit with an explicit
+  `@coderabbitai review` (which works even when auto review is disabled), and
+  escalated as `REASON=review_skipped_banner` if it is still standing when the
+  poll window closes — a distinct reason from `rate_limit_max_retries`, since
+  the operator fix is a `.coderabbit.yaml` change rather than waiting out vendor
+  quota. Same false-clean class as #1437 and the PR #650 pause-banner incident.
+- **CodeRabbit rate-limit tolerance now spans an hourly quota reset** (#1531):
+  `CODERABBIT_RATE_LIMIT_MAX_RETRIES` and `CODERABBIT_RATE_LIMIT_WAIT` defaulted
+  to `2` and `180`, giving roughly six minutes of tolerance against a vendor
+  whose quota resets hourly — so a loop that hit the cap exhausted its retries
+  about 54 minutes before CodeRabbit could possibly answer, then escalated a PR
+  with nothing wrong with it. Defaults are now `4` and `900`, covering a full
+  60-minute reset window; both env vars still override.
 - **ShellCheck CI no longer hangs indefinitely installing zsh** (#1517):
   the `Install zsh for cross-shell snippet tests` step in
   `.github/workflows/shellcheck.yml` was observed hanging on three PRs, and
