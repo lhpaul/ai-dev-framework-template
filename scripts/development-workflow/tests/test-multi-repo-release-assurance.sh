@@ -102,6 +102,37 @@ run_test "missing_evidence_forces_fail" "fail" "$(jq -r '.scenario_results[] | s
 run_test "missing_evidence_requires_supersedes" "true" "$(jq -r '.scenario_results[] | select(.name == "reruns") | (.missing_evidence | index("supersedes") != null)' "$TMP_ROOT/missing-evidence.json")"
 run_contains "missing_evidence_action" "provide required evidence before adoption" "$(cat "$TMP_ROOT/missing-evidence.json")"
 
+# Reproduces the reported gap: an assurance gate that only checks
+# non-emptiness accepts arbitrary strings such as "garbage" as valid
+# evidence for any field, so mismatched routing and milestone records could
+# pass without invoking the real checks.
+GARBAGE_EVIDENCE_FIXTURE="$TMP_ROOT/fixtures/garbage-evidence"
+cp -R "$VALID_FIXTURE" "$GARBAGE_EVIDENCE_FIXTURE"
+jq '
+  (.scenarios[] | select(.name == "component_routing")).release_contract = "garbage" |
+  (.scenarios[] | select(.name == "namespaced_component_milestones")).component_evidence = "garbage"
+' "$GARBAGE_EVIDENCE_FIXTURE/assurance.json" > "$GARBAGE_EVIDENCE_FIXTURE/assurance.json.tmp"
+mv "$GARBAGE_EVIDENCE_FIXTURE/assurance.json.tmp" "$GARBAGE_EVIDENCE_FIXTURE/assurance.json"
+"$HELPER" --fixture-dir "$GARBAGE_EVIDENCE_FIXTURE" --json > "$TMP_ROOT/garbage-evidence.json"
+run_test "garbage_evidence_blocks_adoption" "blocked" "$(jq -r '.adoption_status' "$TMP_ROOT/garbage-evidence.json")"
+run_test "garbage_evidence_forces_component_routing_fail" "fail" "$(jq -r '.scenario_results[] | select(.name == "component_routing") | .outcome' "$TMP_ROOT/garbage-evidence.json")"
+run_test "garbage_evidence_forces_milestone_fail" "fail" "$(jq -r '.scenario_results[] | select(.name == "namespaced_component_milestones") | .outcome' "$TMP_ROOT/garbage-evidence.json")"
+run_test "garbage_evidence_flags_release_contract" "true" "$(jq -r '.scenario_results[] | select(.name == "component_routing") | (.invalid_evidence | index("release_contract") != null)' "$TMP_ROOT/garbage-evidence.json")"
+run_test "garbage_evidence_flags_component_evidence" "true" "$(jq -r '.scenario_results[] | select(.name == "namespaced_component_milestones") | (.invalid_evidence | index("component_evidence") != null)' "$TMP_ROOT/garbage-evidence.json")"
+run_contains "garbage_evidence_action" "evidence does not match the expected artifact format" "$(cat "$TMP_ROOT/garbage-evidence.json")"
+
+# A malformed but non-garbage canonical_repository_identity (too many path
+# segments) must also be rejected -- the same shape check applies to every
+# field with an established artifact format, not just the two above.
+BAD_IDENTITY_FIXTURE="$TMP_ROOT/fixtures/bad-identity"
+cp -R "$VALID_FIXTURE" "$BAD_IDENTITY_FIXTURE"
+jq '(.scenarios[] | select(.name == "component_routing")).canonical_repository_identity = "bad/repo/slug"' \
+  "$BAD_IDENTITY_FIXTURE/assurance.json" > "$BAD_IDENTITY_FIXTURE/assurance.json.tmp"
+mv "$BAD_IDENTITY_FIXTURE/assurance.json.tmp" "$BAD_IDENTITY_FIXTURE/assurance.json"
+"$HELPER" --fixture-dir "$BAD_IDENTITY_FIXTURE" --json > "$TMP_ROOT/bad-identity.json"
+run_test "bad_identity_blocks_adoption" "blocked" "$(jq -r '.adoption_status' "$TMP_ROOT/bad-identity.json")"
+run_test "bad_identity_flags_field" "true" "$(jq -r '.scenario_results[] | select(.name == "component_routing") | (.invalid_evidence | index("canonical_repository_identity") != null)' "$TMP_ROOT/bad-identity.json")"
+
 "$HELPER" --fixture-dir "$VALID_FIXTURE" > "$TMP_ROOT/valid.env"
 run_contains "shell_output_status" "ADOPTION_STATUS=validated" "$(cat "$TMP_ROOT/valid.env")"
 run_contains "shell_output_history" "HISTORICAL_NO_REWRITE=True" "$(cat "$TMP_ROOT/valid.env")"

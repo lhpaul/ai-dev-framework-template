@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from typing import Any, NoReturn
 
@@ -35,6 +36,47 @@ REQUIRED_EVIDENCE = {
     "namespaced_component_milestones": ["component_evidence", "milestone_reconciliation"],
     "bundle_finalization": ["delivery_bundle_manifest", "component_evidence"],
     "reruns": ["run_id", "step_id", "supersedes", "idempotency_guard"],
+}
+
+# A missing-evidence gate that only checks non-emptiness accepts arbitrary
+# strings such as "garbage" as valid evidence for any field. These shape
+# checks apply where this codebase already establishes an objective,
+# unambiguous format or constant for the referenced artifact (a schema
+# version string, a contract-revision digest prefix, a product repository
+# key charset, a GitHub owner/repo slug, or the documented
+# <product-repo>@<component-tag> milestone title format) -- catching
+# evidence that could not possibly be the artifact it claims to be, without
+# loading or re-verifying the referenced artifact itself (the assurance
+# summary remains self-review evidence, not a replacement for the release
+# helpers it checks).
+_KEY_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$")
+_REPO_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _is_valid_repo_slug(value: str) -> bool:
+    if value.count("/") != 1:
+        return False
+    owner, repo_name = value.split("/", 1)
+    if repo_name in ("", ".", ".."):
+        return False
+    return bool(_OWNER_RE.match(owner)) and bool(_REPO_NAME_RE.match(repo_name))
+
+
+def _is_valid_milestone_title(value: str) -> bool:
+    if value.count("@") != 1:
+        return False
+    repo_key, tag = value.split("@", 1)
+    return bool(_KEY_RE.match(repo_key)) and bool(_KEY_RE.match(tag))
+
+
+EVIDENCE_SHAPE_VALIDATORS = {
+    "selected_product_repo_key": lambda value: isinstance(value, str) and bool(_KEY_RE.match(value)),
+    "canonical_repository_identity": lambda value: isinstance(value, str) and _is_valid_repo_slug(value),
+    "release_contract": lambda value: isinstance(value, str) and value.startswith("sha256:") and len(value) > len("sha256:"),
+    "component_evidence": lambda value: value == "component_release_evidence.v1",
+    "delivery_bundle_manifest": lambda value: value == "delivery_bundle_manifest.v1",
+    "milestone_reconciliation": lambda value: isinstance(value, str) and _is_valid_milestone_title(value),
 }
 
 
@@ -127,16 +169,26 @@ def normalize_scenario(raw: Any) -> dict[str, Any]:
         }
         approved_skipped = False
     missing_evidence = []
+    invalid_evidence = []
     if raw.get("required", True) is not False and raw.get("outcome") == "pass":
         for key in REQUIRED_EVIDENCE.get(name, []):
             value = raw.get(key)
             if value in (None, "", [], {}):
                 missing_evidence.append(key)
-        if missing_evidence:
+                continue
+            validator = EVIDENCE_SHAPE_VALIDATORS.get(key)
+            if validator is not None and not validator(value):
+                invalid_evidence.append(key)
+        if missing_evidence or invalid_evidence:
+            reasons = []
+            if missing_evidence:
+                reasons.append("provide required evidence before adoption: " + ", ".join(missing_evidence))
+            if invalid_evidence:
+                reasons.append("evidence does not match the expected artifact format: " + ", ".join(invalid_evidence))
             raw = {
                 **raw,
                 "outcome": "fail",
-                "required_next_action": "provide required evidence before adoption: " + ", ".join(missing_evidence),
+                "required_next_action": "; ".join(reasons),
             }
     return {
         "name": name,
@@ -151,6 +203,7 @@ def normalize_scenario(raw: Any) -> dict[str, Any]:
         "supersedes": raw.get("supersedes") or "",
         "idempotency_guard": raw.get("idempotency_guard") or "",
         "missing_evidence": missing_evidence,
+        "invalid_evidence": invalid_evidence,
     }
 
 

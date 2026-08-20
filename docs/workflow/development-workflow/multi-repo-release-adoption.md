@@ -99,6 +99,16 @@ milestones, cleanup evidence, or tracker release state.
 | Migration no-rewrite | Hub-owned historical baseline and product-owned historical baseline | Historical files are byte-for-byte unchanged before and after assurance. |
 | `single_repo` compatibility | Non-hub release fixture | Existing single-repository release and milestone behavior remains valid without hub fixtures. |
 
+For `component_routing`, `configuration_validation`, `namespaced_component_milestones`,
+and `bundle_finalization`, required evidence values that have an established
+format elsewhere in the workflow contract (a `component_release_evidence.v1`
+or `delivery_bundle_manifest.v1` schema string, a `sha256:`-prefixed contract
+revision, a product repository key, a GitHub `owner/repo` slug, or a
+`<product-repo>@<component-tag>` milestone title) must match that format, not
+merely be non-empty. This catches evidence that could not possibly be the
+artifact it claims to be without loading or re-verifying the referenced
+artifact itself.
+
 The harness output includes:
 
 - `schema_version`
