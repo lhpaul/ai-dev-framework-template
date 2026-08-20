@@ -400,8 +400,16 @@ workflow_pr_output="$(
     --repo-root "$typed_hub_dir" \
     --pr 901
 )"
-run_contains "workflow_pr_without_repo_fails_closed" "NEXT_ACTION=resolve-repository-selection" "$workflow_pr_output"
-run_contains "workflow_pr_without_repo_missing_target" "ROUTING_OUTCOME_CODE=missing_target" "$workflow_pr_output"
+# --pr without --repo used to force resolve-repository-selection even for a
+# hub-only PR, because routing ran before branch_name was known (branch_name
+# only came from the gh pr view call below the old preflight). PR 901's
+# headRefName (mocked above) resolves issue #901, which the mocked tracker
+# types as Workflow (hub-only), so this must now resolve without requiring a
+# product repository selection.
+run_contains "workflow_pr_without_repo_hub_only_outcome" "ROUTING_OUTCOME_CODE=hub_only" "$workflow_pr_output"
+run_contains "workflow_pr_without_repo_hub_only_continues" "ROUTING_CONTINUE_ALLOWED=true" "$workflow_pr_output"
+run_contains "workflow_pr_without_repo_hub_owned" "ACTION_REPOSITORY_KIND=hub_owned" "$workflow_pr_output"
+run_contains "workflow_pr_without_repo_no_selection_required" "NEXT_ACTION=resolve-pr-readiness" "$workflow_pr_output"
 
 workflow_pr_selected_repo_output="$(
   GH_PR_VIEW_JSON='{"headRefName":"feature/901-routing","labels":[],"isDraft":false,"comments":[],"statusCheckRollup":[]}' \

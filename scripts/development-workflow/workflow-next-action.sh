@@ -308,7 +308,24 @@ github_repo_args_for_action() {
 }
 
 if [ -n "$pr_number" ]; then
+  require_gh
+  pr_hub_probe_json=""
   if [ "$workflow_mode" = "workflow_hub" ] && [ -z "$target_repo" ]; then
+    # Opportunistically read the PR from the current (hub) checkout before
+    # routing classification runs. Routing needs branch_name to derive the
+    # tracker issue number and recognize a hub-only item
+    # (implementation_issue_number()/implementation_item_is_hub_only()), but
+    # branch_name was previously only populated by the gh pr view call below,
+    # which itself ran after routing -- so every hub-only spec, plan, and
+    # hub-owned implementation PR (all of which live in the hub repository
+    # and are already readable here with no --repo args) was misclassified
+    # as needing product-repository selection. A genuine product-repo PR
+    # lives in a different repository's PR-number namespace and is expected
+    # to fail this read; that failure is discarded and routing proceeds
+    # exactly as it did before this probe was added.
+    if pr_hub_probe_json="$(gh pr view "$pr_number" --json headRefName,labels,isDraft,comments 2>/dev/null)"; then
+      branch_name="$(printf '%s\n' "$pr_hub_probe_json" | jq -er '.headRefName | strings | select(length > 0)' 2>/dev/null)" || branch_name=""
+    fi
     set +e
     pr_action_context="$(repository_context_for_action implementation 2>&1)"
     pr_action_status=$?
@@ -329,14 +346,18 @@ if [ -n "$pr_number" ]; then
       exit 0
     fi
   fi
-  require_gh
   pr_view_args=()
   if [ "$workflow_mode" = "workflow_hub" ]; then
     while IFS= read -r arg; do
       [ -n "$arg" ] && pr_view_args+=("$arg")
     done < <(github_repo_args_for_action implementation)
   fi
-  if [ "${#pr_view_args[@]}" -gt 0 ]; then
+  if [ "${#pr_view_args[@]}" -eq 0 ] && [ -n "$pr_hub_probe_json" ]; then
+    # Routing resolved to the current (hub) checkout -- the probe above
+    # already read the right repository's PR, so reuse it instead of making
+    # a second, identical gh pr view call.
+    pr_json="$pr_hub_probe_json"
+  elif [ "${#pr_view_args[@]}" -gt 0 ]; then
     if ! pr_json="$(gh pr view "$pr_number" "${pr_view_args[@]}" --json headRefName,labels,isDraft,comments)"; then
       echo "ERROR: could not read PR #$pr_number from the selected GitHub repository." >&2
       exit 1
