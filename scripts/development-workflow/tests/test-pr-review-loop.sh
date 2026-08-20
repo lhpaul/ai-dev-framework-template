@@ -12908,7 +12908,7 @@ unset MOCK_GH_OUTPUT MOCK_GH_POST_EXIT MOCK_GH_POST_OUTPUT MOCK_GH_CALL_LOG MOCK
 
 # The exact banner CodeRabbit posts when reviews.auto_review.enabled is false,
 # quoted from an observed comment on this repository (PR #1527).
-_CR_SKIP_BANNER_1531='> [!IMPORTANT]\n> ## Review skipped\n> \n> Auto reviews are disabled on this repository. Please check the settings in the CodeRabbit UI or the `.coderabbit.yaml` file in this repository. To trigger a single review, invoke the `@coderabbitai review` command.'
+_CR_SKIP_BANNER_1531='<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n\n> [!IMPORTANT]\n> ## Review skipped\n> \n> Auto reviews are disabled on this repository. Please check the settings in the CodeRabbit UI or the `.coderabbit.yaml` file in this repository. To trigger a single review, invoke the `@coderabbitai review` command.'
 
 # --- AC-1: the regex classifies banners, not genuine reviews ------------------
 _cr_re_matches_1531() {
@@ -12924,9 +12924,18 @@ run_test "cr_skip_banner_re_matches_auto_reviews_disabled" "yes" \
 # heading for the drafts-excluded and base-branch-mismatch variants, whose
 # bodies never contain the "auto reviews are disabled" sentence.
 run_test "cr_skip_banner_re_matches_review_skipped_alone" "yes" \
+  "$(_cr_re_matches_1531 '> [!IMPORTANT]
+> ## Review skipped
+>
+> Draft detected. Set `reviews.auto_review.drafts` to true to review draft PRs.')"
+
+# CONTROL: a BARE "## Review skipped" heading, with no blockquote prefix, is not
+# a banner. A genuine CodeRabbit comment may legitimately use that heading, and
+# classifying it as a banner would drop a real review from the activity probe.
+run_test "cr_skip_banner_re_ignores_bare_heading" "no" \
   "$(_cr_re_matches_1531 '## Review skipped
 
-Draft detected. Set `reviews.auto_review.drafts` to true to review draft PRs.')"
+This section explains when the reviewer skips generated files.')"
 
 # CONTROL: a genuine CodeRabbit walkthrough must NOT match, or the fix would
 # suppress real reviews and hang every loop until timeout.
@@ -12960,6 +12969,8 @@ _cr_grep_matches_1531() {
 }
 run_test "cr_skip_banner_re_grep_agrees_on_banner" "yes" \
   "$(_cr_grep_matches_1531 '> ## Review skipped')"
+run_test "cr_skip_banner_re_grep_agrees_on_bare_heading" "no" \
+  "$(_cr_grep_matches_1531 '## Review skipped')"
 run_test "cr_skip_banner_re_grep_agrees_on_prose" "no" \
   "$(_cr_grep_matches_1531 'The walkthrough notes that this review skipped the generated files.')"
 
@@ -13008,7 +13019,7 @@ case "$*" in
     printf '%s\n' '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}'
     exit 0 ;;
   *"issues/42/comments"*)
-    printf '%s\n' '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:00:01Z","updated_at":"2020-01-01T00:00:01Z","body":"## Review skipped — Auto reviews are disabled on this repository."}]'
+    printf '%s\n' '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:00:01Z","updated_at":"2020-01-01T00:00:01Z","body":"<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n\n> [!IMPORTANT]\n> ## Review skipped\n>\n> Auto reviews are disabled on this repository."}]'
     exit 0 ;;
   *)
     printf '[]\n'; exit 0 ;;
@@ -13070,7 +13081,7 @@ case "$*" in
     printf '%s\n' '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}'
     exit 0 ;;
   *"issues/42/comments"*)
-    printf '%s\n' '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:00:01Z","updated_at":"2020-01-01T00:00:01Z","body":"## Review skipped — Draft detected."},{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:05:00Z","updated_at":"2020-01-01T00:05:00Z","body":"Review limit reached — rate limit in effect."}]'
+    printf '%s\n' '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:00:01Z","updated_at":"2020-01-01T00:00:01Z","body":"<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n\n> [!IMPORTANT]\n> ## Review skipped\n>\n> Draft detected."},{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:05:00Z","updated_at":"2020-01-01T00:05:00Z","body":"Review limit reached — rate limit in effect."}]'
     exit 0 ;;
   *)
     printf '[]\n'; exit 0 ;;
@@ -13092,6 +13103,47 @@ run_test "cr_stale_draft_banner_still_escalates" "RESULT=escalate" \
 
 rm -rf "$_cr_mock_dir_1531b"
 unset _cr_mock_dir_1531b _cr_call_log_1531b actual_output
+
+# --- A banner from a PREVIOUS HEAD must not be attributed to this one --------
+# Mirror of the stale-draft case above. Here the only CodeRabbit comment is a
+# skip banner that PREDATES the HEAD commit — the shape produced by pushing a
+# new commit after a draft-phase banner. CodeRabbit has said nothing about the
+# current HEAD, so the outcome is "did not review this HEAD" (no_review), not a
+# configuration problem. Reporting review_skipped_banner here would send the
+# operator to .coderabbit.yaml for what is really a silent or rate-limited review.
+_cr_mock_dir_1531c="$(mktemp -d)"
+_cr_call_log_1531c="$_cr_mock_dir_1531c/calls.log"
+cat > "$_cr_mock_dir_1531c/gh" <<'CR_GH_1531C'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CR_CALL_LOG"
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc1531csha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-02T00:00:00Z\n'; exit 0 ;;
+  *"api graphql"*)
+    printf '%s\n' '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}'
+    exit 0 ;;
+  *"issues/42/comments"*)
+    printf '%s\n' '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:00:01Z","updated_at":"2020-01-01T00:00:01Z","body":"<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n\n> [!IMPORTANT]\n> ## Review skipped\n>\n> Draft detected."}]'
+    exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+CR_GH_1531C
+chmod +x "$_cr_mock_dir_1531c/gh"
+
+actual_output="$(
+  PATH="$_cr_mock_dir_1531c:$PATH" CR_CALL_LOG="$_cr_call_log_1531c" \
+    CODERABBIT_NO_TRIGGER_TIMEOUT=1 \
+    run_coderabbit_review "42" "fix/42-test" "1" "3" 2>/dev/null || true
+)"
+
+run_test "cr_banner_from_previous_head_not_attributed" "REASON=no_review" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+
+rm -rf "$_cr_mock_dir_1531c"
+unset _cr_mock_dir_1531c _cr_call_log_1531c actual_output
 
 # --- AC-4: rate-limit tolerance spans an hourly vendor quota reset ------------
 # Asserted against the script source: the defaults are function-locals, so there

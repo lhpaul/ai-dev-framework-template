@@ -192,7 +192,7 @@ reviews:
     auto_pause_after_reviewed_commits: 10
 ```
 
-`.coderabbit.yaml` must agree with the lifecycle bucket you pick in step 3. CodeRabbit declines to review — and posts a **"Review skipped" banner** instead — in three configurations that are easy to create by accident:
+`.coderabbit.yaml` must agree with the lifecycle bucket you pick in step 3. CodeRabbit declines to review — and posts a **"Review skipped" banner** instead — in three configurations that are easy to create unintentionally:
 
 | Configuration                                                       | When it bites                                                    |
 | ------------------------------------------------------------------- | ---------------------------------------------------------------- |
@@ -247,7 +247,9 @@ CodeRabbit posts as `coderabbitai[bot]`. Use this login to filter its comments a
 
 ### Step 7.1 — Trigger a re-review
 
-**No trigger needed.** CodeRabbit auto-reviews on every push when `auto_review.enabled` is `true` in `.coderabbit.yaml`. There is no trigger comment and therefore no `REVIEW_COMMENT_ID`.
+**No routine trigger needed.** CodeRabbit auto-reviews on every push when `auto_review.enabled` is `true` in `.coderabbit.yaml`, so the normal path posts nothing and there is no `REVIEW_COMMENT_ID`.
+
+The helper does post one **conditional** trigger. When no CodeRabbit activity has appeared after `CODERABBIT_NO_TRIGGER_TIMEOUT` seconds — because CodeRabbit stayed silent after a push, or because it declined with a `Review skipped` banner — the loop posts `@coderabbitai review`, which works even when auto review is disabled. This is bounded by `CODERABBIT_RATE_LIMIT_MAX_RETRIES`, shared with the rate-limit retry path so there is a single knob for total nudge attempts. A separate `@coderabbitai resume` is posted for the pause banner.
 
 ### Step 7.2 — Detect review completion
 
