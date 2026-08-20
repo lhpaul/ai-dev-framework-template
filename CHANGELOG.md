@@ -831,6 +831,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `git rev-parse --is-inside-work-tree`/`--git-dir` instead of a bare
   `.git`-is-a-directory test, so a linked git worktree checkout (whose
   `.git` is a file, not a directory) is recognized instead of rejected.
+  `component-release-target.sh` now accepts an optional `--release-branch`
+  flag and folds it into `release_correlation_key`, so two release attempts
+  for the same product and unchanged contract (for example `v1.2.3` and a
+  later `v1.2.4`) get distinct correlation keys instead of colliding on the
+  same key and conflating separate releases in cleanup locking, conflict
+  detection, and audit records; `prepare-release-post-merge-cleanup.sh` and
+  the prepare-release protocol now pass it once the release branch is known,
+  so re-resolution at cleanup time reproduces the same key.
+  `component-release-evidence.sh` now rejects a `--release-branch` that does
+  not match the target binding's `release_branch_pattern` (for example an
+  unrelated branch such as `totally/wrong`) instead of accepting any
+  syntactically valid branch name, and now accepts an optional
+  `--component-tag` flag so rendered evidence can bind a component tag.
+  `component-milestone-reconciliation.sh` now requires evidence to bind a
+  matching `component_tag` before treating a component as released, instead
+  of treating a missing evidence tag as a match for any caller-supplied
+  `--component-tag` — closing a gap where `apply-component` could stamp an
+  arbitrary, unverified release milestone.
+  `workflow-next-action.sh --pr` in `workflow_hub` mode now gates the
+  implementation-only repository-routing preflight on the branch actually
+  being an implementation branch, instead of running it unconditionally, so
+  spec and plan PRs (and other hub-owned, non-implementation branches)
+  resolve directly instead of always requiring a product-repository
+  selection.
+  `multi-repo-release-assurance.sh` now validates that required evidence
+  values match the established format for the artifact they claim to
+  represent (a component/delivery-bundle schema string, a `sha256:`-prefixed
+  contract revision, a product repository key, a GitHub `owner/repo` slug,
+  or a `<product-repo>@<component-tag>` milestone title) instead of only
+  checking that the value is non-empty, so fabricated evidence such as
+  `release_contract:"garbage"` is rejected instead of producing
+  `adoption_status:"validated"`.
 
 ### Changed
 
