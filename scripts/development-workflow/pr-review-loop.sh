@@ -37,9 +37,20 @@ BUGBOT_HANDLED_SKIP_RC=3
 # never looked at. Same false-clean class as #1437 (rate-limited SUCCESS status) and
 # the PR #650 pause-banner incident, both already fixed for their own banner shapes.
 #
-# Passed into jq as --arg skip_re and applied with test($skip_re; "i"), so it must
-# stay a case-insensitive-safe Oniguruma alternation with no anchors.
-CODERABBIT_SKIP_BANNER_RE='review skipped|auto reviews are disabled'
+# Deliberately NOT a bare "review skipped" substring match. A genuine walkthrough
+# is free to contain that phrase in prose ("this review skipped the generated
+# files"), and misclassifying a real review as a banner is the mirror-image
+# failure: the loop would ignore an actual review, poll to timeout, and escalate.
+# The three alternatives are ordered most to least machine-specific:
+#   1. the HTML marker CodeRabbit stamps on skip comments and on no other kind;
+#   2. the banner's markdown heading, which prose cannot produce accidentally
+#      (the banner renders inside a blockquote, so "> ## Review skipped" matches);
+#   3. the auto-review-disabled sentence, as a belt-and-braces fallback.
+#
+# Passed into jq as --arg skip_re with test($skip_re; "i") and to grep -qiE, so it
+# must stay an alternation valid in both Oniguruma and POSIX ERE, with no anchors
+# and no backslash escapes that differ between the two.
+CODERABBIT_SKIP_BANNER_RE='skip review by coderabbit|#{1,6} *review skipped|auto reviews are disabled'
 
 # --- unlock subcommand ---
 # Must run before the single-instance lock guard so stale-lock recovery always
@@ -4726,21 +4737,35 @@ run_coderabbit_review() {
         # A "Review skipped" banner is a distinct terminal non-review outcome from a
         # rate limit or a pause: CodeRabbit consciously declined to review this PR
         # (auto_review disabled, drafts excluded, or base_branches not matching) rather
-        # than being unable to. It is counted separately so the escalation REASON tells
+        # than being unable to. It is detected separately so the escalation REASON tells
         # the operator which knob to turn — review_skipped_banner points at
         # .coderabbit.yaml, rate_limit_max_retries points at vendor quota.
-        local timeout_skip_banner_count
-        timeout_skip_banner_count="$(
+        #
+        # Matched on the MOST RECENT CodeRabbit comment only, not on "any banner inside
+        # the since_iso window". A repository that sets auto_review.drafts to false —
+        # the recommended setting when coderabbit runs in on_ready.github — collects a
+        # "Review skipped / Draft detected" banner on every PR while it is still a
+        # draft. That banner is newer than the HEAD commit, so a window-wide match would
+        # attribute every later ready-phase timeout to a stale draft banner and report
+        # review_skipped_banner for what is really a slow or silent CodeRabbit. Taking
+        # only the latest comment also yields correctly to the pause and rate-limit
+        # handlers below whenever CodeRabbit has since said something more specific.
+        local timeout_latest_cr_body
+        timeout_latest_cr_body="$(
           gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-            | jq -s --arg bot "$bot_login" --arg since "$since_iso" \
-                 --arg skip_re "$CODERABBIT_SKIP_BANNER_RE" '
-                [.[].[] | select(
-                    .user.login == $bot and
-                    (.created_at > $since or .updated_at > $since) and
-                    ((.body // "") | test($skip_re; "i"))
-                )] | length
+            | jq -rs --arg bot "$bot_login" '
+                add // []
+                | map(select(.user.login == $bot))
+                | sort_by(.created_at)
+                | last
+                | .body // ""
               '
         )"
+        local timeout_skip_banner_count=0
+        if printf '%s\n' "$timeout_latest_cr_body" \
+             | grep -qiE "$CODERABBIT_SKIP_BANNER_RE"; then
+          timeout_skip_banner_count=1
+        fi
         if [ "${timeout_skip_banner_count:-0}" -gt 0 ]; then
           echo "ERROR: CodeRabbit posted a 'Review skipped' banner and never reviewed HEAD $head_sha — escalating instead of returning clean. Check reviews.auto_review.enabled / .drafts / .base_branches in .coderabbit.yaml against this PR's draft state and base branch." >&2
           print_kv RESULT escalate

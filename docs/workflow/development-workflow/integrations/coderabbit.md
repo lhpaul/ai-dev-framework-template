@@ -257,7 +257,7 @@ The helper script checks for a CodeRabbit review on each poll iteration. If a re
 
 As a secondary signal, the script also checks for CodeRabbit issue comments (e.g., the PR summary comment) as an **activity indicator** — this is used only to distinguish "CodeRabbit is active but hasn't finished" from "CodeRabbit didn't review this HEAD at all" when the timeout is reached.
 
-Four kinds of CodeRabbit comment are explicitly **excluded** from that activity signal, because each one is CodeRabbit announcing that it did *not* review: the `Reviews paused` banner, a `rate limit` notice, a `Reviews resumed` acknowledgement, and the `Review skipped` banner (`CODERABBIT_SKIP_BANNER_RE`). Counting any of them as activity would break the poll loop into Phase 3, which would then collect zero inline comments and report the PR clean.
+Four kinds of CodeRabbit comment are explicitly **excluded** from that activity signal, because each one is CodeRabbit announcing that it did *not* review: the `Reviews paused` banner, a `rate limit` notice, a `Reviews resumed` acknowledgement, and the `Review skipped` banner (`CODERABBIT_SKIP_BANNER_RE`, which keys on the `skip review by coderabbit.ai` HTML marker and the banner's markdown heading rather than a bare "review skipped" substring, so a walkthrough using that phrase in prose is not mistaken for a banner). Counting any of them as activity would break the poll loop into Phase 3, which would then collect zero inline comments and report the PR clean.
 
 | Result                                                     | Action                                                          |
 | ---------------------------------------------------------- | --------------------------------------------------------------- |

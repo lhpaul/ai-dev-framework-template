@@ -12939,6 +12939,30 @@ The changes update the reviewer loop. Estimated code review effort: 3.')"
 run_test "cr_skip_banner_re_ignores_prose_use_of_skipped" "no" \
   "$(_cr_re_matches_1531 'Nitpick: this branch is skipped when the list is empty.')"
 
+# CONTROL, and the reason the pattern is not a bare "review skipped" substring:
+# a genuine walkthrough may use that exact phrase in prose. Matching it would be
+# the mirror-image failure — a real review classified as a banner, ignored by the
+# activity probe, polled to timeout, and escalated.
+run_test "cr_skip_banner_re_ignores_exact_phrase_in_prose" "no" \
+  "$(_cr_re_matches_1531 'The walkthrough notes that this review skipped the generated files.')"
+
+# The HTML marker CodeRabbit stamps on skip comments (and on no other kind) is
+# the most reliable signal, and must match on its own even if the rendered
+# heading text is reworded by the vendor.
+run_test "cr_skip_banner_re_matches_html_marker_alone" "yes" \
+  "$(_cr_re_matches_1531 '<!-- This is an auto-generated comment: skip review by coderabbit.ai -->')"
+
+# The pattern is consumed by BOTH jq (test(); Oniguruma) and grep -qiE (POSIX
+# ERE). A pattern valid in only one engine would silently stop matching at one of
+# the two call sites, so the engines are asserted to agree.
+_cr_grep_matches_1531() {
+  if printf '%s' "$1" | grep -qiE "$CODERABBIT_SKIP_BANNER_RE"; then echo yes; else echo no; fi
+}
+run_test "cr_skip_banner_re_grep_agrees_on_banner" "yes" \
+  "$(_cr_grep_matches_1531 '> ## Review skipped')"
+run_test "cr_skip_banner_re_grep_agrees_on_prose" "no" \
+  "$(_cr_grep_matches_1531 'The walkthrough notes that this review skipped the generated files.')"
+
 # --- AC-1: the activity probe returns 0 for a banner-only comment set ---------
 # Mirrors the production jq expression in run_coderabbit_review so a future edit
 # that drops the $skip_re clause is caught here.
@@ -13024,6 +13048,50 @@ unset _cr_trigger_count_1531
 
 rm -rf "$_cr_mock_dir_1531"
 unset _cr_mock_dir_1531 _cr_call_log_1531 actual_output _CR_SKIP_BANNER_1531
+
+# --- Stale draft banner must not shadow a newer, more specific outcome --------
+# A repository that runs coderabbit in on_ready.github keeps auto_review.drafts
+# false, so EVERY PR collects a "Review skipped / Draft detected" banner while it
+# is still a draft. That banner is newer than the HEAD commit, so a guard that
+# matched any banner inside the since_iso window would blame it for every later
+# ready-phase timeout. Here the newest CodeRabbit comment is a rate-limit notice:
+# the run must escalate as rate_limit_max_retries, not review_skipped_banner.
+_cr_mock_dir_1531b="$(mktemp -d)"
+_cr_call_log_1531b="$_cr_mock_dir_1531b/calls.log"
+cat > "$_cr_mock_dir_1531b/gh" <<'CR_GH_1531B'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CR_CALL_LOG"
+case "$*" in
+  *"--jq .head.sha"*)
+    printf 'abc1531bsha\n'; exit 0 ;;
+  *"--jq .commit.committer.date"*)
+    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"api graphql"*)
+    printf '%s\n' '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}'
+    exit 0 ;;
+  *"issues/42/comments"*)
+    printf '%s\n' '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:00:01Z","updated_at":"2020-01-01T00:00:01Z","body":"## Review skipped — Draft detected."},{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:05:00Z","updated_at":"2020-01-01T00:05:00Z","body":"Review limit reached — rate limit in effect."}]'
+    exit 0 ;;
+  *)
+    printf '[]\n'; exit 0 ;;
+esac
+CR_GH_1531B
+chmod +x "$_cr_mock_dir_1531b/gh"
+
+actual_output="$(
+  PATH="$_cr_mock_dir_1531b:$PATH" CR_CALL_LOG="$_cr_call_log_1531b" \
+    CODERABBIT_NO_TRIGGER_TIMEOUT=1 CODERABBIT_RATE_LIMIT_WAIT=1 \
+    CODERABBIT_RATE_LIMIT_MAX_RETRIES=1 \
+    run_coderabbit_review "42" "fix/42-test" "1" "3" 2>/dev/null || true
+)"
+
+run_test "cr_stale_draft_banner_does_not_shadow_rate_limit" "REASON=rate_limit_max_retries" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "cr_stale_draft_banner_still_escalates" "RESULT=escalate" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+
+rm -rf "$_cr_mock_dir_1531b"
+unset _cr_mock_dir_1531b _cr_call_log_1531b actual_output
 
 # --- AC-4: rate-limit tolerance spans an hourly vendor quota reset ------------
 # Asserted against the script source: the defaults are function-locals, so there
