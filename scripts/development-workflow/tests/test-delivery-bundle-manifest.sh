@@ -218,6 +218,22 @@ run_fails_contains \
   update_component "$manifest" web-app "$mobile_evidence" web-v2.8.1 2.8.1 1414 1503 "#1357"
 run_test "component_key_repo_mismatch_preserves_manifest" "$manifest_hash" "$(git hash-object "$manifest")"
 
+# A different component_tag/component_version under the *same* release_pr is
+# a conflicting version claim for one release (Acceptance Criterion 6: "...
+# conflicts with existing stable identity fields, version state, release
+# correlation key, or release contract revision"), not a legitimate re-tag,
+# and must be rejected without mutating the manifest.
+manifest_hash="$(git hash-object "$manifest")"
+run_fails_contains   "same_release_pr_version_conflict_rejected"   "ERROR_CODE=conflicting_component_evidence"   update_component "$manifest" mobile-app "$mobile_evidence" mobile-v1.4.1 1.4.1 1411 1501 "#1356"
+run_test "same_release_pr_version_conflict_preserves_manifest" "$manifest_hash" "$(git hash-object "$manifest")"
+
+# A different component_tag/component_version under a *new* release_pr is the
+# documented re-tag/re-release flow (see
+# docs/testing/workflow/1357-delivery-bundle-issue-manifest-workflow.smoke-test.md,
+# Acceptance Criterion 9) and must still be accepted as a normal update.
+update_component "$manifest" mobile-app "$mobile_evidence" mobile-v1.4.1 1.4.1 1411 1502 "#1356" >/dev/null
+run_test "new_release_pr_retag_accepted" "mobile-v1.4.1" "$(jq -r '.components[] | select(.component_key == "mobile-app") | .component_tag' "$manifest")"
+
 stale_revision="$(jq -r '.revision' "$manifest")"
 bash "$HELPER" remove-component \
   --manifest "$manifest" \
@@ -226,7 +242,7 @@ bash "$HELPER" remove-component \
   --component-key web-app \
   --reason "Split web delivery" \
   --json >/dev/null
-run_test "remove_revision_incremented" "3" "$(jq -r '.revision' "$manifest")"
+run_test "remove_revision_incremented" "$((stale_revision + 1))" "$(jq -r '.revision' "$manifest")"
 run_test "remove_audited" "Split web delivery" "$(jq -r '.removed_components[] | select(.component_key == "web-app") | .reason' "$manifest")"
 manifest_hash="$(git hash-object "$manifest")"
 run_fails_contains \

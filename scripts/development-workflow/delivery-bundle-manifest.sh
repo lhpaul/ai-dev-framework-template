@@ -421,6 +421,20 @@ def cmd_update_component(args):
             for field in stable_fields:
                 if existing.get(field) != incoming.get(field):
                     fail("conflicting_component_evidence", f"component evidence conflicts on {field}")
+            # component_tag/component_version are allowed to change across an
+            # actual new release (a different release_pr is the authoritative
+            # signal that a new release happened -- see the documented re-tag
+            # flow in docs/testing/workflow/1357-delivery-bundle-issue-manifest-workflow.smoke-test.md).
+            # But a version claim for the *same* release_pr must stay stable:
+            # a different component_tag/component_version under an unchanged
+            # release_pr is the conflicting "version state" acceptance
+            # criterion 6 describes, not a legitimate re-tag, and must be
+            # rejected instead of silently overwriting the accepted release
+            # composition.
+            if existing.get("release_pr") == incoming.get("release_pr"):
+                for field in ("component_tag", "component_version"):
+                    if existing.get(field) != incoming.get(field):
+                        fail("conflicting_component_evidence", f"component evidence conflicts on {field}")
             if {k: existing.get(k) for k in incoming.keys()} == incoming:
                 return manifest, False, {"result": "idempotent", "manifest": manifest}
         if idx is None:
