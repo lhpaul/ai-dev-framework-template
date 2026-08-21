@@ -100,6 +100,47 @@ case "$*" in
     printf 'lhpaul/ai-dev-framework-template\n'
     exit 0
     ;;
+  api\ rate_limit\ --jq\ '.resources.graphql.reset')
+    # Fixed far-future epoch (2100-01-01T00:00:00Z) so reset-time messages
+    # are deterministic without depending on wall-clock time.
+    printf '4102444800\n'
+    exit 0
+    ;;
+esac
+
+# ---- gh probe failures: rate limit / auth / network / outage ----
+# Issue numbers reserved for probe-failure regression tests (see issue #1503):
+#   888881 — gh probe fails with an API rate limit error
+#   888882 — gh probe fails with an authentication error
+#   888883 — gh probe fails with a network error
+#   888884 — gh probe fails with an unrecognized/opaque error (outage-style)
+#   888885 — gh probe fails with a genuine "could not resolve" not-found error
+#            (explicit not-found stderr text, not just a bare non-zero exit)
+case "$*" in
+  pr\ view\ 888881\ --json\ state\ --jq\ .state)
+    printf 'API rate limit exceeded for user ID 1148259 (https://docs.github.com/en/rest/overview/resources-in-the-rest-api#rate-limiting)\n' >&2
+    exit 1
+    ;;
+  pr\ view\ 888882\ --json\ state\ --jq\ .state)
+    printf 'gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable.\nerror: not logged into any GitHub hosts. Run gh auth login\n' >&2
+    exit 1
+    ;;
+  pr\ view\ 888883\ --json\ state\ --jq\ .state)
+    printf 'error connecting to api.github.com\ndial tcp: lookup api.github.com: no such host\n' >&2
+    exit 1
+    ;;
+  pr\ view\ 888884\ --json\ state\ --jq\ .state)
+    printf 'HTTP 502: Bad Gateway\nSomething went wrong while executing your query. Unicorn! ...ready.\n' >&2
+    exit 1
+    ;;
+  pr\ view\ 888885\ --json\ state\ --jq\ .state)
+    printf 'GraphQL: Could not resolve to a PullRequest with the number of 888885. (repository.pullRequest)\n' >&2
+    exit 1
+    ;;
+  issue\ view\ 888885\ --json\ state\ --jq\ .state)
+    printf 'GraphQL: Could not resolve to an Issue with the number of 888885. (repository.issue)\n' >&2
+    exit 1
+    ;;
 esac
 
 emit_issue_subissues() {
@@ -492,6 +533,78 @@ run_test "mixed_list_mode" "ambiguous" \
   "$(printf '%s\n' "$output_mixed" | grep '^MODE=' | cut -d= -f2-)"
 run_test_contains "mixed_list_stop_reason" "999999" \
   "$(printf '%s\n' "$output_mixed" | grep '^STOP_REASON=' | cut -d= -f2-)"
+
+# --- gh probe failure classification (issue #1503) --------------------------
+#
+# resolve_token() must distinguish a gh probe failure (rate limit, auth,
+# network, GitHub outage) from a successful "not found" result. A probe
+# failure must route to MODE=tracker_unavailable with a distinct, actionable
+# STOP_REASON — not MODE=ambiguous, which tells the operator their target is
+# unrecognized when it is actually gh that failed.
+
+# Rate-limited probe → tracker_unavailable, reason names the cause and
+# includes the rate-limit reset time.
+output_rate_limited="$(router_output "888881")"
+run_test "rate_limited_probe_mode" "tracker_unavailable" \
+  "$(printf '%s\n' "$output_rate_limited" | grep '^MODE=' | cut -d= -f2-)"
+run_test_contains "rate_limited_probe_stop_reason_names_cause" "rate limit" \
+  "$(printf '%s\n' "$output_rate_limited" | grep '^STOP_REASON=' | cut -d= -f2-)"
+run_test_contains "rate_limited_probe_stop_reason_has_reset_time" "retry after" \
+  "$(printf '%s\n' "$output_rate_limited" | grep '^STOP_REASON=' | cut -d= -f2-)"
+
+# Auth-failed probe → tracker_unavailable, reason is actionable (gh auth login).
+output_auth_failed="$(router_output "888882")"
+run_test "auth_failed_probe_mode" "tracker_unavailable" \
+  "$(printf '%s\n' "$output_auth_failed" | grep '^MODE=' | cut -d= -f2-)"
+run_test_contains "auth_failed_probe_stop_reason" "gh auth login" \
+  "$(printf '%s\n' "$output_auth_failed" | grep '^STOP_REASON=' | cut -d= -f2-)"
+
+# Network-error probe → tracker_unavailable, distinct reason from auth/rate-limit.
+output_network_error="$(router_output "888883")"
+run_test "network_error_probe_mode" "tracker_unavailable" \
+  "$(printf '%s\n' "$output_network_error" | grep '^MODE=' | cut -d= -f2-)"
+run_test_contains "network_error_probe_stop_reason" "Network error" \
+  "$(printf '%s\n' "$output_network_error" | grep '^STOP_REASON=' | cut -d= -f2-)"
+
+# Opaque/outage probe (unrecognized gh error, not the specific not-found
+# message) → tracker_unavailable, falls back to github_unavailable framing.
+output_github_unavailable="$(router_output "888884")"
+run_test "github_unavailable_probe_mode" "tracker_unavailable" \
+  "$(printf '%s\n' "$output_github_unavailable" | grep '^MODE=' | cut -d= -f2-)"
+run_test_contains "github_unavailable_probe_stop_reason" "unavailable" \
+  "$(printf '%s\n' "$output_github_unavailable" | grep '^STOP_REASON=' | cut -d= -f2-)"
+
+# Genuine not-found with an explicit gh "could not resolve" error on BOTH
+# probes must still classify as not_found → MODE=ambiguous (unchanged
+# behavior), proving the fix does not turn every non-zero gh exit into
+# tracker_unavailable.
+output_explicit_not_found="$(router_output "888885")"
+run_test "explicit_not_found_probe_mode" "ambiguous" \
+  "$(printf '%s\n' "$output_explicit_not_found" | grep '^MODE=' | cut -d= -f2-)"
+run_test_contains "explicit_not_found_probe_stop_reason" "could not be resolved" \
+  "$(printf '%s\n' "$output_explicit_not_found" | grep '^STOP_REASON=' | cut -d= -f2-)"
+
+# Genuine not-found via a bare non-zero exit with no stderr (999999, existing
+# fixture) must also still classify as not_found → MODE=ambiguous. Re-asserted
+# here explicitly as part of the #1503 regression coverage.
+run_test "bare_exit_not_found_probe_mode_regression" "ambiguous" \
+  "$(printf '%s\n' "$output_noresol" | grep '^MODE=' | cut -d= -f2-)"
+
+# Multi-target list: a probe failure partway through the list must still
+# surface as tracker_unavailable, not ambiguous, and must not be masked by
+# an earlier successfully-resolved token.
+output_list_rate_limited="$(router_output "978" "888881")"
+run_test "list_rate_limited_mode" "tracker_unavailable" \
+  "$(printf '%s\n' "$output_list_rate_limited" | grep '^MODE=' | cut -d= -f2-)"
+run_test_contains "list_rate_limited_stop_reason" "rate limit" \
+  "$(printf '%s\n' "$output_list_rate_limited" | grep '^STOP_REASON=' | cut -d= -f2-)"
+
+# Happy path: a successful resolution (no probe failure at all) must be
+# entirely unaffected by the new probe-capturing path — reconfirmed here
+# alongside the failure-classification tests so the two are visibly compared
+# in the same regression block.
+run_test "happy_path_probe_regression" "redirect_item" \
+  "$(printf '%s\n' "$output_978" | grep '^MODE=' | cut -d= -f2-)"
 
 # --- Routing-decision record fields present (AC10) -------------------------
 

@@ -3,6 +3,7 @@
 #
 # Classifies a /run-work invocation into one routing mode:
 #   no_target_scan | redirect_items | redirect_item | redirect_epic | ambiguous
+#   | tracker_unavailable
 #
 # The script is READ-ONLY: it must not update tracker status, create branches,
 # open/edit/merge PRs, close issues, delete branches, or post comments.
@@ -34,12 +35,14 @@ MODE_REDIRECT_ITEM="redirect_item"
 MODE_REDIRECT_ITEMS="redirect_items"
 MODE_REDIRECT_EPIC="redirect_epic"
 MODE_AMBIGUOUS="ambiguous"
+MODE_TRACKER_UNAVAILABLE="tracker_unavailable"
 
 LABEL_NO_TARGET="No-target scan"
 LABEL_REDIRECT_ITEM="Redirect (item)"
 LABEL_REDIRECT_ITEMS="Redirect (items)"
 LABEL_REDIRECT_EPIC="Redirect (epic)"
 LABEL_AMBIGUOUS="Ambiguous"
+LABEL_TRACKER_UNAVAILABLE="Tracker unavailable"
 
 # ---------------------------------------------------------------------------
 # Usage
@@ -57,6 +60,10 @@ Classifies a /run-work invocation into one routing mode:
   redirect_item    Single non-epic target; redirect to /run-item (no mutation).
   redirect_epic    Epic-like target; redirect to /run-epic (no mutation).
   ambiguous        Cannot deterministically resolve; no mutation allowed.
+  tracker_unavailable
+                   A gh probe failed (rate limit, auth, network, or GitHub
+                   outage) rather than confirming the target does not exist;
+                   retry once the underlying cause clears. No mutation allowed.
 
 Flags:
   --epic <n>   Treat <n> as an explicit epic target (skips is_epic_issue check).
@@ -266,6 +273,159 @@ RESOLVED_KIND=""
 # Caller should use this to populate STOP_REASON when the generic message is
 # insufficient (e.g., gh CLI missing vs. item not found).
 RESOLVE_FAIL_REASON=""
+# Set by resolve_token alongside RESOLVE_FAIL_REASON when the failure is a
+# probe failure (gh call errored) rather than a confirmed not-found. Callers
+# use this to route to MODE_TRACKER_UNAVAILABLE instead of MODE_AMBIGUOUS.
+# Values: "" (default — genuine not-found / other unresolvable) |
+#         "tracker_unavailable"
+RESOLVE_FAIL_KIND=""
+
+# ---------------------------------------------------------------------------
+# Helper: run a gh probe capturing stdout, stderr, and exit code separately.
+#
+# Unlike `gh ... 2>/dev/null || true`, this lets callers distinguish a probe
+# failure (rate limit, auth, network, GitHub outage) from a successful call
+# that simply found nothing. Sets PROBE_OUT, PROBE_ERR, PROBE_EXIT. Never
+# triggers `set -e` regardless of the underlying gh exit status, and restores
+# the caller's original errexit state on return rather than forcing it back
+# on — callers (resolve_token's call sites) rely on `set +e` remaining in
+# effect around the whole resolve_token() call, and unconditionally
+# re-enabling errexit here would make a later `return 1` from resolve_token
+# terminate the script immediately instead of letting the caller inspect $?.
+# ---------------------------------------------------------------------------
+
+PROBE_OUT=""
+PROBE_ERR=""
+PROBE_EXIT=0
+
+gh_probe() {
+  local err_file errexit_was_set
+  errexit_was_set=0
+  case "$-" in *e*) errexit_was_set=1 ;; esac
+  err_file="$(mktemp)"
+  set +e
+  PROBE_OUT="$(gh "$@" 2>"$err_file")"
+  PROBE_EXIT=$?
+  if [ "$errexit_was_set" -eq 1 ]; then
+    set -e
+  fi
+  PROBE_ERR="$(cat "$err_file" 2>/dev/null)"
+  rm -f "$err_file"
+}
+
+# ---------------------------------------------------------------------------
+# Helper: classify a gh probe's stderr into a failure cause.
+#
+# Echoes one of: not_found | rate_limited | auth_failed | network_error |
+# github_unavailable
+#
+# A confirmed "not found" response (gh's own "could not resolve to a
+# PullRequest/Issue" message, or an empty stderr — gh's historical behavior
+# for this repo's probes) is classified as not_found so genuinely unknown
+# targets keep resolving to MODE_AMBIGUOUS exactly as before. Anything else
+# non-empty and unrecognized falls back to github_unavailable so opaque
+# outages are treated as probe failures rather than silently swallowed as
+# not-found.
+# ---------------------------------------------------------------------------
+
+classify_gh_probe_error() {
+  local err="$1"
+  local err_lc
+  err_lc="$(printf '%s' "$err" | tr '[:upper:]' '[:lower:]')"
+
+  if [ -z "$err_lc" ]; then
+    echo "not_found"
+    return 0
+  fi
+
+  case "$err_lc" in
+    *"could not resolve to a pullrequest"*|*"could not resolve to an issue"*|*"no pull requests found"*|*"no default remote repository has been set"*)
+      echo "not_found"
+      return 0
+      ;;
+  esac
+
+  case "$err_lc" in
+    *"api rate limit"*|*"rate limit exceeded"*|*"secondary rate limit"*)
+      echo "rate_limited"
+      return 0
+      ;;
+  esac
+
+  case "$err_lc" in
+    *"gh auth login"*|*"gh auth refresh"*|*"not logged into"*|*"bad credentials"*|*"requires authentication"*|*"http 401"*|*"401 unauthorized"*|*"authentication required"*)
+      echo "auth_failed"
+      return 0
+      ;;
+  esac
+
+  case "$err_lc" in
+    *"could not resolve host"*|*"connection refused"*|*"connection reset"*|*"network is unreachable"*|*"no such host"*|*"context deadline exceeded"*|*"timed out"*|*"dial tcp"*)
+      echo "network_error"
+      return 0
+      ;;
+  esac
+
+  echo "github_unavailable"
+}
+
+# ---------------------------------------------------------------------------
+# Helper: best-effort rate-limit reset time for the reason string.
+#
+# Queries `gh api rate_limit` for the GraphQL quota reset epoch and formats
+# it as UTC. Never fails the caller — an unavailable/erroring rate_limit call
+# just omits the timestamp from the reason string.
+# ---------------------------------------------------------------------------
+
+gh_rate_limit_reset_info() {
+  local reset_epoch
+  reset_epoch="$(gh api rate_limit --jq '.resources.graphql.reset' 2>/dev/null)" || reset_epoch="" # workflow-shell-guard: allow SH001 - best-effort diagnostic lookup, failure just omits the reset timestamp
+  case "${reset_epoch:-}" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+
+  local reset_human=""
+  if date -u -d "@$reset_epoch" '+%Y-%m-%dT%H:%M:%SZ' >/dev/null 2>&1; then
+    reset_human="$(date -u -d "@$reset_epoch" '+%Y-%m-%dT%H:%M:%SZ')"
+  elif date -u -r "$reset_epoch" '+%Y-%m-%dT%H:%M:%SZ' >/dev/null 2>&1; then
+    reset_human="$(date -u -r "$reset_epoch" '+%Y-%m-%dT%H:%M:%SZ')"
+  fi
+
+  if [ -n "$reset_human" ]; then
+    printf 'retry after %s UTC (rate limit resets then)' "$reset_human"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Helper: build the RESOLVE_FAIL_REASON text for a classified probe failure.
+# ---------------------------------------------------------------------------
+
+build_probe_fail_reason() {
+  local kind="$1" token="$2" err="$3"
+  case "$kind" in
+    rate_limited)
+      local reset_info
+      reset_info="$(gh_rate_limit_reset_info)"
+      if [ -n "$reset_info" ]; then
+        printf "GitHub API rate limit exceeded while resolving target '%s'; %s" "$token" "$reset_info"
+      else
+        printf "GitHub API rate limit exceeded while resolving target '%s'; retry after the rate limit resets" "$token"
+      fi
+      ;;
+    auth_failed)
+      printf "GitHub authentication failed while resolving target '%s'; run 'gh auth login' (or 'gh auth refresh') and retry" "$token"
+      ;;
+    network_error)
+      printf "Network error contacting GitHub while resolving target '%s'; check connectivity and retry" "$token"
+      ;;
+    github_unavailable)
+      printf "GitHub appears unavailable while resolving target '%s' (gh reported: %s); retry shortly" "$token" "$(printf '%s' "$err" | head -n1)"
+      ;;
+    *)
+      printf "gh probe failed while resolving target '%s'" "$token"
+      ;;
+  esac
+}
 
 resolve_token() {
   local token="$1"
@@ -273,6 +433,7 @@ resolve_token() {
   REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
   RESOLVED_KIND="none"
   RESOLVE_FAIL_REASON=""
+  RESOLVE_FAIL_KIND=""
 
   # Normalize: strip leading ./ so ./docs/specs/developments/... matches correctly
   token="${token#./}"
@@ -290,20 +451,44 @@ resolve_token() {
   if is_positive_int "$pr_num"; then
     # Try as a PR first; if that fails, try as an issue
     if have_cmd gh; then
-      local pr_state
-      pr_state="$(gh pr view "$pr_num" --json state --jq '.state' 2>/dev/null)" || true # workflow-shell-guard: allow SH001 - type probe; failure expected when target is not a PR, result checked by caller
-      if [ -n "$pr_state" ]; then
+      local pr_class issue_class
+
+      gh_probe pr view "$pr_num" --json state --jq '.state'
+      if [ "$PROBE_EXIT" -eq 0 ] && [ -n "$PROBE_OUT" ]; then
         RESOLVED_KIND="pr"
         return 0
       fi
+      if [ "$PROBE_EXIT" -ne 0 ]; then
+        pr_class="$(classify_gh_probe_error "$PROBE_ERR")"
+        if [ "$pr_class" != "not_found" ]; then
+          # gh call itself failed (rate limit, auth, network, outage) rather
+          # than confirming the target is not a PR — do not fall through to
+          # the issue probe and do not treat this as a genuine not-found.
+          RESOLVE_FAIL_KIND="tracker_unavailable"
+          RESOLVE_FAIL_REASON="$(build_probe_fail_reason "$pr_class" "$token" "$PROBE_ERR")"
+          RESOLVED_KIND="none"
+          return 1
+        fi
+      fi
+
       # Try as issue
-      local issue_state
-      issue_state="$(gh issue view "$pr_num" --json state --jq '.state' 2>/dev/null)" || true # workflow-shell-guard: allow SH001 - type probe; failure expected when target is not an issue, result checked by caller
-      if [ -n "$issue_state" ]; then
+      gh_probe issue view "$pr_num" --json state --jq '.state'
+      if [ "$PROBE_EXIT" -eq 0 ] && [ -n "$PROBE_OUT" ]; then
         RESOLVED_KIND="issue"
         return 0
       fi
-      # gh available but token is neither an open PR nor an open issue.
+      if [ "$PROBE_EXIT" -ne 0 ]; then
+        issue_class="$(classify_gh_probe_error "$PROBE_ERR")"
+        if [ "$issue_class" != "not_found" ]; then
+          RESOLVE_FAIL_KIND="tracker_unavailable"
+          RESOLVE_FAIL_REASON="$(build_probe_fail_reason "$issue_class" "$token" "$PROBE_ERR")"
+          RESOLVED_KIND="none"
+          return 1
+        fi
+      fi
+
+      # gh available, both probes succeeded, and token is neither an open PR
+      # nor an open issue — a genuine not-found.
       RESOLVED_KIND="none"
       return 1
     else
@@ -443,9 +628,16 @@ elif [ "${#deduped_tokens[@]}" -eq 1 ]; then
   set -e
 
   if [ "$resolve_exit" -ne 0 ]; then
-    # Unresolvable token → ambiguous
-    MODE="$MODE_AMBIGUOUS"
-    MODE_LABEL="$LABEL_AMBIGUOUS"
+    # Unresolvable token → ambiguous, unless the failure was a gh probe
+    # failure (rate limit, auth, network, outage) rather than a confirmed
+    # not-found, in which case it is distinctly tracker_unavailable.
+    if [ "${RESOLVE_FAIL_KIND:-}" = "tracker_unavailable" ]; then
+      MODE="$MODE_TRACKER_UNAVAILABLE"
+      MODE_LABEL="$LABEL_TRACKER_UNAVAILABLE"
+    else
+      MODE="$MODE_AMBIGUOUS"
+      MODE_LABEL="$LABEL_AMBIGUOUS"
+    fi
     if [ -n "${RESOLVE_FAIL_REASON:-}" ]; then
       STOP_REASON="$RESOLVE_FAIL_REASON"
     else
@@ -484,6 +676,7 @@ else
   all_resolved=1
   resolved_list=()
   first_unresolvable=""
+  first_unresolvable_fail_kind=""
 
   for t in "${deduped_tokens[@]}"; do
     set +e
@@ -494,14 +687,23 @@ else
     if [ "$res_exit" -ne 0 ]; then
       all_resolved=0
       first_unresolvable="$t"
+      first_unresolvable_fail_kind="${RESOLVE_FAIL_KIND:-}"
       break
     fi
     resolved_list+=("$t")
   done
 
   if [ "$all_resolved" -eq 0 ]; then
-    MODE="$MODE_AMBIGUOUS"
-    MODE_LABEL="$LABEL_AMBIGUOUS"
+    # Unresolvable token → ambiguous, unless the failure was a gh probe
+    # failure (rate limit, auth, network, outage) rather than a confirmed
+    # not-found, in which case it is distinctly tracker_unavailable.
+    if [ "$first_unresolvable_fail_kind" = "tracker_unavailable" ]; then
+      MODE="$MODE_TRACKER_UNAVAILABLE"
+      MODE_LABEL="$LABEL_TRACKER_UNAVAILABLE"
+    else
+      MODE="$MODE_AMBIGUOUS"
+      MODE_LABEL="$LABEL_AMBIGUOUS"
+    fi
     if [ -n "${RESOLVE_FAIL_REASON:-}" ]; then
       STOP_REASON="$RESOLVE_FAIL_REASON"
     else

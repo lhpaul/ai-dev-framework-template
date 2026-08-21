@@ -940,6 +940,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory instead of the product checkout's, so two cleanup runs that
   resolve the product repository to different local checkouts of the same
   hub no longer both proceed for the same release.
+- **`run-work-router.sh` no longer treats a `gh` probe failure as "target not
+  found"** (#1503): `resolve_token()` probed `gh pr view`/`gh issue view` with
+  `2>/dev/null || true` and treated any empty result as unresolved, so a rate
+  limit, auth failure, network error, or GitHub outage was indistinguishable
+  from the target genuinely not existing — both produced `MODE=ambiguous`,
+  which every bounded command (`/run-item`, `/run-items`, `/run-epic`) treats
+  as a hard stop with a misdirecting reason. Live reproduction: `/run-items
+  1502 1501` stopped reporting both issues unresolvable immediately after a
+  `/run-work` scan exhausted the hourly GraphQL quota, even though both were
+  open and had resolved successfully minutes earlier. `resolve_token()` now
+  captures each probe's stdout, stderr, and exit code separately (`gh_probe`)
+  and classifies a non-zero exit's stderr (`classify_gh_probe_error`) into
+  `rate_limited`, `auth_failed`, `network_error`, or `github_unavailable`
+  before falling back to `not_found` for gh's own "could not resolve to a
+  PullRequest/Issue" message or an empty stderr — preserving current behavior
+  for a genuine not-found. A probe failure now stops with the distinct
+  `MODE=tracker_unavailable` (not `ambiguous`) and a `STOP_REASON` naming the
+  cause; a rate-limited probe additionally reports the GraphQL quota reset
+  time from `gh api rate_limit` when available.
 
 ### Changed
 
