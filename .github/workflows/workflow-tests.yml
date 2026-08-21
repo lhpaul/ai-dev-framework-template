@@ -153,6 +153,8 @@ jobs:
     needs: [select, test]
     if: always()
     runs-on: ubuntu-latest
+    # No checkout and no API calls — this job only reads job results.
+    permissions: {}
     steps:
       - name: Verify selected suites passed
         env:
