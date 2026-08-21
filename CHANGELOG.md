@@ -57,7 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ("helper emits", "script hardcodes", "component returns"), the concrete
   control, and the two real overnight-batch wave sets named in the issue
   (previously collapsed into one serial group of 4 each, now fully
-  parallel-eligible).
+  parallel-eligible). `looks_like_module_identifier` also now strips trailing
+  sentence punctuation before its shape check, so a verb immediately followed
+  by terminal punctuation (e.g. "the script **fails**.") is no longer
+  misread as having a dot-extension and does not slip through as a fake
+  module signal either.
 - **Item runners no longer park permanently after backgrounding a long step
   and ending the turn to wait for it** (#1548): three of four Work Item
   Runners in one overnight wave backgrounded a step (`test-pr-review-loop.sh`,

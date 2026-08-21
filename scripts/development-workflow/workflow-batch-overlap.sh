@@ -185,10 +185,19 @@ def looks_like_module_identifier(value: str) -> bool:
     dot-extension, an underscore/hyphen separator, or mixed/upper case (a
     proper noun or identifier shape). A plain lowercase word (e.g. "emits",
     "hardcodes", "returns") is ordinary English prose, not a module name.
+
+    Trailing sentence punctuation (e.g. the "." that ends "the script
+    fails.") is stripped before the shape check, matching the punctuation
+    `normalize_identifier` strips later. Without this, a verb immediately
+    followed by terminal punctuation would be misread as having a
+    dot-extension and slip through as a fabricated module signal.
     """
-    if re.search(r"[._-]", value):
+    trimmed = value.strip("`'\"“”‘’.,;:)(")
+    if not trimmed:
+        return False
+    if re.search(r"[._-]", trimmed):
         return True
-    return value != value.lower()
+    return trimmed != trimmed.lower()
 
 
 def extract_signals(title: str, brief: str) -> list[dict]:

@@ -283,6 +283,17 @@ write_items "$one_sided" \
 run_test "one_sided_evidence_is_no_actionable_overlap" "no_actionable_overlap" "$(class_for "$one_sided")"
 run_test "one_sided_evidence_dispatch_is_parallel" "parallel_eligible" "$(dispatch_for "$one_sided")"
 
+# Defect 1 residual: an English verb immediately followed by terminal
+# punctuation (no words after it) must not become a module signal either.
+# The unquoted-cue capture group includes "." in its character class, so a
+# trailing sentence period was previously mistaken for a dot-extension.
+verb_terminal_period="$TMP_ROOT/verb-terminal-period.json"
+write_items "$verb_terminal_period" \
+  "$(item_json vtp-a "A" "the script fails." "scripts/x/period-a.sh")" \
+  "$(item_json vtp-b "B" "resolveBeta() has a bug." "scripts/x/period-b.sh")"
+run_test "verb_terminal_period_not_captured" "no_actionable_overlap" "$(class_for "$verb_terminal_period")"
+run_test "verb_terminal_period_drops_bogus_module_signal" "0" "$(pair_value "$verb_terminal_period" '[.pairs[0].signals.leftSignals[] | select(.type=="module")] | length')"
+
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 [ "$FAIL_COUNT" -eq 0 ]
