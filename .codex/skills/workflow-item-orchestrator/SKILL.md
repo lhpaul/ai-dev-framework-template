@@ -90,8 +90,11 @@ Recommended model tier: `balanced`
     (`while pgrep -f "<cmd>" >/dev/null; do sleep 20; done`, with `<cmd>`
     specific enough — e.g. including the PR number — that it cannot match an
     unrelated process; see Protocol 91's "Execution Discipline" section for
-    why PID-capture-and-`wait` does not substitute here). Never end a turn
-    while something this run started is still in flight.
+    why PID-capture-and-`wait` does not substitute here). After the loop
+    exits, check `$?`: pgrep exit status 1 means the step genuinely finished;
+    any other nonzero status (2, 3, 127) is a polling failure, not
+    completion — do not treat it as done. Never end a turn while something
+    this run started is still in flight.
 23. **Never re-invoke `pr-review-loop.sh` for a PR whose loop is already
     running**: it takes a per-PR single-instance lock; a second concurrent
     invocation exits 75 with `REASON=lock_contention` and reports nothing

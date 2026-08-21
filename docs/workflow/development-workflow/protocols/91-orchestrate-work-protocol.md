@@ -68,7 +68,14 @@ restate this rule for those two specifically):**
   captured when the step is launched is gone by the time a later call checks
   on it. Pattern-matching the running process is the correct mechanism for
   this multi-invocation model, not a workaround for it — keep the pattern
-  specific instead of switching to PID capture.
+  specific instead of switching to PID capture. After the loop exits, check
+  `$?` (bash sets it to the polling command's own exit status when the loop
+  condition becomes false) before concluding the step is done: `pgrep` exit
+  status `1` means no process matched — the step has genuinely ended, proceed
+  to read the actual outcome from PR state. Any other status (`2` invalid
+  pattern syntax, `3` fatal error, `127` command not found) is a polling
+  failure, not evidence of completion — do not treat it as done; report it and
+  check PR state directly instead.
 - **Never end a turn while something this runner started is still in flight.**
   A step that takes several minutes (or, for `pr-review-loop.sh`, up to the
   configured `--max-wait`) is expected to take that long — stay with it. Ending
