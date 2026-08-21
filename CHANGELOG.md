@@ -27,6 +27,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **A replied-to but unresolved review thread no longer blocks the very
+  re-review it was replied about** (#1508): `check_unresolved_threads` in
+  `scripts/development-workflow/pr-review-loop.sh` gated the phase-1
+  "should we trigger a new review" check in `run_codex_github_review` and
+  `run_claude_code_action_review` purely on GraphQL `isResolved` state. When a
+  fixer pushed a fix and replied to a thread without also calling
+  `resolveReviewThread` — the normal state immediately after a push — the
+  loop returned `RESULT=needs_fixes REASON=existing_findings` and never
+  re-triggered the platform review, so the reviewer never saw the fix commit
+  until a human resolved the thread manually out of band. `check_unresolved_
+  threads` now takes a required `mode` argument. `mode=provisional`, used only
+  by those two phase-1 pre-trigger gates, additionally treats a thread as not
+  blocking re-review when its last comment is from a non-bot author posted
+  after the PR's current head-commit `committedDate` — modeling "fixed and
+  replied to, awaiting explicit resolution". Every gate that decides
+  `RESULT=clean` (the aggregate thread gate, `coderabbit_thread_gate_clean`,
+  the post-trigger findings recount, and the post-clean recheck) keeps using
+  `mode=strict`, which is byte-for-byte the prior behavior — a reply alone
+  still can never mark a thread resolved there, so this cannot reintroduce the
+  false-clean class fixed by #1531 and #1437. Unrecognized mode values fail
+  safe to `strict`. New regression tests in
+  `scripts/development-workflow/tests/test-pr-review-loop.sh` cover both
+  directions: the reply-after-head-commit case that must not block
+  re-triggering (confirmed to fail against the pre-fix code), and reply-
+  before-head-commit / bot-authored-reply / no-reply / true-resolution cases
+  that must still block under both modes.
 - **`post-merge-cleanup.sh` no longer closes the wrong issue for team-prefixed
   branch slugs** (#1511): the team-prefixed identifier pattern
   (`^(fix|feature|hotfix|refactor)/([a-zA-Z]{2,6}-([0-9]+))($|-)`) matches any
@@ -1006,6 +1032,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (the expected branch not checked out anywhere) still reports a plain,
   unexplained discrepancy with no caller-error row and no change to the
   non-zero exit code.
+- **`graduation-closeout.sh` no longer refuses nested graduation PRs** (#1513):
+  the graduation PR base-branch validation hard-coded `develop` as the only
+  acceptable base, so a nested integration lineage (e.g. a wave branch
+  `develop-ventas-e3b` graduating into a module branch
+  `develop-sales-module` rather than directly into `develop`) failed
+  closeout even though that base is correct for that layer — reproduced
+  downstream on `mome-cl/mome-platform` PR #2138. A new `--base <branch>`
+  flag (default `develop`, matching `batch-merge.sh`'s existing `--base`
+  convention) lets the operator declare the expected graduation base; the
+  script still fails closed with a clear error when the PR's actual base
+  does not match, and rejects an arbitrary non-integration-branch `--base`
+  value (anything other than `develop` or `develop-*`) up front regardless
+  of what the graduation PR happens to target. The sub-item closing comment
+  no longer hard-codes "to `develop`" either, and the summary output now
+  reports `GRADUATION_BASE`. `graduation-closeout-from-merged-pr.sh` (the
+  merge-time automation fallback invoked by
+  `.github/workflows/update-tracker-on-merge.yml`) intentionally keeps its
+  own `develop`-only check: that workflow only triggers on PRs targeting
+  `develop`, so a nested-base graduation can never reach it regardless, and
+  Step 5 of `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`
+  is the primary closeout path for nested graduations — invoked manually
+  with `--base`. This issue is distinct from #1329 (documentation of
+  `/run-epic --base`, the per-sub-item-PR integration base) and does not
+  attempt to resolve it; #1329 remains open. 8 new regression tests cover
+  the default `develop` base (confirmed unaffected), a matching non-default
+  base, a mismatched non-default base, and an invalid `--base` value
+  (confirmed to fail against the pre-fix script).
 
 ### Changed
 
