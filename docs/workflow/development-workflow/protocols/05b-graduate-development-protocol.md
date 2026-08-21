@@ -281,11 +281,15 @@ Run the automated reviewer loop (`pr-review-loop.sh`) and CI loop on the graduat
 
 After the human merges the graduation PR (must use a **merge commit**):
 
-1. Switch to `develop` and sync the merge commit:
+1. Switch to the graduation PR's base branch and sync the merge commit —
+   this is `develop`, unless the graduation PR was a nested graduation
+   (Step 3) whose base was a parent integration branch such as
+   `develop-sales-module`, in which case use that branch instead:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
-   git checkout develop
-   git pull origin develop
+   git checkout <graduation-pr-base>   # develop, or the parent integration branch
+   git pull origin <graduation-pr-base>
    ```
 
 2. Delete the integration branch on the remote (BR-7):
@@ -309,6 +313,7 @@ After the human merges the graduation PR (must use a **merge commit**):
    signals and calls the **same** reconciler below. Agent and automation
    double-runs are safe/idempotent (`already_terminal` / no regressive moves).
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    ./scripts/development-workflow/graduation-closeout.sh \
      --slug <slug> \
@@ -330,7 +335,7 @@ After the human merges the graduation PR (must use a **merge commit**):
    deferred epic or excluded sub-item.
 
    The helper:
-   - validates that the graduation PR is already merged from `develop-<slug>` to `develop`;
+   - validates that the graduation PR is already merged from `develop-<slug>` to its expected base (`develop` by default, or the branch passed via `--base` for a nested graduation);
    - identifies planned sub-items from native GitHub sub-issues or the `integration-branch:<slug>` label fallback;
    - includes issue references from closing keywords in merged PRs targeting `develop-<slug>`;
    - closes open delivered sub-items and reasserts the configured terminal Project status;
