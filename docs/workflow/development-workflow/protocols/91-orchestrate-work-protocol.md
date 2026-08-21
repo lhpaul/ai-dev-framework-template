@@ -31,6 +31,71 @@ for the full routing specification.
 
 ---
 
+## Execution Discipline: A Paused Turn Does Not Resume
+
+Read this before running any long step.
+
+**Ending a turn ends this agent. Nothing external wakes it back up.** If the
+Work Item Runner starts a long-running step in the background and then ends
+its turn to "wait for the completion notification," it parks permanently —
+not blocked, not escalated, not dead, just structurally unable to ever observe
+its own process finishing. This has happened in production runs: a runner
+backgrounded a step, wrote a calm and accurate progress note ("I'll pause here
+and wait for the background task notification before continuing"), and ended
+its turn. No notification ever reached it, because backgrounded-process
+notifications go to whatever *dispatched* the runner (a parent orchestrator or
+a human), never back to the runner itself. The item was recovered only because
+a supervising parent happened to notice the report named no terminal state.
+
+This is the single most dangerous failure mode for unattended runs, because it
+does not look like a failure — the report is plausible, well-written, and (at
+the moment it was written) accurate. Nothing distinguishes it from a runner
+that is about to continue.
+
+**The rule, for every long-running step this protocol asks the runner to
+execute — not only `pr-review-loop.sh` and `pr-ci-loop.sh` (Step 7 / Step 8
+restate this rule for those two specifically):**
+
+- Run the step in the foreground and wait for it to finish, in the same turn, or
+- If the step must be backgrounded, poll it yourself in the same turn until it
+  returns, e.g. `while pgrep -f "<cmd>" >/dev/null; do sleep 20; done`. Make
+  `<cmd>` specific enough that it cannot match an unrelated process — include
+  the PR number or another identifying argument (e.g.
+  `pgrep -f "pr-review-loop.sh 1550"`, not a bare script name). A captured
+  `$!` PID plus `wait "$pid"` is not available here the way it would be inside
+  a single continuous shell script: this runner's tool calls are separate
+  shell invocations with no persisted variable state between them, so a PID
+  captured when the step is launched is gone by the time a later call checks
+  on it. Pattern-matching the running process is the correct mechanism for
+  this multi-invocation model, not a workaround for it — keep the pattern
+  specific instead of switching to PID capture. After the loop exits, check
+  `$?` (bash sets it to the polling command's own exit status when the loop
+  condition becomes false) before concluding the step is done: `pgrep` exit
+  status `1` means no process matched — the step has genuinely ended, proceed
+  to read the actual outcome from PR state. Any other status (`2` invalid
+  pattern syntax, `3` fatal error, `127` command not found) is a polling
+  failure, not evidence of completion — do not treat it as done; report it and
+  check PR state directly instead.
+- **Never end a turn while something this runner started is still in flight.**
+  A step that takes several minutes (or, for `pr-review-loop.sh`, up to the
+  configured `--max-wait`) is expected to take that long — stay with it. Ending
+  the turn is not a way to make the wait "free"; it is a way to lose the run.
+
+**Never re-invoke `pr-review-loop.sh` for a PR whose loop is already running.**
+The script takes a per-PR single-instance lock; a second concurrent invocation
+exits `75` with `REASON=lock_contention` and gives no review information at
+all — it will not tell the runner anything about the PR's actual state. If
+re-entering this item after a backgrounded or interrupted `pr-review-loop.sh`
+run, do not start a new one. Instead, poll for the prior process to finish (or
+confirm it is genuinely gone), then read the outcome directly from PR state —
+`gh pr view`, the "Automated Reviewer Loop Summary" comment, and the GraphQL
+review-thread query — rather than launching a duplicate run. Use
+`pr-review-loop.sh unlock <pr-number>` only after confirming the recorded lock
+PID is no longer alive; it is a stale-lock recovery command, not a way to force
+a second run alongside a live one.
+
+---
+
 ## Step 0: Load Effective Guardrails
 
 Before any artifact-mutating action (before creating branches, opening PRs,
@@ -1711,6 +1776,7 @@ If one or more automated code review platforms are configured (see [`integration
 
 1. **Do not race ahead.** Do not run Step 7 in the background while proceeding to Step 8 without its result.
 2. **Do not background-and-yield.** Do not start `pr-review-loop.sh` in the background and then **end your turn** to wait for it. A backgrounded process's completion notification is delivered to whatever dispatched *you* (the parent orchestrator, or a human) — never back to you. If you end your turn while the loop is still running in the background, you park permanently: not blocked, not escalated, not dead, just structurally unable to ever observe your own process finishing. A parked runner is indistinguishable from a terminated one from the outside, which means it will not be recovered automatically. Run Step 7 in the foreground, or if you must background it, keep polling it yourself **in the same turn** until it returns. The review loop can take several minutes (poll interval × wait for bot); that is expected — stay with it. Only when the script exits with `clean` or `skipped`, observed by you in-turn, may you continue to Step 8.
+3. **Never launch a second `pr-review-loop.sh` for the same PR while one is already running.** The script holds a per-PR single-instance lock; a concurrent invocation exits `75` with `REASON=lock_contention` and reports nothing about the PR's actual review state. If you are re-entering this step after a backgrounded or interrupted run (including after a compaction or a fresh session resuming this item), do not start a new invocation to "check." Poll for the earlier process to finish, or confirm via the lock file / process table that it is genuinely gone, and read the outcome from PR state directly (`gh pr view`, the reviewer-loop summary comment, the GraphQL review-thread query). Reserve `pr-review-loop.sh unlock <pr-number>` for a confirmed-stale lock (recorded PID no longer alive) — never as a way to run two instances at once. See the "Execution Discipline" section above the Step 0 heading for the general foreground/poll rule this specializes.
 
 The helper script evaluates configured platforms sequentially. For each platform it checks for **existing** blocking findings from the bot (e.g. from a review that already ran on PR open) before posting a new trigger. If it finds any, it exits with `needs_fixes` without moving on to later platforms — so the fixer addresses them first; after a push, the next run starts again from the first configured platform. Supported platforms include `greptile`, `devin`, `coderabbit`, and `codex-github` (Codex GitHub App — async bot reviewer handled deterministically by `pr-review-loop.sh`).
 

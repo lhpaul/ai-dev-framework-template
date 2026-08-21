@@ -27,6 +27,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **Item runners no longer park permanently after backgrounding a long step
+  and ending the turn to wait for it** (#1548): three of four Work Item
+  Runners in one overnight wave backgrounded a step (`test-pr-review-loop.sh`,
+  `pr-review-loop.sh`) and ended their turn expecting an external notification
+  to resume them — ending a turn ends the agent, so nothing ever resumed
+  them, and each item was recovered only because a supervising parent noticed
+  the returned report named no terminal state. `91-orchestrate-work-protocol.md`
+  now states plainly, in a new "Execution Discipline: A Paused Turn Does Not
+  Resume" section read before Step 0, that a paused turn does not resume, and
+  prescribes foreground-or-poll for every long step, not only
+  `pr-review-loop.sh`/`pr-ci-loop.sh`; Step 7 and the agent/skill instruction
+  files (`.claude/agents/item-orchestrator.md`,
+  `.cursor/agents/item-orchestrator.md`,
+  `.codex/skills/workflow-item-orchestrator/SKILL.md`) carry the same rule
+  directly, plus a companion warning against re-invoking `pr-review-loop.sh`
+  on a PR whose loop is already running (it exits `75` with
+  `REASON=lock_contention` and reports nothing useful) — read the outcome
+  from PR state instead. On the parent side, `90-batch-orchestrate-work-
+  protocol.md` Step 5's supervision loop now classifies any returned report
+  that names no terminal state (no PR number paired with
+  `ready-for-human-review`, `blocked`, or `escalated` — or, for an item with
+  no PR yet, a concretely-named blocking reason; a bare "waiting" report never
+  satisfies that exception regardless of phrasing) as `stalled` and requires
+  resume/re-dispatch rather than acceptance, extending the existing "in-flight
+  CI/watch states are non-terminal" rule from governing runner behavior to
+  governing how the parent reads runner reports. Added the
+  [runner-stall supervision smoke-test runbook](docs/testing/workflow/1548-runner-stall-supervision.smoke-test.md),
+  since there is no automated test harness for protocol prose in this repo.
 - **`list_open_workflow_type_issues` no longer hardcodes a `.type` field key**
   (#1400): `gh project item-list --format json` derives each item's field key
   from the field's display name, lowercasing only its first character (for
