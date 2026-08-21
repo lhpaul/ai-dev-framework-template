@@ -950,6 +950,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory instead of the product checkout's, so two cleanup runs that
   resolve the product repository to different local checkouts of the same
   hub no longer both proceed for the same release.
+- **`run-work-router.sh` no longer treats a `gh` probe failure as "target not
+  found"** (#1503): `resolve_token()` probed `gh pr view`/`gh issue view` with
+  `2>/dev/null || true` and treated any empty result as unresolved, so a rate
+  limit, auth failure, network error, or GitHub outage was indistinguishable
+  from the target genuinely not existing — both produced `MODE=ambiguous`,
+  which every bounded command (`/run-item`, `/run-items`, `/run-epic`) treats
+  as a hard stop with a misdirecting reason. Live reproduction: `/run-items
+  1502 1501` stopped reporting both issues unresolvable immediately after a
+  `/run-work` scan exhausted the hourly GraphQL quota, even though both were
+  open and had resolved successfully minutes earlier. `resolve_token()` now
+  captures each probe's stdout, stderr, and exit code separately (`gh_probe`)
+  and classifies a non-zero exit's stderr (`classify_gh_probe_error`) into
+  `rate_limited`, `auth_failed`, `network_error`, or `github_unavailable`
+  before falling back to `not_found` for gh's own "could not resolve to a
+  PullRequest/Issue" message, or for an empty stderr **only** when the exit
+  code is gh's normal API-error code (`1`) — preserving current behavior for
+  a genuine not-found while an empty stderr at any other exit code (a
+  signal death, an OOM kill) still falls back to `github_unavailable`
+  instead of being silently treated as not-found. gh's own "no default
+  remote repository has been set" message (a local repo-configuration
+  error, not evidence the target doesn't exist) is likewise never
+  classified as `not_found`, and gets its own `local_config_error`
+  classification distinct from `github_unavailable` since the operator fix
+  is running `gh repo set-default` locally, not waiting out an outage.
+  `gh_probe()` also now guards its own
+  temp-file setup and stderr capture: a failing `mktemp` or `cat` reports a
+  diagnostic `PROBE_ERR` at a dedicated internal exit code instead of
+  silently producing an empty stderr that could otherwise be misread as a
+  not-found. A probe failure now stops with the distinct
+  `MODE=tracker_unavailable` (not `ambiguous`) and a `STOP_REASON` naming the
+  cause; a rate-limited probe additionally reports the GraphQL quota reset
+  time from `gh api rate_limit` when available.
+  `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
+  (the canonical routing specification) is updated to document the new
+  `tracker_unavailable` mode, its decision-table row, edge cases, and handoff
+  mapping (routing layer version 1.0 → 1.1).
 
 ### Changed
 
