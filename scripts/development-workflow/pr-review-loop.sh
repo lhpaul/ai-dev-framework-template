@@ -853,9 +853,13 @@ run_codex_github_review() {
   cd_workflow_repo_root
   repo="$(repo_slug)"
 
-  # Phase 1: Check for existing unresolved review threads from the codex bot
+  # Phase 1: Check for existing unresolved review threads from the codex bot.
+  # mode=provisional (#1508): a thread whose last comment is a non-bot reply
+  # posted after the current head commit does not block re-triggering the
+  # review here — see check_unresolved_threads for why this cannot cause a
+  # false RESULT=clean.
   set +e
-  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" provisional "$graphql_bot_login")"
   thread_check_status=$?
   set -e
   if [ "$thread_check_status" -eq 0 ]; then
@@ -927,8 +931,11 @@ run_codex_github_review() {
       ;;
     1)
       unresolved_count=0
+      # mode=strict: this recount feeds the caller's needs_fixes/COMMENT_COUNT
+      # reporting and must reflect true resolution state, not the provisional
+      # reply relaxation used to decide whether to trigger the review above.
       set +e
-      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" strict "$graphql_bot_login")"
       thread_check_status=$?
       set -e
       if [ "$thread_check_status" -eq 0 ]; then
@@ -997,9 +1004,10 @@ run_claude_code_action_review() {
   cd_workflow_repo_root
   repo="$(repo_slug)"
 
-  # Phase 1: Check for existing unresolved review threads from the Claude Code Action bot
+  # Phase 1: Check for existing unresolved review threads from the Claude Code Action bot.
+  # mode=provisional (#1508): see run_codex_github_review's phase 1 for rationale.
   set +e
-  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" provisional "$graphql_bot_login")"
   thread_check_status=$?
   set -e
   if [ "$thread_check_status" -eq 0 ]; then
@@ -1055,8 +1063,11 @@ run_claude_code_action_review() {
       ;;
     1)
       unresolved_count=0
+      # mode=strict: this recount feeds the caller's needs_fixes/COMMENT_COUNT
+      # reporting and must reflect true resolution state, not the provisional
+      # reply relaxation used to decide whether to trigger the review above.
       set +e
-      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" strict "$graphql_bot_login")"
       thread_check_status=$?
       set -e
       if [ "$thread_check_status" -eq 0 ]; then
@@ -3838,7 +3849,9 @@ coderabbit_thread_gate_clean() {
   while true; do
     thread_audit_attempt=$((thread_audit_attempt + 1))
     set +e
-    out="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+    # mode=strict: this gate decides RESULT=clean for CodeRabbit and must
+    # never be relaxed by a reply-without-resolve (see check_unresolved_threads).
+    out="$(check_unresolved_threads "$pr_number" "$repo" strict "$graphql_bot_login")"
     st=$?
     eval "$prev_errexit"
 
@@ -4983,10 +4996,25 @@ check_unresolved_threads() {
   # Arguments:
   #   $1    pr_number  - PR number (integer)
   #   $2    repo       - "owner/repo" slug
-  #   $3... bot_logins - one or more bot login strings (e.g. "coderabbitai", "devin-ai-integration")
+  #   $3    mode       - "strict" or "provisional" (see below); unrecognized values
+  #                       fail safe to "strict"
+  #   $4... bot_logins - one or more bot login strings (e.g. "coderabbitai", "devin-ai-integration")
   #
   # Bot logins are passed as individual positional arguments (not space-separated)
   # to ensure safe iteration in the comparison loop without word splitting.
+  #
+  # mode=provisional (issue #1508): in addition to the strict resolution checks
+  # above, a thread is also treated as NOT unresolved when its LAST comment was
+  # authored by someone other than a configured bot login (i.e. a maintainer or
+  # fixer-agent reply) AND that comment's createdAt is after the PR's current
+  # head-commit committedDate. This models "fixed and replied to, but the human/
+  # agent has not yet called resolveReviewThread" — the common state immediately
+  # after a fixer pushes (see #1508). It exists ONLY to unblock phase-1 gates that
+  # decide whether to re-trigger a review; it must never be used by a gate that
+  # decides RESULT=clean. Callers making that "declare clean" decision (the
+  # aggregate thread gate, coderabbit_thread_gate_clean, and any post-review
+  # findings recount) must keep using mode=strict, so a reply alone can never
+  # cause a false RESULT=clean — only true GraphQL resolution can.
   #
   # Re-enable errexit within this function. When called from a command substitution
   # with set +e active in the parent (as in the thread gate), the subshell inherits
@@ -4996,7 +5024,12 @@ check_unresolved_threads() {
   set -e
   local pr_number="$1"
   local repo="$2"
-  shift 2
+  local mode="$3"
+  shift 3
+  case "$mode" in
+    provisional) ;;
+    *) mode="strict" ;;
+  esac
   # Remaining positional args are bot login strings; store in an array for safe iteration.
   local -a bot_logins=("$@")
 
@@ -5009,11 +5042,21 @@ check_unresolved_threads() {
   local has_next_page="true"
   local page=0
   local max_pages=10
+  local head_committed_date=""
 
-  # GraphQL query: paginate reviewThreads 100 at a time, fetch first comment per thread.
+  # GraphQL query: paginate reviewThreads 100 at a time, fetch the first comment
+  # (aliased firstComment) per thread. In provisional mode, also fetch each
+  # thread's last comment (aliased lastComment) and the PR head commit's
+  # committedDate, needed for the post-push-reply check above.
+  local nodes_fields='id isResolved isOutdated firstComment:comments(first:1){nodes{author{login}body}}'
+  local pr_fields=''
+  if [ "$mode" = "provisional" ]; then
+    nodes_fields="$nodes_fields"'lastComment:comments(last:1){nodes{author{login}body createdAt}}'
+    pr_fields='commits(last:1){nodes{commit{committedDate}}}'
+  fi
   # Using inline query string to avoid heredoc quoting issues in subshells.
   local graphql_query
-  graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{id isResolved isOutdated comments(first:1){nodes{author{login}body}}}}}}}'
+  graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){'"$pr_fields"'reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{'"$nodes_fields"'}}}}}'
 
   while [ "$has_next_page" = "true" ]; do
     page=$((page + 1))
@@ -5033,22 +5076,26 @@ check_unresolved_threads() {
       result="$(gh api graphql \
         -f query="$graphql_query" \
         -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" -f cursor="$cursor" \
-        --jq '.data.repository.pullRequest.reviewThreads')" \
+        --jq '.data.repository.pullRequest')" \
         || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 3; }
     else
       result="$(gh api graphql \
         -f query="$graphql_query" \
         -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
-        --jq '.data.repository.pullRequest.reviewThreads')" \
+        --jq '.data.repository.pullRequest')" \
         || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 3; }
+    fi
+
+    if [ "$mode" = "provisional" ]; then
+      head_committed_date="$(printf '%s\n' "$result" | jq -r '.commits.nodes[0].commit.committedDate // ""')"
     fi
 
     # Use jq -r (not -re) for boolean/nullable fields: jq -e exits non-zero when the
     # output value is false or null, which would misinterpret valid values like
     # hasNextPage=false or isResolved=false as errors. Rely on gh api's own exit code
     # (caught above) for real API failures; use jq -r only for data extraction.
-    has_next_page="$(printf '%s\n' "$result" | jq -r '.pageInfo.hasNextPage')"
-    cursor="$(printf '%s\n' "$result" | jq -r '.pageInfo.endCursor // empty')"
+    has_next_page="$(printf '%s\n' "$result" | jq -r '.reviewThreads.pageInfo.hasNextPage')"
+    cursor="$(printf '%s\n' "$result" | jq -r '.reviewThreads.pageInfo.endCursor // empty')"
 
     local thread_json
     while IFS= read -r thread_json; do
@@ -5057,8 +5104,8 @@ check_unresolved_threads() {
       local is_resolved is_outdated author body
       is_resolved="$(printf '%s\n' "$thread_json" | jq -r '.isResolved')"
       is_outdated="$(printf '%s\n' "$thread_json" | jq -r '.isOutdated // false')"
-      author="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].author.login // ""')"
-      body="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].body // ""')"
+      author="$(printf '%s\n' "$thread_json" | jq -r '.firstComment.nodes[0].author.login // ""')"
+      body="$(printf '%s\n' "$thread_json" | jq -r '.firstComment.nodes[0].body // ""')"
 
       # Only count threads authored by configured bot logins.
       # Bot logins from the GraphQL API do not include the [bot] suffix.
@@ -5074,8 +5121,27 @@ check_unresolved_threads() {
       if [ "$is_outdated" = "true" ]; then continue; fi
       if printf '%s\n' "$body" | grep -q "✅ Addressed"; then continue; fi
 
+      if [ "$mode" = "provisional" ] && [ -n "$head_committed_date" ]; then
+        local last_author last_created_at last_is_bot
+        last_author="$(printf '%s\n' "$thread_json" | jq -r '.lastComment.nodes[0].author.login // ""')"
+        last_created_at="$(printf '%s\n' "$thread_json" | jq -r '.lastComment.nodes[0].createdAt // ""')"
+        last_is_bot=0
+        if [ -n "$last_author" ]; then
+          for bot_login in "${bot_logins[@]}"; do
+            if [ "$last_author" = "$bot_login" ]; then last_is_bot=1; break; fi
+          done
+        fi
+        if [ "$last_is_bot" -eq 0 ] && [ -n "$last_author" ] && [ -n "$last_created_at" ] \
+            && [ "$last_created_at" \> "$head_committed_date" ]; then
+          local thread_id
+          thread_id="$(printf '%s\n' "$thread_json" | jq -r '.id // "unknown"')"
+          echo "INFO: check_unresolved_threads: thread $thread_id provisionally addressed (reply by $last_author after head commit $head_committed_date) — not blocking re-review; still requires resolveReviewThread before RESULT=clean" >&2
+          continue
+        fi
+      fi
+
       unresolved_count=$((unresolved_count + 1))
-    done < <(printf '%s\n' "$result" | jq -c '.nodes[]')
+    done < <(printf '%s\n' "$result" | jq -c '.reviewThreads.nodes[]')
 
     if [ "$has_next_page" = "true" ] && [ -z "$cursor" ]; then
       echo "WARN: check_unresolved_threads: hasNextPage=true but endCursor is empty for PR #$pr_number; cannot confirm all threads checked" >&2
@@ -7742,7 +7808,9 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
     while true; do
       thread_audit_attempt=$((thread_audit_attempt + 1))
       set +e
-      thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" "${unresolved_bot_logins[@]}")"
+      # mode=strict: this is the aggregate RESULT=clean gate and must never be
+      # relaxed by a reply-without-resolve (see check_unresolved_threads).
+      thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" strict "${unresolved_bot_logins[@]}")"
       thread_check_status=$?
       set -e
       if [ "$thread_check_status" -eq 3 ] && [ "$thread_audit_attempt" -le "$thread_audit_max_retries" ]; then
@@ -7824,7 +7892,9 @@ if [ "$aggregate_result" = "clean" ] \
   late_thread_check_output=""
   late_thread_check_status=0
   set +e
-  late_thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" "${unresolved_bot_logins[@]}")"
+  # mode=strict: the post-clean recheck also decides RESULT=clean and must
+  # never be relaxed by a reply-without-resolve (see check_unresolved_threads).
+  late_thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" strict "${unresolved_bot_logins[@]}")"
   late_thread_check_status=$?
   set -e
 
