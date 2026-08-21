@@ -5139,6 +5139,59 @@ run_platform_review() {
   esac
 }
 
+# gh_rate_limit_exhausted_reset
+#
+# Probes `gh api rate_limit` (a check that GitHub explicitly exempts from
+# consuming the very quota it reports, so it remains reliable to call even
+# when a run has just exhausted its core or graphql budget) and prints the
+# epoch reset timestamp of whichever of those two resources currently has
+# zero remaining calls. Prints nothing and returns 1 when neither resource
+# is exhausted, the probe call itself fails, or the response cannot be
+# parsed — a probe failure carries no information either way, so callers
+# must treat it the same as "not (confirmably) rate limited", not as proof
+# the original failure had some other cause.
+#
+# Used by ensure_pr_ready_for_ready_phase (issue #1509) to distinguish a
+# transient GitHub API/rate-limit outage from a genuine review-gate failure,
+# the same way CODERABBIT_SKIP_BANNER_RE (issue #1531) gives a distinct,
+# actionable REASON to a distinct failure cause instead of overloading a
+# single generic escalation.
+gh_rate_limit_exhausted_reset() {
+  local rl_json
+  if ! rl_json="$(gh api rate_limit 2>/dev/null)"; then
+    return 1
+  fi
+
+  # The `|| reset=""` guard is load-bearing under `set -e`: this is a plain
+  # (unguarded-by-if) assignment, so if jq exits non-zero (e.g. malformed
+  # JSON from the probe), the assignment statement's own exit status would
+  # otherwise propagate and abort the whole script instead of letting this
+  # function fail closed and return 1 like every other parse-failure path
+  # here.
+  local reset
+  reset="$(printf '%s\n' "$rl_json" | jq -r '
+      [.resources.core, .resources.graphql]
+      | map(select(. != null and .remaining == 0))
+      | sort_by(.reset)
+      | .[0].reset // empty
+    ' 2>/dev/null)" || reset=""
+
+  if [ -z "$reset" ]; then
+    return 1
+  fi
+
+  printf '%s\n' "$reset"
+  return 0
+}
+
+# READY_PHASE_GATE_RATE_LIMIT_RESET is set by ensure_pr_ready_for_ready_phase
+# (as a plain global, since the function's only current callers use its exit
+# code directly rather than command-substituting its stdout) whenever it
+# returns 3, carrying the GitHub API rate-limit reset epoch so the caller can
+# report it. Cleared at the start of every call so a stale value from a prior
+# cycle is never mistaken for this cycle's cause.
+READY_PHASE_GATE_RATE_LIMIT_RESET=""
+
 ensure_pr_ready_for_ready_phase() {
   # Ready-phase platforms are intended to run only once draft-compatible GitHub
   # reviewers have cleared. Some external reviewers, including Haystack triage,
@@ -5147,7 +5200,23 @@ ensure_pr_ready_for_ready_phase() {
   local pr_number="$1"
   local is_draft
 
+  READY_PHASE_GATE_RATE_LIMIT_RESET=""
+
   if ! is_draft="$(gh pr view "$pr_number" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+    # Distinguish "GitHub's API was temporarily unavailable/rate-limited" from
+    # "this PR genuinely could not be prepared for the ready phase" (issue
+    # #1509): probe the rate-limit endpoint before concluding this is an
+    # unexplained failure. A confirmed exhaustion returns exit 3 so the caller
+    # can report REASON=rate_limited instead of the generic
+    # ready_for_review_failed, and skip the reviewer-failed label — the same
+    # distinction CODERABBIT_RATE_LIMIT_WAIT/CODERABBIT_SKIP_BANNER_RE draw
+    # between an acknowledged vendor quota block and a silent reviewer.
+    local rl_reset
+    if rl_reset="$(gh_rate_limit_exhausted_reset)"; then
+      READY_PHASE_GATE_RATE_LIMIT_RESET="$rl_reset"
+      echo "WARN: could not determine draft state for PR #$pr_number before ready phase — GitHub API rate limit exhausted (resets $rl_reset)" >&2
+      return 3
+    fi
     echo "WARN: could not determine draft state for PR #$pr_number before ready phase" >&2
     return 2
   fi
@@ -5155,6 +5224,12 @@ ensure_pr_ready_for_ready_phase() {
   if [ "$is_draft" = "true" ]; then
     echo "INFO: converting PR #$pr_number to ready before ready-phase reviewers" >&2
     if ! gh pr ready "$pr_number" >/dev/null 2>&1; then
+      local rl_reset_ready
+      if rl_reset_ready="$(gh_rate_limit_exhausted_reset)"; then
+        READY_PHASE_GATE_RATE_LIMIT_RESET="$rl_reset_ready"
+        echo "WARN: failed to mark PR #$pr_number ready before ready phase — GitHub API rate limit exhausted (resets $rl_reset_ready)" >&2
+        return 3
+      fi
       echo "WARN: failed to mark PR #$pr_number ready before ready phase" >&2
       return 2
     fi
@@ -5234,6 +5309,15 @@ reviewer_failed_label_required_for_result() {
 
   case "$result" in
     escalate)
+      case "$reason" in
+        # rate_limited (issue #1509) means the ready-phase gate confirmed a
+        # GitHub API rate-limit exhaustion, not a genuine review verdict on
+        # the PR — applying reviewer-failed here would blame the PR (and its
+        # author) for transient vendor/infrastructure unavailability.
+        rate_limited)
+          return 1
+          ;;
+      esac
       return 0
       ;;
     skipped)
@@ -7075,8 +7159,22 @@ for index in "${!platforms[@]}"; do
         phase_after_clean_net_new_blocker=1
         phase_after_clean_blocking_platform="ready_for_review"
         aggregate_result="escalate"
-        aggregate_reason="ready_for_review_failed"
-        aggregate_output="$(printf 'RESULT=escalate\nREASON=ready_for_review_failed\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+        # Exit 3 means ensure_pr_ready_for_ready_phase confirmed (via
+        # gh_rate_limit_exhausted_reset) that the underlying `gh` failure was a
+        # GitHub API rate-limit exhaustion rather than a genuine review-gate
+        # failure (issue #1509). Give it a distinct, actionable REASON instead
+        # of the generic ready_for_review_failed, and carry the reset
+        # timestamp so a human/supervisor knows when it is safe to retry.
+        # reviewer_failed_label_required_for_result() excludes this REASON
+        # from the reviewer-failed label — vendor/infrastructure unavailability
+        # is not a review verdict on the PR.
+        if [ "$ready_status" -eq 3 ]; then
+          aggregate_reason="rate_limited"
+          aggregate_output="$(printf 'RESULT=escalate\nREASON=rate_limited\nRATE_LIMIT_RESET=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "$READY_PHASE_GATE_RATE_LIMIT_RESET")"
+        else
+          aggregate_reason="ready_for_review_failed"
+          aggregate_output="$(printf 'RESULT=escalate\nREASON=ready_for_review_failed\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+        fi
         aggregate_status=2
         break
       fi
