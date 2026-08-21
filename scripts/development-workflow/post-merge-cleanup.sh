@@ -512,7 +512,11 @@ fi
 # least as long, and have nothing but trailing whitespace after the fence
 # marker — a shorter, differently-charactered, or content-suffixed line
 # (e.g. a nested example fence, or "``` end of block") is treated as still
-# being inside the fence rather than closing it.
+# being inside the fence rather than closing it. A fence delimiter may be
+# indented up to 3 spaces per GFM; 4+ spaces of leading whitespace makes it
+# indented code instead, so the raw line (not a fully whitespace-stripped
+# line) is matched to preserve that boundary — otherwise a 4-space-indented
+# "```" could be mistaken for a real fence and hide a live closing reference.
 strip_fenced_pr_body_blocks() {
   python3 -c '
 import re, sys
@@ -520,8 +524,9 @@ lines = sys.stdin.read().split("\n")
 out = []
 fence_char = None
 fence_len = 0
+fence_re = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 for line in lines:
-    match = re.match(r"^(`{3,}|~{3,})(.*)$", line.strip())
+    match = fence_re.match(line)
     if fence_char is None:
         if match:
             fence_char = match.group(1)[0]
@@ -553,17 +558,23 @@ sys.stdout.write("\n".join(out))
 # Echoes sorted, deduped issue numbers (one per line, possibly empty).
 # Returns 2 if the arguments are missing/invalid, or 1 (without echoing
 # anything) if the PR body could not be fetched, fence-stripping failed (e.g.
-# python3 missing/erroring), or the keyword-extraction pipeline itself failed
-# — the caller decides whether either failure is fatal. Every failure mode is
-# deliberately distinguished from "no closing keywords found" (which returns
-# 0 with empty output) so a parser or pipeline failure can never be silently
-# treated as "nothing to close". A `grep` exit status of 1 means "no match"
+# python3 missing/erroring), or the keyword-extraction stages themselves
+# failed — the caller decides whether either failure is fatal. Every failure
+# mode is deliberately distinguished from "no closing keywords found" (which
+# returns 0 with empty output) so a failure can never be silently treated as
+# "nothing to close". Each `grep` stage is run separately (not piped
+# together) and its own exit status captured directly: under `pipefail`, a
+# 2-stage `grep1 | grep2` pipeline reports only the *rightmost* non-zero
+# exit, so a real error in the first grep (exit 2+) can be masked by the
+# second grep's ordinary "no match" (exit 1) on its now-empty input, and
+# would otherwise be misread as "nothing to close" rather than propagated.
+# A `grep` exit status of 1 means "no match" for that stage specifically
 # (not a failure, per grep's own exit-code contract) and is not an error;
 # anything else (grep exit >1, or `sort` failing) is.
 fetch_pr_closing_issues() {
   local pr_repo="$1"
   local pr_number="$2"
-  local pr_body stripped_pr_body matched_refs grep_status
+  local pr_body stripped_pr_body keyword_lines matched_refs stage_status
   if [ "$#" -ne 2 ] || [ -z "$pr_repo" ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
     echo "ERROR: fetch_pr_closing_issues requires <pr_repo> <pr_number>." >&2
     return 2
@@ -574,14 +585,25 @@ fetch_pr_closing_issues() {
     return 1
   fi
   set +e
-  matched_refs="$(printf '%s' "$stripped_pr_body" | grep -ioE '(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+' | grep -oE '[0-9]+$')"
-  grep_status=$?
+  keyword_lines="$(printf '%s' "$stripped_pr_body" | grep -ioE '(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+')"
+  stage_status=$?
   set -e
-  if [ "$grep_status" -gt 1 ]; then
-    echo "ERROR: failed to extract closing-keyword references from PR #${pr_number} (grep exit ${grep_status})." >&2
+  if [ "$stage_status" -gt 1 ]; then
+    echo "ERROR: failed to scan PR #${pr_number} body for closing keywords (grep exit ${stage_status})." >&2
     return 1
   fi
-  if [ -z "$matched_refs" ]; then
+  if [ "$stage_status" -eq 1 ] || [ -z "$keyword_lines" ]; then
+    return 0
+  fi
+  set +e
+  matched_refs="$(printf '%s' "$keyword_lines" | grep -oE '[0-9]+$')"
+  stage_status=$?
+  set -e
+  if [ "$stage_status" -gt 1 ]; then
+    echo "ERROR: failed to extract issue numbers from PR #${pr_number} closing-keyword matches (grep exit ${stage_status})." >&2
+    return 1
+  fi
+  if [ "$stage_status" -eq 1 ] || [ -z "$matched_refs" ]; then
     return 0
   fi
   if ! printf '%s\n' "$matched_refs" | sort -un; then

@@ -736,6 +736,42 @@ run_test \
     fi
   )"
 
+# A 4-space-indented fence marker is GFM indented code, not a real fence, and
+# must not be treated as one — otherwise it can spuriously open an unclosed
+# fence that swallows a later, real closing reference.
+indented_fence_branch="fix/retro-525-doc-gaps"
+indented_fence_repo="$(make_repo indented-fence "$indented_fence_branch" yes)"
+indented_fence_pr_body='Cleans up doc gaps.
+
+Example indented code (not a fence):
+    ~~~
+    some literal example content
+
+Closes #609'
+indented_fence_output="$(
+  GH_MERGED_HEAD="$indented_fence_branch" \
+  GH_MERGED_PR=658 \
+  GH_PR_BODY="$indented_fence_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$indented_fence_repo" --base develop --pr 658 "$indented_fence_branch"
+)"
+run_contains \
+  "indented_fence_marker_is_not_a_fence_closes_real_issue" \
+  "Closing issue #609..." \
+  "$indented_fence_output"
+run_test \
+  "indented_fence_marker_does_not_fall_back_to_slug_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #525" <<<"$indented_fence_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"
