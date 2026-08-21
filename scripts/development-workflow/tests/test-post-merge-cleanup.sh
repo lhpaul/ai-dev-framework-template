@@ -587,7 +587,7 @@ unclosed_fence_branch="fix/retro-521-doc-gaps"
 unclosed_fence_repo="$(make_repo unclosed-fence "$unclosed_fence_branch" yes)"
 unclosed_fence_pr_body='Cleans up doc gaps.
 
-```
+~~~
 Example commit message: Closes #997
 Closes #605'
 unclosed_fence_output="$(
