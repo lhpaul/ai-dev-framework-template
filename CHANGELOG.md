@@ -39,14 +39,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolves the same field-name order as
   `workflow_github_project_type_field_json`:
   `issue_tracker.custom_fields.type_field`, then `Custom Type`, `CustomType`,
-  then `Type`, each converted to its gh item-list key. When none of those
-  keys are present anywhere in the item-list payload, the function now emits
-  a distinct stderr warning so a genuinely empty result ("no open Workflow
-  items") is no longer indistinguishable from an unreadable Type field. The
+  then `Type`, each converted to its gh item-list key. When the item-list
+  payload has at least one item and none of those keys are present on any of
+  them, the function now emits a distinct stderr warning so a genuinely
+  unreadable Type field is no longer indistinguishable from a clean "no open
+  Workflow items" result — an empty board (zero items on the project, e.g.
+  open issues not yet triaged onto it) is left alone and does not trigger the
+  warning, since there is nothing to judge the candidate keys against. The
   shipped regression test's fixture previously mocked a `"type":"Workflow"`
   key that real `gh` cannot produce; it now uses `"custom Type"`, matching a
-  real board, plus new cases for a configured `type_field` override and the
-  unreadable-field warning.
+  real board, plus new cases for a configured `type_field` override, the
+  unreadable-field warning, and the empty-board non-warning case.
 - **`post-merge-cleanup.sh` no longer closes the wrong issue for team-prefixed
   branch slugs** (#1511): the team-prefixed identifier pattern
   (`^(fix|feature|hotfix|refactor)/([a-zA-Z]{2,6}-([0-9]+))($|-)`) matches any
