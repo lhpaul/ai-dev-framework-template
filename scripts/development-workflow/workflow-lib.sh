@@ -3021,8 +3021,25 @@ update_tracker_size_best_effort() {
 # Prints a JSON array of open GitHub issues whose project Type is Workflow.
 # Discovery is intentionally open-issues-first, then one project item-list
 # cross-reference, so callers avoid per-item full-board scans.
+#
+# `gh project item-list --format json` derives each item's field keys from
+# the field's display name, lowercasing only the first character (for
+# example "Custom Type" -> "custom Type", "Type" -> "type"). Because "Type"
+# is a reserved GitHub Projects field name, no conforming board can actually
+# name its classification field "Type" — so this resolves the same lookup
+# order as workflow_github_project_type_field_json:
+# issue_tracker.custom_fields.type_field, then "Custom Type", "CustomType",
+# then "Type", each converted to its gh item-list key.
+#
+# When none of those keys appear anywhere in the item-list payload, an
+# empty result is indistinguishable from "nothing open" versus "the Type
+# field could not be read" — this prints a distinct stderr warning for that
+# case so callers (and humans reading release-gate output) are not silently
+# fooled by a false-green `[]`.
 list_open_workflow_type_issues() {
   local project_number owner open_issues project_items repo_owner repo_name repo_slug
+  local _lowti_preferred_field _lowti_candidate_keys_json _lowti_result_json
+  local _lowti_matched_keys _lowti_results _lowti_item_keys_display _lowti_candidate_display
 
   local _lowti_provider
   _lowti_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
@@ -3080,28 +3097,88 @@ list_open_workflow_type_issues() {
     return 0
   fi
 
-  if ! printf '%s' "$project_items" | jq --argjson open "$open_issues" '
+  _lowti_preferred_field="$(workflow_issue_tracker_custom_field type_field "$(workflow_effective_config_file || true)")"
+  _lowti_candidate_keys_json="$(_workflow_lowti_candidate_keys_json "$_lowti_preferred_field")"
+
+  if ! _lowti_result_json="$(printf '%s' "$project_items" | jq --argjson open "$open_issues" --argjson candidate_keys "$_lowti_candidate_keys_json" '
     def terminal($status):
       ($status // "") as $s
       | ($s == "Done" or $s == "Merged" or $s == "Released" or $s == "Cancelled");
 
-    [ .items[]
-      | select((.type // "") == "Workflow")
-      | . as $item
-      | ($open[] | select(.number == $item.content.number)) as $issue
-      | select(terminal($item.status) | not)
-      | {
-          number: $issue.number,
-          title: $issue.title,
-          url: $issue.url,
-          createdAt: $issue.createdAt,
-          status: ($item.status // ""),
-          priority: ($item.priority // ""),
-          type: ($item.type // "")
-        }
-    ]
-  ' 2>/dev/null; then
+    def item_type($item):
+      ( [ $candidate_keys[] as $k | ($item[$k] // "") ] | map(select(. != "")) | first ) // "";
+
+    ( [ .items[] | keys[] ] | unique ) as $item_keys
+    | ( [ $candidate_keys[] | select(. as $k | $item_keys | index($k) != null) ] ) as $matched_keys
+    | {
+        matched_keys: $matched_keys,
+        item_keys: $item_keys,
+        results: [ .items[]
+          | select(item_type(.) == "Workflow")
+          | . as $item
+          | ($open[] | select(.number == $item.content.number)) as $issue
+          | select(terminal($item.status) | not)
+          | {
+              number: $issue.number,
+              title: $issue.title,
+              url: $issue.url,
+              createdAt: $issue.createdAt,
+              status: ($item.status // ""),
+              priority: ($item.priority // ""),
+              type: (item_type($item))
+            }
+        ]
+      }
+  ' 2>/dev/null)"; then
     echo "Warning: failed to parse GitHub Project items while discovering Workflow Type issues." >&2
     printf '[]\n'
+    return 0
   fi
+
+  _lowti_matched_keys="$(printf '%s' "$_lowti_result_json" | jq -c '.matched_keys' 2>/dev/null)"
+  _lowti_results="$(printf '%s' "$_lowti_result_json" | jq -c '.results' 2>/dev/null)"
+
+  if [ "$_lowti_matched_keys" = "[]" ]; then
+    _lowti_item_keys_display="$(printf '%s' "$_lowti_result_json" | jq -r '.item_keys | join(", ")' 2>/dev/null)"
+    _lowti_candidate_display="$(printf '%s' "$_lowti_candidate_keys_json" | jq -r 'join(", ")' 2>/dev/null)"
+    echo "Warning: none of the expected Type field keys (${_lowti_candidate_display}) were found on gh project item-list items (keys present: ${_lowti_item_keys_display}). Cannot distinguish 'no open Workflow items' from 'Type field unreadable' — verify issue_tracker.custom_fields.type_field or the project's Custom Type / Type field name." >&2
+  fi
+
+  printf '%s\n' "${_lowti_results:-[]}"
+}
+
+# _workflow_lowti_candidate_keys_json <preferred_field_name>
+#
+# Builds the ordered, de-duplicated JSON array of gh project item-list keys
+# to check for the Type field value, honoring the same lookup order as
+# workflow_github_project_type_field_json: preferred field name (from
+# issue_tracker.custom_fields.type_field), then "Custom Type", "CustomType",
+# then "Type". Each field display name is converted to its gh item-list key
+# by lowercasing only the first character.
+_workflow_lowti_candidate_keys_json() {
+  local preferred_field="$1"
+  local -a names=("$preferred_field" "Custom Type" "CustomType" "Type")
+  local -a keys=()
+  local name key first rest existing dup
+
+  for name in "${names[@]}"; do
+    [ -z "$name" ] && continue
+    first="$(printf '%s' "${name:0:1}" | tr '[:upper:]' '[:lower:]')"
+    rest="${name:1}"
+    key="${first}${rest}"
+    dup=0
+    for existing in "${keys[@]:-}"; do
+      if [ "$existing" = "$key" ]; then
+        dup=1
+        break
+      fi
+    done
+    [ "$dup" -eq 0 ] && keys+=("$key")
+  done
+
+  if [ "${#keys[@]}" -eq 0 ]; then
+    printf '[]'
+    return 0
+  fi
+  printf '%s\n' "${keys[@]}" | jq -R . | jq -sc .
 }

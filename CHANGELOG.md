@@ -27,6 +27,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **`list_open_workflow_type_issues` no longer hardcodes a `.type` field key**
+  (#1400): `gh project item-list --format json` derives each item's field key
+  from the field's display name, lowercasing only its first character (for
+  example `Custom Type` -> `custom Type`). Because `Type` is a reserved
+  GitHub Projects field name, no conforming board can actually name its
+  classification field `Type`, so the hardcoded `select((.type // "") ==
+  "Workflow")` never matched anything on a real board — release protocol
+  §7.2's "downstream script-bug review" gate silently returned `[]` on every
+  release regardless of how many open Workflow items existed. The lookup now
+  resolves the same field-name order as
+  `workflow_github_project_type_field_json`:
+  `issue_tracker.custom_fields.type_field`, then `Custom Type`, `CustomType`,
+  then `Type`, each converted to its gh item-list key. When none of those
+  keys are present anywhere in the item-list payload, the function now emits
+  a distinct stderr warning so a genuinely empty result ("no open Workflow
+  items") is no longer indistinguishable from an unreadable Type field. The
+  shipped regression test's fixture previously mocked a `"type":"Workflow"`
+  key that real `gh` cannot produce; it now uses `"custom Type"`, matching a
+  real board, plus new cases for a configured `type_field` override and the
+  unreadable-field warning.
 - **`post-merge-cleanup.sh` no longer closes the wrong issue for team-prefixed
   branch slugs** (#1511): the team-prefixed identifier pattern
   (`^(fix|feature|hotfix|refactor)/([a-zA-Z]{2,6}-([0-9]+))($|-)`) matches any
