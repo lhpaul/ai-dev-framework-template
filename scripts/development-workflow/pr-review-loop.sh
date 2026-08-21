@@ -112,7 +112,8 @@ BUGBOT_HANDLED_SKIP_RC=3
 CODERABBIT_RATE_LIMIT_MAX_RETRIES_DEFAULT=4
 CODERABBIT_RATE_LIMIT_WAIT_DEFAULT=900
 
-PR_REVIEW_LOOP_EXECUTION_BUDGET="${PR_REVIEW_LOOP_EXECUTION_BUDGET:-5400}"
+PR_REVIEW_LOOP_EXECUTION_BUDGET_DEFAULT=5400
+PR_REVIEW_LOOP_EXECUTION_BUDGET="${PR_REVIEW_LOOP_EXECUTION_BUDGET:-$PR_REVIEW_LOOP_EXECUTION_BUDGET_DEFAULT}"
 
 # _check_execution_budget — verify worst-case rate-limit wait < execution budget.
 # Emits BUDGET_* key/value lines so a caller can record what it must allow.
@@ -123,10 +124,16 @@ _check_execution_budget() {
 
   case "$retries" in ''|*[!0-9]*) retries="$CODERABBIT_RATE_LIMIT_MAX_RETRIES_DEFAULT" ;; esac
   case "$wait_s" in ''|*[!0-9]*) wait_s="$CODERABBIT_RATE_LIMIT_WAIT_DEFAULT" ;; esac
-  case "$budget" in ''|*[!0-9]*) budget=5400 ;; esac
+  case "$budget" in ''|*[!0-9]*) budget="$PR_REVIEW_LOOP_EXECUTION_BUDGET_DEFAULT" ;; esac
 
+  # 10# forces base 10. The guards above accept any all-digit string, including
+  # a zero-padded one, and bash reads a leading-zero operand inside $(( )) as
+  # octal — so CODERABBIT_RATE_LIMIT_MAX_RETRIES=08 passed the guard and then
+  # died with "value too great for base", crashing the very check that exists
+  # to turn a misconfiguration into a clean escalation.
   local worst
-  worst=$(( retries * wait_s ))
+  worst=$(( 10#$retries * 10#$wait_s ))
+  budget=$(( 10#$budget ))
   print_kv BUDGET_EXECUTION_SECONDS "$budget"
   print_kv BUDGET_WORST_CASE_RATE_LIMIT_WAIT_SECONDS "$worst"
 

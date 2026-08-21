@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+
 - **`test-pr-review-loop.sh` gains an `--area` filter, runs from an immutable
   snapshot, and can no longer be edited mid-run without notice** (#1562): the
   suite is ~13.6k lines and ~900 assertions with no way to run part of it, so

@@ -56,10 +56,18 @@ if [ "${TEST_PR_REVIEW_LOOP_SNAPSHOT:-0}" != "1" ]; then
     case "$1" in
       --area)
         [ $# -ge 2 ] || { echo "ERROR: --area requires a value" >&2; exit 2; }
+        [ -n "$2" ] || { echo "ERROR: --area requires a non-empty value" >&2; exit 2; }
         _area_filter="${_area_filter}${_area_filter:+,}$2"
         shift 2
         ;;
       --area=*)
+        # Reject an empty value. Appending an empty token left _area_filter
+        # empty, which the snapshot step reads as "unfiltered" — so `--area=`
+        # asked for a filter and silently got the full run instead.
+        if [ -z "${1#--area=}" ]; then
+          echo "ERROR: --area= requires a value" >&2
+          exit 2
+        fi
         _area_filter="${_area_filter}${_area_filter:+,}${1#--area=}"
         shift
         ;;
@@ -122,6 +130,10 @@ USAGE
       exit 2
     fi
   else
+    # mktemp rather than a $$-derived name: /tmp is world-writable, so a
+    # predictable path can be pre-created as a symlink and redirect this write
+    # to a file of someone else's choosing. PIDs also recur.
+    _filter_err="$(mktemp -t test-pr-review-loop-filter.XXXXXX)"
     # Preamble (everything before the first area) + selected areas + footer.
     if ! awk -v filter="$_area_filter" '
       function selected(title,   n, i, pat, lt) {
@@ -163,16 +175,16 @@ USAGE
           exit 3
         }
       }
-    ' "$_self" > "$_snapshot" 2>/tmp/.area-filter-err.$$; then
+    ' "$_self" > "$_snapshot" 2>"$_filter_err"; then
       rm -f "$_snapshot"
-      if grep -q NO_AREA_MATCHED "/tmp/.area-filter-err.$$" 2>/dev/null; then
+      if grep -q NO_AREA_MATCHED "$_filter_err" 2>/dev/null; then
         echo "ERROR: no area matched '--area $_area_filter'." >&2
         echo "  Run with --list-areas to see the available areas." >&2
       fi
-      rm -f "/tmp/.area-filter-err.$$"
+      rm -f "$_filter_err"
       exit 2
     fi
-    rm -f "/tmp/.area-filter-err.$$"
+    rm -f "$_filter_err"
     echo "INFO: running filtered areas: $_area_filter" >&2
   fi
 
@@ -13905,8 +13917,32 @@ run_test "budget_lowered_ceiling_is_ok" "BUDGET_INVARIANT=ok" \
      CODERABBIT_RATE_LIMIT_WAIT=300 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
 # Non-numeric input falls back to the shipped defaults rather than doing
 # arithmetic on a string.
-run_test "budget_non_numeric_falls_back" "BUDGET_INVARIANT=ok" \
+run_test "budget_non_numeric_retries_falls_back" "BUDGET_INVARIANT=ok" \
   "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=abc _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+run_test "budget_non_numeric_wait_falls_back" "BUDGET_INVARIANT=ok" \
+  "$(CODERABBIT_RATE_LIMIT_WAIT=abc _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+run_test "budget_non_numeric_budget_falls_back" "BUDGET_INVARIANT=ok" \
+  "$(PR_REVIEW_LOOP_EXECUTION_BUDGET=abc _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+
+# Zero-padded values pass the all-digit guards, and bash reads a leading-zero
+# operand inside $(( )) as octal. Before the 10# prefix these crashed the check
+# that exists to replace a crash with a clean escalation.
+run_test "budget_octal_retries_does_not_crash" "BUDGET_INVARIANT=violated" \
+  "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=08 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+run_test "budget_octal_retries_no_arith_error" "" \
+  "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=08 _check_execution_budget 2>&1 >/dev/null | grep 'error token' || true)"
+run_test "budget_octal_wait_is_base_10" "BUDGET_WORST_CASE_RATE_LIMIT_WAIT_SECONDS=3600" \
+  "$(CODERABBIT_RATE_LIMIT_WAIT=0900 _check_execution_budget 2>/dev/null | grep '^BUDGET_WORST_CASE' || true)"
+run_test "budget_octal_budget_is_base_10" "BUDGET_EXECUTION_SECONDS=9000" \
+  "$(PR_REVIEW_LOOP_EXECUTION_BUDGET=09000 _check_execution_budget 2>/dev/null | grep '^BUDGET_EXECUTION_SECONDS=' || true)"
+
+# --area= with no value must not silently degrade to a full run.
+run_test "area_filter_empty_equals_value_exits_2" "2" \
+  "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" \
+      bash "$_1562_suite" --area= >/dev/null 2>&1; echo $?)"
+run_test "area_filter_empty_value_exits_2" "2" \
+  "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" \
+      bash "$_1562_suite" --area "" >/dev/null 2>&1; echo $?)"
 
 unset _1562_suite _1562_loop _1562_filtered _1562_guard_out
 
