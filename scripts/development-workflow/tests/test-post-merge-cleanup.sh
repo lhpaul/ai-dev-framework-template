@@ -133,6 +133,11 @@ case "$1 $2" in
       else
         printf '\n'
       fi
+    elif [[ "$args" == *"--json body,title"* ]]; then
+      # Emulates the real command's jq filter
+      # '(.title // "") + "\n" + (.body // "")' without invoking jq, so tests
+      # can control the PR title/body via GH_PR_TITLE / GH_PR_BODY.
+      printf '%s\n%s' "${GH_PR_TITLE:-}" "${GH_PR_BODY:-}"
     elif [[ "$args" == *"--jq"* ]]; then
       printf '\n'
     else
@@ -141,9 +146,9 @@ case "$1 $2" in
     ;;
   "issue view")
     if [[ "$args" == *"--jq"* ]]; then
-      printf 'CLOSED\n'
+      printf '%s\n' "${GH_ISSUE_STATE:-CLOSED}"
     else
-      printf '{"state":"CLOSED"}\n'
+      printf '{"state":"%s"}\n' "${GH_ISSUE_STATE:-CLOSED}"
     fi
     ;;
   "issue close")
@@ -388,6 +393,384 @@ run_test "failed_delete_local_branch_remains" "yes" "$(
     printf 'no'
   fi
 )"
+
+# --- Team-prefixed issue identifier vs. PR-body-derived issue (issue #1511) ---
+#
+# Team-prefixed branch slugs (2-6 letters, dash, digits) are ambiguous with
+# ordinary descriptive slug fragments that happen to contain a number
+# (retro-517, http-500, sha-256). These tests cover the three scenarios from
+# the fix: a false-positive slug overridden by the PR body, a team-prefixed
+# slug whose PR body confirms the same issue, and a team-prefixed slug with
+# no PR-body closing reference falling back to the slug-derived issue.
+
+false_positive_branch="fix/retro-517-doc-gaps"
+false_positive_repo="$(make_repo false-positive "$false_positive_branch" yes)"
+false_positive_output="$(
+  GH_MERGED_HEAD="$false_positive_branch" \
+  GH_MERGED_PR=632 \
+  GH_PR_BODY="Fixes #601" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$false_positive_repo" --base develop --pr 632 "$false_positive_branch"
+)"
+run_contains \
+  "false_positive_slug_uses_pr_body_issue" \
+  "Closing issue #601..." \
+  "$false_positive_output"
+run_test \
+  "false_positive_slug_does_not_close_slug_derived_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #517" <<<"$false_positive_output" || grep -Fq "Processing issue #517" <<<"$false_positive_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+run_contains \
+  "false_positive_slug_notes_ambiguity" \
+  "Team-prefixed identifier 'retro-517'" \
+  "$false_positive_output"
+
+matching_override_branch="fix/lh-97-fix-thing"
+matching_override_repo="$(make_repo matching-override "$matching_override_branch" yes)"
+matching_override_output="$(
+  GH_MERGED_HEAD="$matching_override_branch" \
+  GH_MERGED_PR=645 \
+  GH_PR_BODY="Closes #97" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$matching_override_repo" --base develop --pr 645 "$matching_override_branch"
+)"
+run_contains \
+  "pr_body_derived_happy_path_closes_issue" \
+  "Closing issue #97..." \
+  "$matching_override_output"
+run_contains \
+  "pr_body_derived_happy_path_used_override_path" \
+  "using closing keyword refs from PR #645" \
+  "$matching_override_output"
+
+no_reference_branch="fix/lh-97-real-issue"
+no_reference_repo="$(make_repo no-reference "$no_reference_branch" yes)"
+no_reference_output="$(
+  GH_MERGED_HEAD="$no_reference_branch" \
+  GH_MERGED_PR=650 \
+  GH_PR_BODY="No closing keyword here." \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$no_reference_repo" --base develop --pr 650 "$no_reference_branch"
+)"
+run_contains \
+  "no_closing_reference_falls_back_to_slug_issue" \
+  "Closing issue #97..." \
+  "$no_reference_output"
+run_test \
+  "no_closing_reference_does_not_use_override_path" \
+  "no" \
+  "$(
+    if grep -Fq "using closing keyword refs from PR" <<<"$no_reference_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
+# Punctuation-delimited closing keyword (e.g. "(Fixes #601)") must still be
+# recognized — the word-boundary regex requires a non-alnum/underscore
+# character immediately before the keyword, not specifically whitespace, so
+# a parenthesis directly abutting the keyword still matches.
+punctuation_branch="fix/retro-518-doc-gaps"
+punctuation_repo="$(make_repo punctuation "$punctuation_branch" yes)"
+punctuation_output="$(
+  GH_MERGED_HEAD="$punctuation_branch" \
+  GH_MERGED_PR=651 \
+  GH_PR_BODY="Cleans up doc gaps. (Fixes #602)" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$punctuation_repo" --base develop --pr 651 "$punctuation_branch"
+)"
+run_contains \
+  "punctuation_delimited_keyword_uses_pr_body_issue" \
+  "Closing issue #602..." \
+  "$punctuation_output"
+run_test \
+  "punctuation_delimited_keyword_does_not_close_slug_derived_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #518" <<<"$punctuation_output" || grep -Fq "Processing issue #518" <<<"$punctuation_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
+# An example closing keyword inside a fenced code block in the PR body must
+# not be treated as a live reference — only the real footer reference should
+# be used.
+fenced_branch="fix/retro-519-doc-gaps"
+fenced_repo="$(make_repo fenced "$fenced_branch" yes)"
+fenced_pr_body='Cleans up doc gaps.
+
+```
+Example commit message: Closes #999
+```
+
+Closes #603'
+fenced_output="$(
+  GH_MERGED_HEAD="$fenced_branch" \
+  GH_MERGED_PR=652 \
+  GH_PR_BODY="$fenced_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$fenced_repo" --base develop --pr 652 "$fenced_branch"
+)"
+run_contains \
+  "fenced_example_excludes_code_block_reference_closes_real_issue" \
+  "Closing issue #603..." \
+  "$fenced_output"
+run_test \
+  "fenced_example_does_not_close_code_block_example_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #999" <<<"$fenced_output" || grep -Fq "Processing issue #999" <<<"$fenced_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
+# Tilde-fenced (~~~) code blocks must be excluded the same way as
+# backtick-fenced blocks.
+tilde_fenced_branch="fix/retro-520-doc-gaps"
+tilde_fenced_repo="$(make_repo tilde-fenced "$tilde_fenced_branch" yes)"
+tilde_fenced_pr_body='Cleans up doc gaps.
+
+~~~
+Example commit message: Closes #998
+~~~
+
+Closes #604'
+tilde_fenced_output="$(
+  GH_MERGED_HEAD="$tilde_fenced_branch" \
+  GH_MERGED_PR=653 \
+  GH_PR_BODY="$tilde_fenced_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$tilde_fenced_repo" --base develop --pr 653 "$tilde_fenced_branch"
+)"
+run_contains \
+  "tilde_fenced_example_closes_real_issue" \
+  "Closing issue #604..." \
+  "$tilde_fenced_output"
+run_test \
+  "tilde_fenced_example_does_not_close_code_block_example_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #998" <<<"$tilde_fenced_output" || grep -Fq "Processing issue #998" <<<"$tilde_fenced_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
+# An unclosed opening fence must extend to end of input, so a real closing
+# reference placed after an accidentally-unclosed fence is NOT treated as
+# live (rather than leaking past the unclosed fence and being extracted).
+unclosed_fence_branch="fix/retro-521-doc-gaps"
+unclosed_fence_repo="$(make_repo unclosed-fence "$unclosed_fence_branch" yes)"
+unclosed_fence_pr_body='Cleans up doc gaps.
+
+~~~
+Example commit message: Closes #997
+Closes #605'
+unclosed_fence_output="$(
+  GH_MERGED_HEAD="$unclosed_fence_branch" \
+  GH_MERGED_PR=654 \
+  GH_PR_BODY="$unclosed_fence_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$unclosed_fence_repo" --base develop --pr 654 "$unclosed_fence_branch"
+)"
+run_test \
+  "unclosed_fence_extends_to_end_of_input" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #997" <<<"$unclosed_fence_output" || grep -Fq "Processing issue #997" <<<"$unclosed_fence_output" || grep -Fq "Closing issue #605" <<<"$unclosed_fence_output" || grep -Fq "Processing issue #605" <<<"$unclosed_fence_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+run_contains \
+  "unclosed_fence_falls_back_to_slug_issue" \
+  "Closing issue #521..." \
+  "$unclosed_fence_output"
+
+# A closing fence marker shorter than the opening one must NOT be treated as
+# a closer (GFM requires the closer to be at least as long as the opener).
+# Using tildes here (not backticks) keeps this test out of reach of
+# workflow-shell-snippet-lint.py's backtick-only WS001 fence scan.
+mismatched_fence_branch="fix/retro-522-doc-gaps"
+mismatched_fence_repo="$(make_repo mismatched-fence "$mismatched_fence_branch" yes)"
+mismatched_fence_pr_body='Cleans up doc gaps.
+
+~~~~
+Example commit message: Closes #996
+~~~
+still fenced content after a too-short closer
+~~~~
+
+Closes #606'
+mismatched_fence_output="$(
+  GH_MERGED_HEAD="$mismatched_fence_branch" \
+  GH_MERGED_PR=655 \
+  GH_PR_BODY="$mismatched_fence_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$mismatched_fence_repo" --base develop --pr 655 "$mismatched_fence_branch"
+)"
+run_contains \
+  "mismatched_fence_length_closes_real_issue" \
+  "Closing issue #606..." \
+  "$mismatched_fence_output"
+run_test \
+  "mismatched_fence_length_does_not_close_example_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #996" <<<"$mismatched_fence_output" || grep -Fq "Processing issue #996" <<<"$mismatched_fence_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
+# A closing fence line with trailing content after the fence marker (not
+# pure whitespace) must NOT be treated as a closer either (GFM requires the
+# closing fence to be followed only by whitespace).
+trailing_content_fence_branch="fix/retro-523-doc-gaps"
+trailing_content_fence_repo="$(make_repo trailing-content-fence "$trailing_content_fence_branch" yes)"
+trailing_content_fence_pr_body='Cleans up doc gaps.
+
+~~~
+Example commit message: Closes #994
+~~~ not a real closer
+still fenced
+~~~
+
+Closes #607'
+trailing_content_fence_output="$(
+  GH_MERGED_HEAD="$trailing_content_fence_branch" \
+  GH_MERGED_PR=656 \
+  GH_PR_BODY="$trailing_content_fence_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$trailing_content_fence_repo" --base develop --pr 656 "$trailing_content_fence_branch"
+)"
+run_contains \
+  "trailing_content_fence_closes_real_issue" \
+  "Closing issue #607..." \
+  "$trailing_content_fence_output"
+run_test \
+  "trailing_content_fence_does_not_close_example_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #994" <<<"$trailing_content_fence_output" || grep -Fq "Processing issue #994" <<<"$trailing_content_fence_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
+# A genuine sort failure while extracting closing-keyword issue numbers must
+# propagate as a fatal error, not be silently swallowed and fall through to
+# the ambiguous slug-derived issue.
+sort_failure_bin="$TMP_ROOT/sort-failure-bin"
+write_gh_stub "$sort_failure_bin"
+cat >"$sort_failure_bin/sort" <<'STUB'
+#!/usr/bin/env bash
+echo "mock sort failure" >&2
+exit 2
+STUB
+chmod +x "$sort_failure_bin/sort"
+
+sort_failure_branch="fix/retro-524-doc-gaps"
+sort_failure_repo="$(make_repo sort-failure "$sort_failure_branch" yes)"
+set +e
+sort_failure_output="$(
+  env GH_MERGED_HEAD="$sort_failure_branch" \
+    GH_MERGED_PR=657 \
+    GH_PR_BODY="Closes #608" \
+    GH_ISSUE_STATE=OPEN \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$sort_failure_bin:$PATH" \
+    "$HELPER" --repo-root "$sort_failure_repo" --base develop --pr 657 "$sort_failure_branch" 2>&1
+)"
+sort_failure_status=$?
+set -e
+run_test \
+  "extraction_sort_failure_propagates_as_fatal" \
+  "nonzero" \
+  "$([ "$sort_failure_status" -ne 0 ] && printf 'nonzero' || printf 'zero')"
+run_contains \
+  "extraction_sort_failure_error_message" \
+  "ERROR: failed to sort extracted closing-keyword issue numbers" \
+  "$sort_failure_output"
+run_test \
+  "extraction_sort_failure_does_not_fall_back_to_slug_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #524" <<<"$sort_failure_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
+# A 4-space-indented fence marker is GFM indented code, not a real fence, and
+# must not be treated as one — otherwise it can spuriously open an unclosed
+# fence that swallows a later, real closing reference.
+indented_fence_branch="fix/retro-525-doc-gaps"
+indented_fence_repo="$(make_repo indented-fence "$indented_fence_branch" yes)"
+indented_fence_pr_body='Cleans up doc gaps.
+
+Example indented code (not a fence):
+    ~~~
+    some literal example content
+
+Closes #609'
+indented_fence_output="$(
+  GH_MERGED_HEAD="$indented_fence_branch" \
+  GH_MERGED_PR=658 \
+  GH_PR_BODY="$indented_fence_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$indented_fence_repo" --base develop --pr 658 "$indented_fence_branch"
+)"
+run_contains \
+  "indented_fence_marker_is_not_a_fence_closes_real_issue" \
+  "Closing issue #609..." \
+  "$indented_fence_output"
+run_test \
+  "indented_fence_marker_does_not_fall_back_to_slug_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #525" <<<"$indented_fence_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
 
 echo ""
 echo "Passed: $PASS_COUNT"
