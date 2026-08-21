@@ -58,7 +58,17 @@ restate this rule for those two specifically):**
 
 - Run the step in the foreground and wait for it to finish, in the same turn, or
 - If the step must be backgrounded, poll it yourself in the same turn until it
-  returns, e.g. `while pgrep -f "<cmd>" >/dev/null; do sleep 20; done`.
+  returns, e.g. `while pgrep -f "<cmd>" >/dev/null; do sleep 20; done`. Make
+  `<cmd>` specific enough that it cannot match an unrelated process — include
+  the PR number or another identifying argument (e.g.
+  `pgrep -f "pr-review-loop.sh 1550"`, not a bare script name). A captured
+  `$!` PID plus `wait "$pid"` is not available here the way it would be inside
+  a single continuous shell script: this runner's tool calls are separate
+  shell invocations with no persisted variable state between them, so a PID
+  captured when the step is launched is gone by the time a later call checks
+  on it. Pattern-matching the running process is the correct mechanism for
+  this multi-invocation model, not a workaround for it — keep the pattern
+  specific instead of switching to PID capture.
 - **Never end a turn while something this runner started is still in flight.**
   A step that takes several minutes (or, for `pr-review-loop.sh`, up to the
   configured `--max-wait`) is expected to take that long — stay with it. Ending

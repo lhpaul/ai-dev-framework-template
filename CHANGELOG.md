@@ -47,13 +47,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from PR state instead. On the parent side, `90-batch-orchestrate-work-
   protocol.md` Step 5's supervision loop now classifies any returned report
   that names no terminal state (no PR number paired with
-  `ready-for-human-review`, `blocked`, or `escalated`) as `stalled` and
-  requires resume/re-dispatch rather than acceptance, extending the existing
-  "in-flight CI/watch states are non-terminal" rule from governing runner
-  behavior to governing how the parent reads runner reports. A new smoke-test
-  runbook (`docs/testing/workflow/1548-runner-stall-supervision.smoke-test.md`)
-  traces the three verbatim stall reports from the incident plus a genuine
-  terminal report against the classification rule as fixtures.
+  `ready-for-human-review`, `blocked`, or `escalated` — or, for an item with
+  no PR yet, a concretely-named blocking reason; a bare "waiting" report never
+  satisfies that exception regardless of phrasing) as `stalled` and requires
+  resume/re-dispatch rather than acceptance, extending the existing "in-flight
+  CI/watch states are non-terminal" rule from governing runner behavior to
+  governing how the parent reads runner reports. A new smoke-test runbook
+  (`docs/testing/workflow/1548-runner-stall-supervision.smoke-test.md`) traces
+  the three verbatim stall reports from the incident, a genuine terminal
+  report, and a concrete-blocker-vs-generic-waiting no-PR pair against the
+  classification rule as fixtures.
 - **`list_open_workflow_type_issues` no longer hardcodes a `.type` field key**
   (#1400): `gh project item-list --format json` derives each item's field key
   from the field's display name, lowercasing only its first character (for

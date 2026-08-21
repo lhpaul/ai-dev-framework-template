@@ -87,7 +87,10 @@ Recommended model tier: `balanced`
     automatically; none did. For every long step, not only
     `pr-review-loop.sh` and `pr-ci-loop.sh`: run it in the foreground, or if
     backgrounded, poll it in the same turn until it returns
-    (`while pgrep -f "<cmd>" >/dev/null; do sleep 20; done`). Never end a turn
+    (`while pgrep -f "<cmd>" >/dev/null; do sleep 20; done`, with `<cmd>`
+    specific enough — e.g. including the PR number — that it cannot match an
+    unrelated process; see Protocol 91's "Execution Discipline" section for
+    why PID-capture-and-`wait` does not substitute here). Never end a turn
     while something this run started is still in flight.
 23. **Never re-invoke `pr-review-loop.sh` for a PR whose loop is already
     running**: it takes a per-PR single-instance lock; a second concurrent

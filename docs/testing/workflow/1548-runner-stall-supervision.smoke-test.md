@@ -69,6 +69,24 @@ This report names a PR number paired with `ready-for-human-review` (a named
 terminal state under Protocol 90 Step 5 item 1). It must classify as
 terminal, not `stalled`.
 
+### Fixture 5 — must NOT classify as `stalled` (no-PR item, concretely-named blocker)
+
+> "No PR yet. Blocked on issue #1502's merge — the plan depends on its
+> per-run cycle-cap change and cannot proceed until it lands."
+
+No PR number is present, but the report names a concrete, specific blocking
+reason (a dependency issue and why it blocks). Under Protocol 90 Step 5 item
+1's no-PR-yet exception, this is a terminal (`blocked`) report, not `stalled`.
+
+### Fixture 6 — must classify as `stalled` (no-PR item, generic "waiting")
+
+> "No PR yet. I'm waiting for the plan review to come back before I continue."
+
+No PR number, and no concretely-named blocker — this only says it is
+"waiting." Protocol 90 Step 5 item 1 states explicitly that a bare "waiting"
+report never satisfies the no-PR-yet exception regardless of phrasing. This
+must classify as `stalled`.
+
 ---
 
 ## Smoke Test Steps
@@ -116,14 +134,17 @@ context in each tool.
 
 For each fixture in **Test Data** above, apply the mechanical test from Step 5
 item 1: does the report name a PR number paired with `ready-for-human-review`,
-`blocked`, or `escalated`?
+`blocked`, or `escalated` — or, for a no-PR-yet item, a concretely-named
+blocking reason (not merely a description of waiting)?
 
-| Fixture | Contains a named terminal state? | Required classification |
-| ------- | --------------------------------- | ------------------------ |
+| Fixture | Contains a named terminal state (or concrete no-PR blocker)? | Required classification |
+| ------- | --------------------------------------------------------------- | ------------------------ |
 | 1 (#1508) | No | `stalled` |
 | 2 (#1333) | No | `stalled` |
 | 3 (#1400) | No | `stalled` |
 | 4 (genuine terminal) | Yes — PR #1546, `ready-for-human-review` | terminal (not `stalled`) |
+| 5 (no-PR, concrete blocker) | Yes — named dependency, issue #1502 | terminal / `blocked` (not `stalled`) |
+| 6 (no-PR, generic "waiting") | No — only says "waiting," no concrete blocker named | `stalled` |
 
 **Expected result**: Applying the Step 5 item 1 rule by hand to each fixture
 produces exactly the classification in the table above.
@@ -143,7 +164,9 @@ produces exactly the classification in the table above.
 - [ ] Protocol 90 Step 5 requires resume/re-dispatch for a `stalled` report rather than acceptance, and states `stalled` is not itself a stop condition
 - [ ] Fixtures 1–3 (the verbatim #1508/#1333/#1400 reports) trace to `stalled` under the classification rule (AC-4)
 - [ ] Fixture 4 (genuine terminal report) traces to terminal, not `stalled`, under the same rule (AC-4)
-- [ ] `CHANGELOG.md` has an `[Unreleased]` → `### Fixed` entry for this change
+- [ ] Fixture 5 (no-PR item, concretely-named blocker) traces to terminal, not `stalled`
+- [ ] Fixture 6 (no-PR item, generic "waiting") traces to `stalled`, confirming the no-PR-yet exception cannot be satisfied by a bare wait description
+- [ ] `CHANGELOG.md` has an `[Unreleased]` → `### Fixed` entry for this change, including the concrete-blocker requirement for the no-PR-yet exception
 
 ---
 
