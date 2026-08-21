@@ -901,6 +901,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory instead of the product checkout's, so two cleanup runs that
   resolve the product repository to different local checkouts of the same
   hub no longer both proceed for the same release.
+- **`PR_HAS_CHANGELOG` and sibling label checks in `batch-merge.sh` were
+  flaky under `pipefail`** (#1516): `discover`'s `PR_HAS_CHANGELOG`,
+  `PR_READY_LABEL`, `PR_HAS_NEEDS_FIXES`, and `PR_HAS_HUMAN_CHECKPOINT`
+  checks used a `producer | grep -q needle` shape. `grep -q` exits as soon
+  as it finds its first match, closing the pipe while the producer (`gh pr
+  diff` or `jq`) may still be writing — killing the producer with `SIGPIPE`
+  and, under `set -o pipefail`, making the pipeline report failure even
+  though `grep` itself found a match. The result was a false negative that
+  only reproduced when the producer still had output queued at the moment
+  `grep -q` exited, which is why it surfaced as an intermittent
+  `PR_HAS_CHANGELOG=false` on a PR that unambiguously touched
+  `CHANGELOG.md` (observed live on PR #1507). All four call sites now
+  capture the producer's full output into a variable first — a `$(...)`
+  command substitution always drains its command to completion, so nothing
+  downstream can close its pipe early — then match with pure bash (`case`
+  pattern matching), which uses no subprocess and no pipe on the matching
+  side, so it cannot reintroduce the race regardless of payload size. A
+  genuine `gh pr diff` failure is now also distinguished from "CHANGELOG.md
+  legitimately not in the diff" (a `WARN:` diagnostic is emitted) instead of
+  both collapsing to `PR_HAS_CHANGELOG=false` indistinguishably.
+  `cmd_delete_branch`'s case-insensitive `push_err` classification
+  (`printf | grep -qi`) was audited under the same shape and switched to
+  `tr` + a pure-bash substring match; `tr` always drains its input to EOF
+  rather than exiting early, so it was not actually racy, but the change
+  keeps every producer-into-consumer match in this script off the
+  `| grep -q` pattern. New regression coverage in
+  `scripts/development-workflow/tests/test-batch-merge-changelog-race.sh`
+  reproduces the underlying SIGPIPE race in isolation (a `yes | head`-fed
+  producer forced to still have ~1 MB queued when `grep -q` exits — 10/10
+  reproducible in local and CI runs) and exercises the real
+  `batch-merge.sh discover`/`delete-branch` commands against the same kind
+  of adversarial, oversized `gh` mock payload across repeated runs to
+  confirm the fix holds.
 
 ### Changed
 
