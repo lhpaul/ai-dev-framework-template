@@ -19,6 +19,7 @@ on:
       - 'scripts/development-workflow/tests/test-pr-review-loop.sh'
       - 'scripts/development-workflow/tests/test-workflow-branch-push-guard.sh'
       - 'scripts/development-workflow/tests/test-batch-merge-recheck-remaining.sh'
+      - 'scripts/development-workflow/tests/test-batch-merge-changelog-race.sh'
       - 'scripts/development-workflow/tests/test-haystack-commit-msg-hook.sh'
       - 'scripts/development-workflow/tests/test-workflow-hub-smoke-fixtures.sh'
       - 'scripts/development-workflow/tests/fixtures/workflow-hub-smoke/**'
@@ -49,6 +50,9 @@ jobs:
 
       - name: Run batch merge recheck test harness
         run: bash scripts/development-workflow/tests/test-batch-merge-recheck-remaining.sh
+
+      - name: Run batch merge CHANGELOG-race regression test harness
+        run: bash scripts/development-workflow/tests/test-batch-merge-changelog-race.sh
 
       - name: Run Haystack commit-msg hook test harness
         run: bash scripts/development-workflow/tests/test-haystack-commit-msg-hook.sh
