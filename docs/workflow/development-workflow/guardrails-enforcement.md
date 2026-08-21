@@ -174,6 +174,7 @@ At the Step 8/8a readiness handoff, when merge authority is granted for the
 stage (`stages.<stage>.may_merge_pr` is `true`), assemble the evidence object
 and run the existing helpers:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # 1. Classify PR risk against the stage max_merge_risk. A medium-risk PR only
 #    ever reaches a mergeable verdict if why_safe_to_merge evidence is
