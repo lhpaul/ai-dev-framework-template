@@ -217,18 +217,21 @@ write_items "$verb_emits" \
   "$(item_json ve-a "A" "the helper emits false discrepancy rows" "scripts/x/emits-a.sh")" \
   "$(item_json ve-b "B" "an unrelated brief with no cues" "scripts/x/emits-b.sh")"
 run_test "verb_emits_not_captured" "no_actionable_overlap" "$(class_for "$verb_emits")"
+run_test "verb_emits_drops_bogus_module_signal" "0" "$(pair_value "$verb_emits" '[.pairs[0].signals.leftSignals[] | select(.type=="module")] | length')"
 
 verb_hardcodes="$TMP_ROOT/verb-hardcodes.json"
 write_items "$verb_hardcodes" \
   "$(item_json vh-a "A" "the script hardcodes a type field path" "scripts/x/hardcodes-a.sh")" \
   "$(item_json vh-b "B" "an unrelated brief with no cues" "scripts/x/hardcodes-b.sh")"
 run_test "verb_hardcodes_not_captured" "no_actionable_overlap" "$(class_for "$verb_hardcodes")"
+run_test "verb_hardcodes_drops_bogus_module_signal" "0" "$(pair_value "$verb_hardcodes" '[.pairs[0].signals.leftSignals[] | select(.type=="module")] | length')"
 
 verb_returns="$TMP_ROOT/verb-returns.json"
 write_items "$verb_returns" \
   "$(item_json vr-a "A" "the component returns unrelated data" "scripts/x/returns-a.sh")" \
   "$(item_json vr-b "B" "an unrelated brief with no cues" "scripts/x/returns-b.sh")"
 run_test "verb_returns_not_captured" "no_actionable_overlap" "$(class_for "$verb_returns")"
+run_test "verb_returns_drops_bogus_module_signal" "0" "$(pair_value "$verb_returns" '[.pairs[0].signals.leftSignals[] | select(.type=="module")] | length')"
 
 # AC-3 control: genuinely overlapping pairs must still classify concrete, including
 # via an unquoted-but-identifier-shaped module name (proves the validator does not

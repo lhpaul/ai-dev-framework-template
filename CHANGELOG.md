@@ -28,40 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **`workflow-batch-overlap.sh` no longer treats ordinary prose as a module
-  collision or serializes provably independent pairs** (#1540): two
-  compounding defects collapsed parallel batches. First, the unquoted
-  module-cue extractor (`module|package|component|helper|script|service
-  <token>`) captured whatever word followed the cue with no validation, so
-  brief text like "the helper **emits** false rows" or "the **script**
-  **hardcodes** a path" produced fake `module` signals from ordinary English
-  verbs. It now requires the candidate to look like an identifier or path
-  fragment — a dot-extension, an underscore/hyphen separator, or mixed/upper
-  case — via a new `looks_like_module_identifier` check; the quoted variant
-  (`` helper `name` ``) is unaffected. Second, the `has_plan_evidence and
-  (left_signals or right_signals)` branch classified a pair `suspected`
-  (defaulting to serial) whenever **one** side carried a signal and the other
-  carried none, even with disjoint file sets and nothing shared or related —
-  which is close to the strongest evidence of independence the helper can
-  produce, and meant the more specific a brief was, the more likely its item
-  got serialized. The condition now requires signals on **both** sides
-  (`left_signals and right_signals`) before treating the pair as ambiguous;
-  a one-sided signal set with no other evidence now falls through to
-  `no_actionable_overlap`. `suspected` explanations for both the "related"
-  and the plan/brief-mismatch branches now name the specific triggering
-  signal(s) instead of a generic identical string for every pair. Genuinely
-  overlapping pairs (shared files, shared signals, or an unquoted
-  identifier-shaped module name matching on both sides) still classify
-  `concrete`, per a new control fixture. Added regression tests in
-  `scripts/development-workflow/tests/test-workflow-batch-overlap.sh`
-  covering the issue's minimal reproduction, the verb-capture fixtures
-  ("helper emits", "script hardcodes", "component returns"), the concrete
-  control, and the two real overnight-batch wave sets named in the issue
-  (previously collapsed into one serial group of 4 each, now fully
-  parallel-eligible). `looks_like_module_identifier` also now strips trailing
-  sentence punctuation before its shape check, so a verb immediately followed
-  by terminal punctuation (e.g. "the script **fails**.") is no longer
-  misread as having a dot-extension and does not slip through as a fake
-  module signal either.
+  collision or serializes provably independent pairs** (#1540): brief text
+  like "the helper **emits** false rows" no longer produces a fake `module`
+  signal, and a pair with a signal on only one side (nothing shared or
+  related) no longer defaults to `suspected`/serial — it now requires
+  independence-defeating evidence on **both** sides. Genuinely overlapping
+  pairs still classify `concrete`. `suspected` explanations now name the
+  specific triggering signal(s). Regression tests cover the issue's
+  reproduction, verb-capture fixtures, a concrete-overlap control, and the
+  two real overnight-batch wave sets from the issue (previously one serial
+  group of 4 each, now fully parallel-eligible).
 - **Item runners no longer park permanently after backgrounding a long step
   and ending the turn to wait for it** (#1548): three of four Work Item
   Runners in one overnight wave backgrounded a step (`test-pr-review-loop.sh`,
