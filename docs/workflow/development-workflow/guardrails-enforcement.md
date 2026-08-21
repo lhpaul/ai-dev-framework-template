@@ -327,6 +327,7 @@ table is required for consistent stop reporting.
 | `missing_required_secret_or_permission` | A required credential, GitHub permission, or access token is absent. |
 | `guardrails_config_unreadable` | The `guardrails` block in `.ai-dev-workflow.yaml` is missing required fields, uses invalid values, or is internally contradictory. |
 | `missing_audit_evidence` | A delegated decision required an audit record but the record could not be produced or verified. |
+| `evidence_schema_mismatch` | `run-epic-delegated-gate.sh` evidence is missing a required object or array key entirely (for example `.policy` or `.statusChecks[]`), which cannot be distinguished from a genuine authority denial or a genuine "no CI has run" state; fix the evidence file's shape before treating the result as a real denial or CI verdict. |
 
 **Additive rule**: These stop conditions may **add** to but may **never remove**
 the framework's baseline human-stop conditions. The baseline stops
