@@ -6,6 +6,9 @@
 #   2. ensure_on_project_board checks membership without full-board pagination
 #   3. update_tracker_status_best_effort resolves item/status IDs without item-list
 #   4. Type helpers read/update project Type and discover open Workflow items
+#   5. list_open_workflow_type_issues resolves the real gh item-list key
+#      ("custom Type"/configured field), not a hardcoded ".type", and
+#      distinguishes an unreadable Type field from a clean [] (issue #1400)
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-lib-github-projects.sh
 
@@ -230,9 +233,38 @@ JSON
 JSON
     ;;
   "project item-list 1 --owner lhpaul --limit 1000 --format json")
-    cat <<'JSON'
-{"items":[{"content":{"number":824},"status":"Backlog","priority":"High","type":"Workflow","title":"Workflow helper issue"},{"content":{"number":825},"status":"Backlog","priority":"High","type":"Bug","title":"Bug helper issue"},{"content":{"number":826},"status":"Done","priority":"High","type":"Workflow","title":"Done workflow helper issue"},{"content":{"number":827},"status":"Merged","priority":"High","type":"Workflow","title":"Merged workflow helper issue"},{"content":{"number":828},"status":"Released","priority":"High","type":"Workflow","title":"Released workflow helper issue"},{"content":{"number":829},"status":"Cancelled","priority":"High","type":"Workflow","title":"Cancelled workflow helper issue"}]}
+    # Real `gh project item-list --format json` derives each item's field
+    # key from the field's display name, lowercasing only the first
+    # character. "Type" is a reserved GitHub Projects field name, so no
+    # conforming board can name its classification field "Type" — the
+    # fixture below uses "custom Type" (from a field literally named
+    # "Custom Type"), the key a real board actually emits (issue #1400).
+    if [ "${MOCK_ITEM_LIST_MODE:-default}" = "configured_field" ]; then
+      # Board configured with issue_tracker.custom_fields.type_field:
+      # "Classification" — key is "classification".
+      cat <<'JSON'
+{"items":[{"content":{"number":824},"status":"Backlog","priority":"High","classification":"Workflow","custom Type":"Bug","title":"Workflow helper issue"}]}
 JSON
+    elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "unreadable" ]; then
+      # No key matching any candidate (preferred/"Custom Type"/"CustomType"/
+      # "Type") is present anywhere in the payload — simulates a
+      # misconfigured or unreadable Type field.
+      cat <<'JSON'
+{"items":[{"content":{"number":824},"status":"Backlog","priority":"High","title":"Workflow helper issue"}]}
+JSON
+    elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "empty_board" ]; then
+      # Project board has zero items yet (e.g. open issues not triaged onto
+      # the board). This must be a clean "no open Workflow items" result, not
+      # an unreadable-Type-field warning — there is nothing to judge the
+      # field keys against.
+      cat <<'JSON'
+{"items":[]}
+JSON
+    else
+      cat <<'JSON'
+{"items":[{"content":{"number":824},"status":"Backlog","priority":"High","custom Type":"Workflow","title":"Workflow helper issue"},{"content":{"number":825},"status":"Backlog","priority":"High","custom Type":"Bug","title":"Bug helper issue"},{"content":{"number":826},"status":"Done","priority":"High","custom Type":"Workflow","title":"Done workflow helper issue"},{"content":{"number":827},"status":"Merged","priority":"High","custom Type":"Workflow","title":"Merged workflow helper issue"},{"content":{"number":828},"status":"Released","priority":"High","custom Type":"Workflow","title":"Released workflow helper issue"},{"content":{"number":829},"status":"Cancelled","priority":"High","custom Type":"Workflow","title":"Cancelled workflow helper issue"}]}
+JSON
+    fi
     ;;
   "project item-add "*)
     printf 'PVTI_added\n'
@@ -599,6 +631,81 @@ workflow_issue_numbers="$(printf '%s' "$workflow_issues" | jq -r '.[].number' | 
 run_test "workflow_type_discovery_filters_open_type" "824" "$workflow_issue_numbers"
 run_test "workflow_type_discovery_filters_terminal_statuses" "824" "$workflow_issue_numbers"
 run_test "workflow_type_discovery_uses_single_board_scan" "1" "$(count_log_matches 'project item-list')"
+
+# Regression (issue #1400): the payload above uses "custom Type" — the key
+# real `gh project item-list --format json` derives from a field literally
+# named "Custom Type" (lowercasing only the first character). A hardcoded
+# `.type` lookup cannot match this key and silently returns []. Confirm the
+# discovered item's reported type reflects the resolved field value.
+workflow_issue_types="$(printf '%s' "$workflow_issues" | jq -r '.[].type' | tr '\n' ' ' | sed 's/ $//')"
+run_test "workflow_type_discovery_resolves_custom_type_key" "Workflow" "$workflow_issue_types"
+
+# Regression (issue #1400): issue_tracker.custom_fields.type_field names a
+# board's classification field something other than "Custom Type"/"Type".
+# The configured field must be honored (and preferred over a stray
+# "custom Type" key present on the same item, e.g. an unrelated field with
+# that literal name).
+reset_log
+# NOTE: an earlier section (workflow_github_project_type_field_json tests)
+# permanently redefines workflow_issue_tracker_custom_field to always
+# return "Configured Type", ignoring $MOCK_TRACKER_TYPE_FIELD from here on.
+# Restore the $MOCK_TRACKER_TYPE_FIELD-driven stub for this test, then put
+# the hardcoded "Configured Type" stub back so later tests are unaffected.
+workflow_issue_tracker_custom_field() {
+  case "$1" in
+    type_field) printf '%s\n' "${MOCK_TRACKER_TYPE_FIELD:-}" ;;
+    *) printf '\n' ;;
+  esac
+}
+export MOCK_ITEM_LIST_MODE=configured_field
+export MOCK_TRACKER_TYPE_FIELD="Classification"
+workflow_issues="$(list_open_workflow_type_issues)"
+unset MOCK_ITEM_LIST_MODE
+unset MOCK_TRACKER_TYPE_FIELD
+workflow_issue_tracker_custom_field() {
+  case "$1" in
+    type_field) printf 'Configured Type\n' ;;
+    *) printf '\n' ;;
+  esac
+}
+workflow_issue_numbers="$(printf '%s' "$workflow_issues" | jq -r '.[].number' | tr '\n' ' ' | sed 's/ $//')"
+run_test "workflow_type_discovery_honors_configured_type_field" "824" "$workflow_issue_numbers"
+
+# Regression (issue #1400): when none of the configured/default candidate
+# keys (preferred, "Custom Type", "CustomType", "Type") are present
+# anywhere in the item-list payload, the empty result must be distinguished
+# from a clean "no open Workflow items" scan via a distinct stderr warning
+# — otherwise a false-green [] is indistinguishable from an unreadable
+# field (the exact silent failure mode this issue reports).
+reset_log
+export MOCK_ITEM_LIST_MODE=unreadable
+workflow_issues_stderr=""
+workflow_issues_stderr="$(list_open_workflow_type_issues 2>&1 >/dev/null)"
+workflow_issues_unreadable="$(list_open_workflow_type_issues 2>/dev/null)"
+unset MOCK_ITEM_LIST_MODE
+run_test "workflow_type_discovery_unreadable_field_returns_empty" "[]" "$(printf '%s' "$workflow_issues_unreadable" | jq -c '.')"
+case "$workflow_issues_stderr" in
+  *"Cannot distinguish 'no open Workflow items' from 'Type field unreadable'"*) unreadable_warning_result="warned" ;;
+  *) unreadable_warning_result="$workflow_issues_stderr" ;;
+esac
+run_test "workflow_type_discovery_unreadable_field_warns_distinctly" "warned" "$unreadable_warning_result"
+
+# Regression (issue #1400 follow-up): an empty project board (zero items —
+# e.g. open issues not yet triaged onto the board) must not be confused with
+# an unreadable Type field. There is nothing to judge the candidate keys
+# against, so no warning should fire and the result must stay a clean [].
+reset_log
+export MOCK_ITEM_LIST_MODE=empty_board
+workflow_issues_empty_board_stderr=""
+workflow_issues_empty_board_stderr="$(list_open_workflow_type_issues 2>&1 >/dev/null)"
+workflow_issues_empty_board="$(list_open_workflow_type_issues 2>/dev/null)"
+unset MOCK_ITEM_LIST_MODE
+run_test "workflow_type_discovery_empty_board_returns_empty" "[]" "$(printf '%s' "$workflow_issues_empty_board" | jq -c '.')"
+case "$workflow_issues_empty_board_stderr" in
+  *"Cannot distinguish"*) empty_board_warning_result="$workflow_issues_empty_board_stderr" ;;
+  *) empty_board_warning_result="no-warning" ;;
+esac
+run_test "workflow_type_discovery_empty_board_no_false_warning" "no-warning" "$empty_board_warning_result"
 
 reset_log
 export MOCK_TRACKER_PROVIDER=linear
