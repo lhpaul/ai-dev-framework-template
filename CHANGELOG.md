@@ -27,6 +27,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **`workflow-batch-overlap.sh` no longer treats ordinary prose as a module
+  collision or serializes provably independent pairs** (#1540): brief text
+  like "the helper **emits** false rows" no longer produces a fake `module`
+  signal, and a pair with a signal on only one side (nothing shared or
+  related) no longer defaults to `suspected`/serial — it now requires
+  independence-defeating evidence on **both** sides. Genuinely overlapping
+  pairs still classify `concrete`. `suspected` explanations now name the
+  specific triggering signal(s). Regression tests cover the issue's
+  reproduction, verb-capture fixtures, a concrete-overlap control, and the
+  two real overnight-batch wave sets from the issue (previously one serial
+  group of 4 each, now fully parallel-eligible).
 - **Item runners no longer park permanently after backgrounding a long step
   and ending the turn to wait for it** (#1548): three of four Work Item
   Runners in one overnight wave backgrounded a step (`test-pr-review-loop.sh`,
