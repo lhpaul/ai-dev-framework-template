@@ -50,6 +50,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   code sample within the PR body is not mistaken for a live reference —
   mirroring `graduation-closeout-from-merged-pr.sh`'s existing
   `extract_closing_issue_numbers` / `strip_fenced_blocks` behavior.
+- **Security-checkpoint keyword test no longer matches substrings** (#1504):
+  `recommend_checkpoints_for_item` in
+  `scripts/development-workflow/run-epic-policy-recommender.sh` matched the
+  security/auth checkpoint keywords with a bare, unanchored alternation, so
+  ordinary vocabulary ("authoring", "author", "authority", "insensitive")
+  tripped a pending human checkpoint and halted an otherwise fully delegated
+  `/run-epic`/`/run-items` run on issues with no actual security content (live
+  reproduction on `/run-items 1502 1501`). The keyword regex is now
+  `\b`-anchored so real security/auth terms — including negated forms like
+  `unauthorized`/`unauthenticated` — still match while incidental substrings no
+  longer do. The checkpoint `reason` now names the matched term and quotes the
+  source line instead of a generic static message. The sibling unresolved-
+  product and trade-off/architecture classifiers shared the same
+  bare-alternation defect and are now `\b`-anchored too. 13 new regression
+  tests cover the false-positive corpus (confirmed to fail against the pre-fix
+  regex) and the true-positive corpus.
 - **CodeRabbit "Review skipped" banner no longer reports an unreviewed PR as
   clean** (#1531): `run_coderabbit_review` in
   `scripts/development-workflow/pr-review-loop.sh` counted any CodeRabbit issue

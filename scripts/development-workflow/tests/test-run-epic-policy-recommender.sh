@@ -447,6 +447,84 @@ sensitive_backlog_fixture="$(write_fixture sensitive-backlog '{
 sensitive_backlog_output="$(recommend_json "$sensitive_backlog_fixture" "\$run-epic --items 301")"
 run_test "sensitive_backlog_recommends_implementation_checkpoint" "implementation:technical" "$(printf '%s\n' "$sensitive_backlog_output" | jq -r '.recommendedPolicy.checkpoints[0] | .stage + ":" + .domain')"
 
+# Regression coverage for issue #1504: the security-checkpoint keyword test must
+# use word boundaries so ordinary vocabulary ("authoring", "author", "authority",
+# "insensitive") no longer trips a spurious implementation checkpoint, while real
+# security/auth terms still do. security_case_fixture derives each case from the
+# in_review "sensitive_fixture" so only the implementation/technical checkpoint is
+# exercised.
+security_case_fixture() {
+  if [ "$#" -ne 4 ]; then
+    printf 'ERROR: security_case_fixture requires exactly 4 arguments; got %s\n' "$#" >&2
+    return 2
+  fi
+  local name="$1" number="$2" title="$3" body="$4"
+  write_fixture "$name" "$(jq --argjson number "$number" --arg title "$title" --arg body "$body" '
+    .groups.in_review[0].number = $number
+    | .groups.in_review[0].title = $title
+    | .groups.in_review[0].body = $body
+    | .items[0] = .groups.in_review[0]
+  ' "$sensitive_fixture")"
+}
+security_case_checkpoint_count() {
+  if [ "$#" -ne 2 ]; then
+    printf 'ERROR: security_case_checkpoint_count requires exactly 2 arguments; got %s\n' "$#" >&2
+    return 2
+  fi
+  local fixture="$1" number="$2"
+  recommend_json "$fixture" "\$run-epic --items $number" \
+    | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "implementation" and .domain == "technical")] | length'
+}
+security_case_checkpoint_reason() {
+  if [ "$#" -ne 2 ]; then
+    printf 'ERROR: security_case_checkpoint_reason requires exactly 2 arguments; got %s\n' "$#" >&2
+    return 2
+  fi
+  local fixture="$1" number="$2"
+  recommend_json "$fixture" "\$run-epic --items $number" \
+    | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "implementation" and .domain == "technical") | .reason'
+}
+
+# False-positive corpus: must NOT trigger the security checkpoint. Confirmed
+# against the unfixed regex (test("auth|security|secret|permission|credential|
+# sensitive")) that every one of these words matches as a bare substring before
+# this fix, which is exactly the defect being regression-tested here.
+authoring_fixture="$(security_case_fixture authoring-fp 320 "Improve plan-authoring guidance" "Related: #1496 (Protocol 02 plan-authoring rigor) has no bearing here.")"
+run_test "authoring_word_does_not_checkpoint" "0" "$(security_case_checkpoint_count "$authoring_fixture" 320)"
+
+author_fixture="$(security_case_fixture author-fp 321 "Credit the documentation author" "The author of this guide should be listed in the footer.")"
+run_test "author_word_does_not_checkpoint" "0" "$(security_case_checkpoint_count "$author_fixture" 321)"
+
+authority_fixture="$(security_case_fixture authority-fp 322 "Clarify service authority boundaries" "This service has no authority over billing decisions.")"
+run_test "authority_word_does_not_checkpoint" "0" "$(security_case_checkpoint_count "$authority_fixture" 322)"
+
+insensitive_fixture="$(security_case_fixture insensitive-fp 323 "Make string comparison case insensitive" "The comparison should be case insensitive for usernames.")"
+run_test "insensitive_word_does_not_checkpoint" "0" "$(security_case_checkpoint_count "$insensitive_fixture" 323)"
+
+# True-positive corpus: must still trigger the security checkpoint.
+authentication_fixture="$(security_case_fixture authentication-tp 324 "Add authentication to login flow" "Users must authenticate before accessing the dashboard.")"
+run_test "authentication_word_still_checkpoints" "1" "$(security_case_checkpoint_count "$authentication_fixture" 324)"
+
+authorization_fixture="$(security_case_fixture authorization-tp 325 "Fix authorization checks" "The authorization check for admin routes is missing.")"
+run_test "authorization_word_still_checkpoints" "1" "$(security_case_checkpoint_count "$authorization_fixture" 325)"
+
+secret_fixture="$(security_case_fixture secret-tp 326 "Rotate leaked secret" "The leaked secret must be rotated immediately.")"
+run_test "secret_word_still_checkpoints" "1" "$(security_case_checkpoint_count "$secret_fixture" 326)"
+
+credential_fixture="$(security_case_fixture credential-tp 327 "Store credential in vault" "The credential should be stored in a secrets vault.")"
+run_test "credential_word_still_checkpoints" "1" "$(security_case_checkpoint_count "$credential_fixture" 327)"
+run_test "security_checkpoint_reason_names_matched_term_and_line" "yes" "$(security_case_checkpoint_reason "$credential_fixture" 327 | grep -Fq "keyword 'credential' in line: \"The credential should be stored in a secrets vault.\"" && echo yes || echo no)"
+
+# "un-" negated auth terms are real security vocabulary ("unauthorized access",
+# "unauthenticated request") that the pre-fix bare-substring regex also matched
+# (via "auth" inside them). The word-boundary fix must not introduce a false
+# negative here just because "un" glues directly onto the stem.
+unauthorized_fixture="$(security_case_fixture unauthorized-tp 328 "Reject unauthorized requests" "Return 403 for unauthorized access to the admin API.")"
+run_test "unauthorized_word_still_checkpoints" "1" "$(security_case_checkpoint_count "$unauthorized_fixture" 328)"
+
+unauthenticated_fixture="$(security_case_fixture unauthenticated-tp 329 "Block unauthenticated calls" "Middleware should reject unauthenticated requests before hitting the handler.")"
+run_test "unauthenticated_word_still_checkpoints" "1" "$(security_case_checkpoint_count "$unauthenticated_fixture" 329)"
+
 run_test "docs_scope_has_no_checkpoints" "0" "$(printf '%s\n' "$docs_output" | jq -r '.recommendedPolicy.checkpoints | length')"
 
 complete_criteria_fixture="$(write_fixture complete-criteria '{
@@ -470,6 +548,24 @@ complete_criteria_fixture="$(write_fixture complete-criteria '{
 }')"
 complete_criteria_output="$(recommend_json "$complete_criteria_fixture" "\$run-epic --items 401")"
 run_test "complete_acceptance_criteria_has_no_product_checkpoint" "0" "$(printf '%s\n' "$complete_criteria_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length')"
+
+# Sibling classifier audit (issue #1504): the unresolved-product signal shared the
+# same bare-alternation defect as the security test ("ambiguous" is a substring of
+# "unambiguous"). "unambiguous" must not trigger the spec/product checkpoint,
+# while a genuine "ambiguous" reference still does.
+unambiguous_fixture="$(write_fixture unambiguous "$(jq '
+  .groups.eligible[0].body = "## Problem\nThis flow is unambiguous and fully specified.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n- The report names held items.\n"
+  | .items[0].body = .groups.eligible[0].body
+' "$complete_criteria_fixture")")"
+unambiguous_output="$(recommend_json "$unambiguous_fixture" "\$run-epic --items 401")"
+run_test "unambiguous_word_does_not_recommend_product_checkpoint" "0" "$(printf '%s\n' "$unambiguous_output" | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "spec" and .domain == "product")] | length')"
+
+ambiguous_fixture_word="$(write_fixture ambiguous-word "$(jq '
+  .groups.eligible[0].body = "## Problem\nThis flow is ambiguous in edge cases.\n\n## Acceptance Criteria\n- The report labels each proposed item.\n- The report names held items.\n"
+  | .items[0].body = .groups.eligible[0].body
+' "$complete_criteria_fixture")")"
+ambiguous_output_word="$(recommend_json "$ambiguous_fixture_word" "\$run-epic --items 401")"
+run_test "ambiguous_word_still_recommends_product_checkpoint" "issue signals unresolved product requirements or acceptance-criteria ambiguity" "$(printf '%s\n' "$ambiguous_output_word" | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "spec" and .domain == "product") | .reason')"
 
 case_variant_fixture="$(write_fixture case-variant "$(jq '.groups.eligible[0].body = "## ACCEPTANCE CRITERIA\n- The heading case is normalized.\n" | .items[0].body = .groups.eligible[0].body' "$complete_criteria_fixture")")"
 case_variant_output="$(recommend_json "$case_variant_fixture" "\$run-epic --items 401")"
