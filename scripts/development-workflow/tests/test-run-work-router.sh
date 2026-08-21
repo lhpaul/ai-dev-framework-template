@@ -119,6 +119,9 @@ esac
 #   888886 — gh probe fails with empty stderr and a non-1 exit code (e.g. the
 #            gh binary itself crashed or was signal-killed) — must NOT be
 #            misclassified as not_found the way a bare exit-1/empty-stderr is
+#   888887 — gh probe fails with "no default remote repository has been set"
+#            (a local repo-configuration error) — must NOT be classified as
+#            not_found; it is not confirmation the target doesn't exist
 case "$*" in
   pr\ view\ 888881\ --json\ state\ --jq\ .state)
     printf 'API rate limit exceeded for user ID 1148259 (https://docs.github.com/en/rest/overview/resources-in-the-rest-api#rate-limiting)\n' >&2
@@ -154,6 +157,14 @@ case "$*" in
     ;;
   issue\ view\ 888886\ --json\ state\ --jq\ .state)
     exit 137
+    ;;
+  pr\ view\ 888887\ --json\ state\ --jq\ .state)
+    printf 'no default remote repository has been set\n' >&2
+    exit 1
+    ;;
+  issue\ view\ 888887\ --json\ state\ --jq\ .state)
+    printf 'no default remote repository has been set\n' >&2
+    exit 1
     ;;
 esac
 
@@ -613,6 +624,15 @@ run_test "crash_empty_stderr_nonone_exit_mode" "tracker_unavailable" \
   "$(printf '%s\n' "$output_crash_empty_stderr" | grep '^MODE=' | cut -d= -f2-)"
 run_test_contains "crash_empty_stderr_nonone_exit_stop_reason" "unavailable" \
   "$(printf '%s\n' "$output_crash_empty_stderr" | grep '^STOP_REASON=' | cut -d= -f2-)"
+
+# "no default remote repository has been set" is a local repo-configuration
+# error, not confirmation that the target doesn't exist — must NOT be
+# classified as not_found (CodeRabbit finding on PR #1541).
+output_no_default_remote="$(router_output "888887")"
+run_test "no_default_remote_probe_mode" "tracker_unavailable" \
+  "$(printf '%s\n' "$output_no_default_remote" | grep '^MODE=' | cut -d= -f2-)"
+run_test_contains "no_default_remote_probe_stop_reason" "unavailable" \
+  "$(printf '%s\n' "$output_no_default_remote" | grep '^STOP_REASON=' | cut -d= -f2-)"
 
 # Multi-target list: a probe failure partway through the list must still
 # surface as tracker_unavailable, not ambiguous, and must not be masked by

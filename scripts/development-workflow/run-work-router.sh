@@ -302,15 +302,32 @@ gh_probe() {
   local err_file errexit_was_set
   errexit_was_set=0
   case "$-" in *e*) errexit_was_set=1 ;; esac
-  err_file="$(mktemp)"
   set +e
+  # If temp-file setup itself fails, do not let a resulting empty PROBE_ERR
+  # be misread downstream as gh's own empty-stderr not-found case (exit 1).
+  # Use exit code 125 (a value gh itself never returns) with a diagnostic
+  # PROBE_ERR so classify_gh_probe_error() correctly treats this as an
+  # infrastructure failure (github_unavailable), not a not-found.
+  if ! err_file="$(mktemp)"; then
+    PROBE_OUT=""
+    PROBE_ERR="gh_probe: mktemp failed while preparing to capture gh stderr"
+    PROBE_EXIT=125
+    if [ "$errexit_was_set" -eq 1 ]; then
+      set -e
+    fi
+    return 0
+  fi
   PROBE_OUT="$(gh "$@" 2>"$err_file")"
   PROBE_EXIT=$?
   # Capture stderr and clean up the temp file while errexit is still
   # disabled — a failing `cat` (e.g. the temp file became unreadable) must
   # not itself trigger `set -e` and terminate the script ahead of the
   # caller's own `$?` check, once errexit is restored below.
-  PROBE_ERR="$(cat "$err_file" 2>/dev/null)"
+  if ! PROBE_ERR="$(cat "$err_file")"; then
+    PROBE_OUT=""
+    PROBE_ERR="gh_probe: failed to read captured gh stderr"
+    PROBE_EXIT=125
+  fi
   rm -f "$err_file" 2>/dev/null
   if [ "$errexit_was_set" -eq 1 ]; then
     set -e
@@ -334,7 +351,11 @@ gh_probe() {
 # github_unavailable, since gh crashing or being killed is a probe failure,
 # not evidence the target doesn't exist. Any other non-empty, unrecognized
 # stderr also falls back to github_unavailable so opaque outages are treated
-# as probe failures rather than silently swallowed as not-found.
+# as probe failures rather than silently swallowed as not-found. This
+# deliberately includes gh's "no default remote repository has been set"
+# message — that is a local repository-configuration error (gh cannot
+# determine which repository to query), not confirmation that the PR or
+# issue does not exist, so it must NOT be classified as not_found.
 # ---------------------------------------------------------------------------
 
 classify_gh_probe_error() {
@@ -352,7 +373,7 @@ classify_gh_probe_error() {
   fi
 
   case "$err_lc" in
-    *"could not resolve to a pullrequest"*|*"could not resolve to an issue"*|*"no pull requests found"*|*"no default remote repository has been set"*)
+    *"could not resolve to a pullrequest"*|*"could not resolve to an issue"*|*"no pull requests found"*)
       echo "not_found"
       return 0
       ;;
