@@ -296,7 +296,7 @@ fetch_pr_meta() {
   local diff_files diff_exit=0
   diff_files="$(gh pr diff --name-only "$pr_num" 2>/dev/null)" || diff_exit=$?
   if [ "$diff_exit" -ne 0 ]; then
-    echo "WARN: gh pr diff failed for PR #${pr_num} (exit ${diff_exit}) — cannot determine whether CHANGELOG.md is in the diff; reporting PR_HAS_CHANGELOG=false" >&2
+    echo "WARNING: gh pr diff failed for PR #${pr_num} (exit ${diff_exit}) — cannot determine whether CHANGELOG.md is in the diff; reporting PR_HAS_CHANGELOG=false" >&2
   elif _list_has_exact_line 'CHANGELOG.md' "$diff_files"; then
     has_changelog="true"
   fi
