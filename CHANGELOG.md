@@ -36,6 +36,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **Adding a test job to a CI workflow no longer scores the same risk as
+  changing deployment behavior** (#1565): `run-epic-risk-classifier.sh` treated
+  every `.github/workflows/**` change as a sensitive category and escalated the
+  PR to `high`, so a PR that wires a test suite into CI exceeded a `medium`
+  ceiling and could not merge under delegated policy — the risk model penalised
+  closing a test-coverage gap, which is what #1537 asked for. Recognised test
+  and lint workflows now score `medium` with a distinct
+  `test or lint CI workflow change:` reason; deployment, release, and permission
+  behavior still score `high`, as does any unrecognised workflow. The classifier
+  only ever receives changed paths, never file contents, so this is judged by
+  filename — see the authoritative pattern table under "Known Heuristic Limits"
+  in
+  [guardrails-enforcement.md](docs/workflow/development-workflow/guardrails-enforcement.md).
 - **Every test suite is now reachable from CI, so a green check rollup means
   the changed script's own tests ran** (#1537): CI ran a hard-coded list of six
   suites behind a path filter, leaving 59 of 65 suites never executed by any

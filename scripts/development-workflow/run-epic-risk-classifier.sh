@@ -316,6 +316,45 @@ base64_decode() {
   fi
 }
 
+# ci_workflow_is_test_or_lint <path> — true when a .github/workflows file only
+# carries a test or lint job, judged by filename.
+#
+# Issue #1565: every .github/workflows change scored `high`, so a PR that wires
+# a test suite into CI exceeded a medium ceiling and could not be merged under
+# delegated policy — the risk model penalised closing a test-coverage gap.
+# Adding a test or lint job is close to the safest workflow edit there is;
+# changing deployment, release, or permission behavior is not.
+#
+# Filename is the only signal available: the classifier is handed a list of
+# changed paths (--input carries `changed_files` and nothing else), never file
+# contents, so it cannot inspect what a workflow actually does. That makes this
+# deliberately an allowlist, and one that yields to the deny-list below — an
+# unrecognised workflow stays `high`. Misjudging a deployment workflow as a
+# test job is far worse than making someone name a test workflow conventionally.
+ci_workflow_is_test_or_lint() {
+  [ "$#" -eq 1 ] && [ -n "${1:-}" ] \
+    || error_exit "ci_workflow_is_test_or_lint requires exactly one workflow path"
+  local base="${1##*/}"
+
+  # Deny-list wins. A name claiming both ("test-release.yml") is not a test job
+  # for this purpose.
+  case "$base" in
+    *deploy*|*release*|*publish*|*tag*|*secret*|*credential*|*permission*|*policy*|*token*)
+      return 1
+      ;;
+  esac
+
+  case "$base" in
+    test-*.yml|test-*.yaml|\
+    *-test.yml|*-test.yaml|*-tests.yml|*-tests.yaml|\
+    *lint*.yml|*lint*.yaml|\
+    shellcheck.yml|shellcheck.yaml)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 changed_file_risk() {
   local state_json="$1"
   local risk="low"
@@ -325,7 +364,20 @@ changed_file_risk() {
   while IFS= read -r file; do
     [ -n "$file" ] || continue
     case "$file" in
-      .github/workflows/*|*release*|*branch-deletion*|*delete-branch*|\
+      .github/workflows/*)
+        # Split before the sensitive category below, which would otherwise
+        # collapse every workflow edit into `high` (issue #1565).
+        if ci_workflow_is_test_or_lint "$file"; then
+          if [ "$risk" != "high" ]; then
+            risk="medium"
+          fi
+          reasons="$(append_json_array_string "$reasons" "test or lint CI workflow change: ${file}")"
+        else
+          risk="high"
+          reasons="$(append_json_array_string "$reasons" "sensitive or broad file category: ${file}")"
+        fi
+        ;;
+      *release*|*branch-deletion*|*delete-branch*|\
       auth/*|*/auth/*|*/auth|\
       authentication/*|*/authentication/*|*/authentication|\
       secret/*|*/secret/*|*/secret|\
