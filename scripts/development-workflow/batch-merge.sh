@@ -232,6 +232,13 @@ die() {
 # subprocess, no pipe, nothing to SIGPIPE). Because there is no pipe on the
 # matching side, this construction cannot reintroduce the race regardless of
 # how large the haystack is or how early the needle appears in it.
+#
+# Constraint: <needle> must not itself contain a literal newline, or the
+# `$'\n'"$needle"$'\n'` pattern would need an embedded newline in the exact
+# position the haystack's line separators appear, which the glob match above
+# does not attempt to satisfy. Every call site passes a hardcoded, newline-
+# free literal (a label name or "CHANGELOG.md"), so this is a documented
+# caller contract, not a runtime check.
 _list_has_exact_line() {
   local needle="$1" haystack="$2"
   case $'\n'"$haystack"$'\n' in
