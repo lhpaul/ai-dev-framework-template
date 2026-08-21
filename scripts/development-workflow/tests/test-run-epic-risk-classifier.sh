@@ -356,6 +356,89 @@ medium_missing_output="$(classify_fixture "$medium_missing_fixture" medium)"
 run_test "blocks_medium_without_evidence" "blocked" "$(printf '%s\n' "$medium_missing_output" | jq -r '.risk')"
 run_test "missing_evidence_blocks_merge" "false" "$(printf '%s\n' "$medium_missing_output" | jq -r '.merge_permitted')"
 
+# ---------------------------------------------------------------------------
+# CI workflow granularity (issue #1565)
+#
+# Every .github/workflows change used to score `high`, so a PR that wires a
+# test suite into CI exceeded a medium ceiling and could not merge under
+# delegated policy — the risk model penalised closing a test-coverage gap.
+# Adding a test or lint job now scores medium; deployment, release, and
+# permission behavior still score high.
+# ---------------------------------------------------------------------------
+
+# ci_workflow_fixture <name> <changed-files-json> — a clean PR differing only
+# in which files it touches, with why_safe_to_merge evidence supplied so the
+# result reflects file risk rather than the separate evidence blocker.
+ci_workflow_fixture() {
+  write_fixture "$1" '{
+  "pr_number": 30,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+  "changed_files": '"$2"',
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0},
+  "why_safe_to_merge": {
+    "scope": "ci workflow classification fixture",
+    "tests": "fixture tests cover risk classes",
+    "reviewer_outcome": "reviewer loop clean",
+    "ci_outcome": "CI green",
+    "rollback_or_cleanup_risk": "revert the workflow file"
+  }
+}'
+}
+
+ci_workflow_risk() {
+  classify_fixture "$(ci_workflow_fixture "$1" "$2")" medium | jq -r '.risk'
+}
+
+ci_workflow_merge() {
+  classify_fixture "$(ci_workflow_fixture "$1" "$2")" medium | jq -r '.merge_permitted'
+}
+
+# AC-1 / AC-2: the diff shape from PR #1536 — a test workflow plus the workflow
+# script it covers — must fit inside a medium ceiling.
+run_test "ci_test_workflow_is_medium" "medium" \
+  "$(ci_workflow_risk wf-test '[".github/workflows/workflow-tests.yml","scripts/development-workflow/batch-merge.sh"]')"
+
+run_test "ci_test_workflow_alone_is_medium" "medium" \
+  "$(ci_workflow_risk wf-test-alone '[".github/workflows/test-pr-review-loop.yml"]')"
+run_test "ci_test_workflow_merge_permitted" "true" \
+  "$(ci_workflow_merge wf-test-merge '[".github/workflows/test-pr-review-loop.yml"]')"
+run_test "ci_lint_workflow_is_medium" "medium" \
+  "$(ci_workflow_risk wf-lint '[".github/workflows/markdown-lint.yml"]')"
+run_test "ci_shellcheck_workflow_is_medium" "medium" \
+  "$(ci_workflow_risk wf-shellcheck '[".github/workflows/shellcheck.yml"]')"
+
+# AC-3: deployment, release, and permission behavior stay high.
+run_test "ci_deploy_workflow_is_high" "high" \
+  "$(ci_workflow_risk wf-deploy '[".github/workflows/deploy.yml"]')"
+run_test "ci_deploy_workflow_blocked_at_medium" "false" \
+  "$(ci_workflow_merge wf-deploy-merge '[".github/workflows/deploy.yml"]')"
+run_test "ci_release_workflow_is_high" "high" \
+  "$(ci_workflow_risk wf-release '[".github/workflows/auto-tag-release.yml"]')"
+run_test "ci_policy_workflow_is_high" "high" \
+  "$(ci_workflow_risk wf-policy '[".github/workflows/pr-policy.yml"]')"
+
+# An unrecognised workflow name is not assumed safe.
+run_test "ci_unknown_workflow_is_high" "high" \
+  "$(ci_workflow_risk wf-unknown '[".github/workflows/e2e-regression.yml"]')"
+
+# The deny-list beats the allowlist: a name claiming both is not a test job.
+run_test "ci_test_named_release_workflow_is_high" "high" \
+  "$(ci_workflow_risk wf-test-release '[".github/workflows/test-release.yml"]')"
+
+# A test workflow alongside a genuinely sensitive path stays high.
+run_test "ci_test_workflow_with_auth_path_is_high" "high" \
+  "$(ci_workflow_risk wf-test-auth '[".github/workflows/workflow-tests.yml","auth/token.sh"]')"
+
+# The reason string distinguishes the two categories rather than reusing one.
+run_test "ci_test_workflow_reason_is_specific" "yes" \
+  "$(classify_fixture "$(ci_workflow_fixture wf-reason '[".github/workflows/test-pr-review-loop.yml"]')" medium \
+     | jq -e '.reasons | any(startswith("test or lint CI workflow change:"))' >/dev/null && echo yes || echo no)"
+run_test "ci_deploy_workflow_reason_is_sensitive" "yes" \
+  "$(classify_fixture "$(ci_workflow_fixture wf-reason-deploy '[".github/workflows/deploy.yml"]')" medium \
+     | jq -e '.reasons | any(startswith("sensitive or broad file category:"))' >/dev/null && echo yes || echo no)"
+
 high_fixture="$(write_fixture high '{
   "pr_number": 4,
   "merge_state": "CLEAN",

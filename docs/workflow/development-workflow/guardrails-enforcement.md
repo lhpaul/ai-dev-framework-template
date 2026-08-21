@@ -429,3 +429,49 @@ only — they do not by themselves grant merge authority.
 
 **When a parent/epic does not exist**: the work-item ledger record is not
 applicable. Record "not applicable — no parent/epic exists" for that field.
+
+---
+
+## 7. Known Heuristic Limits
+
+Two of the signals used above are keyword- or path-driven. Both have a failure
+mode worth recognising rather than rediscovering.
+
+### CI workflow risk is judged by filename
+
+`run-epic-risk-classifier.sh` is handed a list of changed paths and never the
+file contents, so it cannot inspect what a workflow actually does. It therefore
+scores `.github/workflows/**` by filename: recognised test and lint workflows
+(`test-*.yml`, `*-tests.yml`, `*lint*.yml`, `shellcheck.yml`) score `medium`,
+and everything else — including any name containing `deploy`, `release`,
+`publish`, `tag`, `secret`, `credential`, `permission`, `policy`, or `token` —
+scores `high`.
+
+This is deliberately an allowlist that yields to that deny-list: an
+unrecognised workflow stays `high`. Before issue #1565 every workflow change
+scored `high`, which meant a PR that wired a test suite into CI exceeded a
+`medium` ceiling and could not merge under delegated policy — the risk model
+penalised closing a test-coverage gap.
+
+**Consequence for authors**: name a new test or lint workflow conventionally,
+or expect it to be classified `high` and to need explicit human merge
+authorization. That is the intended trade — misjudging a deployment workflow as
+a test job is far worse than making someone rename a file.
+
+### A bug report about a heuristic will trip that heuristic
+
+A bug report has to name its trigger in order to explain it, so any
+keyword-driven gate in this framework mishandles its own bug reports. Observed
+twice on one run:
+
+- The policy recommender flagged the issue reporting that its keyword test
+  over-matches, because the body quotes the keyword list.
+- The overlap classifier serialized the issue reporting that it over-serializes,
+  because the brief necessarily contains the triggering vocabulary.
+
+This is a property of keyword matching, not a defect in those specific lists,
+and it bites exactly when correct handling matters most. **Operators should
+expect it** and treat a heuristic's verdict on an item filed *against* that
+heuristic as uninformative — re-read the item and decide directly rather than
+deferring to the signal. Do not "fix" it by broadening the keyword list, which
+makes over-matching worse everywhere else.
