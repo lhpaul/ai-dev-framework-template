@@ -2943,9 +2943,17 @@ echo "=== Area 12b: rate-limit-aware ready-phase gate (issue #1509) ==="
 
 _1509_mkmock() {
   # $1 = mock dir, $2 = case body (bash `case "$*" in ... esac` arms)
+  if [ "$#" -ne 2 ]; then
+    echo "ERROR: _1509_mkmock requires exactly 2 arguments (dir, arms), got $#" >&2
+    return 1
+  fi
   local dir="$1"
   local arms="$2"
-  cat > "$dir/gh" <<EOF
+  if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+    echo "ERROR: _1509_mkmock: '$dir' is not a valid directory" >&2
+    return 1
+  fi
+  if ! cat > "$dir/gh" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "\$RL1509_CALL_LOG"
 case "\$*" in
@@ -2956,7 +2964,14 @@ $arms
     ;;
 esac
 EOF
-  chmod +x "$dir/gh"
+  then
+    echo "ERROR: _1509_mkmock: failed to write $dir/gh" >&2
+    return 1
+  fi
+  if ! chmod +x "$dir/gh"; then
+    echo "ERROR: _1509_mkmock: failed to chmod +x $dir/gh" >&2
+    return 1
+  fi
 }
 
 # --- gh_rate_limit_exhausted_reset: core exhausted -------------------------
