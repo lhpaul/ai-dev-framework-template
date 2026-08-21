@@ -987,13 +987,20 @@ unset MOCK_GH_POST_EXIT
 # non-POST calls. check_unresolved_threads calls `gh api graphql ... --jq ...`
 # which outputs the filtered JSON directly (not the raw gh output). Because the
 # mock gh does not run the --jq filter, we set MOCK_GH_OUTPUT to the pre-filtered
-# JSON that the real GraphQL query would return after --jq.
+# JSON that the real GraphQL query would return after --jq (the --jq filter is
+# `.data.repository.pullRequest`, so MOCK_GH_OUTPUT must be an object with a
+# top-level "reviewThreads" key — and, for provisional-mode cases, a top-level
+# "commits" key holding the PR head commit's committedDate).
 #
 # Important: GitHub's GraphQL API returns author.login WITHOUT the "[bot]" suffix
 # (e.g. "coderabbitai", not "coderabbitai[bot]"). The aggregate gate strips the
 # "[bot]" suffix from bot_login_for_platform() output before adding to
 # unresolved_bot_logins, so check_unresolved_threads always receives login strings
 # without the "[bot]" suffix. All test cases below use sanitized login strings.
+#
+# check_unresolved_threads takes a required "mode" argument ("strict" or
+# "provisional") as its third positional parameter, before the bot_logins
+# varargs. Every call below passes it explicitly.
 #
 # Note: the post-clean recheck logic (POST_CLEAN_RECHECK / LATE_THREADS_FOUND)
 # lives in the main execution block which is skipped by HARNESS_MODE=1. Those
@@ -1007,48 +1014,118 @@ echo "=== Area 6: check_unresolved_threads ==="
 unset MOCK_GH_POST_EXIT MOCK_GH_POST_OUTPUT MOCK_GH_CALL_LOG
 
 # test: no review threads — count should be 0
-export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}'
-actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai")"
+export MOCK_GH_OUTPUT='{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}'
+actual="$(check_unresolved_threads "1" "owner/repo" strict "coderabbitai")"
 run_test "unresolved_threads_none" "0" "$actual"
 
 # test: one unresolved bot thread — count should be 1
 # GraphQL author.login is "coderabbitai" (no "[bot]" suffix — stripped by caller)
-export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"},"body":"Blocking issue"}]}}]}'
-actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai")"
+export MOCK_GH_OUTPUT='{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"firstComment":{"nodes":[{"author":{"login":"coderabbitai"},"body":"Blocking issue"}]}}]}}'
+actual="$(check_unresolved_threads "1" "owner/repo" strict "coderabbitai")"
 run_test "unresolved_threads_one_bot" "1" "$actual"
 
 # test: one resolved bot thread — count should be 0
-export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"},"body":"Blocking issue"}]}}]}'
-actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai")"
+export MOCK_GH_OUTPUT='{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":true,"firstComment":{"nodes":[{"author":{"login":"coderabbitai"},"body":"Blocking issue"}]}}]}}'
+actual="$(check_unresolved_threads "1" "owner/repo" strict "coderabbitai")"
 run_test "unresolved_threads_resolved_skipped" "0" "$actual"
 
 # test: bot thread with "✅ Addressed" in body — count should be 0
-export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"},"body":"✅ Addressed — fixed in latest commit"}]}}]}'
-actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai")"
+export MOCK_GH_OUTPUT='{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"firstComment":{"nodes":[{"author":{"login":"coderabbitai"},"body":"✅ Addressed — fixed in latest commit"}]}}]}}'
+actual="$(check_unresolved_threads "1" "owner/repo" strict "coderabbitai")"
 run_test "unresolved_threads_addressed_body_skipped" "0" "$actual"
 
 # test: human-authored thread unresolved — count should be 0 (bot-only filter)
-export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"comments":{"nodes":[{"author":{"login":"humanreview"},"body":"Please change this"}]}}]}'
-actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai")"
+export MOCK_GH_OUTPUT='{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"firstComment":{"nodes":[{"author":{"login":"humanreview"},"body":"Please change this"}]}}]}}'
+actual="$(check_unresolved_threads "1" "owner/repo" strict "coderabbitai")"
 run_test "unresolved_threads_human_ignored" "0" "$actual"
 
 # test: two bot threads, one resolved, one not — count should be 1
-export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":true,"comments":{"nodes":[{"author":{"login":"coderabbitai"},"body":"First finding"}]}},{"id":"RT2","isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"},"body":"Second finding"}]}}]}'
-actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai")"
+export MOCK_GH_OUTPUT='{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":true,"firstComment":{"nodes":[{"author":{"login":"coderabbitai"},"body":"First finding"}]}},{"id":"RT2","isResolved":false,"firstComment":{"nodes":[{"author":{"login":"coderabbitai"},"body":"Second finding"}]}}]}}'
+actual="$(check_unresolved_threads "1" "owner/repo" strict "coderabbitai")"
 run_test "unresolved_threads_mixed_resolved" "1" "$actual"
 
 # test: [bot]-suffix login NOT matched (gate strips suffix; bare login is required)
 # Passing "coderabbitai[bot]" should NOT match GraphQL "coderabbitai" — returns 0.
-export MOCK_GH_OUTPUT='{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"},"body":"Blocking issue"}]}}]}'
-actual="$(check_unresolved_threads "1" "owner/repo" "coderabbitai[bot]")"
+export MOCK_GH_OUTPUT='{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"firstComment":{"nodes":[{"author":{"login":"coderabbitai"},"body":"Blocking issue"}]}}]}}'
+actual="$(check_unresolved_threads "1" "owner/repo" strict "coderabbitai[bot]")"
 run_test "unresolved_threads_bot_suffix_no_match" "0" "$actual"
 
 # test: GraphQL API failure (exit 1 from gh) — function should return exit 3
 export MOCK_GH_EXIT=1
 actual_exit=0
-check_unresolved_threads "1" "owner/repo" "coderabbitai" > /dev/null 2>&1 || actual_exit=$?
+check_unresolved_threads "1" "owner/repo" strict "coderabbitai" > /dev/null 2>&1 || actual_exit=$?
 run_test "unresolved_threads_graphql_failure_exit3" "3" "$actual_exit"
 unset MOCK_GH_EXIT
+
+# test: unrecognized mode value fails safe to strict — a reply-after-head-commit
+# must NOT be treated as provisionally addressed when mode is misspelled/garbage.
+export MOCK_GH_OUTPUT='{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"firstComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"body":"Blocking issue"}]},"lastComment":{"nodes":[{"author":{"login":"humanreview"},"body":"fixed","createdAt":"2026-08-21T02:00:00Z"}]}}]},"commits":{"nodes":[{"commit":{"committedDate":"2026-08-21T01:00:00Z"}}]}}'
+actual="$(check_unresolved_threads "1" "owner/repo" bogus-mode "chatgpt-codex-connector")"
+run_test "unresolved_threads_unrecognized_mode_fails_safe_to_strict" "1" "$actual"
+
+# ---------------------------------------------------------------------------
+# Area 6b: check_unresolved_threads mode=provisional (#1508)
+#
+# A replied-but-unresolved thread must not block phase-1 gates (run_codex_
+# github_review, run_claude_code_action_review) from re-triggering a review
+# when the reply came from a non-bot author AFTER the current PR head commit
+# — this is the "fixer pushed and replied but has not yet called
+# resolveReviewThread" state described in issue #1508. Every other caller
+# (the aggregate clean gate, coderabbit_thread_gate_clean, the post-trigger
+# findings recount, and the post-clean recheck) keeps using mode=strict, so
+# these provisional-mode semantics can only ever make check_unresolved_threads
+# return a SMALLER count than strict mode for the same input — never used by
+# anything that decides RESULT=clean. Confirmed at the call-site level in the
+# "call-site mode audit" test below.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 6b: check_unresolved_threads mode=provisional (#1508) ==="
+
+# Direction 1 (the reported bug): a thread replied to by a human AFTER the
+# head commit was pushed must NOT block re-review in provisional mode — count
+# should be 0, even though isResolved is still false (no resolveReviewThread
+# call was made).
+export MOCK_GH_OUTPUT='{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"firstComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"body":"Blocking issue"}]},"lastComment":{"nodes":[{"author":{"login":"humanreview"},"body":"Fixed in the latest push, see commit abc123","createdAt":"2026-08-21T02:00:00Z"}]}}]},"commits":{"nodes":[{"commit":{"committedDate":"2026-08-21T01:00:00Z"}}]}}'
+actual="$(check_unresolved_threads "1" "owner/repo" provisional "chatgpt-codex-connector")"
+run_test "unresolved_threads_provisional_reply_after_head_not_blocking" "0" "$actual"
+
+# The SAME fixture under mode=strict must still count as unresolved (1) —
+# this is the load-bearing guarantee that provisional mode cannot leak into
+# any RESULT=clean decision: strict mode ignores the reply entirely and
+# requires true GraphQL resolution.
+actual="$(check_unresolved_threads "1" "owner/repo" strict "chatgpt-codex-connector")"
+run_test "unresolved_threads_strict_still_blocks_same_replied_thread" "1" "$actual"
+
+# Direction 2 (must not open the false-clean class, #1531/#1437): a reply
+# posted BEFORE the head commit (i.e. the fixer pushed AFTER replying, or the
+# reply predates the fix entirely) must still count as unresolved even in
+# provisional mode — an old reply is not evidence the current HEAD was
+# addressed.
+export MOCK_GH_OUTPUT='{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"firstComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"body":"Blocking issue"}]},"lastComment":{"nodes":[{"author":{"login":"humanreview"},"body":"looking into it","createdAt":"2026-08-20T23:00:00Z"}]}}]},"commits":{"nodes":[{"commit":{"committedDate":"2026-08-21T01:00:00Z"}}]}}'
+actual="$(check_unresolved_threads "1" "owner/repo" provisional "chatgpt-codex-connector")"
+run_test "unresolved_threads_provisional_reply_before_head_still_blocks" "1" "$actual"
+
+# Direction 2 (continued): a reply from the bot ITSELF (e.g. a second bot
+# comment in the thread) must not count as a "human/agent reply" — still
+# unresolved even in provisional mode.
+export MOCK_GH_OUTPUT='{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"firstComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"body":"Blocking issue"}]},"lastComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"body":"still an issue","createdAt":"2026-08-21T02:00:00Z"}]}}]},"commits":{"nodes":[{"commit":{"committedDate":"2026-08-21T01:00:00Z"}}]}}'
+actual="$(check_unresolved_threads "1" "owner/repo" provisional "chatgpt-codex-connector")"
+run_test "unresolved_threads_provisional_bot_last_comment_still_blocks" "1" "$actual"
+
+# Direction 2 (continued): with no lastComment data at all (e.g. thread has
+# exactly one comment — the bot's own finding, never replied to), provisional
+# mode must behave exactly like strict — still unresolved.
+export MOCK_GH_OUTPUT='{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":false,"firstComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"body":"Blocking issue"}]}}]},"commits":{"nodes":[{"commit":{"committedDate":"2026-08-21T01:00:00Z"}}]}}'
+actual="$(check_unresolved_threads "1" "owner/repo" provisional "chatgpt-codex-connector")"
+run_test "unresolved_threads_provisional_no_reply_still_blocks" "1" "$actual"
+
+# Sanity: true resolution (isResolved=true) still counts as resolved under
+# provisional mode exactly as under strict — provisional mode only ADDS a
+# relaxation, it never removes the existing strict checks.
+export MOCK_GH_OUTPUT='{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"RT1","isResolved":true,"firstComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"body":"Blocking issue"}]}}]},"commits":{"nodes":[{"commit":{"committedDate":"2026-08-21T01:00:00Z"}}]}}'
+actual="$(check_unresolved_threads "1" "owner/repo" provisional "chatgpt-codex-connector")"
+run_test "unresolved_threads_provisional_true_resolution_still_clean" "0" "$actual"
+unset MOCK_GH_OUTPUT
 
 # ---------------------------------------------------------------------------
 # Area 7: bot_login_for_platform — copilot platform
@@ -3157,13 +3234,14 @@ echo ""
 echo "=== Area 13: PR #801 reviewer-loop failure paths ==="
 
 export MOCK_GH_OUTPUT='{
+  "reviewThreads": {
   "pageInfo": {"hasNextPage": false, "endCursor": null},
   "nodes": [
     {
       "id": "thread-outdated",
       "isResolved": false,
       "isOutdated": true,
-      "comments": {
+      "firstComment": {
         "nodes": [
           {
             "author": {"login": "chatgpt-codex-connector"},
@@ -3176,7 +3254,7 @@ export MOCK_GH_OUTPUT='{
       "id": "thread-active",
       "isResolved": false,
       "isOutdated": false,
-      "comments": {
+      "firstComment": {
         "nodes": [
           {
             "author": {"login": "chatgpt-codex-connector"},
@@ -3186,17 +3264,19 @@ export MOCK_GH_OUTPUT='{
       }
     }
   ]
+  }
 }'
 run_test "codex_thread_audit_ignores_outdated" "1" \
-  "$(check_unresolved_threads "42" "owner/repo" "chatgpt-codex-connector")"
+  "$(check_unresolved_threads "42" "owner/repo" strict "chatgpt-codex-connector")"
 export MOCK_GH_OUTPUT='{
+  "reviewThreads": {
   "pageInfo": {"hasNextPage": false, "endCursor": null},
   "nodes": [
     {
       "id": "thread-outdated",
       "isResolved": false,
       "isOutdated": true,
-      "comments": {
+      "firstComment": {
         "nodes": [
           {
             "author": {"login": "chatgpt-codex-connector"},
@@ -3206,9 +3286,10 @@ export MOCK_GH_OUTPUT='{
       }
     }
   ]
+  }
 }'
 run_test "codex_thread_audit_all_outdated_clean" "0" \
-  "$(check_unresolved_threads "42" "owner/repo" "chatgpt-codex-connector")"
+  "$(check_unresolved_threads "42" "owner/repo" strict "chatgpt-codex-connector")"
 unset MOCK_GH_OUTPUT
 
 manual_readiness_audit_count() {

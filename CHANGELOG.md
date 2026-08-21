@@ -27,6 +27,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **A replied-to but unresolved review thread no longer blocks the very
+  re-review it was replied about** (#1508): `check_unresolved_threads` in
+  `scripts/development-workflow/pr-review-loop.sh` gated the phase-1
+  "should we trigger a new review" check in `run_codex_github_review` and
+  `run_claude_code_action_review` purely on GraphQL `isResolved` state. When a
+  fixer pushed a fix and replied to a thread without also calling
+  `resolveReviewThread` — the normal state immediately after a push — the
+  loop returned `RESULT=needs_fixes REASON=existing_findings` and never
+  re-triggered the platform review, so the reviewer never saw the fix commit
+  until a human resolved the thread manually out of band. `check_unresolved_
+  threads` now takes a required `mode` argument. `mode=provisional`, used only
+  by those two phase-1 pre-trigger gates, additionally treats a thread as not
+  blocking re-review when its last comment is from a non-bot author posted
+  after the PR's current head-commit `committedDate` — modeling "fixed and
+  replied to, awaiting explicit resolution". Every gate that decides
+  `RESULT=clean` (the aggregate thread gate, `coderabbit_thread_gate_clean`,
+  the post-trigger findings recount, and the post-clean recheck) keeps using
+  `mode=strict`, which is byte-for-byte the prior behavior — a reply alone
+  still can never mark a thread resolved there, so this cannot reintroduce the
+  false-clean class fixed by #1531 and #1437. Unrecognized mode values fail
+  safe to `strict`. New regression tests in
+  `scripts/development-workflow/tests/test-pr-review-loop.sh` cover both
+  directions: the reply-after-head-commit case that must not block
+  re-triggering (confirmed to fail against the pre-fix code), and reply-
+  before-head-commit / bot-authored-reply / no-reply / true-resolution cases
+  that must still block under both modes.
 - **`post-merge-cleanup.sh` no longer closes the wrong issue for team-prefixed
   branch slugs** (#1511): the team-prefixed identifier pattern
   (`^(fix|feature|hotfix|refactor)/([a-zA-Z]{2,6}-([0-9]+))($|-)`) matches any
