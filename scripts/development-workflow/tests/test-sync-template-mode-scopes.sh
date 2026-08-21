@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # test-sync-template-mode-scopes.sh - role-aware sync-manifest selection tests.
+# covers: sync-manifest.yaml
+# covers: scripts/development-workflow/select-sync-manifest-entries.py
+# covers: scripts/development-workflow/validate-workflow-config.sh
 
 set -euo pipefail
 

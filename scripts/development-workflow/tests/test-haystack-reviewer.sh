@@ -1055,6 +1055,29 @@ run_test "policy_no_timeout_fallback_exit_code" "0" "$ec"
 unset TEST_HAYSTACK_PR_STATUS_CHECK TEST_REVIEWER_PATH
 
 # Test 10.14: no-timeout fallback terminates a hung pr-status subprocess.
+#
+# Budget sizing (issue #1537). This is the only test in this suite that
+# asserts a SUCCESS outcome while deliberately starving a subprocess. Every
+# other short-budget test here expects pending_timeout, so it reaches its
+# expectation whether or not the budget is tight; this one does not.
+#
+# It previously ran with HAYSTACK_REVIEWER_TIMEOUT=3. haystack-reviewer.sh
+# derives the per-call triage timeout as half the remaining budget, so the
+# first (fast) triage call got a 1-second allowance, polled at 1-second
+# granularity. Forking the mock CLI plus jq exceeds that under CPU
+# contention: the triage call was killed, the 3s budget then expired, and all
+# five assertions below failed together with calls=0 and REASON=
+# pending_timeout. That is the 205-passed/5-failed signature reported on the
+# issue — green in isolation, red when run alongside other work, which is
+# precisely the failure mode a batched CI run would introduce.
+#
+# Reproduced deterministically at load average ~42 on an 11-core machine, and
+# fixed by widening the absolute margin while preserving the ratio the test
+# depends on. The budget must stay BELOW the hung call's duration (otherwise
+# the subprocess is never terminated and the test asserts nothing) and far
+# ABOVE the cost of forking the mock (otherwise an unrelated slow moment
+# fails it). 12s against a 30s hang satisfies both, giving the first triage
+# call 6s where it had 1s.
 TEST_HAYSTACK_PR_STATUS_CHECK=1
 TEST_REVIEWER_PATH="$MOCK_BIN:$NO_TIMEOUT_BIN"
 MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,"findings":[]}
@@ -1062,10 +1085,10 @@ MOCK_HAYSTACK_OUTPUTS='{"owner":"owner","repo":"repo","prNumber":123,"rating":5,
 MOCK_HAYSTACK_EXITS='0
 0'
 MOCK_HAYSTACK_SLEEPS='0
-4'
+30'
 _install_mock_with_exits
 
-output=$(_run_reviewer 3 1)
+output=$(_run_reviewer 12 1)
 calls=$(_call_count)
 ec=$(cat "$_REVIEWER_EXIT_FILE")
 

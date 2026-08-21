@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# covers: .claude/agents/*.md .claude/commands/*.md .cursor/agents/*.md
+# covers: .cursor/commands/*.md .codex/skills/** .agents/skills/**
+# covers: docs/workflow/development-workflow/README.md
+# covers: docs/workflow/development-workflow/protocols/*.md
+# covers: docs/workflow/development-workflow/templates/implementation-plan-template.md
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

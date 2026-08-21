@@ -2,6 +2,10 @@
 # test-workflow-agent-product-repo-guidance.sh - prompt guidance coverage for workflow_hub ownership.
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-agent-product-repo-guidance.sh
+# covers: .claude/agents/*.md .claude/commands/*.md .cursor/agents/*.md
+# covers: .cursor/commands/*.md .codex/skills/** .agents/skills/**
+# covers: docs/workflow/development-workflow/repository-modes.md
+# covers: docs/workflow/development-workflow/protocols/*.md
 
 set -euo pipefail
 

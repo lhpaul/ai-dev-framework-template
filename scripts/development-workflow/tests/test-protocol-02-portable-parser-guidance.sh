@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # test-protocol-02-portable-parser-guidance.sh - Protocol 02 portability regression coverage.
+# covers: docs/workflow/development-workflow/protocols/02-generate-implementation-plan-protocol.md
+# covers: .claude/commands/sync-template.md
 
 set -euo pipefail
 

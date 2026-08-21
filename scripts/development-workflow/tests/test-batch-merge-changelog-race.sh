@@ -37,6 +37,7 @@
 # reporting spurious buggy-pattern successes on some CI runner, the most
 # likely explanation is a pipe buffer configured far larger than any
 # platform this repo targets, not that the underlying race stopped existing.
+# covers: scripts/development-workflow/batch-merge.sh
 
 set -euo pipefail
 

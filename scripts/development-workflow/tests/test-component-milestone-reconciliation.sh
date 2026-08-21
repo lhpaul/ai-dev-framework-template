@@ -8,7 +8,7 @@ REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
 HELPER="$REPO_ROOT/scripts/development-workflow/component-milestone-reconciliation.sh"
 FIXTURE_HELPER="$REPO_ROOT/scripts/development-workflow/tests/setup-component-milestone-fixture.sh"
 
-for tool in jq git python3 rg; do
+for tool in jq git python3; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "SETUP_ERROR=$tool is required" >&2
     exit 2
@@ -85,7 +85,11 @@ count_gh_calls() {
   local pattern="$1"
   local output status
   set +e
-  output="$(rg -c -- "$pattern" "$GH_CALL_LOG" 2>&1)"
+  # 'grep -c -E' rather than 'rg -c': ripgrep is not installed on GitHub's
+  # ubuntu-latest runners, and this suite never ran in CI to reveal that
+  # (issue #1537). The patterns here are plain EREs and both tools count
+  # matching LINES and share exit codes 0/1/>1, so the swap is faithful.
+  output="$(grep -c -E -- "$pattern" "$GH_CALL_LOG" 2>&1)"
   status=$?
   set -e
   case "$status" in

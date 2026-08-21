@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
 # test-workflow-hub-docs.sh - smoke checks for workflow-hub adoption docs.
+# covers: docs/workflow/development-workflow/README.md
+# covers: docs/workflow/development-workflow/cross-repo-pr-flow.md
+# covers: docs/workflow/development-workflow/multi-repo-release-adoption.md
+# covers: docs/workflow/development-workflow/product-repo-injection.md
+# covers: docs/workflow/development-workflow/repository-modes.md
+# covers: docs/workflow/development-workflow/workflow-hub-setup.md
+# covers: docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md
+# covers: scripts/development-workflow/README.md
+# covers: scripts/development-workflow/validate-workflow-config.sh
 
 set -euo pipefail
 

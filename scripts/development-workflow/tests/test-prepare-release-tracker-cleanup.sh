@@ -12,6 +12,9 @@
 #      c. update_tracker_status_best_effort emits Warning: -> SKIPPED
 #
 # Usage: bash scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh
+# covers: scripts/development-workflow/prepare-release-post-merge-cleanup.sh
+# covers: scripts/development-workflow/component-release-target.sh
+# covers: scripts/development-workflow/workflow-config-resolver.py
 
 set -euo pipefail
 
@@ -768,12 +771,20 @@ STUB
       hub_tracker_ref:"#1356",component_tag:"mobile-v1.0.0"}' > component-release-evidence.json
 )
 
+# The mock bin directory must precede the real git directory on PATH. It held
+# only a mock gh, and this previously read "$(dirname "$REAL_GIT"):$PWD/bin",
+# which shadows that mock wherever git and gh share a directory: false on
+# macOS (Homebrew puts gh in /opt/homebrew/bin), true on GitHub's
+# ubuntu-latest runners, where both are /usr/bin. There the real gh ran
+# instead of the mock and the cleanup exited 4. git still resolves from the
+# real git directory because only gh is mocked. Surfaced once this suite began
+# running in CI (issue #1537).
 e2e_output="$e2e_root/hub/cleanup-output.json"
 e2e_stderr="$e2e_root/hub/cleanup-stderr.log"
 e2e_status=0
 (
   cd "$e2e_root/hub"
-  PATH="$(dirname "$REAL_GIT"):$PWD/bin:$PATH" WORKFLOW_SKIP_FETCH=1 ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh     mobile-app/release/v1.0.0 --repo mobile-app --repo-root "$PWD"     --evidence-file "$PWD/component-release-evidence.json" --issue 1358 --json
+  PATH="$PWD/bin:$(dirname "$REAL_GIT"):$PATH" WORKFLOW_SKIP_FETCH=1 ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh     mobile-app/release/v1.0.0 --repo mobile-app --repo-root "$PWD"     --evidence-file "$PWD/component-release-evidence.json" --issue 1358 --json
 ) > "$e2e_output" 2> "$e2e_stderr" || e2e_status=$?
 
 run_test "e2e_json_exits_zero" "0" "$e2e_status"
@@ -790,7 +801,7 @@ run_test "e2e_json_no_stray_stdout_text" "0" "$(grep -c '^[A-Za-z].*[^}]$' "$e2e
 e2e_rerun_output="$e2e_root/hub/cleanup-rerun-output.json"
 (
   cd "$e2e_root/hub"
-  PATH="$(dirname "$REAL_GIT"):$PWD/bin:$PATH" WORKFLOW_SKIP_FETCH=1 ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh     mobile-app/release/v1.0.0 --repo mobile-app --repo-root "$PWD"     --evidence-file "$PWD/component-release-evidence.json" --issue 1358 --json
+  PATH="$PWD/bin:$(dirname "$REAL_GIT"):$PATH" WORKFLOW_SKIP_FETCH=1 ./scripts/development-workflow/prepare-release-post-merge-cleanup.sh     mobile-app/release/v1.0.0 --repo mobile-app --repo-root "$PWD"     --evidence-file "$PWD/component-release-evidence.json" --issue 1358 --json
 ) > "$e2e_rerun_output" 2>/dev/null || true
 run_test "e2e_json_rerun_valid_json" "0" "$(jq empty "$e2e_rerun_output" >/dev/null 2>&1; echo $?)"
 run_test "e2e_json_rerun_already_complete" "true" "$(jq -r '.product_cleanup.already_complete' "$e2e_rerun_output")"

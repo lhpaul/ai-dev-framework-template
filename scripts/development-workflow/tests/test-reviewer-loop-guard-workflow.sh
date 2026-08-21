@@ -2,6 +2,13 @@
 # test-reviewer-loop-guard-workflow.sh - Static checks for consolidated PR policy workflow.
 #
 # Usage: bash scripts/development-workflow/tests/test-reviewer-loop-guard-workflow.sh
+# covers: .github/workflows/pr-policy.yml
+# The three workflows below no longer exist — they were consolidated into
+# pr-policy.yml, and this suite asserts they stay gone. Declaring them is
+# deliberate, not a stale path: re-adding any of them must run this suite.
+# covers: .github/workflows/reviewer-loop-guard.yml
+# covers: .github/workflows/apply-regression-label.yml
+# covers: .github/workflows/remove-regression-label-on-push.yml
 
 set -euo pipefail
 
