@@ -13005,24 +13005,30 @@ _cr_mock_dir_1531="$(mktemp -d)"
 _cr_call_log_1531="$_cr_mock_dir_1531/calls.log"
 cat > "$_cr_mock_dir_1531/gh" <<'CR_GH_1531'
 #!/usr/bin/env bash
+# Strict mock: every gh invocation run_coderabbit_review legitimately makes is
+# enumerated, and anything else is a hard error. A permissive "*) echo []" fallback
+# would let these cases pass for the wrong reason — a renamed or dropped comments
+# request would silently return an empty array and still produce the expected
+# REASON, proving nothing.
 printf '%s\n' "$*" >> "$CR_CALL_LOG"
 case "$*" in
-  *"--jq .head.sha"*)
-    printf 'abc1531sha\n'; exit 0 ;;
-  *"--jq .commit.committer.date"*)
-    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
-  # An empty, successful thread audit. Without this the audit errors against the
-  # default "[]" and the run escalates as review_thread_audit_failed — which would
-  # make the RESULT=escalate assertion below pass for the wrong reason, and hide
-  # the fact that the unfixed code returns RESULT=clean here.
-  *"api graphql"*)
-    printf '%s\n' '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}'
-    exit 0 ;;
+  "auth status") exit 0 ;;
+  *"repo view"*"nameWithOwner"*) printf 'owner/repo\n'; exit 0 ;;
+  *"pulls/42 --jq .head.sha"*) printf 'abc1531sha\n'; exit 0 ;;
+  *"commits/abc1531sha --jq .commit.committer.date"*) printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"commits/abc1531sha/statuses"*) printf '[]\n'; exit 0 ;;
+  *"pulls/42/comments"*) printf '[]\n'; exit 0 ;;
+  *"pulls/42/reviews"*) printf '[]\n'; exit 0 ;;
   *"issues/42/comments"*)
     printf '%s\n' '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:00:01Z","updated_at":"2020-01-01T00:00:01Z","body":"<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n\n> [!IMPORTANT]\n> ## Review skipped\n>\n> Auto reviews are disabled on this repository."}]'
     exit 0 ;;
+  *"api graphql"*)
+    printf '%s\n' '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}'
+    exit 0 ;;
+  *"pr comment 42"*) exit 0 ;;
   *)
-    printf '[]\n'; exit 0 ;;
+    printf 'UNEXPECTED gh invocation in 1531 mock: %s\n' "$*" >&2
+    exit 1 ;;
 esac
 CR_GH_1531
 chmod +x "$_cr_mock_dir_1531/gh"
@@ -13041,6 +13047,11 @@ run_test "cr_skip_banner_escalates_not_clean" "RESULT=escalate" \
 # .coderabbit.yaml change, not waiting out a vendor quota.
 run_test "cr_skip_banner_reason_is_review_skipped_banner" "REASON=review_skipped_banner" \
   "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+
+# The mock errors on any unenumerated call, but silence is not proof the RIGHT
+# call happened — assert the comments endpoint was actually requested.
+run_test "cr_skip_banner_queried_issue_comments" "yes" \
+  "$([ "$(grep_count_or_zero "issues/42/comments" "$_cr_call_log_1531")" -ge 1 ] && echo yes || echo no)"
 
 # AC-2: the loop must still have nudged CodeRabbit with an explicit trigger
 # before giving up, since "@coderabbitai review" works even when auto review is
@@ -13071,20 +13082,30 @@ _cr_mock_dir_1531b="$(mktemp -d)"
 _cr_call_log_1531b="$_cr_mock_dir_1531b/calls.log"
 cat > "$_cr_mock_dir_1531b/gh" <<'CR_GH_1531B'
 #!/usr/bin/env bash
+# Strict mock: every gh invocation run_coderabbit_review legitimately makes is
+# enumerated, and anything else is a hard error. A permissive "*) echo []" fallback
+# would let these cases pass for the wrong reason — a renamed or dropped comments
+# request would silently return an empty array and still produce the expected
+# REASON, proving nothing.
 printf '%s\n' "$*" >> "$CR_CALL_LOG"
 case "$*" in
-  *"--jq .head.sha"*)
-    printf 'abc1531bsha\n'; exit 0 ;;
-  *"--jq .commit.committer.date"*)
-    printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
-  *"api graphql"*)
-    printf '%s\n' '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}'
-    exit 0 ;;
+  "auth status") exit 0 ;;
+  *"repo view"*"nameWithOwner"*) printf 'owner/repo\n'; exit 0 ;;
+  *"pulls/42 --jq .head.sha"*) printf 'abc1531bsha\n'; exit 0 ;;
+  *"commits/abc1531bsha --jq .commit.committer.date"*) printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"commits/abc1531bsha/statuses"*) printf '[]\n'; exit 0 ;;
+  *"pulls/42/comments"*) printf '[]\n'; exit 0 ;;
+  *"pulls/42/reviews"*) printf '[]\n'; exit 0 ;;
   *"issues/42/comments"*)
     printf '%s\n' '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:00:01Z","updated_at":"2020-01-01T00:00:01Z","body":"<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n\n> [!IMPORTANT]\n> ## Review skipped\n>\n> Draft detected."},{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:05:00Z","updated_at":"2020-01-01T00:05:00Z","body":"Review limit reached — rate limit in effect."}]'
     exit 0 ;;
+  *"api graphql"*)
+    printf '%s\n' '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}'
+    exit 0 ;;
+  *"pr comment 42"*) exit 0 ;;
   *)
-    printf '[]\n'; exit 0 ;;
+    printf 'UNEXPECTED gh invocation in 1531B mock: %s\n' "$*" >&2
+    exit 1 ;;
 esac
 CR_GH_1531B
 chmod +x "$_cr_mock_dir_1531b/gh"
@@ -13100,6 +13121,8 @@ run_test "cr_stale_draft_banner_does_not_shadow_rate_limit" "REASON=rate_limit_m
   "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
 run_test "cr_stale_draft_banner_still_escalates" "RESULT=escalate" \
   "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "cr_stale_draft_banner_queried_issue_comments" "yes" \
+  "$([ "$(grep_count_or_zero "issues/42/comments" "$_cr_call_log_1531b")" -ge 1 ] && echo yes || echo no)"
 
 rm -rf "$_cr_mock_dir_1531b"
 unset _cr_mock_dir_1531b _cr_call_log_1531b actual_output
@@ -13115,20 +13138,30 @@ _cr_mock_dir_1531c="$(mktemp -d)"
 _cr_call_log_1531c="$_cr_mock_dir_1531c/calls.log"
 cat > "$_cr_mock_dir_1531c/gh" <<'CR_GH_1531C'
 #!/usr/bin/env bash
+# Strict mock: every gh invocation run_coderabbit_review legitimately makes is
+# enumerated, and anything else is a hard error. A permissive "*) echo []" fallback
+# would let these cases pass for the wrong reason — a renamed or dropped comments
+# request would silently return an empty array and still produce the expected
+# REASON, proving nothing.
 printf '%s\n' "$*" >> "$CR_CALL_LOG"
 case "$*" in
-  *"--jq .head.sha"*)
-    printf 'abc1531csha\n'; exit 0 ;;
-  *"--jq .commit.committer.date"*)
-    printf '2020-01-02T00:00:00Z\n'; exit 0 ;;
-  *"api graphql"*)
-    printf '%s\n' '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}'
-    exit 0 ;;
+  "auth status") exit 0 ;;
+  *"repo view"*"nameWithOwner"*) printf 'owner/repo\n'; exit 0 ;;
+  *"pulls/42 --jq .head.sha"*) printf 'abc1531csha\n'; exit 0 ;;
+  *"commits/abc1531csha --jq .commit.committer.date"*) printf '2020-01-02T00:00:00Z\n'; exit 0 ;;
+  *"commits/abc1531csha/statuses"*) printf '[]\n'; exit 0 ;;
+  *"pulls/42/comments"*) printf '[]\n'; exit 0 ;;
+  *"pulls/42/reviews"*) printf '[]\n'; exit 0 ;;
   *"issues/42/comments"*)
     printf '%s\n' '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:00:01Z","updated_at":"2020-01-01T00:00:01Z","body":"<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n\n> [!IMPORTANT]\n> ## Review skipped\n>\n> Draft detected."}]'
     exit 0 ;;
+  *"api graphql"*)
+    printf '%s\n' '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}'
+    exit 0 ;;
+  *"pr comment 42"*) exit 0 ;;
   *)
-    printf '[]\n'; exit 0 ;;
+    printf 'UNEXPECTED gh invocation in 1531C mock: %s\n' "$*" >&2
+    exit 1 ;;
 esac
 CR_GH_1531C
 chmod +x "$_cr_mock_dir_1531c/gh"
@@ -13141,9 +13174,99 @@ actual_output="$(
 
 run_test "cr_banner_from_previous_head_not_attributed" "REASON=no_review" \
   "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "cr_banner_from_previous_head_queried_issue_comments" "yes" \
+  "$([ "$(grep_count_or_zero "issues/42/comments" "$_cr_call_log_1531c")" -ge 1 ] && echo yes || echo no)"
 
 rm -rf "$_cr_mock_dir_1531c"
 unset _cr_mock_dir_1531c _cr_call_log_1531c actual_output
+
+# --- The "latest" comment is ordered by EFFECTIVE event time -----------------
+# Admitting comments on `updated_at` and then ordering them on `created_at`
+# contradicts itself: an older comment CodeRabbit edited a moment ago is the most
+# recent thing it said, but a created_at sort ranks anything posted in between
+# above it. Both permutations below are non-activity comments (a skip banner and
+# a rate-limit notice), so both reach the timeout guard, and each one flips its
+# verdict if the sort key regresses to created_at.
+
+# Permutation 1 — banner created last, rate-limit notice UPDATED last.
+# Effective latest is the rate-limit notice, so this is a quota problem.
+_cr_mock_dir_1531d="$(mktemp -d)"
+_cr_call_log_1531d="$_cr_mock_dir_1531d/calls.log"
+cat > "$_cr_mock_dir_1531d/gh" <<'CR_GH_1531D'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CR_CALL_LOG"
+case "$*" in
+  "auth status") exit 0 ;;
+  *"repo view"*"nameWithOwner"*) printf 'owner/repo\n'; exit 0 ;;
+  *"pulls/42 --jq .head.sha"*) printf 'abc1531dsha\n'; exit 0 ;;
+  *"commits/abc1531dsha --jq .commit.committer.date"*) printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"commits/abc1531dsha/statuses"*) printf '[]\n'; exit 0 ;;
+  *"pulls/42/comments"*) printf '[]\n'; exit 0 ;;
+  *"pulls/42/reviews"*) printf '[]\n'; exit 0 ;;
+  *"issues/42/comments"*)
+    printf '%s\n' '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:00:30Z","updated_at":"2020-01-01T00:00:30Z","body":"<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n\n> [!IMPORTANT]\n> ## Review skipped\n>\n> Draft detected."},{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:00:10Z","updated_at":"2020-01-01T00:01:00Z","body":"Review limit reached — rate limit in effect."}]'
+    exit 0 ;;
+  *"api graphql"*)
+    printf '%s\n' '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}'
+    exit 0 ;;
+  *"pr comment 42"*) exit 0 ;;
+  *)
+    printf 'UNEXPECTED gh invocation in abc1531d mock: %s\n' "$*" >&2
+    exit 1 ;;
+esac
+CR_GH_1531D
+chmod +x "$_cr_mock_dir_1531d/gh"
+
+actual_output="$(
+  PATH="$_cr_mock_dir_1531d:$PATH" CR_CALL_LOG="$_cr_call_log_1531d" \
+    CODERABBIT_NO_TRIGGER_TIMEOUT=1 CODERABBIT_RATE_LIMIT_WAIT=1 \
+    CODERABBIT_RATE_LIMIT_MAX_RETRIES=1 \
+    run_coderabbit_review "42" "fix/42-test" "1" "3" 2>/dev/null || true
+)"
+run_test "cr_latest_by_effective_time_prefers_updated_rate_limit" "REASON=rate_limit_max_retries" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+rm -rf "$_cr_mock_dir_1531d"
+unset _cr_mock_dir_1531d _cr_call_log_1531d actual_output
+
+# Permutation 2 — rate-limit notice created last, banner UPDATED last.
+# Effective latest is the banner, so this is a configuration problem.
+_cr_mock_dir_1531e="$(mktemp -d)"
+_cr_call_log_1531e="$_cr_mock_dir_1531e/calls.log"
+cat > "$_cr_mock_dir_1531e/gh" <<'CR_GH_1531E'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CR_CALL_LOG"
+case "$*" in
+  "auth status") exit 0 ;;
+  *"repo view"*"nameWithOwner"*) printf 'owner/repo\n'; exit 0 ;;
+  *"pulls/42 --jq .head.sha"*) printf 'abc1531esha\n'; exit 0 ;;
+  *"commits/abc1531esha --jq .commit.committer.date"*) printf '2020-01-01T00:00:00Z\n'; exit 0 ;;
+  *"commits/abc1531esha/statuses"*) printf '[]\n'; exit 0 ;;
+  *"pulls/42/comments"*) printf '[]\n'; exit 0 ;;
+  *"pulls/42/reviews"*) printf '[]\n'; exit 0 ;;
+  *"issues/42/comments"*)
+    printf '%s\n' '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:00:30Z","updated_at":"2020-01-01T00:00:30Z","body":"Review limit reached — rate limit in effect."},{"user":{"login":"coderabbitai[bot]"},"created_at":"2020-01-01T00:00:10Z","updated_at":"2020-01-01T00:01:00Z","body":"<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n\n> [!IMPORTANT]\n> ## Review skipped\n>\n> Draft detected."}]'
+    exit 0 ;;
+  *"api graphql"*)
+    printf '%s\n' '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}'
+    exit 0 ;;
+  *"pr comment 42"*) exit 0 ;;
+  *)
+    printf 'UNEXPECTED gh invocation in abc1531e mock: %s\n' "$*" >&2
+    exit 1 ;;
+esac
+CR_GH_1531E
+chmod +x "$_cr_mock_dir_1531e/gh"
+
+actual_output="$(
+  PATH="$_cr_mock_dir_1531e:$PATH" CR_CALL_LOG="$_cr_call_log_1531e" \
+    CODERABBIT_NO_TRIGGER_TIMEOUT=1 CODERABBIT_RATE_LIMIT_WAIT=1 \
+    CODERABBIT_RATE_LIMIT_MAX_RETRIES=1 \
+    run_coderabbit_review "42" "fix/42-test" "1" "3" 2>/dev/null || true
+)"
+run_test "cr_latest_by_effective_time_prefers_updated_banner" "REASON=review_skipped_banner" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+rm -rf "$_cr_mock_dir_1531e"
+unset _cr_mock_dir_1531e _cr_call_log_1531e actual_output
 
 # --- AC-4: rate-limit tolerance spans an hourly vendor quota reset ------------
 # Asserted against the script source: the defaults are function-locals, so there

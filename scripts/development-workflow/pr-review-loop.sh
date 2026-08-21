@@ -4768,6 +4768,14 @@ run_coderabbit_review() {
         # rate-limit handlers below whenever CodeRabbit has since said something more
         # specific. updated_at is accepted alongside created_at because CodeRabbit
         # revises its existing comment in place rather than always posting a new one.
+        #
+        # For the same reason the sort key is the EFFECTIVE event time,
+        # updated_at // created_at, not created_at. Admitting a comment on updated_at
+        # and then ordering on created_at contradicts itself: an older comment that
+        # CodeRabbit edited a moment ago is genuinely the most recent thing it said,
+        # but a created_at sort would rank a banner posted in between above it. That is
+        # not hypothetical — on PR #1532 the walkthrough comment was created at 23:23
+        # and revised at 23:52, straddling later comments.
         local timeout_latest_cr_body
         timeout_latest_cr_body="$(
           gh api "repos/$repo/issues/$pr_number/comments" --paginate \
@@ -4777,7 +4785,7 @@ run_coderabbit_review() {
                     .user.login == $bot and
                     (.created_at > $since or .updated_at > $since)
                   ))
-                | sort_by(.created_at)
+                | sort_by(.updated_at // .created_at)
                 | last
                 | .body // ""
               '
