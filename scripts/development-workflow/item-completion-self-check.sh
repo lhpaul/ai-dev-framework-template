@@ -466,6 +466,7 @@ worktree_path_for_branch() {
 cd "$repo_root"
 
 resolved_repo_root="$(pwd -P)"
+resolved_worktree_path="$(CDPATH='' cd -- "$worktree_path" 2>/dev/null && pwd -P || printf '%s' "$worktree_path")"
 
 worktree_list=""
 worktree_list_available="true"
@@ -487,7 +488,7 @@ if [ "$worktree_list_available" = "true" ]; then
   expected_branch_worktree_path="$(worktree_path_for_branch "$expected_branch" "$worktree_list")"
   if [ -n "$expected_branch_worktree_path" ]; then
     resolved_expected_branch_worktree_path="$(CDPATH='' cd -- "$expected_branch_worktree_path" 2>/dev/null && pwd -P || printf '%s' "$expected_branch_worktree_path")"
-    if [ "$resolved_expected_branch_worktree_path" != "$resolved_repo_root" ]; then
+    if [ "$resolved_expected_branch_worktree_path" != "$resolved_worktree_path" ]; then
       caller_worktree_path_mismatch="true"
     fi
   fi
@@ -506,7 +507,7 @@ if current_branch="$(git rev-parse --abbrev-ref HEAD 2>&1)"; then
   else
     add_row "repository.branch" "discrepancy" "expected=$expected_branch observed=$current_branch" "git rev-parse --abbrev-ref HEAD"
     if [ "$caller_worktree_path_mismatch" = "true" ]; then
-      add_row "caller.worktree_path" "discrepancy" "expected branch $expected_branch is checked out at $resolved_expected_branch_worktree_path, not the supplied --worktree-path $resolved_repo_root; re-run this check with --worktree-path $resolved_expected_branch_worktree_path" "git worktree list --porcelain"
+      add_row "caller.worktree_path" "discrepancy" "expected branch $expected_branch is checked out at $resolved_expected_branch_worktree_path, not the supplied --worktree-path $resolved_worktree_path; re-run this check with --worktree-path $resolved_expected_branch_worktree_path" "git worktree list --porcelain"
     fi
   fi
 else
@@ -520,7 +521,6 @@ else
   add_row "repository.head" "unavailable_required" "unable to read HEAD" "$head_sha"
 fi
 
-resolved_worktree_path="$(CDPATH='' cd -- "$worktree_path" 2>/dev/null && pwd -P || printf '%s' "$worktree_path")"
 if [ "$resolved_repo_root" = "$resolved_worktree_path" ]; then
   add_row "workspace.path" "verified" "$resolved_worktree_path" "pwd -P"
 else
