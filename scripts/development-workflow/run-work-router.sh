@@ -335,8 +335,12 @@ gh_probe() {
   # result (e.g. a PR that was actually found) and misreport it as a probe
   # failure over a benign filesystem cleanup blip, unrelated to whether gh
   # itself succeeded. `--` guards against a pathological temp path starting
-  # with `-`, though mktemp never generates one.
-  rm -f -- "$err_file" 2>/dev/null
+  # with `-`, though mktemp never generates one. A cleanup failure is still
+  # reported (rather than silently swallowed) so a stray leftover temp file
+  # is visible for diagnosis, without affecting the routing decision.
+  if ! rm -f -- "$err_file" 2>/dev/null; then
+    echo "run-work-router: warning: failed to remove temp file '$err_file' used to capture gh stderr" >&2
+  fi
   if [ "$errexit_was_set" -eq 1 ]; then
     set -e
   fi
