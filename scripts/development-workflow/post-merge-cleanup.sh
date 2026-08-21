@@ -507,24 +507,33 @@ fi
 # body is not treated as a live closing reference. Handles both backtick
 # (```) and tilde (~~~) fence styles, and treats an unclosed opening fence as
 # extending to end of input (rather than leaving the rest of the body
-# unfiltered). A closing fence must use the same character as the opening
-# fence it closes, matching GitHub-Flavored Markdown's fence-matching rule.
+# unfiltered). Matches GitHub-Flavored Markdown's fence-matching rule: a
+# closing fence must use the same character as the opening fence, be at
+# least as long, and have nothing but trailing whitespace after the fence
+# marker — a shorter, differently-charactered, or content-suffixed line
+# (e.g. a nested example fence, or "``` end of block") is treated as still
+# being inside the fence rather than closing it.
 strip_fenced_pr_body_blocks() {
   python3 -c '
 import re, sys
 lines = sys.stdin.read().split("\n")
 out = []
 fence_char = None
+fence_len = 0
 for line in lines:
-    match = re.match(r"^(`{3,}|~{3,})", line.strip())
+    match = re.match(r"^(`{3,}|~{3,})(.*)$", line.strip())
     if fence_char is None:
         if match:
             fence_char = match.group(1)[0]
+            fence_len = len(match.group(1))
             continue
         out.append(line)
     else:
-        if match and match.group(1)[0] == fence_char:
+        if (match and match.group(1)[0] == fence_char
+                and len(match.group(1)) >= fence_len
+                and match.group(2).strip() == ""):
             fence_char = None
+            fence_len = 0
         continue
 sys.stdout.write("\n".join(out))
 '
@@ -543,15 +552,18 @@ sys.stdout.write("\n".join(out))
 # graduation-closeout-from-merged-pr.sh's extract_closing_issue_numbers().
 # Echoes sorted, deduped issue numbers (one per line, possibly empty).
 # Returns 2 if the arguments are missing/invalid, or 1 (without echoing
-# anything) if the PR body could not be fetched or fence-stripping failed
-# (e.g. python3 missing/erroring) — the caller decides whether either failure
-# is fatal. A failed fence-strip is deliberately distinguished from "no
-# closing keywords found" (which returns 0 with empty output) so a parser
-# failure can never be silently treated as "nothing to close".
+# anything) if the PR body could not be fetched, fence-stripping failed (e.g.
+# python3 missing/erroring), or the keyword-extraction pipeline itself failed
+# — the caller decides whether either failure is fatal. Every failure mode is
+# deliberately distinguished from "no closing keywords found" (which returns
+# 0 with empty output) so a parser or pipeline failure can never be silently
+# treated as "nothing to close". A `grep` exit status of 1 means "no match"
+# (not a failure, per grep's own exit-code contract) and is not an error;
+# anything else (grep exit >1, or `sort` failing) is.
 fetch_pr_closing_issues() {
   local pr_repo="$1"
   local pr_number="$2"
-  local pr_body stripped_pr_body
+  local pr_body stripped_pr_body matched_refs grep_status
   if [ "$#" -ne 2 ] || [ -z "$pr_repo" ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
     echo "ERROR: fetch_pr_closing_issues requires <pr_repo> <pr_number>." >&2
     return 2
@@ -561,7 +573,21 @@ fetch_pr_closing_issues() {
     echo "ERROR: could not strip fenced code blocks from PR #${pr_number}." >&2
     return 1
   fi
-  printf '%s' "$stripped_pr_body" | grep -ioE '(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+' | grep -oE '[0-9]+$' | sort -un || true
+  set +e
+  matched_refs="$(printf '%s' "$stripped_pr_body" | grep -ioE '(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+' | grep -oE '[0-9]+$')"
+  grep_status=$?
+  set -e
+  if [ "$grep_status" -gt 1 ]; then
+    echo "ERROR: failed to extract closing-keyword references from PR #${pr_number} (grep exit ${grep_status})." >&2
+    return 1
+  fi
+  if [ -z "$matched_refs" ]; then
+    return 0
+  fi
+  if ! printf '%s\n' "$matched_refs" | sort -un; then
+    echo "ERROR: failed to sort extracted closing-keyword issue numbers from PR #${pr_number}." >&2
+    return 1
+  fi
   return 0
 }
 

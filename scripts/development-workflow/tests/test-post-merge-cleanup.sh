@@ -614,6 +614,128 @@ run_contains \
   "Closing issue #521..." \
   "$unclosed_fence_output"
 
+# A closing fence marker shorter than the opening one must NOT be treated as
+# a closer (GFM requires the closer to be at least as long as the opener).
+# Using tildes here (not backticks) keeps this test out of reach of
+# workflow-shell-snippet-lint.py's backtick-only WS001 fence scan.
+mismatched_fence_branch="fix/retro-522-doc-gaps"
+mismatched_fence_repo="$(make_repo mismatched-fence "$mismatched_fence_branch" yes)"
+mismatched_fence_pr_body='Cleans up doc gaps.
+
+~~~~
+Example commit message: Closes #996
+~~~
+still fenced content after a too-short closer
+~~~~
+
+Closes #606'
+mismatched_fence_output="$(
+  GH_MERGED_HEAD="$mismatched_fence_branch" \
+  GH_MERGED_PR=655 \
+  GH_PR_BODY="$mismatched_fence_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$mismatched_fence_repo" --base develop --pr 655 "$mismatched_fence_branch"
+)"
+run_contains \
+  "mismatched_fence_length_closes_real_issue" \
+  "Closing issue #606..." \
+  "$mismatched_fence_output"
+run_test \
+  "mismatched_fence_length_does_not_close_example_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #996" <<<"$mismatched_fence_output" || grep -Fq "Processing issue #996" <<<"$mismatched_fence_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
+# A closing fence line with trailing content after the fence marker (not
+# pure whitespace) must NOT be treated as a closer either (GFM requires the
+# closing fence to be followed only by whitespace).
+trailing_content_fence_branch="fix/retro-523-doc-gaps"
+trailing_content_fence_repo="$(make_repo trailing-content-fence "$trailing_content_fence_branch" yes)"
+trailing_content_fence_pr_body='Cleans up doc gaps.
+
+~~~
+Example commit message: Closes #994
+~~~ not a real closer
+still fenced
+~~~
+
+Closes #607'
+trailing_content_fence_output="$(
+  GH_MERGED_HEAD="$trailing_content_fence_branch" \
+  GH_MERGED_PR=656 \
+  GH_PR_BODY="$trailing_content_fence_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$trailing_content_fence_repo" --base develop --pr 656 "$trailing_content_fence_branch"
+)"
+run_contains \
+  "trailing_content_fence_closes_real_issue" \
+  "Closing issue #607..." \
+  "$trailing_content_fence_output"
+run_test \
+  "trailing_content_fence_does_not_close_example_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #994" <<<"$trailing_content_fence_output" || grep -Fq "Processing issue #994" <<<"$trailing_content_fence_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
+# A genuine sort failure while extracting closing-keyword issue numbers must
+# propagate as a fatal error, not be silently swallowed and fall through to
+# the ambiguous slug-derived issue.
+sort_failure_bin="$TMP_ROOT/sort-failure-bin"
+write_gh_stub "$sort_failure_bin"
+cat >"$sort_failure_bin/sort" <<'STUB'
+#!/usr/bin/env bash
+echo "mock sort failure" >&2
+exit 2
+STUB
+chmod +x "$sort_failure_bin/sort"
+
+sort_failure_branch="fix/retro-524-doc-gaps"
+sort_failure_repo="$(make_repo sort-failure "$sort_failure_branch" yes)"
+set +e
+sort_failure_output="$(
+  env GH_MERGED_HEAD="$sort_failure_branch" \
+    GH_MERGED_PR=657 \
+    GH_PR_BODY="Closes #608" \
+    GH_ISSUE_STATE=OPEN \
+    WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+    PATH="$sort_failure_bin:$PATH" \
+    "$HELPER" --repo-root "$sort_failure_repo" --base develop --pr 657 "$sort_failure_branch" 2>&1
+)"
+sort_failure_status=$?
+set -e
+run_test \
+  "extraction_sort_failure_propagates_as_fatal" \
+  "nonzero" \
+  "$([ "$sort_failure_status" -ne 0 ] && printf 'nonzero' || printf 'zero')"
+run_contains \
+  "extraction_sort_failure_error_message" \
+  "ERROR: failed to sort extracted closing-keyword issue numbers" \
+  "$sort_failure_output"
+run_test \
+  "extraction_sort_failure_does_not_fall_back_to_slug_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #524" <<<"$sort_failure_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"
