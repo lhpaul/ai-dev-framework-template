@@ -175,13 +175,31 @@ stage (`stages.<stage>.may_merge_pr` is `true`), assemble the evidence object
 and run the existing helpers:
 
 ```bash
-# 1. Classify PR risk against the stage max_merge_risk
+# 1. Classify PR risk against the stage max_merge_risk. A medium-risk PR only
+#    ever reaches a mergeable verdict if why_safe_to_merge evidence is
+#    attached; --why-safe-file lets --pr carry that evidence directly instead
+#    of switching to --input:
 ./scripts/development-workflow/run-epic-risk-classifier.sh \
-  --pr <pr-number> --max-risk <stages.<stage>.max_merge_risk>
+  --pr <pr-number> --why-safe-file <why-safe-file> \
+  --max-risk <stages.<stage>.max_merge_risk>
 
 # 2. Run the delegated gate with the assembled evidence
 ./scripts/development-workflow/run-epic-delegated-gate.sh --input <evidence-file>
 ```
+
+**These two helpers use different, independently documented evidence
+schemas** — see `--help` on each script for the exact shape and a worked
+example. Do not feed one script's output directly into the other's `--input`;
+nest `run-epic-risk-classifier.sh`'s result under a top-level `"risk"` key when
+assembling the delegated gate's `<evidence-file>` instead. Feeding the wrong
+shape in does not always fail loudly: the delegated gate reports an
+`evidence_schema_mismatch: ...` reason (rather than a generic
+`delegated review/merge authority is missing` or `required CI state is
+missing` reason) whenever a required object (`.policy`) or array key
+(`.statusChecks`) is entirely absent, precisely because that absence is
+otherwise indistinguishable from a real denial or a real "no CI has run"
+state. Treat that reason as an instruction to fix the evidence file's shape,
+not as a policy or CI verdict.
 
 The evidence file's `pr.inScope` field is meaningful only when the runner has
 a resolved `/run-epic` scope to check the candidate PR against. Protocol 90 and
@@ -191,6 +209,13 @@ scope check when the field is absent rather than defaulting to out-of-scope.
 Only set `pr.inScope: false` when scope resolution genuinely excluded the
 candidate PR; the gate then short-circuits with `decision: "not_applicable"`
 instead of piling the mismatch in among unrelated reasons.
+
+Similarly, `pr.mergeable` should be **omitted entirely** when that data is not
+available — never defaulted to `""`. The gate treats a blank/whitespace-only
+value exactly like an absent field (not blocked), but a caller-side default of
+`""` for a field that was simply never requested from `gh pr view --json` used
+to read as a real "PR is not mergeable" verdict for a PR GitHub reports as
+`MERGEABLE`.
 
 Merge through the repository-approved merge path **only when all of the
 following are satisfied**:

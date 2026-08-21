@@ -27,6 +27,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **`run-epic-risk-classifier.sh --pr` can now attach `why_safe_to_merge`
+  evidence, and Gate 5 evidence-schema mismatches no longer read as a denied
+  merge authority** (#1497): a medium-risk PR classified via `--pr` always
+  reached `blocked` ("medium-risk PR is missing complete why_safe_to_merge
+  evidence") because `--pr` had no way to attach that evidence — only
+  `--input`'s undocumented, hand-normalized shape could carry it. A new
+  `--why-safe-file <file>` flag merges a `why_safe_to_merge` object into the
+  classified state for either `--pr` or `--input` mode, and `--help` on both
+  `run-epic-risk-classifier.sh` and `run-epic-delegated-gate.sh` now
+  documents each script's evidence schema with a worked example, including
+  that the two schemas are different and must not be fed into one another
+  directly (nest the classifier's result under a top-level `risk` key
+  instead). Separately, `run-epic-delegated-gate.sh` used to report a
+  malformed or incompatible evidence file (e.g. one built from the risk
+  classifier's own flat output) as `delegated review authority is missing`,
+  `delegated merge authority is missing`, or `required CI state is missing`
+  — three reasons that read as a policy or CI verdict when the real problem
+  was a missing `.policy` object or an entirely absent `.statusChecks[]` key,
+  risking an operator concluding they lack merge permission when they
+  actually have a JSON shape bug. Both cases now report a distinct
+  `evidence_schema_mismatch: ...` reason (still routed to `human_required`,
+  since the gate cannot safely default an authority/CI verdict either way)
+  naming exactly which required shape is missing, with `nextAction` text that
+  explicitly says this is not a policy or CI-state blocker. A present-but-
+  empty `.statusChecks: []` (a genuine "no CI has run" state) keeps its
+  original wording and `blocked` decision unchanged — only the schema-shaped
+  absence is new. Also fixed: a `.pr.mergeable` value defaulted to `""` by a
+  caller that omitted `mergeable` from its `gh pr view --json` field list
+  used to be read as a real "PR is not mergeable" verdict for a PR GitHub
+  reports as `MERGEABLE`; a blank/whitespace-only `mergeable` string is now
+  treated exactly like an absent field (not blocked), while a genuine
+  non-mergeable state (e.g. `CONFLICTING`) still blocks. `guardrails-
+  enforcement.md`'s Gate 5 section documents the evidence schemas, the
+  `--why-safe-file` flag, and both pitfalls. New regression coverage in
+  `scripts/development-workflow/tests/test-run-epic-risk-classifier.sh` and
+  `scripts/development-workflow/tests/test-run-epic-delegated-gate.sh`
+  reproduces all three failure modes against the unfixed scripts before
+  confirming the fix.
 - **Item runners no longer park permanently after backgrounding a long step
   and ending the turn to wait for it** (#1548): three of four Work Item
   Runners in one overnight wave backgrounded a step (`test-pr-review-loop.sh`,

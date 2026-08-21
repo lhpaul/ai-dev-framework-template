@@ -410,12 +410,48 @@ run_test "missing_delegate_review_reason" "true" "$(reason_match_for "$no_review
 
 null_policy_fixture="$(write_fixture null-policy '.policy = null')"
 run_test "null_policy_requires_human" "human_required" "$(decision_for "$null_policy_fixture")"
+run_test "null_policy_reports_schema_mismatch_not_authority_denial" "true" "$(reason_match_for "$null_policy_fixture" "^evidence_schema_mismatch: \.policy object is missing")"
 
 string_policy_fixture="$(write_fixture string-policy '.policy = "delegate"')"
 run_test "non_object_policy_requires_human" "human_required" "$(decision_for "$string_policy_fixture")"
+run_test "non_object_policy_reports_schema_mismatch_not_authority_denial" "true" "$(reason_match_for "$string_policy_fixture" "^evidence_schema_mismatch: \.policy object is missing")"
 
 no_merge_fixture="$(write_fixture no-merge '.policy.mayMerge = false')"
 run_test "missing_merge_authority_requires_human" "human_required" "$(decision_for "$no_merge_fixture")"
+
+# --- issue #1497: feeding a hand-assembled hybrid evidence file that has a
+# --- well-formed .pr identity (so it clears pr_identity_gaps) but omits
+# --- .policy and .statusChecks entirely -- exactly what happens when an
+# --- operator wraps run-epic-risk-classifier.sh's flat output instead of
+# --- building the delegated-gate's own documented shape -- must report a
+# --- distinct evidence_schema_mismatch reason, never the generic
+# --- "delegated review/merge authority is missing" or "required CI state is
+# --- missing" wording that reads as a policy/CI verdict rather than a
+# --- malformed-input problem. ---
+schema_mismatch_hybrid_fixture="$(write_fixture schema-mismatch-hybrid 'del(.policy) | del(.statusChecks) | del(.risk)')"
+run_test "schema_mismatch_hybrid_requires_human" "human_required" "$(decision_for "$schema_mismatch_hybrid_fixture")"
+run_test "schema_mismatch_hybrid_reports_policy_schema_mismatch" "true" "$(reason_match_for "$schema_mismatch_hybrid_fixture" "^evidence_schema_mismatch: \.policy object is missing")"
+run_test "schema_mismatch_hybrid_reports_statuschecks_schema_mismatch" "true" "$(reason_match_for "$schema_mismatch_hybrid_fixture" "^evidence_schema_mismatch: \.statusChecks\[\] is missing")"
+run_test "schema_mismatch_hybrid_does_not_report_generic_authority_denial" "false" "$(reason_match_for "$schema_mismatch_hybrid_fixture" "^delegated review authority is missing\$")"
+run_test "schema_mismatch_hybrid_does_not_report_generic_merge_denial" "false" "$(reason_match_for "$schema_mismatch_hybrid_fixture" "^delegated merge authority is missing\$")"
+run_test "schema_mismatch_hybrid_does_not_report_generic_ci_missing" "false" "$(reason_match_for "$schema_mismatch_hybrid_fixture" "^required CI state is missing\$")"
+run_test "schema_mismatch_hybrid_next_action_names_schema_not_policy" "true" "$(
+  "$GATE" --input "$schema_mismatch_hybrid_fixture" --json |
+    jq -r '.nextAction | test("schema") and test("denied authority or a real missing-CI-state verdict")'
+)"
+
+missing_statuschecks_only_fixture="$(write_fixture missing-statuschecks-only 'del(.statusChecks)')"
+run_test "missing_statuschecks_key_requires_human" "human_required" "$(decision_for "$missing_statuschecks_only_fixture")"
+run_test "missing_statuschecks_key_reports_schema_mismatch" "true" "$(reason_match_for "$missing_statuschecks_only_fixture" "^evidence_schema_mismatch: \.statusChecks\[\] is missing")"
+run_test "missing_statuschecks_key_does_not_report_generic_ci_missing" "false" "$(reason_match_for "$missing_statuschecks_only_fixture" "^required CI state is missing\$")"
+
+# present-but-empty .statusChecks (genuinely no CI has run / no CI configured
+# without an explicit ciPolicy: none) must keep the existing wording and
+# "blocked" decision unchanged -- only the entirely-absent key case above is
+# new/distinct.
+present_empty_statuschecks_fixture="$(write_fixture present-empty-statuschecks '.statusChecks = []')"
+run_test "present_empty_statuschecks_still_blocked" "blocked" "$(decision_for "$present_empty_statuschecks_fixture")"
+run_test "present_empty_statuschecks_keeps_original_wording" "true" "$(reason_match_for "$present_empty_statuschecks_fixture" "^required CI state is missing\$")"
 
 policy_override_file="$TMP_ROOT/policy-override.json"
 jq '.policy' "$base_fixture" > "$policy_override_file"
@@ -519,6 +555,22 @@ run_test "missing_ci_blocks" "blocked" "$(decision_for "$missing_ci_fixture")"
 
 dirty_merge_fixture="$(write_fixture dirty-merge '.pr.mergeStateStatus = "DIRTY"')"
 run_test "dirty_merge_blocks" "blocked" "$(decision_for "$dirty_merge_fixture")"
+
+# --- issue #1497: a caller-side gh pr view --json field list that omitted
+# --- `mergeable` (or that defaulted it to "" instead of leaving it null) must
+# --- not be reported as a substantive "PR is not mergeable" verdict for a PR
+# --- GitHub actually reports as MERGEABLE. A real non-mergeable state (e.g.
+# --- CONFLICTING) must still block. ---
+not_mergeable_fixture="$(write_fixture not-mergeable '.pr.mergeable = "CONFLICTING"')"
+run_test "real_conflicting_mergeable_blocks" "blocked" "$(decision_for "$not_mergeable_fixture")"
+run_test "real_conflicting_mergeable_reason" "true" "$(reason_match_for "$not_mergeable_fixture" "^PR is not mergeable\$")"
+
+blank_mergeable_fixture="$(write_fixture blank-mergeable '.pr.mergeable = ""')"
+run_test "blank_mergeable_string_allows_merge" "merge_allowed" "$(decision_for "$blank_mergeable_fixture")"
+run_test "blank_mergeable_string_no_false_verdict" "false" "$(reason_match_for "$blank_mergeable_fixture" "^PR is not mergeable\$")"
+
+whitespace_mergeable_fixture="$(write_fixture whitespace-mergeable '.pr.mergeable = "   "')"
+run_test "whitespace_only_mergeable_string_allows_merge" "merge_allowed" "$(decision_for "$whitespace_mergeable_fixture")"
 
 thread_fixture="$(write_fixture unresolved-thread '.pr.unresolvedBlockingThreads = 1')"
 run_test "unresolved_thread_requires_fix" "fix_required" "$(decision_for "$thread_fixture")"
