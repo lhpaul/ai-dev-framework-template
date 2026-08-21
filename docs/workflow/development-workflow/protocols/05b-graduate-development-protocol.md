@@ -261,6 +261,12 @@ When an integration branch is created, it branches off `develop` at a point in t
      --body "<generated-body>"
    ```
 
+   **Nested graduation**: for a nested integration lineage (e.g. a wave
+   branch `develop-ventas-e3b` graduating into a module branch
+   `develop-sales-module` rather than directly into `develop`), pass the
+   parent integration branch to `--base` instead of `develop`, and use that
+   same branch name for `--base` in `graduation-closeout.sh` at Step 5.
+
 ---
 
 ## Step 4: Run the Standard Review Loop
@@ -310,7 +316,11 @@ After the human merges the graduation PR (must use a **merge commit**):
      --epic <epic-issue-number>
    ```
 
-   Add `--exclude-issue <issue-number>` for optional, deferred, cancelled, or explicitly excluded sub-items that must remain open for human disposition. Add `--defer-epic-close` only when the human explicitly requests that the parent epic remain open after the core deliverable graduates.
+   Add `--base <branch>` when this is a nested graduation whose PR base is a
+   parent integration branch rather than `develop` (e.g. `--base
+   develop-sales-module`) — it must match the graduation PR's actual base,
+   and it must be `develop` or a `develop-*` integration branch. Add
+   `--exclude-issue <issue-number>` for optional, deferred, cancelled, or explicitly excluded sub-items that must remain open for human disposition. Add `--defer-epic-close` only when the human explicitly requests that the parent epic remain open after the core deliverable graduates.
 
    **Operator deferral durability:** `--defer-epic-close` also ensures the epic
    carries the durable label `defer-epic-close` before closeout reports success.
