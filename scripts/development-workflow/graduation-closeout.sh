@@ -3,9 +3,17 @@
 # Reconcile delivered integration-branch sub-items after a graduation PR merges.
 #
 # Usage:
-#   ./scripts/development-workflow/graduation-closeout.sh --slug <slug> --graduation-pr <number> --epic <issue-number> [--exclude-issue <number>]... [--defer-epic-close]
+#   ./scripts/development-workflow/graduation-closeout.sh --slug <slug> --graduation-pr <number> --epic <issue-number> [--base <branch>] [--exclude-issue <number>]... [--defer-epic-close]
+#
+#   --base defaults to 'develop'. Override when the graduation PR targets a
+#           parent integration branch instead of develop — e.g. a nested wave
+#           branch develop-ventas-e3b graduating into a module branch
+#           develop-sales-module. Must be 'develop' or a 'develop-*'
+#           integration branch; an arbitrary feature/fix branch is rejected
+#           up front regardless of what the graduation PR actually targets.
 #
 # Env overrides:
+#   GRADUATION_BASE                  Same as --base; --base takes precedence.
 #   GITHUB_PROJECT_STATUS_GRADUATED  Terminal status for graduated work.
 #   GITHUB_PROJECT_STATUS_MERGED     Fallback terminal status.
 
@@ -21,11 +29,16 @@ GRADUATION_PR=""
 EPIC_ISSUE=""
 DEFER_EPIC_CLOSE=0
 declare -a EXCLUDED_ISSUES=()
+GRADUATION_BASE="${GRADUATION_BASE:-develop}"
 
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  graduation-closeout.sh --slug <slug> --graduation-pr <number> --epic <issue-number> [--exclude-issue <number>]... [--defer-epic-close]
+  graduation-closeout.sh --slug <slug> --graduation-pr <number> --epic <issue-number> [--base <branch>] [--exclude-issue <number>]... [--defer-epic-close]
+
+  --base  Expected graduation PR base branch (default: develop). Override
+          for nested graduation into a parent integration branch, e.g.
+          --base develop-sales-module. Must be 'develop' or 'develop-*'.
 EOF
 }
 
@@ -53,6 +66,18 @@ is_valid_slug() {
   esac
 }
 
+is_valid_graduation_base() {
+  # A "real check" per issue #1513: reject an arbitrary feature/fix branch
+  # up front, independent of what the graduation PR actually targets.
+  # Graduation always lands on develop itself or on another develop-*
+  # integration branch (nested graduation).
+  case "$1" in
+    develop) return 0 ;;
+    develop-*) is_valid_slug "${1#develop-}" ;;
+    *) return 1 ;;
+  esac
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --slug)
@@ -68,6 +93,11 @@ while [ "$#" -gt 0 ]; do
     --epic)
       require_value "$@"
       EPIC_ISSUE="$2"
+      shift 2
+      ;;
+    --base)
+      require_value "$@"
+      GRADUATION_BASE="$2"
       shift 2
       ;;
     --exclude-issue)
@@ -101,6 +131,10 @@ if ! is_positive_int "$GRADUATION_PR"; then
 fi
 if ! is_positive_int "$EPIC_ISSUE"; then
   echo "ERROR: --epic must be a positive integer." >&2
+  exit 64
+fi
+if ! is_valid_graduation_base "$GRADUATION_BASE"; then
+  echo "ERROR: --base must be 'develop' or a 'develop-*' integration branch (got '${GRADUATION_BASE}')." >&2
   exit 64
 fi
 for excluded in ${EXCLUDED_ISSUES[@]+"${EXCLUDED_ISSUES[@]}"}; do
@@ -243,8 +277,8 @@ print(pr.get("headRefName") or "")
     echo "ERROR: graduation PR #${GRADUATION_PR} head is '${head_ref:-unknown}', expected '${INTEGRATION_BRANCH}'." >&2
     exit 1
   fi
-  if [ "$base_ref" != "develop" ]; then
-    echo "ERROR: graduation PR #${GRADUATION_PR} base is '${base_ref:-unknown}', expected 'develop'." >&2
+  if [ "$base_ref" != "$GRADUATION_BASE" ]; then
+    echo "ERROR: graduation PR #${GRADUATION_PR} base is '${base_ref:-unknown}', expected '${GRADUATION_BASE}'." >&2
     exit 1
   fi
   if [ "$state" != "MERGED" ] && [ -z "$merged_at" ]; then
@@ -400,7 +434,7 @@ close_issue_with_comment() {
   local issue="$1"
   local kind="$2"
   local comment
-  comment="${kind} delivered via graduation PR #${GRADUATION_PR} from \`${INTEGRATION_BRANCH}\` to \`develop\`. Tracker status reconciled by graduation closeout."
+  comment="${kind} delivered via graduation PR #${GRADUATION_PR} from \`${INTEGRATION_BRANCH}\` to \`${GRADUATION_BASE}\`. Tracker status reconciled by graduation closeout."
   gh issue close "$issue" --comment "$comment" >/dev/null
 }
 
@@ -588,6 +622,7 @@ process_epic "$FAILED_COUNT" > "$EPIC_OUTPUT" || EPIC_STATUS=$?
 echo "GRADUATION_CLOSEOUT_RESULT=$([ "$FAILED_COUNT" -eq 0 ] && [ "$EPIC_STATUS" -eq 0 ] && echo pass || echo failed)"
 echo "SLUG=$SLUG"
 echo "INTEGRATION_BRANCH=$INTEGRATION_BRANCH"
+echo "GRADUATION_BASE=$GRADUATION_BASE"
 echo "GRADUATION_PR=$GRADUATION_PR"
 echo "EPIC_ISSUE=$EPIC_ISSUE"
 cat "$EPIC_OUTPUT"
