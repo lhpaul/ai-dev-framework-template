@@ -330,7 +330,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
       else .
       end;
   def security_keyword_regex:
-    "\\b(authenticat\\w*|authoriz\\w*|security|secrets?|permissions?|credentials?|sensitive|auth)\\b";
+    "\\b(unauthenticat\\w*|unauthoriz\\w*|authenticat\\w*|authoriz\\w*|security|secrets?|permissions?|credentials?|sensitive|auth)\\b";
   def matched_regex_terms($text; $regex):
     [$text | match($regex; "g").string] | stable_unique;
   def security_signal_details($item):

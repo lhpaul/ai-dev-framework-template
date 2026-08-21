@@ -503,6 +503,16 @@ credential_fixture="$(security_case_fixture credential-tp 327 "Store credential 
 run_test "credential_word_still_checkpoints" "1" "$(security_case_checkpoint_count "$credential_fixture" 327)"
 run_test "security_checkpoint_reason_names_matched_term_and_line" "yes" "$(security_case_checkpoint_reason "$credential_fixture" 327 | grep -Fq "keyword 'credential' in line: \"The credential should be stored in a secrets vault.\"" && echo yes || echo no)"
 
+# "un-" negated auth terms are real security vocabulary ("unauthorized access",
+# "unauthenticated request") that the pre-fix bare-substring regex also matched
+# (via "auth" inside them). The word-boundary fix must not introduce a false
+# negative here just because "un" glues directly onto the stem.
+unauthorized_fixture="$(security_case_fixture unauthorized-tp 328 "Reject unauthorized requests" "Return 403 for unauthorized access to the admin API.")"
+run_test "unauthorized_word_still_checkpoints" "1" "$(security_case_checkpoint_count "$unauthorized_fixture" 328)"
+
+unauthenticated_fixture="$(security_case_fixture unauthenticated-tp 329 "Block unauthenticated calls" "Middleware should reject unauthenticated requests before hitting the handler.")"
+run_test "unauthenticated_word_still_checkpoints" "1" "$(security_case_checkpoint_count "$unauthenticated_fixture" 329)"
+
 run_test "docs_scope_has_no_checkpoints" "0" "$(printf '%s\n' "$docs_output" | jq -r '.recommendedPolicy.checkpoints | length')"
 
 complete_criteria_fixture="$(write_fixture complete-criteria '{

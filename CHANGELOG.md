@@ -39,19 +39,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cross-reference — halted an otherwise fully delegated `/run-epic`/`/run-items`
   run and demanded human input on an issue with no actual security content
   (live reproduction on `/run-items 1502 1501`). The keyword regex now uses
-  `\b`-anchored full-term alternatives (`authenticat\w*`, `authoriz\w*`,
-  `security`, `secrets?`, `permissions?`, `credentials?`, `sensitive`, `auth`)
-  so `authentication`, `authorization`, `secret`, `credential`, `permission`,
-  `security`, `sensitive`, and the bare word `auth` still match while
-  `authoring`, `author`, `authority`, and `insensitive` no longer do. The
-  checkpoint `reason` now names the matched term and quotes the source line
-  instead of a generic static message, so an operator can judge relevance
-  without grepping the issue by hand. The sibling unresolved-product classifier
-  (`ambiguous|unclear|...`) shared the same defect — "unambiguous" matched
-  "ambiguous" as a substring — and is now `\b`-anchored too, along with the
-  trade-off/architecture classifier. 11 new regression tests cover both the
-  false-positive corpus (confirmed to fail against the pre-fix regex) and the
-  true-positive corpus.
+  `\b`-anchored full-term alternatives (`unauthenticat\w*`, `unauthoriz\w*`,
+  `authenticat\w*`, `authoriz\w*`, `security`, `secrets?`, `permissions?`,
+  `credentials?`, `sensitive`, `auth`) so `authentication`, `authorization`,
+  `secret`, `credential`, `permission`, `security`, `sensitive`, the bare word
+  `auth`, and negated forms like `unauthorized`/`unauthenticated` still match
+  (the pre-fix regex also matched these via bare substring, so the fix must not
+  silently drop them) while `authoring`, `author`, `authority`, and
+  `insensitive` no longer do. The checkpoint `reason` now names the matched
+  term and quotes the source line instead of a generic static message, so an
+  operator can judge relevance without grepping the issue by hand. The sibling
+  unresolved-product classifier (`ambiguous|unclear|...`) shared the same
+  defect — "unambiguous" matched "ambiguous" as a substring — and is now
+  `\b`-anchored too, along with the trade-off/architecture classifier. 13 new
+  regression tests cover both the false-positive corpus (confirmed to fail
+  against the pre-fix regex) and the true-positive corpus, including the
+  `unauthorized`/`unauthenticated` negated forms.
 - **CodeRabbit "Review skipped" banner no longer reports an unreviewed PR as
   clean** (#1531): `run_coderabbit_review` in
   `scripts/development-workflow/pr-review-loop.sh` counted any CodeRabbit issue
