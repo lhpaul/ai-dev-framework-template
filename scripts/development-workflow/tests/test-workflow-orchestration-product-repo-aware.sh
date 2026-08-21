@@ -233,51 +233,12 @@ branch_resolution_output="$(
 run_contains "workflow_branch_unresolved_repo_action" "NEXT_ACTION=resolve-repository-selection" "$branch_resolution_output"
 run_contains "workflow_branch_unresolved_repo_context" "ACTION_REPOSITORY_KIND=repository_resolution_failed" "$branch_resolution_output"
 
-pr_selection_output="$(
-  WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
-    --repo-root "$hub_dir" \
-    --pr 123
-)"
-run_contains "workflow_pr_requires_repo_selection" "NEXT_ACTION=resolve-repository-selection" "$pr_selection_output"
-run_contains "workflow_pr_selection_required_context" "ACTION_REPOSITORY_KIND=repository_selection_required" "$pr_selection_output"
-
-run_fails_contains \
-  "workflow_next_action_repo_requires_value" \
-  "--repo requires a value." \
-  "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
-    --repo
-
-run_fails_contains \
-  "workflow_next_action_repo_root_requires_value" \
-  "--repo-root requires a value." \
-  "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
-    --repo-root
-
-batch_output="$(
-  WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" \
-    --repo-root "$hub_dir" \
-    --repo admin-portal \
-    "$hub_dev"
-)"
-run_contains "batch_plan_preserves_action_kind" "ACTION_REPOSITORY_KIND=product_repo_owned" "$batch_output"
-run_contains "batch_plan_derives_github_repo_from_git_url" "ACTION_GITHUB_REPO=example/admin-portal" "$batch_output"
-
-run_fails_contains \
-  "batch_plan_repo_rejects_next_flag_as_value" \
-  "--repo requires a value." \
-  env WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" \
-    --repo \
-    --repo-root "$hub_dir" \
-    "$hub_dev"
-
-run_fails_contains \
-  "batch_plan_repo_root_rejects_next_flag_as_value" \
-  "--repo-root requires a value." \
-  env WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" \
-    --repo-root \
-    --repo admin-portal \
-    "$hub_dev"
-
+# The gh stub is defined here rather than further down because the --pr
+# invocation below reaches require_gh in workflow-lib.sh, which shells out to
+# 'gh auth status'. Without the stub that call depends on the ambient gh login:
+# it passed on developer machines and exited 2 on CI runners, where gh is
+# installed but unauthenticated. The suite never ran in CI to reveal that
+# (issue #1537). Every later invocation already used this same stub.
 stub_bin="$TMP_ROOT/bin"
 mkdir -p "$stub_bin"
 cat > "$stub_bin/gh" <<'SH'
@@ -361,6 +322,52 @@ echo "unexpected gh invocation: $*" >&2
 exit 1
 SH
 chmod +x "$stub_bin/gh"
+
+pr_selection_output="$(
+  PATH="$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$hub_dir" \
+    --pr 123
+)"
+run_contains "workflow_pr_requires_repo_selection" "NEXT_ACTION=resolve-repository-selection" "$pr_selection_output"
+run_contains "workflow_pr_selection_required_context" "ACTION_REPOSITORY_KIND=repository_selection_required" "$pr_selection_output"
+
+run_fails_contains \
+  "workflow_next_action_repo_requires_value" \
+  "--repo requires a value." \
+  "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo
+
+run_fails_contains \
+  "workflow_next_action_repo_root_requires_value" \
+  "--repo-root requires a value." \
+  "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root
+
+batch_output="$(
+  WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" \
+    --repo-root "$hub_dir" \
+    --repo admin-portal \
+    "$hub_dev"
+)"
+run_contains "batch_plan_preserves_action_kind" "ACTION_REPOSITORY_KIND=product_repo_owned" "$batch_output"
+run_contains "batch_plan_derives_github_repo_from_git_url" "ACTION_GITHUB_REPO=example/admin-portal" "$batch_output"
+
+run_fails_contains \
+  "batch_plan_repo_rejects_next_flag_as_value" \
+  "--repo requires a value." \
+  env WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" \
+    --repo \
+    --repo-root "$hub_dir" \
+    "$hub_dev"
+
+run_fails_contains \
+  "batch_plan_repo_root_rejects_next_flag_as_value" \
+  "--repo-root requires a value." \
+  env WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" \
+    --repo-root \
+    --repo admin-portal \
+    "$hub_dev"
+
 
 typed_hub_dir="$TMP_ROOT/typed-hub"
 mkdir -p "$typed_hub_dir"

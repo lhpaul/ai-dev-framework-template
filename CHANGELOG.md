@@ -48,6 +48,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and runs those as a matrix, with a nightly scheduled full run as the backstop.
   The workflow contains no list of suites, so adding a `test-*.sh` no longer
   requires a workflow edit — the drift that let the count reach 59.
+- **`github-app-token.sh` no longer leaves the signed JWT (and, on the
+  `secret_ref` path, the private key) behind in a temp directory** (#1537):
+  `exchange_token` is called as `TOKEN="$(exchange_token ...)"`, so its
+  `TOKEN_TMP_DIR` assignment was confined to that command-substitution
+  subshell. The parent's `EXIT` trap therefore had an empty path and cleaned
+  nothing, leaking `header.json`, `payload.json`, `signature.bin`, and any
+  resolved `private-key.pem` on every successful token mint. The scratch
+  directory is now created in the parent shell so the trap can remove it. The
+  suite asserted this all along, but BSD `mktemp -d` ignores `TMPDIR` while GNU
+  `mktemp -d` honours it, so the assertion was vacuous on macOS and the suite
+  never ran on Linux to catch it.
+- **Five test suites that could never have passed in CI now do** (#1537):
+  wiring the suites into CI surfaced latent environment assumptions in suites
+  that had only ever been run on developer machines.
+  `test-component-milestone-reconciliation.sh` required `ripgrep`, which is not
+  installed on `ubuntu-latest` (now `grep -c -E`, whose semantics match).
+  `test-run-nested-artifact-guard.sh` and `test-prepare-release-tracker-cleanup.sh`
+  built a `PATH` from real system directories to hide or shadow `gh`, which
+  works only where `git` and `gh` live in different directories — true under
+  Homebrew, false on runners where both are `/usr/bin`, so one silently tested
+  nothing and the other ran the real `gh` instead of its mock.
+  `test-workflow-orchestration-product-repo-aware.sh` reached `require_gh`
+  before its `gh` stub was defined, making it depend on an ambient GitHub
+  login. `test-workflow-hub-pr-auth.sh` is covered by the entry above.
 - **`test-haystack-reviewer.sh` no longer fails intermittently when run
   alongside other work** (#1537): the suite failed roughly 2 runs in 17 on a
   clean tree at the same commit (205 passed / 5 failed versus 210 / 0), always
