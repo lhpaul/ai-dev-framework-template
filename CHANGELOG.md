@@ -36,6 +36,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **`test-pr-review-loop.sh` gains an `--area` filter, runs from an immutable
+  snapshot, and can no longer be edited mid-run without notice** (#1562): the
+  suite is ~13.6k lines and ~900 assertions with no way to run part of it, so
+  every reviewer fix cycle paid the whole thing. Measured on a clean tree, the
+  runtime is extremely lopsided — **Area 13 is ~94% of it** (156
+  `codex-github-reviewer.sh` invocations that each really sleep), while the
+  other 27 areas together take about 13 seconds. `--area <name>` matches an
+  area number exactly or any substring of its title, `--list-areas` prints
+  them, and a filtered run still prints the summary and still exits non-zero on
+  failure. Separately, bash reads a script incrementally, so editing the suite
+  while a run was in flight made the running shell pick up part of the new
+  text; during the #1531 work that produced a run whose pass/fail counts
+  matched neither version of the file. The harness now re-executes from a temp
+  snapshot, which also makes an out-of-tree copy work via
+  `TEST_PR_REVIEW_LOOP_ORIGIN` rather than failing with "fatal: not a git
+  repository".
+- **A truncated `pr-review-loop.sh` run can no longer be mistaken for a clean
+  one** (#1562): a run killed part-way — by an outer `timeout` shorter than a
+  legitimate rate-limit wait, or by an operator — produced no terminal
+  `RESULT=` line at all, so a caller grepping for one found nothing, and "no
+  blocking findings were reported" reads uncomfortably like "no blocking
+  findings exist". Every exit now carries a verdict: `print_kv` records that a
+  `RESULT` was emitted, and the `EXIT` trap emits `RESULT=escalate` /
+  `REASON=truncated_run` / `TRUNCATED=1` when none ever was, forcing a non-zero
+  status. Verified end to end by killing a live run: exit 143 with the
+  truncated verdict present.
+- **The CodeRabbit rate-limit ceiling is reconciled with an execution budget**
+  (#1562): the worst-case legitimate wait (4 x 900s = 3600s) sat within minutes
+  of the ~65-minute point at which a run was observed being killed, and two
+  runners had wrapped the loop in an outer `timeout` shorter than a single
+  900s wait. `PR_REVIEW_LOOP_EXECUTION_BUDGET` (default 5400s) now declares the
+  wall clock a caller must allow, and startup fails with
+  `REASON=execution_budget_misconfigured` when the worst-case wait is not
+  strictly less than it — a second of setup instead of an hour of waiting
+  followed by nothing. The two rate-limit defaults were restated in two places
+  once the budget check needed them; they are now declared once.
 - **Adding a test job to a CI workflow no longer scores the same risk as
   changing deployment behavior** (#1565): `run-epic-risk-classifier.sh` treated
   every `.github/workflows/**` change as a sensitive category and escalated the

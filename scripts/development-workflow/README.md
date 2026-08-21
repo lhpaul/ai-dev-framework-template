@@ -31,6 +31,34 @@ Note that the full harness is heavily lopsided: `test-pr-review-loop.sh` alone
 is roughly half the total wall clock (~13 minutes of ~27), while the median
 suite finishes in a few seconds.
 
+### Iterating on `test-pr-review-loop.sh`
+
+That suite is ~13.6k lines and ~900 assertions, and its runtime is extremely
+lopsided (issue #1562): **Area 13 is ~94% of it** — 156 `codex-github-reviewer.sh`
+invocations that each really sleep — while the other 27 areas together take
+about 13 seconds. Use `--area` when you are not working on Area 13:
+
+<!-- workflow-shell-contract: bash-zsh -->
+
+```bash
+# What areas are there?
+bash scripts/development-workflow/tests/test-pr-review-loop.sh --list-areas
+
+# Run one area (matches an area number exactly, or any substring of its title)
+bash scripts/development-workflow/tests/test-pr-review-loop.sh --area 1
+bash scripts/development-workflow/tests/test-pr-review-loop.sh --area haystack
+bash scripts/development-workflow/tests/test-pr-review-loop.sh --area 0a --area 12b
+```
+
+A filtered run still prints the summary and still exits non-zero if anything in
+the selected areas failed.
+
+The suite re-executes itself from a temp-file snapshot. Bash reads a script
+incrementally, so editing this file mid-run used to make the running shell pick
+up part of the new text — during the #1531 work that produced a run whose
+pass/fail counts matched neither version of the file, with nothing to indicate
+it. You can now edit it freely while a run is in flight.
+
 ### How CI decides which suites to run
 
 `.github/workflows/workflow-tests.yml` does not contain a list of suites. It
