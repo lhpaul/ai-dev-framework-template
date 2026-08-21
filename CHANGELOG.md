@@ -1086,18 +1086,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   live reviewer configuration** (#1549): the suite's mock review threads and
   CI checks are authored as `cursor` / `Cursor Bugbot` — bugbot's bot login
   and check name — but `bugbot` was not present in
-  `review.on_draft.github` / `review.on_ready.github`, so the six
+  `review.on_draft.github` / `review.on_ready.github`, so eight
   thread-detection assertions (unresolved-thread, REST-unreplied-thread,
-  graph/REST same-thread dedup, and paginated-thread detection) and two
-  CI-check-exclusion assertions silently went inert: the script correctly
-  ignored threads/checks from an unconfigured platform, exited 0, and every
-  test expecting exit 1 failed — 12 of 81 assertions, entirely a function of
-  which platforms this repository happens to commit. Each affected test now
-  pins its own `review:` config for the duration of the call via
-  `AI_DEV_WORKFLOW_CONFIG_FILE`, using a fixture repo built by `make_repo`,
-  rather than re-pinning the coupling to a different platform — the seam
-  `configured_review_platforms()` already honors (and the same pattern
-  already used by `non_thread_platform_logins`/`no_thread_bot_logins`). The
+  graph/REST same-thread dedup, and paginated-thread detection — two
+  assertions each) and four CI-check-exclusion assertions silently went
+  inert: the script correctly ignored threads/checks from an unconfigured
+  platform, exited 0, and every test expecting exit 1 failed — 12 of 81
+  assertions, entirely a function of which platforms this repository happens
+  to commit. Each affected test now pins a `review:` config with `bugbot`
+  configured for the duration of its call via `AI_DEV_WORKFLOW_CONFIG_FILE`
+  — a shared fixture file, since the content is identical across tests —
+  rather than re-pinning the coupling to a different platform: the seam
+  `configured_review_platforms()` already honors, and the same pattern
+  already used by `non_thread_platform_logins`/`no_thread_bot_logins`. The
   suite now passes 99/99 (the fix also added regression coverage) and was
   re-verified clean under three independent reviewer configurations: this
   checkout's local override (`pr-agent`/`coderabbit`), an unrelated platform
@@ -1106,12 +1107,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unresolved-thread fixture still detects under an unrelated platform set
   that also configures `bugbot`, and no longer detects (unavailable_required)
   under an explicitly empty config — proving detection tracks `bugbot`'s
-  presence rather than being hardcoded. The six thread-detection assertions
-  were confirmed to genuinely exercise detection by temporarily forcing the
-  graph and REST thread-counting `jq` filters to always report zero and
-  re-running the suite: all eight thread-detection assertions (plus the new
-  alt-config regression test) failed loudly as expected, then the change was
-  reverted.
+  presence rather than being hardcoded. The eight thread-detection
+  assertions were confirmed to genuinely exercise detection by temporarily
+  forcing the graph and REST thread-counting `jq` filters to always report
+  zero and re-running the suite: all eight (plus the new alt-config
+  regression test) failed loudly as expected, then the change was reverted.
 
 ### Changed
 

@@ -966,7 +966,7 @@ out="$(self_check_output \
   --pr 17 \
   --expected-base develop \
   --require-review-threads true)"
-unset MOCK_GH_THREAD_MODE AI_DEV_WORKFLOW_CONFIG_FILE
+unset MOCK_GH_THREAD_MODE AI_DEV_WORKFLOW_CONFIG_FILE WORKFLOW_SELF_CHECK_TRACKER_STATUS
 run_test "unresolved_thread_alt_config_exit_one" "1" "$(status_code "$out")"
 run_contains "unresolved_thread_alt_config_discrepancy" "| pull_request.review_threads | discrepancy | unresolved=1 graph=1 rest=0 |" "$(body "$out")"
 
@@ -992,7 +992,7 @@ out="$(self_check_output \
   --pr 17 \
   --expected-base develop \
   --require-review-threads true)"
-unset MOCK_GH_THREAD_MODE AI_DEV_WORKFLOW_CONFIG_FILE
+unset MOCK_GH_THREAD_MODE AI_DEV_WORKFLOW_CONFIG_FILE WORKFLOW_SELF_CHECK_TRACKER_STATUS
 run_test "unresolved_thread_empty_config_exit_one" "1" "$(status_code "$out")"
 run_contains "unresolved_thread_empty_config_unavailable" "| pull_request.review_threads | unavailable_required | no configured bot logins |" "$(body "$out")"
 
