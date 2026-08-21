@@ -479,6 +479,72 @@ run_test \
     fi
   )"
 
+# Punctuation-delimited closing keyword (e.g. "(Fixes #601)") must still be
+# recognized — the word-boundary regex requires a non-alnum/underscore
+# character immediately before the keyword, not specifically whitespace, so
+# a parenthesis directly abutting the keyword still matches.
+punctuation_branch="fix/retro-518-doc-gaps"
+punctuation_repo="$(make_repo punctuation "$punctuation_branch" yes)"
+punctuation_output="$(
+  GH_MERGED_HEAD="$punctuation_branch" \
+  GH_MERGED_PR=651 \
+  GH_PR_BODY="Cleans up doc gaps. (Fixes #602)" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$punctuation_repo" --base develop --pr 651 "$punctuation_branch"
+)"
+run_contains \
+  "punctuation_delimited_keyword_uses_pr_body_issue" \
+  "Closing issue #602..." \
+  "$punctuation_output"
+run_test \
+  "punctuation_delimited_keyword_does_not_close_slug_derived_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #518" <<<"$punctuation_output" || grep -Fq "Processing issue #518" <<<"$punctuation_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
+# An example closing keyword inside a fenced code block in the PR body must
+# not be treated as a live reference — only the real footer reference should
+# be used.
+fenced_branch="fix/retro-519-doc-gaps"
+fenced_repo="$(make_repo fenced "$fenced_branch" yes)"
+fenced_pr_body='Cleans up doc gaps.
+
+```
+Example commit message: Closes #999
+```
+
+Closes #603'
+fenced_output="$(
+  GH_MERGED_HEAD="$fenced_branch" \
+  GH_MERGED_PR=652 \
+  GH_PR_BODY="$fenced_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$fenced_repo" --base develop --pr 652 "$fenced_branch"
+)"
+run_contains \
+  "fenced_example_excludes_code_block_reference_closes_real_issue" \
+  "Closing issue #603..." \
+  "$fenced_output"
+run_test \
+  "fenced_example_does_not_close_code_block_example_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #999" <<<"$fenced_output" || grep -Fq "Processing issue #999" <<<"$fenced_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"

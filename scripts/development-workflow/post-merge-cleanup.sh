@@ -501,20 +501,45 @@ fi
 
 # --- Update tracker status and close associated GitHub issue (if any) ---
 
+# strip_fenced_pr_body_blocks
+# Removes fenced code blocks (```...```) from stdin before it is scanned for
+# closing keywords, so an example like "Closes #999" inside a code sample in
+# the PR body is not treated as a live closing reference. Mirrors
+# graduation-closeout-from-merged-pr.sh's strip_fenced_blocks().
+strip_fenced_pr_body_blocks() {
+  python3 -c '
+import re, sys
+text = sys.stdin.read()
+text = re.sub(r"```.*?```", "", text, flags=re.S)
+sys.stdout.write(text)
+'
+}
+
 # fetch_pr_closing_issues <pr_repo> <pr_number>
-# Fetches PR title+body and extracts GitHub closing-keyword issue references
-# (Close/Closes/Closed, Fix/Fixes/Fixed, Resolve/Resolves/Resolved — optionally
-# followed by "issue" — then #NNN). Requires a word boundary before the
-# keyword so substrings like "disclose" or "hotfix" are not treated as closing
-# keywords. Echoes sorted, deduped issue numbers (one per line, possibly
-# empty). Returns 1 (without echoing anything) if the PR body could not be
-# fetched (gh command failure); the caller decides whether that is fatal.
+# Fetches PR title+body, strips fenced code blocks (so example closing
+# keywords in a code sample are not treated as live references — see
+# strip_fenced_pr_body_blocks above), and extracts GitHub closing-keyword
+# issue references (Close/Closes/Closed, Fix/Fixes/Fixed,
+# Resolve/Resolves/Resolved — optionally followed by "issue" — then #NNN).
+# Requires a non-word-boundary immediately before the keyword (start of
+# string, or any character that is not alphanumeric/underscore) so substrings
+# like "disclose" or "hotfix" are not treated as closing keywords, while
+# still matching punctuation-delimited forms like "(Fixes #601)". Mirrors
+# graduation-closeout-from-merged-pr.sh's extract_closing_issue_numbers().
+# Echoes sorted, deduped issue numbers (one per line, possibly empty).
+# Returns 2 if the arguments are missing/invalid, or 1 (without echoing
+# anything) if the PR body could not be fetched (gh command failure); the
+# caller decides whether either failure is fatal.
 fetch_pr_closing_issues() {
   local pr_repo="$1"
   local pr_number="$2"
   local pr_body
+  if [ "$#" -ne 2 ] || [ -z "$pr_repo" ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: fetch_pr_closing_issues requires <pr_repo> <pr_number>." >&2
+    return 2
+  fi
   pr_body="$(gh pr view "$pr_number" --repo "$pr_repo" --json body,title --jq '(.title // "") + "\n" + (.body // "")' 2>/dev/null)" || return 1
-  printf '%s' "$pr_body" | grep -ioE '(^|[[:space:]])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+' | grep -oE '[0-9]+$' | sort -un || true
+  printf '%s' "$pr_body" | strip_fenced_pr_body_blocks | grep -ioE '(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+' | grep -oE '[0-9]+$' | sort -un || true
   return 0
 }
 
@@ -529,11 +554,17 @@ fetch_pr_closing_issues() {
 # the aggregate fatal-on-view-failure behavior this replaces at both call
 # sites. This is distinct from a `gh issue close` failure, which remains a
 # warning-only, non-fatal condition (cleanup continues for the remaining
-# issues in the list either way).
+# issues in the list either way). The issue-numbers list may be empty (a
+# no-op loop), but <pr_number> must be a non-empty numeric PR number so an
+# invalid caller cannot produce a close comment like "Closed by PR #.".
 close_issues_from_pr() {
   local pr_number="$1"
   local issue_list="$2"
   local issue_num issue_state view_failures=0
+  if [ "$#" -ne 2 ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: close_issues_from_pr requires <pr_number> (numeric) <issue_numbers_newline_list>." >&2
+    return 2
+  fi
   while IFS= read -r issue_num; do
     [ -z "$issue_num" ] && continue
     echo "Processing issue #${issue_num} from PR #${pr_number} closing keywords..."

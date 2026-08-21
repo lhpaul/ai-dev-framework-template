@@ -43,6 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference at all, preserving existing behavior for legitimate team-prefixed
   slugs (`fix/lh-97-real-issue`) merged without an explicit closing keyword.
   Plain numeric identifiers (`fix/42-slug`) are unambiguous and are unaffected.
+  The closing-keyword matcher also now requires only a non-word boundary
+  (rather than specifically whitespace) before the keyword, so
+  punctuation-delimited references like `(Fixes #601)` are recognized, and it
+  strips fenced code blocks before matching so an example `Closes #999` in a
+  code sample within the PR body is not mistaken for a live reference —
+  mirroring `graduation-closeout-from-merged-pr.sh`'s existing
+  `extract_closing_issue_numbers` / `strip_fenced_blocks` behavior.
 - **CodeRabbit "Review skipped" banner no longer reports an unreviewed PR as
   clean** (#1531): `run_coderabbit_review` in
   `scripts/development-workflow/pr-review-loop.sh` counted any CodeRabbit issue
