@@ -116,6 +116,9 @@ esac
 #   888884 — gh probe fails with an unrecognized/opaque error (outage-style)
 #   888885 — gh probe fails with a genuine "could not resolve" not-found error
 #            (explicit not-found stderr text, not just a bare non-zero exit)
+#   888886 — gh probe fails with empty stderr and a non-1 exit code (e.g. the
+#            gh binary itself crashed or was signal-killed) — must NOT be
+#            misclassified as not_found the way a bare exit-1/empty-stderr is
 case "$*" in
   pr\ view\ 888881\ --json\ state\ --jq\ .state)
     printf 'API rate limit exceeded for user ID 1148259 (https://docs.github.com/en/rest/overview/resources-in-the-rest-api#rate-limiting)\n' >&2
@@ -140,6 +143,17 @@ case "$*" in
   issue\ view\ 888885\ --json\ state\ --jq\ .state)
     printf 'GraphQL: Could not resolve to an Issue with the number of 888885. (repository.issue)\n' >&2
     exit 1
+    ;;
+  pr\ view\ 888886\ --json\ state\ --jq\ .state)
+    # Empty stderr, non-1 exit code (simulates a signal-killed gh process,
+    # e.g. exit 137 = 128 + SIGKILL(9)). The issue-view probe below mirrors
+    # this so the test isolates classify_gh_probe_error's own empty-stderr
+    # exit-code handling rather than accidentally passing via the generic
+    # "unexpected gh invocation" catch-all if only the PR probe were mocked.
+    exit 137
+    ;;
+  issue\ view\ 888886\ --json\ state\ --jq\ .state)
+    exit 137
     ;;
 esac
 
@@ -589,6 +603,16 @@ run_test_contains "explicit_not_found_probe_stop_reason" "could not be resolved"
 # here explicitly as part of the #1503 regression coverage.
 run_test "bare_exit_not_found_probe_mode_regression" "ambiguous" \
   "$(printf '%s\n' "$output_noresol" | grep '^MODE=' | cut -d= -f2-)"
+
+# A bare non-zero exit with EMPTY stderr and a non-1 exit code (simulating a
+# crashed/signal-killed gh process) must NOT be misclassified as not_found —
+# only gh's normal exit-1/empty-stderr not-found path keeps that
+# classification. This must resolve as tracker_unavailable.
+output_crash_empty_stderr="$(router_output "888886")"
+run_test "crash_empty_stderr_nonone_exit_mode" "tracker_unavailable" \
+  "$(printf '%s\n' "$output_crash_empty_stderr" | grep '^MODE=' | cut -d= -f2-)"
+run_test_contains "crash_empty_stderr_nonone_exit_stop_reason" "unavailable" \
+  "$(printf '%s\n' "$output_crash_empty_stderr" | grep '^STOP_REASON=' | cut -d= -f2-)"
 
 # Multi-target list: a probe failure partway through the list must still
 # surface as tracker_unavailable, not ambiguous, and must not be masked by

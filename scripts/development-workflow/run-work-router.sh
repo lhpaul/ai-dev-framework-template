@@ -306,35 +306,48 @@ gh_probe() {
   set +e
   PROBE_OUT="$(gh "$@" 2>"$err_file")"
   PROBE_EXIT=$?
+  # Capture stderr and clean up the temp file while errexit is still
+  # disabled — a failing `cat` (e.g. the temp file became unreadable) must
+  # not itself trigger `set -e` and terminate the script ahead of the
+  # caller's own `$?` check, once errexit is restored below.
+  PROBE_ERR="$(cat "$err_file" 2>/dev/null)"
+  rm -f "$err_file" 2>/dev/null
   if [ "$errexit_was_set" -eq 1 ]; then
     set -e
   fi
-  PROBE_ERR="$(cat "$err_file" 2>/dev/null)"
-  rm -f "$err_file"
 }
 
 # ---------------------------------------------------------------------------
-# Helper: classify a gh probe's stderr into a failure cause.
+# Helper: classify a gh probe's stderr (and exit code) into a failure cause.
 #
 # Echoes one of: not_found | rate_limited | auth_failed | network_error |
 # github_unavailable
 #
 # A confirmed "not found" response (gh's own "could not resolve to a
-# PullRequest/Issue" message, or an empty stderr — gh's historical behavior
-# for this repo's probes) is classified as not_found so genuinely unknown
-# targets keep resolving to MODE_AMBIGUOUS exactly as before. Anything else
-# non-empty and unrecognized falls back to github_unavailable so opaque
-# outages are treated as probe failures rather than silently swallowed as
-# not-found.
+# PullRequest/Issue" message) is classified as not_found so genuinely unknown
+# targets keep resolving to MODE_AMBIGUOUS exactly as before. An empty stderr
+# is only treated as not_found when the exit code is gh's normal API-error
+# exit code (1) — this repo's probes have historically seen exit 1 with no
+# captured stderr for a genuine not-found. An empty stderr paired with any
+# other exit code (a signal death, an OOM kill, a shell-level launch failure,
+# etc.) is NOT assumed to be a not-found — it falls back to
+# github_unavailable, since gh crashing or being killed is a probe failure,
+# not evidence the target doesn't exist. Any other non-empty, unrecognized
+# stderr also falls back to github_unavailable so opaque outages are treated
+# as probe failures rather than silently swallowed as not-found.
 # ---------------------------------------------------------------------------
 
 classify_gh_probe_error() {
-  local err="$1"
+  local err="$1" exit_code="${2:-1}"
   local err_lc
   err_lc="$(printf '%s' "$err" | tr '[:upper:]' '[:lower:]')"
 
   if [ -z "$err_lc" ]; then
-    echo "not_found"
+    if [ "$exit_code" = "1" ]; then
+      echo "not_found"
+    else
+      echo "github_unavailable"
+    fi
     return 0
   fi
 
@@ -459,7 +472,7 @@ resolve_token() {
         return 0
       fi
       if [ "$PROBE_EXIT" -ne 0 ]; then
-        pr_class="$(classify_gh_probe_error "$PROBE_ERR")"
+        pr_class="$(classify_gh_probe_error "$PROBE_ERR" "$PROBE_EXIT")"
         if [ "$pr_class" != "not_found" ]; then
           # gh call itself failed (rate limit, auth, network, outage) rather
           # than confirming the target is not a PR — do not fall through to
@@ -478,7 +491,7 @@ resolve_token() {
         return 0
       fi
       if [ "$PROBE_EXIT" -ne 0 ]; then
-        issue_class="$(classify_gh_probe_error "$PROBE_ERR")"
+        issue_class="$(classify_gh_probe_error "$PROBE_ERR" "$PROBE_EXIT")"
         if [ "$issue_class" != "not_found" ]; then
           RESOLVE_FAIL_KIND="tracker_unavailable"
           RESOLVE_FAIL_REASON="$(build_probe_fail_reason "$issue_class" "$token" "$PROBE_ERR")"
