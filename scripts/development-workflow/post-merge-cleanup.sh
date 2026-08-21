@@ -502,16 +502,31 @@ fi
 # --- Update tracker status and close associated GitHub issue (if any) ---
 
 # strip_fenced_pr_body_blocks
-# Removes fenced code blocks (```...```) from stdin before it is scanned for
-# closing keywords, so an example like "Closes #999" inside a code sample in
-# the PR body is not treated as a live closing reference. Mirrors
-# graduation-closeout-from-merged-pr.sh's strip_fenced_blocks().
+# Removes fenced code blocks from stdin before it is scanned for closing
+# keywords, so an example like "Closes #999" inside a code sample in the PR
+# body is not treated as a live closing reference. Handles both backtick
+# (```) and tilde (~~~) fence styles, and treats an unclosed opening fence as
+# extending to end of input (rather than leaving the rest of the body
+# unfiltered). A closing fence must use the same character as the opening
+# fence it closes, matching GitHub-Flavored Markdown's fence-matching rule.
 strip_fenced_pr_body_blocks() {
   python3 -c '
 import re, sys
-text = sys.stdin.read()
-text = re.sub(r"```.*?```", "", text, flags=re.S)
-sys.stdout.write(text)
+lines = sys.stdin.read().split("\n")
+out = []
+fence_char = None
+for line in lines:
+    match = re.match(r"^(`{3,}|~{3,})", line.strip())
+    if fence_char is None:
+        if match:
+            fence_char = match.group(1)[0]
+            continue
+        out.append(line)
+    else:
+        if match and match.group(1)[0] == fence_char:
+            fence_char = None
+        continue
+sys.stdout.write("\n".join(out))
 '
 }
 
@@ -528,18 +543,25 @@ sys.stdout.write(text)
 # graduation-closeout-from-merged-pr.sh's extract_closing_issue_numbers().
 # Echoes sorted, deduped issue numbers (one per line, possibly empty).
 # Returns 2 if the arguments are missing/invalid, or 1 (without echoing
-# anything) if the PR body could not be fetched (gh command failure); the
-# caller decides whether either failure is fatal.
+# anything) if the PR body could not be fetched or fence-stripping failed
+# (e.g. python3 missing/erroring) — the caller decides whether either failure
+# is fatal. A failed fence-strip is deliberately distinguished from "no
+# closing keywords found" (which returns 0 with empty output) so a parser
+# failure can never be silently treated as "nothing to close".
 fetch_pr_closing_issues() {
   local pr_repo="$1"
   local pr_number="$2"
-  local pr_body
+  local pr_body stripped_pr_body
   if [ "$#" -ne 2 ] || [ -z "$pr_repo" ] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
     echo "ERROR: fetch_pr_closing_issues requires <pr_repo> <pr_number>." >&2
     return 2
   fi
   pr_body="$(gh pr view "$pr_number" --repo "$pr_repo" --json body,title --jq '(.title // "") + "\n" + (.body // "")' 2>/dev/null)" || return 1
-  printf '%s' "$pr_body" | strip_fenced_pr_body_blocks | grep -ioE '(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+' | grep -oE '[0-9]+$' | sort -un || true
+  if ! stripped_pr_body="$(printf '%s' "$pr_body" | strip_fenced_pr_body_blocks)"; then
+    echo "ERROR: could not strip fenced code blocks from PR #${pr_number}." >&2
+    return 1
+  fi
+  printf '%s' "$stripped_pr_body" | grep -ioE '(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+' | grep -oE '[0-9]+$' | sort -un || true
   return 0
 }
 

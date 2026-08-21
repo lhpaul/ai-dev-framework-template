@@ -545,6 +545,75 @@ run_test \
     fi
   )"
 
+# Tilde-fenced (~~~) code blocks must be excluded the same way as
+# backtick-fenced blocks.
+tilde_fenced_branch="fix/retro-520-doc-gaps"
+tilde_fenced_repo="$(make_repo tilde-fenced "$tilde_fenced_branch" yes)"
+tilde_fenced_pr_body='Cleans up doc gaps.
+
+~~~
+Example commit message: Closes #998
+~~~
+
+Closes #604'
+tilde_fenced_output="$(
+  GH_MERGED_HEAD="$tilde_fenced_branch" \
+  GH_MERGED_PR=653 \
+  GH_PR_BODY="$tilde_fenced_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$tilde_fenced_repo" --base develop --pr 653 "$tilde_fenced_branch"
+)"
+run_contains \
+  "tilde_fenced_example_closes_real_issue" \
+  "Closing issue #604..." \
+  "$tilde_fenced_output"
+run_test \
+  "tilde_fenced_example_does_not_close_code_block_example_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #998" <<<"$tilde_fenced_output" || grep -Fq "Processing issue #998" <<<"$tilde_fenced_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
+# An unclosed opening fence must extend to end of input, so a real closing
+# reference placed after an accidentally-unclosed fence is NOT treated as
+# live (rather than leaking past the unclosed fence and being extracted).
+unclosed_fence_branch="fix/retro-521-doc-gaps"
+unclosed_fence_repo="$(make_repo unclosed-fence "$unclosed_fence_branch" yes)"
+unclosed_fence_pr_body='Cleans up doc gaps.
+
+```
+Example commit message: Closes #997
+Closes #605'
+unclosed_fence_output="$(
+  GH_MERGED_HEAD="$unclosed_fence_branch" \
+  GH_MERGED_PR=654 \
+  GH_PR_BODY="$unclosed_fence_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$unclosed_fence_repo" --base develop --pr 654 "$unclosed_fence_branch"
+)"
+run_test \
+  "unclosed_fence_extends_to_end_of_input" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #997" <<<"$unclosed_fence_output" || grep -Fq "Processing issue #997" <<<"$unclosed_fence_output" || grep -Fq "Closing issue #605" <<<"$unclosed_fence_output" || grep -Fq "Processing issue #605" <<<"$unclosed_fence_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+run_contains \
+  "unclosed_fence_falls_back_to_slug_issue" \
+  "Closing issue #521..." \
+  "$unclosed_fence_output"
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"
