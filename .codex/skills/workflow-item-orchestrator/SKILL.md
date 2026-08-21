@@ -77,3 +77,31 @@ Recommended model tier: `balanced`
     `pr-review-loop.sh` and `pr-ci-loop.sh` (run each to completion in-turn;
     never background one and end your turn to wait for it). That rule applies
     to every dispatch this skill makes exactly as written there.
+22. **A paused turn does not resume**: Ending a turn ends this skill's run;
+    nothing external wakes it back up. If a long step is backgrounded and the
+    turn ends to "wait for the notification," the item parks permanently —
+    indistinguishable from a dead runner, and recoverable only if a
+    supervising parent happens to notice the report named no terminal state.
+    This has happened in production: three runners in one overnight wave each
+    backgrounded a step and ended their turn expecting to resume
+    automatically; none did. For every long step, not only
+    `pr-review-loop.sh` and `pr-ci-loop.sh`: run it in the foreground, or if
+    backgrounded, poll it in the same turn until it returns
+    (`while pgrep -f "<cmd>" >/dev/null; do sleep 20; done`, with `<cmd>`
+    specific enough — e.g. including the PR number — that it cannot match an
+    unrelated process; see Protocol 91's "Execution Discipline" section for
+    why PID-capture-and-`wait` does not substitute here). After the loop
+    exits, check `$?`: pgrep exit status 1 means the step genuinely finished;
+    any other nonzero status (2, 3, 127) is a polling failure, not
+    completion — do not treat it as done. Never end a turn while something
+    this run started is still in flight.
+23. **Never re-invoke `pr-review-loop.sh` for a PR whose loop is already
+    running**: it takes a per-PR single-instance lock; a second concurrent
+    invocation exits 75 with `REASON=lock_contention` and reports nothing
+    about the PR's actual review state. If re-entering this item after a
+    backgrounded or interrupted run, do not start a new one — poll for the
+    earlier process to finish (or confirm it is genuinely gone), then read
+    the outcome from PR state directly (`gh pr view`, the reviewer-loop
+    summary comment, GraphQL review threads) instead of launching a duplicate
+    run. Use `pr-review-loop.sh unlock <pr-number>` only once the recorded
+    lock PID is confirmed no longer alive.

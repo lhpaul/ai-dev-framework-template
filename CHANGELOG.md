@@ -27,6 +27,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **Item runners no longer park permanently after backgrounding a long step
+  and ending the turn to wait for it** (#1548): three of four Work Item
+  Runners in one overnight wave backgrounded a step (`test-pr-review-loop.sh`,
+  `pr-review-loop.sh`) and ended their turn expecting an external notification
+  to resume them — ending a turn ends the agent, so nothing ever resumed
+  them, and each item was recovered only because a supervising parent noticed
+  the returned report named no terminal state. `91-orchestrate-work-protocol.md`
+  now states plainly, in a new "Execution Discipline: A Paused Turn Does Not
+  Resume" section read before Step 0, that a paused turn does not resume, and
+  prescribes foreground-or-poll for every long step, not only
+  `pr-review-loop.sh`/`pr-ci-loop.sh`; Step 7 and the agent/skill instruction
+  files (`.claude/agents/item-orchestrator.md`,
+  `.cursor/agents/item-orchestrator.md`,
+  `.codex/skills/workflow-item-orchestrator/SKILL.md`) carry the same rule
+  directly, plus a companion warning against re-invoking `pr-review-loop.sh`
+  on a PR whose loop is already running (it exits `75` with
+  `REASON=lock_contention` and reports nothing useful) — read the outcome
+  from PR state instead. On the parent side, `90-batch-orchestrate-work-
+  protocol.md` Step 5's supervision loop now classifies any returned report
+  that names no terminal state (no PR number paired with
+  `ready-for-human-review`, `blocked`, or `escalated` — or, for an item with
+  no PR yet, a concretely-named blocking reason; a bare "waiting" report never
+  satisfies that exception regardless of phrasing) as `stalled` and requires
+  resume/re-dispatch rather than acceptance, extending the existing "in-flight
+  CI/watch states are non-terminal" rule from governing runner behavior to
+  governing how the parent reads runner reports. Added the
+  [runner-stall supervision smoke-test runbook](docs/testing/workflow/1548-runner-stall-supervision.smoke-test.md),
+  since there is no automated test harness for protocol prose in this repo.
+- **`list_open_workflow_type_issues` no longer hardcodes a `.type` field key**
+  (#1400): `gh project item-list --format json` derives each item's field key
+  from the field's display name, lowercasing only its first character (for
+  example `Custom Type` -> `custom Type`). Because `Type` is a reserved
+  GitHub Projects field name, no conforming board can actually name its
+  classification field `Type`, so the hardcoded `select((.type // "") ==
+  "Workflow")` never matched anything on a real board — release protocol
+  §7.2's "downstream script-bug review" gate silently returned `[]` on every
+  release regardless of how many open Workflow items existed. The lookup now
+  resolves the same field-name order as
+  `workflow_github_project_type_field_json`:
+  `issue_tracker.custom_fields.type_field`, then `Custom Type`, `CustomType`,
+  then `Type`, each converted to its gh item-list key. When the item-list
+  payload has at least one item and none of those keys are present on any of
+  them, the function now emits a distinct stderr warning so a genuinely
+  unreadable Type field is no longer indistinguishable from a clean "no open
+  Workflow items" result — an empty board (zero items on the project, e.g.
+  open issues not yet triaged onto it) is left alone and does not trigger the
+  warning, since there is nothing to judge the candidate keys against. The
+  shipped regression test's fixture previously mocked a `"type":"Workflow"`
+  key that real `gh` cannot produce; it now uses `"custom Type"`, matching a
+  real board, plus new cases for a configured `type_field` override, the
+  unreadable-field warning, and the empty-board non-warning case.
+- **A replied-to but unresolved review thread no longer blocks the very
+  re-review it was replied about** (#1508): `check_unresolved_threads` in
+  `scripts/development-workflow/pr-review-loop.sh` gated the phase-1
+  "should we trigger a new review" check in `run_codex_github_review` and
+  `run_claude_code_action_review` purely on GraphQL `isResolved` state. When a
+  fixer pushed a fix and replied to a thread without also calling
+  `resolveReviewThread` — the normal state immediately after a push — the
+  loop returned `RESULT=needs_fixes REASON=existing_findings` and never
+  re-triggered the platform review, so the reviewer never saw the fix commit
+  until a human resolved the thread manually out of band. `check_unresolved_
+  threads` now takes a required `mode` argument. `mode=provisional`, used only
+  by those two phase-1 pre-trigger gates, additionally treats a thread as not
+  blocking re-review when its last comment is from a non-bot author posted
+  after the PR's current head-commit `committedDate` — modeling "fixed and
+  replied to, awaiting explicit resolution". Every gate that decides
+  `RESULT=clean` (the aggregate thread gate, `coderabbit_thread_gate_clean`,
+  the post-trigger findings recount, and the post-clean recheck) keeps using
+  `mode=strict`, which is byte-for-byte the prior behavior — a reply alone
+  still can never mark a thread resolved there, so this cannot reintroduce the
+  false-clean class fixed by #1531 and #1437. Unrecognized mode values fail
+  safe to `strict`. New regression tests in
+  `scripts/development-workflow/tests/test-pr-review-loop.sh` cover both
+  directions: the reply-after-head-commit case that must not block
+  re-triggering (confirmed to fail against the pre-fix code), and reply-
+  before-head-commit / bot-authored-reply / no-reply / true-resolution cases
+  that must still block under both modes.
+- **`post-merge-cleanup.sh` no longer closes the wrong issue for team-prefixed
+  branch slugs** (#1511): the team-prefixed identifier pattern
+  (`^(fix|feature|hotfix|refactor)/([a-zA-Z]{2,6}-([0-9]+))($|-)`) matches any
+  slug beginning with 2-6 letters followed by `-<digits>` — including ordinary
+  descriptive fragments with no relation to an issue number
+  (`fix/retro-517-doc-gaps`, `fix/http-500-retry`, `feature/sha-256-hashing`).
+  A downstream consumer observed the script silently update and close an
+  unrelated issue derived from such a slug. The merged PR body/title is now
+  checked first for GitHub closing keywords (`Closes #N`, `Fixes #N`,
+  `Resolves #N`, etc.) whenever the branch slug's identifier is
+  team-prefixed, and that reference is treated as authoritative when present
+  — including when the PR closes more than one issue. The slug-derived
+  identifier is only used as a fallback when the PR body carries no closing
+  reference at all, preserving existing behavior for legitimate team-prefixed
+  slugs (`fix/lh-97-real-issue`) merged without an explicit closing keyword.
+  Plain numeric identifiers (`fix/42-slug`) are unambiguous and are unaffected.
+  The closing-keyword matcher also now requires only a non-word boundary
+  (rather than specifically whitespace) before the keyword, so
+  punctuation-delimited references like `(Fixes #601)` are recognized, and it
+  strips fenced code blocks before matching so an example `Closes #999` in a
+  code sample within the PR body is not mistaken for a live reference —
+  mirroring `graduation-closeout-from-merged-pr.sh`'s existing
+  `extract_closing_issue_numbers` / `strip_fenced_blocks` behavior.
+- **Security-checkpoint keyword test no longer matches substrings** (#1504):
+  `recommend_checkpoints_for_item` in
+  `scripts/development-workflow/run-epic-policy-recommender.sh` matched the
+  security/auth checkpoint keywords with a bare, unanchored alternation, so
+  ordinary vocabulary ("authoring", "author", "authority", "insensitive")
+  tripped a pending human checkpoint and halted an otherwise fully delegated
+  `/run-epic`/`/run-items` run on issues with no actual security content (live
+  reproduction on `/run-items 1502 1501`). The keyword regex is now
+  `\b`-anchored so real security/auth terms — including negated forms like
+  `unauthorized`/`unauthenticated` — still match while incidental substrings no
+  longer do. The checkpoint `reason` now names the matched term and quotes the
+  source line instead of a generic static message. The sibling unresolved-
+  product and trade-off/architecture classifiers shared the same
+  bare-alternation defect and are now `\b`-anchored too. 13 new regression
+  tests cover the false-positive corpus (confirmed to fail against the pre-fix
+  regex) and the true-positive corpus.
 - **CodeRabbit "Review skipped" banner no longer reports an unreviewed PR as
   clean** (#1531): `run_coderabbit_review` in
   `scripts/development-workflow/pr-review-loop.sh` counted any CodeRabbit issue
@@ -77,6 +193,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/best-practices/2-version-control.md` now states that CHANGELOG entries
   describe shipped behavior rather than the review history of the PR that produced
   them — a content rule, not a length rule. No behavior change.
+- **`pr-review-loop.sh` ready-phase gate no longer reports a GitHub API
+  rate-limit outage as a review verdict** (#1509): a `gh pr view`/`gh pr ready`
+  failure in `ensure_pr_ready_for_ready_phase` previously always produced
+  `RESULT=escalate REASON=ready_for_review_failed` plus the `reviewer-failed`
+  label, with no distinction from a genuine review-gate failure. The gate now
+  probes `gh api rate_limit` on that failure; a confirmed core/graphql
+  exhaustion reports `REASON=rate_limited` with the reset timestamp instead,
+  and `reviewer_failed_label_required_for_result` no longer applies
+  `reviewer-failed` for that reason. An unexplained `gh` failure keeps the
+  original `REASON=ready_for_review_failed` behavior.
 
 - **Codex GitHub terminal evidence**: `codex-github-reviewer.sh` no longer
   treats a thumbs-up reaction on the trigger comment as a clean review result,
@@ -901,6 +1027,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory instead of the product checkout's, so two cleanup runs that
   resolve the product repository to different local checkouts of the same
   hub no longer both proceed for the same release.
+- **`run-work-router.sh` no longer treats a `gh` probe failure as "target not
+  found"** (#1503): `resolve_token()` probed `gh pr view`/`gh issue view` with
+  `2>/dev/null || true` and treated any empty result as unresolved, so a rate
+  limit, auth failure, network error, or GitHub outage was indistinguishable
+  from the target genuinely not existing — both produced `MODE=ambiguous`,
+  which every bounded command (`/run-item`, `/run-items`, `/run-epic`) treats
+  as a hard stop with a misdirecting reason. Live reproduction: `/run-items
+  1502 1501` stopped reporting both issues unresolvable immediately after a
+  `/run-work` scan exhausted the hourly GraphQL quota, even though both were
+  open and had resolved successfully minutes earlier. `resolve_token()` now
+  captures each probe's stdout, stderr, and exit code separately (`gh_probe`)
+  and classifies a non-zero exit's stderr (`classify_gh_probe_error`) into
+  `rate_limited`, `auth_failed`, `network_error`, or `github_unavailable`
+  before falling back to `not_found` for gh's own "could not resolve to a
+  PullRequest/Issue" message, or for an empty stderr **only** when the exit
+  code is gh's normal API-error code (`1`) — preserving current behavior for
+  a genuine not-found while an empty stderr at any other exit code (a
+  signal death, an OOM kill) still falls back to `github_unavailable`
+  instead of being silently treated as not-found. gh's own "no default
+  remote repository has been set" message (a local repo-configuration
+  error, not evidence the target doesn't exist) is likewise never
+  classified as `not_found`, and gets its own `local_config_error`
+  classification distinct from `github_unavailable` since the operator fix
+  is running `gh repo set-default` locally, not waiting out an outage.
+  `gh_probe()` also now guards its own
+  temp-file setup and stderr capture: a failing `mktemp` or `cat` reports a
+  diagnostic `PROBE_ERR` at a dedicated internal exit code instead of
+  silently producing an empty stderr that could otherwise be misread as a
+  not-found. A probe failure now stops with the distinct
+  `MODE=tracker_unavailable` (not `ambiguous`) and a `STOP_REASON` naming the
+  cause; a rate-limited probe additionally reports the GraphQL quota reset
+  time from `gh api rate_limit` when available.
+  `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
+  (the canonical routing specification) is updated to document the new
+  `tracker_unavailable` mode, its decision-table row, edge cases, and handoff
+  mapping (routing layer version 1.0 → 1.1).
+- **`item-completion-self-check.sh` no longer reports an indistinguishable
+  false discrepancy when the caller's `--worktree-path` is the main clone
+  (or the wrong sibling worktree)** (#1333): when `--worktree-path` resolves
+  to a path other than the item's actual worktree, `repository.branch`
+  reported a generic `discrepancy` (`HEAD` was the trunk branch checked out
+  in the main clone rather than the item branch) that looked identical to
+  genuine branch contamination — a downstream 5-sub-item epic run hit this
+  in every runner completion report and had to be manually triaged. The
+  script now also inspects `git worktree list --porcelain` (which enumerates
+  every linked worktree regardless of which one it is invoked from) for the
+  path where the expected branch is actually checked out. When that path
+  differs from the supplied `--worktree-path`, a new, distinct
+  `caller.worktree_path` diagnostic row is added alongside the existing
+  `repository.branch` row, naming the actual worktree path and the correct
+  `--worktree-path` to re-run with. This is strictly additive: the
+  pre-existing `repository.branch`/`workspace.worktrees` rows and their
+  `discrepancy` outcome are unchanged, so a genuine contamination case
+  (the expected branch not checked out anywhere) still reports a plain,
+  unexplained discrepancy with no caller-error row and no change to the
+  non-zero exit code.
+- **`graduation-closeout.sh` no longer refuses nested graduation PRs** (#1513):
+  the graduation PR base-branch validation hard-coded `develop` as the only
+  acceptable base, so a nested integration lineage (e.g. a wave branch
+  `develop-ventas-e3b` graduating into a module branch
+  `develop-sales-module` rather than directly into `develop`) failed
+  closeout even though that base is correct for that layer — reproduced
+  downstream on `mome-cl/mome-platform` PR #2138. A new `--base <branch>`
+  flag (default `develop`, matching `batch-merge.sh`'s existing `--base`
+  convention) lets the operator declare the expected graduation base; the
+  script still fails closed with a clear error when the PR's actual base
+  does not match, and rejects an arbitrary non-integration-branch `--base`
+  value (anything other than `develop` or `develop-*`) up front regardless
+  of what the graduation PR happens to target. The sub-item closing comment
+  no longer hard-codes "to `develop`" either, and the summary output now
+  reports `GRADUATION_BASE`. `graduation-closeout-from-merged-pr.sh` (the
+  merge-time automation fallback invoked by
+  `.github/workflows/update-tracker-on-merge.yml`) intentionally keeps its
+  own `develop`-only check: that workflow only triggers on PRs targeting
+  `develop`, so a nested-base graduation can never reach it regardless, and
+  Step 5 of `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`
+  is the primary closeout path for nested graduations — invoked manually
+  with `--base`. This issue is distinct from #1329 (documentation of
+  `/run-epic --base`, the per-sub-item-PR integration base) and does not
+  attempt to resolve it; #1329 remains open. 8 new regression tests cover
+  the default `develop` base (confirmed unaffected), a matching non-default
+  base, a mismatched non-default base, and an invalid `--base` value
+  (confirmed to fail against the pre-fix script).
+- **`test-item-completion-self-check.sh` no longer reads this repository's
+  live reviewer configuration** (#1549): the suite's mock review threads and
+  CI checks are authored as `cursor` / `Cursor Bugbot` — bugbot's bot login
+  and check name — but `bugbot` was not present in
+  `review.on_draft.github` / `review.on_ready.github`, so eight
+  thread-detection assertions (unresolved-thread, REST-unreplied-thread,
+  graph/REST same-thread dedup, and paginated-thread detection — two
+  assertions each) and four CI-check-exclusion assertions silently went
+  inert: the script correctly ignored threads/checks from an unconfigured
+  platform, exited 0, and every test expecting exit 1 failed — 12 of 81
+  assertions, entirely a function of which platforms this repository happens
+  to commit. Each affected test now pins a `review:` config with `bugbot`
+  configured for the duration of its call via `AI_DEV_WORKFLOW_CONFIG_FILE`
+  — a shared fixture file, since the content is identical across tests —
+  rather than re-pinning the coupling to a different platform: the seam
+  `configured_review_platforms()` already honors, and the same pattern
+  already used by `non_thread_platform_logins`/`no_thread_bot_logins`. The
+  suite now passes 99/99 (the fix also added regression coverage) and was
+  re-verified clean under three independent reviewer configurations: this
+  checkout's local override (`pr-agent`/`coderabbit`), an unrelated platform
+  set (`coderabbit`/`codex-github`), and an explicitly empty one. Two new
+  regression tests guard the coupling from returning: the same
+  unresolved-thread fixture still detects under an unrelated platform set
+  that also configures `bugbot`, and no longer detects (unavailable_required)
+  under an explicitly empty config — proving detection tracks `bugbot`'s
+  presence rather than being hardcoded. The eight thread-detection
+  assertions were confirmed to genuinely exercise detection by temporarily
+  forcing the graph and REST thread-counting `jq` filters to always report
+  zero and re-running the suite: all eight (plus the new alt-config
+  regression test) failed loudly as expected, then the change was reverted.
 - **`PR_HAS_CHANGELOG` and sibling label checks in `batch-merge.sh` were
   flaky under `pipefail`** (#1516): `discover`'s `PR_HAS_CHANGELOG`,
   `PR_READY_LABEL`, `PR_HAS_NEEDS_FIXES`, and `PR_HAS_HUMAN_CHECKPOINT`
