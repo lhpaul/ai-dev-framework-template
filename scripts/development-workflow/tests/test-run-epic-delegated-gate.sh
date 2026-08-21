@@ -431,7 +431,7 @@ run_test "missing_merge_authority_requires_human" "human_required" "$(decision_f
 schema_mismatch_hybrid_fixture="$(write_fixture schema-mismatch-hybrid 'del(.policy) | del(.statusChecks) | del(.risk)')"
 run_test "schema_mismatch_hybrid_requires_human" "human_required" "$(decision_for "$schema_mismatch_hybrid_fixture")"
 run_test "schema_mismatch_hybrid_reports_policy_schema_mismatch" "true" "$(reason_match_for "$schema_mismatch_hybrid_fixture" "^evidence_schema_mismatch: \.policy object is missing")"
-run_test "schema_mismatch_hybrid_reports_statuschecks_schema_mismatch" "true" "$(reason_match_for "$schema_mismatch_hybrid_fixture" "^evidence_schema_mismatch: \.statusChecks\[\] is missing")"
+run_test "schema_mismatch_hybrid_reports_statuschecks_schema_mismatch" "true" "$(reason_match_for "$schema_mismatch_hybrid_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
 run_test "schema_mismatch_hybrid_does_not_report_generic_authority_denial" "false" "$(reason_match_for "$schema_mismatch_hybrid_fixture" "^delegated review authority is missing\$")"
 run_test "schema_mismatch_hybrid_does_not_report_generic_merge_denial" "false" "$(reason_match_for "$schema_mismatch_hybrid_fixture" "^delegated merge authority is missing\$")"
 run_test "schema_mismatch_hybrid_does_not_report_generic_ci_missing" "false" "$(reason_match_for "$schema_mismatch_hybrid_fixture" "^required CI state is missing\$")"
@@ -442,8 +442,36 @@ run_test "schema_mismatch_hybrid_next_action_names_schema_not_policy" "true" "$(
 
 missing_statuschecks_only_fixture="$(write_fixture missing-statuschecks-only 'del(.statusChecks)')"
 run_test "missing_statuschecks_key_requires_human" "human_required" "$(decision_for "$missing_statuschecks_only_fixture")"
-run_test "missing_statuschecks_key_reports_schema_mismatch" "true" "$(reason_match_for "$missing_statuschecks_only_fixture" "^evidence_schema_mismatch: \.statusChecks\[\] is missing")"
+run_test "missing_statuschecks_key_reports_schema_mismatch" "true" "$(reason_match_for "$missing_statuschecks_only_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
 run_test "missing_statuschecks_key_does_not_report_generic_ci_missing" "false" "$(reason_match_for "$missing_statuschecks_only_fixture" "^required CI state is missing\$")"
+
+# --- CodeRabbit finding on PR #1553: has("statusChecks") alone accepted null,
+# --- object, and scalar values for .statusChecks (all of which are not the
+# --- array ci_status_checks expects). A null silently defaulted to [] and
+# --- read as the generic "required CI state is missing" instead of a schema
+# --- mismatch; an object had its *values* iterated as if they were
+# --- individual check entries (jq map/.[] accept objects), so a
+# --- well-formed-looking single check value one level too deep could read
+# --- as CI having passed -- a real false "merge_allowed" for malformed
+# --- input, not just an unclear message; a scalar aborted the whole jq
+# --- program. All three must now report evidence_schema_mismatch, never
+# --- crash, and never silently permit merge. ---
+null_statuschecks_fixture="$(write_fixture null-statuschecks '.statusChecks = null')"
+run_test "null_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$null_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+run_test "null_statuschecks_does_not_report_generic_ci_missing" "false" "$(reason_match_for "$null_statuschecks_fixture" "^required CI state is missing\$")"
+
+object_statuschecks_fixture="$(write_fixture object-statuschecks '.statusChecks = {"ci": {"status": "COMPLETED", "conclusion": "SUCCESS"}}')"
+run_test "object_statuschecks_does_not_silently_merge_allow" "human_required" "$(decision_for "$object_statuschecks_fixture")"
+run_test "object_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$object_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+
+scalar_statuschecks_fixture="$(write_fixture scalar-statuschecks '.statusChecks = "SUCCESS"')"
+run_test "scalar_statuschecks_does_not_crash" "true" "$(
+  "$GATE" --input "$scalar_statuschecks_fixture" --json >/dev/null 2>&1 && echo true || echo false
+)"
+run_test "scalar_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$scalar_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+
+boolean_statuschecks_fixture="$(write_fixture boolean-statuschecks '.statusChecks = true')"
+run_test "boolean_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$boolean_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
 
 # present-but-empty .statusChecks (genuinely no CI has run / no CI configured
 # without an explicit ciPolicy: none) must keep the existing wording and

@@ -74,12 +74,17 @@ scope; omit it entirely for /run-item or /run-items evidence -- the gate skips
 the scope check when the field is absent rather than defaulting to
 out-of-scope.
 
-.policy being missing or not an object, or .statusChecks being missing
-entirely (as opposed to present-but-empty), cannot be told apart from a
-genuine denial or a genuine "no CI has run" state -- the gate reports an
-"evidence_schema_mismatch: ..." reason naming exactly which required shape is
-absent instead of guessing. Treat that reason as an instruction to fix the
-evidence file, not as a policy or CI verdict.
+.policy being missing or not an object, or .statusChecks being missing, null,
+or not an array (as opposed to present as an array, even an empty one),
+cannot be told apart from a genuine denial or a genuine "no CI has run"
+state -- the gate reports an "evidence_schema_mismatch: ..." reason naming
+exactly which required shape is absent instead of guessing. This
+.statusChecks check does not apply when ciPolicy/ci_policy resolves to
+"none" (no CI is configured for this repository/product) -- CI-disabled
+evidence is never expected to carry .statusChecks at all, so its absence is
+not a schema mismatch in that case. Treat the evidence_schema_mismatch
+reason as an instruction to fix the evidence file, not as a policy or CI
+verdict.
 
 When --repo-root and --product-repo are supplied (or productRepo.name is present
 in the evidence file), workflow_hub product repository ci_policy is loaded from
@@ -742,7 +747,20 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   def policy: if (.policy | type) == "object" then .policy else {} end;
   def policy_object_present: (.policy | type) == "object";
   def ci_policy: (.ciPolicy // .ci_policy // "required");
-  def status_checks_key_present: has("statusChecks");
+  # A key-existence check alone (`has("statusChecks")`) is not sufficient: it
+  # returns true for `.statusChecks: null`, an object, or a scalar, none of
+  # which are the array `ci_status_checks` below actually expects. `null`
+  # would silently default to `[]` via `// []` (reported as the generic
+  # "required CI state is missing" rather than a schema mismatch); an object
+  # would iterate its *values* as if they were individual check entries
+  # (jq map/.[] accept objects), so a single well-formed-looking check
+  # value nested one level too deep could silently read as CI having passed
+  # -- exactly the "malformed input rendered as a substantive verdict"
+  # failure class this evidence_schema_mismatch reason exists to prevent; a
+  # scalar would abort the whole jq program with an uncaught type error. This
+  # predicate instead requires `.statusChecks` to literally be an array
+  # (present-but-empty `[]` still counts, matching existing behavior).
+  def status_checks_key_present: ((.statusChecks // null) | type) == "array";
   def labels: (.pr.labels // []);
   def risk_blockers: (.risk.blockers // []);
   def risk_ci_only_blockers:
@@ -927,8 +945,15 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     " on PR #" + (($prNumber // "unknown") | tostring) +
     " requires a fixed commit or a verified human accept/reject decision at head " + ($entry.headSha // "unknown");
   def ci_status_checks:
+    # Coerce defensively to [] for any non-array .statusChecks (missing,
+    # null, object, or scalar) so this helper -- called unconditionally from
+    # reviewer_access_classification below, not only from the guarded reasons
+    # branch that reports evidence_schema_mismatch -- can never abort the
+    # whole jq program on malformed input. The schema-mismatch diagnosis
+    # itself is reported separately via status_checks_key_present, which
+    # remains the single source of truth for "is .statusChecks well-formed".
     (reviewer_check_keys) as $reviewerKeys |
-    (.statusChecks // [])
+    ((.statusChecks // null) | if type == "array" then . else [] end)
     | map(. as $check | select(($reviewerKeys | index(reviewer_check_key($check)) | not)));
   def current_ci_blocker:
     if ci_policy == "none" then
@@ -1155,7 +1180,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
 	  (if (ci_policy == "none")
 	   then $reasons
 	   elif (status_checks_key_present | not)
-	   then add_reason($reasons; "evidence_schema_mismatch: .statusChecks[] is missing from the evidence file; an absent key cannot be distinguished from a genuine \"no CI has run\" state, so the gate reports it distinctly instead of guessing. Populate .statusChecks as an array (even an empty one) built from a live PR read -- see --help for the evidence schema -- rather than substituting the output of a different script (e.g. the result produced by run-epic-risk-classifier.sh belongs nested under a top-level \"risk\" key, not here).")
+	   then add_reason($reasons; "evidence_schema_mismatch: .statusChecks is missing, null, or not an array in the evidence file; an absent or malformed value cannot be distinguished from a genuine \"no CI has run\" state, so the gate reports it distinctly instead of guessing. Populate .statusChecks as an array (even an empty one) built from a live PR read -- see --help for the evidence schema -- rather than substituting the output of a different script (e.g. the result produced by run-epic-risk-classifier.sh belongs nested under a top-level \"risk\" key, not here).")
 	   elif (ci_status_checks | length) == 0
 	   then add_reason($reasons; "required CI state is missing")
 	   else $reasons end) as $reasons |

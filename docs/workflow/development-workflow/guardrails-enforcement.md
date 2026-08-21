@@ -196,11 +196,14 @@ assembling the delegated gate's `<evidence-file>` instead. Feeding the wrong
 shape in does not always fail loudly: the delegated gate reports an
 `evidence_schema_mismatch: ...` reason (rather than a generic
 `delegated review/merge authority is missing` or `required CI state is
-missing` reason) whenever a required object (`.policy`) or array key
-(`.statusChecks`) is entirely absent, precisely because that absence is
-otherwise indistinguishable from a real denial or a real "no CI has run"
-state. Treat that reason as an instruction to fix the evidence file's shape,
-not as a policy or CI verdict.
+missing` reason) whenever `.policy` is missing or not an object, or
+`.statusChecks` is missing, `null`, or not an array — precisely because that
+absence/malformation is otherwise indistinguishable from a real denial or a
+real "no CI has run" state. The `.statusChecks` check is skipped when
+`ciPolicy`/`ci_policy` resolves to `none` (no CI configured for this
+repository/product), since CI-disabled evidence is never expected to carry
+`.statusChecks` at all. Treat that reason as an instruction to fix the
+evidence file's shape, not as a policy or CI verdict.
 
 The evidence file's `pr.inScope` field is meaningful only when the runner has
 a resolved `/run-epic` scope to check the candidate PR against. Protocol 90 and
@@ -327,7 +330,7 @@ table is required for consistent stop reporting.
 | `missing_required_secret_or_permission` | A required credential, GitHub permission, or access token is absent. |
 | `guardrails_config_unreadable` | The `guardrails` block in `.ai-dev-workflow.yaml` is missing required fields, uses invalid values, or is internally contradictory. |
 | `missing_audit_evidence` | A delegated decision required an audit record but the record could not be produced or verified. |
-| `evidence_schema_mismatch` | `run-epic-delegated-gate.sh` evidence is missing a required object or array key entirely (for example `.policy` or `.statusChecks[]`), which cannot be distinguished from a genuine authority denial or a genuine "no CI has run" state; fix the evidence file's shape before treating the result as a real denial or CI verdict. |
+| `evidence_schema_mismatch` | `run-epic-delegated-gate.sh` evidence is missing a required object (`.policy`), or `.statusChecks` is missing, `null`, or not an array — which cannot be distinguished from a genuine authority denial or a genuine "no CI has run" state (unless `ciPolicy`/`ci_policy` is `none`, where `.statusChecks` is not required at all); fix the evidence file's shape before treating the result as a real denial or CI verdict. |
 
 **Additive rule**: These stop conditions may **add** to but may **never remove**
 the framework's baseline human-stop conditions. The baseline stops
