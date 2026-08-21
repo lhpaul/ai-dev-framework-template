@@ -68,6 +68,17 @@
 
 set -euo pipefail
 
+# Duplicate the script's real stderr onto fd 3. cmd_discover captures
+# fetch_pr_meta's combined stdout+stderr locally
+# (`meta="$(fetch_pr_meta "$pr_num" 2>&1)"`) so it can cache and later replay
+# a PR's KEY=VALUE metadata block; any diagnostic fetch_pr_meta writes to fd
+# 2 gets swept into that capture and re-emitted on real stdout inside the
+# candidate block, which is not stderr and violates the documented
+# KEY=VALUE-only discovery record contract. fd 3 is opened here, before that
+# local capture exists, so a diagnostic written to fd 3 bypasses it and lands
+# on this script's real stderr instead.
+exec 3>&2
+
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./workflow-lib.sh
 . "$SCRIPT_DIR/workflow-lib.sh"
@@ -303,7 +314,11 @@ fetch_pr_meta() {
   local diff_files diff_exit=0
   diff_files="$(gh pr diff --name-only "$pr_num" 2>/dev/null)" || diff_exit=$?
   if [ "$diff_exit" -ne 0 ]; then
-    echo "WARNING: gh pr diff failed for PR #${pr_num} (exit ${diff_exit}) — cannot determine whether CHANGELOG.md is in the diff; reporting PR_HAS_CHANGELOG=false" >&2
+    # fd 3, not fd 2: see the `exec 3>&2` comment near the top of this file.
+    # cmd_discover captures fetch_pr_meta's combined stdout+stderr locally to
+    # cache and replay the KEY=VALUE metadata block; fd 2 would leak this
+    # diagnostic into that block instead of reaching real stderr.
+    echo "WARNING: gh pr diff failed for PR #${pr_num} (exit ${diff_exit}) — cannot determine whether CHANGELOG.md is in the diff; reporting PR_HAS_CHANGELOG=false" >&3
   elif _list_has_exact_line 'CHANGELOG.md' "$diff_files"; then
     has_changelog="true"
   fi

@@ -308,6 +308,21 @@ diff_failure_changelog_val="$(awk -F= '$1=="PR_HAS_CHANGELOG"{print $2; exit}' <
 run_test "diff_failure_still_reports_has_changelog_false" "false" "$diff_failure_changelog_val"
 run_test "diff_failure_is_surfaced_not_silently_swallowed" "yes" "$(grep -q 'gh pr diff failed for PR #9002' <<< "$diff_failure_output" && echo yes || echo no)"
 
+# Regression coverage for a Codex GitHub finding on this PR (#1536): the
+# gh-pr-diff-failure diagnostic must land on real stderr, not get captured
+# and replayed inside cmd_discover's KEY=VALUE stdout candidate block (the
+# `meta="$(fetch_pr_meta "$pr_num" 2>&1)"` cache-and-replay path). Capture
+# stdout and stderr *separately* this time (no `2>&1`) to prove the
+# diagnostic is actually on stderr and does not leak into the discovery
+# record's stdout contract.
+diff_failure_stderr_file="$(mktemp)"
+diff_failure_stdout_only="$("$HELPER" discover --prs 9002 2>"$diff_failure_stderr_file")"
+diff_failure_stderr_only="$(cat "$diff_failure_stderr_file")"
+rm -f "$diff_failure_stderr_file"
+run_test "diff_failure_warning_not_on_stdout" "no" "$(grep -q 'gh pr diff failed for PR #9002' <<< "$diff_failure_stdout_only" && echo yes || echo no)"
+run_test "diff_failure_warning_is_on_stderr" "yes" "$(grep -q 'gh pr diff failed for PR #9002' <<< "$diff_failure_stderr_only" && echo yes || echo no)"
+run_test "diff_failure_stdout_still_reports_changelog_false" "false" "$(awk -F= '$1=="PR_HAS_CHANGELOG"{print $2; exit}' <<< "$diff_failure_stdout_only")"
+
 # ---------------------------------------------------------------------------
 # Part 5: cmd_delete_branch's push_err match (also touched by this fix, via
 # `tr` instead of `grep -qi`) still classifies "already gone" vs. "genuine
