@@ -80,16 +80,29 @@ echo "=== Part 1: race mechanism proof (buggy shape vs. fixed shape) ==="
 # grep -q's early exit (right after matching line 1) reliably happens while
 # the producer still has output queued.
 #
-# Deliberately does NOT guard the inner `yes | head` pipeline with `|| true`:
-# doing so was measured (during development of this test) to change bash's
-# process-exec strategy for the tail command of this function body enough to
-# eliminate the very race this function exists to reproduce. This function
-# is only ever invoked from inside an explicit `( fn )` subshell guarded by
-# `if !`, both below, so its own `set -e` exposure is already contained —
-# see _buggy_pattern_matches / _fixed_pattern_matches.
+# Deliberately generates the filler with a single `awk` process (no internal
+# pipe) rather than `yes | head -n 20000`. `yes | head -N` has its own,
+# unrelated pipefail failure baked in: `head` always closes its read end
+# after its Nth line, so `yes` always gets SIGPIPE'd on its next write —
+# 100% of the time, regardless of what (if anything) is downstream of
+# `head`. If `_race_mechanism_producer`'s body were `yes | head -n 20000`,
+# the function's own exit status would already be non-zero on every run
+# purely from that internal pipe, before `grep -q`'s early exit ever enters
+# the picture — conflating "the #1516 SIGPIPE-on-early-close race" with an
+# unrelated, always-firing `yes | head` gotcha, and making the buggy-pattern
+# assertion below pass for the wrong reason (caught in review on PR #1536).
+# A single `awk` with no internal pipe has no failure mode of its own: run
+# standalone (no downstream consumer), it exits 0 every time. Consumed by
+# `grep -q` below, the *only* way this function's exit status can go
+# non-zero is the actual race this test exists to prove — `grep -q` closing
+# the read end while `awk` still has output queued to write.
 _race_mechanism_producer() {
   printf 'CHANGELOG.md\n'
-  yes 'scripts/filler-padding-line-to-exceed-the-kernel-pipe-buffer.sh' | head -n 20000
+  awk 'BEGIN {
+    for (i = 0; i < 20000; i++) {
+      print "scripts/filler-padding-line-to-exceed-the-kernel-pipe-buffer.sh"
+    }
+  }'
 }
 
 # Mirrors the *original* buggy shape from batch-merge.sh (pre-#1516):

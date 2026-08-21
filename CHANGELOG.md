@@ -919,8 +919,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pattern matching), which uses no subprocess and no pipe on the matching
   side, so it cannot reintroduce the race regardless of payload size. A
   genuine `gh pr diff` failure is now also distinguished from "CHANGELOG.md
-  legitimately not in the diff" (a `WARN:` diagnostic is emitted) instead of
-  both collapsing to `PR_HAS_CHANGELOG=false` indistinguishably.
+  legitimately not in the diff" (a `WARNING:` diagnostic is emitted) instead of
+  both collapsing to `PR_HAS_CHANGELOG=false` indistinguishably. That
+  diagnostic is written to a dedicated fd 3 (a duplicate of the script's real
+  stderr, opened before `cmd_discover`'s local `meta="$(fetch_pr_meta "$pr_num"
+  2>&1)"` capture exists) instead of fd 2, so it can no longer be swept into
+  that capture and re-emitted on real stdout inside a discovery candidate
+  block — a `KEY=VALUE`-only contract violation caught in review on PR #1536.
   `cmd_delete_branch`'s case-insensitive `push_err` classification
   (`printf | grep -qi`) was audited under the same shape and switched to
   `tr` + a pure-bash substring match; `tr` always drains its input to EOF
@@ -928,12 +933,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeps every producer-into-consumer match in this script off the
   `| grep -q` pattern. New regression coverage in
   `scripts/development-workflow/tests/test-batch-merge-changelog-race.sh`
-  reproduces the underlying SIGPIPE race in isolation (a `yes | head`-fed
-  producer forced to still have ~1 MB queued when `grep -q` exits — 10/10
-  reproducible in local and CI runs) and exercises the real
-  `batch-merge.sh discover`/`delete-branch` commands against the same kind
-  of adversarial, oversized `gh` mock payload across repeated runs to
-  confirm the fix holds.
+  reproduces the underlying SIGPIPE race in isolation (an `awk`-generated
+  producer with no pipe of its own — so its only possible failure is the
+  actual race under test, not an unrelated `yes | head` pipefail quirk —
+  forced to still have ~1 MB queued when `grep -q` exits: 10/10 reproducible
+  in local and CI runs) and exercises the real `batch-merge.sh
+  discover`/`delete-branch` commands against the same kind of adversarial,
+  oversized `gh` mock payload across repeated runs, including a stdout/stderr
+  separation check for the fd 3 fix, to confirm the fix holds.
 
 ### Changed
 
