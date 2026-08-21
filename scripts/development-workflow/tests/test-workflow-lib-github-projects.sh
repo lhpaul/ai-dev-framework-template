@@ -252,6 +252,14 @@ JSON
       cat <<'JSON'
 {"items":[{"content":{"number":824},"status":"Backlog","priority":"High","title":"Workflow helper issue"}]}
 JSON
+    elif [ "${MOCK_ITEM_LIST_MODE:-default}" = "empty_board" ]; then
+      # Project board has zero items yet (e.g. open issues not triaged onto
+      # the board). This must be a clean "no open Workflow items" result, not
+      # an unreadable-Type-field warning — there is nothing to judge the
+      # field keys against.
+      cat <<'JSON'
+{"items":[]}
+JSON
     else
       cat <<'JSON'
 {"items":[{"content":{"number":824},"status":"Backlog","priority":"High","custom Type":"Workflow","title":"Workflow helper issue"},{"content":{"number":825},"status":"Backlog","priority":"High","custom Type":"Bug","title":"Bug helper issue"},{"content":{"number":826},"status":"Done","priority":"High","custom Type":"Workflow","title":"Done workflow helper issue"},{"content":{"number":827},"status":"Merged","priority":"High","custom Type":"Workflow","title":"Merged workflow helper issue"},{"content":{"number":828},"status":"Released","priority":"High","custom Type":"Workflow","title":"Released workflow helper issue"},{"content":{"number":829},"status":"Cancelled","priority":"High","custom Type":"Workflow","title":"Cancelled workflow helper issue"}]}
@@ -681,6 +689,23 @@ case "$workflow_issues_stderr" in
   *) unreadable_warning_result="$workflow_issues_stderr" ;;
 esac
 run_test "workflow_type_discovery_unreadable_field_warns_distinctly" "warned" "$unreadable_warning_result"
+
+# Regression (issue #1400 follow-up): an empty project board (zero items —
+# e.g. open issues not yet triaged onto the board) must not be confused with
+# an unreadable Type field. There is nothing to judge the candidate keys
+# against, so no warning should fire and the result must stay a clean [].
+reset_log
+export MOCK_ITEM_LIST_MODE=empty_board
+workflow_issues_empty_board_stderr=""
+workflow_issues_empty_board_stderr="$(list_open_workflow_type_issues 2>&1 >/dev/null)"
+workflow_issues_empty_board="$(list_open_workflow_type_issues 2>/dev/null)"
+unset MOCK_ITEM_LIST_MODE
+run_test "workflow_type_discovery_empty_board_returns_empty" "[]" "$(printf '%s' "$workflow_issues_empty_board" | jq -c '.')"
+case "$workflow_issues_empty_board_stderr" in
+  *"Cannot distinguish"*) empty_board_warning_result="$workflow_issues_empty_board_stderr" ;;
+  *) empty_board_warning_result="no-warning" ;;
+esac
+run_test "workflow_type_discovery_empty_board_no_false_warning" "no-warning" "$empty_board_warning_result"
 
 reset_log
 export MOCK_TRACKER_PROVIDER=linear

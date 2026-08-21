@@ -3040,6 +3040,7 @@ list_open_workflow_type_issues() {
   local project_number owner open_issues project_items repo_owner repo_name repo_slug
   local _lowti_preferred_field _lowti_candidate_keys_json _lowti_result_json
   local _lowti_matched_keys _lowti_results _lowti_item_keys_display _lowti_candidate_display
+  local _lowti_item_count
 
   local _lowti_provider
   _lowti_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
@@ -3113,6 +3114,7 @@ list_open_workflow_type_issues() {
     | {
         matched_keys: $matched_keys,
         item_keys: $item_keys,
+        item_count: (.items | length),
         results: [ .items[]
           | select(item_type(.) == "Workflow")
           | . as $item
@@ -3137,8 +3139,9 @@ list_open_workflow_type_issues() {
 
   _lowti_matched_keys="$(printf '%s' "$_lowti_result_json" | jq -c '.matched_keys' 2>/dev/null)"
   _lowti_results="$(printf '%s' "$_lowti_result_json" | jq -c '.results' 2>/dev/null)"
+  _lowti_item_count="$(printf '%s' "$_lowti_result_json" | jq -r '.item_count' 2>/dev/null)"
 
-  if [ "$_lowti_matched_keys" = "[]" ]; then
+  if [ "$_lowti_matched_keys" = "[]" ] && [ "${_lowti_item_count:-0}" -gt 0 ] 2>/dev/null; then
     _lowti_item_keys_display="$(printf '%s' "$_lowti_result_json" | jq -r '.item_keys | join(", ")' 2>/dev/null)"
     _lowti_candidate_display="$(printf '%s' "$_lowti_candidate_keys_json" | jq -r 'join(", ")' 2>/dev/null)"
     echo "Warning: none of the expected Type field keys (${_lowti_candidate_display}) were found on gh project item-list items (keys present: ${_lowti_item_keys_display}). Cannot distinguish 'no open Workflow items' from 'Type field unreadable' — verify issue_tracker.custom_fields.type_field or the project's Custom Type / Type field name." >&2
