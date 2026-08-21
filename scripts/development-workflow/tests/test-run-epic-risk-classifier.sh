@@ -67,6 +67,27 @@ JSON
     fi
     printf '%s\n' 'docs/workflow/development-workflow/protocols/95-run-epic-protocol.md'
     ;;
+  pr\ view\ 43\ --json*)
+    cat <<'JSON'
+{
+  "number": 43,
+  "title": "Live medium risk",
+  "baseRefName": "develop",
+  "headRefName": "fix/43-live-medium",
+  "headRepository": {"name": "ai-dev-framework-template", "owner": {"login": "lhpaul"}},
+  "mergeStateStatus": "CLEAN",
+  "isDraft": false,
+  "reviewDecision": "APPROVED",
+  "labels": [{"name": "ready-for-human-review"}],
+  "statusCheckRollup": [
+    {"__typename": "CheckRun", "name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}
+  ]
+}
+JSON
+    ;;
+  pr\ diff\ 43\ --name-only)
+    printf '%s\n' 'scripts/development-workflow/run-epic-risk-classifier.sh'
+    ;;
   issue\ edit*|pr\ create*|pr\ merge*|project\ item-edit*|project\ item-add*|pr\ comment*|pr\ close*|pr\ edit*)
     printf 'mutating gh command was called: gh %s\n' "$*" >&2
     exit 99
@@ -593,6 +614,44 @@ run_test "json_read_only_guarantee" "yes" "$(printf '%s\n' "$live_output" | jq -
 run_fails_contains "live_pr_view_failure_errors" "failed to read PR #42" env MOCK_GH_MODE=view-fail "$CLASSIFIER" --pr 42 --json
 run_fails_contains "live_pr_empty_response_errors" "empty PR response for #42" env MOCK_GH_MODE=view-empty "$CLASSIFIER" --pr 42 --json
 run_fails_contains "live_pr_diff_failure_errors" "failed to read changed files for PR #42" env MOCK_GH_MODE=diff-fail "$CLASSIFIER" --pr 42 --json
+
+# --- issue #1497: --pr cannot attach why_safe_to_merge, so a medium-risk PR
+# --- classified via --pr always ends up "blocked" without --why-safe-file ---
+live_medium_no_evidence_output="$("$CLASSIFIER" --pr 43 --max-risk medium --json)"
+run_test "live_pr_medium_risk_without_why_safe_file_is_blocked" "blocked" "$(printf '%s\n' "$live_medium_no_evidence_output" | jq -r '.risk')"
+run_test "live_pr_medium_risk_without_why_safe_file_reason" "yes" "$(printf '%s\n' "$live_medium_no_evidence_output" | jq -e '.blockers[] | select(test("why_safe_to_merge"))' >/dev/null && echo yes || echo no)"
+
+why_safe_fixture="$(write_fixture why-safe '{
+  "scope": "single read-only classifier helper",
+  "tests": "fixture tests cover risk classes",
+  "reviewer_outcome": "reviewer loop clean",
+  "ci_outcome": "CI green",
+  "rollback_or_cleanup_risk": "remove helper and docs if needed"
+}')"
+live_medium_with_evidence_output="$("$CLASSIFIER" --pr 43 --why-safe-file "$why_safe_fixture" --max-risk medium --json)"
+run_test "live_pr_medium_risk_with_why_safe_file_reaches_medium" "medium" "$(printf '%s\n' "$live_medium_with_evidence_output" | jq -r '.risk')"
+run_test "live_pr_medium_risk_with_why_safe_file_merge_permitted" "true" "$(printf '%s\n' "$live_medium_with_evidence_output" | jq -r '.merge_permitted')"
+run_test "live_pr_why_safe_file_carried_through" "single read-only classifier helper" "$(printf '%s\n' "$live_medium_with_evidence_output" | jq -r '.why_safe_to_merge.scope')"
+
+# --why-safe-file also works with --input mode, and overrides any
+# why_safe_to_merge already embedded in the --input file's contents.
+why_safe_override_fixture="$(write_fixture why-safe-override '{
+  "scope": "overridden via --why-safe-file",
+  "tests": "overridden",
+  "reviewer_outcome": "overridden",
+  "ci_outcome": "overridden",
+  "rollback_or_cleanup_risk": "overridden"
+}')"
+input_with_why_safe_override_output="$("$CLASSIFIER" --input "$medium_fixture" --why-safe-file "$why_safe_override_fixture" --max-risk medium --json)"
+run_test "why_safe_file_overrides_input_why_safe" "overridden via --why-safe-file" "$(printf '%s\n' "$input_with_why_safe_override_output" | jq -r '.why_safe_to_merge.scope')"
+
+non_object_why_safe_fixture="$(write_fixture why-safe-non-object '["not", "an", "object"]')"
+run_fails_contains "rejects_non_object_why_safe_file" "--why-safe-file must contain a JSON object" \
+  "$CLASSIFIER" --pr 43 --why-safe-file "$non_object_why_safe_fixture" --max-risk medium --json
+run_fails_contains "rejects_missing_why_safe_file" "input file not found" \
+  "$CLASSIFIER" --pr 43 --why-safe-file "$TMP_ROOT/missing-why-safe.json" --max-risk medium --json
+run_fails_contains "rejects_flag_as_why_safe_file_value" "--why-safe-file requires a value" \
+  "$CLASSIFIER" --pr 43 --why-safe-file --max-risk medium --json
 
 run_test "no_mutating_gh_commands" "no" "$(
   grep -Eq '(^issue edit|^pr create|^pr merge|^project item-edit|^project item-add|^pr comment|^pr close|^pr edit|mutation)' "$CALL_LOG" && echo yes || echo no

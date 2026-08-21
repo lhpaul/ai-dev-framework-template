@@ -17,6 +17,75 @@ repository merge protocol. The gate is read-only: it does not run reviewers,
 poll CI, edit labels, update trackers, create comments, merge PRs, close
 issues, or delete branches.
 
+--input <file> expects the evidence schema below. This is a DIFFERENT schema
+than run-epic-risk-classifier.sh's --pr/--input/--json shape -- do not feed
+that script's output directly into this one's --input. Nest its result under
+a top-level "risk" key instead (see the worked example). Feeding the wrong
+shape in does not always fail loudly: some required fields being entirely
+absent reads as an "evidence_schema_mismatch" reason (see below); assemble
+each evidence file to its own documented shape.
+
+Minimal worked example. Only .pr.number, .pr.headRefName, and .pr.baseRefName
+are hard-required (the gate refuses to evaluate without them); every other key
+is optional and defaults per the rules noted inline below:
+
+  {
+    "policy": {
+      "delegateReview": true,
+      "mayMerge": true,
+      "mayStartBacklog": true
+    },
+    "item": {
+      "number": 918,
+      "status": "In Development"
+    },
+    "pr": {
+      "number": 42,
+      "headRefName": "fix/42-example",
+      "baseRefName": "develop",
+      "headSha": "<40-char-sha>",
+      "isDraft": false,
+      "mergeStateStatus": "CLEAN",
+      "mergeable": "MERGEABLE",
+      "labels": ["ready-for-human-review", "ready-for-regression"],
+      "unresolvedBlockingThreads": 0,
+      "auditDispositionPresent": true
+    },
+    "reviewer": {
+      "status": "clean",
+      "blockingCount": 0
+    },
+    "risk": {
+      "mergePermitted": true,
+      "blockers": []
+    },
+    "statusChecks": [
+      {"name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}
+    ]
+  }
+
+.pr.mergeable follows GitHub's mergeable enum (e.g. MERGEABLE, CONFLICTING,
+UNKNOWN). Omit the field entirely when you don't have this data -- do not
+default it to "" (an empty string is treated the same as omitted, never as a
+"not mergeable" verdict).
+
+.pr.inScope is meaningful only when checking against a resolved /run-epic
+scope; omit it entirely for /run-item or /run-items evidence -- the gate skips
+the scope check when the field is absent rather than defaulting to
+out-of-scope.
+
+.policy being missing or not an object, or .statusChecks being missing, null,
+or not an array (as opposed to present as an array, even an empty one),
+cannot be told apart from a genuine denial or a genuine "no CI has run"
+state -- the gate reports an "evidence_schema_mismatch: ..." reason naming
+exactly which required shape is absent instead of guessing. This
+.statusChecks check does not apply when ciPolicy/ci_policy resolves to
+"none" (no CI is configured for this repository/product) -- CI-disabled
+evidence is never expected to carry .statusChecks at all, so its absence is
+not a schema mismatch in that case. Treat the evidence_schema_mismatch
+reason as an instruction to fix the evidence file, not as a policy or CI
+verdict.
+
 When --repo-root and --product-repo are supplied (or productRepo.name is present
 in the evidence file), workflow_hub product repository ci_policy is loaded from
 the resolver and applied when the evidence file omits ciPolicy/ci_policy.
@@ -676,7 +745,30 @@ state_json="$(printf '%s\n' "$state_json" | jq --argjson fixes "$verified_securi
 
 decision_json="$(printf '%s\n' "$state_json" | jq '
   def policy: if (.policy | type) == "object" then .policy else {} end;
+  def policy_object_present: (.policy | type) == "object";
   def ci_policy: (.ciPolicy // .ci_policy // "required");
+  # A key-existence check alone (`has("statusChecks")`) is not sufficient: it
+  # returns true for `.statusChecks: null`, an object, or a scalar, none of
+  # which are the array `ci_status_checks` below actually expects. `null`
+  # would silently default to `[]` via `// []` (reported as the generic
+  # "required CI state is missing" rather than a schema mismatch); an object
+  # would iterate its *values* as if they were individual check entries
+  # (jq map/.[] accept objects), so a single well-formed-looking check
+  # value nested one level too deep could silently read as CI having passed
+  # -- exactly the "malformed input rendered as a substantive verdict"
+  # failure class this evidence_schema_mismatch reason exists to prevent; a
+  # scalar would abort the whole jq program with an uncaught type error. This
+  # predicate instead requires `.statusChecks` to literally be an array
+  # (present-but-empty `[]` still counts, matching existing behavior). It
+  # also requires every array member to itself be an object: a string or
+  # number member reaches the reviewer_check_key field accessors (`.name`,
+  # `.context`, ...) and aborts the whole jq program the same way a
+  # non-array top-level value did; a `null` member does not crash but
+  # silently reads as an unnamed, all-fields-absent check that reports a
+  # generic CI failure instead of the more legible schema-mismatch reason.
+  def status_checks_key_present:
+    ((.statusChecks // null) | type) == "array" and
+    ((.statusChecks // []) | all(type == "object"));
   def labels: (.pr.labels // []);
   def risk_blockers: (.risk.blockers // []);
   def risk_ci_only_blockers:
@@ -861,8 +953,19 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     " on PR #" + (($prNumber // "unknown") | tostring) +
     " requires a fixed commit or a verified human accept/reject decision at head " + ($entry.headSha // "unknown");
   def ci_status_checks:
+    # Coerce defensively to [] for any non-array .statusChecks (missing,
+    # null, object, or scalar), and drop any non-object array member, so
+    # this helper -- called unconditionally from reviewer_access_classification
+    # below, not only from the guarded reasons branch that reports
+    # evidence_schema_mismatch -- can never abort the whole jq program on
+    # malformed input (a string/number member would otherwise reach the
+    # reviewer_check_key field accessors and crash). The schema-mismatch
+    # diagnosis itself is reported separately via status_checks_key_present,
+    # which remains the single source of truth for "is .statusChecks
+    # well-formed" (array-typed, every member an object).
     (reviewer_check_keys) as $reviewerKeys |
-    (.statusChecks // [])
+    ((.statusChecks // null) | if type == "array" then . else [] end)
+    | map(select(type == "object"))
     | map(. as $check | select(($reviewerKeys | index(reviewer_check_key($check)) | not)));
   def current_ci_blocker:
     if ci_policy == "none" then
@@ -872,9 +975,20 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
       | any(.[]?; (success_check | not))
     end;
   def pr_mergeable_ok:
-    (.pr.mergeable // .pr.mergeableState // null) as $mergeable |
-    if $mergeable == null then true
-    else (($mergeable | tostring | ascii_downcase) | IN("mergeable", "true"))
+    # A blank/whitespace-only string is treated exactly like an absent field
+    # (unknown mergeable state -> not blocked), not like a real GitHub
+    # mergeable-enum value. Evidence assembled by hand from a `gh pr view
+    # --json` call that omitted the `mergeable` field can easily default the
+    # missing key to "" (e.g. via `.mergeable // ""`) rather than leaving it
+    # null; without this normalization that "" would fall through to the
+    # `else` branch below and be reported as a real "not mergeable" verdict
+    # for a PR GitHub actually reports as MERGEABLE -- missing input rendered
+    # as a substantive verdict, the same failure class pr_identity_gaps
+    # already guards against for .pr identity fields above.
+    ((.pr.mergeable // .pr.mergeableState // null) |
+      if . == null then null else (tostring | gsub("^\\s+|\\s+$"; "")) end) as $mergeable |
+    if ($mergeable == null or $mergeable == "") then true
+    else (($mergeable | ascii_downcase) | IN("mergeable", "true"))
     end;
   def access_obj: (.accessRestriction // .access_restriction // {});
   def access_obj_present:
@@ -1029,10 +1143,25 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   (if ($invalidCheckpointStates | length) > 0
    then add_reason($reasons; "human_checkpoint_required: invalid checkpoint satisfaction_state; expected pending, satisfied, or waived")
    else $reasons end) as $reasons |
-  (if (policy.delegateReview // false) != true
+  # A .policy that is entirely absent or not an object is indistinguishable,
+  # field-by-field, from an explicit denial of every individual authority flag
+  # once `policy` above defaults it to {} -- exactly the same conflation
+  # pr_identity_gaps already guards against for .pr identity above. Report it
+  # as one named, actionable evidence_schema_mismatch reason instead of the
+  # two generic authority-denial reasons below, so an operator debugging a
+  # malformed evidence file (e.g. one assembled from the output of a
+  # different script, such as the --json result produced by
+  # run-epic-risk-classifier.sh, which has no .policy at all) is not misled
+  # into concluding they lack merge
+  # permission when the real problem is the input shape.
+  (if (policy_object_present | not) then
+     add_reason($reasons; "evidence_schema_mismatch: .policy object is missing or is not an object in the evidence file; this cannot be distinguished from an explicit denial of delegated review/merge authority, so the gate reports it distinctly instead of guessing. Supply .policy as an object with explicit delegateReview and mayMerge booleans (see --help for the evidence schema) before concluding authority is denied.")
+   elif (policy.delegateReview // false) != true
    then add_reason($reasons; "delegated review authority is missing")
    else $reasons end) as $reasons |
-  (if (policy.mayMerge // false) != true
+  (if (policy_object_present | not) then
+     $reasons
+   elif (policy.mayMerge // false) != true
    then add_reason($reasons; "delegated merge authority is missing")
    else $reasons end) as $reasons |
   (if graduation_pr and (graduation_approved | not)
@@ -1062,6 +1191,8 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
    else $reasons end) as $reasons |
 	  (if (ci_policy == "none")
 	   then $reasons
+	   elif (status_checks_key_present | not)
+	   then add_reason($reasons; "evidence_schema_mismatch: .statusChecks is missing, null, or not an array in the evidence file; an absent or malformed value cannot be distinguished from a genuine \"no CI has run\" state, so the gate reports it distinctly instead of guessing. Populate .statusChecks as an array (even an empty one) built from a live PR read -- see --help for the evidence schema -- rather than substituting the output of a different script (e.g. the result produced by run-epic-risk-classifier.sh belongs nested under a top-level \"risk\" key, not here).")
 	   elif (ci_status_checks | length) == 0
 	   then add_reason($reasons; "required CI state is missing")
 	   else $reasons end) as $reasons |
@@ -1114,7 +1245,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
       elif ($reviewerAccessClassification | IN("access_restricted", "authorization_required", "authorization_stale", "audit_required")) then "human_required"
       elif $count == 0 then "merge_allowed"
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "fix_required"
-      elif ($reasons | any(test("authority|risk gate|needs-setup|Backlog|human_checkpoint_required|human-checkpoint|graduation_approval_required|security_sensitive_advisory_pending"))) then "human_required"
+      elif ($reasons | any(test("authority|risk gate|needs-setup|Backlog|human_checkpoint_required|human-checkpoint|graduation_approval_required|security_sensitive_advisory_pending|evidence_schema_mismatch"))) then "human_required"
       else "blocked"
       end
     ),
@@ -1130,6 +1261,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
       elif ($reasons | any(test("human_checkpoint_required|human-checkpoint"))) then "stop for the named human checkpoint action, record satisfied or waived evidence, sync labels, and rerun this gate"
       elif ($reasons | any(test("graduation_approval_required"))) then "stop for explicit graduation approval via /graduate-development before mutating"
       elif ($reasons | any(test("security_sensitive_advisory_pending"))) then "record a fixed commit or obtain a verified human accept/reject decision for each pending security-sensitive advisory finding (never a delegated-agent-recorded acceptance/rejection), then rerun this gate"
+      elif ($reasons | any(test("evidence_schema_mismatch"))) then "fix the evidence file to match the delegated-gate schema (see --help) before concluding this is a denied authority or a real missing-CI-state verdict -- an absent or malformed required field cannot be distinguished from a genuine blocker, so verify the JSON shape first, then rerun this gate"
       elif ($reasons | any(test("authority|risk gate|needs-setup|Backlog"))) then "stop for human authority or setup before mutating"
       else "block until required state is available"
       end

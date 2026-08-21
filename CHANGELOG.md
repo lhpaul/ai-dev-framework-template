@@ -27,6 +27,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **`run-epic-risk-classifier.sh --pr` can now attach `why_safe_to_merge`
+  evidence, and Gate 5 evidence-schema mismatches no longer read as a denied
+  merge authority** (#1497): a medium-risk PR classified via `--pr` always
+  reached `blocked` ("medium-risk PR is missing complete why_safe_to_merge
+  evidence") because `--pr` had no way to attach that evidence — only
+  `--input`'s undocumented, hand-normalized shape could carry it. A new
+  `--why-safe-file <file>` flag merges a `why_safe_to_merge` object into the
+  classified state for either `--pr` or `--input` mode, and `--help` on both
+  `run-epic-risk-classifier.sh` and `run-epic-delegated-gate.sh` now
+  documents each script's evidence schema with a worked example, including
+  that the two schemas are different and must not be fed into one another
+  directly (nest the classifier's result under a top-level `risk` key
+  instead). Separately, `run-epic-delegated-gate.sh` used to report a
+  malformed or incompatible evidence file (e.g. one built from the risk
+  classifier's own flat output) as `delegated review authority is missing`,
+  `delegated merge authority is missing`, or `required CI state is missing`
+  — three reasons that read as a policy or CI verdict when the real problem
+  was a missing `.policy` object or an entirely absent `.statusChecks[]` key,
+  risking an operator concluding they lack merge permission when they
+  actually have a JSON shape bug. Both cases now report a distinct
+  `evidence_schema_mismatch: ...` reason (still routed to `human_required`,
+  since the gate cannot safely default an authority/CI verdict either way)
+  naming exactly which required shape is missing, with `nextAction` text that
+  explicitly says this is not a policy or CI-state blocker. A present-but-
+  empty `.statusChecks: []` (a genuine "no CI has run" state) keeps its
+  original wording and `blocked` decision unchanged — only the schema-shaped
+  absence is new. When `ciPolicy`/`ci_policy` is `none`, no CI reason is
+  added at all (as before this PR); the overall decision then depends only
+  on other evidence and is not necessarily `blocked`. A
+  CodeRabbit review on the PR caught a sharper variant of the same bug: a
+  key-existence check alone (`has("statusChecks")`) accepted `null`, an
+  object, or a scalar for `.statusChecks`, none of which are the array the
+  gate actually expects — a `null` silently defaulted to `[]` and reported
+  the old generic message instead of a schema mismatch; an **object** had its
+  *values* iterated as individual check entries (jq's `map`/`.[]` accept
+  objects), so a single well-formed-looking check value one level too deep
+  could read as CI having passed, silently producing a false
+  `merge_allowed` verdict for malformed input rather than merely an unclear
+  message; a scalar aborted the whole jq program. `.statusChecks` is now
+  required to literally be an array before any CI evaluation runs against
+  it, and (per a CodeRabbit follow-up finding) every array member must
+  itself be an object — a string or number member reached the same field
+  accessors and crashed the same way a non-array top-level value did, and a
+  `null` member silently read as a generic CI failure instead of the more
+  legible schema-mismatch reason. Also fixed: a `.pr.mergeable` value
+  defaulted to `""` by a
+  caller that omitted `mergeable` from its `gh pr view --json` field list
+  used to be read as a real "PR is not mergeable" verdict for a PR GitHub
+  reports as `MERGEABLE`; a blank/whitespace-only `mergeable` string is now
+  treated exactly like an absent field (not blocked), while a genuine
+  non-mergeable state (e.g. `CONFLICTING`) still blocks. `guardrails-
+  enforcement.md`'s Gate 5 section documents the evidence schemas, the
+  `--why-safe-file` flag, and both pitfalls. New regression coverage in
+  `scripts/development-workflow/tests/test-run-epic-risk-classifier.sh` and
+  `scripts/development-workflow/tests/test-run-epic-delegated-gate.sh`
+  reproduces all three failure modes against the unfixed scripts before
+  confirming the fix.
 - **`workflow-batch-overlap.sh` no longer treats ordinary prose as a module
   collision or serializes provably independent pairs** (#1540): brief text
   like "the helper **emits** false rows" no longer produces a fake `module`
