@@ -523,9 +523,13 @@ fetch_pr_closing_issues() {
 # closes the issue if it is still open (commenting with the closing PR
 # number), and reasserts Merged status after close. A `gh issue view` failure
 # for a given issue is counted and reported but does not stop processing of
-# the remaining issues in the list; the caller should treat a nonzero return
-# as fatal (matching the existing single-issue close-failure handling
-# elsewhere in this script, which is a warning-only, non-fatal condition).
+# the remaining issues in the list; once all issues have been processed, a
+# nonzero view-failure count makes this function return 1, and the caller
+# must treat that as fatal (`close_issues_from_pr ... || exit 1`), matching
+# the aggregate fatal-on-view-failure behavior this replaces at both call
+# sites. This is distinct from a `gh issue close` failure, which remains a
+# warning-only, non-fatal condition (cleanup continues for the remaining
+# issues in the list either way).
 close_issues_from_pr() {
   local pr_number="$1"
   local issue_list="$2"
