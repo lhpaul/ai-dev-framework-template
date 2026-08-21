@@ -176,6 +176,30 @@ def add_signal(signals: set[tuple[str, str]], kind: str, value: str) -> None:
     signals.add((kind, value))
 
 
+def looks_like_module_identifier(value: str) -> bool:
+    """Reject bare English words captured after an unquoted module cue.
+
+    The unquoted variant of the module-cue extraction has no delimiter to
+    anchor on, so it must accept only candidates that look like an
+    identifier or path fragment rather than the next word of a sentence: a
+    dot-extension, an underscore/hyphen separator, or mixed/upper case (a
+    proper noun or identifier shape). A plain lowercase word (e.g. "emits",
+    "hardcodes", "returns") is ordinary English prose, not a module name.
+
+    Trailing sentence punctuation (e.g. the "." that ends "the script
+    fails.") is stripped before the shape check, matching the punctuation
+    `normalize_identifier` strips later. Without this, a verb immediately
+    followed by terminal punctuation would be misread as having a
+    dot-extension and slip through as a fabricated module signal.
+    """
+    trimmed = value.strip("`'\"“”‘’.,;:)(")
+    if not trimmed:
+        return False
+    if re.search(r"[._-]", trimmed):
+        return True
+    return trimmed != trimmed.lower()
+
+
 def extract_signals(title: str, brief: str) -> list[dict]:
     text = f"{title or ''}\n{brief or ''}"
     signals: set[tuple[str, str]] = set()
@@ -199,7 +223,10 @@ def extract_signals(title: str, brief: str) -> list[dict]:
     for match in re.finditer(rf"\b{module_cue}\s+[`'\"]([^`'\"\n]+)[`'\"]", text, re.I):
         add_signal(signals, "module", match.group(1))
     for match in re.finditer(rf"\b{module_cue}\s+([A-Za-z][A-Za-z0-9_.-]{{2,}})", text, re.I):
-        add_signal(signals, "module", match.group(1))
+        candidate = match.group(1)
+        if not looks_like_module_identifier(candidate):
+            continue
+        add_signal(signals, "module", candidate)
 
     return [{"type": kind, "value": value} for kind, value in sorted(signals)]
 
@@ -237,6 +264,16 @@ def pair_id(left_id: str, right_id: str) -> str:
     return "--".join(sorted([left_id, right_id]))
 
 
+def describe_signal(signal: dict) -> str:
+    return f"{signal['type']}:{signal['value']}"
+
+
+def describe_signal_list(signals: list[dict]) -> str:
+    if not signals:
+        return "none"
+    return ", ".join(describe_signal(signal) for signal in signals)
+
+
 def item_sort_key(item: dict):
     priority = PRIORITY_RANK.get(str(item.get("priority", "")).lower(), 2)
     created = str(item.get("createdAt") or item.get("created_at") or "")
@@ -266,12 +303,23 @@ def classify_pair(left: dict, right: dict) -> dict:
     elif related:
         classification = "suspected"
         source = "mixed" if has_plan_evidence else "brief"
-        explanation = "Brief-derived targets are related but not identical."
+        first = related[0]
+        more = f" (+{len(related) - 1} more)" if len(related) > 1 else ""
+        explanation = (
+            "Brief-derived targets are related but not identical: "
+            f"{describe_signal(first['left'])} vs {describe_signal(first['right'])} "
+            f"({first['reason']}){more}."
+        )
         evidence = {"relatedSignals": related}
-    elif has_plan_evidence and (left_signals or right_signals):
+    elif has_plan_evidence and (left_signals and right_signals):
         classification = "suspected"
         source = "mixed"
-        explanation = "Plan-derived and brief-derived evidence do not prove independence; require pair-scoped disposition."
+        explanation = (
+            "Plan-derived evidence exists but brief-derived signals neither match nor relate, so "
+            "independence is not proven; require pair-scoped disposition. "
+            f"Left signals: {describe_signal_list(left_signals)}. "
+            f"Right signals: {describe_signal_list(right_signals)}."
+        )
         evidence = {"leftSignals": left_signals, "rightSignals": right_signals}
     else:
         classification = "no_actionable_overlap"

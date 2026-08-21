@@ -68,6 +68,17 @@
 
 set -euo pipefail
 
+# Duplicate the script's real stderr onto fd 3. cmd_discover captures
+# fetch_pr_meta's combined stdout+stderr locally
+# (`meta="$(fetch_pr_meta "$pr_num" 2>&1)"`) so it can cache and later replay
+# a PR's KEY=VALUE metadata block; any diagnostic fetch_pr_meta writes to fd
+# 2 gets swept into that capture and re-emitted on real stdout inside the
+# candidate block, which is not stderr and violates the documented
+# KEY=VALUE-only discovery record contract. fd 3 is opened here, before that
+# local capture exists, so a diagnostic written to fd 3 bypasses it and lands
+# on this script's real stderr instead.
+exec 3>&2
+
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./workflow-lib.sh
 . "$SCRIPT_DIR/workflow-lib.sh"
@@ -205,6 +216,48 @@ die() {
   exit 2
 }
 
+# _list_has_exact_line <needle> <haystack>
+#
+# Returns 0 (true) when the newline-separated <haystack> contains a line
+# exactly equal to <needle>, 1 otherwise.
+#
+# Why this exists instead of `producer | grep -q needle`: under
+# `set -o pipefail` (enabled at the top of this script), a `cmd | grep -q`
+# pipeline is racy. `grep -q` exits as soon as it finds its first match,
+# closing its stdin (the pipe's read end) while `cmd` may still be writing
+# more output. That kills `cmd` with SIGPIPE, so `cmd` itself exits non-zero
+# (128+SIGPIPE) even though it did nothing wrong and `grep` genuinely found a
+# match. Bash's pipefail exit-status rule ("last command, scanning
+# right-to-left, to exit non-zero") then reports the *pipeline* as failed —
+# even though grep's own exit status was 0 (match found) — because it finds
+# `cmd`'s non-zero SIGPIPE exit before it finds grep's exit. The failure is
+# therefore data- and timing-dependent: it only reproduces when `cmd` still
+# has buffered output left to write at the moment `grep -q` finds its match,
+# which is why the bug in #1516 was intermittent rather than deterministic.
+#
+# The fix here is to never let a downstream consumer's early exit signal an
+# upstream producer at all: capture the producer's full output into a plain
+# bash variable first (a `$(...)` command substitution always drains its
+# command to completion — nothing downstream can close its pipe early), then
+# match against that variable with pure bash string comparison (`case`, no
+# subprocess, no pipe, nothing to SIGPIPE). Because there is no pipe on the
+# matching side, this construction cannot reintroduce the race regardless of
+# how large the haystack is or how early the needle appears in it.
+#
+# Constraint: <needle> must not itself contain a literal newline, or the
+# `$'\n'"$needle"$'\n'` pattern would need an embedded newline in the exact
+# position the haystack's line separators appear, which the glob match above
+# does not attempt to satisfy. Every call site passes a hardcoded, newline-
+# free literal (a label name or "CHANGELOG.md"), so this is a documented
+# caller contract, not a runtime check.
+_list_has_exact_line() {
+  local needle="$1" haystack="$2"
+  case $'\n'"$haystack"$'\n' in
+    *$'\n'"$needle"$'\n'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Fetch PR metadata from GitHub for a given PR number.
 # Prints key=value lines (prefixed with "PR_") to stdout.
 fetch_pr_meta() {
@@ -218,7 +271,7 @@ fetch_pr_meta() {
     return 1
   }
 
-  local number title branch head_sha base created_at labels_csv ready_label is_draft has_needs_fixes has_human_checkpoint
+  local number title branch head_sha base created_at labels_csv label_lines ready_label is_draft has_needs_fixes has_human_checkpoint
 
   number="$(printf '%s' "$json" | jq -r '.number')"
   title="$(printf '%s' "$json" | jq -r '.title')"
@@ -228,25 +281,45 @@ fetch_pr_meta() {
   created_at="$(printf '%s' "$json" | jq -r '.createdAt')"
   labels_csv="$(printf '%s' "$json" | jq -r '[.labels[].name] | join(",")')"
   is_draft="$(printf '%s' "$json" | jq -r '.isDraft')"
-  if printf '%s' "$json" | jq -r '.labels[].name' | grep -q '^ready-for-human-review$'; then
+
+  # Capture the full label list once, then match against it with pure bash
+  # (see _list_has_exact_line above). The original `jq | grep -q` shape here
+  # had the same SIGPIPE race as the CHANGELOG check below: jq streams one
+  # label per line, and grep -q closing the pipe after its match can kill jq
+  # with SIGPIPE before it finishes writing the remaining labels.
+  label_lines="$(printf '%s' "$json" | jq -r '.labels[].name')"
+  if _list_has_exact_line 'ready-for-human-review' "$label_lines"; then
     ready_label="true"
   else
     ready_label="false"
   fi
-  if printf '%s' "$json" | jq -r '.labels[].name' | grep -q '^needs-fixes$'; then
+  if _list_has_exact_line 'needs-fixes' "$label_lines"; then
     has_needs_fixes="true"
   else
     has_needs_fixes="false"
   fi
-  if printf '%s' "$json" | jq -r '.labels[].name' | grep -q '^human-checkpoint-required$'; then
+  if _list_has_exact_line 'human-checkpoint-required' "$label_lines"; then
     has_human_checkpoint="true"
   else
     has_human_checkpoint="false"
   fi
 
-  # Check whether the PR diff touches CHANGELOG.md
+  # Check whether the PR diff touches CHANGELOG.md. Capture the full file
+  # list first (see _list_has_exact_line above) so a match never races the
+  # `gh pr diff` producer via a `| grep -q` pipe. Also distinguish a genuine
+  # `gh` failure from "CHANGELOG.md legitimately not in the diff": both used
+  # to collapse to has_changelog=false silently, so a transient `gh` outage
+  # could be misreported as a real "no CHANGELOG entry" finding.
   local has_changelog="false"
-  if gh pr diff --name-only "$pr_num" 2>/dev/null | grep -q '^CHANGELOG\.md$'; then
+  local diff_files diff_exit=0
+  diff_files="$(gh pr diff --name-only "$pr_num" 2>/dev/null)" || diff_exit=$?
+  if [ "$diff_exit" -ne 0 ]; then
+    # fd 3, not fd 2: see the `exec 3>&2` comment near the top of this file.
+    # cmd_discover captures fetch_pr_meta's combined stdout+stderr locally to
+    # cache and replay the KEY=VALUE metadata block; fd 2 would leak this
+    # diagnostic into that block instead of reaching real stderr.
+    echo "WARNING: gh pr diff failed for PR #${pr_num} (exit ${diff_exit}) — cannot determine whether CHANGELOG.md is in the diff; reporting PR_HAS_CHANGELOG=false" >&3
+  elif _list_has_exact_line 'CHANGELOG.md' "$diff_files"; then
     has_changelog="true"
   fi
 
@@ -1300,7 +1373,14 @@ cmd_delete_branch() {
   }
   push_exit=$?
 
-  if printf '%s' "$push_err" | grep -qi 'remote ref does not exist'; then
+  # Match case-insensitively without a `producer | grep -qi` pipe (see
+  # _list_has_exact_line's comment above for why that shape is racy under
+  # pipefail). `tr` is safe here because — unlike `grep -q` — it always
+  # drains its input to EOF rather than exiting early on a match, so it
+  # cannot SIGPIPE the `printf` that feeds it.
+  local push_err_lower
+  push_err_lower="$(printf '%s' "$push_err" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$push_err_lower" == *"remote ref does not exist"* ]]; then
     # Branch was already gone — expected after auto-delete or a prior run.
     print_kv DELETE_RESULT "not_found"
   else
