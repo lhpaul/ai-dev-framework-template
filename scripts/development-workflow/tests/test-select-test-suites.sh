@@ -212,6 +212,51 @@ assert_contains "gaps_names_uncovered_script" \
   "  scripts/development-workflow/codex-github-reviewer.sh" "$gaps"
 
 # ---------------------------------------------------------------------------
+# Area 7b: an unreadable suite is fatal, never a silent convention fallback
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 7b: unreadable suite fails hard ==="
+
+# Regression guard. `die` cannot abort the program from inside a process
+# substitution, so an unreadable suite used to print ERROR: to stderr and still
+# exit 0 — selecting via the naming convention as though nothing had gone
+# wrong. A selector that under-selects while reporting success is the exact
+# failure this whole script exists to end, so every mode must exit 2.
+UNREADABLE="$REPO_ROOT/$T/test-zzz-unreadable-probe.sh"
+if [ -e "$UNREADABLE" ] || [ -L "$UNREADABLE" ]; then
+  printf 'ERROR: probe path already exists, refusing to overwrite: %s\n' "$UNREADABLE" >&2
+  exit 2
+fi
+cleanup_unreadable() { chmod u+rw -- "$UNREADABLE" 2>/dev/null || true; rm -f -- "$UNREADABLE"; }
+trap cleanup_unreadable EXIT
+printf '#!/usr/bin/env bash\n# covers: scripts/development-workflow/zzz-unreadable-probe.sh\n' \
+  > "$UNREADABLE"
+chmod 000 "$UNREADABLE"
+
+if [ -r "$UNREADABLE" ]; then
+  # Running as root (or on a filesystem ignoring the mode bits) makes the file
+  # readable regardless, so the assertions below would prove nothing.
+  echo "SKIP: unreadable-suite checks — the probe is still readable in this environment"
+else
+  set +e
+  bash "$SELECTOR" --all >/dev/null 2>&1; ec_all=$?
+  bash "$SELECTOR" --report-gaps >/dev/null 2>&1; ec_gaps=$?
+  bash "$SELECTOR" --print-map >/dev/null 2>&1; ec_map=$?
+  printf '%s\n' "README.md" | bash "$SELECTOR" --changed-files - >/dev/null 2>&1; ec_changed=$?
+  err_text="$(bash "$SELECTOR" --all 2>&1 >/dev/null)"
+  set -e
+  run_test "unreadable_suite_all_exit_2" "2" "$ec_all"
+  run_test "unreadable_suite_gaps_exit_2" "2" "$ec_gaps"
+  run_test "unreadable_suite_map_exit_2" "2" "$ec_map"
+  run_test "unreadable_suite_changed_exit_2" "2" "$ec_changed"
+  run_test "unreadable_suite_reports_error" "yes" \
+    "$(printf '%s' "$err_text" | grep -q 'cannot read test suite' && echo yes || echo no)"
+fi
+
+cleanup_unreadable
+trap - EXIT
+
+# ---------------------------------------------------------------------------
 # Area 8: glob semantics
 # ---------------------------------------------------------------------------
 echo ""

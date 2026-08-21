@@ -154,8 +154,29 @@ list_workflow_scripts() {
     | LC_ALL=C sort )
 }
 
+# assert_suites_readable — verify every suite can be read, in the CURRENT
+# shell, before anything starts consuming suite_patterns.
+#
+# This preflight exists because `die` cannot abort the program from where the
+# headers are actually read. suite_patterns is consumed as
+# `done < <(suite_patterns "$suite")`, and it reads each header the same way;
+# a process substitution runs in a subshell, so an `exit` there ends only that
+# subshell. The reading loop then simply sees EOF, treats the suite as having
+# declared nothing, silently falls back to the naming convention, and the
+# selector exits 0 — under-selecting suites while reporting success, which is
+# the precise failure this script exists to end. Checking up front, in the
+# parent shell, is what makes the failure fatal.
+assert_suites_readable() {
+  local suite
+  while IFS= read -r suite; do
+    [ -n "$suite" ] || continue
+    [ -r "$REPO_ROOT/$suite" ] || die "cannot read test suite: $REPO_ROOT/$suite"
+  done < <(list_suites)
+}
+
 # read_suite_header <suite-path> — the first COVERS_HEADER_LINES lines of a
-# suite, or a hard error if the file cannot be read.
+# suite. Defense in depth behind assert_suites_readable: reaching the error
+# here means the file became unreadable mid-run.
 read_suite_header() {
   local suite="$1"
   [ -r "$REPO_ROOT/$suite" ] || die "cannot read test suite: $REPO_ROOT/$suite"
@@ -421,6 +442,8 @@ main() {
       *) die "unknown argument '$1'" ;;
     esac
   done
+
+  assert_suites_readable
 
   case "$mode" in
     all) mode_all "$format" ;;
