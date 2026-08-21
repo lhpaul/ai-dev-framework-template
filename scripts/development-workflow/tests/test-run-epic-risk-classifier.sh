@@ -370,6 +370,10 @@ run_test "missing_evidence_blocks_merge" "false" "$(printf '%s\n' "$medium_missi
 # in which files it touches, with why_safe_to_merge evidence supplied so the
 # result reflects file risk rather than the separate evidence blocker.
 ci_workflow_fixture() {
+  if [ "$#" -ne 2 ] || [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
+    printf 'ERROR: ci_workflow_fixture requires <name> <changed-files-json>\n' >&2
+    exit 2
+  fi
   write_fixture "$1" '{
   "pr_number": 30,
   "merge_state": "CLEAN",
@@ -388,10 +392,12 @@ ci_workflow_fixture() {
 }
 
 ci_workflow_risk() {
+  [ "$#" -eq 2 ] || { printf 'ERROR: ci_workflow_risk requires <name> <changed-files-json>\n' >&2; exit 2; }
   classify_fixture "$(ci_workflow_fixture "$1" "$2")" medium | jq -r '.risk'
 }
 
 ci_workflow_merge() {
+  [ "$#" -eq 2 ] || { printf 'ERROR: ci_workflow_merge requires <name> <changed-files-json>\n' >&2; exit 2; }
   classify_fixture "$(ci_workflow_fixture "$1" "$2")" medium | jq -r '.merge_permitted'
 }
 
@@ -418,6 +424,18 @@ run_test "ci_release_workflow_is_high" "high" \
   "$(ci_workflow_risk wf-release '[".github/workflows/auto-tag-release.yml"]')"
 run_test "ci_policy_workflow_is_high" "high" \
   "$(ci_workflow_risk wf-policy '[".github/workflows/pr-policy.yml"]')"
+run_test "ci_permissions_workflow_is_high" "high" \
+  "$(ci_workflow_risk wf-permissions '[".github/workflows/permissions.yml"]')"
+run_test "ci_permission_workflow_is_high" "high" \
+  "$(ci_workflow_risk wf-permission '[".github/workflows/permission-sync.yml"]')"
+run_test "ci_token_workflow_is_high" "high" \
+  "$(ci_workflow_risk wf-token '[".github/workflows/token-refresh.yml"]')"
+
+# .yaml variants of the allowlist are accepted too.
+run_test "ci_test_workflow_yaml_ext_is_medium" "medium" \
+  "$(ci_workflow_risk wf-yaml '[".github/workflows/test-thing.yaml"]')"
+run_test "ci_singular_test_suffix_is_medium" "medium" \
+  "$(ci_workflow_risk wf-singular '[".github/workflows/smoke-test.yml"]')"
 
 # An unrecognised workflow name is not assumed safe.
 run_test "ci_unknown_workflow_is_high" "high" \

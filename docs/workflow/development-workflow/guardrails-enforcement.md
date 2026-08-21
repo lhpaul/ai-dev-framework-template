@@ -441,11 +441,22 @@ mode worth recognising rather than rediscovering.
 
 `run-epic-risk-classifier.sh` is handed a list of changed paths and never the
 file contents, so it cannot inspect what a workflow actually does. It therefore
-scores `.github/workflows/**` by filename: recognised test and lint workflows
-(`test-*.yml`, `*-tests.yml`, `*lint*.yml`, `shellcheck.yml`) score `medium`,
-and everything else — including any name containing `deploy`, `release`,
-`publish`, `tag`, `secret`, `credential`, `permission`, `policy`, or `token` —
-scores `high`.
+scores `.github/workflows/**` by filename.
+
+This table is the authoritative rule; it is matched against the **basename**,
+and the deny-list is checked first.
+
+| Order | Rule | Patterns | Risk |
+| ----- | ---- | -------- | ---- |
+| 1 | Deny-list (checked first, wins over any allowlist match) | basename containing `deploy`, `release`, `publish`, `tag`, `secret`, `credential`, `permission`, `policy`, or `token` | `high` |
+| 2 | Test workflows | `test-*.yml`, `test-*.yaml`, `*-test.yml`, `*-test.yaml`, `*-tests.yml`, `*-tests.yaml` | `medium` |
+| 3 | Lint workflows | `*lint*.yml`, `*lint*.yaml`, `shellcheck.yml`, `shellcheck.yaml` | `medium` |
+| 4 | Anything else under `.github/workflows/**` | — | `high` |
+
+So `workflow-tests.yml` and `markdown-lint.yml` are `medium`, while
+`deploy.yml`, `auto-tag-release.yml`, `pr-policy.yml`, and `e2e-regression.yml`
+are `high`. A name matching both lists (`test-release.yml`) is `high`: rule 1
+wins.
 
 This is deliberately an allowlist that yields to that deny-list: an
 unrecognised workflow stays `high`. Before issue #1565 every workflow change

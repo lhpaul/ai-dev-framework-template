@@ -332,6 +332,8 @@ base64_decode() {
 # unrecognised workflow stays `high`. Misjudging a deployment workflow as a
 # test job is far worse than making someone name a test workflow conventionally.
 ci_workflow_is_test_or_lint() {
+  [ "$#" -eq 1 ] && [ -n "${1:-}" ] \
+    || error_exit "ci_workflow_is_test_or_lint requires exactly one workflow path"
   local base="${1##*/}"
 
   # Deny-list wins. A name claiming both ("test-release.yml") is not a test job
