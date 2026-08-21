@@ -126,6 +126,38 @@ _check_execution_budget() {
   case "$wait_s" in ''|*[!0-9]*) wait_s="$CODERABBIT_RATE_LIMIT_WAIT_DEFAULT" ;; esac
   case "$budget" in ''|*[!0-9]*) budget="$PR_REVIEW_LOOP_EXECUTION_BUDGET_DEFAULT" ;; esac
 
+  # Upper bounds, checked BEFORE any arithmetic. Bash integers are 64-bit and
+  # wrap silently: retries=99999999999999999 multiplied out to a NEGATIVE worst
+  # case, which then compared as comfortably under budget and reported the
+  # invariant satisfied — the check accepting exactly the unsafe configuration
+  # it exists to reject. Bounding the inputs is what makes the comparison
+  # below meaningful; a digit string beyond these is a misconfiguration, not a
+  # value to clamp silently.
+  #
+  # The limits are deliberately generous — far past anything operationally
+  # sensible — because their job is to keep the arithmetic honest, not to
+  # express policy.
+  local max_retries=1000        # 1000 retries at any sane wait is already days
+  local max_wait=86400          # one day per retry
+  local max_budget=604800       # one week of wall clock
+  local bound_error=""
+  if [ "${#retries}" -gt 10 ] || [ "$(( 10#$retries ))" -gt "$max_retries" ]; then
+    bound_error="CODERABBIT_RATE_LIMIT_MAX_RETRIES=$retries exceeds the maximum of $max_retries"
+  elif [ "${#wait_s}" -gt 10 ] || [ "$(( 10#$wait_s ))" -gt "$max_wait" ]; then
+    bound_error="CODERABBIT_RATE_LIMIT_WAIT=$wait_s exceeds the maximum of $max_wait"
+  elif [ "${#budget}" -gt 10 ] || [ "$(( 10#$budget ))" -gt "$max_budget" ]; then
+    bound_error="PR_REVIEW_LOOP_EXECUTION_BUDGET=$budget exceeds the maximum of $max_budget"
+  fi
+  if [ -n "$bound_error" ]; then
+    print_kv BUDGET_INVARIANT violated
+    echo "ERROR: $bound_error." >&2
+    echo "  Values beyond these bounds overflow 64-bit arithmetic and would make" >&2
+    echo "  the budget comparison meaningless." >&2
+    print_kv RESULT escalate
+    print_kv REASON execution_budget_misconfigured
+    return 1
+  fi
+
   # 10# forces base 10. The guards above accept any all-digit string, including
   # a zero-padded one, and bash reads a leading-zero operand inside $(( )) as
   # octal — so CODERABBIT_RATE_LIMIT_MAX_RETRIES=08 passed the guard and then

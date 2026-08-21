@@ -133,7 +133,11 @@ USAGE
     # mktemp rather than a $$-derived name: /tmp is world-writable, so a
     # predictable path can be pre-created as a symlink and redirect this write
     # to a file of someone else's choosing. PIDs also recur.
-    _filter_err="$(mktemp -t test-pr-review-loop-filter.XXXXXX)"
+    if ! _filter_err="$(mktemp -t test-pr-review-loop-filter.XXXXXX)" \
+       || [ -z "$_filter_err" ]; then
+      echo "ERROR: could not create a temp file for the area-filter diagnostics" >&2
+      exit 2
+    fi
     # Preamble (everything before the first area) + selected areas + footer.
     if ! awk -v filter="$_area_filter" '
       function selected(title,   n, i, pat, lt) {
@@ -13935,6 +13939,29 @@ run_test "budget_octal_wait_is_base_10" "BUDGET_WORST_CASE_RATE_LIMIT_WAIT_SECON
   "$(CODERABBIT_RATE_LIMIT_WAIT=0900 _check_execution_budget 2>/dev/null | grep '^BUDGET_WORST_CASE' || true)"
 run_test "budget_octal_budget_is_base_10" "BUDGET_EXECUTION_SECONDS=9000" \
   "$(PR_REVIEW_LOOP_EXECUTION_BUDGET=09000 _check_execution_budget 2>/dev/null | grep '^BUDGET_EXECUTION_SECONDS=' || true)"
+
+# Oversized digit strings wrap 64-bit arithmetic. retries=99999999999999999
+# multiplied out NEGATIVE, which compared as under budget and reported the
+# invariant satisfied — the check accepting the unsafe configuration it exists
+# to reject. Bounds are enforced before any arithmetic now.
+run_test "budget_overflow_retries_rejected" "BUDGET_INVARIANT=violated" \
+  "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=99999999999999999 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+run_test "budget_overflow_retries_not_negative" "" \
+  "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=99999999999999999 _check_execution_budget 2>/dev/null | grep -- '-[0-9]' || true)"
+run_test "budget_overflow_huge_digit_string_rejected" "BUDGET_INVARIANT=violated" \
+  "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=999999999999999999999 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+run_test "budget_overflow_wait_rejected" "BUDGET_INVARIANT=violated" \
+  "$(CODERABBIT_RATE_LIMIT_WAIT=99999999999999999 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+run_test "budget_overflow_budget_rejected" "BUDGET_INVARIANT=violated" \
+  "$(PR_REVIEW_LOOP_EXECUTION_BUDGET=99999999999999999 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+run_test "budget_overflow_escalates" "REASON=execution_budget_misconfigured" \
+  "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=99999999999999999 _check_execution_budget 2>/dev/null | grep '^REASON=' || true)"
+run_test "budget_overflow_exits_nonzero" "1" \
+  "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=99999999999999999 _check_execution_budget >/dev/null 2>&1; echo $?)"
+# The bound must not reject values that are merely large but legitimate.
+run_test "budget_large_but_valid_is_ok" "BUDGET_INVARIANT=ok" \
+  "$(PR_REVIEW_LOOP_EXECUTION_BUDGET=604800 CODERABBIT_RATE_LIMIT_MAX_RETRIES=1000 \
+     CODERABBIT_RATE_LIMIT_WAIT=600 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
 
 # --area= with no value must not silently degrade to a full run.
 run_test "area_filter_empty_equals_value_exits_2" "2" \
