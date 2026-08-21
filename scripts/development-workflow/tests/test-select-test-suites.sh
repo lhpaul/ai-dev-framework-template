@@ -156,7 +156,13 @@ run_test "all_matches_disk_count" "$on_disk" "$total_suites"
 
 # AC-2: a suite dropped into the directory is picked up with no workflow edit.
 NEW_SUITE="$REPO_ROOT/$T/test-zzz-ac2-probe.sh"
-cleanup_probe() { rm -f "$NEW_SUITE"; }
+# This probe writes into the real tests directory, so refuse to run if anything
+# already occupies that path rather than clobbering a developer's file.
+if [ -e "$NEW_SUITE" ] || [ -L "$NEW_SUITE" ]; then
+  printf 'ERROR: probe path already exists, refusing to overwrite: %s\n' "$NEW_SUITE" >&2
+  exit 2
+fi
+cleanup_probe() { rm -f -- "$NEW_SUITE"; }
 trap cleanup_probe EXIT
 cat > "$NEW_SUITE" <<'PROBE'
 #!/usr/bin/env bash

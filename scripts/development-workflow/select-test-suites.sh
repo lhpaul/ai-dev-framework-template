@@ -68,8 +68,19 @@
 
 set -euo pipefail
 
+die() {
+  printf 'ERROR: %s\n' "$1" >&2
+  exit 2
+}
+
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-REPO_ROOT="${SELECT_TEST_SUITES_REPO_ROOT:-$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)}"
+if [ -n "${SELECT_TEST_SUITES_REPO_ROOT:-}" ]; then
+  REPO_ROOT="$SELECT_TEST_SUITES_REPO_ROOT"
+else
+  REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)" \
+    || die "could not resolve the repository root from $SCRIPT_DIR (not a git checkout?); set SELECT_TEST_SUITES_REPO_ROOT to override"
+fi
+[ -d "$REPO_ROOT" ] || die "resolved repository root is not a directory: $REPO_ROOT"
 TESTS_DIR="scripts/development-workflow/tests"
 SCRIPTS_DIR="scripts/development-workflow"
 
@@ -89,11 +100,6 @@ $TESTS_DIR/fixtures/**
 
 usage() {
   sed -n '3,66p' "$0" | sed 's/^# \{0,1\}//'
-}
-
-die() {
-  printf 'ERROR: %s\n' "$1" >&2
-  exit 2
 }
 
 # ── Pattern matching ────────────────────────────────────────────────────────
@@ -148,6 +154,15 @@ list_workflow_scripts() {
     | LC_ALL=C sort )
 }
 
+# read_suite_header <suite-path> — the first COVERS_HEADER_LINES lines of a
+# suite, or a hard error if the file cannot be read.
+read_suite_header() {
+  local suite="$1"
+  [ -r "$REPO_ROOT/$suite" ] || die "cannot read test suite: $REPO_ROOT/$suite"
+  head -n "$COVERS_HEADER_LINES" "$REPO_ROOT/$suite" \
+    || die "failed to read the header of: $REPO_ROOT/$suite"
+}
+
 # suite_patterns <suite-path> — the patterns a suite covers, one per line.
 suite_patterns() {
   local suite="$1" base declared=0 line rest pattern candidate
@@ -177,7 +192,11 @@ suite_patterns() {
         set +f
         ;;
     esac
-  done < <(head -n "$COVERS_HEADER_LINES" "$REPO_ROOT/$suite" 2>/dev/null || true)
+    # A suite that cannot be read must fail loudly. Swallowing the error here
+    # would drop its '# covers:' mapping and silently fall back to the naming
+    # convention — under-selecting suites without any signal, which is the
+    # exact failure mode this script exists to end.
+  done < <(read_suite_header "$suite")
 
   if [ "$declared" -eq 0 ]; then
     for candidate in "$SCRIPTS_DIR/$base.sh" "$SCRIPTS_DIR/$base.py"; do
@@ -207,7 +226,7 @@ suite_has_mapping() {
 
 # emit_suites <format> — reads a newline-delimited suite list on stdin.
 emit_suites() {
-  local format="$1" line first=1
+  local format="$1" line escaped first=1
   if [ "$format" != json ]; then
     cat
     return 0
@@ -217,7 +236,12 @@ emit_suites() {
     [ -n "$line" ] || continue
     [ "$first" -eq 1 ] || printf ','
     first=0
-    printf '"%s"' "$line"
+    # Escape backslash first, then the quote, so a path containing either
+    # still yields valid JSON. The workflow feeds this straight into
+    # fromJSON(), where a malformed string would fail the whole run.
+    escaped="${line//\\/\\\\}"
+    escaped="${escaped//\"/\\\"}"
+    printf '"%s"' "$escaped"
   done
   printf ']\n'
 }

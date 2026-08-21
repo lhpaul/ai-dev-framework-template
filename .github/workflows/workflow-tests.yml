@@ -139,6 +139,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          # This job executes test code from the pull request. Leaving the
+          # checkout token in .git/config would put it within reach of that
+          # code. The suites only ever fetch from this public repository, so
+          # they do not need authenticated remote git access.
+          persist-credentials: false
 
       - name: Run ${{ matrix.suite }}
         # Longest suite is test-pr-review-loop.sh at ~13 min; this bounds a hang

@@ -53,10 +53,17 @@ just the suites your working changes affect.
 git diff --name-only origin/develop... \
   | bash scripts/development-workflow/select-test-suites.sh --changed-files -
 
-# Run exactly those suites
-git diff --name-only origin/develop... \
-  | bash scripts/development-workflow/select-test-suites.sh --changed-files - \
-  | while read -r suite; do bash "$suite" || echo "FAILED: $suite"; done
+# Run exactly those suites (exits non-zero if any suite fails)
+( set -o pipefail
+  git diff --name-only origin/develop... \
+    | bash scripts/development-workflow/select-test-suites.sh --changed-files - \
+    | { suite_status=0
+        while IFS= read -r suite; do
+          bash "$suite" || { printf 'FAILED: %s\n' "$suite" >&2; suite_status=1; }
+        done
+        exit "$suite_status"
+      }
+)
 
 # Which workflow scripts have no suite at all?
 bash scripts/development-workflow/select-test-suites.sh --report-gaps
