@@ -44,7 +44,7 @@ This protocol defines:
 | `redirect_item`   | Redirect (item)    | Single non-epic target resolved; `/run-work` performs **no mutation** and emits redirect to `/run-item`.                                               |
 | `redirect_epic`   | Redirect (epic)    | Epic-like or `--epic` target; `/run-work` performs **no mutation** and emits redirect to `/run-epic`.                                                   |
 | `ambiguous`       | Ambiguous          | Cannot resolve deterministically; records stop reason and performs no mutation.                                                                         |
-| `tracker_unavailable` | Tracker unavailable | A `gh` probe used to resolve a target failed (rate limit, auth, network, or a GitHub outage) rather than confirming the target does not exist; records a cause-specific stop reason and performs no mutation. Distinct from `ambiguous`, which means the input itself could not be resolved, not that the resolution attempt errored. |
+| `tracker_unavailable` | Tracker unavailable | A `gh` probe used to resolve a target failed (rate limit, auth, network, GitHub outage, or a local repository-configuration error) rather than confirming the target does not exist; records a cause-specific stop reason and performs no mutation. Distinct from `ambiguous`, which means the input itself could not be resolved, not that the resolution attempt errored. |
 
 **Valid transitions**:
 
@@ -55,9 +55,16 @@ This protocol defines:
 - Any unresolved input → `ambiguous`.
 - Any input whose resolution could not be determined because the underlying
   `gh` probe itself failed (rate limit, auth failure, network error, GitHub
-  outage) → `tracker_unavailable`, not `ambiguous`. A genuine not-found result
-  (the probe succeeded and confirmed no matching target) still resolves to
-  `ambiguous`.
+  outage, or a local repository-configuration error such as gh having no
+  default remote repository configured) → `tracker_unavailable`, not
+  `ambiguous`. A genuine not-found result (the probe succeeded and confirmed
+  no matching target) still resolves to `ambiguous`. The `STOP_REASON` and
+  operator guidance differ by sub-cause: a rate limit, auth failure, network
+  error, or outage all recommend retrying (immediately, or after the
+  reported quota reset time for a rate limit); a local repository-
+  configuration error instead recommends running `gh repo set-default` in
+  the checkout, since retrying will not help until the default repository is
+  configured.
 
 ---
 
@@ -76,6 +83,7 @@ encodes the same rows. Every row maps to at least one automated test in
 | Two or more explicit target tokens (after duplicate collapse) that each resolve to a concrete target | `redirect_items` | UC3, BR5, AC3 |
 | Any input that cannot be deterministically resolved: unresolvable lookalike token, mixed list with at least one unresolvable token, or a single token matching two different concrete artifacts (conflicting signal) | `ambiguous` | BR2, BR10, AC11 |
 | A `gh` probe used to resolve a token failed with a rate limit, auth failure, network error, or GitHub outage — the probe itself errored rather than confirming the target does not exist (single token, or the first such failure encountered in a multi-token list) | `tracker_unavailable` | #1503 |
+| A `gh` probe used to resolve a token failed with a local repository-configuration error (gh has no default remote repository configured for this checkout) — a local environment problem, not evidence the target does not exist and not a transient outage | `tracker_unavailable` (with `STOP_REASON` recommending `gh repo set-default`, not a retry) | #1503 |
 
 **Edge cases** (all must be covered by automated tests):
 
@@ -98,6 +106,7 @@ encodes the same rows. Every row maps to at least one automated test in
 | `gh pr view`/`gh issue view` probe fails with an authentication error while resolving a token | `tracker_unavailable` |
 | `gh pr view`/`gh issue view` probe fails with a network error while resolving a token | `tracker_unavailable` |
 | `gh pr view`/`gh issue view` probe fails with an unrecognized/opaque error (GitHub outage) while resolving a token | `tracker_unavailable` |
+| `gh pr view`/`gh issue view` probe fails with "no default remote repository has been set" while resolving a token | `tracker_unavailable` (`STOP_REASON` recommends `gh repo set-default`, distinct from the outage/retry wording) |
 | `gh pr view`/`gh issue view` probe returns gh's own "could not resolve to a PullRequest/Issue" not-found message, or a bare non-zero exit with empty stderr at gh's normal API-error exit code (`1`) | `ambiguous` (genuine not-found, unchanged) |
 | A probe failure occurs partway through a multi-token list (after at least one token already resolved successfully) | `tracker_unavailable` (not masked by the earlier successful resolution) |
 
@@ -145,7 +154,7 @@ RESOLVED_SCOPE=<comma-separated list of resolved concrete targets, or "(none)" f
 ```
 HELD_BACK=<comma-separated list of items held back with reason, or "(none)">
 OUT_OF_SCOPE=<comma-separated list of out-of-scope items encountered, or "(none)">
-STOP_REASON=<human-readable stop reason when mode is ambiguous or tracker_unavailable, or run does not advance; for tracker_unavailable this names the probe-failure cause (rate limit, auth, network, or GitHub outage) and, for a rate limit, the quota reset time when available>
+STOP_REASON=<human-readable stop reason when mode is ambiguous or tracker_unavailable, or run does not advance; for tracker_unavailable this names the probe-failure cause (rate limit, auth, network, GitHub outage, or local repository-configuration error) and, for a rate limit, the quota reset time when available; a local repository-configuration error recommends running gh repo set-default instead of retrying>
 REDIRECT_COMMAND=<recommended /run-items, /run-item, or /run-epic command when mode is redirect_items, redirect_item, or redirect_epic>
 GUARDRAILS_MODE=<mode value from .ai-dev-workflow.yaml or "manual" (default)>
 GUARDRAILS_BACKLOG_START=<true|false (default: false)>
@@ -189,7 +198,7 @@ After the routing-decision record is emitted, `/run-work` hands off as follows:
 | `redirect_item`   | **No handoff** — emit `REDIRECT_COMMAND` (e.g. `/run-item <target>`); operator re-invokes `/run-item`                              |
 | `redirect_epic`   | **No handoff** — emit `REDIRECT_COMMAND` (e.g. `/run-epic --epic <n>`); operator re-invokes `/run-epic`                           |
 | `ambiguous`       | **No handoff** — record stop reason, perform no mutation, stop for a human decision                                                 |
-| `tracker_unavailable` | **No handoff** — record the cause-specific stop reason, perform no mutation, and recommend the operator retry once the underlying `gh` failure clears (immediately for auth/network fixes, or after the reported quota reset time for a rate limit) rather than treating the target as unresolved |
+| `tracker_unavailable` | **No handoff** — record the cause-specific stop reason, perform no mutation, and recommend the operator retry once the underlying `gh` failure clears (immediately for auth/network fixes, or after the reported quota reset time for a rate limit) rather than treating the target as unresolved. For a local repository-configuration error (no default remote configured), the recommendation is `gh repo set-default`, not a retry — retrying will not change the outcome. |
 
 The routing layer does not replace Protocols 90, 91, or 95. `/run-work` is a
 proposal surface only. Execution is delegated to `/run-items`, `/run-item`, or

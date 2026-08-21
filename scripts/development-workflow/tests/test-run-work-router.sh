@@ -627,11 +627,15 @@ run_test_contains "crash_empty_stderr_nonone_exit_stop_reason" "unavailable" \
 
 # "no default remote repository has been set" is a local repo-configuration
 # error, not confirmation that the target doesn't exist — must NOT be
-# classified as not_found (CodeRabbit finding on PR #1541).
+# classified as not_found (CodeRabbit finding on PR #1541), and gets its own
+# distinct, actionable STOP_REASON (local_config_error) instead of the
+# generic "retry shortly" github_unavailable message, since the operator fix
+# here is local configuration, not waiting out an outage (CodeRabbit
+# late-arriving finding on the same PR).
 output_no_default_remote="$(router_output "888887")"
 run_test "no_default_remote_probe_mode" "tracker_unavailable" \
   "$(printf '%s\n' "$output_no_default_remote" | grep '^MODE=' | cut -d= -f2-)"
-run_test_contains "no_default_remote_probe_stop_reason" "unavailable" \
+run_test_contains "no_default_remote_probe_stop_reason" "gh repo set-default" \
   "$(printf '%s\n' "$output_no_default_remote" | grep '^STOP_REASON=' | cut -d= -f2-)"
 
 # Multi-target list: a probe failure partway through the list must still

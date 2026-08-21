@@ -338,7 +338,7 @@ gh_probe() {
 # Helper: classify a gh probe's stderr (and exit code) into a failure cause.
 #
 # Echoes one of: not_found | rate_limited | auth_failed | network_error |
-# github_unavailable
+# local_config_error | github_unavailable
 #
 # A confirmed "not found" response (gh's own "could not resolve to a
 # PullRequest/Issue" message) is classified as not_found so genuinely unknown
@@ -349,13 +349,15 @@ gh_probe() {
 # other exit code (a signal death, an OOM kill, a shell-level launch failure,
 # etc.) is NOT assumed to be a not-found — it falls back to
 # github_unavailable, since gh crashing or being killed is a probe failure,
-# not evidence the target doesn't exist. Any other non-empty, unrecognized
-# stderr also falls back to github_unavailable so opaque outages are treated
-# as probe failures rather than silently swallowed as not-found. This
-# deliberately includes gh's "no default remote repository has been set"
-# message — that is a local repository-configuration error (gh cannot
-# determine which repository to query), not confirmation that the PR or
-# issue does not exist, so it must NOT be classified as not_found.
+# not evidence the target doesn't exist. gh's "no default remote repository
+# has been set" message is a local repository-configuration error (gh
+# cannot determine which repository to query, independent of GitHub's
+# availability) — it must NOT be classified as not_found, and is kept
+# distinct from github_unavailable because the operator fix is local
+# ("gh repo set-default"), not "wait and retry". Any other non-empty,
+# unrecognized stderr falls back to github_unavailable so opaque outages
+# are treated as probe failures rather than silently swallowed as
+# not-found.
 # ---------------------------------------------------------------------------
 
 classify_gh_probe_error() {
@@ -396,6 +398,13 @@ classify_gh_probe_error() {
   case "$err_lc" in
     *"could not resolve host"*|*"connection refused"*|*"connection reset"*|*"network is unreachable"*|*"no such host"*|*"context deadline exceeded"*|*"timed out"*|*"dial tcp"*)
       echo "network_error"
+      return 0
+      ;;
+  esac
+
+  case "$err_lc" in
+    *"no default remote repository has been set"*|*"could not determine base repo"*)
+      echo "local_config_error"
       return 0
       ;;
   esac
@@ -451,6 +460,9 @@ build_probe_fail_reason() {
       ;;
     network_error)
       printf "Network error contacting GitHub while resolving target '%s'; check connectivity and retry" "$token"
+      ;;
+    local_config_error)
+      printf "gh could not determine which repository to query while resolving target '%s' (gh reported: %s); run 'gh repo set-default' in this checkout — retrying will not help until the default repository is configured" "$token" "$(printf '%s' "$err" | head -n1)"
       ;;
     github_unavailable)
       printf "GitHub appears unavailable while resolving target '%s' (gh reported: %s); retry shortly" "$token" "$(printf '%s' "$err" | head -n1)"

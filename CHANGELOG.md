@@ -961,7 +961,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of being silently treated as not-found. gh's own "no default
   remote repository has been set" message (a local repo-configuration
   error, not evidence the target doesn't exist) is likewise never
-  classified as `not_found`. `gh_probe()` also now guards its own
+  classified as `not_found`, and gets its own `local_config_error`
+  classification distinct from `github_unavailable` since the operator fix
+  is running `gh repo set-default` locally, not waiting out an outage.
+  `gh_probe()` also now guards its own
   temp-file setup and stderr capture: a failing `mktemp` or `cat` reports a
   diagnostic `PROBE_ERR` at a dedicated internal exit code instead of
   silently producing an empty stderr that could otherwise be misread as a
