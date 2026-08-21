@@ -328,7 +328,15 @@ gh_probe() {
     PROBE_ERR="gh_probe: failed to read captured gh stderr"
     PROBE_EXIT=125
   fi
-  rm -f "$err_file" 2>/dev/null
+  # Best-effort cleanup only. PROBE_OUT/PROBE_ERR/PROBE_EXIT above already
+  # correctly reflect gh's own result (including a genuine successful
+  # resolution) — a failure to delete the now-fully-read temp file must NOT
+  # overwrite them: doing so would discard an already-valid successful probe
+  # result (e.g. a PR that was actually found) and misreport it as a probe
+  # failure over a benign filesystem cleanup blip, unrelated to whether gh
+  # itself succeeded. `--` guards against a pathological temp path starting
+  # with `-`, though mktemp never generates one.
+  rm -f -- "$err_file" 2>/dev/null
   if [ "$errexit_was_set" -eq 1 ]; then
     set -e
   fi
