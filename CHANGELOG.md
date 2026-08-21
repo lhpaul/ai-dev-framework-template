@@ -27,6 +27,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **`post-merge-cleanup.sh` no longer closes the wrong issue for team-prefixed
+  branch slugs** (#1511): the team-prefixed identifier pattern
+  (`^(fix|feature|hotfix|refactor)/([a-zA-Z]{2,6}-([0-9]+))($|-)`) matches any
+  slug beginning with 2-6 letters followed by `-<digits>` — including ordinary
+  descriptive fragments with no relation to an issue number
+  (`fix/retro-517-doc-gaps`, `fix/http-500-retry`, `feature/sha-256-hashing`).
+  A downstream consumer observed the script silently update and close an
+  unrelated issue derived from such a slug. The merged PR body/title is now
+  checked first for GitHub closing keywords (`Closes #N`, `Fixes #N`,
+  `Resolves #N`, etc.) whenever the branch slug's identifier is
+  team-prefixed, and that reference is treated as authoritative when present
+  — including when the PR closes more than one issue. The slug-derived
+  identifier is only used as a fallback when the PR body carries no closing
+  reference at all, preserving existing behavior for legitimate team-prefixed
+  slugs (`fix/lh-97-real-issue`) merged without an explicit closing keyword.
+  Plain numeric identifiers (`fix/42-slug`) are unambiguous and are unaffected.
 - **CodeRabbit "Review skipped" banner no longer reports an unreviewed PR as
   clean** (#1531): `run_coderabbit_review` in
   `scripts/development-workflow/pr-review-loop.sh` counted any CodeRabbit issue

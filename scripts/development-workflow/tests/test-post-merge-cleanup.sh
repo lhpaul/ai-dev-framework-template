@@ -133,6 +133,11 @@ case "$1 $2" in
       else
         printf '\n'
       fi
+    elif [[ "$args" == *"--json body,title"* ]]; then
+      # Emulates the real command's jq filter
+      # '(.title // "") + "\n" + (.body // "")' without invoking jq, so tests
+      # can control the PR title/body via GH_PR_TITLE / GH_PR_BODY.
+      printf '%s\n%s' "${GH_PR_TITLE:-}" "${GH_PR_BODY:-}"
     elif [[ "$args" == *"--jq"* ]]; then
       printf '\n'
     else
@@ -141,9 +146,9 @@ case "$1 $2" in
     ;;
   "issue view")
     if [[ "$args" == *"--jq"* ]]; then
-      printf 'CLOSED\n'
+      printf '%s\n' "${GH_ISSUE_STATE:-CLOSED}"
     else
-      printf '{"state":"CLOSED"}\n'
+      printf '{"state":"%s"}\n' "${GH_ISSUE_STATE:-CLOSED}"
     fi
     ;;
   "issue close")
@@ -388,6 +393,91 @@ run_test "failed_delete_local_branch_remains" "yes" "$(
     printf 'no'
   fi
 )"
+
+# --- Team-prefixed issue identifier vs. PR-body-derived issue (issue #1511) ---
+#
+# Team-prefixed branch slugs (2-6 letters, dash, digits) are ambiguous with
+# ordinary descriptive slug fragments that happen to contain a number
+# (retro-517, http-500, sha-256). These tests cover the three scenarios from
+# the fix: a false-positive slug overridden by the PR body, a team-prefixed
+# slug whose PR body confirms the same issue, and a team-prefixed slug with
+# no PR-body closing reference falling back to the slug-derived issue.
+
+false_positive_branch="fix/retro-517-doc-gaps"
+false_positive_repo="$(make_repo false-positive "$false_positive_branch" yes)"
+false_positive_output="$(
+  GH_MERGED_HEAD="$false_positive_branch" \
+  GH_MERGED_PR=632 \
+  GH_PR_BODY="Fixes #601" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$false_positive_repo" --base develop --pr 632 "$false_positive_branch"
+)"
+run_contains \
+  "false_positive_slug_uses_pr_body_issue" \
+  "Closing issue #601..." \
+  "$false_positive_output"
+run_test \
+  "false_positive_slug_does_not_close_slug_derived_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #517" <<<"$false_positive_output" || grep -Fq "Processing issue #517" <<<"$false_positive_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+run_contains \
+  "false_positive_slug_notes_ambiguity" \
+  "Team-prefixed identifier 'retro-517'" \
+  "$false_positive_output"
+
+matching_override_branch="fix/lh-97-fix-thing"
+matching_override_repo="$(make_repo matching-override "$matching_override_branch" yes)"
+matching_override_output="$(
+  GH_MERGED_HEAD="$matching_override_branch" \
+  GH_MERGED_PR=645 \
+  GH_PR_BODY="Closes #97" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$matching_override_repo" --base develop --pr 645 "$matching_override_branch"
+)"
+run_contains \
+  "pr_body_derived_happy_path_closes_issue" \
+  "Closing issue #97..." \
+  "$matching_override_output"
+run_contains \
+  "pr_body_derived_happy_path_used_override_path" \
+  "using closing keyword refs from PR #645" \
+  "$matching_override_output"
+
+no_reference_branch="fix/lh-97-real-issue"
+no_reference_repo="$(make_repo no-reference "$no_reference_branch" yes)"
+no_reference_output="$(
+  GH_MERGED_HEAD="$no_reference_branch" \
+  GH_MERGED_PR=650 \
+  GH_PR_BODY="No closing keyword here." \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$no_reference_repo" --base develop --pr 650 "$no_reference_branch"
+)"
+run_contains \
+  "no_closing_reference_falls_back_to_slug_issue" \
+  "Closing issue #97..." \
+  "$no_reference_output"
+run_test \
+  "no_closing_reference_does_not_use_override_path" \
+  "no" \
+  "$(
+    if grep -Fq "using closing keyword refs from PR" <<<"$no_reference_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
 
 echo ""
 echo "Passed: $PASS_COUNT"
