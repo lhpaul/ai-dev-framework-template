@@ -46,6 +46,8 @@ Resolves which test suites a change set requires, and reports coverage gaps.
 Consumed by `.github/workflows/workflow-tests.yml`; also useful locally to run
 just the suites your working changes affect.
 
+<!-- workflow-shell-contract: bash-zsh -->
+
 ```bash
 # Which suites does my branch need?
 git diff --name-only origin/develop... \
@@ -69,6 +71,8 @@ A suite's coverage is resolved in one of two ways:
 1. **`# covers:` header** (authoritative). Declare the paths a suite exercises
    in its first 60 lines. Several lines accumulate, and one line may list
    several space-separated patterns:
+
+   <!-- workflow-shell-contract: bash -->
 
    ```bash
    #!/usr/bin/env bash
