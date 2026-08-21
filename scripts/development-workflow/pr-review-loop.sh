@@ -125,7 +125,8 @@ _check_execution_budget() {
   case "$wait_s" in ''|*[!0-9]*) wait_s="$CODERABBIT_RATE_LIMIT_WAIT_DEFAULT" ;; esac
   case "$budget" in ''|*[!0-9]*) budget=5400 ;; esac
 
-  local worst=$(( retries * wait_s ))
+  local worst
+  worst=$(( retries * wait_s ))
   print_kv BUDGET_EXECUTION_SECONDS "$budget"
   print_kv BUDGET_WORST_CASE_RATE_LIMIT_WAIT_SECONDS "$worst"
 
