@@ -459,6 +459,7 @@ run_test "missing_statuschecks_key_does_not_report_generic_ci_missing" "false" "
 null_statuschecks_fixture="$(write_fixture null-statuschecks '.statusChecks = null')"
 run_test "null_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$null_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
 run_test "null_statuschecks_does_not_report_generic_ci_missing" "false" "$(reason_match_for "$null_statuschecks_fixture" "^required CI state is missing\$")"
+run_test "null_statuschecks_fails_closed" "human_required" "$(decision_for "$null_statuschecks_fixture")"
 
 object_statuschecks_fixture="$(write_fixture object-statuschecks '.statusChecks = {"ci": {"status": "COMPLETED", "conclusion": "SUCCESS"}}')"
 run_test "object_statuschecks_does_not_silently_merge_allow" "human_required" "$(decision_for "$object_statuschecks_fixture")"
@@ -469,9 +470,42 @@ run_test "scalar_statuschecks_does_not_crash" "true" "$(
   "$GATE" --input "$scalar_statuschecks_fixture" --json >/dev/null 2>&1 && echo true || echo false
 )"
 run_test "scalar_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$scalar_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+run_test "scalar_statuschecks_fails_closed" "human_required" "$(decision_for "$scalar_statuschecks_fixture")"
 
 boolean_statuschecks_fixture="$(write_fixture boolean-statuschecks '.statusChecks = true')"
 run_test "boolean_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$boolean_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+run_test "boolean_statuschecks_fails_closed" "human_required" "$(decision_for "$boolean_statuschecks_fixture")"
+
+# --- CodeRabbit follow-up finding on the same PR: the array-type check above
+# --- does not validate individual array *members*. A string or number member
+# --- reaches reviewer_check_key's field accessors and aborts the whole jq
+# --- program the same way a non-array top-level value did; a null member does
+# --- not crash but silently reads as an unnamed, all-fields-absent check
+# --- (a generic CI failure) rather than the more legible schema-mismatch
+# --- reason. Every array member must now itself be an object. ---
+string_member_statuschecks_fixture="$(write_fixture string-member-statuschecks '.statusChecks = ["SUCCESS"]')"
+run_test "string_member_statuschecks_does_not_crash" "true" "$(
+  "$GATE" --input "$string_member_statuschecks_fixture" --json >/dev/null 2>&1 && echo true || echo false
+)"
+run_test "string_member_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$string_member_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+run_test "string_member_statuschecks_fails_closed" "human_required" "$(decision_for "$string_member_statuschecks_fixture")"
+
+number_member_statuschecks_fixture="$(write_fixture number-member-statuschecks '.statusChecks = [42]')"
+run_test "number_member_statuschecks_does_not_crash" "true" "$(
+  "$GATE" --input "$number_member_statuschecks_fixture" --json >/dev/null 2>&1 && echo true || echo false
+)"
+run_test "number_member_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$number_member_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+
+null_member_statuschecks_fixture="$(write_fixture null-member-statuschecks '.statusChecks = [null]')"
+run_test "null_member_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$null_member_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+run_test "null_member_statuschecks_fails_closed" "human_required" "$(decision_for "$null_member_statuschecks_fixture")"
+
+mixed_member_statuschecks_fixture="$(write_fixture mixed-member-statuschecks '.statusChecks = [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}, "SUCCESS"]')"
+run_test "mixed_member_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$mixed_member_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+run_test "mixed_member_statuschecks_does_not_silently_merge_allow" "human_required" "$(decision_for "$mixed_member_statuschecks_fixture")"
+
+well_formed_statuschecks_fixture="$(write_fixture well-formed-statuschecks '.statusChecks = [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}]')"
+run_test "well_formed_statuschecks_still_merge_allowed" "merge_allowed" "$(decision_for "$well_formed_statuschecks_fixture")"
 
 # present-but-empty .statusChecks (genuinely no CI has run / no CI configured
 # without an explicit ciPolicy: none) must keep the existing wording and

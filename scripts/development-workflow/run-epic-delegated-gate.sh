@@ -759,8 +759,16 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
   # failure class this evidence_schema_mismatch reason exists to prevent; a
   # scalar would abort the whole jq program with an uncaught type error. This
   # predicate instead requires `.statusChecks` to literally be an array
-  # (present-but-empty `[]` still counts, matching existing behavior).
-  def status_checks_key_present: ((.statusChecks // null) | type) == "array";
+  # (present-but-empty `[]` still counts, matching existing behavior). It
+  # also requires every array member to itself be an object: a string or
+  # number member reaches the reviewer_check_key field accessors (`.name`,
+  # `.context`, ...) and aborts the whole jq program the same way a
+  # non-array top-level value did; a `null` member does not crash but
+  # silently reads as an unnamed, all-fields-absent check that reports a
+  # generic CI failure instead of the more legible schema-mismatch reason.
+  def status_checks_key_present:
+    ((.statusChecks // null) | type) == "array" and
+    ((.statusChecks // []) | all(type == "object"));
   def labels: (.pr.labels // []);
   def risk_blockers: (.risk.blockers // []);
   def risk_ci_only_blockers:
@@ -946,14 +954,18 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
     " requires a fixed commit or a verified human accept/reject decision at head " + ($entry.headSha // "unknown");
   def ci_status_checks:
     # Coerce defensively to [] for any non-array .statusChecks (missing,
-    # null, object, or scalar) so this helper -- called unconditionally from
-    # reviewer_access_classification below, not only from the guarded reasons
-    # branch that reports evidence_schema_mismatch -- can never abort the
-    # whole jq program on malformed input. The schema-mismatch diagnosis
-    # itself is reported separately via status_checks_key_present, which
-    # remains the single source of truth for "is .statusChecks well-formed".
+    # null, object, or scalar), and drop any non-object array member, so
+    # this helper -- called unconditionally from reviewer_access_classification
+    # below, not only from the guarded reasons branch that reports
+    # evidence_schema_mismatch -- can never abort the whole jq program on
+    # malformed input (a string/number member would otherwise reach the
+    # reviewer_check_key field accessors and crash). The schema-mismatch
+    # diagnosis itself is reported separately via status_checks_key_present,
+    # which remains the single source of truth for "is .statusChecks
+    # well-formed" (array-typed, every member an object).
     (reviewer_check_keys) as $reviewerKeys |
     ((.statusChecks // null) | if type == "array" then . else [] end)
+    | map(select(type == "object"))
     | map(. as $check | select(($reviewerKeys | index(reviewer_check_key($check)) | not)));
   def current_ci_blocker:
     if ci_policy == "none" then

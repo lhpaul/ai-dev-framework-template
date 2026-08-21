@@ -51,9 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   since the gate cannot safely default an authority/CI verdict either way)
   naming exactly which required shape is missing, with `nextAction` text that
   explicitly says this is not a policy or CI-state blocker. A present-but-
-  empty `.statusChecks: []` (a genuine "no CI has run" state, or any state
-  when `ciPolicy`/`ci_policy` is `none`) keeps its original wording and
-  `blocked` decision unchanged — only the schema-shaped absence is new. A
+  empty `.statusChecks: []` (a genuine "no CI has run" state) keeps its
+  original wording and `blocked` decision unchanged — only the schema-shaped
+  absence is new. When `ciPolicy`/`ci_policy` is `none`, no CI reason is
+  added at all (as before this PR); the overall decision then depends only
+  on other evidence and is not necessarily `blocked`. A
   CodeRabbit review on the PR caught a sharper variant of the same bug: a
   key-existence check alone (`has("statusChecks")`) accepted `null`, an
   object, or a scalar for `.statusChecks`, none of which are the array the
@@ -65,7 +67,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `merge_allowed` verdict for malformed input rather than merely an unclear
   message; a scalar aborted the whole jq program. `.statusChecks` is now
   required to literally be an array before any CI evaluation runs against
-  it. Also fixed: a `.pr.mergeable` value defaulted to `""` by a
+  it, and (per a CodeRabbit follow-up finding) every array member must
+  itself be an object — a string or number member reached the same field
+  accessors and crashed the same way a non-array top-level value did, and a
+  `null` member silently read as a generic CI failure instead of the more
+  legible schema-mismatch reason. Also fixed: a `.pr.mergeable` value
+  defaulted to `""` by a
   caller that omitted `mergeable` from its `gh pr view --json` field list
   used to be read as a real "PR is not mergeable" verdict for a PR GitHub
   reports as `MERGEABLE`; a blank/whitespace-only `mergeable` string is now
