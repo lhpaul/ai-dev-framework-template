@@ -4,6 +4,7 @@
 # Usage: bash scripts/development-workflow/tests/test-haystack-commit-msg-hook.sh
 #
 # Exit code: 0 if all tests pass, 1 if any test fails.
+# covers: hooks/commit-msg
 
 set -euo pipefail
 

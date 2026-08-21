@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Change-scoped CI test selection with a coverage-gap report** (#1537): adds
+  `scripts/development-workflow/select-test-suites.sh`, which resolves the
+  suites a change set requires from the repository itself — a `test-<name>.sh`
+  covers `<name>.sh` by convention, and a suite whose name does not match its
+  subject declares what it exercises with `# covers:` header lines next to the
+  test rather than in a central map that drifts. `--report-gaps` lists workflow
+  scripts with no suite (4 of 64 once the `# covers:` headers land, down from
+  the 15 reported on the issue) and suites no change set can select (0 of 66),
+  so the gap stays visible rather than silent.
 - **Artifact ownership and product release contract** (#1353): documents and
   validates multi-repository release artifact ownership and product release
   configuration for workflow hubs.
@@ -27,6 +36,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **Every test suite is now reachable from CI, so a green check rollup means
+  the changed script's own tests ran** (#1537): CI ran a hard-coded list of six
+  suites behind a path filter, leaving 59 of 65 suites never executed by any
+  workflow. Because "all checks green" is the signal the reviewer loop, the
+  readiness labels, the delegated merge gate, and `item-completion-self-check.sh`
+  all lean on, that signal was vacuous for most scripts in this repository — it
+  reported that six unrelated suites passed. `.github/workflows/test-pr-review-loop.yml`
+  is replaced by `.github/workflows/workflow-tests.yml`, which asks the new
+  `select-test-suites.sh` which suites a pull request's changed files require
+  and runs those as a matrix, with a nightly scheduled full run as the backstop.
+  The workflow contains no list of suites, so adding a `test-*.sh` no longer
+  requires a workflow edit — the drift that let the count reach 59.
+- **`test-haystack-reviewer.sh` no longer fails intermittently when run
+  alongside other work** (#1537): the suite failed roughly 2 runs in 17 on a
+  clean tree at the same commit (205 passed / 5 failed versus 210 / 0), always
+  during or just after a full sweep. All five failures came from one test,
+  which gave the reviewer a 3-second budget; `haystack-reviewer.sh` derives the
+  per-call triage timeout as half the remaining budget, so its first call had a
+  1-second allowance polled at 1-second granularity. Under CPU contention,
+  forking the mock CLI exceeded that, the call was killed, and the budget
+  expired before any call completed. Reproduced deterministically at load
+  average ~42 on an 11-core machine and fixed by widening the budget to 12
+  seconds against a 30-second hang, preserving the ratio the test depends on.
+  This mattered before batching the suites, not after: a suite that passes
+  alone and fails in a batch is exactly the failure mode running them together
+  would have introduced, and intermittent red teaches everyone to re-run until
+  green.
 - **`run-epic-risk-classifier.sh --pr` can now attach `why_safe_to_merge`
   evidence, and Gate 5 evidence-schema mismatches no longer read as a denied
   merge authority** (#1497): a medium-risk PR classified via `--pr` always

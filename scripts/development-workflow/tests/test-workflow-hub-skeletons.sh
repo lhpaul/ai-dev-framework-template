@@ -2,6 +2,9 @@
 # test-workflow-hub-skeletons.sh - workflow hub skeleton validation tests.
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-hub-skeletons.sh
+# covers: scripts/development-workflow/validate-workflow-hub-skeletons.py
+# covers: scripts/development-workflow/workflow-config-resolver.py
+# covers: sync-manifest.yaml
 
 set -euo pipefail
 

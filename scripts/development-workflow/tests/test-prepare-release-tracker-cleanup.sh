@@ -12,6 +12,9 @@
 #      c. update_tracker_status_best_effort emits Warning: -> SKIPPED
 #
 # Usage: bash scripts/development-workflow/tests/test-prepare-release-tracker-cleanup.sh
+# covers: scripts/development-workflow/prepare-release-post-merge-cleanup.sh
+# covers: scripts/development-workflow/component-release-target.sh
+# covers: scripts/development-workflow/workflow-config-resolver.py
 
 set -euo pipefail
 

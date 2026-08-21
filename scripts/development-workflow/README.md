@@ -27,6 +27,75 @@ enough to detect a failure even though each script's own PASS/FAIL lines keep
 scrolling past. Individual `test-*.sh` files typically run in a few seconds
 each and are safe to invoke with a default foreground timeout.
 
+Note that the full harness is heavily lopsided: `test-pr-review-loop.sh` alone
+is roughly half the total wall clock (~13 minutes of ~27), while the median
+suite finishes in a few seconds.
+
+### How CI decides which suites to run
+
+`.github/workflows/workflow-tests.yml` does not contain a list of suites. It
+asks `select-test-suites.sh` which suites a pull request's changed files
+require, and runs those; a nightly scheduled job runs all of them. Adding a new
+`test-*.sh` therefore needs no workflow edit — see the section on
+[`select-test-suites.sh`](#select-test-suitessh) below for the mapping rules and
+for the `# covers:` header a suite uses when its name does not match a script.
+
+## `select-test-suites.sh`
+
+Resolves which test suites a change set requires, and reports coverage gaps.
+Consumed by `.github/workflows/workflow-tests.yml`; also useful locally to run
+just the suites your working changes affect.
+
+```bash
+# Which suites does my branch need?
+git diff --name-only origin/develop... \
+  | bash scripts/development-workflow/select-test-suites.sh --changed-files -
+
+# Run exactly those suites
+git diff --name-only origin/develop... \
+  | bash scripts/development-workflow/select-test-suites.sh --changed-files - \
+  | while read -r suite; do bash "$suite" || echo "FAILED: $suite"; done
+
+# Which workflow scripts have no suite at all?
+bash scripts/development-workflow/select-test-suites.sh --report-gaps
+
+# Every suite, and the full resolved suite-to-path map
+bash scripts/development-workflow/select-test-suites.sh --all
+bash scripts/development-workflow/select-test-suites.sh --print-map
+```
+
+A suite's coverage is resolved in one of two ways:
+
+1. **`# covers:` header** (authoritative). Declare the paths a suite exercises
+   in its first 60 lines. Several lines accumulate, and one line may list
+   several space-separated patterns:
+
+   ```bash
+   #!/usr/bin/env bash
+   # test-workflow-hub-pr-auth.sh - workflow-hub product PR auth helper tests.
+   # covers: scripts/development-workflow/github-app-token.sh
+   # covers: scripts/development-workflow/open-product-pr.sh
+   ```
+
+   Use this whenever a suite's name does not match the script it tests, or when
+   it tests protocols, docs, git hooks, or other workflow files. The
+   declaration sits next to the test, so it cannot drift out of sync the way a
+   central mapping file does.
+
+2. **Naming convention** (default when no header is present). `test-<name>.sh`
+   covers `scripts/development-workflow/<name>.sh` and `<name>.py`.
+
+In both cases a suite also covers itself and its own fixture directory, so
+editing a test always runs it.
+
+Patterns are repository-root-relative: `**` matches across `/`, `*` and `?` do
+not. A change to `workflow-lib.sh`, to the selector itself, to the shared
+fixtures, or to the workflow file runs every suite rather than a subset.
+
+`--report-gaps` prints two lists and always exits 0 — it is visibility, not a
+gate: workflow scripts that no suite covers, and suites that no change set can
+select. The second list should stay empty; a suite in it runs only nightly.
+
 ## `install-codex-skills.sh`
 
 Installs the repository's bundled Codex skills into the local Codex skill directories by creating symlinks.

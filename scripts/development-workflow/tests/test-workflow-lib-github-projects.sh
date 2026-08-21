@@ -11,6 +11,7 @@
 #      distinguishes an unreadable Type field from a clean [] (issue #1400)
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-lib-github-projects.sh
+# covers: scripts/development-workflow/workflow-lib.sh
 
 set -euo pipefail
 

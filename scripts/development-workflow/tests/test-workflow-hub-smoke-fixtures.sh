@@ -2,6 +2,14 @@
 # test-workflow-hub-smoke-fixtures.sh - non-secret workflow-hub smoke coverage.
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-hub-smoke-fixtures.sh [--live-github-app]
+# covers: scripts/development-workflow/hub-*.sh
+# covers: scripts/development-workflow/open-product-pr.sh
+# covers: scripts/development-workflow/select-sync-manifest-entries.py
+# covers: scripts/development-workflow/validate-workflow-hub-skeletons.py
+# covers: scripts/development-workflow/work-item-repository-routing.py
+# covers: scripts/development-workflow/workflow-config-resolver.py
+# covers: scripts/development-workflow/workflow-next-action.sh
+# covers: sync-manifest.yaml
 
 set -euo pipefail
 

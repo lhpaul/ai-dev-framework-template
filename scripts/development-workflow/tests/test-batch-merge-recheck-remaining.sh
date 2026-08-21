@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # test-batch-merge-recheck-remaining.sh - Unit tests for post-merge PR rechecks.
+# covers: scripts/development-workflow/batch-merge.sh
+# covers: .github/workflows/e2e-regression.yml
 
 set -euo pipefail
 

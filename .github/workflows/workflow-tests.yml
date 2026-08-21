@@ -1,0 +1,187 @@
+name: workflow test harnesses
+
+# Issue #1537. This workflow replaced test-pr-review-loop.yml, which ran a
+# hard-coded list of six suites behind a path filter. Every other suite — 59 of
+# them at the time — was never executed by CI, so a PR that changed any other
+# workflow script showed a fully green check rollup while its own tests never
+# ran. "All checks green" is the signal the reviewer loop, the readiness
+# labels, and the delegated merge gate lean on, so for most scripts here that
+# signal was vacuous.
+#
+# Selection is computed by scripts/development-workflow/select-test-suites.sh
+# from the repository itself (naming convention plus '# covers:' headers), NOT
+# from a list in this file. Adding a suite therefore requires no workflow edit
+# (AC-2). Do not reintroduce per-suite 'run:' steps here — that is the exact
+# drift this issue exists to end, and test-select-test-suites.sh asserts
+# against it.
+#
+# Tradeoff (AC-4): the full set is 65 suites / ~27 min sequentially, and
+# test-pr-review-loop.sh alone is ~13 min of that — 48% of the total, with a
+# median suite in the low seconds. Running everything on every PR would put 27
+# minutes in front of every change. Running the change-scoped subset keeps the
+# typical PR at well under a minute while making "green" mean the changed
+# script's own tests passed. The scheduled nightly full run is the backstop
+# that catches cross-suite and mapping regressions the subset cannot see.
+
+on:
+  pull_request:
+    # Deliberately NOT path-filtered. A path filter is how the previous
+    # workflow silently skipped suites; the selector below decides what runs,
+    # and an empty selection finishes in seconds.
+    branches:
+      - develop
+      - develop-**
+      - main
+  schedule:
+    # Nightly full run, 04:17 UTC. Off the hour to avoid Actions peak.
+    - cron: '17 4 * * *'
+  # Manual full run. There is no PR to diff against, so this always runs
+  # everything — no input is offered, rather than one that cannot take effect.
+  workflow_dispatch:
+
+concurrency:
+  group: workflow-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  select:
+    name: select suites
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      suites: ${{ steps.select.outputs.suites }}
+      count: ${{ steps.select.outputs.count }}
+      mode: ${{ steps.select.outputs.mode }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          # Full history so the merge-base diff below is computable.
+          fetch-depth: 0
+
+      - name: Resolve suites to run
+        id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          selector=scripts/development-workflow/select-test-suites.sh
+
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "mode=full" >> "$GITHUB_OUTPUT"
+            echo "Full run (event: $EVENT_NAME)."
+            suites="$(bash "$selector" --all --format json)"
+            lines="$(bash "$selector" --all)"
+          else
+            echo "mode=selected" >> "$GITHUB_OUTPUT"
+            # actions/checkout leaves HEAD on the PR's merge ref, so
+            # merge-base against the base branch is the fork point and
+            # base..HEAD is exactly this PR's changes.
+            git fetch --no-tags --quiet origin \
+              "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+            base_sha="$(git merge-base "refs/remotes/origin/$BASE_REF" HEAD)"
+            echo "Diffing $base_sha..HEAD"
+            git diff --name-only "$base_sha" HEAD > changed-files.txt
+            echo "Changed files:"
+            sed 's/^/  /' changed-files.txt
+            suites="$(bash "$selector" --changed-files changed-files.txt --format json)"
+            lines="$(bash "$selector" --changed-files changed-files.txt)"
+          fi
+
+          count="$(printf '%s\n' "$lines" | grep -c . || true)"
+          echo "suites=$suites" >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Selected test suites ($count)"
+            echo ""
+            if [ "$count" -eq 0 ]; then
+              echo "_No workflow test suite covers this change set._"
+            else
+              printf '%s\n' "$lines" | sed 's/^/- `/; s/$/`/'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # AC-3: a script with no suite is reported, so the gap is visible rather
+      # than silent. Advisory — this never fails the build.
+      - name: Report coverage gaps
+        run: |
+          set -euo pipefail
+          report="$(bash scripts/development-workflow/select-test-suites.sh --report-gaps)"
+          printf '%s\n' "$report"
+          {
+            echo ""
+            echo "<details><summary>Test coverage gaps</summary>"
+            echo ""
+            echo '```'
+            printf '%s\n' "$report"
+            echo '```'
+            echo ""
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    name: ${{ matrix.suite }}
+    needs: select
+    if: needs.select.outputs.count != '0'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      # Run every selected suite even when one fails, so a PR gets the whole
+      # picture in one pass instead of one failure per push.
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        suite: ${{ fromJSON(needs.select.outputs.suites) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Run ${{ matrix.suite }}
+        # Longest suite is test-pr-review-loop.sh at ~13 min; this bounds a hang
+        # well above that rather than inheriting the 6-hour Actions default.
+        timeout-minutes: 30
+        run: bash "${{ matrix.suite }}"
+
+  # A single stable check name to require in branch protection. The matrix job
+  # names change with the selection, so they cannot be required directly.
+  result:
+    name: workflow test harnesses
+    needs: [select, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify selected suites passed
+        env:
+          SELECT_RESULT: ${{ needs.select.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          COUNT: ${{ needs.select.outputs.count }}
+          MODE: ${{ needs.select.outputs.mode }}
+        run: |
+          set -euo pipefail
+          echo "mode=$MODE selected=$COUNT select=$SELECT_RESULT test=$TEST_RESULT"
+
+          if [ "$SELECT_RESULT" != "success" ]; then
+            echo "::error::Suite selection failed — cannot conclude the change is tested."
+            exit 1
+          fi
+
+          # 'skipped' is only legitimate when nothing was selected. Any other
+          # skip (a cancelled or unstarted matrix) must not read as success.
+          if [ "$COUNT" = "0" ]; then
+            if [ "$TEST_RESULT" = "skipped" ]; then
+              echo "No suite covers this change set — nothing to run."
+              exit 0
+            fi
+            echo "::error::No suites selected but the test job reported '$TEST_RESULT'."
+            exit 1
+          fi
+
+          if [ "$TEST_RESULT" != "success" ]; then
+            echo "::error::One or more selected test suites failed ($TEST_RESULT)."
+            exit 1
+          fi
+          echo "All $COUNT selected suite(s) passed."

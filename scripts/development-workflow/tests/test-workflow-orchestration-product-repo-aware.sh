@@ -2,6 +2,11 @@
 # test-workflow-orchestration-product-repo-aware.sh - workflow hub routing tests.
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-orchestration-product-repo-aware.sh
+# covers: scripts/development-workflow/discover-workflow-state.sh
+# covers: scripts/development-workflow/workflow-batch-plan.sh
+# covers: scripts/development-workflow/workflow-next-action.sh
+# covers: scripts/development-workflow/pr-ci-loop.sh
+# covers: scripts/development-workflow/post-merge-cleanup.sh
 
 set -euo pipefail
 

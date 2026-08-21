@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# covers: .github/workflows/deploy.yml .github/workflows/e2e-regression.yml
+# covers: docs/workflow/development-workflow/integrations/*.md
+# covers: docs/workflow/development-workflow/protocols/*.md
 
 set -euo pipefail
 

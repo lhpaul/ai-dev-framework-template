@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # test-workflow-hub-product-repo-commands.sh - workflow-hub product command tests.
+# covers: scripts/development-workflow/hub-*.sh
+# covers: scripts/development-workflow/workflow-config-resolver.py
 
 set -euo pipefail
 

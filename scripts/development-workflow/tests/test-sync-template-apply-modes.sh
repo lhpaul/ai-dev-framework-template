@@ -2,6 +2,10 @@
 # test-sync-template-apply-modes.sh — assert sync-template primary modes wording.
 #
 # Usage: bash scripts/development-workflow/tests/test-sync-template-apply-modes.sh
+# covers: .claude/commands/sync-template.md
+# covers: .cursor/commands/sync-template.md .claude/skills/sync-template.md
+# covers: .codex/skills/workflow-sync-template/**
+# covers: .agents/skills/workflow-sync-template/**
 
 set -euo pipefail
 
