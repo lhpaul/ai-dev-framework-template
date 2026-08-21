@@ -447,7 +447,51 @@ reviewer_check_names_json() {
   printf '%s\n' "${check_names[@]}" | jq -R . | jq -s 'unique'
 }
 
+# worktree_path_for_branch <branch> <git-worktree-list---porcelain-output>
+#
+# Parses `git worktree list --porcelain` output and prints the worktree path
+# whose checked-out branch is <branch>, or nothing if no linked worktree has
+# that branch checked out. `git worktree list` enumerates every worktree
+# linked to the repository regardless of which one it is invoked from, so
+# this works even when $repo_root/$worktree_path is the wrong path.
+worktree_path_for_branch() {
+  local branch="$1"
+  local list_output="$2"
+  printf '%s\n' "$list_output" | awk -v want="refs/heads/$branch" '
+    /^worktree / { path = substr($0, 10) }
+    /^branch / { if ($0 == "branch " want) { print path; exit } }
+  '
+}
+
 cd "$repo_root"
+
+resolved_repo_root="$(pwd -P)"
+
+worktree_list=""
+worktree_list_available="true"
+if ! worktree_list="$(git worktree list --porcelain 2>&1)"; then
+  worktree_list_available="false"
+fi
+
+# Detect the "caller passed the wrong --worktree-path" pattern: the expected
+# branch IS checked out somewhere in this repository's worktrees, just not at
+# the path the caller supplied (e.g. the main clone instead of the actual
+# item worktree, or a sibling item's worktree). When true, a branch mismatch
+# below is a caller path error, not evidence of branch contamination, and
+# gets its own distinct diagnostic row instead of being folded into the
+# generic repository.branch discrepancy.
+expected_branch_worktree_path=""
+resolved_expected_branch_worktree_path=""
+caller_worktree_path_mismatch="false"
+if [ "$worktree_list_available" = "true" ]; then
+  expected_branch_worktree_path="$(worktree_path_for_branch "$expected_branch" "$worktree_list")"
+  if [ -n "$expected_branch_worktree_path" ]; then
+    resolved_expected_branch_worktree_path="$(CDPATH='' cd -- "$expected_branch_worktree_path" 2>/dev/null && pwd -P || printf '%s' "$expected_branch_worktree_path")"
+    if [ "$resolved_expected_branch_worktree_path" != "$resolved_repo_root" ]; then
+      caller_worktree_path_mismatch="true"
+    fi
+  fi
+fi
 
 current_branch=""
 returned_to_expected_base="false"
@@ -461,6 +505,9 @@ if current_branch="$(git rev-parse --abbrev-ref HEAD 2>&1)"; then
     add_row "repository.branch" "verified" "$current_branch" "local checkout returned to expected base; PR head check verifies item branch"
   else
     add_row "repository.branch" "discrepancy" "expected=$expected_branch observed=$current_branch" "git rev-parse --abbrev-ref HEAD"
+    if [ "$caller_worktree_path_mismatch" = "true" ]; then
+      add_row "caller.worktree_path" "discrepancy" "expected branch $expected_branch is checked out at $resolved_expected_branch_worktree_path, not the supplied --worktree-path $resolved_repo_root; re-run this check with --worktree-path $resolved_expected_branch_worktree_path" "git worktree list --porcelain"
+    fi
   fi
 else
   add_row "repository.branch" "unavailable_required" "$current_branch" "git rev-parse --abbrev-ref HEAD"
@@ -473,7 +520,6 @@ else
   add_row "repository.head" "unavailable_required" "unable to read HEAD" "$head_sha"
 fi
 
-resolved_repo_root="$(pwd -P)"
 resolved_worktree_path="$(CDPATH='' cd -- "$worktree_path" 2>/dev/null && pwd -P || printf '%s' "$worktree_path")"
 if [ "$resolved_repo_root" = "$resolved_worktree_path" ]; then
   add_row "workspace.path" "verified" "$resolved_worktree_path" "pwd -P"
@@ -494,8 +540,7 @@ else
   add_row "workspace.status" "unavailable_required" "$status_short" "git status --short"
 fi
 
-worktree_list=""
-if worktree_list="$(git worktree list --porcelain 2>&1)"; then
+if [ "$worktree_list_available" = "true" ]; then
   if printf '%s\n' "$worktree_list" | grep -Fq "branch refs/heads/$expected_branch"; then
     add_row "workspace.worktrees" "verified" "expected branch present; path=$resolved_worktree_path" "git worktree list --porcelain"
   elif is_true "$returned_to_expected_base"; then

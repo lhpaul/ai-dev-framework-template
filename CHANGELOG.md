@@ -986,6 +986,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (the canonical routing specification) is updated to document the new
   `tracker_unavailable` mode, its decision-table row, edge cases, and handoff
   mapping (routing layer version 1.0 → 1.1).
+- **`item-completion-self-check.sh` no longer reports an indistinguishable
+  false discrepancy when the caller's `--worktree-path` is the main clone
+  (or the wrong sibling worktree)** (#1333): when `--worktree-path` resolves
+  to a path other than the item's actual worktree, `repository.branch`
+  reported a generic `discrepancy` (`HEAD` was the trunk branch checked out
+  in the main clone rather than the item branch) that looked identical to
+  genuine branch contamination — a downstream 5-sub-item epic run hit this
+  in every runner completion report and had to be manually triaged. The
+  script now also inspects `git worktree list --porcelain` (which enumerates
+  every linked worktree regardless of which one it is invoked from) for the
+  path where the expected branch is actually checked out. When that path
+  differs from the supplied `--worktree-path`, a new, distinct
+  `caller.worktree_path` diagnostic row is added alongside the existing
+  `repository.branch` row, naming the actual worktree path and the correct
+  `--worktree-path` to re-run with. This is strictly additive: the
+  pre-existing `repository.branch`/`workspace.worktrees` rows and their
+  `discrepancy` outcome are unchanged, so a genuine contamination case
+  (the expected branch not checked out anywhere) still reports a plain,
+  unexplained discrepancy with no caller-error row and no change to the
+  non-zero exit code.
 
 ### Changed
 
