@@ -2924,6 +2924,233 @@ unset _reviewer_failed_required _reviewer_failed_fn_line _sync_fn_line _harness_
 unset MOCK_GH_EXIT MOCK_GH_LABEL_VIEW_EXIT MOCK_GH_LABEL_CREATE_EXIT MOCK_GH_PR_EDIT_EXIT
 
 # ---------------------------------------------------------------------------
+# Area 12b: ready-phase gate distinguishes GitHub API rate-limit exhaustion
+# from a genuine review-gate failure (issue #1509)
+#
+# gh_rate_limit_exhausted_reset() and ensure_pr_ready_for_ready_phase() are
+# defined before the HARNESS_MODE return point and are therefore callable
+# directly from the test harness.
+#
+# Uses the strict-mock pattern established for issue #1531 (a PATH-installed
+# `gh` script that enumerates every invocation the code under test legitimately
+# makes and hard-errors on anything else) rather than the permissive global
+# MOCK_GH_* fallback used elsewhere in this file — a renamed or dropped
+# `gh api rate_limit` call must fail the test, not silently return an empty
+# default that happens to still satisfy the assertion.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 12b: rate-limit-aware ready-phase gate (issue #1509) ==="
+
+_1509_mkmock() {
+  # $1 = mock dir, $2 = case body (bash `case "$*" in ... esac` arms)
+  if [ "$#" -ne 2 ]; then
+    echo "ERROR: _1509_mkmock requires exactly 2 arguments (dir, arms), got $#" >&2
+    return 1
+  fi
+  local dir="$1"
+  local arms="$2"
+  if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+    echo "ERROR: _1509_mkmock: '$dir' is not a valid directory" >&2
+    return 1
+  fi
+  if ! cat > "$dir/gh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "\$RL1509_CALL_LOG"
+case "\$*" in
+$arms
+  *)
+    printf 'UNEXPECTED gh invocation in 1509 mock: %s\n' "\$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+  then
+    echo "ERROR: _1509_mkmock: failed to write $dir/gh" >&2
+    return 1
+  fi
+  if ! chmod +x "$dir/gh"; then
+    echo "ERROR: _1509_mkmock: failed to chmod +x $dir/gh" >&2
+    return 1
+  fi
+}
+
+# --- gh_rate_limit_exhausted_reset: core exhausted -------------------------
+_1509_dir="$(mktemp -d)"
+_1509_log="$_1509_dir/calls.log"
+_1509_mkmock "$_1509_dir" '  "api rate_limit")
+    printf '"'"'{"resources":{"core":{"limit":5000,"remaining":0,"reset":1700000100},"graphql":{"limit":5000,"remaining":5000,"reset":1700009999}}}\n'"'"'
+    exit 0 ;;'
+_1509_out="$(PATH="$_1509_dir:$PATH" RL1509_CALL_LOG="$_1509_log" gh_rate_limit_exhausted_reset)"
+_1509_rc=$?
+run_test "rl1509_core_exhausted_prints_reset" "1700000100" "$_1509_out"
+run_test "rl1509_core_exhausted_exit_0" "0" "$_1509_rc"
+run_test "rl1509_core_exhausted_probed_rate_limit" "yes" \
+  "$([ "$(grep -c -- 'api rate_limit' "$_1509_log" 2>/dev/null || true)" -ge 1 ] && echo yes || echo no)"
+rm -rf "$_1509_dir"
+unset _1509_dir _1509_log _1509_out _1509_rc
+
+# --- gh_rate_limit_exhausted_reset: graphql exhausted -----------------------
+_1509_dir="$(mktemp -d)"
+_1509_log="$_1509_dir/calls.log"
+_1509_mkmock "$_1509_dir" '  "api rate_limit")
+    printf '"'"'{"resources":{"core":{"limit":5000,"remaining":5000,"reset":1700009999},"graphql":{"limit":5000,"remaining":0,"reset":1700000200}}}\n'"'"'
+    exit 0 ;;'
+_1509_out="$(PATH="$_1509_dir:$PATH" RL1509_CALL_LOG="$_1509_log" gh_rate_limit_exhausted_reset)"
+run_test "rl1509_graphql_exhausted_prints_reset" "1700000200" "$_1509_out"
+rm -rf "$_1509_dir"
+unset _1509_dir _1509_log _1509_out
+
+# --- gh_rate_limit_exhausted_reset: both exhausted -> earliest reset wins --
+_1509_dir="$(mktemp -d)"
+_1509_log="$_1509_dir/calls.log"
+_1509_mkmock "$_1509_dir" '  "api rate_limit")
+    printf '"'"'{"resources":{"core":{"limit":5000,"remaining":0,"reset":1700000500},"graphql":{"limit":5000,"remaining":0,"reset":1700000300}}}\n'"'"'
+    exit 0 ;;'
+_1509_out="$(PATH="$_1509_dir:$PATH" RL1509_CALL_LOG="$_1509_log" gh_rate_limit_exhausted_reset)"
+run_test "rl1509_both_exhausted_earliest_reset" "1700000300" "$_1509_out"
+rm -rf "$_1509_dir"
+unset _1509_dir _1509_log _1509_out
+
+# --- gh_rate_limit_exhausted_reset: neither exhausted -> empty, exit 1 -----
+_1509_dir="$(mktemp -d)"
+_1509_log="$_1509_dir/calls.log"
+_1509_mkmock "$_1509_dir" '  "api rate_limit")
+    printf '"'"'{"resources":{"core":{"limit":5000,"remaining":4999,"reset":1700009999},"graphql":{"limit":5000,"remaining":5000,"reset":1700009999}}}\n'"'"'
+    exit 0 ;;'
+set +e
+_1509_out="$(PATH="$_1509_dir:$PATH" RL1509_CALL_LOG="$_1509_log" gh_rate_limit_exhausted_reset)"
+_1509_rc=$?
+set -e
+run_test "rl1509_not_exhausted_empty_output" "" "$_1509_out"
+run_test "rl1509_not_exhausted_exit_1" "1" "$_1509_rc"
+rm -rf "$_1509_dir"
+unset _1509_dir _1509_log _1509_out _1509_rc
+
+# --- gh_rate_limit_exhausted_reset: probe call itself fails -> exit 1 ------
+_1509_dir="$(mktemp -d)"
+_1509_log="$_1509_dir/calls.log"
+_1509_mkmock "$_1509_dir" '  "api rate_limit")
+    exit 1 ;;'
+set +e
+_1509_out="$(PATH="$_1509_dir:$PATH" RL1509_CALL_LOG="$_1509_log" gh_rate_limit_exhausted_reset)"
+_1509_rc=$?
+set -e
+run_test "rl1509_probe_failure_empty_output" "" "$_1509_out"
+run_test "rl1509_probe_failure_exit_1" "1" "$_1509_rc"
+rm -rf "$_1509_dir"
+unset _1509_dir _1509_log _1509_out _1509_rc
+
+# --- gh_rate_limit_exhausted_reset: malformed JSON does not abort the caller
+# under `set -e` (regression guard for the unguarded-assignment failure mode) --
+_1509_dir="$(mktemp -d)"
+_1509_log="$_1509_dir/calls.log"
+_1509_mkmock "$_1509_dir" '  "api rate_limit")
+    printf '"'"'not-json\n'"'"'
+    exit 0 ;;'
+set +e
+_1509_out="$(PATH="$_1509_dir:$PATH" RL1509_CALL_LOG="$_1509_log" gh_rate_limit_exhausted_reset)"
+_1509_rc=$?
+set -e
+run_test "rl1509_malformed_json_empty_output" "" "$_1509_out"
+run_test "rl1509_malformed_json_exit_1" "1" "$_1509_rc"
+rm -rf "$_1509_dir"
+unset _1509_dir _1509_log _1509_out _1509_rc
+
+# --- ensure_pr_ready_for_ready_phase: gh pr view failure + confirmed rate
+# limit exhaustion -> exit 3, distinct from the generic exit 2, and
+# READY_PHASE_GATE_RATE_LIMIT_RESET carries the reset timestamp -------------
+_1509_dir="$(mktemp -d)"
+_1509_log="$_1509_dir/calls.log"
+_1509_mkmock "$_1509_dir" '  "pr view 999 --json isDraft --jq .isDraft")
+    exit 1 ;;
+  "api rate_limit")
+    printf '"'"'{"resources":{"core":{"limit":5000,"remaining":0,"reset":1700000777},"graphql":{"limit":5000,"remaining":5000,"reset":1700009999}}}\n'"'"'
+    exit 0 ;;'
+set +e
+PATH="$_1509_dir:$PATH" RL1509_CALL_LOG="$_1509_log" \
+  ensure_pr_ready_for_ready_phase "999" >/dev/null 2>&1
+_1509_rc=$?
+set -e
+run_test "rl1509_gate_draft_state_rate_limited_exit_3" "3" "$_1509_rc"
+run_test "rl1509_gate_draft_state_rate_limited_reset_captured" "1700000777" \
+  "$READY_PHASE_GATE_RATE_LIMIT_RESET"
+run_test "rl1509_gate_draft_state_rate_limited_probed" "yes" \
+  "$([ "$(grep -c -- 'api rate_limit' "$_1509_log" 2>/dev/null || true)" -ge 1 ] && echo yes || echo no)"
+run_test "rl1509_gate_draft_state_rate_limited_did_not_call_pr_ready" "0" \
+  "$(grep -c -- 'pr ready 999' "$_1509_log" 2>/dev/null || true)"
+rm -rf "$_1509_dir"
+unset _1509_dir _1509_log _1509_rc
+
+# --- ensure_pr_ready_for_ready_phase: gh pr view failure WITHOUT confirmed
+# rate-limit exhaustion still returns the original exit 2 (unchanged
+# behavior — an unexplained failure is not asserted to be a rate limit) -----
+_1509_dir="$(mktemp -d)"
+_1509_log="$_1509_dir/calls.log"
+_1509_mkmock "$_1509_dir" '  "pr view 999 --json isDraft --jq .isDraft")
+    exit 1 ;;
+  "api rate_limit")
+    printf '"'"'{"resources":{"core":{"limit":5000,"remaining":4999,"reset":1700009999},"graphql":{"limit":5000,"remaining":5000,"reset":1700009999}}}\n'"'"'
+    exit 0 ;;'
+READY_PHASE_GATE_RATE_LIMIT_RESET="stale-from-prior-cycle"
+set +e
+PATH="$_1509_dir:$PATH" RL1509_CALL_LOG="$_1509_log" \
+  ensure_pr_ready_for_ready_phase "999" >/dev/null 2>&1
+_1509_rc=$?
+set -e
+run_test "rl1509_gate_draft_state_unexplained_failure_exit_2" "2" "$_1509_rc"
+run_test "rl1509_gate_unexplained_failure_clears_stale_reset" "" \
+  "$READY_PHASE_GATE_RATE_LIMIT_RESET"
+rm -rf "$_1509_dir"
+unset _1509_dir _1509_log _1509_rc
+
+# --- ensure_pr_ready_for_ready_phase: `gh pr ready` failure (after a
+# successful draft-state read) + confirmed rate-limit exhaustion -> exit 3 --
+_1509_dir="$(mktemp -d)"
+_1509_log="$_1509_dir/calls.log"
+_1509_mkmock "$_1509_dir" '  "pr view 999 --json isDraft --jq .isDraft")
+    printf '"'"'true\n'"'"'
+    exit 0 ;;
+  "pr ready 999")
+    exit 1 ;;
+  "api rate_limit")
+    printf '"'"'{"resources":{"core":{"limit":5000,"remaining":0,"reset":1700000888},"graphql":{"limit":5000,"remaining":5000,"reset":1700009999}}}\n'"'"'
+    exit 0 ;;'
+set +e
+PATH="$_1509_dir:$PATH" RL1509_CALL_LOG="$_1509_log" \
+  ensure_pr_ready_for_ready_phase "999" >/dev/null 2>&1
+_1509_rc=$?
+set -e
+run_test "rl1509_gate_pr_ready_rate_limited_exit_3" "3" "$_1509_rc"
+run_test "rl1509_gate_pr_ready_rate_limited_reset_captured" "1700000888" \
+  "$READY_PHASE_GATE_RATE_LIMIT_RESET"
+rm -rf "$_1509_dir"
+unset _1509_dir _1509_log _1509_rc
+unset -f _1509_mkmock
+READY_PHASE_GATE_RATE_LIMIT_RESET=""
+
+# --- reviewer_failed_label_required_for_result: rate_limited escalation is
+# infrastructure unavailability, not a review verdict — no label -----------
+#
+# Defined locally (not reusing Area 12's _reviewer_failed_required) because
+# Area 12 ends by `unset`-ing that name — with neither -f nor -v given, bash
+# falls back to unsetting the FUNCTION when no variable by that name exists,
+# so the Area 12 helper is gone by the time this block runs.
+_1509_reviewer_failed_required() {
+  if reviewer_failed_label_required_for_result "$1" "${2:-}"; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+}
+run_test "reviewer_failed_escalate_rate_limited_no_label" "no" \
+  "$(_1509_reviewer_failed_required escalate rate_limited)"
+# Sibling REASON tokens must be unaffected by the new exception (regression
+# guard against an over-broad case match swallowing other escalate reasons).
+run_test "reviewer_failed_escalate_ready_for_review_failed_still_label" "yes" \
+  "$(_1509_reviewer_failed_required escalate ready_for_review_failed)"
+unset -f _1509_reviewer_failed_required
+
+# ---------------------------------------------------------------------------
 # Area 13: PR #801 follow-up coverage for reviewer-loop failure paths
 # ---------------------------------------------------------------------------
 echo ""

@@ -116,6 +116,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/best-practices/2-version-control.md` now states that CHANGELOG entries
   describe shipped behavior rather than the review history of the PR that produced
   them — a content rule, not a length rule. No behavior change.
+- **`pr-review-loop.sh` ready-phase gate no longer reports a GitHub API
+  rate-limit outage as a review verdict** (#1509): a `gh pr view`/`gh pr ready`
+  failure in `ensure_pr_ready_for_ready_phase` previously always produced
+  `RESULT=escalate REASON=ready_for_review_failed` plus the `reviewer-failed`
+  label, with no distinction from a genuine review-gate failure. The gate now
+  probes `gh api rate_limit` on that failure; a confirmed core/graphql
+  exhaustion reports `REASON=rate_limited` with the reset timestamp instead,
+  and `reviewer_failed_label_required_for_result` no longer applies
+  `reviewer-failed` for that reason. An unexplained `gh` failure keeps the
+  original `REASON=ready_for_review_failed` behavior.
 
 - **Codex GitHub terminal evidence**: `codex-github-reviewer.sh` no longer
   treats a thumbs-up reaction on the trigger comment as a clean review result,
