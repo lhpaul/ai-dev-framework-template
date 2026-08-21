@@ -30,31 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Security-checkpoint keyword test no longer matches substrings** (#1504):
   `recommend_checkpoints_for_item` in
   `scripts/development-workflow/run-epic-policy-recommender.sh` matched the
-  security/auth checkpoint keywords (`auth|security|secret|permission|
-  credential|sensitive`) with a bare, unanchored alternation, so ordinary
-  vocabulary containing those substrings tripped a pending human checkpoint:
-  "authoring", "author", "authority", and "insensitive" all matched. Because a
-  pending checkpoint sets `requiresConfirmation: true`, a single incidental
-  word — such as `auth` inside a `Related: #1496 (... plan-authoring rigor)`
-  cross-reference — halted an otherwise fully delegated `/run-epic`/`/run-items`
-  run and demanded human input on an issue with no actual security content
-  (live reproduction on `/run-items 1502 1501`). The keyword regex now uses
-  `\b`-anchored full-term alternatives (`unauthenticat\w*`, `unauthoriz\w*`,
-  `authenticat\w*`, `authoriz\w*`, `security`, `secrets?`, `permissions?`,
-  `credentials?`, `sensitive`, `auth`) so `authentication`, `authorization`,
-  `secret`, `credential`, `permission`, `security`, `sensitive`, the bare word
-  `auth`, and negated forms like `unauthorized`/`unauthenticated` still match
-  (the pre-fix regex also matched these via bare substring, so the fix must not
-  silently drop them) while `authoring`, `author`, `authority`, and
-  `insensitive` no longer do. The checkpoint `reason` now names the matched
-  term and quotes the source line instead of a generic static message, so an
-  operator can judge relevance without grepping the issue by hand. The sibling
-  unresolved-product classifier (`ambiguous|unclear|...`) shared the same
-  defect — "unambiguous" matched "ambiguous" as a substring — and is now
-  `\b`-anchored too, along with the trade-off/architecture classifier. 13 new
-  regression tests cover both the false-positive corpus (confirmed to fail
-  against the pre-fix regex) and the true-positive corpus, including the
-  `unauthorized`/`unauthenticated` negated forms.
+  security/auth checkpoint keywords with a bare, unanchored alternation, so
+  ordinary vocabulary ("authoring", "author", "authority", "insensitive")
+  tripped a pending human checkpoint and halted an otherwise fully delegated
+  `/run-epic`/`/run-items` run on issues with no actual security content (live
+  reproduction on `/run-items 1502 1501`). The keyword regex is now
+  `\b`-anchored so real security/auth terms — including negated forms like
+  `unauthorized`/`unauthenticated` — still match while incidental substrings no
+  longer do. The checkpoint `reason` now names the matched term and quotes the
+  source line instead of a generic static message. The sibling unresolved-
+  product and trade-off/architecture classifiers shared the same
+  bare-alternation defect and are now `\b`-anchored too. 13 new regression
+  tests cover the false-positive corpus (confirmed to fail against the pre-fix
+  regex) and the true-positive corpus.
 - **CodeRabbit "Review skipped" banner no longer reports an unreviewed PR as
   clean** (#1531): `run_coderabbit_review` in
   `scripts/development-workflow/pr-review-loop.sh` counted any CodeRabbit issue

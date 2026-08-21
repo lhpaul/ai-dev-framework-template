@@ -454,6 +454,10 @@ run_test "sensitive_backlog_recommends_implementation_checkpoint" "implementatio
 # in_review "sensitive_fixture" so only the implementation/technical checkpoint is
 # exercised.
 security_case_fixture() {
+  if [ "$#" -ne 4 ]; then
+    printf 'ERROR: security_case_fixture requires exactly 4 arguments; got %s\n' "$#" >&2
+    return 2
+  fi
   local name="$1" number="$2" title="$3" body="$4"
   write_fixture "$name" "$(jq --argjson number "$number" --arg title "$title" --arg body "$body" '
     .groups.in_review[0].number = $number
@@ -463,11 +467,19 @@ security_case_fixture() {
   ' "$sensitive_fixture")"
 }
 security_case_checkpoint_count() {
+  if [ "$#" -ne 2 ]; then
+    printf 'ERROR: security_case_checkpoint_count requires exactly 2 arguments; got %s\n' "$#" >&2
+    return 2
+  fi
   local fixture="$1" number="$2"
   recommend_json "$fixture" "\$run-epic --items $number" \
     | jq -r '[.recommendedPolicy.checkpoints[]? | select(.stage == "implementation" and .domain == "technical")] | length'
 }
 security_case_checkpoint_reason() {
+  if [ "$#" -ne 2 ]; then
+    printf 'ERROR: security_case_checkpoint_reason requires exactly 2 arguments; got %s\n' "$#" >&2
+    return 2
+  fi
   local fixture="$1" number="$2"
   recommend_json "$fixture" "\$run-epic --items $number" \
     | jq -r '.recommendedPolicy.checkpoints[] | select(.stage == "implementation" and .domain == "technical") | .reason'
