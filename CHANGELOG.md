@@ -986,6 +986,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (the canonical routing specification) is updated to document the new
   `tracker_unavailable` mode, its decision-table row, edge cases, and handoff
   mapping (routing layer version 1.0 → 1.1).
+- **`graduation-closeout.sh` no longer refuses nested graduation PRs** (#1513):
+  the graduation PR base-branch validation hard-coded `develop` as the only
+  acceptable base, so a nested integration lineage (e.g. a wave branch
+  `develop-ventas-e3b` graduating into a module branch
+  `develop-sales-module` rather than directly into `develop`) failed
+  closeout even though that base is correct for that layer — reproduced
+  downstream on `mome-cl/mome-platform` PR #2138. A new `--base <branch>`
+  flag (default `develop`, matching `batch-merge.sh`'s existing `--base`
+  convention) lets the operator declare the expected graduation base; the
+  script still fails closed with a clear error when the PR's actual base
+  does not match, and rejects an arbitrary non-integration-branch `--base`
+  value (anything other than `develop` or `develop-*`) up front regardless
+  of what the graduation PR happens to target. The sub-item closing comment
+  no longer hard-codes "to `develop`" either, and the summary output now
+  reports `GRADUATION_BASE`. `graduation-closeout-from-merged-pr.sh` (the
+  merge-time automation fallback invoked by
+  `.github/workflows/update-tracker-on-merge.yml`) intentionally keeps its
+  own `develop`-only check: that workflow only triggers on PRs targeting
+  `develop`, so a nested-base graduation can never reach it regardless, and
+  Step 5 of `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`
+  is the primary closeout path for nested graduations — invoked manually
+  with `--base`. This issue is distinct from #1329 (documentation of
+  `/run-epic --base`, the per-sub-item-PR integration base) and does not
+  attempt to resolve it; #1329 remains open. 8 new regression tests cover
+  the default `develop` base (confirmed unaffected), a matching non-default
+  base, a mismatched non-default base, and an invalid `--base` value
+  (confirmed to fail against the pre-fix script).
 
 ### Changed
 

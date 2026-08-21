@@ -261,6 +261,12 @@ When an integration branch is created, it branches off `develop` at a point in t
      --body "<generated-body>"
    ```
 
+   **Nested graduation**: for a nested integration lineage (e.g. a wave
+   branch `develop-ventas-e3b` graduating into a module branch
+   `develop-sales-module` rather than directly into `develop`), pass the
+   parent integration branch to `--base` instead of `develop`, and use that
+   same branch name for `--base` in `graduation-closeout.sh` at Step 5.
+
 ---
 
 ## Step 4: Run the Standard Review Loop
@@ -275,11 +281,15 @@ Run the automated reviewer loop (`pr-review-loop.sh`) and CI loop on the graduat
 
 After the human merges the graduation PR (must use a **merge commit**):
 
-1. Switch to `develop` and sync the merge commit:
+1. Switch to the graduation PR's base branch and sync the merge commit —
+   this is `develop`, unless the graduation PR was a nested graduation
+   (Step 3) whose base was a parent integration branch such as
+   `develop-sales-module`, in which case use that branch instead:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
-   git checkout develop
-   git pull origin develop
+   git checkout <graduation-pr-base>   # develop, or the parent integration branch
+   git pull origin <graduation-pr-base>
    ```
 
 2. Delete the integration branch on the remote (BR-7):
@@ -303,6 +313,7 @@ After the human merges the graduation PR (must use a **merge commit**):
    signals and calls the **same** reconciler below. Agent and automation
    double-runs are safe/idempotent (`already_terminal` / no regressive moves).
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    ./scripts/development-workflow/graduation-closeout.sh \
      --slug <slug> \
@@ -310,7 +321,11 @@ After the human merges the graduation PR (must use a **merge commit**):
      --epic <epic-issue-number>
    ```
 
-   Add `--exclude-issue <issue-number>` for optional, deferred, cancelled, or explicitly excluded sub-items that must remain open for human disposition. Add `--defer-epic-close` only when the human explicitly requests that the parent epic remain open after the core deliverable graduates.
+   Add `--base <branch>` when this is a nested graduation whose PR base is a
+   parent integration branch rather than `develop` (e.g. `--base
+   develop-sales-module`) — it must match the graduation PR's actual base,
+   and it must be `develop` or a `develop-*` integration branch. Add
+   `--exclude-issue <issue-number>` for optional, deferred, cancelled, or explicitly excluded sub-items that must remain open for human disposition. Add `--defer-epic-close` only when the human explicitly requests that the parent epic remain open after the core deliverable graduates.
 
    **Operator deferral durability:** `--defer-epic-close` also ensures the epic
    carries the durable label `defer-epic-close` before closeout reports success.
@@ -320,7 +335,7 @@ After the human merges the graduation PR (must use a **merge commit**):
    deferred epic or excluded sub-item.
 
    The helper:
-   - validates that the graduation PR is already merged from `develop-<slug>` to `develop`;
+   - validates that the graduation PR is already merged from `develop-<slug>` to its expected base (`develop` by default, or the branch passed via `--base` for a nested graduation);
    - identifies planned sub-items from native GitHub sub-issues or the `integration-branch:<slug>` label fallback;
    - includes issue references from closing keywords in merged PRs targeting `develop-<slug>`;
    - closes open delivered sub-items and reasserts the configured terminal Project status;
