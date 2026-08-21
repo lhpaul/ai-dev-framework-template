@@ -17,9 +17,200 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
+# Run from an immutable snapshot (issue #1562)
+# ---------------------------------------------------------------------------
+#
+# Bash reads a script incrementally rather than loading it whole, so editing
+# this file while a run is in flight makes the running shell pick up part of
+# the new text at whatever offset it has reached. During the #1531 work that
+# produced a run reporting a pass/fail count matching neither the old file nor
+# the new one, with nothing to indicate anything had happened. At ~13 minutes
+# per run the temptation to edit while waiting is constant, which makes this a
+# question of when rather than whether.
+#
+# So the harness copies itself to a temp file and re-executes from there. The
+# copy is a single atomic-enough read at startup; once running, edits to the
+# working-tree file cannot reach it.
+#
+# The obvious manual workaround — copy it somewhere immutable and run that —
+# does not work on its own, because the repo root is resolved via git from the
+# script's own location. TEST_PR_REVIEW_LOOP_ORIGIN carries the original path
+# across the re-exec so root resolution still anchors to the real checkout.
+#
+# --area composes with the snapshot rather than needing its own machinery: the
+# areas are contiguous line ranges in a linear script, so a filtered run is
+# just a snapshot built from the shared preamble, the selected ranges, and the
+# summary footer. Nothing in the 13k-line body has to be restructured or
+# wrapped in conditionals.
+#
+# Why it is worth having (measured on a clean tree):
+#   * whole suite            210s
+#   * Area 13 alone          197s  — 94%, from 156 codex-github-reviewer.sh
+#                                    invocations that each really sleep
+#   * all 27 other areas     ~13s
+# So iterating on anything other than Area 13 goes from minutes to seconds.
+if [ "${TEST_PR_REVIEW_LOOP_SNAPSHOT:-0}" != "1" ]; then
+  _area_filter=""
+  _list_areas=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --area)
+        [ $# -ge 2 ] || { echo "ERROR: --area requires a value" >&2; exit 2; }
+        [ -n "$2" ] || { echo "ERROR: --area requires a non-empty value" >&2; exit 2; }
+        _area_filter="${_area_filter}${_area_filter:+,}$2"
+        shift 2
+        ;;
+      --area=*)
+        # Reject an empty value. Appending an empty token left _area_filter
+        # empty, which the snapshot step reads as "unfiltered" — so `--area=`
+        # asked for a filter and silently got the full run instead.
+        if [ -z "${1#--area=}" ]; then
+          echo "ERROR: --area= requires a value" >&2
+          exit 2
+        fi
+        _area_filter="${_area_filter}${_area_filter:+,}${1#--area=}"
+        shift
+        ;;
+      --list-areas) _list_areas=1; shift ;;
+      -h|--help)
+        cat <<'USAGE'
+Usage: bash test-pr-review-loop.sh [--area <name>]... [--list-areas]
+
+  --area <name>   Run only matching areas. Matches the area's number or any
+                  substring of its title, case-insensitively; repeatable, and
+                  a comma-separated list is accepted. Examples:
+                    --area 13
+                    --area haystack
+                    --area 0a --area 1
+  --list-areas    Print the area names with their line ranges and exit.
+
+With no arguments the whole suite runs.
+USAGE
+        exit 0
+        ;;
+      *) echo "ERROR: unknown argument '$1'" >&2; exit 2 ;;
+    esac
+  done
+
+  # Honour a pre-set origin so a copy of this file placed outside the checkout
+  # still resolves the repo root — the workaround issue #1562 records as not
+  # working. The snapshot below makes the copy unnecessary, but someone holding
+  # an out-of-tree copy should not be met with "fatal: not a git repository".
+  if [ -n "${TEST_PR_REVIEW_LOOP_ORIGIN:-}" ]; then
+    if [ ! -f "$TEST_PR_REVIEW_LOOP_ORIGIN" ]; then
+      echo "ERROR: TEST_PR_REVIEW_LOOP_ORIGIN does not exist: $TEST_PR_REVIEW_LOOP_ORIGIN" >&2
+      exit 2
+    fi
+    _origin_dir="$(CDPATH='' cd -- "$(dirname -- "$TEST_PR_REVIEW_LOOP_ORIGIN")" && pwd)"
+    _self="$_origin_dir/$(basename "$TEST_PR_REVIEW_LOOP_ORIGIN")"
+  else
+    _origin_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+    _self="$_origin_dir/$(basename "$0")"
+  fi
+
+  if [ "$_list_areas" -eq 1 ]; then
+    awk '
+      /^echo "=== / {
+        line=$0
+        sub(/^echo "=== /, "", line)
+        sub(/ ==="$/, "", line)
+        if (prev != "") printf "  %-70s lines %d-%d\n", prev, pstart, NR-1
+        prev=line; pstart=NR
+      }
+      END { if (prev != "") printf "  %-70s lines %d-%d\n", prev, pstart, NR }
+    ' "$_self"
+    exit 0
+  fi
+
+  _snapshot="$(mktemp -t test-pr-review-loop.XXXXXX)"
+  if [ -z "$_area_filter" ]; then
+    if ! cat "$_self" > "$_snapshot"; then
+      rm -f "$_snapshot"
+      echo "ERROR: could not snapshot the test harness for execution" >&2
+      exit 2
+    fi
+  else
+    # mktemp rather than a $$-derived name: /tmp is world-writable, so a
+    # predictable path can be pre-created as a symlink and redirect this write
+    # to a file of someone else's choosing. PIDs also recur.
+    if ! _filter_err="$(mktemp -t test-pr-review-loop-filter.XXXXXX)" \
+       || [ -z "$_filter_err" ]; then
+      echo "ERROR: could not create a temp file for the area-filter diagnostics" >&2
+      exit 2
+    fi
+    # Preamble (everything before the first area) + selected areas + footer.
+    if ! awk -v filter="$_area_filter" '
+      function selected(title,   n, i, pat, lt) {
+        n = split(filter, pats, ",")
+        lt = tolower(title)
+        for (i = 1; i <= n; i++) {
+          pat = tolower(pats[i])
+          gsub(/^[ \t]+|[ \t]+$/, "", pat)
+          if (pat == "") continue
+          # A bare number must match the area number exactly, so --area 1 does
+          # not also drag in 10, 10b, 12, and 13.
+          if (pat ~ /^[0-9]+[a-z]?$/) {
+            if (tolower(title) ~ ("^area " pat ":")) return 1
+          } else if (index(lt, pat) > 0) {
+            return 1
+          }
+        }
+        return 0
+      }
+      BEGIN { emit = 1; matched = 0; footer = 0 }
+      # The summary block must survive every filter: it prints the counts and
+      # carries the [ "$FAIL_COUNT" -eq 0 ] test that gives the run its exit
+      # status. Dropping it made a filtered run with failures still exit 0.
+      /^# Summary$/ { footer = 1 }
+      footer { print; next }
+      /^echo "=== / {
+        title = $0
+        sub(/^echo "=== /, "", title)
+        sub(/ ==="$/, "", title)
+        emit = selected(title)
+        if (emit) matched = 1
+        seen_area = 1
+      }
+      /^# -+$/ && seen_area && !emit { next }
+      { if (emit) print }
+      END {
+        if (!matched) {
+          print "NO_AREA_MATCHED" > "/dev/stderr"
+          exit 3
+        }
+      }
+    ' "$_self" > "$_snapshot" 2>"$_filter_err"; then
+      rm -f "$_snapshot"
+      if grep -q NO_AREA_MATCHED "$_filter_err" 2>/dev/null; then
+        echo "ERROR: no area matched '--area $_area_filter'." >&2
+        echo "  Run with --list-areas to see the available areas." >&2
+      fi
+      rm -f "$_filter_err"
+      exit 2
+    fi
+    rm -f "$_filter_err"
+    echo "INFO: running filtered areas: $_area_filter" >&2
+  fi
+
+  TEST_PR_REVIEW_LOOP_SNAPSHOT=1 \
+  TEST_PR_REVIEW_LOOP_ORIGIN="$_self" \
+  TEST_PR_REVIEW_LOOP_AREA_FILTER="$_area_filter" \
+    bash "$_snapshot" 
+  _rc=$?
+  rm -f "$_snapshot"
+  exit "$_rc"
+fi
+
+# ---------------------------------------------------------------------------
 # Locate repository root (works inside worktrees and normal checkouts).
 # ---------------------------------------------------------------------------
-SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+# Prefer the pre-re-exec origin: $0 is the snapshot in a temp directory, which
+# is not inside any checkout.
+if [ -n "${TEST_PR_REVIEW_LOOP_ORIGIN:-}" ]; then
+  SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$TEST_PR_REVIEW_LOOP_ORIGIN")" && pwd)"
+else
+  SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+fi
 # Locate repo root from the script's directory.
 # Use --show-toplevel so the path resolves to the current worktree root
 # (correct when the harness runs inside a linked worktree).
@@ -147,6 +338,10 @@ esac
 MOCK_GIT
 chmod +x "$MOCK_BIN/git"
 
+# Preserved before the mocks are prepended, so a test that needs to invoke a
+# real tool (or re-enter this harness) can do so with the genuine PATH. Without
+# it, a nested run picks up the mock git and cannot resolve the repo root.
+TEST_PR_REVIEW_LOOP_REAL_PATH="$PATH"
 export PATH="$MOCK_BIN:$PATH"
 
 # ---------------------------------------------------------------------------
@@ -13577,13 +13772,206 @@ rm -rf "$_cr_mock_dir_1531e"
 unset _cr_mock_dir_1531e _cr_call_log_1531e actual_output
 
 # --- AC-4: rate-limit tolerance spans an hourly vendor quota reset ------------
-# Asserted against the script source: the defaults are function-locals, so there
-# is no accessor to read them from, and the whole point of the change is that
-# the shipped numbers (not just the env overrides) are large enough.
+# Asserted against the script source: the whole point of the change is that the
+# shipped numbers (not just the env overrides) are large enough.
+#
+# These greps used to target the inline "${VAR:-4}" / "${VAR:-900}" expansions
+# inside run_coderabbit_review. Issue #1562 gave the same two numbers a second
+# reader — the execution-budget invariant — so they were hoisted to a single
+# declaration rather than restated, which is what these now pin.
 run_test "cr_rate_limit_default_retries_is_four" "1" \
-  "$(grep_count_or_zero 'CODERABBIT_RATE_LIMIT_MAX_RETRIES:-4' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+  "$(grep_count_or_zero 'CODERABBIT_RATE_LIMIT_MAX_RETRIES_DEFAULT=4' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
 run_test "cr_rate_limit_default_wait_is_900" "1" \
-  "$(grep_count_or_zero 'CODERABBIT_RATE_LIMIT_WAIT:-900' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+  "$(grep_count_or_zero 'CODERABBIT_RATE_LIMIT_WAIT_DEFAULT=900' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+# And the review path must actually consume that declaration, so hoisting the
+# numbers out cannot leave the wait reading a stale literal.
+run_test "cr_rate_limit_review_path_uses_default_consts" "2" \
+  "$(grep_count_or_zero 'CODERABBIT_RATE_LIMIT_MAX_RETRIES:-$CODERABBIT_RATE_LIMIT_MAX_RETRIES_DEFAULT' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+
+# ---------------------------------------------------------------------------
+# Area 18: suite ergonomics and execution budget (issue #1562)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 18: suite ergonomics and execution budget (#1562) ==="
+
+_1562_suite="$REPO_ROOT/scripts/development-workflow/tests/test-pr-review-loop.sh"
+_1562_loop="$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+
+# --- AC-1: a single area can be run without the full suite -------------------
+run_test "area_filter_list_areas_lists_this_area" "yes" \
+  "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" bash "$_1562_suite" --list-areas 2>/dev/null | grep -q 'Area 18:' && echo yes || echo no)"
+
+_1562_filtered="$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" bash "$_1562_suite" --area 1 2>/dev/null || true)"
+run_test "area_filter_runs_selected_area" "yes" \
+  "$(printf '%s\n' "$_1562_filtered" | grep -q 'normalize_platform_verdict' && echo yes || echo no)"
+# The point of the filter: Area 13 is ~94% of the runtime, so it must be absent.
+run_test "area_filter_excludes_other_areas" "yes" \
+  "$(printf '%s\n' "$_1562_filtered" | grep -q 'PR #801 reviewer-loop failure paths' && echo no || echo yes)"
+# The summary footer carries the exit status and must survive every filter.
+run_test "area_filter_keeps_summary_footer" "yes" \
+  "$(printf '%s\n' "$_1562_filtered" | grep -q '^Tests: ' && echo yes || echo no)"
+
+run_test "area_filter_unknown_area_exits_2" "2" \
+  "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" bash "$_1562_suite" --area definitely-not-an-area >/dev/null 2>&1; echo $?)"
+run_test "area_filter_missing_value_exits_2" "2" \
+  "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" bash "$_1562_suite" --area >/dev/null 2>&1; echo $?)"
+run_test "area_filter_unknown_flag_exits_2" "2" \
+  "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" bash "$_1562_suite" --not-a-flag >/dev/null 2>&1; echo $?)"
+# A bare number selects that area exactly, not every area containing the digit.
+run_test "area_filter_bare_number_is_exact" "yes" \
+  "$(printf '%s\n' "$_1562_filtered" | grep -q 'max_cycles' && echo no || echo yes)"
+
+# --- AC-2: a mid-run edit cannot silently alter the result -------------------
+run_test "suite_reexecs_from_snapshot" "yes" \
+  "$(grep -q 'TEST_PR_REVIEW_LOOP_SNAPSHOT' "$_1562_suite" && echo yes || echo no)"
+run_test "suite_snapshot_preserves_origin_for_repo_root" "yes" \
+  "$(grep -q 'TEST_PR_REVIEW_LOOP_ORIGIN' "$_1562_suite" && echo yes || echo no)"
+# The snapshot must be what actually runs. This process IS a snapshot run, so
+# $0 is the temp copy rather than the checked-in path — which is also what
+# makes running the harness from outside the repo work, since repo-root
+# resolution follows TEST_PR_REVIEW_LOOP_ORIGIN instead of $0.
+run_test "suite_runs_from_a_copy_not_the_original" "yes" \
+  "$([ "$0" != "$_1562_suite" ] && echo yes || echo no)"
+run_test "suite_origin_points_at_the_checked_in_file" "yes" \
+  "$([ "${TEST_PR_REVIEW_LOOP_ORIGIN:-}" = "$_1562_suite" ] && echo yes || echo no)"
+run_test "suite_repo_root_resolved_despite_snapshot" "yes" \
+  "$([ -d "$REPO_ROOT/scripts/development-workflow" ] && echo yes || echo no)"
+# Issue #1562 consequence 3: an out-of-tree copy used to fail with "fatal: not
+# a git repository" because the root was resolved from the copy's location.
+# A pre-set origin now makes that work.
+_1562_copy="$(mktemp -t test-pr-review-loop-copy.XXXXXX)"
+cat "$_1562_suite" > "$_1562_copy"
+run_test "out_of_tree_copy_resolves_repo_root" "yes" \
+  "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" \
+      TEST_PR_REVIEW_LOOP_ORIGIN="$_1562_suite" \
+      bash "$_1562_copy" --area 1 2>/dev/null | grep -q '^Tests: ' && echo yes || echo no)"
+run_test "out_of_tree_copy_bad_origin_exits_2" "2" \
+  "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" \
+      TEST_PR_REVIEW_LOOP_ORIGIN=/nonexistent/suite.sh \
+      bash "$_1562_copy" --area 1 >/dev/null 2>&1; echo $?)"
+rm -f "$_1562_copy"
+unset _1562_copy
+
+# --- AC-3: a truncated run is never mistaken for a clean one ----------------
+run_test "truncation_guard_defined" "yes" \
+  "$(type -t _emit_truncation_guard >/dev/null 2>&1 && echo yes || echo no)"
+
+# With no RESULT emitted, the guard supplies a terminal one and forces non-zero.
+_RESULT_EMITTED=0
+run_test "truncation_guard_forces_nonzero_from_success" "2" \
+  "$(_emit_truncation_guard 0 >/dev/null 2>&1; echo $?)"
+_RESULT_EMITTED=0
+run_test "truncation_guard_emits_result_escalate" "RESULT=escalate" \
+  "$(_emit_truncation_guard 0 2>/dev/null | grep '^RESULT=' || true)"
+_RESULT_EMITTED=0
+run_test "truncation_guard_emits_truncated_reason" "REASON=truncated_run" \
+  "$(_emit_truncation_guard 0 2>/dev/null | grep '^REASON=' || true)"
+_RESULT_EMITTED=0
+run_test "truncation_guard_preserves_kill_status" "143" \
+  "$(_emit_truncation_guard 143 >/dev/null 2>&1; echo $?)"
+
+# When a verdict was reached, the guard must not add a second RESULT line.
+_RESULT_EMITTED=1
+run_test "truncation_guard_silent_after_a_verdict" "" \
+  "$(_emit_truncation_guard 0 2>/dev/null | grep '^RESULT=' || true)"
+_RESULT_EMITTED=1
+run_test "truncation_guard_passes_status_through" "1" \
+  "$(_emit_truncation_guard 1 >/dev/null 2>&1; echo $?)"
+
+# print_kv is the choke point that sets the flag, covering all emission sites.
+_RESULT_EMITTED=0
+print_kv RESULT clean >/dev/null
+run_test "print_kv_records_result_emission" "1" "$_RESULT_EMITTED"
+_RESULT_EMITTED=0
+print_kv REASON something >/dev/null
+run_test "print_kv_ignores_non_result_keys" "0" "$_RESULT_EMITTED"
+_RESULT_EMITTED=0
+
+# --- AC-4: rate-limit ceiling reconciled with the execution budget ----------
+run_test "budget_check_defined" "yes" \
+  "$(type -t _check_execution_budget >/dev/null 2>&1 && echo yes || echo no)"
+
+# Shipped defaults must satisfy the invariant: 4 x 900 = 3600 < 5400.
+run_test "budget_defaults_satisfy_invariant" "BUDGET_INVARIANT=ok" \
+  "$(_check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+run_test "budget_default_worst_case_is_3600" "BUDGET_WORST_CASE_RATE_LIMIT_WAIT_SECONDS=3600" \
+  "$(_check_execution_budget 2>/dev/null | grep '^BUDGET_WORST_CASE' || true)"
+run_test "budget_default_budget_is_5400" "BUDGET_EXECUTION_SECONDS=5400" \
+  "$(_check_execution_budget 2>/dev/null | grep '^BUDGET_EXECUTION_SECONDS=' || true)"
+run_test "budget_defaults_exit_zero" "0" \
+  "$(_check_execution_budget >/dev/null 2>&1; echo $?)"
+
+# A budget below the worst-case wait is a configuration error, reported before
+# any waiting rather than discovered as a truncated run an hour later.
+run_test "budget_too_small_is_violation" "BUDGET_INVARIANT=violated" \
+  "$(PR_REVIEW_LOOP_EXECUTION_BUDGET=600 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+run_test "budget_too_small_exits_nonzero" "1" \
+  "$(PR_REVIEW_LOOP_EXECUTION_BUDGET=600 _check_execution_budget >/dev/null 2>&1; echo $?)"
+run_test "budget_too_small_escalates" "REASON=execution_budget_misconfigured" \
+  "$(PR_REVIEW_LOOP_EXECUTION_BUDGET=600 _check_execution_budget 2>/dev/null | grep '^REASON=' || true)"
+# Equality is a violation too: the wait must fit strictly inside the budget.
+run_test "budget_equal_to_worst_case_is_violation" "BUDGET_INVARIANT=violated" \
+  "$(PR_REVIEW_LOOP_EXECUTION_BUDGET=3600 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+# Raising the retries without raising the budget is caught.
+run_test "budget_raised_retries_violates" "BUDGET_INVARIANT=violated" \
+  "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=8 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+# Lowering the ceiling to match a tighter budget is the supported escape hatch.
+run_test "budget_lowered_ceiling_is_ok" "BUDGET_INVARIANT=ok" \
+  "$(PR_REVIEW_LOOP_EXECUTION_BUDGET=600 CODERABBIT_RATE_LIMIT_MAX_RETRIES=1 \
+     CODERABBIT_RATE_LIMIT_WAIT=300 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+# Non-numeric input falls back to the shipped defaults rather than doing
+# arithmetic on a string.
+run_test "budget_non_numeric_retries_falls_back" "BUDGET_INVARIANT=ok" \
+  "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=abc _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+run_test "budget_non_numeric_wait_falls_back" "BUDGET_INVARIANT=ok" \
+  "$(CODERABBIT_RATE_LIMIT_WAIT=abc _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+run_test "budget_non_numeric_budget_falls_back" "BUDGET_INVARIANT=ok" \
+  "$(PR_REVIEW_LOOP_EXECUTION_BUDGET=abc _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+
+# Zero-padded values pass the all-digit guards, and bash reads a leading-zero
+# operand inside $(( )) as octal. Before the 10# prefix these crashed the check
+# that exists to replace a crash with a clean escalation.
+run_test "budget_octal_retries_does_not_crash" "BUDGET_INVARIANT=violated" \
+  "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=08 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+run_test "budget_octal_retries_no_arith_error" "" \
+  "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=08 _check_execution_budget 2>&1 >/dev/null | grep 'error token' || true)"
+run_test "budget_octal_wait_is_base_10" "BUDGET_WORST_CASE_RATE_LIMIT_WAIT_SECONDS=3600" \
+  "$(CODERABBIT_RATE_LIMIT_WAIT=0900 _check_execution_budget 2>/dev/null | grep '^BUDGET_WORST_CASE' || true)"
+run_test "budget_octal_budget_is_base_10" "BUDGET_EXECUTION_SECONDS=9000" \
+  "$(PR_REVIEW_LOOP_EXECUTION_BUDGET=09000 _check_execution_budget 2>/dev/null | grep '^BUDGET_EXECUTION_SECONDS=' || true)"
+
+# Oversized digit strings wrap 64-bit arithmetic. retries=99999999999999999
+# multiplied out NEGATIVE, which compared as under budget and reported the
+# invariant satisfied — the check accepting the unsafe configuration it exists
+# to reject. Bounds are enforced before any arithmetic now.
+run_test "budget_overflow_retries_rejected" "BUDGET_INVARIANT=violated" \
+  "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=99999999999999999 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+run_test "budget_overflow_retries_not_negative" "" \
+  "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=99999999999999999 _check_execution_budget 2>/dev/null | grep -- '-[0-9]' || true)"
+run_test "budget_overflow_huge_digit_string_rejected" "BUDGET_INVARIANT=violated" \
+  "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=999999999999999999999 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+run_test "budget_overflow_wait_rejected" "BUDGET_INVARIANT=violated" \
+  "$(CODERABBIT_RATE_LIMIT_WAIT=99999999999999999 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+run_test "budget_overflow_budget_rejected" "BUDGET_INVARIANT=violated" \
+  "$(PR_REVIEW_LOOP_EXECUTION_BUDGET=99999999999999999 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+run_test "budget_overflow_escalates" "REASON=execution_budget_misconfigured" \
+  "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=99999999999999999 _check_execution_budget 2>/dev/null | grep '^REASON=' || true)"
+run_test "budget_overflow_exits_nonzero" "1" \
+  "$(CODERABBIT_RATE_LIMIT_MAX_RETRIES=99999999999999999 _check_execution_budget >/dev/null 2>&1; echo $?)"
+# The bound must not reject values that are merely large but legitimate.
+run_test "budget_large_but_valid_is_ok" "BUDGET_INVARIANT=ok" \
+  "$(PR_REVIEW_LOOP_EXECUTION_BUDGET=604800 CODERABBIT_RATE_LIMIT_MAX_RETRIES=1000 \
+     CODERABBIT_RATE_LIMIT_WAIT=600 _check_execution_budget 2>/dev/null | grep '^BUDGET_INVARIANT=' || true)"
+
+# --area= with no value must not silently degrade to a full run.
+run_test "area_filter_empty_equals_value_exits_2" "2" \
+  "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" \
+      bash "$_1562_suite" --area= >/dev/null 2>&1; echo $?)"
+run_test "area_filter_empty_value_exits_2" "2" \
+  "$(env -u TEST_PR_REVIEW_LOOP_SNAPSHOT PATH="$TEST_PR_REVIEW_LOOP_REAL_PATH" \
+      bash "$_1562_suite" --area "" >/dev/null 2>&1; echo $?)"
+
+unset _1562_suite _1562_loop _1562_filtered _1562_guard_out
 
 # ---------------------------------------------------------------------------
 # Summary

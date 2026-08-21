@@ -18,7 +18,171 @@ if [ "${HARNESS_MODE:-0}" -eq 1 ] && [ "${BASH_SOURCE[0]}" != "$0" ]; then
   _HARNESS_MODE_EFFECTIVE=1
 fi
 
+# ---------------------------------------------------------------------------
+# Truncated-run detection (issue #1562)
+#
+# A run killed part-way through — by an outer `timeout` shorter than a
+# legitimate rate-limit wait, or by an operator, or by a session ending —
+# used to produce output with no terminal RESULT= line at all. A caller
+# grepping for RESULT= finds nothing, and "no blocking findings were reported"
+# reads uncomfortably like "no blocking findings exist". The exit code is
+# non-zero in that case (124 from timeout, 143 from SIGTERM), but the exit code
+# is precisely what an orchestrator loses when it captures stdout through a
+# pipeline or a log file.
+#
+# So every exit is made to carry a terminal RESULT=. print_kv is wrapped here
+# to record that a RESULT line was emitted, and the EXIT trap below emits
+# RESULT=escalate / REASON=truncated_run when none ever was.
+_RESULT_EMITTED=0
+
+# Overrides the definition sourced from workflow-lib.sh, deliberately: wrapping
+# the single choke point every RESULT line already passes through is what makes
+# this cover all ~100 emission sites without annotating each one.
+print_kv() {
+  if [ "$1" = "RESULT" ]; then
+    _RESULT_EMITTED=1
+  fi
+  printf '%s=%s\n' "$1" "$2"
+}
+
+# _emit_truncation_guard <exit-status>
+#
+# Emits a terminal RESULT for a run that produced none. The status the caller
+# should exit with is the function's RETURN CODE, not stdout: stdout is where
+# the RESULT lines go, so returning the status there would have made
+# `status="$(_emit_truncation_guard "$status")"` capture the RESULT lines into
+# the status and hand `exit` a multi-line string.
+_emit_truncation_guard() {
+  local status="$1"
+  if [ "$_RESULT_EMITTED" -eq 1 ]; then
+    return "$status"
+  fi
+  print_kv RESULT escalate
+  print_kv REASON truncated_run
+  print_kv TRUNCATED 1
+  print_kv TRUNCATED_EXIT_STATUS "$status"
+  echo "ERROR: pr-review-loop.sh exited without reaching a verdict (status ${status})." >&2
+  echo "  This run was truncated — treat it as NOT reviewed, not as clean." >&2
+  echo "  Common cause: an outer 'timeout' shorter than a single rate-limit wait." >&2
+  echo "  See PR_REVIEW_LOOP_EXECUTION_BUDGET in this script's header for the" >&2
+  echo "  wall clock a caller must allow." >&2
+  # A truncated run must never look successful, whatever killed it.
+  if [ "$status" -eq 0 ]; then
+    status=2
+  fi
+  return "$status"
+}
+
 BUGBOT_HANDLED_SKIP_RC=3
+
+# ---------------------------------------------------------------------------
+# Execution budget vs. rate-limit ceiling (issue #1562)
+#
+# These two numbers were in direct tension and nothing reconciled them:
+#
+#   - The worst-case legitimate CodeRabbit rate-limit wait is
+#     CODERABBIT_RATE_LIMIT_MAX_RETRIES x CODERABBIT_RATE_LIMIT_WAIT, which at
+#     the defaults (4 x 900s) is 3600s — a full hour in which the loop is
+#     working correctly and has nothing to report.
+#   - A run was killed at roughly 65 minutes of foreground polling during the
+#     #1503 work. So the maximum legitimate wait sat within a few minutes of
+#     the observed kill threshold.
+#
+# Two runners then made it worse by wrapping the loop in an outer `timeout`
+# SHORTER than a single 900s rate-limit wait, guaranteeing truncation on any
+# rate-limited PR.
+#
+# PR_REVIEW_LOOP_EXECUTION_BUDGET is the wall clock a caller must allow for
+# this script. The invariant is checked at startup: the worst-case rate-limit
+# wait must be strictly less than the budget, so a correctly-configured run can
+# always finish waiting before the budget it declares. Raising the retry count
+# or the per-retry wait without also raising the budget is a configuration
+# error, and is reported as one rather than discovered as a truncated run an
+# hour later.
+#
+# Callers: allow at least this many seconds. Do NOT wrap this script in a
+# `timeout` shorter than it. If you must bound it more tightly, lower
+# CODERABBIT_RATE_LIMIT_MAX_RETRIES or CODERABBIT_RATE_LIMIT_WAIT and lower the
+# budget to match, so the invariant still holds.
+# The shipped CodeRabbit rate-limit defaults, declared once. Both the review
+# path and the budget invariant below read them from here: the two must agree,
+# and they previously restated 4 and 900 independently, which is precisely the
+# drift that lets a budget check pass while the real wait is something else.
+# Raised to span an hourly vendor quota reset by issue #1509.
+CODERABBIT_RATE_LIMIT_MAX_RETRIES_DEFAULT=4
+CODERABBIT_RATE_LIMIT_WAIT_DEFAULT=900
+
+PR_REVIEW_LOOP_EXECUTION_BUDGET_DEFAULT=5400
+PR_REVIEW_LOOP_EXECUTION_BUDGET="${PR_REVIEW_LOOP_EXECUTION_BUDGET:-$PR_REVIEW_LOOP_EXECUTION_BUDGET_DEFAULT}"
+
+# _check_execution_budget — verify worst-case rate-limit wait < execution budget.
+# Emits BUDGET_* key/value lines so a caller can record what it must allow.
+_check_execution_budget() {
+  local retries="${CODERABBIT_RATE_LIMIT_MAX_RETRIES:-$CODERABBIT_RATE_LIMIT_MAX_RETRIES_DEFAULT}"
+  local wait_s="${CODERABBIT_RATE_LIMIT_WAIT:-$CODERABBIT_RATE_LIMIT_WAIT_DEFAULT}"
+  local budget="$PR_REVIEW_LOOP_EXECUTION_BUDGET"
+
+  case "$retries" in ''|*[!0-9]*) retries="$CODERABBIT_RATE_LIMIT_MAX_RETRIES_DEFAULT" ;; esac
+  case "$wait_s" in ''|*[!0-9]*) wait_s="$CODERABBIT_RATE_LIMIT_WAIT_DEFAULT" ;; esac
+  case "$budget" in ''|*[!0-9]*) budget="$PR_REVIEW_LOOP_EXECUTION_BUDGET_DEFAULT" ;; esac
+
+  # Upper bounds, checked BEFORE any arithmetic. Bash integers are 64-bit and
+  # wrap silently: retries=99999999999999999 multiplied out to a NEGATIVE worst
+  # case, which then compared as comfortably under budget and reported the
+  # invariant satisfied — the check accepting exactly the unsafe configuration
+  # it exists to reject. Bounding the inputs is what makes the comparison
+  # below meaningful; a digit string beyond these is a misconfiguration, not a
+  # value to clamp silently.
+  #
+  # The limits are deliberately generous — far past anything operationally
+  # sensible — because their job is to keep the arithmetic honest, not to
+  # express policy.
+  local max_retries=1000        # 1000 retries at any sane wait is already days
+  local max_wait=86400          # one day per retry
+  local max_budget=604800       # one week of wall clock
+  local bound_error=""
+  if [ "${#retries}" -gt 10 ] || [ "$(( 10#$retries ))" -gt "$max_retries" ]; then
+    bound_error="CODERABBIT_RATE_LIMIT_MAX_RETRIES=$retries exceeds the maximum of $max_retries"
+  elif [ "${#wait_s}" -gt 10 ] || [ "$(( 10#$wait_s ))" -gt "$max_wait" ]; then
+    bound_error="CODERABBIT_RATE_LIMIT_WAIT=$wait_s exceeds the maximum of $max_wait"
+  elif [ "${#budget}" -gt 10 ] || [ "$(( 10#$budget ))" -gt "$max_budget" ]; then
+    bound_error="PR_REVIEW_LOOP_EXECUTION_BUDGET=$budget exceeds the maximum of $max_budget"
+  fi
+  if [ -n "$bound_error" ]; then
+    print_kv BUDGET_INVARIANT violated
+    echo "ERROR: $bound_error." >&2
+    echo "  Values beyond these bounds overflow 64-bit arithmetic and would make" >&2
+    echo "  the budget comparison meaningless." >&2
+    print_kv RESULT escalate
+    print_kv REASON execution_budget_misconfigured
+    return 1
+  fi
+
+  # 10# forces base 10. The guards above accept any all-digit string, including
+  # a zero-padded one, and bash reads a leading-zero operand inside $(( )) as
+  # octal — so CODERABBIT_RATE_LIMIT_MAX_RETRIES=08 passed the guard and then
+  # died with "value too great for base", crashing the very check that exists
+  # to turn a misconfiguration into a clean escalation.
+  local worst
+  worst=$(( 10#$retries * 10#$wait_s ))
+  budget=$(( 10#$budget ))
+  print_kv BUDGET_EXECUTION_SECONDS "$budget"
+  print_kv BUDGET_WORST_CASE_RATE_LIMIT_WAIT_SECONDS "$worst"
+
+  if [ "$worst" -ge "$budget" ]; then
+    print_kv BUDGET_INVARIANT violated
+    echo "ERROR: worst-case rate-limit wait (${retries} x ${wait_s}s = ${worst}s) is not less than" >&2
+    echo "  the execution budget (${budget}s). A rate-limited PR could not finish waiting" >&2
+    echo "  inside the budget this run declares, so it would be truncated rather than" >&2
+    echo "  reviewed. Raise PR_REVIEW_LOOP_EXECUTION_BUDGET, or lower" >&2
+    echo "  CODERABBIT_RATE_LIMIT_MAX_RETRIES / CODERABBIT_RATE_LIMIT_WAIT." >&2
+    print_kv RESULT escalate
+    print_kv REASON execution_budget_misconfigured
+    return 1
+  fi
+  print_kv BUDGET_INVARIANT ok
+  return 0
+}
 
 # CODERABBIT_SKIP_BANNER_RE — matches the CodeRabbit "Review skipped" banner.
 #
@@ -181,7 +345,17 @@ else
     exit 75
   fi
 fi
-trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; [ -n "$_PR_CONFIG_TMPFILE" ] && rm -f "$_PR_CONFIG_TMPFILE"' EXIT
+_on_exit() {
+  local status=$?
+  [ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"
+  [ -n "$_PR_CONFIG_TMPFILE" ] && rm -f "$_PR_CONFIG_TMPFILE"
+  # Runs on death-by-signal too: the TERM/INT handlers below re-raise, and bash
+  # still runs the EXIT trap on the way out (verified for both `timeout` and a
+  # direct SIGTERM), which is what lets a killed run report itself.
+  _emit_truncation_guard "$status" || status=$?
+  exit "$status"
+}
+trap _on_exit EXIT
 # SIGTERM/SIGINT handlers: kill the current background child (if any) so the
 # handler fires promptly even while a foreground sleep or gh api call is
 # running, then clean up the lock dir and re-raise the signal so the parent
@@ -4386,8 +4560,8 @@ run_coderabbit_review() {
   # exhausted its retries roughly 54 minutes before the vendor could possibly answer
   # and escalated PRs that had nothing wrong with them — the dominant failure mode
   # for unattended overnight runs. Both env vars still override.
-  local coderabbit_rate_limit_max_retries="${CODERABBIT_RATE_LIMIT_MAX_RETRIES:-4}"
-  local coderabbit_rate_limit_wait="${CODERABBIT_RATE_LIMIT_WAIT:-900}"
+  local coderabbit_rate_limit_max_retries="${CODERABBIT_RATE_LIMIT_MAX_RETRIES:-$CODERABBIT_RATE_LIMIT_MAX_RETRIES_DEFAULT}"
+  local coderabbit_rate_limit_wait="${CODERABBIT_RATE_LIMIT_WAIT:-$CODERABBIT_RATE_LIMIT_WAIT_DEFAULT}"
   # See coderabbit_resolve_no_trigger_timeout / coderabbit_no_trigger_timeout_default
   # (issue #1433) for why the default is computed from max_wait rather than a
   # fixed constant, and for env var override / validation-fallback handling
@@ -6833,6 +7007,14 @@ fi
 # per-invocation id).
 current_run_id="$(reviewer_loop_resolve_run_id)"
 print_kv RUN_ID "$current_run_id"
+
+# Reconcile the rate-limit ceiling against the declared execution budget before
+# any waiting starts (issue #1562). Failing here costs a second; discovering the
+# same misconfiguration by being killed mid-wait costs an hour and reports
+# nothing.
+if ! _check_execution_budget; then
+  exit 2
+fi
 
 # --- Release PR early-exit guard ---
 # Release PRs (release/* -> main) and hotfix PRs (hotfix/* -> main) carry
