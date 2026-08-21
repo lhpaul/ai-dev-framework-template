@@ -605,8 +605,28 @@ unset MOCK_GH_PR_MODE
 run_test "null_ci_exit_zero" "0" "$(status_code "$out")"
 run_contains "null_ci_structured" "| pull_request.ci | verified | no checks |" "$(body "$out")"
 
+# Shared fixture: a reviewer config where `bugbot` IS configured. Several
+# tests below assert behavior that only engages when the fixture's mock bot
+# (authored as `cursor` / `Cursor Bugbot`, bugbot's login and check name) is
+# recognized as belonging to a *configured* review platform. Pinning this
+# config explicitly via AI_DEV_WORKFLOW_CONFIG_FILE — rather than depending on
+# whatever review.on_draft.github / review.on_ready.github this repository
+# happens to have committed — is what makes these tests independent of live
+# repository configuration (issue #1549).
+bugbot_configured_config="$TMP_ROOT/bugbot-configured-workflow.yaml"
+cat > "$bugbot_configured_config" <<'YAML'
+review:
+  on_draft:
+    github:
+      - pr-agent
+  on_ready:
+    github:
+      - bugbot
+YAML
+
 repo="$(make_repo reviewer-check-failure)"
 export MOCK_GH_PR_MODE=reviewer_check_failure
+export AI_DEV_WORKFLOW_CONFIG_FILE="$bugbot_configured_config"
 export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
 out="$(self_check_output \
   --repo-root "$repo" \
@@ -616,12 +636,13 @@ out="$(self_check_output \
   --worktree-path "$repo" \
   --pr 17 \
   --expected-base develop)"
-unset MOCK_GH_PR_MODE
+unset MOCK_GH_PR_MODE AI_DEV_WORKFLOW_CONFIG_FILE
 run_test "reviewer_check_failure_excluded_exit_zero" "0" "$(status_code "$out")"
 run_contains "reviewer_check_failure_excluded" "| pull_request.ci | verified | no checks |" "$(body "$out")"
 
 repo="$(make_repo reviewer-workflow-failure)"
 export MOCK_GH_PR_MODE=reviewer_workflow_failure
+export AI_DEV_WORKFLOW_CONFIG_FILE="$bugbot_configured_config"
 export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
 out="$(self_check_output \
   --repo-root "$repo" \
@@ -631,7 +652,7 @@ out="$(self_check_output \
   --worktree-path "$repo" \
   --pr 17 \
   --expected-base develop)"
-unset MOCK_GH_PR_MODE
+unset MOCK_GH_PR_MODE AI_DEV_WORKFLOW_CONFIG_FILE
 run_test "reviewer_workflow_failure_excluded_exit_zero" "0" "$(status_code "$out")"
 run_contains "reviewer_workflow_failure_excluded" "| pull_request.ci | verified | no checks |" "$(body "$out")"
 
@@ -741,6 +762,7 @@ run_contains "non_clean_summary_observed" "| pull_request.review_summary | verif
 
 repo="$(make_repo addressed-thread)"
 export MOCK_GH_THREAD_MODE=addressed
+export AI_DEV_WORKFLOW_CONFIG_FILE="$bugbot_configured_config"
 export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
 out="$(self_check_output \
   --repo-root "$repo" \
@@ -751,7 +773,7 @@ out="$(self_check_output \
   --pr 17 \
   --expected-base develop \
   --require-review-threads true)"
-unset MOCK_GH_THREAD_MODE
+unset MOCK_GH_THREAD_MODE AI_DEV_WORKFLOW_CONFIG_FILE
 run_test "addressed_thread_exit_zero" "0" "$(status_code "$out")"
 run_contains "addressed_thread_verified" "| pull_request.review_threads | verified | unresolved=0 |" "$(body "$out")"
 
@@ -842,6 +864,7 @@ run_contains "graphql_thread_fetch_failed_overall" "- Result: unavailable_requir
 
 repo="$(make_repo unresolved-thread)"
 export MOCK_GH_THREAD_MODE=unresolved
+export AI_DEV_WORKFLOW_CONFIG_FILE="$bugbot_configured_config"
 export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
 out="$(self_check_output \
   --repo-root "$repo" \
@@ -852,12 +875,13 @@ out="$(self_check_output \
   --pr 17 \
   --expected-base develop \
   --require-review-threads true)"
-unset MOCK_GH_THREAD_MODE
+unset MOCK_GH_THREAD_MODE AI_DEV_WORKFLOW_CONFIG_FILE
 run_test "unresolved_thread_exit_one" "1" "$(status_code "$out")"
 run_contains "unresolved_thread_discrepancy" "| pull_request.review_threads | discrepancy | unresolved=1 graph=1 rest=0 |" "$(body "$out")"
 
 repo="$(make_repo rest-unreplied-thread)"
 export MOCK_GH_REST_THREAD_MODE=unreplied
+export AI_DEV_WORKFLOW_CONFIG_FILE="$bugbot_configured_config"
 export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
 out="$(self_check_output \
   --repo-root "$repo" \
@@ -868,13 +892,14 @@ out="$(self_check_output \
   --pr 17 \
   --expected-base develop \
   --require-review-threads true)"
-unset MOCK_GH_REST_THREAD_MODE
+unset MOCK_GH_REST_THREAD_MODE AI_DEV_WORKFLOW_CONFIG_FILE
 run_test "rest_unreplied_thread_exit_one" "1" "$(status_code "$out")"
 run_contains "rest_unreplied_thread_discrepancy" "| pull_request.review_threads | discrepancy | unresolved=1 graph=0 rest=1 |" "$(body "$out")"
 
 repo="$(make_repo graph-rest-same-thread)"
 export MOCK_GH_THREAD_MODE=unresolved
 export MOCK_GH_REST_THREAD_MODE=unreplied
+export AI_DEV_WORKFLOW_CONFIG_FILE="$bugbot_configured_config"
 export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
 out="$(self_check_output \
   --repo-root "$repo" \
@@ -885,12 +910,13 @@ out="$(self_check_output \
   --pr 17 \
   --expected-base develop \
   --require-review-threads true)"
-unset MOCK_GH_THREAD_MODE MOCK_GH_REST_THREAD_MODE
+unset MOCK_GH_THREAD_MODE MOCK_GH_REST_THREAD_MODE AI_DEV_WORKFLOW_CONFIG_FILE
 run_test "graph_rest_same_thread_exit_one" "1" "$(status_code "$out")"
 run_contains "graph_rest_same_thread_not_double_counted" "| pull_request.review_threads | discrepancy | unresolved=1 graph=1 rest=0 |" "$(body "$out")"
 
 repo="$(make_repo paginated-thread)"
 export MOCK_GH_THREAD_MODE=paginated
+export AI_DEV_WORKFLOW_CONFIG_FILE="$bugbot_configured_config"
 export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
 out="$(self_check_output \
   --repo-root "$repo" \
@@ -901,9 +927,74 @@ out="$(self_check_output \
   --pr 17 \
   --expected-base develop \
   --require-review-threads true)"
-unset MOCK_GH_THREAD_MODE
+unset MOCK_GH_THREAD_MODE AI_DEV_WORKFLOW_CONFIG_FILE
 run_test "paginated_thread_exit_one" "1" "$(status_code "$out")"
 run_contains "paginated_thread_discrepancy" "| pull_request.review_threads | discrepancy | unresolved=1 graph=1 rest=0 |" "$(body "$out")"
+
+# Regression guard (issue #1549): thread and CI-check-exclusion detection
+# must depend only on whether `bugbot` itself is configured, never on the
+# ambient repository config or on what else happens to be configured
+# alongside it. Prove both directions with the same fixture thread: (a) an
+# unrelated/irrelevant platform set that still includes bugbot still detects
+# the thread; (b) an explicitly empty config does not detect it. If this
+# coupling regresses again — e.g. a future edit drops the
+# AI_DEV_WORKFLOW_CONFIG_FILE pin from the tests above — this pair keeps
+# failing (or silently passing for the wrong reason) independent of whatever
+# review.on_draft.github / review.on_ready.github this repository commits.
+alt_bugbot_config="$TMP_ROOT/alt-bugbot-workflow.yaml"
+cat > "$alt_bugbot_config" <<'YAML'
+review:
+  on_draft:
+    github:
+      - some-unrelated-platform
+  on_ready:
+    github:
+      - another-unrelated-platform
+      - bugbot
+YAML
+
+repo="$(make_repo unresolved-thread-alt-config)"
+export MOCK_GH_THREAD_MODE=unresolved
+export AI_DEV_WORKFLOW_CONFIG_FILE="$alt_bugbot_config"
+export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
+out="$(self_check_output \
+  --repo-root "$repo" \
+  --issue 1202 \
+  --branch feature/1202-self-check \
+  --stage implementation \
+  --worktree-path "$repo" \
+  --pr 17 \
+  --expected-base develop \
+  --require-review-threads true)"
+unset MOCK_GH_THREAD_MODE AI_DEV_WORKFLOW_CONFIG_FILE WORKFLOW_SELF_CHECK_TRACKER_STATUS
+run_test "unresolved_thread_alt_config_exit_one" "1" "$(status_code "$out")"
+run_contains "unresolved_thread_alt_config_discrepancy" "| pull_request.review_threads | discrepancy | unresolved=1 graph=1 rest=0 |" "$(body "$out")"
+
+empty_review_config="$TMP_ROOT/empty-review-workflow.yaml"
+cat > "$empty_review_config" <<'YAML'
+review:
+  on_draft:
+    github: []
+  on_ready:
+    github: []
+YAML
+
+repo="$(make_repo unresolved-thread-empty-config)"
+export MOCK_GH_THREAD_MODE=unresolved
+export AI_DEV_WORKFLOW_CONFIG_FILE="$empty_review_config"
+export WORKFLOW_SELF_CHECK_TRACKER_STATUS="Development in Review"
+out="$(self_check_output \
+  --repo-root "$repo" \
+  --issue 1202 \
+  --branch feature/1202-self-check \
+  --stage implementation \
+  --worktree-path "$repo" \
+  --pr 17 \
+  --expected-base develop \
+  --require-review-threads true)"
+unset MOCK_GH_THREAD_MODE AI_DEV_WORKFLOW_CONFIG_FILE WORKFLOW_SELF_CHECK_TRACKER_STATUS
+run_test "unresolved_thread_empty_config_exit_one" "1" "$(status_code "$out")"
+run_contains "unresolved_thread_empty_config_unavailable" "| pull_request.review_threads | unavailable_required | no configured bot logins |" "$(body "$out")"
 
 repo="$(make_repo tracker-required)"
 export WORKFLOW_SELF_CHECK_TRACKER_STATUS="__FAIL__"
