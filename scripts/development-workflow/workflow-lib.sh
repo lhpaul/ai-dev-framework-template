@@ -98,11 +98,15 @@ workflow_local_review_override_root() {
 }
 
 # _workflow_local_file_has_review_section <file>
-# True when the file exists and declares a top-level `review:` mapping.
+# True when the file exists and declares a top-level `review:` key, whatever
+# its value — empty, `{}`, `null`, `~`, or a nested mapping. Matches on the
+# key alone (mirrors workflow-config-resolver.py's `"review" not in local`
+# key-presence check) so an explicit-but-empty `review: {}` is still treated
+# as present and does not fall through to the main clone's file.
 _workflow_local_file_has_review_section() {
   local file="$1"
   [ -f "$file" ] || return 1
-  grep -Eq '^review:[[:space:]]*(#.*)?$' "$file"
+  grep -Eq '^review:' "$file"
 }
 
 workflow_local_config_file() {
