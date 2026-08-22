@@ -27,7 +27,15 @@ each evidence file to its own documented shape.
 
 Minimal worked example. Only .pr.number, .pr.headRefName, and .pr.baseRefName
 are hard-required (the gate refuses to evaluate without them); every other key
-is optional and defaults per the rules noted inline below:
+is optional and defaults per the rules noted inline below.
+
+.reviewer.headSha and .risk.headSha bind each verdict to the head it was
+produced at (issue #1558). When present and different from .pr.headSha the
+gate refuses with reason "stale_verdict_head: ..." and decision fix_required —
+a sibling merge that forced a conflict resolution gives the PR a new head, and
+a verdict from the old head is not evidence about the new one. Omit the field
+only when the verdict really was produced at the current head; assemble
+.pr.headSha from a live read immediately before running the gate.
 
   {
     "policy": {
@@ -53,11 +61,13 @@ is optional and defaults per the rules noted inline below:
     },
     "reviewer": {
       "status": "clean",
-      "blockingCount": 0
+      "blockingCount": 0,
+      "headSha": "<40-char-sha>"
     },
     "risk": {
       "mergePermitted": true,
-      "blockers": []
+      "blockers": [],
+      "headSha": "<40-char-sha>"
     },
     "statusChecks": [
       {"name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}
@@ -1230,6 +1240,17 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
    elif risk_merge_permitted != true
    then add_reason($reasons; "risk gate does not permit merge")
    else $reasons end) as $reasons |
+  # Per-revision binding (#1558): a verdict recorded at another head is not
+  # evidence about this one. Present-and-different is refused; absent is
+  # accepted for compatibility with evidence assembled before the field existed.
+  (((.reviewer.headSha // .reviewer.head_sha // "") | tostring) as $reviewerHead |
+   if ($reviewerHead != "" and $reviewerHead != pr_head_sha)
+   then add_reason($reasons; "stale_verdict_head: reviewer-loop verdict was produced at " + $reviewerHead + " but the PR head is " + pr_head_sha + "; re-run the reviewer loop at the current head before any merge decision")
+   else $reasons end) as $reasons |
+  (((.risk.headSha // .risk.head_sha // "") | tostring) as $riskHead |
+   if ($riskHead != "" and $riskHead != pr_head_sha)
+   then add_reason($reasons; "stale_verdict_head: risk classification was produced at " + $riskHead + " but the PR head is " + pr_head_sha + "; re-run run-epic-risk-classifier.sh at the current head before any merge decision")
+   else $reasons end) as $reasons |
   (if (.pr.auditDispositionPresent // false) != true
    then add_reason($reasons; "PR disposition audit is missing")
    else $reasons end) as $reasons |
@@ -1244,6 +1265,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
       elif $reviewerAccessClassification == "insufficient_evidence" then "blocked"
       elif ($reviewerAccessClassification | IN("access_restricted", "authorization_required", "authorization_stale", "audit_required")) then "human_required"
       elif $count == 0 then "merge_allowed"
+      elif ($reasons | any(test("stale_verdict_head"))) then "fix_required"
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "fix_required"
       elif ($reasons | any(test("authority|risk gate|needs-setup|Backlog|human_checkpoint_required|human-checkpoint|graduation_approval_required|security_sensitive_advisory_pending|evidence_schema_mismatch"))) then "human_required"
       else "blocked"
@@ -1257,6 +1279,7 @@ decision_json="$(printf '%s\n' "$state_json" | jq '
       if $exceptionalBypassPermitted then "execute exactly the named admin merge once, then verify merge state, cleanup, tracker reconciliation, and audit update"
       elif ($reviewerAccessClassification | IN("access_restricted", "authorization_required", "authorization_stale", "audit_required", "insufficient_evidence")) then $reviewerAccess.primaryAction
       elif $count == 0 then "record merge evidence and use the repository merge protocol"
+      elif ($reasons | any(test("stale_verdict_head"))) then "the PR head moved after its verdicts were produced: re-run the reviewer loop, CI loop, and risk classification at the current head, rebuild the evidence file from a live PR read, and rerun this gate"
       elif ($reasons | any(test("reviewer blocking|CI checks|unresolved blocking|advisories"))) then "remove readiness labels, fix, rerun validation, reviewer loop, CI loop, and this gate"
       elif ($reasons | any(test("human_checkpoint_required|human-checkpoint"))) then "stop for the named human checkpoint action, record satisfied or waived evidence, sync labels, and rerun this gate"
       elif ($reasons | any(test("graduation_approval_required"))) then "stop for explicit graduation approval via /graduate-development before mutating"
