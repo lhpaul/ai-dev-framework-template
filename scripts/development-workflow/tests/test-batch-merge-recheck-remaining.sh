@@ -50,7 +50,7 @@ emit_pr() {
     labels_json='[{"name":"needs-fixes"}]'
   fi
   printf '{"number":%s,"state":"%s","isDraft":%s,"baseRefName":"%s","headRefName":"%s","headRefOid":"%s","mergeStateStatus":"%s","labels":%s,"statusCheckRollup":%s}\n' \
-    "$pr" "$state" "$draft" "$base" "$head" "${MOCK_HEAD_OID:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" "$merge_state" "$labels_json" "$checks"
+    "$pr" "$state" "$draft" "$base" "$head" "${MOCK_HEAD_OID-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" "$merge_state" "$labels_json" "$checks"
 }
 
 count_for() {
@@ -130,6 +130,11 @@ case "$*" in
       head_changed_annotate)
         MOCK_HEAD_OID=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb emit_pr 102 OPEN false develop feature/mock-pr-102 DIRTY "$check_success"
         ;;
+      head_unavailable)
+        # gh omitted headRefOid (transient API gap): with a binding present,
+        # this must not read as "nothing to re-verify" (#1558).
+        MOCK_HEAD_OID="" emit_pr 102 OPEN false develop feature/mock-pr-102 CLEAN "$check_success"
+        ;;
       dirty_pending)
         emit_pr 102 OPEN false develop feature/mock-pr-102 DIRTY "$check_pending"
         ;;
@@ -163,11 +168,15 @@ case "$*" in
         ;;
     esac
     ;;
-  api\ --paginate\ repos/\{owner\}/\{repo\}/issues/102/comments?per_page=100\ --jq*)
+  api\ --paginate\ repos/\{owner\}/\{repo\}/issues/102/comments?per_page=100)
     # Annotation lookup: an existing marker comment only once the mock has
     # "created" one, so the second annotate run exercises the PATCH path.
+    # Real gh api output shape (raw comments, filtered locally by jq now
+    # that the marker match happens outside gh's own --jq).
     if [ -f "$MOCK_GH_STATE_DIR/hold-comment-102" ]; then
-      printf '777\n'
+      printf '[{"id":777,"body":"<!-- batch-merge-hold:v1 -->\\nBatch merge hold"}]\n'
+    else
+      printf '[]\n'
     fi
     ;;
   api\ repos/\{owner\}/\{repo\}/issues/102/comments\ -f\ body=*)
@@ -293,6 +302,16 @@ run_test "head_changed_voids_all_verdicts" "reviewer_loop,ci,risk_classification
   "$(printf '%s\n' "$head_changed_output" | jq -r 'select(.pr == 102) | .verdicts_voided | join(",")')"
 run_test "head_changed_required_action" "reverify_at_current_head" "$(json_field "$head_changed_output" 102 required_action)"
 run_test "head_changed_no_annotation_without_flag" "null" "$(json_field "$head_changed_output" 102 annotation)"
+# An unreadable live head (gh omitted headRefOid) must not read as "nothing
+# to re-verify" -- treat it at least as conservatively as a confirmed change.
+export MOCK_SCENARIO=head_unavailable
+rm -f "$MOCK_GH_STATE_DIR"/*.count "$MOCK_GH_STATE_DIR"/hold-*
+head_unavailable_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --reviewed-head-shas "102:$_sha_a")"
+run_test "head_unavailable_blocks" "merge_blocked" "$(json_field "$head_unavailable_output" 102 classification)"
+run_test "head_unavailable_reason" "head_sha_unavailable" "$(json_field "$head_unavailable_output" 102 reason)"
+run_test "head_unavailable_voids_all_verdicts" "reviewer_loop,ci,risk_classification,delegated_gate" \
+  "$(printf '%s\n' "$head_unavailable_output" | jq -r 'select(.pr == 102) | .verdicts_voided | join(",")')"
+run_test "head_unavailable_required_action" "reverify_at_current_head" "$(json_field "$head_unavailable_output" 102 required_action)"
 # Same PR, same head as reviewed: the binding is satisfied and the normal
 # classification applies (pending CI → retried → clean in the default scenario).
 export MOCK_SCENARIO=default
@@ -324,6 +343,9 @@ export MOCK_SCENARIO=head_changed_annotate
 rm -f "$MOCK_GH_STATE_DIR"/*.count "$MOCK_GH_STATE_DIR"/hold-*
 annotate_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --reviewed-head-shas "102:$_sha_a" --annotate)"
 run_test "annotate_creates_comment" "created" "$(json_field "$annotate_output" 102 annotation)"
+# The JSONL contract (one JSON object per line, Protocol 94 Step 4.5) must
+# survive stamping .annotation onto a merge_blocked record.
+run_test "annotate_output_stays_jsonl" "1" "$(printf '%s\n' "$annotate_output" | wc -l | tr -d ' ')"
 run_test "annotate_body_has_marker" "yes" "$(grep -q 'batch-merge-hold:v1' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
 run_test "annotate_body_names_sibling" "yes" "$(grep -q '#101 (merged)' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
 run_test "annotate_body_names_reason" "yes" "$(grep -q 'head_sha_changed' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"

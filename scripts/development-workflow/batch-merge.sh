@@ -109,7 +109,10 @@ Usage:
           it as PR_HEAD_SHA). A PR whose live head differs is reported
           classification=merge_blocked reason=head_sha_changed with
           verdicts_voided listing what the new head invalidates (#1558) —
-          even when its merge state is CLEAN.
+          even when its merge state is CLEAN. If the live head cannot be read
+          at all, reason=head_sha_unavailable carries the same
+          verdicts_voided and required_action=reverify_at_current_head —
+          an unreadable head must not be read as "nothing to re-verify".
           --annotate writes (or updates in place) a <!-- batch-merge-hold:v1 -->
           comment on every merge_blocked PR so the hold reason, the
           invalidating sibling, and the re-verification requirement are on
@@ -198,13 +201,15 @@ emit_recheck_record() {
       # consumer reads one vocabulary (#1558). A new head voids every verdict
       # computed against the old one; a dirty PR will get a new head once its
       # conflict is resolved, so the re-verification requirement is the same —
-      # it just comes one step later.
+      # it just comes one step later. An unreadable head is treated the same
+      # as a changed one: the caller cannot prove the head still matches the
+      # reviewed SHA, so it must not read as "nothing to re-verify".
       def verdicts_voided:
-        if $reason == "head_sha_changed"
+        if $reason == "head_sha_changed" or $reason == "head_sha_unavailable"
         then ["reviewer_loop", "ci", "risk_classification", "delegated_gate"]
         else [] end;
       def required_action:
-        if $reason == "head_sha_changed" then "reverify_at_current_head"
+        if $reason == "head_sha_changed" or $reason == "head_sha_unavailable" then "reverify_at_current_head"
         elif $reason == "merge_state_non_clean" then "resolve_conflict_then_reverify"
         elif $reason == "checks_failed" then "fix_ci_then_reverify"
         else null end;
@@ -259,8 +264,17 @@ annotate_hold_comment() {
       "_Recorded at " + $ts + "; updated in place on every recheck. A held PR is not a parked PR: keep it conflict-free and re-verify the reviewer loop, CI, risk classification and the delegated gate at the current head before any merge decision (#1558)._"
     ] | join("\n")' 2>/dev/null)" || { printf 'failed:render\n'; return 0; }
 
-  existing_id="$(gh api --paginate "repos/{owner}/{repo}/issues/${pr}/comments?per_page=100" \
-    --jq "[.[] | select((.body // \"\") | contains(\"${marker}\"))] | last | .id // empty" 2>/dev/null | tail -n 1 || true)"
+  # Look up separately from filtering so a real gh api failure (auth,
+  # network, rate limit) is reported as failed:lookup instead of being read
+  # as "no existing comment", which would create a duplicate on every
+  # subsequent recheck instead of updating the one hold comment in place.
+  local comments_raw
+  if ! comments_raw="$(gh api --paginate "repos/{owner}/{repo}/issues/${pr}/comments?per_page=100" 2>/dev/null)"; then
+    printf 'failed:lookup\n'
+    return 0
+  fi
+  existing_id="$(printf '%s\n' "$comments_raw" | jq -r --arg marker "$marker" \
+    '[.[] | select((.body // "") | contains($marker))] | last | .id // empty' 2>/dev/null | tail -n 1)"
   status=0
   if [ -n "$existing_id" ]; then
     gh api "repos/{owner}/{repo}/issues/comments/${existing_id}" -X PATCH -f body="$body" >/dev/null 2>&1 || status=$?
@@ -287,7 +301,11 @@ emit_remaining_pr_record() {
     pr="$(printf '%s\n' "$record" | jq -r '.pr')"
     if [ "$classification" = "merge_blocked" ] && [ "$reason" != "already_merged" ]; then
       annotation="$(annotate_hold_comment "$pr" "$record")"
-      record="$(printf '%s\n' "$record" | jq --arg a "$annotation" '.annotation = $a')"
+      # -c is mandatory: this record is printed straight to stdout as a JSONL
+      # line (Protocol 94 Step 4.5 parses one JSON object per line). Without
+      # it jq pretty-prints the object across ~20 lines and corrupts the
+      # stream for every consumer downstream of --annotate.
+      record="$(printf '%s\n' "$record" | jq -c --arg a "$annotation" '.annotation = $a')"
     fi
   fi
   printf '%s\n' "$record"
@@ -771,7 +789,7 @@ cmd_annotate_hold() {
   record="$(emit_recheck_record "hold" "$pr" "" "${sibling:-null}" "null" "null" "$merge_state" "$checks_state" "merge_blocked" "false" "0" "null" "hold" "$reason" "$head_sha" "")"
   # A held PR's verdicts are not void yet — but it must be kept conflict-free
   # and re-verified at whatever head it has when the hold lifts.
-  record="$(printf '%s\n' "$record" | jq '.required_action = "keep_conflict_free_then_reverify_before_merge"')"
+  record="$(printf '%s\n' "$record" | jq -c '.required_action = "keep_conflict_free_then_reverify_before_merge"')"
   annotation="$(annotate_hold_comment "$pr" "$record" "${held_by:-batch-merge.sh annotate-hold}")"
   print_kv PR "$pr"
   print_kv HOLD_REASON "$reason"
@@ -786,7 +804,7 @@ cmd_recheck_remaining() {
   local after_merged_pr=""
   local approved_unready_prs="${BATCH_MERGE_APPROVED_UNREADY_PRS:-}"
   local reviewed_head_shas=""
-  RECHECK_ANNOTATE="false"
+  local RECHECK_ANNOTATE="false"
 
   while [ $# -gt 0 ]; do
     case "$1" in

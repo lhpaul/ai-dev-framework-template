@@ -403,7 +403,10 @@ After a clean or resolved merge, in order:
      PR without reordering. `reason=head_sha_changed` means the head moved
      after its verdicts were produced: `verdicts_voided` lists
      `reviewer_loop`, `ci`, `risk_classification` and `delegated_gate`, and
-     `required_action=reverify_at_current_head`. `reason=merge_state_non_clean`
+     `required_action=reverify_at_current_head`. `reason=head_sha_unavailable`
+     means the live head could not be read at all and is treated the same as
+     `head_sha_changed` — an unreadable head must not read as "nothing to
+     re-verify". `reason=merge_state_non_clean`
      with `required_action=resolve_conflict_then_reverify` means the head has
      not moved yet but will once the conflict is resolved, so the same
      re-verification follows. `annotation` reports whether the hold comment
