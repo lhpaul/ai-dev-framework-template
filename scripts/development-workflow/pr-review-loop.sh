@@ -8359,7 +8359,7 @@ if [ "$aggregate_result" = "clean" ] \
   # submitted between the loop starting and the settle beginning still counts as
   # this HEAD's review, and anchoring to "now" would wait for a second one.
   # Anchor to the head this run reviewed, captured before dispatch. The
-  # previous form, commits/${head_sha:-HEAD}, read a variable that is only
+  # previous form read head_sha with a HEAD fallback, and head_sha is only
   # ever function-local, so at this scope it asked the API for commits/HEAD —
   # which GitHub resolves to the DEFAULT BRANCH head. Measured on PR #1575:
   # that anchor was nine days old, so any review CodeRabbit had ever
