@@ -667,21 +667,25 @@ def local_product_repo(local: dict[str, Any], local_path: Path, name: str) -> di
 
 
 def resolve_local_path(
-    repo_root: Path,
     local: dict[str, Any],
     local_path: Path,
     name: str,
     require_local: bool,
 ) -> tuple[str, str]:
+    # Relative local_path/checkout_root values are anchored to local_path's own
+    # directory, not repo_root. When repo_root is a linked worktree without its
+    # own local config, local_path resolves to the main clone's file (#1560);
+    # anchoring to repo_root there would resolve the same stored relative value
+    # to a different absolute path depending on which checkout it is read from.
     local_entry = local_product_repo(local, local_path, name)
     explicit = local_entry.get("local_path") or local_entry.get("checkout_path")
     if explicit:
-        return str((repo_root / str(explicit)).resolve()) if not os.path.isabs(str(explicit)) else str(explicit), "local_override"
+        return str((local_path.parent / str(explicit)).resolve()) if not os.path.isabs(str(explicit)) else str(explicit), "local_override"
     checkout_root = local.get("checkout_root")
     if checkout_root:
         base = Path(str(checkout_root))
         if not base.is_absolute():
-            base = (repo_root / base).resolve()
+            base = (local_path.parent / base).resolve()
         return str(base / name), "checkout_root"
     if require_local:
         raise ConfigError(
@@ -758,7 +762,16 @@ def dump_yaml_subset(value: Any, indent: int = 0) -> list[str]:
 
 
 def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_value: str) -> Path:
-    _, local, _, local_path = load_configs(repo_root)
+    # Always read and write the checkout's own local config file, never the
+    # main clone fallback that load_configs()/resolve_local_config() applies
+    # for review-override resolution (#1560). Two problems otherwise: this
+    # would silently mutate a different checkout's file from inside a linked
+    # worktree, and normalized_path below is computed relative to repo_root —
+    # if that write landed in another directory (the main clone), the stored
+    # relative path would resolve incorrectly whenever repo_root and the main
+    # clone are not the same filesystem depth apart from the target path.
+    local_path = repo_root / LOCAL_CONFIG_NAME
+    local = parse_yaml_subset(local_path)
     repos = as_list(local.get("product_repos"), local_path, "product_repos")
     updated = False
     match_count = 0
@@ -973,7 +986,7 @@ def resolve_context(args: argparse.Namespace) -> dict[str, str]:
     if mode == "workflow_hub":
         repo = select_product_repo(product_repos(shared, shared_path), args.repo, shared_path)
         local_value, local_source = resolve_local_path(
-            repo_root, local, local_path, str(repo["name"]), bool(args.require_local)
+            local, local_path, str(repo["name"]), bool(args.require_local)
         )
         github_repo = str(repo.get("github_repo") or "")
         if not github_repo and repo.get("git_url"):
@@ -1052,7 +1065,7 @@ def scalar_from_path(data: dict[str, Any], path: list[str]) -> str:
 def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
     repo_root = repo_root_from_args(args.repo_root)
     local_path, local_origin, main_clone_file = resolve_local_config(repo_root)
-    _, local, _, _ = load_configs(repo_root)
+    local = parse_yaml_subset(local_path)
     local_file = str(local_path) if local_path.is_file() else ""
     if not local_file:
         local_origin = ""

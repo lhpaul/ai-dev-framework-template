@@ -894,6 +894,42 @@ plain_output="$(workflow_review_override_context "$(fixture_dir plain-no-git)")"
 run_contains "plain_dir_override_origin_empty" "LOCAL_OVERRIDE_ORIGIN=" "$plain_output"
 git -C "$worktree_main" worktree remove --force "$worktree_linked"
 
+# set-local-path (workflow_hub product_repos local paths) must stay scoped to
+# the checkout's own local file even when run from a linked worktree whose
+# main clone already has a local override — writing into the fallback-resolved
+# path would (a) silently mutate a different checkout's file and (b) store a
+# local_path/checkout_root value relative to repo_root inside a file that
+# lives in a different directory, breaking resolution later.
+hub_worktree_main="$(fixture_dir hub-worktree-main)"
+git -C "$hub_worktree_main" init -q
+cat > "$hub_worktree_main/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: demo
+      github_repo: example/demo
+YAML
+git -C "$hub_worktree_main" add .ai-dev-workflow.yaml
+git -C "$hub_worktree_main" -c user.name=fixture -c user.email=fixture@example.com commit -q -m init
+cat > "$hub_worktree_main/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    runner: [claude]
+YAML
+hub_worktree_linked="$TMP_ROOT/hub-worktree-linked"
+git -C "$hub_worktree_main" worktree add -q "$hub_worktree_linked" -b fixture/hub-worktree-linked HEAD
+python3 "$RESOLVER" set-local-path --repo-root "$hub_worktree_linked" --repo demo --local-path "$TMP_ROOT/demo-checkout" >/dev/null
+run_test "set_local_path_from_worktree_writes_own_file" "present" "$([ -f "$hub_worktree_linked/.ai-dev-workflow.local.yaml" ] && echo present || echo absent)"
+run_test "set_local_path_from_worktree_leaves_main_clone_untouched" "review:
+  on_draft:
+    runner: [claude]" "$(cat "$hub_worktree_main/.ai-dev-workflow.local.yaml")"
+worktree_resolve_output="$(python3 "$RESOLVER" resolve --repo-root "$hub_worktree_linked" --repo demo --require-local)"
+run_contains "set_local_path_from_worktree_resolves_correctly" "TARGET_LOCAL_PATH=$TMP_ROOT/demo-checkout" "$worktree_resolve_output"
+git -C "$hub_worktree_main" worktree remove --force "$hub_worktree_linked"
+unset hub_worktree_main hub_worktree_linked worktree_resolve_output
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"

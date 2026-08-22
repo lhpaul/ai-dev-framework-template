@@ -53,6 +53,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hard-fail states whether an override was present but unpropagated, and the
   worktree-entry step verifies continuity before Step 7a. Regression tests
   create the worktree with plain `git worktree add`, not a helper.
+  `set-local-path` (`workflow_hub` product-repo local checkout paths, a
+  separate mechanism that shares the same local file) stays scoped to writing
+  and reading the checkout's own file, never the main-clone fallback — writing
+  there from a worktree would silently mutate a different checkout's file and
+  store a `local_path`/`checkout_root` value relative to the wrong directory.
 - **A CodeRabbit `RESULT=clean` now means "clean, and still clean after the
   platform went quiet"** (#1556): the loop's post-clean recheck was a single
   30-second wait, far too short for a vendor that posts findings minutes after
