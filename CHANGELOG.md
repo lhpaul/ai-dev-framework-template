@@ -47,8 +47,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to hold a 2-3 minute quiet window and re-query by hand, which is operator
   discipline standing in for a tooling guarantee. The recheck is now a settle
   loop that polls until the platform has produced no activity for a full quiet
-  period (180s for CodeRabbit, 60s otherwise) or the window is exhausted (600s
-  / 180s). Any activity resets the quiet timer, and a failed activity query is
+  period (120s for CodeRabbit, 60s otherwise) or the window is exhausted (900s
+  / 180s). For CodeRabbit the quiet period does not even begin until a review
+  has been **submitted** for the current HEAD: measured on PR #1573, it posted
+  its walkthrough comment 48 seconds after the push and submitted the actual
+  review — carrying three findings — twelve minutes later, so silence in
+  between meant it was still working rather than finished. A quiet period alone
+  cannot tell those apart, which is why the settle waits for a positive signal
+  and not merely an absent one. Any activity resets the quiet timer, and a failed activity query is
   never counted as silence. An exhausted window still reports `clean` but flags
   it `POST_CLEAN_SETTLED=0` with `POST_CLEAN_SETTLE_TIMEOUT=1`, so a weaker
   verdict is visible rather than indistinguishable. All windows are
@@ -67,8 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   be clean, not that it be *recent*. On PR #1555 the label was applied off a
   thread check that had gone stale during a ~10 minute status poll, with four
   findings landing in the gap. The loop emits `POST_CLEAN_SETTLED_AT` so the
-  gap is measurable, and the protocol now requires a re-query when anything
-  lengthy intervenes.
+  gap is measurable; see
+  [protocol 92](docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md)
+  for the operating contract.
 - **`test-pr-review-loop.sh` gains an `--area` filter, runs from an immutable
   snapshot, and can no longer be edited mid-run without notice** (#1562): the
   suite is ~13.6k lines and ~900 assertions with no way to run part of it, so

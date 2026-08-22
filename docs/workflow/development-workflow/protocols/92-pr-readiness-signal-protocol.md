@@ -59,11 +59,18 @@ Apply this label when **all** of the following are true:
       and treat any unresolved bot thread as blocking. The loop emits
       `POST_CLEAN_SETTLED_AT=<iso8601>` for exactly this: it is the instant the
       verdict was established, so the gap is measurable rather than guessed at.
-- [ ] The reviewer loop reported `POST_CLEAN_SETTLED=1`. `POST_CLEAN_SETTLED=0`
-      (with `POST_CLEAN_SETTLE_TIMEOUT=1`) means the settle window was
-      exhausted while the platform was **still active** — no unresolved thread
-      was found, but the verdict is weaker than a settled one. Treat it as a
-      prompt to re-query threads before labelling rather than as a pass.
+- [ ] **When Step 7 returned `clean`**, the reviewer loop also reported
+      `POST_CLEAN_SETTLED=1`. This condition does not apply to
+      `Result: skipped`: the settle loop only runs on a clean aggregate, so a
+      legitimately skipped result never emits `POST_CLEAN_SETTLED=1` and must
+      not be blocked for its absence.
+
+      `POST_CLEAN_SETTLED=0` (with `POST_CLEAN_SETTLE_TIMEOUT=1`) means the
+      window was exhausted while the platform was still active, or — with
+      `POST_CLEAN_NO_SUBMITTED_REVIEW=1` — that it never submitted a review for
+      this HEAD at all. No unresolved thread was found in either case, so the
+      verdict stands, but it is weaker than a settled one. Treat it as a prompt
+      to re-query threads immediately before labelling rather than as a pass.
 - [ ] Every configured automated PR reviewer has no blocking PR feedback (or is skipped)
 - [ ] All feedback from a previous human review cycle has been addressed
 - [ ] For `spec/*` and `implementation-plan/*` PRs,

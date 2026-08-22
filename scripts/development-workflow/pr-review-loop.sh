@@ -572,6 +572,14 @@ Environment variables:
                                      POST_CLEAN_SETTLED=0 and POST_CLEAN_SETTLE_TIMEOUT=1.
   POST_CLEAN_POLL=<seconds>          Interval between settle re-checks (default: 60 for coderabbit /
                                      coderabbit-cli, 30 otherwise).
+  POST_CLEAN_REQUIRE_REVIEW=0|1      Whether silence alone may satisfy the settle, or whether a SUBMITTED review
+                                     for the current HEAD is required first (default: 1 for coderabbit /
+                                     coderabbit-cli, 0 otherwise). CodeRabbit posts a walkthrough issue comment
+                                     within a minute of the push and then submits the actual review much later —
+                                     twelve minutes, measured on PR #1573 — so silence in between means it is
+                                     still working, not that it finished. When no review arrives inside the
+                                     window the verdict stays clean but reports POST_CLEAN_NO_SUBMITTED_REVIEW=1
+                                     alongside POST_CLEAN_SETTLED=0.
   <PLATFORM>_POST_CLEAN_SETTLE_QUIET / _SETTLE_WINDOW / _POLL
                                      Per-platform overrides, taking precedence over the generic forms above.
                                      The platform name is upper-cased with '-' replaced by '_', except that
@@ -6920,27 +6928,55 @@ _settle_config_for_platform() {
     coderabbit|coderabbit-cli) prefix="CODERABBIT" ;;
     *) prefix="$(printf '%s' "$platform" | tr '[:lower:]-' '[:upper:]_')" ;;
   esac
+  # The prefix is interpolated into a variable NAME below. Reject anything that
+  # is not a valid shell identifier rather than trusting the tr transform to
+  # have neutralised it: platform reaches here from --platform and from the
+  # workflow config, neither of which is validated upstream. An unusable prefix
+  # simply means no per-platform overrides — the generic knobs and the defaults
+  # still apply, so a strange platform name degrades instead of failing.
+  case "$prefix" in
+    ''|*[!A-Za-z0-9_]*) prefix="" ;;
+    [0-9]*) prefix="" ;;
+  esac
 
+  # require_review: whether silence alone may satisfy the settle, or whether a
+  # formal review submission for the current HEAD is required first.
+  #
+  # This is the distinction the first implementation of #1556 missed, and the
+  # measurement that forced it: on PR #1573, HEAD landed at 00:17:29, CodeRabbit
+  # posted its WALKTHROUGH comment 48s later at 00:18:17, and the loop treated
+  # that as "reviewed, no findings" and returned clean. The actual review was
+  # submitted at 00:30:32 — twelve minutes after the walkthrough — carrying
+  # three findings. A quiet period cannot help here: CodeRabbit was completely
+  # silent for the whole 180s window because it was still thinking.
+  #
+  # Silence is an absence signal and cannot distinguish "done" from "working".
+  # For CodeRabbit the settle therefore waits for a positive one.
+  local require_review
   case "$platform" in
     coderabbit|coderabbit-cli)
-      # Sized from the observed late-arrival spread, not guessed.
-      window=600; quiet=180; poll=60
+      # Window sized from the observed walkthrough-to-review gap (~12 min),
+      # not guessed.
+      window=900; quiet=120; poll=60; require_review=1
       ;;
     *)
-      window=180; quiet=60; poll=30
+      window=180; quiet=60; poll=30; require_review=0
       ;;
   esac
 
-  local v
-  eval "v=\"\${${prefix}_POST_CLEAN_SETTLE_WINDOW:-}\""
+  local v _n
+  v=""
+  if [ -n "$prefix" ]; then _n="${prefix}_POST_CLEAN_SETTLE_WINDOW"; v="${!_n:-}"; fi
   [ -n "$v" ] || v="${POST_CLEAN_SETTLE_WINDOW:-}"
   case "$v" in ''|*[!0-9]*) ;; *) window="$v" ;; esac
 
-  eval "v=\"\${${prefix}_POST_CLEAN_SETTLE_QUIET:-}\""
+  v=""
+  if [ -n "$prefix" ]; then _n="${prefix}_POST_CLEAN_SETTLE_QUIET"; v="${!_n:-}"; fi
   [ -n "$v" ] || v="${POST_CLEAN_SETTLE_QUIET:-${POST_CLEAN_WAIT:-}}"
   case "$v" in ''|*[!0-9]*) ;; *) quiet="$v" ;; esac
 
-  eval "v=\"\${${prefix}_POST_CLEAN_POLL:-}\""
+  v=""
+  if [ -n "$prefix" ]; then _n="${prefix}_POST_CLEAN_POLL"; v="${!_n:-}"; fi
   [ -n "$v" ] || v="${POST_CLEAN_POLL:-}"
   case "$v" in ''|*[!0-9]*) ;; *) poll="$v" ;; esac
 
@@ -6950,7 +6986,38 @@ _settle_config_for_platform() {
   [ "$poll" -lt 1 ] && poll=1
   [ "$poll" -gt "$quiet" ] && [ "$quiet" -gt 0 ] && poll="$quiet"
 
-  printf '%s %s %s' "$window" "$quiet" "$poll"
+  v=""
+  if [ -n "$prefix" ]; then _n="${prefix}_POST_CLEAN_REQUIRE_REVIEW"; v="${!_n:-}"; fi
+  [ -n "$v" ] || v="${POST_CLEAN_REQUIRE_REVIEW:-}"
+  case "$v" in 0|1) require_review="$v" ;; esac
+
+  printf '%s %s %s %s' "$window" "$quiet" "$poll" "$require_review"
+}
+
+# _bot_review_submitted_since <repo> <pr> <since-iso> <bot-login>...
+#
+# Echoes 1 when any listed bot has SUBMITTED a formal review at or after
+# <since-iso>, 0 when none has, and -1 when the query failed. This is the
+# positive completion signal: CodeRabbit's walkthrough issue comment appears
+# within a minute of the push and means only that it has noticed the PR, while
+# the submitted review is what carries the findings.
+_bot_review_submitted_since() {
+  local repo="$1" pr="$2" since="$3"
+  shift 3
+  local logins_json n
+  logins_json="$(printf '%s\n' "$@" | jq -R . | jq -sc .)"
+  n="$(gh api "repos/$repo/pulls/$pr/reviews" --paginate 2>/dev/null \
+    | jq -s --argjson bots "$logins_json" --arg since "$since" '
+        [ .[][]? | select(
+            ((.user.login // "")) as $raw
+            | ($raw | rtrimstr("[bot]")) as $l
+            | ((($bots | index($l)) != null) or (($bots | index($raw)) != null))
+          ) | select((.submitted_at // "") > $since)
+        ] | length' 2>/dev/null)" || n=""
+  case "$n" in
+    ''|*[!0-9]*) printf '%s' "-1"; return 0 ;;
+  esac
+  [ "$n" -gt 0 ] && printf '1' || printf '0'
 }
 
 # _bot_activity_since <repo> <pr> <since-iso> <bot-login>...
@@ -6970,22 +7037,25 @@ _bot_activity_since() {
   issue_n="$(gh api "repos/$repo/issues/$pr/comments" --paginate 2>/dev/null \
     | jq -s --argjson bots "$logins_json" --arg since "$since" '
         [ .[][]? | select(
-            ((.user.login // "") | rtrimstr("[bot]")) as $l
-            | ($bots | index($l) or ($bots | index(.user.login // ""))) 
+            ((.user.login // "")) as $raw
+            | ($raw | rtrimstr("[bot]")) as $l
+            | ((($bots | index($l)) != null) or (($bots | index($raw)) != null)) 
           ) | select((.created_at > $since) or ((.updated_at // .created_at) > $since))
         ] | length' 2>/dev/null)" || issue_n=""
   comment_n="$(gh api "repos/$repo/pulls/$pr/comments" --paginate 2>/dev/null \
     | jq -s --argjson bots "$logins_json" --arg since "$since" '
         [ .[][]? | select(
-            ((.user.login // "") | rtrimstr("[bot]")) as $l
-            | ($bots | index($l) or ($bots | index(.user.login // "")))
+            ((.user.login // "")) as $raw
+            | ($raw | rtrimstr("[bot]")) as $l
+            | ((($bots | index($l)) != null) or (($bots | index($raw)) != null))
           ) | select((.created_at > $since) or ((.updated_at // .created_at) > $since))
         ] | length' 2>/dev/null)" || comment_n=""
   review_n="$(gh api "repos/$repo/pulls/$pr/reviews" --paginate 2>/dev/null \
     | jq -s --argjson bots "$logins_json" --arg since "$since" '
         [ .[][]? | select(
-            ((.user.login // "") | rtrimstr("[bot]")) as $l
-            | ($bots | index($l) or ($bots | index(.user.login // "")))
+            ((.user.login // "")) as $raw
+            | ($raw | rtrimstr("[bot]")) as $l
+            | ((($bots | index($l)) != null) or (($bots | index($raw)) != null))
           ) | select((.submitted_at // "") > $since)
         ] | length' 2>/dev/null)" || review_n=""
 
@@ -8213,10 +8283,12 @@ fi
 settle_window=0
 settle_quiet=0
 settle_poll=0
+settle_require_review=0
 for _sp in "${platforms[@]}"; do
-  read -r _sw _sq _spoll <<<"$(_settle_config_for_platform "$_sp")"
+  read -r _sw _sq _spoll _srr <<<"$(_settle_config_for_platform "$_sp")"
   [ "${_sw:-0}" -gt "$settle_window" ] && settle_window="$_sw"
   [ "${_sq:-0}" -gt "$settle_quiet" ] && settle_quiet="$_sq"
+  [ "${_srr:-0}" -eq 1 ] && settle_require_review=1
   if [ "$settle_poll" -eq 0 ] || { [ "${_spoll:-0}" -gt 0 ] && [ "${_spoll:-0}" -lt "$settle_poll" ]; }; then
     settle_poll="${_spoll:-30}"
   fi
@@ -8224,7 +8296,7 @@ done
 [ "$settle_window" -gt 0 ] || settle_window=180
 [ "$settle_quiet" -gt 0 ] || settle_quiet=60
 [ "$settle_poll" -gt 0 ] || settle_poll=30
-unset _sp _sw _sq _spoll
+unset _sp _sw _sq _spoll _srr
 
 if [ "$aggregate_result" = "clean" ] \
     && [ "$compare_mode" -eq 0 ] \
@@ -8234,7 +8306,18 @@ if [ "$aggregate_result" = "clean" ] \
   print_kv POST_CLEAN_RECHECK 1
   print_kv POST_CLEAN_SETTLE_WINDOW_SECONDS "$settle_window"
   print_kv POST_CLEAN_SETTLE_QUIET_SECONDS "$settle_quiet"
-  echo "INFO: post-clean settle — requiring ${settle_quiet}s of platform silence (max ${settle_window}s), polling every ${settle_poll}s" >&2
+  print_kv POST_CLEAN_REQUIRE_REVIEW "$settle_require_review"
+  if [ "$settle_require_review" -eq 1 ]; then
+    echo "INFO: post-clean settle — awaiting a submitted review for this HEAD, then ${settle_quiet}s of silence (max ${settle_window}s), polling every ${settle_poll}s" >&2
+  else
+    echo "INFO: post-clean settle — requiring ${settle_quiet}s of platform silence (max ${settle_window}s), polling every ${settle_poll}s" >&2
+  fi
+  # since_iso for the settle probes is the HEAD commit time, not "now": a review
+  # submitted between the loop starting and the settle beginning still counts as
+  # this HEAD's review, and anchoring to "now" would wait for a second one.
+  settle_head_iso="$(gh api "repos/$(repo_slug)/commits/${head_sha:-HEAD}" --jq '.commit.committer.date // empty' 2>/dev/null)"
+  [ -n "$settle_head_iso" ] || settle_head_iso="$(date -u -v-1H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '1 hour ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
+  settle_review_seen=0
 
   late_thread_count=0
   settle_elapsed=0
@@ -8301,6 +8384,19 @@ if [ "$aggregate_result" = "clean" ] \
       settle_quiet_elapsed=0
       settle_since="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
       echo "INFO: post-clean settle — $settle_activity new platform action(s) at ${settle_elapsed}s; quiet timer reset" >&2
+    elif [ "$settle_require_review" -eq 1 ] && [ "$settle_review_seen" -eq 0 ]; then
+      # Silence before the review lands is the platform thinking, not finishing.
+      # Do not let it accumulate toward the quiet period.
+      settle_review_probe="$(_bot_review_submitted_since "$settle_repo" "$pr_number" "$settle_head_iso" "${unresolved_bot_logins[@]}")"
+      if [ "$settle_review_probe" = "1" ]; then
+        settle_review_seen=1
+        echo "INFO: post-clean settle — submitted review detected at ${settle_elapsed}s; quiet period starts now" >&2
+      elif [ "$settle_review_probe" = "-1" ]; then
+        settle_probe_failed=1
+        echo "WARN: post-clean settle: review probe failed; not counting this interval as quiet" >&2
+      else
+        echo "INFO: post-clean settle — no submitted review yet at ${settle_elapsed}s of ${settle_window}s; still waiting" >&2
+      fi
     else
       settle_quiet_elapsed=$((settle_quiet_elapsed + settle_poll))
     fi
@@ -8317,7 +8413,13 @@ if [ "$aggregate_result" = "clean" ] \
       # knows to look and one that does not.
       print_kv POST_CLEAN_SETTLED 0
       print_kv POST_CLEAN_SETTLE_TIMEOUT 1
-      echo "WARN: post-clean settle — window (${settle_window}s) exhausted before ${settle_quiet}s of silence; the platform was still active. Verdict is clean but UNSETTLED." >&2
+      if [ "$settle_require_review" -eq 1 ] && [ "$settle_review_seen" -eq 0 ]; then
+        print_kv POST_CLEAN_NO_SUBMITTED_REVIEW 1
+        echo "WARN: post-clean settle — window (${settle_window}s) exhausted and the platform never submitted a review for this HEAD." >&2
+        echo "  Its walkthrough comment alone does not mean it finished. Verdict is clean but UNSETTLED — re-query threads before labelling." >&2
+      else
+        echo "WARN: post-clean settle — window (${settle_window}s) exhausted before ${settle_quiet}s of silence; the platform was still active. Verdict is clean but UNSETTLED." >&2
+      fi
     fi
     [ "$settle_probe_failed" -eq 1 ] && print_kv POST_CLEAN_ACTIVITY_PROBE_FAILED 1
     [ "$settle_activity_seen" -eq 1 ] && print_kv POST_CLEAN_ACTIVITY_SEEN 1

@@ -13982,34 +13982,34 @@ echo "=== Area 19: post-clean settle and updated_at activity (#1556) ==="
 # --- AC-4: the settle window is configurable, per platform ------------------
 run_test "settle_config_defined" "yes" \
   "$(type -t _settle_config_for_platform >/dev/null 2>&1 && echo yes || echo no)"
-run_test "settle_default_platform" "180 60 30" \
+run_test "settle_default_platform" "180 60 30 0" \
   "$(_settle_config_for_platform pr-agent)"
 # CodeRabbit gets a longer window because it is the platform that posts late.
-run_test "settle_coderabbit_is_longer" "600 180 60" \
+run_test "settle_coderabbit_is_longer" "900 120 60 1" \
   "$(_settle_config_for_platform coderabbit)"
-run_test "settle_coderabbit_cli_shares_prefix" "600 180 60" \
+run_test "settle_coderabbit_cli_shares_prefix" "900 120 60 1" \
   "$(_settle_config_for_platform coderabbit-cli)"
-run_test "settle_generic_env_override" "180 45 30" \
+run_test "settle_generic_env_override" "180 45 30 0" \
   "$(POST_CLEAN_SETTLE_QUIET=45 _settle_config_for_platform pr-agent)"
-run_test "settle_per_platform_env_wins" "600 10 10" \
+run_test "settle_per_platform_env_wins" "900 10 10 1" \
   "$(CODERABBIT_POST_CLEAN_SETTLE_QUIET=10 _settle_config_for_platform coderabbit)"
-run_test "settle_per_platform_beats_generic" "600 20 20" \
+run_test "settle_per_platform_beats_generic" "900 20 20 1" \
   "$(POST_CLEAN_SETTLE_QUIET=99 CODERABBIT_POST_CLEAN_SETTLE_QUIET=20 \
      _settle_config_for_platform coderabbit)"
-run_test "settle_window_override" "300 180 60" \
+run_test "settle_window_override" "300 120 60 1" \
   "$(CODERABBIT_POST_CLEAN_SETTLE_WINDOW=300 _settle_config_for_platform coderabbit)"
 # Legacy knob still works so existing callers are not silently retimed.
-run_test "settle_legacy_post_clean_wait" "180 5 5" \
+run_test "settle_legacy_post_clean_wait" "180 5 5 0" \
   "$(POST_CLEAN_WAIT=5 _settle_config_for_platform pr-agent)"
-run_test "settle_specific_beats_legacy" "180 45 30" \
+run_test "settle_specific_beats_legacy" "180 45 30 0" \
   "$(POST_CLEAN_WAIT=5 POST_CLEAN_SETTLE_QUIET=45 _settle_config_for_platform pr-agent)"
 # A quiet period longer than the window could never be satisfied, which would
 # burn the whole window and then report settled without ever having been.
-run_test "settle_quiet_clamped_to_window" "60 60 30" \
+run_test "settle_quiet_clamped_to_window" "60 60 30 0" \
   "$(POST_CLEAN_SETTLE_WINDOW=60 POST_CLEAN_SETTLE_QUIET=999 _settle_config_for_platform pr-agent)"
-run_test "settle_junk_falls_back_to_default" "180 60 30" \
+run_test "settle_junk_falls_back_to_default" "180 60 30 0" \
   "$(POST_CLEAN_SETTLE_QUIET=abc _settle_config_for_platform pr-agent)"
-run_test "settle_negative_junk_falls_back" "180 60 30" \
+run_test "settle_negative_junk_falls_back" "180 60 30 0" \
   "$(POST_CLEAN_SETTLE_QUIET=-5 _settle_config_for_platform pr-agent)"
 
 # --- AC-2 / AC-3: an in-place edit registers as activity --------------------
@@ -14076,6 +14076,84 @@ run_test "activity_probe_failure_is_minus_one" "-1" \
 rm -rf "$_1556_bin"
 unset _1556_bin
 
+# --- The completion signal: silence is not the same as finished -------------
+#
+# Measured on PR #1573, which is what forced this design. HEAD landed at
+# 00:17:29; CodeRabbit posted its WALKTHROUGH comment 48s later at 00:18:17,
+# and the loop read that as "reviewed, no findings" and returned clean. The
+# actual review was submitted at 00:30:32 — twelve minutes after the
+# walkthrough — carrying three findings. A quiet period cannot catch that:
+# CodeRabbit was silent for the entire window because it was still working.
+run_test "settle_coderabbit_requires_submitted_review" "1" \
+  "$(_settle_config_for_platform coderabbit | awk '{print $4}')"
+run_test "settle_other_platforms_do_not_require_review" "0" \
+  "$(_settle_config_for_platform pr-agent | awk '{print $4}')"
+run_test "settle_require_review_overridable" "0" \
+  "$(CODERABBIT_POST_CLEAN_REQUIRE_REVIEW=0 _settle_config_for_platform coderabbit | awk '{print $4}')"
+
+# A platform name reaches this function from --platform and from the workflow
+# config, neither validated upstream, and was interpolated into an eval. I could
+# not craft a working exploit — the uppercase transform breaks the obvious
+# vectors — but eval on config-derived data is not a construct worth keeping.
+run_test "settle_hostile_platform_name_is_safe" "180 60 30 0" \
+  "$(_settle_config_for_platform 'a}">/tmp/settle-probe;${b')"
+run_test "settle_hostile_platform_no_side_effect" "absent" \
+  "$(rm -f /tmp/settle-probe; _settle_config_for_platform 'a}">/tmp/settle-probe;${b' >/dev/null 2>&1; \
+     [ -e /tmp/settle-probe ] && echo present || echo absent)"
+# An unusable prefix must degrade to the generic knobs, not discard them.
+run_test "settle_hostile_name_still_honours_generic" "180 42 30 0" \
+  "$(POST_CLEAN_SETTLE_QUIET=42 _settle_config_for_platform 'we!rd')"
+run_test "settle_no_eval_in_lookup" "0" \
+  "$(grep_count_or_zero 'eval "v=' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+
+run_test "review_probe_defined" "yes" \
+  "$(type -t _bot_review_submitted_since >/dev/null 2>&1 && echo yes || echo no)"
+
+_1556_rbin="$(mktemp -d)"
+_1556_mkreviews() {
+  cat > "$_1556_rbin/gh" <<GHEOF
+#!/usr/bin/env bash
+case "\$*" in
+  *"pulls/42/reviews"*) cat <<'JSON'
+$1
+JSON
+    ;;
+  *) printf '[]\n' ;;
+esac
+GHEOF
+  chmod +x "$_1556_rbin/gh"
+}
+
+# A walkthrough comment is NOT a submitted review — this is the whole point.
+_1556_mkreviews '[]'
+run_test "review_probe_no_review_is_zero" "0" \
+  "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" coderabbitai)"
+
+# The PR #1573 review, submitted 13 minutes after HEAD.
+_1556_mkreviews '[{"user":{"login":"coderabbitai[bot]"},"submitted_at":"2026-08-22T00:30:32Z","state":"COMMENTED"}]'
+run_test "review_probe_detects_submitted_review" "1" \
+  "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" coderabbitai)"
+
+# A review from a PREVIOUS head must not satisfy this head.
+_1556_mkreviews '[{"user":{"login":"coderabbitai[bot]"},"submitted_at":"2026-08-22T00:10:00Z","state":"COMMENTED"}]'
+run_test "review_probe_ignores_stale_review" "0" \
+  "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" coderabbitai)"
+
+# Another bot's review must not satisfy this bot.
+_1556_mkreviews '[{"user":{"login":"other-bot[bot]"},"submitted_at":"2026-08-22T00:30:32Z","state":"COMMENTED"}]'
+run_test "review_probe_ignores_other_bot" "0" \
+  "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" coderabbitai)"
+
+cat > "$_1556_rbin/gh" <<'GHFAIL2'
+#!/usr/bin/env bash
+echo "simulated failure" >&2; exit 1
+GHFAIL2
+chmod +x "$_1556_rbin/gh"
+run_test "review_probe_failure_is_minus_one" "-1" \
+  "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" coderabbitai)"
+rm -rf "$_1556_rbin"
+unset _1556_rbin
+
 # --- AC-1: the loop owns the wait, and the contract says so -----------------
 _1556_loop="$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
 # The activity probe inside run_coderabbit_review must accept updated_at too;
@@ -14095,6 +14173,13 @@ run_test "post_clean_reports_timeout_distinctly" "yes" \
 # A failed activity probe must never be counted as silence.
 run_test "post_clean_probe_failure_not_silence" "yes" \
   "$(grep -q 'not counting this interval as quiet' "$_1556_loop" && echo yes || echo no)"
+# Silence before the review lands must not accumulate toward the quiet period.
+run_test "post_clean_gates_quiet_on_review" "yes" \
+  "$(grep -q 'quiet period starts now' "$_1556_loop" && echo yes || echo no)"
+run_test "post_clean_reports_missing_review" "yes" \
+  "$(grep -q 'print_kv POST_CLEAN_NO_SUBMITTED_REVIEW 1' "$_1556_loop" && echo yes || echo no)"
+run_test "post_clean_anchors_since_to_head_commit" "yes" \
+  "$(grep -q 'settle_head_iso=' "$_1556_loop" && echo yes || echo no)"
 # The documented knobs must actually appear in --help (AC-4).
 for _knob in POST_CLEAN_SETTLE_QUIET POST_CLEAN_SETTLE_WINDOW POST_CLEAN_POLL; do
   run_test "help_documents_$_knob" "yes" \
