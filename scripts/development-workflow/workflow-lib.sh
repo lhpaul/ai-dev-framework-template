@@ -85,13 +85,24 @@ workflow_local_review_override_root() {
   fi
 
   repo_root="$(workflow_repo_root)"
-  if [ ! -f "$repo_root/.ai-dev-workflow.local.yaml" ] \
+  # A checkout-local file without a `review:` section (set-local-path writes
+  # one holding only product_repos into a worktree) must not mask the main
+  # clone's reviewer override — that is the #1560 failure all over again.
+  if ! _workflow_local_file_has_review_section "$repo_root/.ai-dev-workflow.local.yaml" \
     && main_root="$(workflow_linked_worktree_main_root "$repo_root")" \
-    && [ -f "$main_root/.ai-dev-workflow.local.yaml" ]; then
+    && _workflow_local_file_has_review_section "$main_root/.ai-dev-workflow.local.yaml"; then
     printf '%s\n' "$main_root"
     return 0
   fi
   printf '%s\n' "$repo_root"
+}
+
+# _workflow_local_file_has_review_section <file>
+# True when the file exists and declares a top-level `review:` mapping.
+_workflow_local_file_has_review_section() {
+  local file="$1"
+  [ -f "$file" ] || return 1
+  grep -Eq '^review:[[:space:]]*(#.*)?$' "$file"
 }
 
 workflow_local_config_file() {

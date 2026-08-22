@@ -89,12 +89,10 @@ actionable error rather than silently choosing a different shared reviewer. When
 there is no local reviewer override, the shared-policy path remains unchanged.
 
 Worktrees created outside the loop — `git worktree add` from Protocol 90's
-isolation manifest or Protocol 91's "Worktree isolation for batch dispatch"
-step — never contain the gitignored override either. For those, the config
-resolver and `workflow-lib.sh` fall
-back to the main clone's `.ai-dev-workflow.local.yaml` when the linked worktree
-has none of its own (#1560). A worktree's own file and
-`WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT` still take precedence, in that order.
+isolation manifest or Protocol 91's worktree step — never contain the
+gitignored override either. The workflow scripts resolve it from the main clone
+(#1560); the precedence rules and the no-copy requirement are defined once, in
+Protocol 91, ["Worktree isolation for batch dispatch"](protocols/91-orchestrate-work-protocol.md#worktree-isolation-for-batch-dispatch).
 
 ---
 

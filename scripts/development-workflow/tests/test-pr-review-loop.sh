@@ -684,6 +684,21 @@ linked_platforms="$(
 run_test "linked_worktree_applies_main_clone_review_override" "pr-agent,bugbot" "$linked_platforms"
 linked_main_root="$(workflow_linked_worktree_main_root "$_WT_LINKED")"
 run_test "linked_worktree_main_root_detected" "$_WT_MAIN" "$linked_main_root"
+# A worktree-local file with no `review:` section (set-local-path output) must
+# not mask the main clone's reviewer override.
+printf 'product_repos:\n  - name: mobile-app\n    local_path: ../mobile-app\n' > "$_WT_LINKED/.ai-dev-workflow.local.yaml"
+product_only_local_file="$(
+  workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
+  workflow_local_config_file
+)"
+run_test "product_only_worktree_file_does_not_mask_main_clone" "$_WT_MAIN/.ai-dev-workflow.local.yaml" "$product_only_local_file"
+printf 'review:\n  on_ready:\n    github: [haystack]\n' > "$_WT_LINKED/.ai-dev-workflow.local.yaml"
+review_local_file="$(
+  workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
+  workflow_local_config_file
+)"
+run_test "worktree_file_with_review_section_wins" "$_WT_LINKED/.ai-dev-workflow.local.yaml" "$review_local_file"
+rm -f "$_WT_LINKED/.ai-dev-workflow.local.yaml"
 main_root_status=0
 workflow_linked_worktree_main_root "$_WT_MAIN" >/dev/null 2>&1 || main_root_status=$?
 run_test "main_clone_is_not_a_linked_worktree" "1" "$main_root_status"

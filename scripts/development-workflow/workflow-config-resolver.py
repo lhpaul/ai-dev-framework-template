@@ -1062,10 +1062,28 @@ def scalar_from_path(data: dict[str, Any], path: list[str]) -> str:
     return str(value) if value not in {None, ""} else ""
 
 
+def resolve_local_review_config(repo_root: Path) -> tuple[Path, str, Path | None, dict[str, Any]]:
+    """Like ``resolve_local_config`` but for the ``review`` section specifically.
+
+    A checkout-local file that carries no ``review`` section — the file
+    ``set-local-path`` writes into a linked worktree holds only
+    ``product_repos`` — must not mask the main clone's reviewer override; that
+    would recreate the zero-reachable-reviewer failure #1560 exists to end.
+    Returns ``(path, origin, main_clone_file, parsed)`` where ``parsed`` is the
+    mapping the review values come from.
+    """
+    local_path, origin, main_clone_file = resolve_local_config(repo_root)
+    local = parse_yaml_subset(local_path)
+    if origin == "checkout" and main_clone_file is not None and "review" not in local:
+        main_local = parse_yaml_subset(main_clone_file)
+        if "review" in main_local:
+            return main_clone_file, "main_clone", main_clone_file, main_local
+    return local_path, origin, main_clone_file, local
+
+
 def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
     repo_root = repo_root_from_args(args.repo_root)
-    local_path, local_origin, main_clone_file = resolve_local_config(repo_root)
-    local = parse_yaml_subset(local_path)
+    local_path, local_origin, main_clone_file, local = resolve_local_review_config(repo_root)
     local_file = str(local_path) if local_path.is_file() else ""
     if not local_file:
         local_origin = ""

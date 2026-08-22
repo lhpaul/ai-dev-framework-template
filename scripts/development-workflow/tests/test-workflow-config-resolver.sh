@@ -866,6 +866,20 @@ run_contains "linked_worktree_own_file_origin" "LOCAL_OVERRIDE_ORIGIN=checkout" 
 run_contains "linked_worktree_own_file_still_reports_main" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$own_file_output"
 rm -f "$worktree_linked/.ai-dev-workflow.local.yaml"
 
+# A checkout-local file that carries no `review` section — the shape
+# set-local-path writes into a worktree (product_repos only) — must not mask
+# the main clone's reviewer override.
+cat > "$worktree_linked/.ai-dev-workflow.local.yaml" <<'YAML'
+product_repos:
+  - name: mobile-app
+    local_path: ../checkouts/mobile-app
+YAML
+masked_output="$(workflow_review_override_context "$worktree_linked")"
+run_contains "product_only_local_file_keeps_main_clone_runner" "REVIEW_ON_DRAFT_RUNNER=claude" "$masked_output"
+run_contains "product_only_local_file_origin_is_main_clone" "LOCAL_OVERRIDE_ORIGIN=main_clone" "$masked_output"
+run_contains "product_only_local_file_reports_main_clone_file" "LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$masked_output"
+rm -f "$worktree_linked/.ai-dev-workflow.local.yaml"
+
 # WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT (the #1033 handoff path) beats both.
 override_root_dir="$(fixture_dir worktree-override-root)"
 cat > "$override_root_dir/.ai-dev-workflow.local.yaml" <<'YAML'
