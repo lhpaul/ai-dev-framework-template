@@ -184,6 +184,15 @@ case "$*" in
     printf '%s\n' "$*" > "$MOCK_GH_STATE_DIR/hold-body-102"
     printf '{"id":777}\n'
     ;;
+  api\ repos/\{owner\}/\{repo\}/issues/comments/777\ --jq\ .body)
+    # Body read for the hold-lifted update: the marker plus whatever the last
+    # create/patch stored (the stored line is the whole argv, so take the tail).
+    if [ -f "$MOCK_GH_STATE_DIR/hold-body-102" ]; then
+      sed 's/^.*-f body=//' "$MOCK_GH_STATE_DIR/hold-body-102"
+    else
+      printf '<!-- batch-merge-hold:v1 -->\nBatch merge hold\n'
+    fi
+    ;;
   api\ repos/\{owner\}/\{repo\}/issues/comments/777\ -X\ PATCH\ -f\ body=*)
     printf '%s\n' "$*" > "$MOCK_GH_STATE_DIR/hold-body-102"
     printf '{"id":777}\n'
@@ -355,12 +364,24 @@ rm -f "$MOCK_GH_STATE_DIR"/*.count
 annotate_again_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --reviewed-head-shas "102:$_sha_a" --annotate)"
 run_test "annotate_updates_in_place" "updated" "$(json_field "$annotate_again_output" 102 annotation)"
 run_test "annotate_patch_call_recorded" "1" "$(grep -c 'issues/comments/777 -X PATCH' "$CALL_LOG" || true)"
-# Clean records are never annotated.
+# A PR that rechecks clean after having been held gets its hold lifted in
+# place; one that was never held gets annotation=none and no comment.
 export MOCK_SCENARIO=default
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+lifted_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --annotate)"
+run_test "clean_after_hold_is_lifted" "lifted" "$(json_field "$lifted_output" 102 annotation)"
+run_test "lifted_body_says_so" "yes" "$(grep -q 'Hold lifted' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
 rm -f "$MOCK_GH_STATE_DIR"/*.count "$MOCK_GH_STATE_DIR"/hold-*
 clean_annotate_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --annotate)"
-run_test "clean_pr_not_annotated" "null" "$(json_field "$clean_annotate_output" 102 annotation)"
+run_test "never_held_clean_pr_annotation_none" "none" "$(json_field "$clean_annotate_output" 102 annotation)"
 run_test "clean_pr_no_comment_written" "absent" "$([ -f "$MOCK_GH_STATE_DIR/hold-comment-102" ] && echo present || echo absent)"
+# Holds caused by the PR's own stage are reported, not annotated.
+export MOCK_SCENARIO=unready_approved
+rm -f "$MOCK_GH_STATE_DIR"/*.count "$MOCK_GH_STATE_DIR"/hold-*
+label_hold_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --annotate)"
+run_test "label_gate_hold_reported" "label_gate_failed" "$(json_field "$label_hold_output" 102 reason)"
+run_test "label_gate_hold_not_annotated" "null" "$(json_field "$label_hold_output" 102 annotation)"
+run_test "label_gate_hold_no_comment" "absent" "$([ -f "$MOCK_GH_STATE_DIR/hold-comment-102" ] && echo present || echo absent)"
 
 echo ""
 echo "=== annotate-hold for holds outside a recheck (#1558) ==="

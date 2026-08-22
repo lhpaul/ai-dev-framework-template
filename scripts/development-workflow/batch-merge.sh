@@ -114,9 +114,12 @@ Usage:
           verdicts_voided and required_action=reverify_at_current_head —
           an unreadable head must not be read as "nothing to re-verify".
           --annotate writes (or updates in place) a <!-- batch-merge-hold:v1 -->
-          comment on every merge_blocked PR so the hold reason, the
-          invalidating sibling, and the re-verification requirement are on
-          the PR itself, where the runner and the human will read them.
+          comment on every PR held by a sibling's effect (head_sha_changed,
+          head_sha_unavailable, merge_state_non_clean, checks_failed) so the
+          hold reason, the invalidating sibling, and the re-verification
+          requirement are on the PR itself; label and draft holds are not
+          annotated. A PR that rechecks clean gets its hold comment marked
+          lifted (annotation=lifted, or none when it never had one).
           Every record carries head_sha, reviewed_head_sha, verdicts_voided,
           required_action, and (with --annotate) annotation.
   batch-merge.sh annotate-hold --pr <number> --reason <text> [--held-by <who>] [--invalidating-sibling <number>] [--head-sha <sha>]
@@ -261,7 +264,7 @@ annotate_hold_comment() {
       "**Verdicts void at this head:** " + ((.verdicts_voided // []) | list),
       "**Required before any merge decision:** `" + (.required_action // "none") + "`",
       "",
-      "_Recorded at " + $ts + "; updated in place on every recheck. A held PR is not a parked PR: keep it conflict-free and re-verify the reviewer loop, CI, risk classification and the delegated gate at the current head before any merge decision (#1558)._"
+      "_Recorded at " + $ts + "; updated in place on every recheck. A held PR is not a parked PR: keep it conflict-free and re-verify the reviewer loop, CI, risk classification and the delegated gate at the current head before any merge decision (#1558). If the only conflicting file is `CHANGELOG.md`, `batch-merge.sh merge` resolves it at merge time without moving this head (Protocol 94 Step 4.3) — check with `git merge-tree --write-tree --name-only origin/<base> origin/<head>` before resolving anything on the branch._"
     ] | join("\n")' 2>/dev/null)" || { printf 'failed:render\n'; return 0; }
 
   # Look up separately from filtering so a real gh api failure (auth,
@@ -287,10 +290,33 @@ annotate_hold_comment() {
   printf 'failed:create\n'
 }
 
+# annotate_hold_lifted <pr> — when a previously held PR rechecks clean, the
+# marker comment must not keep saying it is held. Appends a "hold lifted" line
+# in place. Prints lifted | none (no marker comment to update) | failed:<why>.
+annotate_hold_lifted() {
+  local pr="$1"
+  local marker='<!-- batch-merge-hold:v1 -->'
+  local existing_json existing_id body status
+  existing_json="$(gh api --paginate "repos/{owner}/{repo}/issues/${pr}/comments?per_page=100" 2>/dev/null)" || { printf 'failed:lookup\n'; return 0; }
+  existing_id="$(printf '%s\n' "$existing_json" | jq -r --arg marker "$marker" '[.[] | select((.body // "") | contains($marker))] | last | .id // empty' 2>/dev/null | tail -n 1)"
+  [ -n "$existing_id" ] || { printf 'none\n'; return 0; }
+  body="$(gh api "repos/{owner}/{repo}/issues/comments/${existing_id}" --jq '.body' 2>/dev/null)" || { printf 'failed:lookup\n'; return 0; }
+  case "$body" in *"**Hold lifted**"*) printf 'lifted\n'; return 0 ;; esac
+  body="$(printf '%s\n\n**Hold lifted** at %s: rechecked clean after the latest sibling merge; the verdicts recorded above no longer describe this PR.\n' "$body" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
+  status=0
+  gh api "repos/{owner}/{repo}/issues/comments/${existing_id}" -X PATCH -f body="$body" >/dev/null 2>&1 || status=$?
+  [ "$status" -eq 0 ] && { printf 'lifted\n'; return 0; }
+  printf 'failed:update\n'
+}
+
 # emit_remaining_pr_record <args as emit_recheck_record> — emits a remaining_pr
-# record and, when --annotate is in force and the PR is held for a reason the
-# runner can act on, writes the hold onto the PR first and reports the result
-# in the record's `annotation` field so nothing is computed and then dropped.
+# record and, when --annotate is in force, keeps the PR's hold comment current:
+# a hold caused by a sibling merge (head moved, conflict, failed checks) is
+# written onto the PR; a PR that rechecks clean gets its existing hold lifted.
+# Label and draft holds are not annotated — they describe the PR's own stage,
+# not a sibling's effect on it, and the orchestrator already reports them.
+# The result lands in the record's `annotation` field so nothing is computed
+# and then dropped.
 emit_remaining_pr_record() {
   local record annotation
   record="$(emit_recheck_record "$@")"
@@ -299,7 +325,14 @@ emit_remaining_pr_record() {
     classification="$(printf '%s\n' "$record" | jq -r '.classification')"
     reason="$(printf '%s\n' "$record" | jq -r '.reason')"
     pr="$(printf '%s\n' "$record" | jq -r '.pr')"
-    if [ "$classification" = "merge_blocked" ] && [ "$reason" != "already_merged" ]; then
+    if [ "$classification" = "clean" ]; then
+      annotation="$(annotate_hold_lifted "$pr")"
+      record="$(printf '%s\n' "$record" | jq -c --arg a "$annotation" '.annotation = $a')"
+    elif [ "$classification" = "merge_blocked" ]; then
+      case "$reason" in
+        head_sha_changed|head_sha_unavailable|merge_state_non_clean|checks_failed) ;;
+        *) printf '%s\n' "$record"; return 0 ;;
+      esac
       annotation="$(annotate_hold_comment "$pr" "$record")"
       # -c is mandatory: this record is printed straight to stdout as a JSONL
       # line (Protocol 94 Step 4.5 parses one JSON object per line). Without

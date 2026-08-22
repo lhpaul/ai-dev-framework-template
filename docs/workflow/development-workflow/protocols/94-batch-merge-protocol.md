@@ -445,6 +445,19 @@ After a clean or resolved merge, in order:
    redispatched (Protocol 90 Step 5 item 4): an unmergeable PR is not
    `ready-for-human-review` in any sense that matters to the batch.
 
+   **CHANGELOG-only conflicts do not move the head.** Every PR in a wave adds
+   an `[Unreleased]` entry, so `merge_state_non_clean` after a sibling merge
+   is usually `CHANGELOG.md` alone; Step 4.3 resolves that at merge time
+   inside `batch-merge.sh merge`, without touching the PR branch, so no
+   verdict is voided. Before routing `resolve_conflict_then_reverify`, check
+   which files conflict — `git merge-tree --write-tree --name-only
+   origin/<base> origin/<head>` — and route the action only when a file
+   other than `CHANGELOG.md` is in the list. The helper cannot see conflicted
+   files from the GitHub API, which is why this check is the runner's. Holds
+   caused by the PR's own stage (`label_gate_failed`, `draft_pr`) are reported
+   in the record but not annotated onto the PR; a PR that later rechecks clean
+   has its hold comment marked lifted.
+
 6. Report the per-PR outcome immediately (see outcome codes in Step 5).
 
 ### 4.3 Conflict classification
