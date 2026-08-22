@@ -8327,7 +8327,12 @@ if [ "$aggregate_result" = "clean" ] \
   # The head this settle is about. Emitted as POST_CLEAN_HEAD_SHA so Protocol
   # 91 Check 0.6 can refuse telemetry that describes a commit the PR has since
   # moved past (a fix pushed between Step 7 and Step 8a) — issue #1574.
-  settle_head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null || true)"
+  if ! settle_head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null)"; then
+    # An unbound settle is refused by Check 0.6 (fail-closed); say so here
+    # rather than letting an empty field pass silently.
+    settle_head_sha=""
+    echo "WARN: post-clean settle — could not read the PR head; POST_CLEAN_HEAD_SHA will be empty and Protocol 91 Check 0.6 will refuse this verdict" >&2
+  fi
 
   late_thread_count=0
   settle_elapsed=0
