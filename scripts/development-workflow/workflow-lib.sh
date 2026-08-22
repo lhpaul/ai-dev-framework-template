@@ -39,27 +39,29 @@ workflow_effective_config_file() {
 #
 # Prints the main clone root when repo_root is a linked git worktree. Prints
 # nothing and returns 1 for the main clone itself, a plain checkout, a bare
-# repository, or a directory outside any git repository. Mirrors
-# linked_worktree_main_root() in workflow-config-resolver.py (#1560).
+# repository, a submodule, or a directory outside any git repository.
+# Git-free on purpose: callers such as run-epic-policy-recommender.sh must
+# never invoke git or gh, and a linked worktree is recognisable from the
+# filesystem alone — its .git is a FILE whose first line is
+# `gitdir: <main>/.git/worktrees/<name>`. Mirrors linked_worktree_main_root()
+# in workflow-config-resolver.py (#1560).
 workflow_linked_worktree_main_root() {
   local repo_root="${1:-$(workflow_repo_root)}"
-  local output="" common_dir="" git_dir="" main_root="" resolved_root=""
+  local dot_git="" first="" gitdir="" main_root="" resolved_root=""
 
-  # One invocation, two lines: common dir first, then the worktree's own git
-  # dir. Fewer than two lines (or any failure) means "not a linked worktree".
-  output="$(git -C "$repo_root" rev-parse --git-common-dir --git-dir 2>/dev/null)" || return 1
-  common_dir="${output%%$'\n'*}"
-  git_dir="${output#*$'\n'}"
-  [ -n "$common_dir" ] && [ -n "$git_dir" ] || return 1
-  case "$common_dir" in /*) ;; *) common_dir="$repo_root/$common_dir" ;; esac
-  case "$git_dir" in /*) ;; *) git_dir="$repo_root/$git_dir" ;; esac
-  common_dir="$(CDPATH='' cd -- "$common_dir" 2>/dev/null && pwd -P)" || return 1
-  git_dir="$(CDPATH='' cd -- "$git_dir" 2>/dev/null && pwd -P)" || return 1
+  dot_git="$repo_root/.git"
+  [ -f "$dot_git" ] || return 1
+  IFS= read -r first < "$dot_git" || [ -n "$first" ] || return 1
+  case "$first" in gitdir:*) ;; *) return 1 ;; esac
+  gitdir="${first#gitdir:}"
+  gitdir="${gitdir#"${gitdir%%[![:space:]]*}"}"
+  case "$gitdir" in /*) ;; *) gitdir="$repo_root/$gitdir" ;; esac
+  gitdir="$(CDPATH='' cd -- "$gitdir" 2>/dev/null && pwd -P)" || return 1
+  case "$gitdir" in */.git/worktrees/*) ;; *) return 1 ;; esac
+  main_root="${gitdir%/.git/worktrees/*}"
   resolved_root="$(CDPATH='' cd -- "$repo_root" 2>/dev/null && pwd -P)" || return 1
-  [ "$common_dir" != "$git_dir" ] || return 1
-  [ "$(basename -- "$common_dir")" = ".git" ] || return 1
-  main_root="$(dirname -- "$common_dir")"
   [ "$main_root" != "$resolved_root" ] || return 1
+  [ -d "$main_root/.git" ] || return 1
   printf '%s\n' "$main_root"
 }
 

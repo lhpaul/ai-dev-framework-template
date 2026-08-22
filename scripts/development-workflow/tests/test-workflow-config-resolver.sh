@@ -925,6 +925,17 @@ run_contains "linked_worktree_without_main_file_main_empty" "MAIN_CLONE_LOCAL_OV
 # A plain directory outside any repository is unaffected.
 plain_output="$(workflow_review_override_context "$(fixture_dir plain-no-git)")"
 run_contains "plain_dir_override_origin_empty" "LOCAL_OVERRIDE_ORIGIN=" "$plain_output"
+# A submodule-style `.git` file (gitdir: .../.git/modules/<name>) is not a
+# linked worktree; and detection must not invoke git at all (the policy
+# recommender is forbidden from doing so and reads config through this path).
+submodule_dir="$(fixture_dir fake-submodule)"
+printf 'gitdir: %s/.git/modules/fake-submodule\n' "$worktree_main" > "$submodule_dir/.git"
+submodule_output="$(workflow_review_override_context "$submodule_dir")"
+run_contains "submodule_gitdir_is_not_a_linked_worktree" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=" "$submodule_output"
+no_git_bin="$TMP_ROOT/no-git-bin"; mkdir -p "$no_git_bin"
+printf '#!/usr/bin/env bash\ntouch "%s/git-was-called"\nexit 64\n' "$TMP_ROOT" > "$no_git_bin/git"; chmod +x "$no_git_bin/git"
+PATH="$no_git_bin:$PATH" python3 "$RESOLVER" review-overrides --repo-root "$worktree_linked" >/dev/null
+run_test "resolver_detects_worktree_without_invoking_git" "absent" "$([ -e "$TMP_ROOT/git-was-called" ] && echo present || echo absent)"
 git -C "$worktree_main" worktree remove --force "$worktree_linked"
 
 # set-local-path (workflow_hub product_repos local paths) must stay scoped to

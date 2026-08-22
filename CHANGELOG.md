@@ -44,7 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   internal reviewers — on all three worktrees of the 2026-08-20/21 first wave.
   #1033 only covered worktrees that `pr-review-loop.sh` creates itself.
   `workflow-config-resolver.py` and `workflow-lib.sh` now fall back to the main
-  clone's file (located via `git rev-parse --git-common-dir`) when a linked
+  clone's file (read from the worktree's `.git` file, `gitdir:
+  <main>/.git/worktrees/<name>` — no git invocation, so git-forbidden callers
+  such as the policy recommender stay compliant) when a linked
   worktree has none; a worktree's own file and
   `WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT` still take precedence.
   `review-overrides` reports `LOCAL_OVERRIDE_FILE`, `LOCAL_OVERRIDE_ORIGIN`

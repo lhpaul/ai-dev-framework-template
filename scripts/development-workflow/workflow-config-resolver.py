@@ -15,7 +15,6 @@ import json
 import os
 import re
 import shlex
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -302,44 +301,36 @@ def linked_worktree_main_root(repo_root: Path) -> Path | None:
     """Return the main clone's root when ``repo_root`` is a linked git worktree.
 
     ``git worktree add`` carries no untracked or gitignored files, so a linked
-    worktree never contains ``.ai-dev-workflow.local.yaml`` (#1560). For a
-    linked worktree ``--git-common-dir`` (the main clone's ``.git``) differs
-    from ``--git-dir``; the main clone root is its parent. Returns ``None`` for
-    the main clone itself, a plain checkout, a bare repository (no working
-    tree), or a directory that is not inside a git repository at all.
+    worktree never contains ``.ai-dev-workflow.local.yaml`` (#1560). Detection
+    is git-free on purpose: callers such as ``run-epic-policy-recommender.sh``
+    are contractually forbidden from invoking ``git`` or ``gh``, and a linked
+    worktree is recognisable from the filesystem alone — its ``.git`` is a
+    *file* whose first line is ``gitdir: <main>/.git/worktrees/<name>``. The
+    main clone (a ``.git`` directory), a plain checkout, a bare repository, a
+    submodule (``gitdir: .../.git/modules/<name>``) and a directory outside
+    any repository all return ``None``.
     """
+    dot_git = repo_root / ".git"
     try:
-        completed = subprocess.run(
-            ["git", "-C", str(repo_root), "rev-parse", "--git-common-dir", "--git-dir"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        if not dot_git.is_file():
+            return None
+        first_line = dot_git.read_text(encoding="utf-8", errors="replace").splitlines()[:1]
     except OSError:
         return None
-    if completed.returncode != 0:
+    if not first_line or not first_line[0].startswith("gitdir:"):
         return None
-    lines = completed.stdout.splitlines()
-    if len(lines) != 2:
-        return None
-    common_dir = Path(lines[0])
-    git_dir = Path(lines[1])
-    if not common_dir.is_absolute():
-        common_dir = repo_root / common_dir
-    if not git_dir.is_absolute():
-        git_dir = repo_root / git_dir
+    gitdir = Path(first_line[0][len("gitdir:"):].strip())
+    if not gitdir.is_absolute():
+        gitdir = repo_root / gitdir
     try:
-        common_dir = common_dir.resolve()
-        git_dir = git_dir.resolve()
+        gitdir = gitdir.resolve()
         resolved_root = repo_root.resolve()
     except OSError:
         return None
-    if common_dir == git_dir:
+    if gitdir.parent.name != "worktrees" or gitdir.parent.parent.name != ".git":
         return None
-    if common_dir.name != ".git":
-        return None
-    main_root = common_dir.parent
-    if main_root == resolved_root:
+    main_root = gitdir.parent.parent.parent
+    if main_root == resolved_root or not (main_root / ".git").is_dir():
         return None
     return main_root
 

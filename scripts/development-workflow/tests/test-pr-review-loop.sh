@@ -714,12 +714,22 @@ rm -f "$_WT_LINKED/.ai-dev-workflow.local.yaml"
 main_root_status=0
 workflow_linked_worktree_main_root "$_WT_MAIN" >/dev/null 2>&1 || main_root_status=$?
 run_test "main_clone_is_not_a_linked_worktree" "1" "$main_root_status"
+# Detection is git-free: under the harness's git mock (which exits 64 for
+# anything but one rev-parse form) the worktree is still recognised, and no
+# git call is logged. run-epic-policy-recommender.sh relies on this — it is
+# forbidden from invoking git, and it reads the review config through these
+# helpers (caught by its CI suite, not locally, where the local file exists).
 mock_git_status=0
 mock_git_main_root="$(
   unset -f git
   workflow_linked_worktree_main_root "$_WT_LINKED" 2>/dev/null
 )" || mock_git_status=$?
-run_test "single_line_rev_parse_is_not_a_linked_worktree" "1:" "$mock_git_status:$mock_git_main_root"
+run_test "linked_worktree_detected_without_invoking_git" "0:$_WT_MAIN" "$mock_git_status:$mock_git_main_root"
+printf 'gitdir: ../elsewhere/.git/modules/sub\n' > "$_WT_MAIN/fake-submodule.git"
+mkdir -p "$_WT_MAIN/fake-submodule"; cp "$_WT_MAIN/fake-submodule.git" "$_WT_MAIN/fake-submodule/.git"
+submodule_status=0
+workflow_linked_worktree_main_root "$_WT_MAIN/fake-submodule" >/dev/null 2>&1 || submodule_status=$?
+run_test "submodule_gitdir_file_is_not_a_linked_worktree" "1" "$submodule_status"
 git -C "$_WT_MAIN" worktree remove --force "$_WT_LINKED"
 unset -f git
 rm -rf "$_WT_MAIN"
