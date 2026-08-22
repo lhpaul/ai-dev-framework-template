@@ -1955,19 +1955,32 @@ ISO-8601 timestamp, or a reason word); the pattern below admits nothing else:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+# Drop settle telemetry from any earlier invocation first. A loop that exits
+# before emitting POST_CLEAN_* (outer timeout, interruption, API failure)
+# must leave Check 0.6 with nothing — not with the previous HEAD's verdict.
+for settle_var in $(env | grep -o '^POST_CLEAN_[A-Z_]*' || true); do
+  unset "$settle_var"
+done
 loop_out="$(mktemp)"
-settle_kv="$(mktemp)"
-./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name> > "$loop_out" 2>&1
+loop_status=0
+./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name> > "$loop_out" 2>&1 || loop_status=$?
 cat "$loop_out"
-grep -E '^POST_CLEAN_[A-Z_]+=[A-Za-z0-9:_-]*$' "$loop_out" > "$settle_kv" || true
-while IFS='=' read -r key value; do
-  export "$key=$value"
-done < "$settle_kv"
+if [ "$loop_status" -ne 0 ]; then
+  echo "Reviewer loop exited ${loop_status}: act on its RESULT=/REASON= lines (needs_fixes, escalate, ...). Do not enter Step 8a on this run."
+else
+  settle_kv="$(mktemp)"
+  grep -E '^POST_CLEAN_[A-Z_]+=[A-Za-z0-9:_-]*$' "$loop_out" > "$settle_kv" || true
+  while IFS='=' read -r key value; do
+    export "$key=$value"
+  done < "$settle_kv"
+fi
 ```
 
 Re-export after every invocation: a fixer cycle re-runs the loop, and the
-settle fields belong to the latest HEAD only. A new session that cannot produce
-them re-runs Step 7 rather than guessing (Check 0.6 fails closed).
+settle fields belong to the latest HEAD only — which is why the block clears
+them before running and exports nothing on a non-zero exit. A new session that
+cannot produce them re-runs Step 7 rather than guessing (Check 0.6 fails
+closed).
 
 Interpret the result as follows:
 

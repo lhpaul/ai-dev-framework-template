@@ -14231,6 +14231,13 @@ done
 # the label, not merely discouraged after it.
 run_test "p91_checklist_refuses_no_submitted_review" "yes" \
   "$(grep -q 'POST_CLEAN_NO_SUBMITTED_REVIEW:-0}" = "1"' "$_1574_p91" && echo yes || echo no)"
+# Stale telemetry from a previous invocation must never survive into Check 0.6:
+# the Step 7 block clears POST_CLEAN_* before the loop runs and exports nothing
+# when the loop exits non-zero.
+run_test "p91_step7_clears_stale_settle_vars" "yes" \
+  "$(grep -q "grep -o '^POST_CLEAN_\[A-Z_\]\*'" "$_1574_p91" && echo yes || echo no)"
+run_test "p91_step7_exports_only_on_zero_exit" "yes" \
+  "$(grep -q 'Do not enter Step 8a on this run' "$_1574_p91" && echo yes || echo no)"
 # Protocol 91 carries no wait at all any more: the only sleep in 8a.1 was the
 # fixed one this issue removes, and the timeout path now goes back to Step 7.
 run_test "p91_8a1_has_no_sleep" "0" \
