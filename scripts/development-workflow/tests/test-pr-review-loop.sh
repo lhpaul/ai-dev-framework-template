@@ -14241,9 +14241,20 @@ run_test "ledger_excludes_head_moved_reruns" "1 1 available" \
   "$(reviewer_loop_history_entries_count "$_1574_ledger_body" r1)"
 run_test "cap_skipped_for_head_moved" "yes" \
   "$(grep -q 'if \[ "\$aggregate_reason" = "head_moved_during_run" \]; then' "$_1574_loop" && echo yes || echo no)"
-# The label is applied only after a final head re-validation (Check 4).
+# The head is re-validated in Check 4 on BOTH paths — before the
+# label-present/absent branch — and a stale existing label is pulled back.
 run_test "p91_revalidates_head_before_label" "yes" \
-  "$(awk '/^# Check 4:/{p=1} p && /settle_head_ok \|\| exit 12/{found=1} END{exit !found}' "$_1574_p91" && echo yes || echo no)"
+  "$(awk '/^# Check 4:/{p=1} p && /SETTLE_APPLIES:-1}" -eq 1 \] && ! settle_head_ok/{found=1} p && /^if \[ "\$HAS_HUMAN_REVIEW_LABEL" -gt 0 \]; then/{ if (found) ok=1 } END{exit !ok}' "$_1574_p91" && echo yes || echo no)"
+run_test "p91_pulls_stale_label_back" "yes" \
+  "$(grep -q 'it covers a head that is no longer the PR head' "$_1574_p91" && echo yes || echo no)"
+# A head-move rerun never escalates on a failed ledger persist: no fixer is
+# dispatched, so there is nothing for the ledger to bound.
+run_test "persist_failure_ignores_head_moved" "1" \
+  "$(reviewer_loop_persist_failure_should_escalate 1 needs_fixes head_moved_during_run; echo $?)"
+run_test "persist_failure_still_escalates_real_needs_fixes" "0" \
+  "$(reviewer_loop_persist_failure_should_escalate 1 needs_fixes unresolved_review_threads; echo $?)"
+run_test "p91_step7_snippet_fails_fast" "yes" \
+  "$(awk '/^set -euo pipefail$/{s=NR} /^# Drop settle telemetry from any earlier invocation first/{ if (s==NR-1) ok=1 } END{exit !ok}' "$_1574_p91" && echo yes || echo no)"
 unset _1574_ledger_body
 for _field in POST_CLEAN_SETTLED POST_CLEAN_SETTLE_TIMEOUT POST_CLEAN_NO_SUBMITTED_REVIEW POST_CLEAN_SETTLED_AT POST_CLEAN_RECHECK_SKIP_REASON POST_CLEAN_HEAD_SHA; do
   run_test "p91_consumes_$_field" "yes" \

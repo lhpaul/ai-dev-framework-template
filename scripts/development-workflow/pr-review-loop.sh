@@ -6698,11 +6698,17 @@ reviewer_loop_cycle_count_unavailable_should_escalate() {
 reviewer_loop_persist_failure_should_escalate() {
   local post_summary_exit_code="$1"
   local result="$2"
+  local reason="${3:-}"
 
   case "$result" in
     needs_fixes|needs_rerun) : ;;
     *) return 1 ;;
   esac
+  # A head that moved during a clean run dispatches no fixer and is not
+  # counted as a cycle, so an unpersisted ledger cannot let an unbounded
+  # dispatch through; a transient comment failure there is not a reason to
+  # pull a human in (issue #1574).
+  [ "$reason" != "head_moved_during_run" ] || return 1
 
   [ "$post_summary_exit_code" -ne 0 ]
 }
@@ -8622,7 +8628,7 @@ if [ "$aggregate_result" != "skipped" ]; then
     "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
     "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
     "$advisory_checks_section" || _post_summary_exit=$?
-  if reviewer_loop_persist_failure_should_escalate "$_post_summary_exit" "$aggregate_result"; then
+  if reviewer_loop_persist_failure_should_escalate "$_post_summary_exit" "$aggregate_result" "$aggregate_reason"; then
     echo "WARN: reviewer-loop summary comment could not be persisted for a dispatch-triggering result ($aggregate_result) — escalating (ledger_persist_failed) rather than letting an uncounted fixer/retry dispatch happen" >&2
     aggregate_result="escalate"
     aggregate_reason="ledger_persist_failed"

@@ -1955,6 +1955,7 @@ ISO-8601 timestamp, or a reason word); the pattern below admits nothing else:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
 # Drop settle telemetry from any earlier invocation first. A loop that exits
 # before emitting POST_CLEAN_* (outer timeout, interruption, API failure)
 # must leave Check 0.6 with nothing — not with the previous HEAD's verdict.
@@ -2822,16 +2823,21 @@ fi
 
 # Check 4: ready-for-human-review label NOT yet applied (we are about to apply it)
 HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
+# Last look before the label (issue #1574): several API-backed gates ran since
+# Check 0.6, and a push during any of them leaves the settled verdict
+# describing a head the PR has left. The label stays on — or goes on — the
+# commit that was reviewed, or not at all; a label already present for a head
+# that has since moved is pulled back.
+if [ "${SETTLE_APPLIES:-1}" -eq 1 ] && ! settle_head_ok; then
+  if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
+    echo "Removing 'ready-for-human-review': it covers a head that is no longer the PR head."
+    gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "ready-for-human-review"
+  fi
+  exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
+fi
 if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
   echo "INFO: PR already has 'ready-for-human-review' label. Skipping re-application."
 else
-  # Last look before the label (issue #1574): several API-backed gates ran
-  # since Check 0.6, and a push during any of them leaves the settled verdict
-  # describing a head the PR has left. The label goes on the commit that was
-  # reviewed or not at all.
-  if [ "${SETTLE_APPLIES:-1}" -eq 1 ]; then
-    settle_head_ok || exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
-  fi
   echo "Applying 'ready-for-human-review' label..."
   gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --add-label "ready-for-human-review"
 fi
@@ -2889,6 +2895,7 @@ a wait of its own (issue #1574).
 
    Before running the query, resolve the Codex bot login. Use the value of `CODEX_GITHUB_BOT_LOGIN` if set; otherwise default to `"chatgpt-codex-connector[bot]"` (the default used by `codex-github-reviewer.sh`). Strip the `[bot]` suffix because GraphQL `author.login` values omit it:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
    # GraphQL author.login omits the "[bot]" suffix present in REST API logins; strip it.
