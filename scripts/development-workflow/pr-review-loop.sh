@@ -7870,7 +7870,18 @@ _post_review_summary() {
       fi
       ;;
     needs_fixes)
-      result_line="${blocking} blocking finding(s) require fixes"
+      case "$reason" in
+        head_moved_during_run)
+          # This is the only needs_fixes reason with a zero blocking count
+          # (issue #1574): every reviewer was clean, but the PR head moved
+          # while they ran, so "N blocking finding(s)" would misreport why
+          # this cycle is not clean. Name the reason explicitly instead.
+          result_line="needs_fixes (head_moved_during_run) — the clean verdict was for a HEAD the PR has since moved past; nothing to fix, re-run Step 7 for the current HEAD"
+          ;;
+        *)
+          result_line="${blocking} blocking finding(s) require fixes"
+          ;;
+      esac
       ;;
     escalate)
       result_line="escalated (${reason:-unknown})"
