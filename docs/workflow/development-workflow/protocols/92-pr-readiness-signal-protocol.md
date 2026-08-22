@@ -45,6 +45,25 @@ Apply this label when **all** of the following are true:
 - [ ] CI checks are green (build, lint, tests all pass)
 - [ ] The relevant pre-PR review gate from `REVIEW.md` has been completed
 - [ ] Step 7's latest automated reviewer-loop summary has `Result: clean` or `Result: skipped`; `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result blocks this label
+- [ ] That clean verdict is **adjacent** to applying the label, not merely
+      earlier than it (issue #1556). The reviewer loop now settles before
+      reporting clean — it waits for the platform to go quiet for a configured
+      period — but a caller can still invalidate that by doing something slow
+      in between. On PR #1555 the label was applied off a thread check that had
+      gone stale during a ~10 minute status poll, and four findings had landed
+      in the gap; the label had to be pulled back.
+
+      Concretely, when anything lengthy happens between the loop's verdict and
+      the label — a CI poll, a fix cycle, a merge of a sibling PR, a session
+      break — re-query review threads immediately before applying the label,
+      and treat any unresolved bot thread as blocking. The loop emits
+      `POST_CLEAN_SETTLED_AT=<iso8601>` for exactly this: it is the instant the
+      verdict was established, so the gap is measurable rather than guessed at.
+- [ ] The reviewer loop reported `POST_CLEAN_SETTLED=1`. `POST_CLEAN_SETTLED=0`
+      (with `POST_CLEAN_SETTLE_TIMEOUT=1`) means the settle window was
+      exhausted while the platform was **still active** — no unresolved thread
+      was found, but the verdict is weaker than a settled one. Treat it as a
+      prompt to re-query threads before labelling rather than as a pass.
 - [ ] Every configured automated PR reviewer has no blocking PR feedback (or is skipped)
 - [ ] All feedback from a previous human review cycle has been addressed
 - [ ] For `spec/*` and `implementation-plan/*` PRs,

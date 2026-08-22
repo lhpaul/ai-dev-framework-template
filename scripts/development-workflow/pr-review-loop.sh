@@ -501,7 +501,16 @@ Outputs stable key=value lines including:
   PHASE_AFTER_CLEAN_GATE_RESULT=<result> (emitted only after the phase starts)
   PHASE_AFTER_CLEAN_SKIP_REASON=<result> (emitted when the phase never starts)
   PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (compatibility alias for READY_PHASE_NET_NEW_BLOCKER)
-  POST_CLEAN_RECHECK=0|1 (1 when the post-clean wait-and-recheck ran)
+  POST_CLEAN_RECHECK=0|1 (1 when the post-clean settle-and-recheck ran)
+  POST_CLEAN_SETTLED=0|1 (1 when the platform went quiet for the full required period; 0 when the
+    window was exhausted while it was still active — the verdict is still clean, but weaker)
+  POST_CLEAN_SETTLE_TIMEOUT=1 (present only when the window was exhausted before silence)
+  POST_CLEAN_SETTLE_WINDOW_SECONDS / POST_CLEAN_SETTLE_QUIET_SECONDS (the values in force)
+  POST_CLEAN_ACTIVITY_SEEN=1 (present when the platform acted during the settle window)
+  POST_CLEAN_ACTIVITY_PROBE_FAILED=1 (present when an activity query failed; a failed probe is
+    never counted as silence)
+  POST_CLEAN_SETTLED_AT=<iso8601> (when the verdict was established — a caller that inserts a long
+    poll between this and the readiness label is acting on a stale check)
   LATE_THREADS_FOUND=<N> (count of newly-found unresolved threads; -1 on audit failure; 0 when POST_CLEAN_RECHECK=0)
   RUN_ID=<id> (this invocation's resolved orchestration-run identifier — either PR_REVIEW_LOOP_RUN_ID
                   verbatim, or a freshly generated "auto-<epoch>-<pid>-<random>" id when unset. See
@@ -553,7 +562,25 @@ Outputs stable key=value lines including:
                   match" key=value parser.)
 
 Environment variables:
-  POST_CLEAN_WAIT=<seconds>          Override the post-clean recheck wait (default: 30). Set to 0 to run immediately.
+  POST_CLEAN_SETTLE_QUIET=<sec>      Consecutive seconds of platform silence required before a clean verdict is
+                                     called settled (issue #1556). Defaults per platform: 180 for coderabbit /
+                                     coderabbit-cli, 60 otherwise. Any platform activity — including an in-place
+                                     EDIT of an existing bot comment — resets this timer.
+  POST_CLEAN_SETTLE_WINDOW=<sec>     Maximum total time to spend settling (default: 600 for coderabbit /
+                                     coderabbit-cli, 180 otherwise). If the window is exhausted while the platform
+                                     is still active, the verdict stays clean but is reported UNSETTLED via
+                                     POST_CLEAN_SETTLED=0 and POST_CLEAN_SETTLE_TIMEOUT=1.
+  POST_CLEAN_POLL=<seconds>          Interval between settle re-checks (default: 60 for coderabbit /
+                                     coderabbit-cli, 30 otherwise).
+  <PLATFORM>_POST_CLEAN_SETTLE_QUIET / _SETTLE_WINDOW / _POLL
+                                     Per-platform overrides, taking precedence over the generic forms above.
+                                     The platform name is upper-cased with '-' replaced by '_', except that
+                                     coderabbit-cli shares the CODERABBIT_ prefix. Example:
+                                     CODERABBIT_POST_CLEAN_SETTLE_QUIET=240
+                                     When several platforms are configured, the LONGEST window and quiet period
+                                     across them are used — any of them can be the one that posts late.
+  POST_CLEAN_WAIT=<seconds>          Legacy alias, still honoured: sets the quiet period when no more specific
+                                     POST_CLEAN_SETTLE_QUIET (generic or per-platform) is set.
   SKIP_POST_CLEAN_RECHECK=1          Suppress the post-clean recheck. Set by callers re-dispatching after a prior
                                      late-thread fix cycle, so the corrective invocation does not recheck again.
   FALLBACK_THREAD_SETTLE_WAIT=<sec>  Seconds to wait before running the thread audit when using
@@ -4601,6 +4628,14 @@ run_coderabbit_review() {
     # Also check for CodeRabbit issue comments (summary comment) as activity signal.
     # Filter by since_iso so historical comments from prior pushes do not incorrectly
     # mark this HEAD cycle as having activity (which would suppress stale-findings recovery).
+    #
+    # Both created_at AND updated_at are accepted (issue #1556). CodeRabbit revises
+    # its walkthrough comment IN PLACE rather than posting a new one, so the comment
+    # keeps its original created_at. Observed on PR #1532: created 23:23 — before the
+    # 23:34 HEAD commit — and edited 23:52 to carry the new review. A created_at-only
+    # filter cannot see that at all; the run only survived because CodeRabbit also
+    # submitted a formal review, which is matched separately on submitted_at. The
+    # timeout guard already accepted updated_at; this probe did not.
     # Exclude "Reviews paused" comments (pause marker), "rate limit" comments (rate-limit
     # marker), "Reviews resumed" acknowledgement comments, and "Review skipped" banners
     # (skip marker — see CODERABBIT_SKIP_BANNER_RE) — none of these represent a
@@ -4613,7 +4648,7 @@ run_coderabbit_review() {
                --arg skip_re "$CODERABBIT_SKIP_BANNER_RE" '
               [.[].[] | select(
                   .user.login == $bot and
-                  .created_at > $since and
+                  (.created_at > $since or (.updated_at // .created_at) > $since) and
                   ((.body // "") | test("Reviews paused|review paused"; "i") | not) and
                   ((.body // "") | test("rate.?limit"; "i") | not) and
                   ((.body // "") | test("reviews resumed"; "i") | not) and
@@ -6848,6 +6883,118 @@ resolve_local_review_override_root() {
 # All function definitions above (including normalize_platform_verdict,
 # append_compare_metrics_row, and restore_regression_label_if_missing) are
 # loaded; only the argument-parsing and execution sections below are skipped.
+# ---------------------------------------------------------------------------
+# Post-clean settle window (issue #1556)
+#
+# The old behaviour was a single 30-second wait followed by one thread re-query.
+# That is far too short for CodeRabbit, which posts findings minutes after it
+# first goes quiet. Measured: PR #1532 two late findings, #1541 three across
+# three rounds, #1555 five across two rounds, and again during #1537/#1562 —
+# eight on one PR across two post-clean rounds, two of them Major. Every late
+# finding was real. Nothing escaped only because runners were told to hold a
+# 2-3 minute quiet window and re-query by hand, which is operator discipline
+# standing in for a tooling guarantee.
+#
+# The verdict now means "clean, and still clean after the vendor went quiet":
+# poll until the platform has produced NO activity for a full quiet period, or
+# until the overall window is exhausted. Any activity resets the quiet timer,
+# because a vendor that just spoke is likely to speak again.
+#
+# _settle_config_for_platform <platform> — echoes "window quiet poll" seconds.
+#
+# Per-platform (AC-4), because vendors differ by an order of magnitude and a
+# window sized for the slowest would tax every other platform. Resolution
+# order, most specific first:
+#   1. <PLATFORM>_POST_CLEAN_SETTLE_WINDOW / _QUIET / _POLL   (e.g. CODERABBIT_)
+#   2. POST_CLEAN_SETTLE_WINDOW / POST_CLEAN_SETTLE_QUIET / POST_CLEAN_POLL
+#   3. the per-platform defaults below
+#
+# POST_CLEAN_WAIT is still honoured as the quiet period when nothing more
+# specific is set, so existing callers keep working.
+_settle_config_for_platform() {
+  local platform="$1"
+  local window quiet poll
+  local prefix
+  # coderabbit-cli shares CodeRabbit's posting behaviour.
+  case "$platform" in
+    coderabbit|coderabbit-cli) prefix="CODERABBIT" ;;
+    *) prefix="$(printf '%s' "$platform" | tr '[:lower:]-' '[:upper:]_')" ;;
+  esac
+
+  case "$platform" in
+    coderabbit|coderabbit-cli)
+      # Sized from the observed late-arrival spread, not guessed.
+      window=600; quiet=180; poll=60
+      ;;
+    *)
+      window=180; quiet=60; poll=30
+      ;;
+  esac
+
+  local v
+  eval "v=\"\${${prefix}_POST_CLEAN_SETTLE_WINDOW:-}\""
+  [ -n "$v" ] || v="${POST_CLEAN_SETTLE_WINDOW:-}"
+  case "$v" in ''|*[!0-9]*) ;; *) window="$v" ;; esac
+
+  eval "v=\"\${${prefix}_POST_CLEAN_SETTLE_QUIET:-}\""
+  [ -n "$v" ] || v="${POST_CLEAN_SETTLE_QUIET:-${POST_CLEAN_WAIT:-}}"
+  case "$v" in ''|*[!0-9]*) ;; *) quiet="$v" ;; esac
+
+  eval "v=\"\${${prefix}_POST_CLEAN_POLL:-}\""
+  [ -n "$v" ] || v="${POST_CLEAN_POLL:-}"
+  case "$v" in ''|*[!0-9]*) ;; *) poll="$v" ;; esac
+
+  # A quiet period longer than the window can never be satisfied, which would
+  # burn the whole window and then report settled without ever having been.
+  [ "$quiet" -gt "$window" ] && quiet="$window"
+  [ "$poll" -lt 1 ] && poll=1
+  [ "$poll" -gt "$quiet" ] && [ "$quiet" -gt 0 ] && poll="$quiet"
+
+  printf '%s %s %s' "$window" "$quiet" "$poll"
+}
+
+# _bot_activity_since <repo> <pr> <since-iso> <bot-login>...
+#
+# Counts bot activity at or after <since-iso> across issue comments, review
+# comments, and submitted reviews. Accepts updated_at as well as created_at,
+# so an in-place edit counts — the same blind spot fixed in the CodeRabbit
+# activity probe. Echoes an integer, or "-1" if the query failed (which the
+# caller must not read as "quiet").
+_bot_activity_since() {
+  local repo="$1" pr="$2" since="$3"
+  shift 3
+  local logins_json
+  logins_json="$(printf '%s\n' "$@" | jq -R . | jq -sc .)"
+
+  local issue_n review_n comment_n
+  issue_n="$(gh api "repos/$repo/issues/$pr/comments" --paginate 2>/dev/null \
+    | jq -s --argjson bots "$logins_json" --arg since "$since" '
+        [ .[][]? | select(
+            ((.user.login // "") | rtrimstr("[bot]")) as $l
+            | ($bots | index($l) or ($bots | index(.user.login // ""))) 
+          ) | select((.created_at > $since) or ((.updated_at // .created_at) > $since))
+        ] | length' 2>/dev/null)" || issue_n=""
+  comment_n="$(gh api "repos/$repo/pulls/$pr/comments" --paginate 2>/dev/null \
+    | jq -s --argjson bots "$logins_json" --arg since "$since" '
+        [ .[][]? | select(
+            ((.user.login // "") | rtrimstr("[bot]")) as $l
+            | ($bots | index($l) or ($bots | index(.user.login // "")))
+          ) | select((.created_at > $since) or ((.updated_at // .created_at) > $since))
+        ] | length' 2>/dev/null)" || comment_n=""
+  review_n="$(gh api "repos/$repo/pulls/$pr/reviews" --paginate 2>/dev/null \
+    | jq -s --argjson bots "$logins_json" --arg since "$since" '
+        [ .[][]? | select(
+            ((.user.login // "") | rtrimstr("[bot]")) as $l
+            | ($bots | index($l) or ($bots | index(.user.login // "")))
+          ) | select((.submitted_at // "") > $since)
+        ] | length' 2>/dev/null)" || review_n=""
+
+  case "${issue_n}${comment_n}${review_n}" in
+    ''|*[!0-9]*) printf '%s' "-1"; return 0 ;;
+  esac
+  printf '%s' "$(( issue_n + comment_n + review_n ))"
+}
+
 [ "$_HARNESS_MODE_EFFECTIVE" -eq 1 ] && return 0 2>/dev/null || true
 
 if [ "$#" -lt 1 ]; then
@@ -8060,42 +8207,76 @@ fi
 # Configurable via POST_CLEAN_WAIT env var (default: 30 seconds).
 # Emits POST_CLEAN_RECHECK=1 when the wait-and-recheck runs, and
 # LATE_THREADS_FOUND=<N> with the count of newly-discovered unresolved threads.
-post_clean_wait="${POST_CLEAN_WAIT:-30}"
+# Take the longest settle configuration across every configured platform: any
+# of them can be the one that posts late, so the window must accommodate the
+# slowest rather than whichever happened to run last.
+settle_window=0
+settle_quiet=0
+settle_poll=0
+for _sp in "${platforms[@]}"; do
+  read -r _sw _sq _spoll <<<"$(_settle_config_for_platform "$_sp")"
+  [ "${_sw:-0}" -gt "$settle_window" ] && settle_window="$_sw"
+  [ "${_sq:-0}" -gt "$settle_quiet" ] && settle_quiet="$_sq"
+  if [ "$settle_poll" -eq 0 ] || { [ "${_spoll:-0}" -gt 0 ] && [ "${_spoll:-0}" -lt "$settle_poll" ]; }; then
+    settle_poll="${_spoll:-30}"
+  fi
+done
+[ "$settle_window" -gt 0 ] || settle_window=180
+[ "$settle_quiet" -gt 0 ] || settle_quiet=60
+[ "$settle_poll" -gt 0 ] || settle_poll=30
+unset _sp _sw _sq _spoll
+
 if [ "$aggregate_result" = "clean" ] \
     && [ "$compare_mode" -eq 0 ] \
     && [ "${SKIP_POST_CLEAN_RECHECK:-0}" != "1" ] \
     && [ "${#unresolved_bot_logins[@]}" -gt 0 ] \
     && [ -n "$pr_number" ]; then
   print_kv POST_CLEAN_RECHECK 1
-  echo "INFO: post-clean recheck — waiting ${post_clean_wait}s for any late-arriving review threads" >&2
-  _interruptible_sleep "$post_clean_wait"
+  print_kv POST_CLEAN_SETTLE_WINDOW_SECONDS "$settle_window"
+  print_kv POST_CLEAN_SETTLE_QUIET_SECONDS "$settle_quiet"
+  echo "INFO: post-clean settle — requiring ${settle_quiet}s of platform silence (max ${settle_window}s), polling every ${settle_poll}s" >&2
 
   late_thread_count=0
-  late_thread_check_output=""
-  late_thread_check_status=0
-  set +e
-  # mode=strict: the post-clean recheck also decides RESULT=clean and must
-  # never be relaxed by a reply-without-resolve (see check_unresolved_threads).
-  late_thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" strict "${unresolved_bot_logins[@]}")"
-  late_thread_check_status=$?
-  set -e
+  settle_elapsed=0
+  settle_quiet_elapsed=0
+  settle_activity_seen=0
+  settle_probe_failed=0
+  settle_since="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  settle_repo="$(repo_slug)"
 
-  if [ "$late_thread_check_status" -eq 2 ]; then
-    # Page-cap exceeded — cannot confirm all threads are resolved. Escalate.
-    echo "WARN: post-clean recheck: check_unresolved_threads exceeded page cap — escalating" >&2
-    aggregate_result="escalate"
-    aggregate_reason="post_clean_recheck_thread_check_incomplete"
-    late_thread_count=-1
-  elif [ "$late_thread_check_status" -ne 0 ]; then
-    # GraphQL failure — escalate rather than silently treating the recheck as clean.
-    echo "WARN: post-clean recheck: check_unresolved_threads failed (exit $late_thread_check_status) — escalating" >&2
-    aggregate_result="escalate"
-    aggregate_reason="post_clean_recheck_thread_audit_failed"
-    late_thread_count=-1
-  else
+  while [ "$settle_elapsed" -lt "$settle_window" ] \
+     && [ "$settle_quiet_elapsed" -lt "$settle_quiet" ]; do
+    _interruptible_sleep "$settle_poll"
+    settle_elapsed=$((settle_elapsed + settle_poll))
+
+    # Threads first: a late unresolved thread is the outcome we are hunting,
+    # and finding one ends the wait immediately.
+    late_thread_check_output=""
+    late_thread_check_status=0
+    set +e
+    # mode=strict: this decides RESULT=clean and must never be relaxed by a
+    # reply-without-resolve (see check_unresolved_threads).
+    late_thread_check_output="$(check_unresolved_threads "$pr_number" "$settle_repo" strict "${unresolved_bot_logins[@]}")"
+    late_thread_check_status=$?
+    set -e
+
+    if [ "$late_thread_check_status" -eq 2 ]; then
+      echo "WARN: post-clean settle: check_unresolved_threads exceeded page cap — escalating" >&2
+      aggregate_result="escalate"
+      aggregate_reason="post_clean_recheck_thread_check_incomplete"
+      late_thread_count=-1
+      break
+    elif [ "$late_thread_check_status" -ne 0 ]; then
+      echo "WARN: post-clean settle: check_unresolved_threads failed (exit $late_thread_check_status) — escalating" >&2
+      aggregate_result="escalate"
+      aggregate_reason="post_clean_recheck_thread_audit_failed"
+      late_thread_count=-1
+      break
+    fi
+
     late_thread_count="$late_thread_check_output"
     if [ "$late_thread_count" -gt 0 ]; then
-      echo "INFO: post-clean recheck — found $late_thread_count late unresolved thread(s); switching to needs_fixes" >&2
+      echo "INFO: post-clean settle — found $late_thread_count late unresolved thread(s) after ${settle_elapsed}s; switching to needs_fixes" >&2
       aggregate_result="needs_fixes"
       aggregate_reason="late_review_threads"
       if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 1 ]; then
@@ -8103,10 +8284,49 @@ if [ "$aggregate_result" = "clean" ] \
         phase_after_clean_blocking_platform="${phase_after_clean_blocking_platform:-late_review_threads}"
       fi
       total_blocking_count=$((total_blocking_count + late_thread_count))
-    else
-      echo "INFO: post-clean recheck — no late threads found; result remains clean" >&2
+      break
     fi
+
+    # No unresolved thread yet — but the platform may still be mid-write, and a
+    # comment posted without a review thread (or a walkthrough edited in place)
+    # is exactly the signal that more is coming. Any activity resets the quiet
+    # timer rather than merely being noted.
+    settle_activity="$(_bot_activity_since "$settle_repo" "$pr_number" "$settle_since" "${unresolved_bot_logins[@]}")"
+    if [ "$settle_activity" = "-1" ]; then
+      # A failed probe is not silence. Do not let it satisfy the quiet period.
+      settle_probe_failed=1
+      echo "WARN: post-clean settle: activity probe failed; not counting this interval as quiet" >&2
+    elif [ "${settle_activity:-0}" -gt 0 ]; then
+      settle_activity_seen=1
+      settle_quiet_elapsed=0
+      settle_since="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+      echo "INFO: post-clean settle — $settle_activity new platform action(s) at ${settle_elapsed}s; quiet timer reset" >&2
+    else
+      settle_quiet_elapsed=$((settle_quiet_elapsed + settle_poll))
+    fi
+  done
+
+  if [ "$aggregate_result" = "clean" ]; then
+    if [ "$settle_quiet_elapsed" -ge "$settle_quiet" ]; then
+      print_kv POST_CLEAN_SETTLED 1
+      echo "INFO: post-clean settle — platform quiet for ${settle_quiet_elapsed}s; result remains clean" >&2
+    else
+      # The window ran out before the quiet period was satisfied. The verdict is
+      # still clean (no unresolved thread was ever found) but it is weaker than
+      # a settled one, and saying so is the difference between a caller that
+      # knows to look and one that does not.
+      print_kv POST_CLEAN_SETTLED 0
+      print_kv POST_CLEAN_SETTLE_TIMEOUT 1
+      echo "WARN: post-clean settle — window (${settle_window}s) exhausted before ${settle_quiet}s of silence; the platform was still active. Verdict is clean but UNSETTLED." >&2
+    fi
+    [ "$settle_probe_failed" -eq 1 ] && print_kv POST_CLEAN_ACTIVITY_PROBE_FAILED 1
+    [ "$settle_activity_seen" -eq 1 ] && print_kv POST_CLEAN_ACTIVITY_SEEN 1
   fi
+
+  # The instant the verdict was established. A caller that inserts a long poll
+  # between this timestamp and the readiness label is acting on a stale check —
+  # see the "adjacent to the readiness decision" note in the reviewer-loop docs.
+  print_kv POST_CLEAN_SETTLED_AT "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   print_kv LATE_THREADS_FOUND "$late_thread_count"
 else
   print_kv POST_CLEAN_RECHECK 0

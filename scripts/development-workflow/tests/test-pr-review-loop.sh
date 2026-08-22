@@ -13974,6 +13974,135 @@ run_test "area_filter_empty_value_exits_2" "2" \
 unset _1562_suite _1562_loop _1562_filtered _1562_guard_out
 
 # ---------------------------------------------------------------------------
+# Area 19: post-clean settle window and updated_at activity (issue #1556)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 19: post-clean settle and updated_at activity (#1556) ==="
+
+# --- AC-4: the settle window is configurable, per platform ------------------
+run_test "settle_config_defined" "yes" \
+  "$(type -t _settle_config_for_platform >/dev/null 2>&1 && echo yes || echo no)"
+run_test "settle_default_platform" "180 60 30" \
+  "$(_settle_config_for_platform pr-agent)"
+# CodeRabbit gets a longer window because it is the platform that posts late.
+run_test "settle_coderabbit_is_longer" "600 180 60" \
+  "$(_settle_config_for_platform coderabbit)"
+run_test "settle_coderabbit_cli_shares_prefix" "600 180 60" \
+  "$(_settle_config_for_platform coderabbit-cli)"
+run_test "settle_generic_env_override" "180 45 30" \
+  "$(POST_CLEAN_SETTLE_QUIET=45 _settle_config_for_platform pr-agent)"
+run_test "settle_per_platform_env_wins" "600 10 10" \
+  "$(CODERABBIT_POST_CLEAN_SETTLE_QUIET=10 _settle_config_for_platform coderabbit)"
+run_test "settle_per_platform_beats_generic" "600 20 20" \
+  "$(POST_CLEAN_SETTLE_QUIET=99 CODERABBIT_POST_CLEAN_SETTLE_QUIET=20 \
+     _settle_config_for_platform coderabbit)"
+run_test "settle_window_override" "300 180 60" \
+  "$(CODERABBIT_POST_CLEAN_SETTLE_WINDOW=300 _settle_config_for_platform coderabbit)"
+# Legacy knob still works so existing callers are not silently retimed.
+run_test "settle_legacy_post_clean_wait" "180 5 5" \
+  "$(POST_CLEAN_WAIT=5 _settle_config_for_platform pr-agent)"
+run_test "settle_specific_beats_legacy" "180 45 30" \
+  "$(POST_CLEAN_WAIT=5 POST_CLEAN_SETTLE_QUIET=45 _settle_config_for_platform pr-agent)"
+# A quiet period longer than the window could never be satisfied, which would
+# burn the whole window and then report settled without ever having been.
+run_test "settle_quiet_clamped_to_window" "60 60 30" \
+  "$(POST_CLEAN_SETTLE_WINDOW=60 POST_CLEAN_SETTLE_QUIET=999 _settle_config_for_platform pr-agent)"
+run_test "settle_junk_falls_back_to_default" "180 60 30" \
+  "$(POST_CLEAN_SETTLE_QUIET=abc _settle_config_for_platform pr-agent)"
+run_test "settle_negative_junk_falls_back" "180 60 30" \
+  "$(POST_CLEAN_SETTLE_QUIET=-5 _settle_config_for_platform pr-agent)"
+
+# --- AC-2 / AC-3: an in-place edit registers as activity --------------------
+run_test "activity_probe_defined" "yes" \
+  "$(type -t _bot_activity_since >/dev/null 2>&1 && echo yes || echo no)"
+
+_1556_bin="$(mktemp -d)"
+_1556_mkgh() {
+  # $1 = issue-comments JSON body for the mock to return
+  cat > "$_1556_bin/gh" <<GHEOF
+#!/usr/bin/env bash
+case "\$*" in
+  *"issues/42/comments"*) cat <<'JSON'
+$1
+JSON
+    ;;
+  *"pulls/42/comments"*) printf '[]\n' ;;
+  *"pulls/42/reviews"*)  printf '[]\n' ;;
+  *) printf '[]\n' ;;
+esac
+GHEOF
+  chmod +x "$_1556_bin/gh"
+}
+
+# The PR #1532 shape exactly: the walkthrough comment was CREATED at 23:23,
+# before the 23:34 HEAD commit, and EDITED at 23:52 to carry the new review.
+# A created_at-only filter cannot see it; that run only survived because
+# CodeRabbit also submitted a formal review, matched separately.
+_1556_mkgh '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2026-01-01T23:23:00Z","updated_at":"2026-01-01T23:52:00Z","body":"walkthrough"}]'
+run_test "activity_1532_shape_edit_counts" "1" \
+  "$(PATH="$_1556_bin:$PATH" _bot_activity_since owner/repo 42 "2026-01-01T23:34:00Z" coderabbitai)"
+
+# The same comment with no edit must NOT count — otherwise every historical
+# comment would look like fresh activity and the quiet timer could never expire.
+_1556_mkgh '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2026-01-01T23:23:00Z","updated_at":"2026-01-01T23:23:00Z","body":"walkthrough"}]'
+run_test "activity_stale_comment_does_not_count" "0" \
+  "$(PATH="$_1556_bin:$PATH" _bot_activity_since owner/repo 42 "2026-01-01T23:34:00Z" coderabbitai)"
+
+# A genuinely new comment counts through created_at, as before.
+_1556_mkgh '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2026-01-01T23:40:00Z","updated_at":"2026-01-01T23:40:00Z","body":"new"}]'
+run_test "activity_new_comment_counts" "1" \
+  "$(PATH="$_1556_bin:$PATH" _bot_activity_since owner/repo 42 "2026-01-01T23:34:00Z" coderabbitai)"
+
+# A comment with no updated_at at all must not crash or false-positive.
+_1556_mkgh '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2026-01-01T23:23:00Z","body":"no-updated-field"}]'
+run_test "activity_missing_updated_at_is_safe" "0" \
+  "$(PATH="$_1556_bin:$PATH" _bot_activity_since owner/repo 42 "2026-01-01T23:34:00Z" coderabbitai)"
+
+# Another bot's activity must not satisfy this bot's quiet period.
+_1556_mkgh '[{"user":{"login":"some-other-bot[bot]"},"created_at":"2026-01-01T23:40:00Z","updated_at":"2026-01-01T23:40:00Z","body":"unrelated"}]'
+run_test "activity_other_bot_ignored" "0" \
+  "$(PATH="$_1556_bin:$PATH" _bot_activity_since owner/repo 42 "2026-01-01T23:34:00Z" coderabbitai)"
+
+# A failed query must report -1, never 0 — a broken probe is not silence.
+cat > "$_1556_bin/gh" <<'GHFAIL'
+#!/usr/bin/env bash
+echo "simulated gh failure" >&2
+exit 1
+GHFAIL
+chmod +x "$_1556_bin/gh"
+run_test "activity_probe_failure_is_minus_one" "-1" \
+  "$(PATH="$_1556_bin:$PATH" _bot_activity_since owner/repo 42 "2026-01-01T23:34:00Z" coderabbitai)"
+
+rm -rf "$_1556_bin"
+unset _1556_bin
+
+# --- AC-1: the loop owns the wait, and the contract says so -----------------
+_1556_loop="$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+# The activity probe inside run_coderabbit_review must accept updated_at too;
+# that was the specific created_at-only filter reported on PR #1532.
+run_test "coderabbit_activity_probe_accepts_updated_at" "1" \
+  "$(grep_count_or_zero '(.created_at > $since or (.updated_at // .created_at) > $since)' "$_1556_loop")"
+# The verdict must no longer be a single fixed sleep.
+run_test "post_clean_no_longer_single_wait" "0" \
+  "$(grep_count_or_zero '_interruptible_sleep "$post_clean_wait"' "$_1556_loop")"
+run_test "post_clean_emits_settled_field" "yes" \
+  "$(grep -q 'print_kv POST_CLEAN_SETTLED ' "$_1556_loop" && echo yes || echo no)"
+run_test "post_clean_emits_settled_at" "yes" \
+  "$(grep -q 'print_kv POST_CLEAN_SETTLED_AT ' "$_1556_loop" && echo yes || echo no)"
+# An exhausted window must be distinguishable from a genuinely quiet one.
+run_test "post_clean_reports_timeout_distinctly" "yes" \
+  "$(grep -q 'print_kv POST_CLEAN_SETTLE_TIMEOUT 1' "$_1556_loop" && echo yes || echo no)"
+# A failed activity probe must never be counted as silence.
+run_test "post_clean_probe_failure_not_silence" "yes" \
+  "$(grep -q 'not counting this interval as quiet' "$_1556_loop" && echo yes || echo no)"
+# The documented knobs must actually appear in --help (AC-4).
+for _knob in POST_CLEAN_SETTLE_QUIET POST_CLEAN_SETTLE_WINDOW POST_CLEAN_POLL; do
+  run_test "help_documents_$_knob" "yes" \
+    "$(grep -q "$_knob=<" "$_1556_loop" && echo yes || echo no)"
+done
+unset _knob _1556_loop
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
