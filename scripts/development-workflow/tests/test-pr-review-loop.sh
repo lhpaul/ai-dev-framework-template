@@ -698,6 +698,12 @@ review_local_file="$(
   workflow_local_config_file
 )"
 run_test "worktree_file_with_review_section_wins" "$_WT_LINKED/.ai-dev-workflow.local.yaml" "$review_local_file"
+printf 'review: {}\n' > "$_WT_LINKED/.ai-dev-workflow.local.yaml"
+empty_review_local_file="$(
+  workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
+  workflow_local_config_file
+)"
+run_test "worktree_file_with_empty_review_key_wins" "$_WT_LINKED/.ai-dev-workflow.local.yaml" "$empty_review_local_file"
 rm -f "$_WT_LINKED/.ai-dev-workflow.local.yaml"
 main_root_status=0
 workflow_linked_worktree_main_root "$_WT_MAIN" >/dev/null 2>&1 || main_root_status=$?
@@ -711,7 +717,7 @@ run_test "single_line_rev_parse_is_not_a_linked_worktree" "1:" "$mock_git_status
 git -C "$_WT_MAIN" worktree remove --force "$_WT_LINKED"
 unset -f git
 rm -rf "$_WT_MAIN"
-unset _REAL_PATH _WT_MAIN _WT_LINKED linked_override_root linked_local_file linked_platforms linked_main_root main_root_status mock_git_status mock_git_main_root
+unset _REAL_PATH _WT_MAIN _WT_LINKED linked_override_root linked_local_file linked_platforms linked_main_root main_root_status mock_git_status mock_git_main_root product_only_local_file review_local_file empty_review_local_file
 
 cat > "$_LOCAL_OVERRIDE_DIR/.ai-dev-workflow.local.yaml" <<'YAML'
 review:

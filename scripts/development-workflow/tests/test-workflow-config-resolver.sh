@@ -880,6 +880,14 @@ run_contains "product_only_local_file_origin_is_main_clone" "LOCAL_OVERRIDE_ORIG
 run_contains "product_only_local_file_reports_main_clone_file" "LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$masked_output"
 rm -f "$worktree_linked/.ai-dev-workflow.local.yaml"
 
+# An explicit, empty `review:` key in the checkout-local file IS a review
+# section: it wins (and yields no override), matching the shell parsers.
+printf 'review: {}\n' > "$worktree_linked/.ai-dev-workflow.local.yaml"
+empty_review_output="$(workflow_review_override_context "$worktree_linked")"
+run_contains "empty_review_key_in_worktree_file_wins" "LOCAL_OVERRIDE_ORIGIN=checkout" "$empty_review_output"
+run_contains "empty_review_key_in_worktree_file_runner_empty" "REVIEW_ON_DRAFT_RUNNER=" "$empty_review_output"
+rm -f "$worktree_linked/.ai-dev-workflow.local.yaml"
+
 # WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT (the #1033 handoff path) beats both.
 override_root_dir="$(fixture_dir worktree-override-root)"
 cat > "$override_root_dir/.ai-dev-workflow.local.yaml" <<'YAML'
