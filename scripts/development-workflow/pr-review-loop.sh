@@ -502,6 +502,9 @@ Outputs stable key=value lines including:
   PHASE_AFTER_CLEAN_SKIP_REASON=<result> (emitted when the phase never starts)
   PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (compatibility alias for READY_PHASE_NET_NEW_BLOCKER)
   POST_CLEAN_RECHECK=0|1 (1 when the post-clean settle-and-recheck ran)
+  POST_CLEAN_RECHECK_SKIP_REASON=<reason> (present only when POST_CLEAN_RECHECK=0: not_clean,
+    compare_mode, skip_env, no_thread_posting_platforms, or no_pr_number — so a caller can tell
+    "nothing to settle" from "settling was suppressed" (issue #1574))
   POST_CLEAN_SETTLED=0|1 (1 when the platform went quiet for the full required period; 0 when the
     window was exhausted while it was still active — the verdict is still clean, but weaker)
   POST_CLEAN_SETTLE_TIMEOUT=1 (present only when the window was exhausted before silence)
@@ -511,6 +514,12 @@ Outputs stable key=value lines including:
     never counted as silence)
   POST_CLEAN_SETTLED_AT=<iso8601> (when the verdict was established — a caller that inserts a long
     poll between this and the readiness label is acting on a stale check)
+  POST_CLEAN_HEAD_SHA=<sha> (the PR head this run reviewed, read BEFORE any reviewer was dispatched and
+    emitted on every clean path; Protocol 91 Check 0.6 refuses the verdict when the live head differs —
+    a push after Step 7 voids it — issue #1574)
+  RESULT=needs_fixes REASON=head_moved_during_run (the PR head changed while the reviewers ran, so
+    the clean verdict describes a commit the PR has left; nothing to fix — re-run the loop for the
+    current HEAD)
   LATE_THREADS_FOUND=<N> (count of newly-found unresolved threads; -1 on audit failure; 0 when POST_CLEAN_RECHECK=0)
   RUN_ID=<id> (this invocation's resolved orchestration-run identifier — either PR_REVIEW_LOOP_RUN_ID
                   verbatim, or a freshly generated "auto-<epoch>-<pid>-<random>" id when unset. See
@@ -563,11 +572,12 @@ Outputs stable key=value lines including:
 
 Environment variables:
   POST_CLEAN_SETTLE_QUIET=<sec>      Consecutive seconds of platform silence required before a clean verdict is
-                                     called settled (issue #1556). Defaults per platform: 180 for coderabbit /
+                                     called settled (issue #1556). Defaults per platform: 120 for coderabbit /
                                      coderabbit-cli, 60 otherwise. Any platform activity — including an in-place
                                      EDIT of an existing bot comment — resets this timer.
-  POST_CLEAN_SETTLE_WINDOW=<sec>     Maximum total time to spend settling (default: 600 for coderabbit /
-                                     coderabbit-cli, 180 otherwise). If the window is exhausted while the platform
+  POST_CLEAN_SETTLE_WINDOW=<sec>     Maximum total time to spend settling (default: 900 for coderabbit /
+                                     coderabbit-cli, 180 otherwise — sized from the measured ~12 min
+                                     walkthrough-to-review gap on PR #1573). If the window is exhausted while the platform
                                      is still active, the verdict stays clean but is reported UNSETTLED via
                                      POST_CLEAN_SETTLED=0 and POST_CLEAN_SETTLE_TIMEOUT=1.
   POST_CLEAN_POLL=<seconds>          Interval between settle re-checks (default: 60 for coderabbit /
@@ -6521,6 +6531,9 @@ reviewer_loop_history_entries_count() {
         [
           .entries[]?
           | select((.result // "") == "needs_fixes" or (.result // "") == "needs_rerun")
+          # A head that moved during an otherwise clean run dispatches no
+          # fixer; it is a re-run, not a cycle (issue #1574).
+          | select((.reason // "") != "head_moved_during_run")
         ] as $qualifying
         | ($qualifying
             | [.[] | select((.head_sha // "") | length > 0) | ((.head_sha // "") + "|" + (.result // ""))]
@@ -6685,11 +6698,17 @@ reviewer_loop_cycle_count_unavailable_should_escalate() {
 reviewer_loop_persist_failure_should_escalate() {
   local post_summary_exit_code="$1"
   local result="$2"
+  local reason="${3:-}"
 
   case "$result" in
     needs_fixes|needs_rerun) : ;;
     *) return 1 ;;
   esac
+  # A head that moved during a clean run dispatches no fixer and is not
+  # counted as a cycle, so an unpersisted ledger cannot let an unbounded
+  # dispatch through; a transient comment failure there is not a reason to
+  # pull a human in (issue #1574).
+  [ "$reason" != "head_moved_during_run" ] || return 1
 
   [ "$post_summary_exit_code" -ne 0 ]
 }
@@ -7552,6 +7571,19 @@ total_suggestion_count=0
 aggregate_advisory_labels=""
 reviewer_failed_required=0
 declare -a compare_verdicts=()
+# The head this run reviews, captured BEFORE any reviewer is dispatched
+# (issue #1574). Every verdict below describes this commit; the settle emits it
+# as POST_CLEAN_HEAD_SHA, and the head-move guard after the settle turns a
+# clean verdict into needs_fixes/head_moved_during_run if the PR moved away
+# from it while the loop ran. Reading it later would bind the verdict to
+# whatever was pushed in the meantime.
+loop_head_sha=""
+if [ -n "$pr_number" ]; then
+  if ! loop_head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null)"; then
+    loop_head_sha=""
+    echo "WARN: could not read the PR head before dispatching reviewers; POST_CLEAN_HEAD_SHA will be empty and Protocol 91 Check 0.6 will refuse this verdict" >&2
+  fi
+fi
 # Per-platform result tokens for the PR summary comment.
 # Each entry is "platform_name:display_token" (e.g. "haystack:unavailable").
 declare -a platform_result_tokens=()
@@ -7847,7 +7879,18 @@ _post_review_summary() {
       fi
       ;;
     needs_fixes)
-      result_line="${blocking} blocking finding(s) require fixes"
+      case "$reason" in
+        head_moved_during_run)
+          # This is the only needs_fixes reason with a zero blocking count
+          # (issue #1574): every reviewer was clean, but the PR head moved
+          # while they ran, so "N blocking finding(s)" would misreport why
+          # this cycle is not clean. Name the reason explicitly instead.
+          result_line="needs_fixes (head_moved_during_run) — the clean verdict was for a HEAD the PR has since moved past; nothing to fix, re-run Step 7 for the current HEAD"
+          ;;
+        *)
+          result_line="${blocking} blocking finding(s) require fixes"
+          ;;
+      esac
       ;;
     escalate)
       result_line="escalated (${reason:-unknown})"
@@ -8315,9 +8358,28 @@ if [ "$aggregate_result" = "clean" ] \
   # since_iso for the settle probes is the HEAD commit time, not "now": a review
   # submitted between the loop starting and the settle beginning still counts as
   # this HEAD's review, and anchoring to "now" would wait for a second one.
-  settle_head_iso="$(gh api "repos/$(repo_slug)/commits/${head_sha:-HEAD}" --jq '.commit.committer.date // empty' 2>/dev/null)"
-  [ -n "$settle_head_iso" ] || settle_head_iso="$(date -u -v-1H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '1 hour ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
+  # Anchor to the head this run reviewed, captured before dispatch. The
+  # previous form read head_sha with a HEAD fallback, and head_sha is only
+  # ever function-local, so at this scope it asked the API for commits/HEAD —
+  # which GitHub resolves to the DEFAULT BRANCH head. Measured on PR #1575:
+  # that anchor was nine days old, so any review CodeRabbit had ever
+  # submitted satisfied "a submitted review for this HEAD" and the
+  # require-review settle waited for nothing. When the head is unknown, the
+  # anchor is now: a review must land after this point (conservative —
+  # Check 0.6 refuses the unbound verdict anyway).
+  settle_head_iso=""
+  if [ -n "$loop_head_sha" ]; then
+    settle_head_iso="$(gh api "repos/$(repo_slug)/commits/${loop_head_sha}" --jq '.commit.committer.date // empty' 2>/dev/null)" || settle_head_iso=""
+  fi
+  if [ -z "$settle_head_iso" ]; then
+    settle_head_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    echo "WARN: post-clean settle — head commit time unavailable; a submitted review must land after ${settle_head_iso} to count" >&2
+  fi
   settle_review_seen=0
+  # The head this settle is about. Emitted as POST_CLEAN_HEAD_SHA so Protocol
+  # 91 Check 0.6 can refuse telemetry that describes a commit the PR has since
+  # moved past (a fix pushed between Step 7 and Step 8a) — issue #1574.
+  settle_head_sha="$loop_head_sha"
 
   late_thread_count=0
   settle_elapsed=0
@@ -8429,12 +8491,44 @@ if [ "$aggregate_result" = "clean" ] \
   # between this timestamp and the readiness label is acting on a stale check —
   # see the "adjacent to the readiness decision" note in the reviewer-loop docs.
   print_kv POST_CLEAN_SETTLED_AT "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  print_kv POST_CLEAN_HEAD_SHA "$settle_head_sha"
   print_kv LATE_THREADS_FOUND "$late_thread_count"
 else
   print_kv POST_CLEAN_RECHECK 0
+  # Say WHY the recheck did not run (issue #1574). Protocol 91's readiness
+  # checklist treats no_thread_posting_platforms as "nothing could arrive late"
+  # and every other reason as "the verdict was never settled — re-run Step 7".
+  if [ "$aggregate_result" != "clean" ]; then
+    print_kv POST_CLEAN_RECHECK_SKIP_REASON not_clean
+  elif [ "$compare_mode" -ne 0 ]; then
+    print_kv POST_CLEAN_RECHECK_SKIP_REASON compare_mode
+  elif [ "${SKIP_POST_CLEAN_RECHECK:-0}" = "1" ]; then
+    print_kv POST_CLEAN_RECHECK_SKIP_REASON skip_env
+  elif [ "${#unresolved_bot_logins[@]}" -eq 0 ]; then
+    print_kv POST_CLEAN_RECHECK_SKIP_REASON no_thread_posting_platforms
+  else
+    print_kv POST_CLEAN_RECHECK_SKIP_REASON no_pr_number
+  fi
   # Emit LATE_THREADS_FOUND=0 on skipped paths so consumers can always rely on
   # the field being present, regardless of whether the recheck ran.
   print_kv LATE_THREADS_FOUND 0
+  # The head binding applies to every clean verdict, not only settled ones:
+  # a no-thread-platform run is just as stale once the PR moves.
+  print_kv POST_CLEAN_HEAD_SHA "$loop_head_sha"
+fi
+
+# Head-move guard (#1574): a push that lands while the reviewers run leaves
+# the clean verdict describing a commit the PR no longer sits on. Refuse it
+# here, before the summary records it, rather than letting Check 0.6 compare
+# a head that was read after the fact.
+if [ "$aggregate_result" = "clean" ] && [ -n "$pr_number" ] && [ -n "$loop_head_sha" ]; then
+  live_head_sha=""
+  if live_head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null)" \
+    && [ -n "$live_head_sha" ] && [ "$live_head_sha" != "$loop_head_sha" ]; then
+    echo "WARN: PR head moved from ${loop_head_sha} to ${live_head_sha} while this loop ran; the clean verdict describes the old head — re-run the loop for the current HEAD" >&2
+    aggregate_result="needs_fixes"
+    aggregate_reason="head_moved_during_run"
+  fi
 fi
 
 if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 0 ]; then
@@ -8477,7 +8571,12 @@ fi
 # then the lifetime ceiling (max_total_cycles_exceeded — the structural
 # backstop). Both counts fail together (-1/-1) when the ledger could not be
 # read, so the unavailable check only needs to inspect one of them.
-if reviewer_loop_cycle_count_unavailable_should_escalate "$lifetime_cycle_count" "$aggregate_result"; then
+if [ "$aggregate_reason" = "head_moved_during_run" ]; then
+  # Not a fixer cycle: the reviewers were clean, the PR simply moved. The
+  # caller re-runs the loop; neither cap applies and the ledger does not
+  # count it (reviewer_loop_history_entries_count excludes this reason).
+  :
+elif reviewer_loop_cycle_count_unavailable_should_escalate "$lifetime_cycle_count" "$aggregate_result"; then
   echo "WARN: reviewer cycle counts could not be read (ledger unavailable after retries) with aggregate_result=$aggregate_result — escalating (cycle_count_unavailable) rather than allowing an unbounded number of unverifiable retries" >&2
   aggregate_result="escalate"
   aggregate_reason="cycle_count_unavailable"
@@ -8544,7 +8643,7 @@ if [ "$aggregate_result" != "skipped" ]; then
     "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
     "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
     "$advisory_checks_section" || _post_summary_exit=$?
-  if reviewer_loop_persist_failure_should_escalate "$_post_summary_exit" "$aggregate_result"; then
+  if reviewer_loop_persist_failure_should_escalate "$_post_summary_exit" "$aggregate_result" "$aggregate_reason"; then
     echo "WARN: reviewer-loop summary comment could not be persisted for a dispatch-triggering result ($aggregate_result) — escalating (ledger_persist_failed) rather than letting an uncounted fixer/retry dispatch happen" >&2
     aggregate_result="escalate"
     aggregate_reason="ledger_persist_failed"

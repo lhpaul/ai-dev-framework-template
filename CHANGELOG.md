@@ -37,6 +37,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Protocol 91's late-thread re-check no longer waits a fixed 10 seconds**
+  (#1574): the readiness checklist now consumes `pr-review-loop.sh`'s
+  `POST_CLEAN_*` settle fields instead of carrying a wait of its own. A new
+  Check 0.6 (exit 12) refuses a clean verdict that was never settled — recheck
+  suppressed, no submitted review for the HEAD, settle window exhausted, or
+  `POST_CLEAN_HEAD_SHA` not the live head — and Check 4 re-validates the head
+  immediately before applying `ready-for-human-review`; Step 8a.1 is only the
+  adjacency re-query. The loop reads the PR head before dispatching reviewers,
+  emits `POST_CLEAN_HEAD_SHA` and `POST_CLEAN_RECHECK_SKIP_REASON`, anchors
+  the require-review settle to that head (it previously resolved to the
+  default-branch head, so any past review satisfied it), and reports a head
+  that moved during a clean run as `needs_fixes` / `head_moved_during_run`
+  without counting a fixer cycle. Protocol 92 names the same contract; the
+  loop's `--help` defaults now match its code. The Check 0.5 jq filter's
+  unterminated quote (since `559c5402`) is fixed. Details and measurements:
+  Protocol 91 Step 7 / Check 0.6 / Step 8a.1 and `test-pr-review-loop.sh`
+  Area 20.
 - **A CodeRabbit `RESULT=clean` now means "clean, and still clean after the
   platform went quiet"** (#1556): the loop's post-clean recheck was a single
   30-second wait, far too short for a vendor that posts findings minutes after
