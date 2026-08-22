@@ -6531,6 +6531,9 @@ reviewer_loop_history_entries_count() {
         [
           .entries[]?
           | select((.result // "") == "needs_fixes" or (.result // "") == "needs_rerun")
+          # A head that moved during an otherwise clean run dispatches no
+          # fixer; it is a re-run, not a cycle (issue #1574).
+          | select((.reason // "") != "head_moved_during_run")
         ] as $qualifying
         | ($qualifying
             | [.[] | select((.head_sha // "") | length > 0) | ((.head_sha // "") + "|" + (.result // ""))]
@@ -8547,7 +8550,12 @@ fi
 # then the lifetime ceiling (max_total_cycles_exceeded — the structural
 # backstop). Both counts fail together (-1/-1) when the ledger could not be
 # read, so the unavailable check only needs to inspect one of them.
-if reviewer_loop_cycle_count_unavailable_should_escalate "$lifetime_cycle_count" "$aggregate_result"; then
+if [ "$aggregate_reason" = "head_moved_during_run" ]; then
+  # Not a fixer cycle: the reviewers were clean, the PR simply moved. The
+  # caller re-runs the loop; neither cap applies and the ledger does not
+  # count it (reviewer_loop_history_entries_count excludes this reason).
+  :
+elif reviewer_loop_cycle_count_unavailable_should_escalate "$lifetime_cycle_count" "$aggregate_result"; then
   echo "WARN: reviewer cycle counts could not be read (ledger unavailable after retries) with aggregate_result=$aggregate_result — escalating (cycle_count_unavailable) rather than allowing an unbounded number of unverifiable retries" >&2
   aggregate_result="escalate"
   aggregate_reason="cycle_count_unavailable"

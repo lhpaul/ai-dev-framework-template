@@ -14231,6 +14231,20 @@ run_test "loop_refuses_head_moved_during_run" "yes" \
   "$(grep -q 'aggregate_reason="head_moved_during_run"' "$_1574_loop" && echo yes || echo no)"
 run_test "p91_names_head_moved_during_run" "yes" \
   "$(grep -q 'head_moved_during_run' "$_1574_p91" && echo yes || echo no)"
+# A head that moved during a clean run is a re-run, not a fixer cycle: the
+# ledger does not count it and neither cap fires on it.
+_1574_ledger_body="$(jq -nc '{schema:"reviewer_loop_history.v1",pr_number:42,history_status:"available",entries:[
+  {iteration:1,head_sha:"a1",run_id:"r1",result:"needs_fixes",reason:"head_moved_during_run"},
+  {iteration:2,head_sha:"a2",run_id:"r1",result:"needs_fixes",reason:"unresolved_review_threads"}]}' \
+  | { printf '%s\n' "$REVIEWER_LOOP_HISTORY_MARKER" '```json'; cat; printf '```\n'; })"
+run_test "ledger_excludes_head_moved_reruns" "1 1 available" \
+  "$(reviewer_loop_history_entries_count "$_1574_ledger_body" r1)"
+run_test "cap_skipped_for_head_moved" "yes" \
+  "$(grep -q 'if \[ "\$aggregate_reason" = "head_moved_during_run" \]; then' "$_1574_loop" && echo yes || echo no)"
+# The label is applied only after a final head re-validation (Check 4).
+run_test "p91_revalidates_head_before_label" "yes" \
+  "$(awk '/^# Check 4:/{p=1} p && /settle_head_ok \|\| exit 12/{found=1} END{exit !found}' "$_1574_p91" && echo yes || echo no)"
+unset _1574_ledger_body
 for _field in POST_CLEAN_SETTLED POST_CLEAN_SETTLE_TIMEOUT POST_CLEAN_NO_SUBMITTED_REVIEW POST_CLEAN_SETTLED_AT POST_CLEAN_RECHECK_SKIP_REASON POST_CLEAN_HEAD_SHA; do
   run_test "p91_consumes_$_field" "yes" \
     "$(grep -q "$_field" "$_1574_p91" && echo yes || echo no)"

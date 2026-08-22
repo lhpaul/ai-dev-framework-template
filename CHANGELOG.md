@@ -48,7 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never settled — recheck suppressed, no submitted review for the HEAD, or
   settle window exhausted while the platform was active (re-run Step 7; a
   second consecutive timeout escalates as `settle_never_quiet`) — and Step 7
-  tells the runner to export the fields; the loop emits `POST_CLEAN_HEAD_SHA`
+  tells the runner to export the fields (the label is re-validated against
+  the live head one last time before it is applied); the loop emits
+  `POST_CLEAN_HEAD_SHA`
   and Check 0.6 refuses telemetry for a head the PR has moved past, flipping
   the verdict to `RESULT=needs_fixes REASON=head_moved_during_run` with a
   named message in the PR summary comment rather than a bare

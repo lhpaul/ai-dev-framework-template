@@ -2581,7 +2581,9 @@ settle_head_ok() {
 # #1555, #1568, #1569 and #1570, every one real — so a clean verdict that was
 # never settled, or whose platform never submitted a review for this HEAD, is
 # refused here rather than re-checked with a wait of this script's own.
+SETTLE_APPLIES=1
 if [ "${REVIEWER_LOOP_SKIPPED_NO_PLATFORMS:-false}" = "true" ]   || { [ -n "$LOOP_SUMMARY_BODY" ] && echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*skipped([ [:space:]—.,;:)]|$)'; }; then
+  SETTLE_APPLIES=0
   echo "✅ Settle-state check not applicable: Step 7 was skipped."
 elif [ -z "${POST_CLEAN_RECHECK:-}" ]; then
   echo "ERROR: Settle state unknown — POST_CLEAN_RECHECK is not set in this environment."
@@ -2823,6 +2825,13 @@ HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json la
 if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
   echo "INFO: PR already has 'ready-for-human-review' label. Skipping re-application."
 else
+  # Last look before the label (issue #1574): several API-backed gates ran
+  # since Check 0.6, and a push during any of them leaves the settled verdict
+  # describing a head the PR has left. The label goes on the commit that was
+  # reviewed or not at all.
+  if [ "${SETTLE_APPLIES:-1}" -eq 1 ]; then
+    settle_head_ok || exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
+  fi
   echo "Applying 'ready-for-human-review' label..."
   gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --add-label "ready-for-human-review"
 fi
