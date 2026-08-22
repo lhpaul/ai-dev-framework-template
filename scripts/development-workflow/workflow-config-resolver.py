@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -294,9 +295,99 @@ def as_list(value: Any, path: Path, field: str) -> list[Any]:
     return value
 
 
+LOCAL_CONFIG_NAME = ".ai-dev-workflow.local.yaml"
+
+
+def linked_worktree_main_root(repo_root: Path) -> Path | None:
+    """Return the main clone's root when ``repo_root`` is a linked git worktree.
+
+    ``git worktree add`` carries no untracked or gitignored files, so a linked
+    worktree never contains ``.ai-dev-workflow.local.yaml`` (#1560). For a
+    linked worktree ``--git-common-dir`` (the main clone's ``.git``) differs
+    from ``--git-dir``; the main clone root is its parent. Returns ``None`` for
+    the main clone itself, a plain checkout, a bare repository (no working
+    tree), or a directory that is not inside a git repository at all.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--git-common-dir", "--git-dir"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if completed.returncode != 0:
+        return None
+    lines = completed.stdout.splitlines()
+    if len(lines) != 2:
+        return None
+    common_dir = Path(lines[0])
+    git_dir = Path(lines[1])
+    if not common_dir.is_absolute():
+        common_dir = repo_root / common_dir
+    if not git_dir.is_absolute():
+        git_dir = repo_root / git_dir
+    try:
+        common_dir = common_dir.resolve()
+        git_dir = git_dir.resolve()
+        resolved_root = repo_root.resolve()
+    except OSError:
+        return None
+    if common_dir == git_dir:
+        return None
+    if common_dir.name != ".git":
+        return None
+    main_root = common_dir.parent
+    if main_root == resolved_root:
+        return None
+    return main_root
+
+
+def resolve_local_config(repo_root: Path) -> tuple[Path, str, Path | None]:
+    """Locate the local override file that applies to ``repo_root``.
+
+    Returns ``(path, origin, main_clone_file)``.
+
+    ``origin`` is ``override_root`` when ``WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT``
+    names the source (the initiating checkout of a reviewer-loop handoff,
+    #1033), ``checkout`` when ``repo_root`` holds the file itself,
+    ``main_clone`` when ``repo_root`` is a linked worktree without one and the
+    main clone has it (#1560), and ``""`` when no file exists anywhere — ``path``
+    is then the checkout's own, not-yet-existing file, which is also where
+    writes land in that case.
+
+    ``main_clone_file`` is the main clone's file whenever ``repo_root`` is a
+    linked worktree and that file exists, independent of which file is used.
+    It lets callers report "a local override exists in the main clone but was
+    not the one applied" instead of a bare "no override".
+    """
+    override_root = os.environ.get("WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT", "")
+    main_root = linked_worktree_main_root(repo_root)
+    main_clone_file: Path | None = None
+    if main_root is not None:
+        candidate = main_root / LOCAL_CONFIG_NAME
+        if candidate.is_file():
+            main_clone_file = candidate
+    if override_root:
+        root = Path(override_root)
+        if not root.is_dir():
+            raise ConfigError(
+                "configured local reviewer override source is unavailable: "
+                f"WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT={override_root}"
+            )
+        return root.resolve() / LOCAL_CONFIG_NAME, "override_root", main_clone_file
+    checkout_file = repo_root / LOCAL_CONFIG_NAME
+    if checkout_file.is_file():
+        return checkout_file, "checkout", main_clone_file
+    if main_clone_file is not None:
+        return main_clone_file, "main_clone", main_clone_file
+    return checkout_file, "", main_clone_file
+
+
 def load_configs(repo_root: Path) -> tuple[dict[str, Any], dict[str, Any], Path, Path]:
     shared_path = repo_root / ".ai-dev-workflow.yaml"
-    local_path = repo_root / ".ai-dev-workflow.local.yaml"
+    local_path, _, _ = resolve_local_config(repo_root)
     shared = parse_yaml_subset(shared_path)
     local = parse_yaml_subset(local_path)
     return shared, local, shared_path, local_path
@@ -960,7 +1051,11 @@ def scalar_from_path(data: dict[str, Any], path: list[str]) -> str:
 
 def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
     repo_root = repo_root_from_args(args.repo_root)
+    local_path, local_origin, main_clone_file = resolve_local_config(repo_root)
     _, local, _, _ = load_configs(repo_root)
+    local_file = str(local_path) if local_path.is_file() else ""
+    if not local_file:
+        local_origin = ""
 
     local_runner, has_local_runner = list_override_from_path(local, ["review", "on_draft", "runner"])
     runner = local_runner
@@ -1002,6 +1097,13 @@ def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
         "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY": policy,
         "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE": policy_source,
         "LOCAL_OVERRIDE_SOURCE": ",".join(sources),
+        # Which file the values above came from, and where it lives relative to
+        # --repo-root. A linked worktree reports origin=main_clone (#1560); an
+        # agent that still resolves zero reviewers while this is non-empty is
+        # reading the wrong file, not facing a policy decision.
+        "LOCAL_OVERRIDE_FILE": local_file,
+        "LOCAL_OVERRIDE_ORIGIN": local_origin,
+        "MAIN_CLONE_LOCAL_OVERRIDE_FILE": str(main_clone_file) if main_clone_file else "",
     }
 
 

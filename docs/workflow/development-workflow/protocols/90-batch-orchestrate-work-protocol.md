@@ -1071,6 +1071,14 @@ Pre-dispatch validation is mandatory:
   `read_only` and will not edit files, switch branches, create commits, push,
   open or update PRs, modify labels, or update tracker state.
 
+The worktree creator does not seed `.ai-dev-workflow.local.yaml` into the
+worktree, and runners must not copy it by hand. The gitignored file never
+survives `git worktree add`; instead `workflow-config-resolver.py` and
+`workflow-lib.sh` resolve a linked worktree's local override from the main
+clone (#1560), and the runner verifies that once after entering the worktree
+(Protocol 91 Step 3.5, "Local reviewer override continuity"). A hand-copied
+file would shadow the main clone's and drift from it.
+
 This requirement is separate from the unsanctioned nested-agent PR guard in
 #1200. The #1200 guard prevents child agents from creating duplicate or
 wrong-base PR artifacts. The isolation manifest prevents multiple sanctioned

@@ -636,6 +636,68 @@ else
 fi
 run_test "unavailable_initiating_override_stops_resolution" "1" "$missing_override_status"
 
+# #1560: an externally created linked worktree (plain `git worktree add`, the
+# Protocol 90 isolation path) has no gitignored local override of its own. The
+# initiating root must resolve to the main clone's file, and the exported
+# override root must be the directory that actually holds it. The harness's
+# git mock rejects everything but `rev-parse --git-common-dir`, so this block
+# runs against the real git found on the PATH the harness started with.
+_REAL_PATH="${PATH#"$MOCK_BIN:"}"
+_WT_MAIN="$(mktemp -d)"
+_WT_MAIN="$(CDPATH='' cd -- "$_WT_MAIN" && pwd -P)"
+git() { PATH="$_REAL_PATH" command git "$@"; }
+git -C "$_WT_MAIN" init -q
+cat > "$_WT_MAIN/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+
+review:
+  on_draft:
+    runner: [codex]
+    github: [pr-agent]
+  on_ready:
+    github: [haystack]
+YAML
+git -C "$_WT_MAIN" add .ai-dev-workflow.yaml
+git -C "$_WT_MAIN" -c user.name=fixture -c user.email=fixture@example.com commit -q -m init
+cat > "$_WT_MAIN/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    runner: [cursor]
+    github: [pr-agent]
+  on_ready:
+    github: [bugbot]
+YAML
+_WT_LINKED="$_WT_MAIN-linked"
+git -C "$_WT_MAIN" worktree add -q "$_WT_LINKED" -b fixture/linked-1560 HEAD
+# The resolver shells out to git itself, so it needs the real PATH too.
+linked_override_root="$(PATH="$_REAL_PATH" resolve_local_review_override_root "$_WT_LINKED")"
+run_test "linked_worktree_override_root_is_main_clone" "$_WT_MAIN" "$linked_override_root"
+linked_local_file="$(
+  workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
+  workflow_local_config_file
+)"
+run_test "linked_worktree_local_config_file_is_main_clone" "$_WT_MAIN/.ai-dev-workflow.local.yaml" "$linked_local_file"
+linked_platforms="$(
+  workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
+  workflow_config_review_platforms "$_WT_LINKED/.ai-dev-workflow.yaml" | paste -sd ',' -
+)"
+run_test "linked_worktree_applies_main_clone_review_override" "pr-agent,bugbot" "$linked_platforms"
+linked_main_root="$(workflow_linked_worktree_main_root "$_WT_LINKED")"
+run_test "linked_worktree_main_root_detected" "$_WT_MAIN" "$linked_main_root"
+main_root_status=0
+workflow_linked_worktree_main_root "$_WT_MAIN" >/dev/null 2>&1 || main_root_status=$?
+run_test "main_clone_is_not_a_linked_worktree" "1" "$main_root_status"
+mock_git_status=0
+mock_git_main_root="$(
+  unset -f git
+  workflow_linked_worktree_main_root "$_WT_LINKED" 2>/dev/null
+)" || mock_git_status=$?
+run_test "single_line_rev_parse_is_not_a_linked_worktree" "1:" "$mock_git_status:$mock_git_main_root"
+git -C "$_WT_MAIN" worktree remove --force "$_WT_LINKED"
+unset -f git
+rm -rf "$_WT_MAIN"
+unset _REAL_PATH _WT_MAIN _WT_LINKED linked_override_root linked_local_file linked_platforms linked_main_root main_root_status mock_git_status mock_git_main_root
+
 cat > "$_LOCAL_OVERRIDE_DIR/.ai-dev-workflow.local.yaml" <<'YAML'
 review:
   on_ready:

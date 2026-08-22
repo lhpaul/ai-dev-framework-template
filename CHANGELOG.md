@@ -37,6 +37,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A linked git worktree now resolves the main clone's local reviewer
+  override** (#1560): `git worktree add` carries no gitignored files, so every
+  worktree created through the Protocol 90 isolation path lost
+  `.ai-dev-workflow.local.yaml` and Step 7a hard-failed with zero reachable
+  internal reviewers — on all three worktrees of the 2026-08-20/21 first wave.
+  #1033 only covered worktrees that `pr-review-loop.sh` creates itself.
+  `workflow-config-resolver.py` and `workflow-lib.sh` now fall back to the main
+  clone's file (located via `git rev-parse --git-common-dir`) when a linked
+  worktree has none; a worktree's own file and
+  `WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT` still take precedence.
+  `review-overrides` reports `LOCAL_OVERRIDE_FILE`, `LOCAL_OVERRIDE_ORIGIN`
+  (`checkout` / `main_clone` / `override_root`) and
+  `MAIN_CLONE_LOCAL_OVERRIDE_FILE`; Protocol 91's zero-reachable-reviewer
+  hard-fail states whether an override was present but unpropagated, and the
+  worktree-entry step verifies continuity before Step 7a. Regression tests
+  create the worktree with plain `git worktree add`, not a helper.
 - **A CodeRabbit `RESULT=clean` now means "clean, and still clean after the
   platform went quiet"** (#1556): the loop's post-clean recheck was a single
   30-second wait, far too short for a vendor that posts findings minutes after

@@ -88,6 +88,13 @@ If the initiating local policy cannot be resolved, the loop stops with an
 actionable error rather than silently choosing a different shared reviewer. When
 there is no local reviewer override, the shared-policy path remains unchanged.
 
+Worktrees created outside the loop — `git worktree add` from Protocol 90's
+isolation manifest or Protocol 91 Step 3.5 — never contain the gitignored
+override either. For those, the config resolver and `workflow-lib.sh` fall
+back to the main clone's `.ai-dev-workflow.local.yaml` when the linked worktree
+has none of its own (#1560). A worktree's own file and
+`WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT` still take precedence, in that order.
+
 ---
 
 ## Resume checklist

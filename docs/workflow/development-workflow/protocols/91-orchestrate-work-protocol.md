@@ -964,6 +964,28 @@ fi
 echo "Branch context verified: $CURRENT"
 ```
 
+**Local reviewer override continuity — verify once after entering the worktree**
+
+`git worktree add` carries no gitignored files, so the worktree has no
+`.ai-dev-workflow.local.yaml` of its own. The workflow scripts resolve a linked
+worktree's override from the main clone automatically (#1560); confirm that
+from inside the worktree now, rather than discovering it in Step 7a as a
+zero-reachable-reviewer hard-fail:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+python3 ./scripts/development-workflow/workflow-config-resolver.py review-overrides --repo-root "$(pwd -P)" \
+  | grep -E '^(LOCAL_OVERRIDE_FILE|LOCAL_OVERRIDE_ORIGIN|MAIN_CLONE_LOCAL_OVERRIDE_FILE)='
+```
+
+Expected for a worktree of a clone that has a local override:
+`LOCAL_OVERRIDE_ORIGIN=main_clone` with `LOCAL_OVERRIDE_FILE` equal to
+`MAIN_CLONE_LOCAL_OVERRIDE_FILE`. `MAIN_CLONE_LOCAL_OVERRIDE_FILE` set while
+`LOCAL_OVERRIDE_FILE` is empty means the override exists and is not being
+applied — stop and report it to the Portfolio Orchestrator; do not copy the
+file by hand. All three empty means the clone has no local override and the
+shared `.ai-dev-workflow.yaml` applies.
+
 Apply the same verification pattern any time a `git switch` or `git checkout <branch>` is issued outside the worktree-creation path (e.g., when a stage protocol's recovery step asks to switch branches):
 
 ```bash
@@ -1525,6 +1547,29 @@ The local YAML file takes precedence over `.ai-dev-workflow.yaml`. This allows
 developers without access to all configured review tools to run a subset, such
 as only `cursor`, without changing the shared config.
 
+Resolve the effective lists with the config resolver rather than by reading
+the files by hand. It applies the precedence above and locates the override
+file for the checkout you are actually in:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+python3 ./scripts/development-workflow/workflow-config-resolver.py review-overrides --repo-root "$(pwd -P)"
+```
+
+`REVIEW_ON_DRAFT_RUNNER` is the override list (empty when the local file sets
+none — then `review.on_draft.runner` from `.ai-dev-workflow.yaml` applies).
+`LOCAL_OVERRIDE_FILE` names the file the values came from and
+`LOCAL_OVERRIDE_ORIGIN` where it lives: `checkout` (this directory),
+`main_clone` (this directory is a linked git worktree with no file of its own,
+so the main clone's applies — `git worktree add` never carries gitignored
+files, #1560), or `override_root` (`WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT`, the
+reviewer-loop handoff path from #1033). `MAIN_CLONE_LOCAL_OVERRIDE_FILE` is set
+whenever a linked worktree's main clone holds a local override, whichever file
+was applied. A worktree created through the Protocol 90 isolation manifest
+therefore resolves the same reviewer configuration as the main clone without
+anyone copying the file into it; do not copy it by hand — a copy shadows the
+main clone's file and drifts from it.
+
 Supported runner reviewer values: `claude`, `cursor`, `codex`, `coderabbit`.
 
 If neither config file defines `review.on_draft.runner`, fall back to running
@@ -1600,7 +1645,21 @@ Post via `gh pr comment`. This comment doubles as the BR-7 mandatory Step 7a sum
 
 **Case A — Zero reviewers reachable (any policy):**
 
-> `Step 7a BLOCKED: no internal reviewer is reachable from the current runner. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner that supports all configured reviewers, or temporarily override 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
+> `Step 7a BLOCKED: no internal reviewer is reachable from the current runner. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. Local override: <local-override-state>. To unblock: run Step 7a from a runner that supports all configured reviewers, or temporarily override 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
+
+`<local-override-state>` comes from the resolver output, never from a guess
+(#1560 AC-3):
+
+- `none` — `LOCAL_OVERRIDE_FILE` and `MAIN_CLONE_LOCAL_OVERRIDE_FILE` are both
+  empty. This is a genuine configuration-policy block.
+- `<LOCAL_OVERRIDE_FILE> (<LOCAL_OVERRIDE_ORIGIN>), applied` — an override was
+  resolved and still left zero reachable reviewers; the override itself names
+  reviewers this runner cannot reach.
+- `present but unpropagated: <MAIN_CLONE_LOCAL_OVERRIDE_FILE>` —
+  `LOCAL_OVERRIDE_FILE` is empty while the main clone has a file. This is
+  almost always a worktree resolving the wrong file rather than a policy
+  decision: re-run the resolver from the worktree path (`pwd -P`) and report
+  the discrepancy instead of treating the block as final.
 
 **Case B — `fail-if-any-unavailable` policy triggered (one or more reviewers unreachable, but at least one was reachable):**
 

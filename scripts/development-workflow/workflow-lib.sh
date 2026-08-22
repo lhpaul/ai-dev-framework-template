@@ -35,8 +35,45 @@ workflow_effective_config_file() {
   return 1
 }
 
+# workflow_linked_worktree_main_root [repo_root]
+#
+# Prints the main clone root when repo_root is a linked git worktree. Prints
+# nothing and returns 1 for the main clone itself, a plain checkout, a bare
+# repository, or a directory outside any git repository. Mirrors
+# linked_worktree_main_root() in workflow-config-resolver.py (#1560).
+workflow_linked_worktree_main_root() {
+  local repo_root="${1:-$(workflow_repo_root)}"
+  local output="" common_dir="" git_dir="" main_root="" resolved_root=""
+
+  # One invocation, two lines: common dir first, then the worktree's own git
+  # dir. Fewer than two lines (or any failure) means "not a linked worktree".
+  output="$(git -C "$repo_root" rev-parse --git-common-dir --git-dir 2>/dev/null)" || return 1
+  common_dir="${output%%$'\n'*}"
+  git_dir="${output#*$'\n'}"
+  [ -n "$common_dir" ] && [ -n "$git_dir" ] || return 1
+  case "$common_dir" in /*) ;; *) common_dir="$repo_root/$common_dir" ;; esac
+  case "$git_dir" in /*) ;; *) git_dir="$repo_root/$git_dir" ;; esac
+  common_dir="$(CDPATH='' cd -- "$common_dir" 2>/dev/null && pwd -P)" || return 1
+  git_dir="$(CDPATH='' cd -- "$git_dir" 2>/dev/null && pwd -P)" || return 1
+  resolved_root="$(CDPATH='' cd -- "$repo_root" 2>/dev/null && pwd -P)" || return 1
+  [ "$common_dir" != "$git_dir" ] || return 1
+  [ "$(basename -- "$common_dir")" = ".git" ] || return 1
+  main_root="$(dirname -- "$common_dir")"
+  [ "$main_root" != "$resolved_root" ] || return 1
+  printf '%s\n' "$main_root"
+}
+
+# workflow_local_review_override_root
+#
+# Prints the directory whose .ai-dev-workflow.local.yaml applies to this
+# checkout. Precedence: WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT (the initiating
+# checkout of a reviewer-loop handoff, #1033), then the checkout's own file,
+# then — when the checkout is a linked worktree with no file of its own — the
+# main clone (#1560: `git worktree add` never carries gitignored files, so
+# without this every externally created worktree silently lost the override).
 workflow_local_review_override_root() {
   local override_root="${WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT:-}"
+  local repo_root="" main_root=""
 
   if [ -n "$override_root" ]; then
     if [ ! -d "$override_root" ]; then
@@ -47,7 +84,14 @@ workflow_local_review_override_root() {
     return 0
   fi
 
-  workflow_repo_root
+  repo_root="$(workflow_repo_root)"
+  if [ ! -f "$repo_root/.ai-dev-workflow.local.yaml" ] \
+    && main_root="$(workflow_linked_worktree_main_root "$repo_root")" \
+    && [ -f "$main_root/.ai-dev-workflow.local.yaml" ]; then
+    printf '%s\n' "$main_root"
+    return 0
+  fi
+  printf '%s\n' "$repo_root"
 }
 
 workflow_local_config_file() {
