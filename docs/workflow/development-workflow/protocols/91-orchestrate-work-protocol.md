@@ -2332,7 +2332,7 @@ Interpret the result as follows:
 | 9         | Residual gate missing, blocked, or escalated for broad-scope work                                | Keep out of readiness; fix residuals, add `needs-fixes`, or escalate |
 | 10        | Documentation-stage alignment checker infrastructure failure                                     | Retry checker or resolve GitHub/diff read failure |
 | 11        | Complex workflow decision-gate matrix evidence missing or contradictory when applicable          | Keep out of readiness; add `needs-fixes`, complete matrix evidence, and re-run review |
-| 12        | Reviewer-loop clean verdict not settled (Check 0.6): `POST_CLEAN_*` fields absent, recheck suppressed, platform never submitted a review, or settle window exhausted while the platform was active | Do not label ready; re-run Step 7, export its `POST_CLEAN_*` fields, and re-enter Step 8a; a second consecutive `POST_CLEAN_SETTLE_TIMEOUT=1` escalates (`settle_never_quiet`) |
+| 12        | Reviewer-loop clean verdict not settled (Check 0.6): `POST_CLEAN_*` fields absent, recheck suppressed, platform never submitted a review, settle window exhausted while the platform was active, or `POST_CLEAN_HEAD_SHA` differs from the live PR head | Do not label ready; re-run Step 7, export its `POST_CLEAN_*` fields, and re-enter Step 8a; a second consecutive `POST_CLEAN_SETTLE_TIMEOUT=1` escalates (`settle_never_quiet`) |
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
@@ -2577,7 +2577,20 @@ elif [ "$POST_CLEAN_RECHECK" = "0" ]; then
     exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
   fi
 elif [ "${POST_CLEAN_SETTLED:-0}" = "1" ]; then
-  echo "✅ Settle-state check: verdict settled at ${POST_CLEAN_SETTLED_AT:-<unknown>}."
+  # A settled verdict is about one head. Anything pushed after Step 7 — a
+  # fixer, another automation, a sibling-merge conflict resolution — leaves
+  # these fields describing a commit the PR has moved past.
+  LIVE_HEAD_SHA=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json headRefOid --jq '.headRefOid')
+  if [ -z "${POST_CLEAN_HEAD_SHA:-}" ]; then
+    echo "ERROR: Settle telemetry is not bound to a head (POST_CLEAN_HEAD_SHA is not set)."
+    echo "Re-run Step 7 with the current pr-review-loop.sh and export its POST_CLEAN_* fields before re-entering Step 8a."
+    exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
+  elif [ "$POST_CLEAN_HEAD_SHA" != "$LIVE_HEAD_SHA" ]; then
+    echo "ERROR: The settled verdict is for head ${POST_CLEAN_HEAD_SHA}, but the PR head is now ${LIVE_HEAD_SHA:-unknown}."
+    echo "Something was pushed after Step 7. Re-run Step 7 for the current HEAD, export its POST_CLEAN_* fields, and re-enter Step 8a."
+    exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
+  fi
+  echo "✅ Settle-state check: verdict settled at ${POST_CLEAN_SETTLED_AT:-<unknown>} for head ${POST_CLEAN_HEAD_SHA}."
 elif [ "${POST_CLEAN_NO_SUBMITTED_REVIEW:-0}" = "1" ]; then
   echo "ERROR: The reviewer loop reported clean, but the platform never submitted a review for this HEAD (POST_CLEAN_NO_SUBMITTED_REVIEW=1)."
   echo "Its walkthrough comment is not its review. Re-run Step 7 so the loop waits for the submitted review; do not apply ready-for-human-review on this state."
@@ -2910,7 +2923,7 @@ a wait of its own (issue #1574).
   - If `ready-for-regression not verified` on implementation PR (exit 3 from pre-Check-4 gate): Step 7b was not completed. Apply the label via Step 7b, run Step 8 (CI loop), and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until `ready-for-regression` is verified present.
   - If `unresolved review threads found` (exit 4 from GraphQL pre-Check-4 gate): The GraphQL query returned unresolved bot-authored review threads. Address the findings, push fixes, and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until the GraphQL query confirms all threads are resolved. **Do not rely on self-tracked thread state** — the GraphQL query is the authoritative check.
   - If `late-arriving review threads detected` (exit 6 from Step 8a.1 re-check): Unresolved review threads were discovered after the pre-Check-4 gate — a platform posted after the loop's verdict. Remove `ready-for-human-review`, add `needs-fixes`, and return to Step 7a.
-  - If `reviewer-loop verdict not settled` (exit 12 from Check 0.6): the latest Step 7 output is not in this environment, the loop's recheck was suppressed (`SKIP_POST_CLEAN_RECHECK`, `--compare`), the platform never submitted a review for this HEAD (`POST_CLEAN_NO_SUBMITTED_REVIEW=1`), or the settle window ran out while the platform was still active (`POST_CLEAN_SETTLE_TIMEOUT=1`). Do not apply `ready-for-human-review`. Re-run Step 7 for the current HEAD, export its `POST_CLEAN_*` fields, and re-enter Step 8a from the beginning. If a second consecutive run reports `POST_CLEAN_SETTLE_TIMEOUT=1`, escalate to the human with reason `settle_never_quiet` rather than re-running again.
+  - If `reviewer-loop verdict not settled` (exit 12 from Check 0.6): the latest Step 7 output is not in this environment, the loop's recheck was suppressed (`SKIP_POST_CLEAN_RECHECK`, `--compare`), the platform never submitted a review for this HEAD (`POST_CLEAN_NO_SUBMITTED_REVIEW=1`), the settle window ran out while the platform was still active (`POST_CLEAN_SETTLE_TIMEOUT=1`), or the verdict describes a head the PR has moved past (`POST_CLEAN_HEAD_SHA` differs from the live head). Do not apply `ready-for-human-review`. Re-run Step 7 for the current HEAD, export its `POST_CLEAN_*` fields, and re-enter Step 8a from the beginning. If a second consecutive run reports `POST_CLEAN_SETTLE_TIMEOUT=1`, escalate to the human with reason `settle_never_quiet` rather than re-running again.
   - If `reviewer-loop summary missing or non-clean` (exit 7 from Check 0.5): The latest automated reviewer-loop summary comment is absent or its `Result:` line is not `clean`/`skipped`. Do not apply `ready-for-human-review`. For `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result, escalate or re-enter Step 7 according to the reviewer-loop result.
   - If `documentation-stage alignment mismatch` (exit 8 from Check 3.6):
     the PR is on `spec/*` or `implementation-plan/*` but includes files outside

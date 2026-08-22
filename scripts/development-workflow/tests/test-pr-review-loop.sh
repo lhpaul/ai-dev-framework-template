@@ -14221,7 +14221,9 @@ run_test "help_documents_skip_reason" "yes" \
 # of its own (AC-2), and Protocols 91/92 must describe one contract (AC-3).
 run_test "p91_has_no_fixed_recheck_sleep" "0" \
   "$(grep_count_or_zero 'sleep 10' "$_1574_p91")"
-for _field in POST_CLEAN_SETTLED POST_CLEAN_SETTLE_TIMEOUT POST_CLEAN_NO_SUBMITTED_REVIEW POST_CLEAN_SETTLED_AT POST_CLEAN_RECHECK_SKIP_REASON; do
+run_test "loop_emits_settle_head_sha" "yes" \
+  "$(grep -q 'print_kv POST_CLEAN_HEAD_SHA' "$_1574_loop" && echo yes || echo no)"
+for _field in POST_CLEAN_SETTLED POST_CLEAN_SETTLE_TIMEOUT POST_CLEAN_NO_SUBMITTED_REVIEW POST_CLEAN_SETTLED_AT POST_CLEAN_RECHECK_SKIP_REASON POST_CLEAN_HEAD_SHA; do
   run_test "p91_consumes_$_field" "yes" \
     "$(grep -q "$_field" "$_1574_p91" && echo yes || echo no)"
   run_test "p92_names_$_field" "yes" \
@@ -14248,7 +14250,17 @@ run_test "p91_8a1_has_no_sleep" "0" \
 # readiness checklist fence and run them with a stubbed gh.
 _1574_gate="$(mktemp)"
 {
-  printf 'set -euo pipefail\nPR_NUMBER=42\nTARGET_REPO=owner/repo\ngh() { printf "%%s\\n" "${MOCK_SUMMARY:-}"; }\n'
+  cat <<'STUB'
+set -euo pipefail
+PR_NUMBER=42
+TARGET_REPO=owner/repo
+gh() {
+  case "$*" in
+    *headRefOid*) printf '%s\n' "${MOCK_HEAD:-}" ;;
+    *) printf '%s\n' "${MOCK_SUMMARY:-}" ;;
+  esac
+}
+STUB
   awk '/^# Check 0\.5:/{p=1} /^# Check 1:/{p=0} p' "$_1574_p91"
 } > "$_1574_gate"
 run_test "gate_extracted_has_check_0_6" "yes" "$(grep -q '^# Check 0.6' "$_1574_gate" && echo yes || echo no)"
@@ -14262,10 +14274,11 @@ _1574_clean='### Automated Reviewer Loop Summary
 _1574_skipped='### Automated Reviewer Loop Summary
 
 **Result:** skipped — no review platforms configured'
+_1574_head="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 _1574_run_gate() {
   # $@ = VAR=value assignments; prints the exit status
   local status=0
-  env -i PATH="$PATH" MOCK_SUMMARY="$_1574_clean" "$@" bash "$_1574_gate" >/dev/null 2>&1 || status=$?
+  env -i PATH="$PATH" MOCK_SUMMARY="$_1574_clean" MOCK_HEAD="$_1574_head" "$@" bash "$_1574_gate" >/dev/null 2>&1 || status=$?
   printf '%s' "$status"
 }
 run_test "gate_skipped_flag_passes" "0" "$(_1574_run_gate REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true)"
@@ -14274,7 +14287,11 @@ run_test "gate_missing_fields_refused" "12" "$(_1574_run_gate)"
 run_test "gate_no_thread_platforms_passes" "0" "$(_1574_run_gate POST_CLEAN_RECHECK=0 POST_CLEAN_RECHECK_SKIP_REASON=no_thread_posting_platforms)"
 run_test "gate_suppressed_recheck_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0 POST_CLEAN_RECHECK_SKIP_REASON=skip_env)"
 run_test "gate_recheck_without_reason_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0)"
-run_test "gate_settled_passes" "0" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z)"
+run_test "gate_settled_passes" "0" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z POST_CLEAN_HEAD_SHA="$_1574_head")"
+# A settled verdict is bound to one head: telemetry without a head, or for a
+# head the PR has moved past, is refused.
+run_test "gate_settled_without_head_binding_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1)"
+run_test "gate_settled_for_other_head_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_HEAD_SHA=0123456789012345678901234567890123456789)"
 run_test "gate_no_submitted_review_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=0 POST_CLEAN_SETTLE_TIMEOUT=1 POST_CLEAN_NO_SUBMITTED_REVIEW=1)"
 run_test "gate_settle_timeout_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=0 POST_CLEAN_SETTLE_TIMEOUT=1)"
 run_test "gate_unsettled_without_flags_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=0)"
@@ -14282,11 +14299,11 @@ run_test "gate_unsettled_without_flags_refused" "12" "$(_1574_run_gate POST_CLEA
 _1574_gate_bad="$(mktemp)"
 sed 's/POST_CLEAN_SETTLED:-0}" = "1"/POST_CLEAN_SETTLED:-0}" = "0"/' "$_1574_gate" > "$_1574_gate_bad"
 _1574_bad_status=0
-env -i PATH="$PATH" MOCK_SUMMARY="$_1574_clean" POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 bash "$_1574_gate_bad" >/dev/null 2>&1 || _1574_bad_status=$?
+env -i PATH="$PATH" MOCK_SUMMARY="$_1574_clean" MOCK_HEAD="$_1574_head" POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_HEAD_SHA="$_1574_head" bash "$_1574_gate_bad" >/dev/null 2>&1 || _1574_bad_status=$?
 run_test "gate_planted_inversion_is_caught" "12" "$_1574_bad_status"
 rm -f "$_1574_gate" "$_1574_gate_bad"
 unset -f _1574_run_gate
-unset _1574_gate _1574_gate_bad _1574_clean _1574_skipped _1574_bad_status
+unset _1574_gate _1574_gate_bad _1574_clean _1574_skipped _1574_bad_status _1574_head
 unset _1574_loop _1574_p91 _1574_p92 _1574_cw _1574_cq _1574_help _reason _field
 
 # ---------------------------------------------------------------------------

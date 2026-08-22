@@ -78,8 +78,9 @@ Apply this label when **all** of the following are true:
       unset or suppressed (`POST_CLEAN_RECHECK_SKIP_REASON` other than
       `no_thread_posting_platforms`), whose platform never submitted a review
       (`POST_CLEAN_NO_SUBMITTED_REVIEW=1`), or whose settle window ran out
-      (`POST_CLEAN_SETTLE_TIMEOUT=1`); the runner re-runs Step 7, and a second
-      consecutive timeout escalates as `settle_never_quiet`. Step 8a.1 is then
+      (`POST_CLEAN_SETTLE_TIMEOUT=1`), or whose `POST_CLEAN_HEAD_SHA` is not
+      the live PR head; the runner re-runs Step 7, and a second consecutive
+      timeout escalates as `settle_never_quiet`. Step 8a.1 is then
       only the adjacency re-query, timed by `POST_CLEAN_SETTLED_AT`. The loop's
       `--help` lists the per-platform defaults; the protocols do not repeat
       them.

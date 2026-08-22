@@ -48,7 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never settled — recheck suppressed, no submitted review for the HEAD, or
   settle window exhausted while the platform was active (re-run Step 7; a
   second consecutive timeout escalates as `settle_never_quiet`) — and Step 7
-  tells the runner to export the fields. Area 20 executes the gate with a
+  tells the runner to export the fields; the loop emits `POST_CLEAN_HEAD_SHA`
+  and Check 0.6 refuses telemetry for a head the PR has moved past. Area 20
+  executes the gate with a
   stubbed `gh` across every state, including a planted inversion — which is
   how it surfaced that the Check 0.5 fence had carried an unterminated quote
   on its jq filter since it was written, so the checklist as printed could

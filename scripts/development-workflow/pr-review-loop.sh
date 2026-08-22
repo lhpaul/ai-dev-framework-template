@@ -514,6 +514,8 @@ Outputs stable key=value lines including:
     never counted as silence)
   POST_CLEAN_SETTLED_AT=<iso8601> (when the verdict was established — a caller that inserts a long
     poll between this and the readiness label is acting on a stale check)
+  POST_CLEAN_HEAD_SHA=<sha> (the PR head the settle describes; Protocol 91 Check 0.6 refuses the
+    verdict when the live head differs — a push after Step 7 voids it — issue #1574)
   LATE_THREADS_FOUND=<N> (count of newly-found unresolved threads; -1 on audit failure; 0 when POST_CLEAN_RECHECK=0)
   RUN_ID=<id> (this invocation's resolved orchestration-run identifier — either PR_REVIEW_LOOP_RUN_ID
                   verbatim, or a freshly generated "auto-<epoch>-<pid>-<random>" id when unset. See
@@ -8322,6 +8324,10 @@ if [ "$aggregate_result" = "clean" ] \
   settle_head_iso="$(gh api "repos/$(repo_slug)/commits/${head_sha:-HEAD}" --jq '.commit.committer.date // empty' 2>/dev/null)"
   [ -n "$settle_head_iso" ] || settle_head_iso="$(date -u -v-1H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '1 hour ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
   settle_review_seen=0
+  # The head this settle is about. Emitted as POST_CLEAN_HEAD_SHA so Protocol
+  # 91 Check 0.6 can refuse telemetry that describes a commit the PR has since
+  # moved past (a fix pushed between Step 7 and Step 8a) — issue #1574.
+  settle_head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null || true)"
 
   late_thread_count=0
   settle_elapsed=0
@@ -8433,6 +8439,7 @@ if [ "$aggregate_result" = "clean" ] \
   # between this timestamp and the readiness label is acting on a stale check —
   # see the "adjacent to the readiness decision" note in the reviewer-loop docs.
   print_kv POST_CLEAN_SETTLED_AT "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  print_kv POST_CLEAN_HEAD_SHA "$settle_head_sha"
   print_kv LATE_THREADS_FOUND "$late_thread_count"
 else
   print_kv POST_CLEAN_RECHECK 0
