@@ -14188,6 +14188,52 @@ done
 unset _knob _1556_loop
 
 # ---------------------------------------------------------------------------
+# Area 20: the late-thread re-check is one contract, owned by the loop (#1574)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 20: late-thread re-check contract (#1574) ==="
+
+_1574_loop="$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+_1574_p91="$REPO_ROOT/docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"
+_1574_p92="$REPO_ROOT/docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md"
+
+# The --help text carried 600/180 for CodeRabbit while the code used 900/120.
+# Read both and compare, so the numbers cannot drift apart again.
+read -r _1574_cw _1574_cq _ _ <<<"$(_settle_config_for_platform coderabbit)"
+_1574_help="$(bash "$_1574_loop" --help 2>&1 || true)"
+run_test "help_window_default_matches_code" "$_1574_cw" \
+  "$(printf '%s\n' "$_1574_help" | grep -oE 'Maximum total time to spend settling \(default: [0-9]+' | grep -oE '[0-9]+$')"
+run_test "help_quiet_default_matches_code" "$_1574_cq" \
+  "$(printf '%s\n' "$_1574_help" | grep -oE 'Defaults per platform: [0-9]+ for coderabbit' | grep -oE '[0-9]+')"
+
+# A skipped recheck must say why, so the checklist can tell "nothing could
+# arrive late" from "settling was suppressed".
+run_test "recheck_skip_reason_emitted" "yes" \
+  "$(grep -q 'print_kv POST_CLEAN_RECHECK_SKIP_REASON' "$_1574_loop" && echo yes || echo no)"
+for _reason in not_clean compare_mode skip_env no_thread_posting_platforms no_pr_number; do
+  run_test "recheck_skip_reason_$_reason" "yes" \
+    "$(grep -q "POST_CLEAN_RECHECK_SKIP_REASON $_reason" "$_1574_loop" && echo yes || echo no)"
+done
+run_test "help_documents_skip_reason" "yes" \
+  "$(printf '%s\n' "$_1574_help" | grep -q 'POST_CLEAN_RECHECK_SKIP_REASON=' && echo yes || echo no)"
+
+# Protocol 91 must defer to the loop's settle fields rather than carry a wait
+# of its own (AC-2), and Protocols 91/92 must describe one contract (AC-3).
+run_test "p91_has_no_fixed_recheck_sleep" "0" \
+  "$(grep_count_or_zero 'sleep 10' "$_1574_p91")"
+for _field in POST_CLEAN_SETTLED POST_CLEAN_SETTLE_TIMEOUT POST_CLEAN_NO_SUBMITTED_REVIEW POST_CLEAN_SETTLED_AT POST_CLEAN_RECHECK_SKIP_REASON; do
+  run_test "p91_consumes_$_field" "yes" \
+    "$(grep -q "$_field" "$_1574_p91" && echo yes || echo no)"
+  run_test "p92_names_$_field" "yes" \
+    "$(grep -q "$_field" "$_1574_p92" && echo yes || echo no)"
+done
+# AC-4: an unsettled clean verdict without a submitted review is refused before
+# the label, not merely discouraged after it.
+run_test "p91_checklist_refuses_no_submitted_review" "yes" \
+  "$(grep -q 'POST_CLEAN_NO_SUBMITTED_REVIEW:-0}" = "1"' "$_1574_p91" && echo yes || echo no)"
+unset _1574_loop _1574_p91 _1574_p92 _1574_cw _1574_cq _1574_help _reason _field
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

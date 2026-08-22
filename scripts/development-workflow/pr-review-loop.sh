@@ -502,6 +502,9 @@ Outputs stable key=value lines including:
   PHASE_AFTER_CLEAN_SKIP_REASON=<result> (emitted when the phase never starts)
   PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (compatibility alias for READY_PHASE_NET_NEW_BLOCKER)
   POST_CLEAN_RECHECK=0|1 (1 when the post-clean settle-and-recheck ran)
+  POST_CLEAN_RECHECK_SKIP_REASON=<reason> (present only when POST_CLEAN_RECHECK=0: not_clean,
+    compare_mode, skip_env, no_thread_posting_platforms, or no_pr_number — so a caller can tell
+    "nothing to settle" from "settling was suppressed" (issue #1574))
   POST_CLEAN_SETTLED=0|1 (1 when the platform went quiet for the full required period; 0 when the
     window was exhausted while it was still active — the verdict is still clean, but weaker)
   POST_CLEAN_SETTLE_TIMEOUT=1 (present only when the window was exhausted before silence)
@@ -563,11 +566,12 @@ Outputs stable key=value lines including:
 
 Environment variables:
   POST_CLEAN_SETTLE_QUIET=<sec>      Consecutive seconds of platform silence required before a clean verdict is
-                                     called settled (issue #1556). Defaults per platform: 180 for coderabbit /
+                                     called settled (issue #1556). Defaults per platform: 120 for coderabbit /
                                      coderabbit-cli, 60 otherwise. Any platform activity — including an in-place
                                      EDIT of an existing bot comment — resets this timer.
-  POST_CLEAN_SETTLE_WINDOW=<sec>     Maximum total time to spend settling (default: 600 for coderabbit /
-                                     coderabbit-cli, 180 otherwise). If the window is exhausted while the platform
+  POST_CLEAN_SETTLE_WINDOW=<sec>     Maximum total time to spend settling (default: 900 for coderabbit /
+                                     coderabbit-cli, 180 otherwise — sized from the measured ~12 min
+                                     walkthrough-to-review gap on PR #1573). If the window is exhausted while the platform
                                      is still active, the verdict stays clean but is reported UNSETTLED via
                                      POST_CLEAN_SETTLED=0 and POST_CLEAN_SETTLE_TIMEOUT=1.
   POST_CLEAN_POLL=<seconds>          Interval between settle re-checks (default: 60 for coderabbit /
@@ -8432,6 +8436,20 @@ if [ "$aggregate_result" = "clean" ] \
   print_kv LATE_THREADS_FOUND "$late_thread_count"
 else
   print_kv POST_CLEAN_RECHECK 0
+  # Say WHY the recheck did not run (issue #1574). Protocol 91's readiness
+  # checklist treats no_thread_posting_platforms as "nothing could arrive late"
+  # and every other reason as "the verdict was never settled — re-run Step 7".
+  if [ "$aggregate_result" != "clean" ]; then
+    print_kv POST_CLEAN_RECHECK_SKIP_REASON not_clean
+  elif [ "$compare_mode" -ne 0 ]; then
+    print_kv POST_CLEAN_RECHECK_SKIP_REASON compare_mode
+  elif [ "${SKIP_POST_CLEAN_RECHECK:-0}" = "1" ]; then
+    print_kv POST_CLEAN_RECHECK_SKIP_REASON skip_env
+  elif [ "${#unresolved_bot_logins[@]}" -eq 0 ]; then
+    print_kv POST_CLEAN_RECHECK_SKIP_REASON no_thread_posting_platforms
+  else
+    print_kv POST_CLEAN_RECHECK_SKIP_REASON no_pr_number
+  fi
   # Emit LATE_THREADS_FOUND=0 on skipped paths so consumers can always rely on
   # the field being present, regardless of whether the recheck ran.
   print_kv LATE_THREADS_FOUND 0

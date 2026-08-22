@@ -71,6 +71,16 @@ Apply this label when **all** of the following are true:
       this HEAD at all. No unresolved thread was found in either case, so the
       verdict stands, but it is weaker than a settled one. Treat it as a prompt
       to re-query threads immediately before labelling rather than as a pass.
+
+      Protocol 91 is the only place this is enforced, and it carries no number
+      of its own (issue #1574): Check 0.6 of the readiness checklist refuses a
+      clean verdict whose `POST_CLEAN_RECHECK` is unset or suppressed
+      (`POST_CLEAN_RECHECK_SKIP_REASON` other than
+      `no_thread_posting_platforms`) or whose platform never submitted a
+      review (`POST_CLEAN_NO_SUBMITTED_REVIEW=1`), and Step 8a.1 sizes its
+      final re-query wait from `POST_CLEAN_SETTLE_TIMEOUT` and
+      `POST_CLEAN_SETTLE_QUIET_SECONDS`. The loop's `--help` lists the
+      per-platform defaults; the protocols do not repeat them.
 - [ ] Every configured automated PR reviewer has no blocking PR feedback (or is skipped)
 - [ ] All feedback from a previous human review cycle has been addressed
 - [ ] For `spec/*` and `implementation-plan/*` PRs,
