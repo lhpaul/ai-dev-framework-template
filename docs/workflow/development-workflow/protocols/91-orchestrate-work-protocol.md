@@ -1956,12 +1956,13 @@ ISO-8601 timestamp, or a reason word); the pattern below admits nothing else:
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 loop_out="$(mktemp)"
+settle_kv="$(mktemp)"
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name> > "$loop_out" 2>&1
-loop_status=$?
 cat "$loop_out"
+grep -E '^POST_CLEAN_[A-Z_]+=[A-Za-z0-9:_-]*$' "$loop_out" > "$settle_kv" || true
 while IFS='=' read -r key value; do
   export "$key=$value"
-done < <(grep -E '^POST_CLEAN_[A-Z_]+=[A-Za-z0-9:_-]*$' "$loop_out")
+done < "$settle_kv"
 ```
 
 Re-export after every invocation: a fixer cycle re-runs the loop, and the
@@ -2312,12 +2313,13 @@ Interpret the result as follows:
 | 3         | `ready-for-regression` label missing at pre-Check-4 gate                                         | Apply label, re-run Step 8                          |
 | 4         | Unresolved review threads at pre-Check-4 gate                                                    | Resolve threads, push fixes, re-run checklist       |
 | 5         | CI not green at readiness gate                                                                    | Run Step 8 (pr-ci-loop.sh) and fix failing checks   |
-| 6         | Late-arriving async bot threads detected after label application                                  | Remove `ready-for-human-review`, add `needs-fixes`, return to Step 7a |
+| 6         | Late-arriving review threads detected after label application                                     | Remove `ready-for-human-review`, add `needs-fixes`, return to Step 7a |
 | 7         | Latest reviewer-loop summary is missing or has a non-clean terminal result                       | Do not label ready; escalate or return to reviewer loop |
 | 8         | Documentation-stage alignment mismatch on `spec/*` or `implementation-plan/*` PR                 | Remove stale readiness, add/update warning, add `needs-fixes`, correct or escalate |
 | 9         | Residual gate missing, blocked, or escalated for broad-scope work                                | Keep out of readiness; fix residuals, add `needs-fixes`, or escalate |
 | 10        | Documentation-stage alignment checker infrastructure failure                                     | Retry checker or resolve GitHub/diff read failure |
 | 11        | Complex workflow decision-gate matrix evidence missing or contradictory when applicable          | Keep out of readiness; add `needs-fixes`, complete matrix evidence, and re-run review |
+| 12        | Reviewer-loop clean verdict not settled (Check 0.6): `POST_CLEAN_*` fields absent, recheck suppressed, or platform never submitted a review | Do not label ready; re-run Step 7, export its `POST_CLEAN_*` fields, and re-enter Step 8a |
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
@@ -2471,6 +2473,7 @@ application) in the readiness checklist. This sync step never applies
 
 Run this checklist for **every PR**:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 PR_NUMBER=<pr_number>
 BRANCH=<branch_name>  # e.g., feature/foo, spec/bar, fix/baz
@@ -2530,7 +2533,7 @@ if [ -z "$LOOP_SUMMARY_BODY" ]; then
     exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
   fi
 fi
-if [ -n "$LOOP_SUMMARY_BODY" ] && echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[*[:space:]])Result:([*[:space:]])*(clean|skipped)([[:space:]—.,;:)]|$)|No blocking PR feedback'; then
+if [ -n "$LOOP_SUMMARY_BODY" ] && echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*(clean|skipped)([ [:space:]—.,;:)]|$)|No blocking PR feedback'; then
   echo "✅ Automated reviewer-loop summary result is clean/skipped."
 elif [ -n "$LOOP_SUMMARY_BODY" ]; then
   echo "ERROR: Latest automated reviewer-loop summary is not clean/skipped."
@@ -2546,7 +2549,7 @@ fi
 # #1555, #1568, #1569 and #1570, every one real — so a clean verdict that was
 # never settled, or whose platform never submitted a review for this HEAD, is
 # refused here rather than re-checked with a wait of this script's own.
-if [ "${REVIEWER_LOOP_SKIPPED_NO_PLATFORMS:-false}" = "true" ]   || { [ -n "$LOOP_SUMMARY_BODY" ] && echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[*[:space:]])Result:([*[:space:]])*skipped([[:space:]—.,;:)]|$)'; }; then
+if [ "${REVIEWER_LOOP_SKIPPED_NO_PLATFORMS:-false}" = "true" ]   || { [ -n "$LOOP_SUMMARY_BODY" ] && echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*skipped([ [:space:]—.,;:)]|$)'; }; then
   echo "✅ Settle-state check not applicable: Step 7 was skipped."
 elif [ -z "${POST_CLEAN_RECHECK:-}" ]; then
   echo "ERROR: Settle state unknown — POST_CLEAN_RECHECK is not set in this environment."
@@ -2677,7 +2680,7 @@ if [ "${COMPLEX_GATE_MATRIX_REQUIRED:-false}" = "true" ]; then
     gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
     exit 11
   fi
-  if printf '%s\n' "$PR_BODY" | grep -Eiq 'complex workflow decision-gate matrix:[[:space:]]*not applicable|complex gate matrix[[:space:]-]+not applicable'; then
+  if printf '%s\n' "$PR_BODY" | grep -Eiq 'complex workflow decision-gate matrix:[ [:space:]]*not applicable|complex gate matrix[ [:space:]-]+not applicable'; then
     echo "ERROR: Complex workflow decision-gate matrix was required, but the PR body says not applicable."
     gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
     exit 11
@@ -2873,6 +2876,7 @@ a wait of its own (issue #1574).
 
 3. **Handle late-arriving threads**:
    - If `$UNRESOLVED_RECHECK -gt 0`: New unresolved threads were discovered. Remove `ready-for-human-review`, add `needs-fixes`, and return to Step 7a to address them:
+     <!-- workflow-shell-contract: bash-zsh -->
      ```bash
      if [ "$UNRESOLVED_RECHECK" -gt 0 ]; then
        echo "⚠️ LATE-ARRIVING THREADS: Re-check detected $UNRESOLVED_RECHECK new unresolved review thread(s)."
