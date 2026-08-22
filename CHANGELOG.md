@@ -37,6 +37,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A CodeRabbit `RESULT=clean` now means "clean, and still clean after the
+  platform went quiet"** (#1556): the loop's post-clean recheck was a single
+  30-second wait, far too short for a vendor that posts findings minutes after
+  it first falls silent. Measured across the 2026-08-20/21 unattended run and
+  since — PR #1532 two late findings, #1541 three across three rounds, #1555
+  five across two, and eight on one PR during #1562 work, two of them Major.
+  **Every late finding was real**; none escaped only because runners were told
+  to hold a 2-3 minute quiet window and re-query by hand, which is operator
+  discipline standing in for a tooling guarantee. The recheck is now a settle
+  loop that polls until the platform has produced no activity for a full quiet
+  period (120s for CodeRabbit, 60s otherwise) or the window is exhausted (900s
+  / 180s). For CodeRabbit the quiet period does not even begin until a review
+  has been **submitted** for the current HEAD: measured on PR #1573, it posted
+  its walkthrough comment 48 seconds after the push and submitted the actual
+  review — carrying three findings — twelve minutes later, so silence in
+  between meant it was still working rather than finished. A quiet period alone
+  cannot tell those apart, which is why the settle waits for a positive signal
+  and not merely an absent one. Any activity resets the quiet timer, and a failed activity query is
+  never counted as silence. An exhausted window still reports `clean` but flags
+  it `POST_CLEAN_SETTLED=0` with `POST_CLEAN_SETTLE_TIMEOUT=1`, so a weaker
+  verdict is visible rather than indistinguishable. All windows are
+  configurable generically and per platform; `POST_CLEAN_WAIT` still works.
+- **An in-place edit of a bot comment now registers as review activity**
+  (#1556): CodeRabbit revises its walkthrough comment rather than posting a new
+  one, so the comment keeps its original `created_at`. Observed on PR #1532 —
+  created 23:23, before the 23:34 HEAD commit, and edited 23:52 to carry the
+  new review. The activity probe in `run_coderabbit_review` selected on
+  `created_at` alone and could not see it; that run only survived because
+  CodeRabbit also submitted a formal review, matched separately on
+  `submitted_at`. The probe now accepts `updated_at` as well, as the timeout
+  guard already did.
+- **Readiness now requires the clean verdict to be adjacent to the label**
+  (#1556): protocol 92 previously required only that the reviewer-loop summary
+  be clean, not that it be *recent*. On PR #1555 the label was applied off a
+  thread check that had gone stale during a ~10 minute status poll, with four
+  findings landing in the gap. The loop emits `POST_CLEAN_SETTLED_AT` so the
+  gap is measurable; see
+  [protocol 92](docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md)
+  for the operating contract.
 - **`test-pr-review-loop.sh` gains an `--area` filter, runs from an immutable
   snapshot, and can no longer be edited mid-run without notice** (#1562): the
   suite is ~13.6k lines and ~900 assertions with no way to run part of it, so
