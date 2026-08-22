@@ -14231,6 +14231,55 @@ done
 # the label, not merely discouraged after it.
 run_test "p91_checklist_refuses_no_submitted_review" "yes" \
   "$(grep -q 'POST_CLEAN_NO_SUBMITTED_REVIEW:-0}" = "1"' "$_1574_p91" && echo yes || echo no)"
+# Protocol 91 carries no wait at all any more: the only sleep in 8a.1 was the
+# fixed one this issue removes, and the timeout path now goes back to Step 7.
+run_test "p91_8a1_has_no_sleep" "0" \
+  "$(awk '/^### 8a\.1:/,/^## Step 8b/' "$_1574_p91" | grep -cE '^[[:space:]]*sleep ' || true)"
+
+
+# Execute the gate, not just grep it: extract Check 0.5 + 0.6 from the
+# readiness checklist fence and run them with a stubbed gh.
+_1574_gate="$(mktemp)"
+{
+  printf 'set -euo pipefail\nPR_NUMBER=42\nTARGET_REPO=owner/repo\ngh() { printf "%%s\\n" "${MOCK_SUMMARY:-}"; }\n'
+  awk '/^# Check 0\.5:/{p=1} /^# Check 1:/{p=0} p' "$_1574_p91"
+} > "$_1574_gate"
+run_test "gate_extracted_has_check_0_6" "yes" "$(grep -q '^# Check 0.6' "$_1574_gate" && echo yes || echo no)"
+# The extracted gate must parse in every shell the fence's contract names;
+# the Check 0.5 jq filter had an unterminated quote until this PR.
+run_test "gate_parses_in_bash" "yes" "$(bash -n "$_1574_gate" 2>/dev/null && echo yes || echo no)"
+run_test "gate_parses_in_zsh" "yes" "$(if command -v zsh >/dev/null 2>&1; then zsh -n "$_1574_gate" 2>/dev/null && echo yes || echo no; else echo yes; fi)"
+_1574_clean='### Automated Reviewer Loop Summary
+
+**Result:** clean — no blocking findings'
+_1574_skipped='### Automated Reviewer Loop Summary
+
+**Result:** skipped — no review platforms configured'
+_1574_run_gate() {
+  # $@ = VAR=value assignments; prints the exit status
+  local status=0
+  env -i PATH="$PATH" MOCK_SUMMARY="$_1574_clean" "$@" bash "$_1574_gate" >/dev/null 2>&1 || status=$?
+  printf '%s' "$status"
+}
+run_test "gate_skipped_flag_passes" "0" "$(_1574_run_gate REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true)"
+run_test "gate_skipped_summary_passes" "0" "$(_1574_run_gate MOCK_SUMMARY="$_1574_skipped")"
+run_test "gate_missing_fields_refused" "12" "$(_1574_run_gate)"
+run_test "gate_no_thread_platforms_passes" "0" "$(_1574_run_gate POST_CLEAN_RECHECK=0 POST_CLEAN_RECHECK_SKIP_REASON=no_thread_posting_platforms)"
+run_test "gate_suppressed_recheck_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0 POST_CLEAN_RECHECK_SKIP_REASON=skip_env)"
+run_test "gate_recheck_without_reason_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0)"
+run_test "gate_settled_passes" "0" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z)"
+run_test "gate_no_submitted_review_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=0 POST_CLEAN_SETTLE_TIMEOUT=1 POST_CLEAN_NO_SUBMITTED_REVIEW=1)"
+run_test "gate_settle_timeout_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=0 POST_CLEAN_SETTLE_TIMEOUT=1)"
+run_test "gate_unsettled_without_flags_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=0)"
+# Planted violation: invert the settled comparison and the matrix must notice.
+_1574_gate_bad="$(mktemp)"
+sed 's/POST_CLEAN_SETTLED:-0}" = "1"/POST_CLEAN_SETTLED:-0}" = "0"/' "$_1574_gate" > "$_1574_gate_bad"
+_1574_bad_status=0
+env -i PATH="$PATH" MOCK_SUMMARY="$_1574_clean" POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 bash "$_1574_gate_bad" >/dev/null 2>&1 || _1574_bad_status=$?
+run_test "gate_planted_inversion_is_caught" "12" "$_1574_bad_status"
+rm -f "$_1574_gate" "$_1574_gate_bad"
+unset -f _1574_run_gate
+unset _1574_gate _1574_gate_bad _1574_clean _1574_skipped _1574_bad_status
 unset _1574_loop _1574_p91 _1574_p92 _1574_cw _1574_cq _1574_help _reason _field
 
 # ---------------------------------------------------------------------------

@@ -68,19 +68,21 @@ Apply this label when **all** of the following are true:
       `POST_CLEAN_SETTLED=0` (with `POST_CLEAN_SETTLE_TIMEOUT=1`) means the
       window was exhausted while the platform was still active, or — with
       `POST_CLEAN_NO_SUBMITTED_REVIEW=1` — that it never submitted a review for
-      this HEAD at all. No unresolved thread was found in either case, so the
-      verdict stands, but it is weaker than a settled one. Treat it as a prompt
-      to re-query threads immediately before labelling rather than as a pass.
+      this HEAD at all. No unresolved thread was found in either case, but
+      neither is a pass: the verdict is not usable for this label until a
+      re-run of Step 7 reports `POST_CLEAN_SETTLED=1`.
 
-      Protocol 91 is the only place this is enforced, and it carries no number
-      of its own (issue #1574): Check 0.6 of the readiness checklist refuses a
-      clean verdict whose `POST_CLEAN_RECHECK` is unset or suppressed
-      (`POST_CLEAN_RECHECK_SKIP_REASON` other than
-      `no_thread_posting_platforms`) or whose platform never submitted a
-      review (`POST_CLEAN_NO_SUBMITTED_REVIEW=1`), and Step 8a.1 sizes its
-      final re-query wait from `POST_CLEAN_SETTLE_TIMEOUT` and
-      `POST_CLEAN_SETTLE_QUIET_SECONDS`. The loop's `--help` lists the
-      per-platform defaults; the protocols do not repeat them.
+      Protocol 91 is the only place this is enforced, and it carries no wait
+      and no number of its own (issue #1574): Check 0.6 of the readiness
+      checklist (exit 12) refuses a clean verdict whose `POST_CLEAN_RECHECK` is
+      unset or suppressed (`POST_CLEAN_RECHECK_SKIP_REASON` other than
+      `no_thread_posting_platforms`), whose platform never submitted a review
+      (`POST_CLEAN_NO_SUBMITTED_REVIEW=1`), or whose settle window ran out
+      (`POST_CLEAN_SETTLE_TIMEOUT=1`); the runner re-runs Step 7, and a second
+      consecutive timeout escalates as `settle_never_quiet`. Step 8a.1 is then
+      only the adjacency re-query, timed by `POST_CLEAN_SETTLED_AT`. The loop's
+      `--help` lists the per-platform defaults; the protocols do not repeat
+      them.
 - [ ] Every configured automated PR reviewer has no blocking PR feedback (or is skipped)
 - [ ] All feedback from a previous human review cycle has been addressed
 - [ ] For `spec/*` and `implementation-plan/*` PRs,

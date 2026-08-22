@@ -45,8 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pr-review-loop.sh`; Protocol 91 still described the old contract. Step 8a.1
   now consumes the loop's `POST_CLEAN_*` settle fields instead of carrying a
   number, a new readiness Check 0.6 (exit 12) refuses a clean verdict that was
-  never settled or whose platform never submitted a review for the HEAD, and
-  Step 7 tells the runner to export the fields. The loop reports
+  never settled — recheck suppressed, no submitted review for the HEAD, or
+  settle window exhausted while the platform was active (re-run Step 7; a
+  second consecutive timeout escalates as `settle_never_quiet`) — and Step 7
+  tells the runner to export the fields. Area 20 executes the gate with a
+  stubbed `gh` across every state, including a planted inversion — which is
+  how it surfaced that the Check 0.5 fence had carried an unterminated quote
+  on its jq filter since it was written, so the checklist as printed could
+  not have parsed in bash or zsh; fixed here. The loop reports
   `POST_CLEAN_RECHECK_SKIP_REASON` so "nothing can arrive late" is
   distinguishable from "settling was suppressed", and its `--help` now states
   the CodeRabbit defaults the code actually uses (900s window / 120s quiet,

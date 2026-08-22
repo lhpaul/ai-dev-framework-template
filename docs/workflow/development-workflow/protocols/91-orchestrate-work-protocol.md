@@ -2319,7 +2319,7 @@ Interpret the result as follows:
 | 9         | Residual gate missing, blocked, or escalated for broad-scope work                                | Keep out of readiness; fix residuals, add `needs-fixes`, or escalate |
 | 10        | Documentation-stage alignment checker infrastructure failure                                     | Retry checker or resolve GitHub/diff read failure |
 | 11        | Complex workflow decision-gate matrix evidence missing or contradictory when applicable          | Keep out of readiness; add `needs-fixes`, complete matrix evidence, and re-run review |
-| 12        | Reviewer-loop clean verdict not settled (Check 0.6): `POST_CLEAN_*` fields absent, recheck suppressed, or platform never submitted a review | Do not label ready; re-run Step 7, export its `POST_CLEAN_*` fields, and re-enter Step 8a |
+| 12        | Reviewer-loop clean verdict not settled (Check 0.6): `POST_CLEAN_*` fields absent, recheck suppressed, platform never submitted a review, or settle window exhausted while the platform was active | Do not label ready; re-run Step 7, export its `POST_CLEAN_*` fields, and re-enter Step 8a; a second consecutive `POST_CLEAN_SETTLE_TIMEOUT=1` escalates (`settle_never_quiet`) |
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
@@ -2519,7 +2519,7 @@ if ! LOOP_SUMMARY_BODY=$(gh pr view "$PR_NUMBER" --json comments --jq '
    | select(.body | test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"))]
   | sort_by(.createdAt)
   | last
-  | .body // ""); then
+  | .body // ""'); then
   echo "ERROR: Cannot verify automated reviewer-loop result — gh pr view failed."
   echo "Retry the GitHub query or resolve the CLI/API failure before applying ready-for-human-review."
   exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
@@ -2571,10 +2571,12 @@ elif [ "${POST_CLEAN_NO_SUBMITTED_REVIEW:-0}" = "1" ]; then
   exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
 else
   # POST_CLEAN_SETTLE_TIMEOUT=1: the platform was still active when the window
-  # ran out. No unresolved thread was found, so the verdict stands, but Step
-  # 8a.1 must wait out one more quiet period before its re-query.
-  echo "⚠️ Settle-state check: verdict is clean but UNSETTLED (window exhausted while the platform was active)."
-  echo "Step 8a.1 will wait ${POST_CLEAN_SETTLE_QUIET_SECONDS:-60}s of quiet before re-querying threads."
+  # ran out. Elapsed time is not quiet time — only the loop's activity-aware
+  # settle can tell the two apart — so this is refused like the other unsettled
+  # states, not re-checked after a sleep of this script's own.
+  echo "ERROR: The reviewer loop reported clean but UNSETTLED: the settle window ran out while the platform was still active (POST_CLEAN_SETTLE_TIMEOUT=1)."
+  echo "Re-run Step 7 so the loop settles again for this HEAD. If that run also reports POST_CLEAN_SETTLE_TIMEOUT=1, escalate to the human with reason settle_never_quiet instead of re-running a third time."
+  exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
 fi
 
 # Check 1: PR is non-draft
@@ -2821,29 +2823,24 @@ a wait of its own (issue #1574).
 
 **Procedure:**
 
-1. **Size the wait from the loop's settle result — never from a fixed number**:
+1. **Do not wait here — the loop already did, or the checklist already sent you back**:
 
-   Check 0.6 already refused the states that cannot be re-checked into safety
-   (`POST_CLEAN_RECHECK` unset or suppressed; `POST_CLEAN_NO_SUBMITTED_REVIEW=1`).
-   What reaches this substep is one of:
+   Check 0.6 refused every unsettled state before the label was applied:
+   `POST_CLEAN_RECHECK` unset or suppressed, `POST_CLEAN_NO_SUBMITTED_REVIEW=1`,
+   and `POST_CLEAN_SETTLE_TIMEOUT=1`. Elapsed time is not quiet time — a bot
+   that edits its walkthrough mid-sleep and posts threads afterwards defeats any
+   fixed sleep — and only the loop's activity-aware settle (quiet timer reset on
+   every platform action) can tell the two apart. So what reaches this substep
+   is one of:
 
-   | Step 7 settle fields                                                 | Wait before the re-query                                                                                                                                             |
-   | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | `POST_CLEAN_SETTLED=1`                                               | None. The loop already held the platform's quiet period after a submitted review; the re-query below is the adjacency check Protocol 92 requires, not another wait. |
-   | `POST_CLEAN_SETTLED=0` with `POST_CLEAN_SETTLE_TIMEOUT=1`            | One quiet period: `POST_CLEAN_SETTLE_QUIET_SECONDS` from the same output (the platform was still active when the window ran out).                                   |
-   | `POST_CLEAN_RECHECK=0` with `POST_CLEAN_RECHECK_SKIP_REASON=no_thread_posting_platforms` | Not applicable — no configured platform posts threads. Skip 8a.1.                                                                                                   |
+   | Step 7 settle fields                                                                      | Action                                                                                                                                            |
+   | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `POST_CLEAN_SETTLED=1`                                                                   | Re-query now. The loop held the platform's quiet period after a submitted review; this re-query is the adjacency check Protocol 92 requires.       |
+   | `POST_CLEAN_RECHECK=0` with `POST_CLEAN_RECHECK_SKIP_REASON=no_thread_posting_platforms` | Not applicable — no configured platform posts threads. Skip 8a.1.                                                                                 |
 
-   <!-- workflow-shell-contract: bash-zsh -->
-   ```bash
-   if [ "${POST_CLEAN_SETTLED:-0}" != "1" ] && [ "${POST_CLEAN_SETTLE_TIMEOUT:-0}" = "1" ]; then
-     echo "Unsettled clean verdict: waiting ${POST_CLEAN_SETTLE_QUIET_SECONDS:-60}s of platform quiet before re-querying threads..."
-     sleep "${POST_CLEAN_SETTLE_QUIET_SECONDS:-60}"
-   fi
-   ```
-
-   The only number in this substep is the one the loop printed. If the loop
-   output is not available in this session, the answer is to re-run Step 7
-   (Check 0.6 enforces that), not to pick a wait.
+   This substep carries no wait and no number. If the loop output is not
+   available in this session, the answer is to re-run Step 7 (Check 0.6
+   enforces that), not to pick a wait.
 
 2. **Re-query review threads**:
 
@@ -2900,7 +2897,7 @@ a wait of its own (issue #1574).
   - If `ready-for-regression not verified` on implementation PR (exit 3 from pre-Check-4 gate): Step 7b was not completed. Apply the label via Step 7b, run Step 8 (CI loop), and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until `ready-for-regression` is verified present.
   - If `unresolved review threads found` (exit 4 from GraphQL pre-Check-4 gate): The GraphQL query returned unresolved bot-authored review threads. Address the findings, push fixes, and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until the GraphQL query confirms all threads are resolved. **Do not rely on self-tracked thread state** — the GraphQL query is the authoritative check.
   - If `late-arriving review threads detected` (exit 6 from Step 8a.1 re-check): Unresolved review threads were discovered after the pre-Check-4 gate — a platform posted after the loop's verdict. Remove `ready-for-human-review`, add `needs-fixes`, and return to Step 7a.
-  - If `reviewer-loop verdict not settled` (exit 12 from Check 0.6): the latest Step 7 output is not in this environment, the loop's recheck was suppressed (`SKIP_POST_CLEAN_RECHECK`, `--compare`), or the platform never submitted a review for this HEAD (`POST_CLEAN_NO_SUBMITTED_REVIEW=1`). Do not apply `ready-for-human-review`. Re-run Step 7 for the current HEAD, export its `POST_CLEAN_*` fields, and re-enter Step 8a from the beginning.
+  - If `reviewer-loop verdict not settled` (exit 12 from Check 0.6): the latest Step 7 output is not in this environment, the loop's recheck was suppressed (`SKIP_POST_CLEAN_RECHECK`, `--compare`), the platform never submitted a review for this HEAD (`POST_CLEAN_NO_SUBMITTED_REVIEW=1`), or the settle window ran out while the platform was still active (`POST_CLEAN_SETTLE_TIMEOUT=1`). Do not apply `ready-for-human-review`. Re-run Step 7 for the current HEAD, export its `POST_CLEAN_*` fields, and re-enter Step 8a from the beginning. If a second consecutive run reports `POST_CLEAN_SETTLE_TIMEOUT=1`, escalate to the human with reason `settle_never_quiet` rather than re-running again.
   - If `reviewer-loop summary missing or non-clean` (exit 7 from Check 0.5): The latest automated reviewer-loop summary comment is absent or its `Result:` line is not `clean`/`skipped`. Do not apply `ready-for-human-review`. For `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result, escalate or re-enter Step 7 according to the reviewer-loop result.
   - If `documentation-stage alignment mismatch` (exit 8 from Check 3.6):
     the PR is on `spec/*` or `implementation-plan/*` but includes files outside
