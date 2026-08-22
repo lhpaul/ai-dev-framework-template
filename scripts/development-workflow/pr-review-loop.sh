@@ -8358,8 +8358,23 @@ if [ "$aggregate_result" = "clean" ] \
   # since_iso for the settle probes is the HEAD commit time, not "now": a review
   # submitted between the loop starting and the settle beginning still counts as
   # this HEAD's review, and anchoring to "now" would wait for a second one.
-  settle_head_iso="$(gh api "repos/$(repo_slug)/commits/${head_sha:-HEAD}" --jq '.commit.committer.date // empty' 2>/dev/null)"
-  [ -n "$settle_head_iso" ] || settle_head_iso="$(date -u -v-1H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '1 hour ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
+  # Anchor to the head this run reviewed, captured before dispatch. The
+  # previous form, commits/${head_sha:-HEAD}, read a variable that is only
+  # ever function-local, so at this scope it asked the API for commits/HEAD —
+  # which GitHub resolves to the DEFAULT BRANCH head. Measured on PR #1575:
+  # that anchor was nine days old, so any review CodeRabbit had ever
+  # submitted satisfied "a submitted review for this HEAD" and the
+  # require-review settle waited for nothing. When the head is unknown, the
+  # anchor is now: a review must land after this point (conservative —
+  # Check 0.6 refuses the unbound verdict anyway).
+  settle_head_iso=""
+  if [ -n "$loop_head_sha" ]; then
+    settle_head_iso="$(gh api "repos/$(repo_slug)/commits/${loop_head_sha}" --jq '.commit.committer.date // empty' 2>/dev/null)" || settle_head_iso=""
+  fi
+  if [ -z "$settle_head_iso" ]; then
+    settle_head_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    echo "WARN: post-clean settle — head commit time unavailable; a submitted review must land after ${settle_head_iso} to count" >&2
+  fi
   settle_review_seen=0
   # The head this settle is about. Emitted as POST_CLEAN_HEAD_SHA so Protocol
   # 91 Check 0.6 can refuse telemetry that describes a commit the PR has since

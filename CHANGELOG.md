@@ -49,7 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   settle window exhausted while the platform was active (re-run Step 7; a
   second consecutive timeout escalates as `settle_never_quiet`) — and Step 7
   tells the runner to export the fields (the label is re-validated against
-  the live head one last time before it is applied); the loop emits
+  the live head one last time before it is applied). The settle's "submitted
+  review for this HEAD" anchor read a function-local variable and fell back
+  to `commits/HEAD`, which the GitHub API resolves to the default branch —
+  nine days old on PR #1575 — so any past review satisfied it; it is now the
+  pre-dispatch head. The loop emits
   `POST_CLEAN_HEAD_SHA`
   and Check 0.6 refuses telemetry for a head the PR has moved past, flipping
   the verdict to `RESULT=needs_fixes REASON=head_moved_during_run` with a

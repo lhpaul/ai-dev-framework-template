@@ -14180,6 +14180,13 @@ run_test "post_clean_reports_missing_review" "yes" \
   "$(grep -q 'print_kv POST_CLEAN_NO_SUBMITTED_REVIEW 1' "$_1556_loop" && echo yes || echo no)"
 run_test "post_clean_anchors_since_to_head_commit" "yes" \
   "$(grep -q 'settle_head_iso=' "$_1556_loop" && echo yes || echo no)"
+# The anchor must be the pre-dispatch head, never commits/HEAD: the API
+# resolves HEAD to the default branch, which on PR #1575 was nine days old,
+# so any past review satisfied the require-review settle (issue #1574).
+run_test "post_clean_anchor_uses_pre_dispatch_head" "yes" \
+  "$(grep -q 'commits/${loop_head_sha}' "$_1556_loop" && echo yes || echo no)"
+run_test "post_clean_anchor_never_commits_HEAD" "0" \
+  "$(grep_count_or_zero 'commits/${head_sha:-HEAD}' "$_1556_loop")"
 # The documented knobs must actually appear in --help (AC-4).
 for _knob in POST_CLEAN_SETTLE_QUIET POST_CLEAN_SETTLE_WINDOW POST_CLEAN_POLL; do
   run_test "help_documents_$_knob" "yes" \
