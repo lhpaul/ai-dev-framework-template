@@ -106,7 +106,9 @@ workflow_local_review_override_root() {
 _workflow_local_file_has_review_section() {
   local file="$1"
   [ -f "$file" ] || return 1
-  grep -Eq '^review:' "$file"
+  # Key presence only, matching parse_yaml_subset(), which strips whitespace
+  # around keys: `review : {}` is a review section there and must be one here.
+  grep -Eq '^review[[:blank:]]*:' "$file"
 }
 
 workflow_local_config_file() {

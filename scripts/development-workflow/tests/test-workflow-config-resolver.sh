@@ -887,6 +887,17 @@ empty_review_output="$(workflow_review_override_context "$worktree_linked")"
 run_contains "empty_review_key_in_worktree_file_wins" "LOCAL_OVERRIDE_ORIGIN=checkout" "$empty_review_output"
 run_contains "empty_review_key_in_worktree_file_runner_empty" "REVIEW_ON_DRAFT_RUNNER=" "$empty_review_output"
 rm -f "$worktree_linked/.ai-dev-workflow.local.yaml"
+# The parser strips whitespace around keys, so `review : {}` is a review
+# section too — and the shell-side check must agree (CodeRabbit, PR #1575).
+printf 'review : {}\n' > "$worktree_linked/.ai-dev-workflow.local.yaml"
+spaced_review_output="$(workflow_review_override_context "$worktree_linked")"
+run_contains "spaced_review_key_in_worktree_file_wins" "LOCAL_OVERRIDE_ORIGIN=checkout" "$spaced_review_output"
+spaced_review_shell="$(
+  workflow_repo_root() { printf '%s\n' "$worktree_linked"; }
+  workflow_local_config_file
+)"
+run_test "spaced_review_key_shell_agrees_with_resolver" "$worktree_linked/.ai-dev-workflow.local.yaml" "$spaced_review_shell"
+rm -f "$worktree_linked/.ai-dev-workflow.local.yaml"
 
 # WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT (the #1033 handoff path) beats both.
 override_root_dir="$(fixture_dir worktree-override-root)"
