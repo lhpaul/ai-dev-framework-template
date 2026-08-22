@@ -38,37 +38,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Protocol 91's late-thread re-check no longer waits a fixed 10 seconds**
-  (#1574): Step 8a.1 was sized for a `codex-github` posting race, two orders
-  of magnitude short of CodeRabbit, whose findings arrive minutes after the
-  loop goes quiet (12 minutes walkthrough-to-review on PR #1573; 2, 3, 5, 1,
-  3 and 8 late findings across six PRs, all real). #1556 put the wait in
-  `pr-review-loop.sh`; Protocol 91 still described the old contract. Step 8a.1
-  now consumes the loop's `POST_CLEAN_*` settle fields instead of carrying a
-  number, a new readiness Check 0.6 (exit 12) refuses a clean verdict that was
-  never settled — recheck suppressed, no submitted review for the HEAD, or
-  settle window exhausted while the platform was active (re-run Step 7; a
-  second consecutive timeout escalates as `settle_never_quiet`) — and Step 7
-  tells the runner to export the fields (the label is re-validated against
-  the live head one last time before it is applied). The settle's "submitted
-  review for this HEAD" anchor read a function-local variable and fell back
-  to `commits/HEAD`, which the GitHub API resolves to the default branch —
-  nine days old on PR #1575 — so any past review satisfied it; it is now the
-  pre-dispatch head. The loop emits
-  `POST_CLEAN_HEAD_SHA`
-  and Check 0.6 refuses telemetry for a head the PR has moved past, flipping
-  the verdict to `RESULT=needs_fixes REASON=head_moved_during_run` with a
-  named message in the PR summary comment rather than a bare
-  "0 blocking finding(s)". Area 20
-  executes the gate with a
-  stubbed `gh` across every state, including a planted inversion — which is
-  how it surfaced that the Check 0.5 fence had carried an unterminated quote
-  on its jq filter since it was written, so the checklist as printed could
-  not have parsed in bash or zsh; fixed here. The loop reports
-  `POST_CLEAN_RECHECK_SKIP_REASON` so "nothing can arrive late" is
-  distinguishable from "settling was suppressed", and its `--help` now states
-  the CodeRabbit defaults the code actually uses (900s window / 120s quiet,
-  not 600/180). Area 20 of `test-pr-review-loop.sh` pins help-to-code and
-  protocol-to-loop agreement.
+  (#1574): the readiness checklist now consumes `pr-review-loop.sh`'s
+  `POST_CLEAN_*` settle fields instead of carrying a wait of its own. A new
+  Check 0.6 (exit 12) refuses a clean verdict that was never settled — recheck
+  suppressed, no submitted review for the HEAD, settle window exhausted, or
+  `POST_CLEAN_HEAD_SHA` not the live head — and Check 4 re-validates the head
+  immediately before applying `ready-for-human-review`; Step 8a.1 is only the
+  adjacency re-query. The loop reads the PR head before dispatching reviewers,
+  emits `POST_CLEAN_HEAD_SHA` and `POST_CLEAN_RECHECK_SKIP_REASON`, anchors
+  the require-review settle to that head (it previously resolved to the
+  default-branch head, so any past review satisfied it), and reports a head
+  that moved during a clean run as `needs_fixes` / `head_moved_during_run`
+  without counting a fixer cycle. Protocol 92 names the same contract; the
+  loop's `--help` defaults now match its code. The Check 0.5 jq filter's
+  unterminated quote (since `559c5402`) is fixed. Details and measurements:
+  Protocol 91 Step 7 / Check 0.6 / Step 8a.1 and `test-pr-review-loop.sh`
+  Area 20.
 - **A CodeRabbit `RESULT=clean` now means "clean, and still clean after the
   platform went quiet"** (#1556): the loop's post-clean recheck was a single
   30-second wait, far too short for a vendor that posts findings minutes after

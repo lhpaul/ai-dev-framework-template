@@ -2929,8 +2929,8 @@ a wait of its own (issue #1574).
      if [ "$UNRESOLVED_RECHECK" -gt 0 ]; then
        echo "⚠️ LATE-ARRIVING THREADS: Re-check detected $UNRESOLVED_RECHECK new unresolved review thread(s)."
        echo "Removing ready-for-human-review label and returning to Step 7a."
-       gh pr edit "$PR_NUMBER" --remove-label "ready-for-human-review"
-       gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+       gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "ready-for-human-review"
+       gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --add-label "needs-fixes"
        echo "Return to Step 7a to address the newly-discovered threads."
        exit 6  # Exit code 6 = "late-arriving review threads detected"
      fi
