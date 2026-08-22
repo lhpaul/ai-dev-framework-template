@@ -1988,6 +1988,7 @@ Interpret the result as follows:
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `clean`                                 | Summary comment posted automatically by the script. If `ADVISORY_LABELS` is non-empty, document a disposition for each advisory finding and update the summary comment before proceeding — see "Advisory finding dispositions" in `93-automated-reviewer-loop-protocol.md`. Then continue to Step 7b (implementation PRs) → Step 8 → **Step 8a** (which contains the mandatory GraphQL `reviewThreads` pre-Check-4 gate). **Do NOT apply `ready-for-human-review` directly from this step** — `clean` from the script only means no blocking inline comments or `CHANGES_REQUESTED` reviews were found; it does NOT mean all review threads are resolved. The GraphQL check in Step 8a is the authoritative gate. |
 | `skipped`                               | Continue to Step 7b (implementation PRs) then Step 8 (no summary comment posted — Step 8c skips the check)                                                                                                                                                                                                                                                                                 |
+| `needs_fixes` with `REASON=head_moved_during_run` | The PR head changed while the reviewers ran, so the clean verdict describes a commit the PR has left. Nothing to fix and no fixer to dispatch: run Step 7 again for the current HEAD. Does not count toward `cycle`.                                                                                                                                                                           |
 | `needs_fixes` and `cycle < max_cycles`  | Summary comment posted or updated automatically by the script. Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again                                                                                                                                                                                                                                |
 | `needs_fixes` and `cycle >= max_cycles` | Summary comment posted or updated automatically by the script. Escalate to human                                                                                                                                                                                                                                                                                                          |
 | `needs_rerun` (exit code 3)             | (Reserved — not currently emitted.) Treat as `escalate` if encountered unexpectedly.                                                                                                                                                                                                                                                                                                      |
@@ -2556,6 +2557,24 @@ elif [ -n "$LOOP_SUMMARY_BODY" ]; then
 fi
 
 # Check 0.6: a clean verdict must be a SETTLED one (issues #1556 / #1574).
+# Every clean verdict is about one head — the one the loop read before it
+# dispatched any reviewer and emitted as POST_CLEAN_HEAD_SHA. Anything pushed
+# after Step 7 — a fixer, another automation, a sibling-merge conflict
+# resolution — leaves the fields describing a commit the PR has moved past.
+settle_head_ok() {
+  LIVE_HEAD_SHA=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json headRefOid --jq '.headRefOid')
+  if [ -z "${POST_CLEAN_HEAD_SHA:-}" ]; then
+    echo "ERROR: Reviewer-loop telemetry is not bound to a head (POST_CLEAN_HEAD_SHA is not set)."
+    echo "Re-run Step 7 with the current pr-review-loop.sh and export its POST_CLEAN_* fields before re-entering Step 8a."
+    return 1
+  fi
+  if [ "$POST_CLEAN_HEAD_SHA" != "$LIVE_HEAD_SHA" ]; then
+    echo "ERROR: The reviewer-loop verdict is for head ${POST_CLEAN_HEAD_SHA}, but the PR head is now ${LIVE_HEAD_SHA:-unknown}."
+    echo "Something was pushed after Step 7. Re-run Step 7 for the current HEAD, export its POST_CLEAN_* fields, and re-enter Step 8a."
+    return 1
+  fi
+  return 0
+}
 # The loop's POST_CLEAN_* fields are exported from the latest Step 7 output
 # ("Carry the settle verdict forward"). CodeRabbit posts findings minutes after
 # it first goes quiet — 2, 3, 5, 1, 3 and 8 late findings on PRs #1532, #1541,
@@ -2570,26 +2589,15 @@ elif [ -z "${POST_CLEAN_RECHECK:-}" ]; then
   exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
 elif [ "$POST_CLEAN_RECHECK" = "0" ]; then
   if [ "${POST_CLEAN_RECHECK_SKIP_REASON:-}" = "no_thread_posting_platforms" ]; then
-    echo "✅ Settle-state check: no configured platform posts review threads; nothing can arrive late."
+    settle_head_ok || exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
+    echo "✅ Settle-state check: no configured platform posts review threads; nothing can arrive late (verdict for head ${POST_CLEAN_HEAD_SHA})."
   else
     echo "ERROR: The reviewer loop did not settle its clean verdict (POST_CLEAN_RECHECK_SKIP_REASON=${POST_CLEAN_RECHECK_SKIP_REASON:-unknown})."
     echo "Re-run Step 7 without SKIP_POST_CLEAN_RECHECK / --compare so the loop settles, then re-enter Step 8a."
     exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
   fi
 elif [ "${POST_CLEAN_SETTLED:-0}" = "1" ]; then
-  # A settled verdict is about one head. Anything pushed after Step 7 — a
-  # fixer, another automation, a sibling-merge conflict resolution — leaves
-  # these fields describing a commit the PR has moved past.
-  LIVE_HEAD_SHA=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json headRefOid --jq '.headRefOid')
-  if [ -z "${POST_CLEAN_HEAD_SHA:-}" ]; then
-    echo "ERROR: Settle telemetry is not bound to a head (POST_CLEAN_HEAD_SHA is not set)."
-    echo "Re-run Step 7 with the current pr-review-loop.sh and export its POST_CLEAN_* fields before re-entering Step 8a."
-    exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
-  elif [ "$POST_CLEAN_HEAD_SHA" != "$LIVE_HEAD_SHA" ]; then
-    echo "ERROR: The settled verdict is for head ${POST_CLEAN_HEAD_SHA}, but the PR head is now ${LIVE_HEAD_SHA:-unknown}."
-    echo "Something was pushed after Step 7. Re-run Step 7 for the current HEAD, export its POST_CLEAN_* fields, and re-enter Step 8a."
-    exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
-  fi
+  settle_head_ok || exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
   echo "✅ Settle-state check: verdict settled at ${POST_CLEAN_SETTLED_AT:-<unknown>} for head ${POST_CLEAN_HEAD_SHA}."
 elif [ "${POST_CLEAN_NO_SUBMITTED_REVIEW:-0}" = "1" ]; then
   echo "ERROR: The reviewer loop reported clean, but the platform never submitted a review for this HEAD (POST_CLEAN_NO_SUBMITTED_REVIEW=1)."
@@ -2878,6 +2886,7 @@ a wait of its own (issue #1574).
    CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
    ```
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    JQ_FILTER="[.data.repository.pullRequest.reviewThreads.nodes[]
          | select(.isResolved == false)

@@ -514,8 +514,12 @@ Outputs stable key=value lines including:
     never counted as silence)
   POST_CLEAN_SETTLED_AT=<iso8601> (when the verdict was established — a caller that inserts a long
     poll between this and the readiness label is acting on a stale check)
-  POST_CLEAN_HEAD_SHA=<sha> (the PR head the settle describes; Protocol 91 Check 0.6 refuses the
-    verdict when the live head differs — a push after Step 7 voids it — issue #1574)
+  POST_CLEAN_HEAD_SHA=<sha> (the PR head this run reviewed, read BEFORE any reviewer was dispatched and
+    emitted on every clean path; Protocol 91 Check 0.6 refuses the verdict when the live head differs —
+    a push after Step 7 voids it — issue #1574)
+  RESULT=needs_fixes REASON=head_moved_during_run (the PR head changed while the reviewers ran, so
+    the clean verdict describes a commit the PR has left; nothing to fix — re-run the loop for the
+    current HEAD)
   LATE_THREADS_FOUND=<N> (count of newly-found unresolved threads; -1 on audit failure; 0 when POST_CLEAN_RECHECK=0)
   RUN_ID=<id> (this invocation's resolved orchestration-run identifier — either PR_REVIEW_LOOP_RUN_ID
                   verbatim, or a freshly generated "auto-<epoch>-<pid>-<random>" id when unset. See
@@ -7558,6 +7562,19 @@ total_suggestion_count=0
 aggregate_advisory_labels=""
 reviewer_failed_required=0
 declare -a compare_verdicts=()
+# The head this run reviews, captured BEFORE any reviewer is dispatched
+# (issue #1574). Every verdict below describes this commit; the settle emits it
+# as POST_CLEAN_HEAD_SHA, and the head-move guard after the settle turns a
+# clean verdict into needs_fixes/head_moved_during_run if the PR moved away
+# from it while the loop ran. Reading it later would bind the verdict to
+# whatever was pushed in the meantime.
+loop_head_sha=""
+if [ -n "$pr_number" ]; then
+  if ! loop_head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null)"; then
+    loop_head_sha=""
+    echo "WARN: could not read the PR head before dispatching reviewers; POST_CLEAN_HEAD_SHA will be empty and Protocol 91 Check 0.6 will refuse this verdict" >&2
+  fi
+fi
 # Per-platform result tokens for the PR summary comment.
 # Each entry is "platform_name:display_token" (e.g. "haystack:unavailable").
 declare -a platform_result_tokens=()
@@ -8327,12 +8344,7 @@ if [ "$aggregate_result" = "clean" ] \
   # The head this settle is about. Emitted as POST_CLEAN_HEAD_SHA so Protocol
   # 91 Check 0.6 can refuse telemetry that describes a commit the PR has since
   # moved past (a fix pushed between Step 7 and Step 8a) — issue #1574.
-  if ! settle_head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null)"; then
-    # An unbound settle is refused by Check 0.6 (fail-closed); say so here
-    # rather than letting an empty field pass silently.
-    settle_head_sha=""
-    echo "WARN: post-clean settle — could not read the PR head; POST_CLEAN_HEAD_SHA will be empty and Protocol 91 Check 0.6 will refuse this verdict" >&2
-  fi
+  settle_head_sha="$loop_head_sha"
 
   late_thread_count=0
   settle_elapsed=0
@@ -8465,6 +8477,23 @@ else
   # Emit LATE_THREADS_FOUND=0 on skipped paths so consumers can always rely on
   # the field being present, regardless of whether the recheck ran.
   print_kv LATE_THREADS_FOUND 0
+  # The head binding applies to every clean verdict, not only settled ones:
+  # a no-thread-platform run is just as stale once the PR moves.
+  print_kv POST_CLEAN_HEAD_SHA "$loop_head_sha"
+fi
+
+# Head-move guard (#1574): a push that lands while the reviewers run leaves
+# the clean verdict describing a commit the PR no longer sits on. Refuse it
+# here, before the summary records it, rather than letting Check 0.6 compare
+# a head that was read after the fact.
+if [ "$aggregate_result" = "clean" ] && [ -n "$pr_number" ] && [ -n "$loop_head_sha" ]; then
+  live_head_sha=""
+  if live_head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null)" \
+    && [ -n "$live_head_sha" ] && [ "$live_head_sha" != "$loop_head_sha" ]; then
+    echo "WARN: PR head moved from ${loop_head_sha} to ${live_head_sha} while this loop ran; the clean verdict describes the old head — re-run the loop for the current HEAD" >&2
+    aggregate_result="needs_fixes"
+    aggregate_reason="head_moved_during_run"
+  fi
 fi
 
 if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 0 ]; then

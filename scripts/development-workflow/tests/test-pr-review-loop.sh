@@ -14221,8 +14221,16 @@ run_test "help_documents_skip_reason" "yes" \
 # of its own (AC-2), and Protocols 91/92 must describe one contract (AC-3).
 run_test "p91_has_no_fixed_recheck_sleep" "0" \
   "$(grep_count_or_zero 'sleep 10' "$_1574_p91")"
-run_test "loop_emits_settle_head_sha" "yes" \
-  "$(grep -q 'print_kv POST_CLEAN_HEAD_SHA' "$_1574_loop" && echo yes || echo no)"
+# Both clean paths — settled and no-thread-platforms — emit the head binding,
+# and the head is read before any reviewer is dispatched, then compared after.
+run_test "loop_emits_head_sha_on_both_clean_paths" "2" \
+  "$(grep_count_or_zero 'print_kv POST_CLEAN_HEAD_SHA' "$_1574_loop")"
+run_test "loop_reads_head_before_dispatch" "yes" \
+  "$(awk '/^loop_head_sha=""/{h=NR} /^aggregate_result="skipped"/{a=NR} END{exit !(h>0 && a>0 && h>a)}' "$_1574_loop" && echo yes || echo no)"
+run_test "loop_refuses_head_moved_during_run" "yes" \
+  "$(grep -q 'aggregate_reason="head_moved_during_run"' "$_1574_loop" && echo yes || echo no)"
+run_test "p91_names_head_moved_during_run" "yes" \
+  "$(grep -q 'head_moved_during_run' "$_1574_p91" && echo yes || echo no)"
 for _field in POST_CLEAN_SETTLED POST_CLEAN_SETTLE_TIMEOUT POST_CLEAN_NO_SUBMITTED_REVIEW POST_CLEAN_SETTLED_AT POST_CLEAN_RECHECK_SKIP_REASON POST_CLEAN_HEAD_SHA; do
   run_test "p91_consumes_$_field" "yes" \
     "$(grep -q "$_field" "$_1574_p91" && echo yes || echo no)"
@@ -14284,7 +14292,10 @@ _1574_run_gate() {
 run_test "gate_skipped_flag_passes" "0" "$(_1574_run_gate REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true)"
 run_test "gate_skipped_summary_passes" "0" "$(_1574_run_gate MOCK_SUMMARY="$_1574_skipped")"
 run_test "gate_missing_fields_refused" "12" "$(_1574_run_gate)"
-run_test "gate_no_thread_platforms_passes" "0" "$(_1574_run_gate POST_CLEAN_RECHECK=0 POST_CLEAN_RECHECK_SKIP_REASON=no_thread_posting_platforms)"
+run_test "gate_no_thread_platforms_passes" "0" "$(_1574_run_gate POST_CLEAN_RECHECK=0 POST_CLEAN_RECHECK_SKIP_REASON=no_thread_posting_platforms POST_CLEAN_HEAD_SHA="$_1574_head")"
+# The no-thread path is bound to a head too: a push after Step 7 voids it.
+run_test "gate_no_thread_platforms_unbound_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0 POST_CLEAN_RECHECK_SKIP_REASON=no_thread_posting_platforms)"
+run_test "gate_no_thread_platforms_other_head_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0 POST_CLEAN_RECHECK_SKIP_REASON=no_thread_posting_platforms POST_CLEAN_HEAD_SHA=0123456789012345678901234567890123456789)"
 run_test "gate_suppressed_recheck_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0 POST_CLEAN_RECHECK_SKIP_REASON=skip_env)"
 run_test "gate_recheck_without_reason_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0)"
 run_test "gate_settled_passes" "0" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z POST_CLEAN_HEAD_SHA="$_1574_head")"
