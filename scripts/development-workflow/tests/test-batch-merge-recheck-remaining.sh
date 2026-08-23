@@ -383,6 +383,15 @@ rm -f "$MOCK_GH_STATE_DIR"/*.count
 lifted_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --annotate)"
 run_test "clean_after_hold_is_lifted" "lifted" "$(json_field "$lifted_output" 102 annotation)"
 run_test "lifted_body_says_so" "yes" "$(grep -q 'Hold lifted' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
+# Idempotence: a second clean recheck on an already-lifted comment must not
+# PATCH again or append a second "Hold lifted" line (the guard at the top of
+# annotate_hold_lifted must short-circuit on the marker it already wrote).
+_patch_count_before_second_lift="$(grep -c 'issues/comments/777 -X PATCH' "$CALL_LOG" || true)"
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+lifted_again_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --annotate)"
+run_test "clean_after_lift_is_still_lifted" "lifted" "$(json_field "$lifted_again_output" 102 annotation)"
+run_test "lifted_idempotent_no_second_patch" "$_patch_count_before_second_lift" "$(grep -c 'issues/comments/777 -X PATCH' "$CALL_LOG" || true)"
+run_test "lifted_body_not_duplicated" "1" "$(grep -o 'Hold lifted' "$MOCK_GH_STATE_DIR/hold-body-102" | wc -l | tr -d ' ')"
 rm -f "$MOCK_GH_STATE_DIR"/*.count "$MOCK_GH_STATE_DIR"/hold-*
 clean_annotate_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --annotate)"
 run_test "never_held_clean_pr_annotation_none" "none" "$(json_field "$clean_annotate_output" 102 annotation)"
