@@ -3818,6 +3818,59 @@ run_test "codex_account_not_connected_blocking_count" "BLOCKING_COUNT=0" \
 rm -rf "$_codex_notconn_dir"
 unset _codex_notconn_dir _codex_notconn_exit _codex_notconn_output
 
+# A same-fetch mix of a non-blocking review and an account-connection refusal
+# must classify as UNAVAILABLE, not as the review (CodeRabbit on PR #1586);
+# a BLOCKING review still wins outright, as for usage-limit.
+_codex_mixed_dir="$(mktemp -d)"
+cat > "$_codex_mixed_dir/gh" <<'CODEX_MIXED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*) exit 0 ;;
+  *"pr view"*headRefOid*) printf 'abcmixed1234567890\n'; exit 0 ;;
+  *"--method POST"*) printf '{"id":101,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"id":401,"submitted_at":"2026-01-01T00:00:02Z","state":"COMMENTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"%s"}]\n' "${MOCK_REVIEW_BODY:-No blocking issues found. Reviewed commit: \`abcmixed1234567890\`}"
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":201,"created_at":"2026-01-01T00:00:03Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"%s"}]\n' "${MOCK_REFUSAL_OVERRIDE:-To use Codex here, [create a Codex account and connect to github](https://chatgpt.com/codex/cloud/settings/connectors).}"
+    exit 0 ;;
+  *) printf 'ERROR=unexpected-gh-invocation\n' >&2; exit 64 ;;
+esac
+CODEX_MIXED_GH
+chmod +x "$_codex_mixed_dir/gh"
+_codex_mixed_exit=0
+PATH="$_codex_mixed_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_mixed_dir/output.txt" 2>&1 || _codex_mixed_exit=$?
+run_test "codex_mixed_fetch_refusal_wins_over_clean_review" "3" "$_codex_mixed_exit"
+run_test "codex_mixed_fetch_refusal_reason" "REASON=codex-github-account-not-connected" \
+  "$(grep "^REASON=" "$_codex_mixed_dir/output.txt" || true)"
+_codex_mixed_blocking_exit=0
+MOCK_REVIEW_BODY="Changes requested: must fix the null deref. Reviewed commit: \`abcmixed1234567890\`" \
+PATH="$_codex_mixed_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_mixed_dir/blocking.txt" 2>&1 || _codex_mixed_blocking_exit=$?
+# Parity, not an independent guarantee: with a blocking review in the SAME
+# fetch, the pre-existing usage-limit path also returns UNAVAILABLE (measured
+# on develop: usage-limit → 3, environment-error → 2). The not-connected block
+# must behave identically to usage-limit rather than inventing a stricter
+# contract; the shared blocking-evidence gap is tracked separately.
+_codex_mixed_usage_exit=0
+MOCK_REVIEW_BODY="Changes requested: must fix the null deref. Reviewed commit: \`abcmixed1234567890\`" \
+MOCK_REFUSAL_OVERRIDE="You have reached your Codex usage limits for code reviews." \
+PATH="$_codex_mixed_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_mixed_dir/usage.txt" 2>&1 || _codex_mixed_usage_exit=$?
+run_test "codex_mixed_fetch_not_connected_matches_usage_limit" \
+  "$_codex_mixed_usage_exit" "$_codex_mixed_blocking_exit"
+rm -rf "$_codex_mixed_dir"
+unset _codex_mixed_dir _codex_mixed_exit _codex_mixed_blocking_exit _codex_mixed_usage_exit
+
 # --- #1526: a trigger already answered with a refusal must be re-triggered,
 # so a restored quota/connection can review the same commit. Without the fix
 # the guard skipped the post and re-read the stale refusal forever.

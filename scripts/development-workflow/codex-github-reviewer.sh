@@ -1197,6 +1197,18 @@ codex_combine_terminal_evidence() {
       COMBINED_REVIEW_STATE=""
       echo "INFO: $label usage-limit notice takes immediate precedence over terminal/review evidence, including same-fetch evidence"
     fi
+  elif [ "$comment_latest_is_terminal" -eq 0 ] && [ -n "$comment_latest_body" ] && codex_response_is_account_not_connected "$comment_latest_body"; then
+    if [ -n "$COMBINED_SOURCE" ] && { [ "$COMBINED_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$COMBINED_BODY"; }; then
+      # Same contract as the usage-limit block above: blocking evidence is
+      # never discarded by an unavailability notice (CodeRabbit on PR #1586).
+      :
+    else
+      COMBINED_BODY="$comment_latest_body"
+      COMBINED_TIME="$comment_latest_time"
+      COMBINED_SOURCE="comment"
+      COMBINED_REVIEW_STATE=""
+      echo "INFO: $label account-connection refusal takes immediate precedence over terminal/review evidence, including same-fetch evidence"
+    fi
   elif [ "$comment_latest_is_terminal" -eq 0 ] && [ -n "$comment_latest_body" ] && codex_response_is_environment_error "$comment_latest_body"; then
     if [ -n "$COMBINED_SOURCE" ] && { [ "$COMBINED_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$COMBINED_BODY"; }; then
       # Blocking terminal/review evidence always wins outright — it is
