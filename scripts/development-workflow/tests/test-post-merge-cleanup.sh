@@ -438,8 +438,7 @@ commitmsg_output="$(
   GH_MERGED_PR=1601 \
   GH_PR_TITLE="fix(#1600): thing" \
   GH_PR_BODY="No closing keyword in the body." \
-  GH_PR_COMMITS_TEXT="fix: the thing
-Closes #1602" \
+  GH_PR_COMMITS_TEXT=$'fix: the thing\nCloses #1602' \
   GH_ISSUE_STATE=OPEN \
   WORKFLOW_TARGET_GITHUB_REPO=example/repo \
   PATH="$stub_bin:$PATH" \
