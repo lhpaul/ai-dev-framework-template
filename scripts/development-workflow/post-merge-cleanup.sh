@@ -584,14 +584,26 @@ fetch_pr_closing_issues() {
   # natively on default-branch merges — this repo merges to develop, so the
   # script must read them itself (#1391, second confirmation: a `Closes #N`
   # in a commit body was silently ignored).
-  local pr_commit_text
+  local pr_commit_text stripped_pr_commit_text
   pr_commit_text="$(gh pr view "$pr_number" --repo "$pr_repo" --json commits --jq '[.commits[] | ((.messageHeadline // "") + "\n" + (.messageBody // ""))] | join("\n")' 2>/dev/null)" || return 1
-  pr_body="${pr_body}
-${pr_commit_text}"
+  # Strip the title/body and the commit text SEPARATELY, then combine the
+  # already-stripped results. strip_fenced_pr_body_blocks deliberately treats
+  # an unclosed opening fence as extending to end of input; if the raw body
+  # and commit text were concatenated *before* stripping, an unclosed (e.g.
+  # accidentally malformed) fence in the PR body would swallow every commit
+  # message that follows it — including a live `Closes #N` reference — as
+  # collateral damage. Each source's fence state must not leak into the
+  # other's.
   if ! stripped_pr_body="$(printf '%s' "$pr_body" | strip_fenced_pr_body_blocks)"; then
-    echo "ERROR: could not strip fenced code blocks from PR #${pr_number}." >&2
+    echo "ERROR: could not strip fenced code blocks from PR #${pr_number} body." >&2
     return 1
   fi
+  if ! stripped_pr_commit_text="$(printf '%s' "$pr_commit_text" | strip_fenced_pr_body_blocks)"; then
+    echo "ERROR: could not strip fenced code blocks from PR #${pr_number} commit messages." >&2
+    return 1
+  fi
+  stripped_pr_body="${stripped_pr_body}
+${stripped_pr_commit_text}"
   set +e
   keyword_lines="$(printf '%s' "$stripped_pr_body" | grep -ioE '(^|[^[:alnum:]_])(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(issue[[:space:]]+)?#[0-9]+')"
   stage_status=$?
@@ -675,11 +687,18 @@ close_issues_from_pr() {
 # A PR title like "fix(#2053,#2055): ..." references issues without a closing
 # keyword; neither GitHub nor this script closes them. Say so loudly instead
 # of silently processing a subset (#1391): list every #N in the title that is
-# not in the processed list.
+# not in the processed list. Best-effort by design (a failure here must never
+# fail the overall cleanup), but a failure to fetch the title is itself
+# announced on stderr rather than returning silently — otherwise the one
+# helper whose whole purpose is avoiding a silent gap could itself go silent
+# on a transient `gh` failure, indistinguishable from "no bare refs found".
 warn_unprocessed_title_refs() {
   local pr_repo="$1" pr_number="$2" processed="$3"
   local title refs ref unprocessed=""
-  title="$(gh pr view "$pr_number" --repo "$pr_repo" --json title --jq '.title // ""' 2>/dev/null)" || return 0
+  title="$(gh pr view "$pr_number" --repo "$pr_repo" --json title --jq '.title // ""' 2>/dev/null)" || {
+    echo "Warning: could not fetch PR #${pr_number} title to check for unprocessed bare issue references; skipping this check." >&2
+    return 0
+  }
   refs="$(printf '%s' "$title" | grep -oE '#[0-9]+' | tr -d '#' | sort -un)" || return 0
   [ -n "$refs" ] || return 0
   while IFS= read -r ref; do

@@ -138,6 +138,10 @@ case "$1 $2" in
       # GH_PR_COMMITS_TEXT (already-joined text, may be empty).
       printf '%s\n' "${GH_PR_COMMITS_TEXT:-}"
     elif [[ "$args" == *"--json title "* || "$args" == *'--json title'* ]]; then
+      if [ -n "${GH_PR_TITLE_FETCH_FAIL:-}" ]; then
+        echo "mock pr view --json title failure" >&2
+        exit 1
+      fi
       printf '%s\n' "${GH_PR_TITLE:-}"
     elif [[ "$args" == *"--json body,title"* ]]; then
       # Emulates the real command's jq filter
@@ -443,6 +447,33 @@ Closes #1602" \
 )"
 run_contains "commit_message_ref_processed" "Processing issue #1602 from PR #1601" "$commitmsg_output"
 
+# #1391: title/body and commit text must be fence-stripped SEPARATELY. An
+# unclosed fence in the PR body extends "to end of input" by design (see the
+# unclosed_fence_extends_to_end_of_input test above); if body and commit text
+# were combined before stripping, that same unclosed-fence rule would treat
+# every commit message as inside the fence too and silently drop a live
+# commit-message closing reference as collateral damage.
+unclosed_body_fence_branch="fix/1610-unclosed-body-fence"
+unclosed_body_fence_repo="$(make_repo unclosed-body-fence "$unclosed_body_fence_branch" yes)"
+unclosed_body_fence_output="$(
+  GH_MERGED_HEAD="$unclosed_body_fence_branch" \
+  GH_MERGED_PR=1611 \
+  GH_PR_TITLE="fix(#1610): thing" \
+  GH_PR_BODY='Accidentally unclosed fence below.
+
+```
+some example text' \
+  GH_PR_COMMITS_TEXT="fix: the thing
+Closes #1612" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$unclosed_body_fence_repo" --base develop --pr 1611 "$unclosed_body_fence_branch"
+)"
+run_contains "unclosed_body_fence_does_not_swallow_commit_ref" \
+  "Processing issue #1612 from PR #1611" \
+  "$unclosed_body_fence_output"
+
 bare_branch="fix/2053-first-of-two"
 bare_repo="$(make_repo bare-title "$bare_branch" yes)"
 bare_output="$(
@@ -458,6 +489,45 @@ bare_output="$(
 run_contains "bare_title_ref_warns_loudly" "title references issue(s) #2055 without a closing keyword" "$bare_output"
 run_test "bare_title_ref_branch_issue_not_warned" "no" \
   "$(if grep -Fq "#2053 without" <<<"$bare_output"; then printf yes; else printf no; fi)"
+
+# #1391: the branch-derived issue may already be closed (e.g. a re-run, or an
+# issue closed by hand before cleanup ran) — extras from the PR body/commits
+# must still be processed rather than being skipped along with the branch
+# issue's own (redundant) close step.
+already_closed_branch="fix/1800-already-closed-with-extra"
+already_closed_repo="$(make_repo already-closed-extra "$already_closed_branch" yes)"
+already_closed_output="$(
+  GH_MERGED_HEAD="$already_closed_branch" \
+  GH_MERGED_PR=1801 \
+  GH_PR_TITLE="fix(#1800): thing" \
+  GH_PR_BODY="Also closes #1802" \
+  GH_ISSUE_STATE=CLOSED \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$already_closed_repo" --base develop --pr 1801 "$already_closed_branch"
+)"
+run_contains "already_closed_branch_issue_skips_close" "Issue #1800 is already CLOSED, skipping close." "$already_closed_output"
+run_contains "already_closed_branch_extra_still_processed" "Processing issue #1802 from PR #1801" "$already_closed_output"
+
+# #1391: a transient failure fetching the PR title for the bare-ref check
+# must not go completely silent — it is the one helper whose purpose is
+# avoiding exactly that kind of silent gap.
+title_fetch_fail_branch="fix/1900-title-fetch-fails"
+title_fetch_fail_repo="$(make_repo title-fetch-fail "$title_fetch_fail_branch" yes)"
+title_fetch_fail_output="$(
+  GH_MERGED_HEAD="$title_fetch_fail_branch" \
+  GH_MERGED_PR=1901 \
+  GH_PR_TITLE="fix(#1900): thing" \
+  GH_PR_BODY="No closing keywords." \
+  GH_ISSUE_STATE=OPEN \
+  GH_PR_TITLE_FETCH_FAIL=1 \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$title_fetch_fail_repo" --base develop --pr 1901 "$title_fetch_fail_branch" 2>&1
+)"
+run_contains "title_fetch_failure_warns_instead_of_silent" \
+  "could not fetch PR #1901 title to check for unprocessed bare issue references" \
+  "$title_fetch_fail_output"
 
 false_positive_branch="fix/retro-517-doc-gaps"
 false_positive_repo="$(make_repo false-positive "$false_positive_branch" yes)"
