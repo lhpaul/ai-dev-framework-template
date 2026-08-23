@@ -269,7 +269,7 @@ annotate_hold_comment() {
       "**Verdicts void at this head:** " + ((.verdicts_voided // []) | list),
       "**Required before any merge decision:** `" + (.required_action // "none") + "`",
       "",
-      "_Recorded at " + $ts + "; updated in place on every recheck. A held PR is not a parked PR: keep it conflict-free and re-verify the reviewer loop, CI, risk classification and the delegated gate at the current head before any merge decision (#1558). If the only conflicting file is `CHANGELOG.md`, `batch-merge.sh merge` resolves it at merge time without moving this head (Protocol 94 Step 4.3) — check with `git merge-tree --write-tree --name-only origin/<base> origin/<head>` before resolving anything on the branch._"
+      "_Recorded at " + $ts + "; updated in place on every recheck. A held PR is not a parked PR: keep it conflict-free and re-verify the reviewer loop, CI, risk classification and the delegated gate at the current head before any merge decision (#1558). If the only conflicting file is `CHANGELOG.md` AND this head already has a clean verdict and green CI, `batch-merge.sh merge` resolves it at merge time without moving this head (Protocol 94 Step 4.3); a conflicting PR gets no `pull_request` CI, so any further push must resolve the conflict on the branch first. Check with `git merge-tree --write-tree --name-only origin/<base> origin/<head>`._"
     ] | join("\n")' 2>/dev/null)" || { printf 'failed:render\n'; return 0; }
 
   # Look up separately from filtering so a real gh api failure (auth,
