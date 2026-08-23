@@ -710,6 +710,19 @@ spaced_review_local_file="$(
   workflow_local_config_file
 )"
 run_test "worktree_file_with_spaced_review_key_wins" "$_WT_LINKED/.ai-dev-workflow.local.yaml" "$spaced_review_local_file"
+# An unreadable checkout-local file is an error, not "no review section"
+# (CodeRabbit on PR #1575). Skipped as root, where chmod 000 is readable.
+if [ "$(id -u)" -ne 0 ]; then
+  chmod 000 "$_WT_LINKED/.ai-dev-workflow.local.yaml"
+  unreadable_status=0
+  unreadable_out="$(
+    workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
+    workflow_local_config_file 2>/dev/null
+  )" || unreadable_status=$?
+  run_test "unreadable_worktree_file_is_an_error" "1:" "$unreadable_status:$unreadable_out"
+  chmod 644 "$_WT_LINKED/.ai-dev-workflow.local.yaml"
+  unset unreadable_status unreadable_out
+fi
 rm -f "$_WT_LINKED/.ai-dev-workflow.local.yaml"
 main_root_status=0
 workflow_linked_worktree_main_root "$_WT_MAIN" >/dev/null 2>&1 || main_root_status=$?

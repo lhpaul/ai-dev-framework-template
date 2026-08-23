@@ -90,11 +90,19 @@ workflow_local_review_override_root() {
   # A checkout-local file without a `review:` section (set-local-path writes
   # one holding only product_repos into a worktree) must not mask the main
   # clone's reviewer override — that is the #1560 failure all over again.
-  if ! _workflow_local_file_has_review_section "$repo_root/.ai-dev-workflow.local.yaml" \
-    && main_root="$(workflow_linked_worktree_main_root "$repo_root")" \
-    && _workflow_local_file_has_review_section "$main_root/.ai-dev-workflow.local.yaml"; then
-    printf '%s\n' "$main_root"
-    return 0
+  # An UNREADABLE file is neither present nor absent: falling through to the
+  # main clone would apply a different policy than the resolver, which fails
+  # on the same file. Probe status 2 is a structured error; stop.
+  local checkout_status=0 main_status=0
+  _workflow_local_file_has_review_section "$repo_root/.ai-dev-workflow.local.yaml" || checkout_status=$?
+  [ "$checkout_status" -ne 2 ] || return 1
+  if [ "$checkout_status" -eq 1 ] && main_root="$(workflow_linked_worktree_main_root "$repo_root")"; then
+    _workflow_local_file_has_review_section "$main_root/.ai-dev-workflow.local.yaml" || main_status=$?
+    [ "$main_status" -ne 2 ] || return 1
+    if [ "$main_status" -eq 0 ]; then
+      printf '%s\n' "$main_root"
+      return 0
+    fi
   fi
   printf '%s\n' "$repo_root"
 }
@@ -110,7 +118,15 @@ _workflow_local_file_has_review_section() {
   [ -f "$file" ] || return 1
   # Key presence only, matching parse_yaml_subset(), which strips whitespace
   # around keys: `review : {}` is a review section there and must be one here.
-  grep -Eq '^review[[:blank:]]*:' "$file"
+  # Status 2 (with an error on stderr) means the file exists but cannot be
+  # read — callers must not treat that as "no review section".
+  local status=0
+  grep -Eq '^review[[:blank:]]*:' "$file" || status=$?
+  if [ "$status" -gt 1 ]; then
+    echo "ERROR: local reviewer override exists but could not be read (grep status $status): $file" >&2
+    return 2
+  fi
+  return "$status"
 }
 
 workflow_local_config_file() {
