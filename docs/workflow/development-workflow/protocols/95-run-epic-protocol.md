@@ -180,9 +180,12 @@ candidate PR, resolver policy, reviewer, CI, risk, scope, and audit evidence:
 ```
 
 Bind each verdict to the head it was produced at: set `reviewer.headSha` to
-the head the reviewer loop reported clean for and `risk.headSha` to the head
-the risk classifier read, and assemble `pr.headSha` from a live `gh pr view`
-immediately before running the gate. A sibling merge that forces a conflict
+the `POST_CLEAN_HEAD_SHA` the reviewer loop reported clean for and
+`risk.headSha` to the `head_sha` field of the classifier's own output (it
+reads `headRefOid` in the same call as the rest of the PR state, so the
+binding is the head the verdict was computed from — never a later live read),
+and assemble `pr.headSha` from a live `gh pr view` immediately before running
+the gate. A sibling merge that forces a conflict
 resolution moves the head; the gate then refuses with
 `stale_verdict_head` / `fix_required` instead of deciding on verdicts about a
 commit that no longer exists (issue #1558 AC-2).

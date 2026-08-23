@@ -345,6 +345,18 @@ for bad in "102:abc" "102-$_sha_a" "999:$_sha_a" ",102:$_sha_a"; do
 done
 run_test "out_of_scope_binding_reason" "reviewed_head_sha_not_in_frozen_list" \
   "$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --reviewed-head-shas "999:$_sha_a" 2>/dev/null | jq -r '.reason' | tail -n 1)"
+# A partial binding map is refused: an unbound remaining PR would skip the
+# head comparison and could recheck clean with every verdict stale.
+partial_status=0
+partial_output="$("$HELPER" recheck-remaining --prs 101,102,103 --after-merged-pr 101 --base develop --reviewed-head-shas "102:$_sha_a" 2>/dev/null)" || partial_status=$?
+run_test "partial_binding_map_rejected" "2" "$partial_status"
+run_test "partial_binding_map_reason" "reviewed_head_sha_missing" "$(printf '%s\n' "$partial_output" | jq -r '.reason' | tail -n 1)"
+# A moved head that is also unmergeable must resolve the conflict first.
+export MOCK_SCENARIO=head_changed_annotate
+rm -f "$MOCK_GH_STATE_DIR"/*.count "$MOCK_GH_STATE_DIR"/hold-*
+dirty_moved_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --reviewed-head-shas "102:$_sha_a")"
+run_test "moved_and_dirty_requires_conflict_resolution" "resolve_conflict_then_reverify" "$(json_field "$dirty_moved_output" 102 required_action)"
+run_test "moved_and_dirty_still_voids_verdicts" "4" "$(printf '%s\n' "$dirty_moved_output" | jq -r 'select(.pr == 102) | .verdicts_voided | length')"
 
 echo ""
 echo "=== Hold annotation on the PR (#1558) ==="
@@ -359,7 +371,7 @@ run_test "annotate_body_has_marker" "yes" "$(grep -q 'batch-merge-hold:v1' "$MOC
 run_test "annotate_body_names_sibling" "yes" "$(grep -q '#101 (merged)' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
 run_test "annotate_body_names_reason" "yes" "$(grep -q 'head_sha_changed' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
 run_test "annotate_body_names_voided_verdicts" "yes" "$(grep -q 'reviewer_loop, ci, risk_classification, delegated_gate' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
-run_test "annotate_body_names_action" "yes" "$(grep -q 'reverify_at_current_head' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
+run_test "annotate_body_names_action" "yes" "$(grep -q 'resolve_conflict_then_reverify' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
 rm -f "$MOCK_GH_STATE_DIR"/*.count
 annotate_again_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --reviewed-head-shas "102:$_sha_a" --annotate)"
 run_test "annotate_updates_in_place" "updated" "$(json_field "$annotate_again_output" 102 annotation)"

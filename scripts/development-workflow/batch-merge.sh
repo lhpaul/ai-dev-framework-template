@@ -104,7 +104,8 @@ Usage:
           --after-merged-pr must itself be one of the numbers listed in --prs
           (the frozen in-scope list). Passing a merged PR that is absent from
           --prs exits with reason=after_merged_pr_not_in_frozen_list.
-          --reviewed-head-shas binds each remaining PR to the headRefOid its
+          --reviewed-head-shas (one entry per remaining PR; a partial map is
+          refused with reason=reviewed_head_sha_missing) binds each remaining PR to the headRefOid its
           reviewer-loop / CI / risk verdicts were produced at (discover emits
           it as PR_HEAD_SHA). A PR whose live head differs is reported
           classification=merge_blocked reason=head_sha_changed with
@@ -211,8 +212,12 @@ emit_recheck_record() {
         if $reason == "head_sha_changed" or $reason == "head_sha_unavailable"
         then ["reviewer_loop", "ci", "risk_classification", "delegated_gate"]
         else [] end;
+      def non_clean_state: ($merge_state | IN("DIRTY", "BLOCKED", "BEHIND", "UNSTABLE", "HAS_HOOKS"));
       def required_action:
-        if $reason == "head_sha_changed" or $reason == "head_sha_unavailable" then "reverify_at_current_head"
+        # A moved head that is ALSO unmergeable needs the conflict resolved
+        # first; re-verifying alone would leave it blocked.
+        if ($reason == "head_sha_changed" or $reason == "head_sha_unavailable") and non_clean_state then "resolve_conflict_then_reverify"
+        elif $reason == "head_sha_changed" or $reason == "head_sha_unavailable" then "reverify_at_current_head"
         elif $reason == "merge_state_non_clean" then "resolve_conflict_then_reverify"
         elif $reason == "checks_failed" then "fix_ci_then_reverify"
         else null end;
@@ -1009,6 +1014,17 @@ cmd_recheck_remaining() {
       fi
       printf '%s\t%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" >> "$reviewed_file"
     done
+    # A partial map is a silent bypass: an unbound PR skips the head
+    # comparison and can recheck clean with every verdict stale. Require a
+    # binding for every remaining PR in the frozen list.
+    while IFS="$(printf '\t')" read -r _ri _rpr; do
+      [ "$_rpr" = "$after_merged_pr" ] && continue
+      if ! awk -F'\t' -v pr="$_rpr" '$1 == pr { found=1 } END { exit !found }' "$reviewed_file"; then
+        emit_recheck_error "$after_merged_pr" "$deadline_seconds" "reviewed_head_sha_missing"
+        exit 2
+      fi
+    done < "$pr_file"
+    unset _ri _rpr
   fi
 
   while IFS="$(printf '\t')" read -r original_index pr_num; do

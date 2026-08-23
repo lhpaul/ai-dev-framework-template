@@ -171,7 +171,7 @@ live_pr_state() {
   require_gh
 
   if ! pr_json="$(gh pr view "$number" \
-    --json number,title,baseRefName,headRefName,headRepository,mergeStateStatus,labels,statusCheckRollup,reviewDecision,isDraft 2>/dev/null)"; then
+    --json number,title,baseRefName,headRefName,headRefOid,headRepository,mergeStateStatus,labels,statusCheckRollup,reviewDecision,isDraft 2>/dev/null)"; then
     error_exit "failed to read PR #$number"
   fi
   if [ -z "$pr_json" ]; then
@@ -193,6 +193,7 @@ live_pr_state() {
     title: .title,
     base: .baseRefName,
     head: .headRefName,
+    head_sha: (.headRefOid // null),
     github_repo: (
       if (.headRepository.owner.login? and .headRepository.name?) then
         (.headRepository.owner.login + "/" + .headRepository.name)
@@ -557,6 +558,7 @@ classify_state() {
     '{
       pr_number: (.pr_number // .number // null),
       title: (.title // null),
+      head_sha: (.head_sha // .headRefOid // null),
       risk: $risk,
       max_risk: $maxRisk,
       merge_permitted: $mergePermitted,
