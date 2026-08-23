@@ -3783,6 +3783,221 @@ run_test "codex_trigger_idempotency_paginated_single_object" "1" \
   "$(printf '%s\n' "$_codex_paginated_selected_trigger" | wc -l | tr -d ' ')"
 unset _codex_trigger_comments _codex_selected_trigger _codex_paginated_trigger_comments _codex_paginated_selected_trigger
 
+# --- #1522: the account-not-connected refusal is unavailability, not a finding
+_codex_notconn_dir="$(mktemp -d)"
+cat > "$_codex_notconn_dir/gh" <<'CODEX_NOTCONN_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*) exit 0 ;;
+  *"pr view"*headRefOid*) printf 'abcnotconn1234567890\n'; exit 0 ;;
+  *"--method POST"*) printf '{"id":101,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*) printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":201,"created_at":"2026-01-01T00:00:01Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, [create a Codex account and connect to github](https://chatgpt.com/codex/cloud/settings/connectors)."}]\n'
+    exit 0 ;;
+  *) printf 'ERROR=unexpected-gh-invocation\n' >&2; exit 64 ;;
+esac
+CODEX_NOTCONN_GH
+chmod +x "$_codex_notconn_dir/gh"
+_codex_notconn_exit=0
+PATH="$_codex_notconn_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_notconn_dir/output.txt" 2>&1 || _codex_notconn_exit=$?
+_codex_notconn_output="$(cat "$_codex_notconn_dir/output.txt")"
+run_test "codex_account_not_connected_exit_unavailable" "3" "$_codex_notconn_exit"
+run_test "codex_account_not_connected_verdict" \
+  "VERDICT: UNAVAILABLE — Codex GitHub account is not connected for the triggering identity" \
+  "$(printf '%s\n' "$_codex_notconn_output" | grep "^VERDICT:")"
+run_test "codex_account_not_connected_reason" "REASON=codex-github-account-not-connected" \
+  "$(printf '%s\n' "$_codex_notconn_output" | grep "^REASON=")"
+run_test "codex_account_not_connected_blocking_count" "BLOCKING_COUNT=0" \
+  "$(printf '%s\n' "$_codex_notconn_output" | grep "^BLOCKING_COUNT=")"
+rm -rf "$_codex_notconn_dir"
+unset _codex_notconn_dir _codex_notconn_exit _codex_notconn_output
+
+# A same-fetch mix of a non-blocking review and an account-connection refusal
+# must classify as UNAVAILABLE, not as the review (CodeRabbit on PR #1586);
+# a BLOCKING review still wins outright, as for usage-limit.
+_codex_mixed_dir="$(mktemp -d)"
+cat > "$_codex_mixed_dir/gh" <<'CODEX_MIXED_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*) exit 0 ;;
+  *"pr view"*headRefOid*) printf 'abcmixed1234567890\n'; exit 0 ;;
+  *"--method POST"*) printf '{"id":101,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[{"id":401,"submitted_at":"2026-01-01T00:00:02Z","state":"COMMENTED","user":{"login":"chatgpt-codex-connector[bot]"},"body":"%s"}]\n' "${MOCK_REVIEW_BODY:-No blocking issues found. Reviewed commit: \`abcmixed1234567890\`}"
+    exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":201,"created_at":"2026-01-01T00:00:03Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"%s"}]\n' "${MOCK_REFUSAL_OVERRIDE:-To use Codex here, [create a Codex account and connect to github](https://chatgpt.com/codex/cloud/settings/connectors).}"
+    exit 0 ;;
+  *) printf 'ERROR=unexpected-gh-invocation\n' >&2; exit 64 ;;
+esac
+CODEX_MIXED_GH
+chmod +x "$_codex_mixed_dir/gh"
+_codex_mixed_exit=0
+PATH="$_codex_mixed_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_mixed_dir/output.txt" 2>&1 || _codex_mixed_exit=$?
+run_test "codex_mixed_fetch_refusal_wins_over_clean_review" "3" "$_codex_mixed_exit"
+run_test "codex_mixed_fetch_refusal_reason" "REASON=codex-github-account-not-connected" \
+  "$(grep "^REASON=" "$_codex_mixed_dir/output.txt" || true)"
+_codex_mixed_blocking_exit=0
+MOCK_REVIEW_BODY="Changes requested: must fix the null deref. Reviewed commit: \`abcmixed1234567890\`" \
+PATH="$_codex_mixed_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_mixed_dir/blocking.txt" 2>&1 || _codex_mixed_blocking_exit=$?
+# Parity, not an independent guarantee: with a blocking review in the SAME
+# fetch, the pre-existing usage-limit path also returns UNAVAILABLE (measured
+# on develop: usage-limit → 3, environment-error → 2). The not-connected block
+# must behave identically to usage-limit rather than inventing a stricter
+# contract; the shared blocking-evidence gap is tracked separately.
+_codex_mixed_usage_exit=0
+MOCK_REVIEW_BODY="Changes requested: must fix the null deref. Reviewed commit: \`abcmixed1234567890\`" \
+MOCK_REFUSAL_OVERRIDE="You have reached your Codex usage limits for code reviews." \
+PATH="$_codex_mixed_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_mixed_dir/usage.txt" 2>&1 || _codex_mixed_usage_exit=$?
+run_test "codex_mixed_fetch_not_connected_matches_usage_limit" \
+  "$_codex_mixed_usage_exit" "$_codex_mixed_blocking_exit"
+rm -rf "$_codex_mixed_dir"
+unset _codex_mixed_dir _codex_mixed_exit _codex_mixed_blocking_exit _codex_mixed_usage_exit
+
+# --- #1526: a trigger already answered with a refusal must be re-triggered,
+# so a restored quota/connection can review the same commit. Without the fix
+# the guard skipped the post and re-read the stale refusal forever.
+_codex_retrig_dir="$(mktemp -d)"
+cat > "$_codex_retrig_dir/gh" <<'CODEX_RETRIG_GH'
+#!/usr/bin/env bash
+log="$MOCK_POST_LOG"
+case "$*" in
+  *"auth status"*) exit 0 ;;
+  *"pr view"*headRefOid*) printf 'abcretrig1234567890\n'; exit 0 ;;
+  *"--method POST"*)
+    printf 'POST\n' >> "$log"
+    printf '{"id":301,"created_at":"2026-01-01T00:10:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*) printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":200,"created_at":"2026-01-01T00:00:00Z","user":{"login":"runner"},"body":"Review triggered by workflow runner for abcretrig1234567890"},{"id":201,"created_at":"2026-01-01T00:00:05Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"You have reached your Codex usage limits for code reviews."}]\n'
+    exit 0 ;;
+  *) printf 'ERROR=unexpected-gh-invocation\n' >&2; exit 64 ;;
+esac
+CODEX_RETRIG_GH
+chmod +x "$_codex_retrig_dir/gh"
+: > "$_codex_retrig_dir/posts.log"
+MOCK_POST_LOG="$_codex_retrig_dir/posts.log" PATH="$_codex_retrig_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_retrig_dir/output.txt" 2>&1 || true
+_codex_retrig_output="$(cat "$_codex_retrig_dir/output.txt")"
+run_test "codex_refused_trigger_is_retriggered" "yes" \
+  "$(if grep -Fq "re-triggering so a restored quota/connection can review this commit" <<<"$_codex_retrig_output"; then printf yes; else printf no; fi)"
+run_test "codex_refused_trigger_posts_new_comment" "yes" \
+  "$(if grep -Fq POST "$_codex_retrig_dir/posts.log"; then printf yes; else printf no; fi)"
+run_test "codex_refused_trigger_does_not_skip_as_duplicate" "no" \
+  "$(if grep -Fq "skipping duplicate post" <<<"$_codex_retrig_output"; then printf yes; else printf no; fi)"
+rm -rf "$_codex_retrig_dir"
+unset _codex_retrig_dir _codex_retrig_output
+
+# The environment-error refusal is the third unavailability form and must be
+# recovered from identically (pr-agent on PR #1586).
+_codex_envretrig_dir="$(mktemp -d)"
+cat > "$_codex_envretrig_dir/gh" <<'CODEX_ENVRETRIG_GH'
+#!/usr/bin/env bash
+log="$MOCK_POST_LOG"
+case "$*" in
+  *"auth status"*) exit 0 ;;
+  *"pr view"*headRefOid*) printf 'abcenvretrig123456\n'; exit 0 ;;
+  *"--method POST"*)
+    printf 'POST\n' >> "$log"
+    printf '{"id":301,"created_at":"2026-01-01T00:10:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*) printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":200,"created_at":"2026-01-01T00:00:00Z","user":{"login":"runner"},"body":"Review triggered by workflow runner for abcenvretrig123456"},{"id":201,"created_at":"2026-01-01T00:00:05Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *) printf 'ERROR=unexpected-gh-invocation\n' >&2; exit 64 ;;
+esac
+CODEX_ENVRETRIG_GH
+chmod +x "$_codex_envretrig_dir/gh"
+: > "$_codex_envretrig_dir/posts.log"
+MOCK_POST_LOG="$_codex_envretrig_dir/posts.log" PATH="$_codex_envretrig_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_envretrig_dir/output.txt" 2>&1 || true
+_codex_envretrig_output="$(cat "$_codex_envretrig_dir/output.txt")"
+run_test "codex_env_error_trigger_is_retriggered" "yes" \
+  "$(if grep -Fq "re-triggering so a restored quota/connection can review this commit" <<<"$_codex_envretrig_output"; then printf yes; else printf no; fi)"
+run_test "codex_env_error_trigger_posts_new_comment" "yes" \
+  "$(if grep -Fq POST "$_codex_envretrig_dir/posts.log"; then printf yes; else printf no; fi)"
+rm -rf "$_codex_envretrig_dir"
+unset _codex_envretrig_dir _codex_envretrig_output
+
+# --- #1522 (async-arrival path): the not-connected refusal must still be
+# classified as UNAVAILABLE when it only arrives during the post-poll-window
+# "async grace period" check, not just during the main poll loop. This
+# exercises a SEPARATE duplicate three-path classification chain in the
+# script (ASYNC_BOT_RESPONSE) that has its own usage-limit/environment-error
+# branches; without the account-not-connected branch mirrored there too, a
+# refusal seen only during the grace poll fell through to a generic
+# TIMED_OUT instead of the specific UNAVAILABLE/REASON verdict.
+_codex_notconn_async_dir="$(mktemp -d)"
+: > "$_codex_notconn_async_dir/calls.log"
+cat > "$_codex_notconn_async_dir/gh" <<'CODEX_NOTCONN_ASYNC_GH'
+#!/usr/bin/env bash
+log="$MOCK_CALL_LOG"
+case "$*" in
+  *"auth status"*) exit 0 ;;
+  *"pr view"*headRefOid*) printf 'abcnotconnasync1234\n'; exit 0 ;;
+  *"--method POST"*) printf '{"id":901,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*) printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    n=0
+    [ -f "$log" ] && n=$(cat "$log")
+    n=$((n + 1))
+    echo "$n" > "$log"
+    # First two reads (idempotency check + the single main-loop poll) see no
+    # reply yet; only the async-grace-period read sees the refusal, so the
+    # main poll loop's own (already-present) classification cannot be what
+    # catches this case.
+    if [ "$n" -le 2 ]; then
+      printf '[]\n'
+    else
+      printf '[{"id":902,"created_at":"2026-01-01T00:00:05Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, [create a Codex account and connect to github](https://chatgpt.com/codex/cloud/settings/connectors)."}]\n'
+    fi
+    exit 0 ;;
+  *) printf 'ERROR=unexpected-gh-invocation\n' >&2; exit 64 ;;
+esac
+CODEX_NOTCONN_ASYNC_GH
+chmod +x "$_codex_notconn_async_dir/gh"
+_codex_notconn_async_exit=0
+MOCK_CALL_LOG="$_codex_notconn_async_dir/calls.log" PATH="$_codex_notconn_async_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_notconn_async_dir/output.txt" 2>&1 || _codex_notconn_async_exit=$?
+_codex_notconn_async_output="$(cat "$_codex_notconn_async_dir/output.txt")"
+run_test "codex_account_not_connected_async_exit_unavailable" "3" "$_codex_notconn_async_exit"
+run_test "codex_account_not_connected_async_verdict" \
+  "VERDICT: UNAVAILABLE — Codex GitHub account is not connected for the triggering identity" \
+  "$(printf '%s\n' "$_codex_notconn_async_output" | grep "^VERDICT:")"
+run_test "codex_account_not_connected_async_reason" "REASON=codex-github-account-not-connected" \
+  "$(printf '%s\n' "$_codex_notconn_async_output" | grep "^REASON=")"
+rm -rf "$_codex_notconn_async_dir"
+unset _codex_notconn_async_dir _codex_notconn_async_exit _codex_notconn_async_output
+
 _codex_usage_comment_mock_dir="$(mktemp -d)"
 cat > "$_codex_usage_comment_mock_dir/gh" <<'CODEX_USAGE_COMMENT_GH'
 #!/usr/bin/env bash

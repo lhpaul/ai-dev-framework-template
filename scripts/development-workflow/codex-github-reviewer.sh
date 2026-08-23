@@ -346,6 +346,23 @@ codex_response_is_environment_error() {
   grep -qiE "to[[:space:]]+use[[:space:]]+codex[[:space:]]+here,[[:space:]]+create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo" <<< "$response"
 }
 
+# codex_response_is_account_not_connected <response>
+# The Codex GitHub App refuses with an account-connection prompt when the
+# triggering GitHub identity has no linked Codex account (Codex attributes
+# reviews per triggering identity, so an org-wide install can work for one
+# developer and refuse for another). That is reviewer unavailability, not a
+# code-review finding (#1522) — without this it fell to the safe-fail
+# NEEDS_REVISION path and reported a blocking finding with nothing to fix.
+# Fence-guarded and quote-stripped by the caller, like the usage-limit check,
+# so a review that merely quotes the refusal text is not misclassified.
+codex_response_is_account_not_connected() {
+  local response="$1"
+  if codex_response_has_fence_marker "$response"; then
+    return 1
+  fi
+  grep -qiE "to[[:space:]]+use[[:space:]]+codex[[:space:]]+here,[[:space:]]+(\[)?create[[:space:]]+a[[:space:]]+codex[[:space:]]+account[[:space:]]+and[[:space:]]+connect" <<< "$response"
+}
+
 codex_response_reviews_current_head() {
   local response="$1"
   local reviewed_sha
@@ -820,7 +837,7 @@ codex_response_priority() {
   # APPROVED (fresh evidence from PR #1490 finding 3796982553).
   if [ "$state" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$body"; then
     printf '3\n'
-  elif codex_response_is_usage_limit "$body" || codex_response_is_environment_error "$body"; then
+  elif codex_response_is_usage_limit "$body" || codex_response_is_environment_error "$body" || codex_response_is_account_not_connected "$body"; then
     printf '1\n'
   elif codex_response_is_approved "$body"; then
     printf '0\n'
@@ -941,7 +958,7 @@ codex_scan_comment_evidence() {
     is_usage_limit=0
     if [ "$is_terminal" -eq 0 ]; then
       codex_response_is_usage_limit "$body" && is_usage_limit=1
-      if [ "$is_usage_limit" -eq 1 ] || codex_response_is_environment_error "$body"; then
+      if [ "$is_usage_limit" -eq 1 ] || codex_response_is_environment_error "$body" || codex_response_is_account_not_connected "$body"; then
         is_actionable=1
       fi
     fi
@@ -1180,6 +1197,18 @@ codex_combine_terminal_evidence() {
       COMBINED_REVIEW_STATE=""
       echo "INFO: $label usage-limit notice takes immediate precedence over terminal/review evidence, including same-fetch evidence"
     fi
+  elif [ "$comment_latest_is_terminal" -eq 0 ] && [ -n "$comment_latest_body" ] && codex_response_is_account_not_connected "$comment_latest_body"; then
+    if [ -n "$COMBINED_SOURCE" ] && { [ "$COMBINED_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$COMBINED_BODY"; }; then
+      # Same contract as the usage-limit block above: blocking evidence is
+      # never discarded by an unavailability notice (CodeRabbit on PR #1586).
+      :
+    else
+      COMBINED_BODY="$comment_latest_body"
+      COMBINED_TIME="$comment_latest_time"
+      COMBINED_SOURCE="comment"
+      COMBINED_REVIEW_STATE=""
+      echo "INFO: $label account-connection refusal takes immediate precedence over terminal/review evidence, including same-fetch evidence"
+    fi
   elif [ "$comment_latest_is_terminal" -eq 0 ] && [ -n "$comment_latest_body" ] && codex_response_is_environment_error "$comment_latest_body"; then
     if [ -n "$COMBINED_SOURCE" ] && { [ "$COMBINED_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$COMBINED_BODY"; }; then
       # Blocking terminal/review evidence always wins outright — it is
@@ -1223,6 +1252,18 @@ codex_return_environment_error() {
   echo "$1"
   echo "---END BOT RESPONSE---"
   exit 2
+}
+
+codex_return_account_not_connected() {
+  echo "VERDICT: UNAVAILABLE — Codex GitHub account is not connected for the triggering identity"
+  echo "REASON=codex-github-account-not-connected"
+  echo "COMMENT_COUNT=0"
+  echo "BLOCKING_COUNT=0"
+  echo "SUGGESTION_COUNT=0"
+  echo "---BEGIN BOT RESPONSE---"
+  echo "$1"
+  echo "---END BOT RESPONSE---"
+  exit 3
 }
 
 codex_return_reaction_without_review() {
@@ -1302,6 +1343,31 @@ if [ -n "$TRIGGER_COMMENT_INFO" ]; then
     echo "ERROR: existing trigger comment payload missing created_at" >&2
     echo "VERDICT: TIMED_OUT — malformed trigger comment payload (treated as unavailable)"
     exit 2
+  fi
+  if [ -n "$TRIGGER_TIME" ]; then
+    # Recovery after an unavailability reply (#1526). The guard keys only on
+    # the head SHA, so once Codex answered a trigger with a usage-limit or
+    # account-connection refusal, every later run for that same commit found
+    # the old trigger, skipped posting, and re-read the stale refusal — the
+    # commit could never be reviewed again without a new push. If the bot's
+    # newest reply after that trigger is a refusal (not a review), treat the
+    # trigger as spent and post a fresh one.
+    CODEX_LAST_REPLY=""
+    if CODEX_LAST_REPLY=$(gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate 2>/dev/null \
+      | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg since "$TRIGGER_TIME" \
+        '[.[][] | select((.user.login == $bot or .user.login == $bot_plain) and .created_at >= $since)]
+         | sort_by(.created_at) | last | .body // ""'); then
+      if [ -n "$CODEX_LAST_REPLY" ] && \
+        { codex_response_is_usage_limit "$(codex_strip_quoted_spans "$CODEX_LAST_REPLY")" || \
+          codex_response_is_account_not_connected "$(codex_strip_quoted_spans "$CODEX_LAST_REPLY")" || \
+          codex_response_is_environment_error "$(codex_strip_quoted_spans "$CODEX_LAST_REPLY")"; }; then
+        echo "INFO: previous trigger for commit $CURRENT_SHA was answered with a reviewer-unavailability refusal — re-triggering so a restored quota/connection can review this commit"
+        TRIGGER_TIME=""
+        TRIGGER_COMMENT_ID=""
+      fi
+    else
+      echo "WARNING: could not read bot replies to check whether the existing trigger was refused; keeping the existing trigger" >&2
+    fi
   fi
   if [ -n "$TRIGGER_TIME" ]; then
     echo "INFO: trigger comment already posted for commit $CURRENT_SHA (at $TRIGGER_TIME) — skipping duplicate post"
@@ -1587,6 +1653,10 @@ while true; do
       # (fresh evidence from PR #1490 finding 3793259351, a followup to
       # 3790122058/3793219190/3793219192).
       codex_return_usage_limit "$BOT_RESPONSE"
+    elif codex_response_is_account_not_connected "$(codex_strip_quoted_spans "$BOT_RESPONSE_FULL")"; then
+      # Same shape as the usage-limit branch: no source gate (the refusal can
+      # arrive as a comment or a review) and quote-stripped first (#1522).
+      codex_return_account_not_connected "$BOT_RESPONSE"
     elif [ "$BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$BOT_RESPONSE_FULL"; then
       SEEN_ENVIRONMENT_ERROR=1
       SEEN_ENVIRONMENT_RESPONSE="$BOT_RESPONSE"
@@ -1806,6 +1876,9 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
     # Quote-stripped before checking — see the main-loop equivalent above
     # for the rationale (PR #1490 finding 3793259351).
     codex_return_usage_limit "$ASYNC_BOT_RESPONSE"
+  elif codex_response_is_account_not_connected "$(codex_strip_quoted_spans "$ASYNC_BOT_RESPONSE_FULL")"; then
+    # Same shape as the usage-limit branch above (#1522).
+    codex_return_account_not_connected "$ASYNC_BOT_RESPONSE"
   elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_BOT_RESPONSE_FULL"; then
     SEEN_ENVIRONMENT_ERROR=1
     SEEN_ENVIRONMENT_RESPONSE="$ASYNC_BOT_RESPONSE"
@@ -1910,6 +1983,9 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
         # Quote-stripped before checking — see the main-loop equivalent
         # above for the rationale (PR #1490 finding 3793259351).
         codex_return_usage_limit "$ASYNC_FINAL_BOT_RESPONSE"
+      elif codex_response_is_account_not_connected "$(codex_strip_quoted_spans "$ASYNC_FINAL_BOT_RESPONSE_FULL")"; then
+        # Same shape as the usage-limit branch above (#1522).
+        codex_return_account_not_connected "$ASYNC_FINAL_BOT_RESPONSE"
       elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_FINAL_BOT_RESPONSE_FULL"; then
         SEEN_ENVIRONMENT_ERROR=1
         SEEN_ENVIRONMENT_RESPONSE="$ASYNC_FINAL_BOT_RESPONSE"
@@ -2062,6 +2138,9 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
       # Quote-stripped before checking — see the main-loop equivalent
       # above for the rationale (PR #1490 finding 3793259351).
       codex_return_usage_limit "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
+    elif codex_response_is_account_not_connected "$(codex_strip_quoted_spans "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL")"; then
+      # Same shape as the usage-limit branch above (#1522).
+      codex_return_account_not_connected "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
     elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL"; then
       SEEN_ENVIRONMENT_ERROR=1
       SEEN_ENVIRONMENT_RESPONSE="$ASYNC_REACTION_FINAL_BOT_RESPONSE"

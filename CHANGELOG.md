@@ -36,6 +36,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **Codex reviewer unavailability is classified and recoverable** (#1522,
+  #1526): the Codex GitHub App's "create a Codex account and connect to
+  github" refusal — which it returns per triggering identity, so an org-wide
+  install can work for one developer and refuse for another — was not matched
+  at all and fell through to the safe-fail blocking verdict. It now returns
+  `VERDICT: UNAVAILABLE` / `REASON=codex-github-account-not-connected`
+  (exit 3), quote-stripped and fence-guarded like the usage-limit check. The
+  trigger-comment idempotency guard, which keys only on the head SHA, made
+  any unavailability terminal: once Codex answered a trigger with a refusal,
+  every later run for that commit skipped the post and re-read the stale
+  reply. When the newest bot reply to an existing trigger is any refusal —
+  usage limit, account not connected, or missing environment — the trigger is
+  now treated as spent and a fresh one is posted.
 - **`post-merge-cleanup.sh` now processes every issue a PR resolves**
   (#1391): closing references in the PR title, body, and commit messages are
   processed in addition to the branch-derived issue, and bare `#N` title
