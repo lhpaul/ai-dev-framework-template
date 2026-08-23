@@ -55,6 +55,11 @@ workflow_linked_worktree_main_root() {
   case "$first" in gitdir:*) ;; *) return 1 ;; esac
   gitdir="${first#gitdir:}"
   gitdir="${gitdir#"${gitdir%%[![:space:]]*}"}"
+  # Trim trailing whitespace too, including a stray CR that `read` (unlike
+  # Python's splitlines()) does not strip from a CRLF-terminated line — the
+  # trimmed value must resolve with `cd` below, same as workflow-config-
+  # resolver.py's linked_worktree_main_root().
+  gitdir="${gitdir%"${gitdir##*[![:space:]]}"}"
   case "$gitdir" in /*) ;; *) gitdir="$repo_root/$gitdir" ;; esac
   gitdir="$(CDPATH='' cd -- "$gitdir" 2>/dev/null && pwd -P)" || return 1
   case "$gitdir" in */.git/worktrees/*) ;; *) return 1 ;; esac

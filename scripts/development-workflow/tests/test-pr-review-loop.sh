@@ -724,6 +724,20 @@ if [ "$(id -u)" -ne 0 ]; then
   unset unreadable_status unreadable_out
 fi
 rm -f "$_WT_LINKED/.ai-dev-workflow.local.yaml"
+# An unreadable main-clone file is the same structured error as an unreadable
+# checkout file — the checkout has none of its own, so resolution falls
+# through to the main clone, and that file cannot be read either.
+if [ "$(id -u)" -ne 0 ]; then
+  chmod 000 "$_WT_MAIN/.ai-dev-workflow.local.yaml"
+  unreadable_main_status=0
+  unreadable_main_out="$(
+    workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
+    workflow_local_config_file 2>/dev/null
+  )" || unreadable_main_status=$?
+  run_test "unreadable_main_clone_file_is_an_error" "1:" "$unreadable_main_status:$unreadable_main_out"
+  chmod 644 "$_WT_MAIN/.ai-dev-workflow.local.yaml"
+  unset unreadable_main_status unreadable_main_out
+fi
 main_root_status=0
 workflow_linked_worktree_main_root "$_WT_MAIN" >/dev/null 2>&1 || main_root_status=$?
 run_test "main_clone_is_not_a_linked_worktree" "1" "$main_root_status"
