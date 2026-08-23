@@ -636,6 +636,134 @@ else
 fi
 run_test "unavailable_initiating_override_stops_resolution" "1" "$missing_override_status"
 
+# #1560: an externally created linked worktree (plain `git worktree add`, the
+# Protocol 90 isolation path) has no gitignored local override of its own. The
+# initiating root must resolve to the main clone's file, and the exported
+# override root must be the directory that actually holds it. The harness's
+# git mock rejects everything but `rev-parse --git-common-dir`, so this block
+# runs against the real git found on the PATH the harness started with.
+_REAL_PATH="${PATH#"$MOCK_BIN:"}"
+_WT_MAIN="$(mktemp -d)"
+_WT_MAIN="$(CDPATH='' cd -- "$_WT_MAIN" && pwd -P)"
+git() { PATH="$_REAL_PATH" command git "$@"; }
+git -C "$_WT_MAIN" init -q
+cat > "$_WT_MAIN/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+
+review:
+  on_draft:
+    runner: [codex]
+    github: [pr-agent]
+  on_ready:
+    github: [haystack]
+YAML
+git -C "$_WT_MAIN" add .ai-dev-workflow.yaml
+git -C "$_WT_MAIN" -c user.name=fixture -c user.email=fixture@example.com commit -q -m init
+cat > "$_WT_MAIN/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    runner: [cursor]
+    github: [pr-agent]
+  on_ready:
+    github: [bugbot]
+YAML
+_WT_LINKED="$_WT_MAIN-linked"
+git -C "$_WT_MAIN" worktree add -q "$_WT_LINKED" -b fixture/linked-1560 HEAD
+# The resolver shells out to git itself, so it needs the real PATH too.
+linked_override_root="$(PATH="$_REAL_PATH" resolve_local_review_override_root "$_WT_LINKED")"
+run_test "linked_worktree_override_root_is_main_clone" "$_WT_MAIN" "$linked_override_root"
+linked_local_file="$(
+  workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
+  workflow_local_config_file
+)"
+run_test "linked_worktree_local_config_file_is_main_clone" "$_WT_MAIN/.ai-dev-workflow.local.yaml" "$linked_local_file"
+linked_platforms="$(
+  workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
+  workflow_config_review_platforms "$_WT_LINKED/.ai-dev-workflow.yaml" | paste -sd ',' -
+)"
+run_test "linked_worktree_applies_main_clone_review_override" "pr-agent,bugbot" "$linked_platforms"
+linked_main_root="$(workflow_linked_worktree_main_root "$_WT_LINKED")"
+run_test "linked_worktree_main_root_detected" "$_WT_MAIN" "$linked_main_root"
+# A worktree-local file with no `review:` section (set-local-path output) must
+# not mask the main clone's reviewer override.
+printf 'product_repos:\n  - name: mobile-app\n    local_path: ../mobile-app\n' > "$_WT_LINKED/.ai-dev-workflow.local.yaml"
+product_only_local_file="$(
+  workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
+  workflow_local_config_file
+)"
+run_test "product_only_worktree_file_does_not_mask_main_clone" "$_WT_MAIN/.ai-dev-workflow.local.yaml" "$product_only_local_file"
+printf 'review:\n  on_ready:\n    github: [haystack]\n' > "$_WT_LINKED/.ai-dev-workflow.local.yaml"
+review_local_file="$(
+  workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
+  workflow_local_config_file
+)"
+run_test "worktree_file_with_review_section_wins" "$_WT_LINKED/.ai-dev-workflow.local.yaml" "$review_local_file"
+printf 'review: {}\n' > "$_WT_LINKED/.ai-dev-workflow.local.yaml"
+empty_review_local_file="$(
+  workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
+  workflow_local_config_file
+)"
+run_test "worktree_file_with_empty_review_key_wins" "$_WT_LINKED/.ai-dev-workflow.local.yaml" "$empty_review_local_file"
+printf 'review : {}\n' > "$_WT_LINKED/.ai-dev-workflow.local.yaml"
+spaced_review_local_file="$(
+  workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
+  workflow_local_config_file
+)"
+run_test "worktree_file_with_spaced_review_key_wins" "$_WT_LINKED/.ai-dev-workflow.local.yaml" "$spaced_review_local_file"
+# An unreadable checkout-local file is an error, not "no review section"
+# (CodeRabbit on PR #1575). Skipped as root, where chmod 000 is readable.
+if [ "$(id -u)" -ne 0 ]; then
+  chmod 000 "$_WT_LINKED/.ai-dev-workflow.local.yaml"
+  unreadable_status=0
+  unreadable_out="$(
+    workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
+    workflow_local_config_file 2>/dev/null
+  )" || unreadable_status=$?
+  run_test "unreadable_worktree_file_is_an_error" "1:" "$unreadable_status:$unreadable_out"
+  chmod 644 "$_WT_LINKED/.ai-dev-workflow.local.yaml"
+  unset unreadable_status unreadable_out
+fi
+rm -f "$_WT_LINKED/.ai-dev-workflow.local.yaml"
+# An unreadable main-clone file is the same structured error as an unreadable
+# checkout file — the checkout has none of its own, so resolution falls
+# through to the main clone, and that file cannot be read either.
+if [ "$(id -u)" -ne 0 ]; then
+  chmod 000 "$_WT_MAIN/.ai-dev-workflow.local.yaml"
+  unreadable_main_status=0
+  unreadable_main_out="$(
+    workflow_repo_root() { printf '%s\n' "$_WT_LINKED"; }
+    workflow_local_config_file 2>/dev/null
+  )" || unreadable_main_status=$?
+  run_test "unreadable_main_clone_file_is_an_error" "1:" "$unreadable_main_status:$unreadable_main_out"
+  chmod 644 "$_WT_MAIN/.ai-dev-workflow.local.yaml"
+  unset unreadable_main_status unreadable_main_out
+fi
+main_root_status=0
+workflow_linked_worktree_main_root "$_WT_MAIN" >/dev/null 2>&1 || main_root_status=$?
+run_test "main_clone_is_not_a_linked_worktree" "1" "$main_root_status"
+# Detection is git-free: under the harness's git mock (which exits 64 for
+# anything but one rev-parse form) the worktree is still recognised, and no
+# git call is logged. run-epic-policy-recommender.sh relies on this — it is
+# forbidden from invoking git, and it reads the review config through these
+# helpers (caught by its CI suite, not locally, where the local file exists).
+mock_git_status=0
+mock_git_main_root="$(
+  unset -f git
+  workflow_linked_worktree_main_root "$_WT_LINKED" 2>/dev/null
+)" || mock_git_status=$?
+run_test "linked_worktree_detected_without_invoking_git" "0:$_WT_MAIN" "$mock_git_status:$mock_git_main_root"
+# The referenced gitdir must exist: otherwise path resolution fails before
+# the worktrees-layout check and the test proves nothing about that check.
+mkdir -p "$_WT_MAIN/.git/modules/sub" "$_WT_MAIN/fake-submodule"
+printf 'gitdir: ../.git/modules/sub\n' > "$_WT_MAIN/fake-submodule/.git"
+submodule_status=0
+workflow_linked_worktree_main_root "$_WT_MAIN/fake-submodule" >/dev/null 2>&1 || submodule_status=$?
+run_test "submodule_gitdir_file_is_not_a_linked_worktree" "1" "$submodule_status"
+git -C "$_WT_MAIN" worktree remove --force "$_WT_LINKED"
+unset -f git
+rm -rf "$_WT_MAIN"
+unset _REAL_PATH _WT_MAIN _WT_LINKED linked_override_root linked_local_file linked_platforms linked_main_root main_root_status mock_git_status mock_git_main_root product_only_local_file review_local_file empty_review_local_file spaced_review_local_file
+
 cat > "$_LOCAL_OVERRIDE_DIR/.ai-dev-workflow.local.yaml" <<'YAML'
 review:
   on_ready:

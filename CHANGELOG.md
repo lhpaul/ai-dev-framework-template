@@ -37,6 +37,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A linked git worktree now resolves the main clone's local reviewer
+  override** (#1560): `git worktree add` carries no gitignored files, so every
+  worktree created through the Protocol 90 isolation path lost
+  `.ai-dev-workflow.local.yaml` and Step 7a hard-failed with zero reachable
+  internal reviewers — on all three worktrees of the 2026-08-20/21 first wave.
+  #1033 only covered worktrees that `pr-review-loop.sh` creates itself.
+  `workflow-config-resolver.py` and `workflow-lib.sh` now fall back to the main
+  clone's file (read from the worktree's `.git` file, `gitdir:
+  <main>/.git/worktrees/<name>` — no git invocation, so git-forbidden callers
+  such as the policy recommender stay compliant) when a linked
+  worktree has none; a worktree's own file and
+  `WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT` still take precedence.
+  `review-overrides` reports `LOCAL_OVERRIDE_FILE`, `LOCAL_OVERRIDE_ORIGIN`
+  (`checkout` / `main_clone` / `override_root`) and
+  `MAIN_CLONE_LOCAL_OVERRIDE_FILE`; Protocol 91's zero-reachable-reviewer
+  hard-fail states whether an override was present but unpropagated, and the
+  worktree-entry step verifies continuity before Step 7a. Regression tests
+  create the worktree with plain `git worktree add`, not a helper.
+  `set-local-path` (`workflow_hub` product-repo local checkout paths, a
+  separate mechanism that shares the same local file) stays scoped to writing
+  and reading the checkout's own file, never the main-clone fallback — writing
+  there from a worktree would silently mutate a different checkout's file and
+  store a `local_path`/`checkout_root` value relative to the wrong directory.
 - **A sibling merge no longer voids a PR's verdicts silently** (#1558):
   merging one PR in a wave dirties its siblings on `[Unreleased]`, and the
   conflict resolution produces a new head SHA that invalidates the reviewer

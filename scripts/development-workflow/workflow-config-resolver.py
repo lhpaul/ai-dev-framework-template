@@ -294,9 +294,91 @@ def as_list(value: Any, path: Path, field: str) -> list[Any]:
     return value
 
 
+LOCAL_CONFIG_NAME = ".ai-dev-workflow.local.yaml"
+
+
+def linked_worktree_main_root(repo_root: Path) -> Path | None:
+    """Return the main clone's root when ``repo_root`` is a linked git worktree.
+
+    ``git worktree add`` carries no untracked or gitignored files, so a linked
+    worktree never contains ``.ai-dev-workflow.local.yaml`` (#1560). Detection
+    is git-free on purpose: callers such as ``run-epic-policy-recommender.sh``
+    are contractually forbidden from invoking ``git`` or ``gh``, and a linked
+    worktree is recognisable from the filesystem alone — its ``.git`` is a
+    *file* whose first line is ``gitdir: <main>/.git/worktrees/<name>``. The
+    main clone (a ``.git`` directory), a plain checkout, a bare repository, a
+    submodule (``gitdir: .../.git/modules/<name>``) and a directory outside
+    any repository all return ``None``.
+    """
+    dot_git = repo_root / ".git"
+    try:
+        if not dot_git.is_file():
+            return None
+        first_line = dot_git.read_text(encoding="utf-8", errors="replace").splitlines()[:1]
+    except OSError:
+        return None
+    if not first_line or not first_line[0].startswith("gitdir:"):
+        return None
+    gitdir = Path(first_line[0][len("gitdir:"):].strip())
+    if not gitdir.is_absolute():
+        gitdir = repo_root / gitdir
+    try:
+        gitdir = gitdir.resolve()
+        resolved_root = repo_root.resolve()
+    except OSError:
+        return None
+    if gitdir.parent.name != "worktrees" or gitdir.parent.parent.name != ".git":
+        return None
+    main_root = gitdir.parent.parent.parent
+    if main_root == resolved_root or not (main_root / ".git").is_dir():
+        return None
+    return main_root
+
+
+def resolve_local_config(repo_root: Path) -> tuple[Path, str, Path | None]:
+    """Locate the local override file that applies to ``repo_root``.
+
+    Returns ``(path, origin, main_clone_file)``.
+
+    ``origin`` is ``override_root`` when ``WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT``
+    names the source (the initiating checkout of a reviewer-loop handoff,
+    #1033), ``checkout`` when ``repo_root`` holds the file itself,
+    ``main_clone`` when ``repo_root`` is a linked worktree without one and the
+    main clone has it (#1560), and ``""`` when no file exists anywhere — ``path``
+    is then the checkout's own, not-yet-existing file, which is also where
+    writes land in that case.
+
+    ``main_clone_file`` is the main clone's file whenever ``repo_root`` is a
+    linked worktree and that file exists, independent of which file is used.
+    It lets callers report "a local override exists in the main clone but was
+    not the one applied" instead of a bare "no override".
+    """
+    override_root = os.environ.get("WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT", "")
+    main_root = linked_worktree_main_root(repo_root)
+    main_clone_file: Path | None = None
+    if main_root is not None:
+        candidate = main_root / LOCAL_CONFIG_NAME
+        if candidate.is_file():
+            main_clone_file = candidate
+    if override_root:
+        root = Path(override_root)
+        if not root.is_dir():
+            raise ConfigError(
+                "configured local reviewer override source is unavailable: "
+                f"WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT={override_root}"
+            )
+        return root.resolve() / LOCAL_CONFIG_NAME, "override_root", main_clone_file
+    checkout_file = repo_root / LOCAL_CONFIG_NAME
+    if checkout_file.is_file():
+        return checkout_file, "checkout", main_clone_file
+    if main_clone_file is not None:
+        return main_clone_file, "main_clone", main_clone_file
+    return checkout_file, "", main_clone_file
+
+
 def load_configs(repo_root: Path) -> tuple[dict[str, Any], dict[str, Any], Path, Path]:
     shared_path = repo_root / ".ai-dev-workflow.yaml"
-    local_path = repo_root / ".ai-dev-workflow.local.yaml"
+    local_path, _, _ = resolve_local_config(repo_root)
     shared = parse_yaml_subset(shared_path)
     local = parse_yaml_subset(local_path)
     return shared, local, shared_path, local_path
@@ -576,21 +658,25 @@ def local_product_repo(local: dict[str, Any], local_path: Path, name: str) -> di
 
 
 def resolve_local_path(
-    repo_root: Path,
     local: dict[str, Any],
     local_path: Path,
     name: str,
     require_local: bool,
 ) -> tuple[str, str]:
+    # Relative local_path/checkout_root values are anchored to local_path's own
+    # directory, not repo_root. When repo_root is a linked worktree without its
+    # own local config, local_path resolves to the main clone's file (#1560);
+    # anchoring to repo_root there would resolve the same stored relative value
+    # to a different absolute path depending on which checkout it is read from.
     local_entry = local_product_repo(local, local_path, name)
     explicit = local_entry.get("local_path") or local_entry.get("checkout_path")
     if explicit:
-        return str((repo_root / str(explicit)).resolve()) if not os.path.isabs(str(explicit)) else str(explicit), "local_override"
+        return str((local_path.parent / str(explicit)).resolve()) if not os.path.isabs(str(explicit)) else str(explicit), "local_override"
     checkout_root = local.get("checkout_root")
     if checkout_root:
         base = Path(str(checkout_root))
         if not base.is_absolute():
-            base = (repo_root / base).resolve()
+            base = (local_path.parent / base).resolve()
         return str(base / name), "checkout_root"
     if require_local:
         raise ConfigError(
@@ -667,7 +753,16 @@ def dump_yaml_subset(value: Any, indent: int = 0) -> list[str]:
 
 
 def set_local_product_repo_path(repo_root: Path, repo_name: str, local_path_value: str) -> Path:
-    _, local, _, local_path = load_configs(repo_root)
+    # Always read and write the checkout's own local config file, never the
+    # main clone fallback that load_configs()/resolve_local_config() applies
+    # for review-override resolution (#1560). Two problems otherwise: this
+    # would silently mutate a different checkout's file from inside a linked
+    # worktree, and normalized_path below is computed relative to repo_root —
+    # if that write landed in another directory (the main clone), the stored
+    # relative path would resolve incorrectly whenever repo_root and the main
+    # clone are not the same filesystem depth apart from the target path.
+    local_path = repo_root / LOCAL_CONFIG_NAME
+    local = parse_yaml_subset(local_path)
     repos = as_list(local.get("product_repos"), local_path, "product_repos")
     updated = False
     match_count = 0
@@ -882,7 +977,7 @@ def resolve_context(args: argparse.Namespace) -> dict[str, str]:
     if mode == "workflow_hub":
         repo = select_product_repo(product_repos(shared, shared_path), args.repo, shared_path)
         local_value, local_source = resolve_local_path(
-            repo_root, local, local_path, str(repo["name"]), bool(args.require_local)
+            local, local_path, str(repo["name"]), bool(args.require_local)
         )
         github_repo = str(repo.get("github_repo") or "")
         if not github_repo and repo.get("git_url"):
@@ -958,9 +1053,31 @@ def scalar_from_path(data: dict[str, Any], path: list[str]) -> str:
     return str(value) if value not in {None, ""} else ""
 
 
+def resolve_local_review_config(repo_root: Path) -> tuple[Path, str, Path | None, dict[str, Any]]:
+    """Like ``resolve_local_config`` but for the ``review`` section specifically.
+
+    A checkout-local file that carries no ``review`` section — the file
+    ``set-local-path`` writes into a linked worktree holds only
+    ``product_repos`` — must not mask the main clone's reviewer override; that
+    would recreate the zero-reachable-reviewer failure #1560 exists to end.
+    Returns ``(path, origin, main_clone_file, parsed)`` where ``parsed`` is the
+    mapping the review values come from.
+    """
+    local_path, origin, main_clone_file = resolve_local_config(repo_root)
+    local = parse_yaml_subset(local_path)
+    if origin == "checkout" and main_clone_file is not None and "review" not in local:
+        main_local = parse_yaml_subset(main_clone_file)
+        if "review" in main_local:
+            return main_clone_file, "main_clone", main_clone_file, main_local
+    return local_path, origin, main_clone_file, local
+
+
 def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
     repo_root = repo_root_from_args(args.repo_root)
-    _, local, _, _ = load_configs(repo_root)
+    local_path, local_origin, main_clone_file, local = resolve_local_review_config(repo_root)
+    local_file = str(local_path) if local_path.is_file() else ""
+    if not local_file:
+        local_origin = ""
 
     local_runner, has_local_runner = list_override_from_path(local, ["review", "on_draft", "runner"])
     runner = local_runner
@@ -1002,6 +1119,13 @@ def resolve_review_overrides(args: argparse.Namespace) -> dict[str, str]:
         "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY": policy,
         "INTERNAL_REVIEWERS_UNAVAILABLE_POLICY_SOURCE": policy_source,
         "LOCAL_OVERRIDE_SOURCE": ",".join(sources),
+        # Which file the values above came from, and where it lives relative to
+        # --repo-root. A linked worktree reports origin=main_clone (#1560); an
+        # agent that still resolves zero reviewers while this is non-empty is
+        # reading the wrong file, not facing a policy decision.
+        "LOCAL_OVERRIDE_FILE": local_file,
+        "LOCAL_OVERRIDE_ORIGIN": local_origin,
+        "MAIN_CLONE_LOCAL_OVERRIDE_FILE": str(main_clone_file) if main_clone_file else "",
     }
 
 

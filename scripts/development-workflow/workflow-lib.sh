@@ -35,8 +35,52 @@ workflow_effective_config_file() {
   return 1
 }
 
+# workflow_linked_worktree_main_root [repo_root]
+#
+# Prints the main clone root when repo_root is a linked git worktree. Prints
+# nothing and returns 1 for the main clone itself, a plain checkout, a bare
+# repository, a submodule, or a directory outside any git repository.
+# Git-free on purpose: callers such as run-epic-policy-recommender.sh must
+# never invoke git or gh, and a linked worktree is recognisable from the
+# filesystem alone — its .git is a FILE whose first line is
+# `gitdir: <main>/.git/worktrees/<name>`. Mirrors linked_worktree_main_root()
+# in workflow-config-resolver.py (#1560).
+workflow_linked_worktree_main_root() {
+  local repo_root="${1:-$(workflow_repo_root)}"
+  local dot_git="" first="" gitdir="" main_root="" resolved_root=""
+
+  dot_git="$repo_root/.git"
+  [ -f "$dot_git" ] || return 1
+  IFS= read -r first < "$dot_git" || [ -n "$first" ] || return 1
+  case "$first" in gitdir:*) ;; *) return 1 ;; esac
+  gitdir="${first#gitdir:}"
+  gitdir="${gitdir#"${gitdir%%[![:space:]]*}"}"
+  # Trim trailing whitespace too, including a stray CR that `read` (unlike
+  # Python's splitlines()) does not strip from a CRLF-terminated line — the
+  # trimmed value must resolve with `cd` below, same as workflow-config-
+  # resolver.py's linked_worktree_main_root().
+  gitdir="${gitdir%"${gitdir##*[![:space:]]}"}"
+  case "$gitdir" in /*) ;; *) gitdir="$repo_root/$gitdir" ;; esac
+  gitdir="$(CDPATH='' cd -- "$gitdir" 2>/dev/null && pwd -P)" || return 1
+  case "$gitdir" in */.git/worktrees/*) ;; *) return 1 ;; esac
+  main_root="${gitdir%/.git/worktrees/*}"
+  resolved_root="$(CDPATH='' cd -- "$repo_root" 2>/dev/null && pwd -P)" || return 1
+  [ "$main_root" != "$resolved_root" ] || return 1
+  [ -d "$main_root/.git" ] || return 1
+  printf '%s\n' "$main_root"
+}
+
+# workflow_local_review_override_root
+#
+# Prints the directory whose .ai-dev-workflow.local.yaml applies to this
+# checkout. Precedence: WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT (the initiating
+# checkout of a reviewer-loop handoff, #1033), then the checkout's own file,
+# then — when the checkout is a linked worktree with no file of its own — the
+# main clone (#1560: `git worktree add` never carries gitignored files, so
+# without this every externally created worktree silently lost the override).
 workflow_local_review_override_root() {
   local override_root="${WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT:-}"
+  local repo_root="" main_root=""
 
   if [ -n "$override_root" ]; then
     if [ ! -d "$override_root" ]; then
@@ -47,7 +91,47 @@ workflow_local_review_override_root() {
     return 0
   fi
 
-  workflow_repo_root
+  repo_root="$(workflow_repo_root)"
+  # A checkout-local file without a `review:` section (set-local-path writes
+  # one holding only product_repos into a worktree) must not mask the main
+  # clone's reviewer override — that is the #1560 failure all over again.
+  # An UNREADABLE file is neither present nor absent: falling through to the
+  # main clone would apply a different policy than the resolver, which fails
+  # on the same file. Probe status 2 is a structured error; stop.
+  local checkout_status=0 main_status=0
+  _workflow_local_file_has_review_section "$repo_root/.ai-dev-workflow.local.yaml" || checkout_status=$?
+  [ "$checkout_status" -ne 2 ] || return 1
+  if [ "$checkout_status" -eq 1 ] && main_root="$(workflow_linked_worktree_main_root "$repo_root")"; then
+    _workflow_local_file_has_review_section "$main_root/.ai-dev-workflow.local.yaml" || main_status=$?
+    [ "$main_status" -ne 2 ] || return 1
+    if [ "$main_status" -eq 0 ]; then
+      printf '%s\n' "$main_root"
+      return 0
+    fi
+  fi
+  printf '%s\n' "$repo_root"
+}
+
+# _workflow_local_file_has_review_section <file>
+# True when the file exists and declares a top-level `review:` key, whatever
+# its value — empty, `{}`, `null`, `~`, or a nested mapping. Matches on the
+# key alone (mirrors workflow-config-resolver.py's `"review" not in local`
+# key-presence check) so an explicit-but-empty `review: {}` is still treated
+# as present and does not fall through to the main clone's file.
+_workflow_local_file_has_review_section() {
+  local file="$1"
+  [ -f "$file" ] || return 1
+  # Key presence only, matching parse_yaml_subset(), which strips whitespace
+  # around keys: `review : {}` is a review section there and must be one here.
+  # Status 2 (with an error on stderr) means the file exists but cannot be
+  # read — callers must not treat that as "no review section".
+  local status=0
+  grep -Eq '^review[[:blank:]]*:' "$file" || status=$?
+  if [ "$status" -gt 1 ]; then
+    echo "ERROR: local reviewer override exists but could not be read (grep status $status): $file" >&2
+    return 2
+  fi
+  return "$status"
 }
 
 workflow_local_config_file() {

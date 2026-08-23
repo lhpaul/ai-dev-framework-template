@@ -814,6 +814,167 @@ run_fails_contains \
 wrapper_output="$(workflow_validate_repository_context mobile-app "$hub_dir" require-local)"
 run_contains "workflow_lib_validate_wrapper" "TARGET_REPO_NAME=mobile-app" "$wrapper_output"
 
+# --- #1560: a linked worktree resolves the main clone's local override --------
+# `git worktree add` carries no gitignored files, so a linked worktree never has
+# its own .ai-dev-workflow.local.yaml. The worktree here is created with plain
+# git, not a workflow helper — that is the path Protocol 90's isolation manifest
+# takes and the one #1033's fix did not cover (AC-2).
+worktree_main="$(fixture_dir worktree-main)"
+git -C "$worktree_main" init -q
+cat > "$worktree_main/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+
+review:
+  on_draft:
+    runner: [codex]
+YAML
+git -C "$worktree_main" add .ai-dev-workflow.yaml
+git -C "$worktree_main" -c user.name=fixture -c user.email=fixture@example.com commit -q -m init
+cat > "$worktree_main/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    runner: [claude]
+  on_ready:
+    github: [coderabbit]
+YAML
+worktree_linked="$TMP_ROOT/worktree-linked"
+git -C "$worktree_main" worktree add -q "$worktree_linked" -b fixture/linked HEAD
+run_test "linked_worktree_has_no_local_file_of_its_own" "absent" "$([ -e "$worktree_linked/.ai-dev-workflow.local.yaml" ] && echo present || echo absent)"
+worktree_output="$(workflow_review_override_context "$worktree_linked")"
+run_contains "linked_worktree_resolves_main_clone_runner" "REVIEW_ON_DRAFT_RUNNER=claude" "$worktree_output"
+run_contains "linked_worktree_resolves_main_clone_ready_github" "REVIEW_ON_READY_GITHUB=coderabbit" "$worktree_output"
+run_contains "linked_worktree_override_origin" "LOCAL_OVERRIDE_ORIGIN=main_clone" "$worktree_output"
+run_contains "linked_worktree_override_file" "LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$worktree_output"
+run_contains "linked_worktree_main_clone_file_reported" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$worktree_output"
+run_contains "linked_worktree_source_still_local" "LOCAL_OVERRIDE_SOURCE=runner:.ai-dev-workflow.local.yaml,ready-github:.ai-dev-workflow.local.yaml" "$worktree_output"
+
+main_clone_output="$(workflow_review_override_context "$worktree_main")"
+run_contains "main_clone_override_origin_is_checkout" "LOCAL_OVERRIDE_ORIGIN=checkout" "$main_clone_output"
+run_contains "main_clone_override_file" "LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$main_clone_output"
+run_contains "main_clone_reports_no_main_clone_file" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=" "$main_clone_output"
+
+# A worktree's own file wins over the main clone's, and the main clone's is
+# still reported so a mismatch is visible.
+cat > "$worktree_linked/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    runner: [cursor]
+YAML
+own_file_output="$(workflow_review_override_context "$worktree_linked")"
+run_contains "linked_worktree_own_file_wins" "REVIEW_ON_DRAFT_RUNNER=cursor" "$own_file_output"
+run_contains "linked_worktree_own_file_origin" "LOCAL_OVERRIDE_ORIGIN=checkout" "$own_file_output"
+run_contains "linked_worktree_own_file_still_reports_main" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$own_file_output"
+rm -f "$worktree_linked/.ai-dev-workflow.local.yaml"
+
+# A checkout-local file that carries no `review` section — the shape
+# set-local-path writes into a worktree (product_repos only) — must not mask
+# the main clone's reviewer override.
+cat > "$worktree_linked/.ai-dev-workflow.local.yaml" <<'YAML'
+product_repos:
+  - name: mobile-app
+    local_path: ../checkouts/mobile-app
+YAML
+masked_output="$(workflow_review_override_context "$worktree_linked")"
+run_contains "product_only_local_file_keeps_main_clone_runner" "REVIEW_ON_DRAFT_RUNNER=claude" "$masked_output"
+run_contains "product_only_local_file_origin_is_main_clone" "LOCAL_OVERRIDE_ORIGIN=main_clone" "$masked_output"
+run_contains "product_only_local_file_reports_main_clone_file" "LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$masked_output"
+rm -f "$worktree_linked/.ai-dev-workflow.local.yaml"
+
+# An explicit, empty `review:` key in the checkout-local file IS a review
+# section: it wins (and yields no override), matching the shell parsers.
+printf 'review: {}\n' > "$worktree_linked/.ai-dev-workflow.local.yaml"
+empty_review_output="$(workflow_review_override_context "$worktree_linked")"
+run_contains "empty_review_key_in_worktree_file_wins" "LOCAL_OVERRIDE_ORIGIN=checkout" "$empty_review_output"
+run_contains "empty_review_key_in_worktree_file_runner_empty" "REVIEW_ON_DRAFT_RUNNER=" "$empty_review_output"
+rm -f "$worktree_linked/.ai-dev-workflow.local.yaml"
+# The parser strips whitespace around keys, so `review : {}` is a review
+# section too — and the shell-side check must agree (CodeRabbit, PR #1575).
+printf 'review : {}\n' > "$worktree_linked/.ai-dev-workflow.local.yaml"
+spaced_review_output="$(workflow_review_override_context "$worktree_linked")"
+run_contains "spaced_review_key_in_worktree_file_wins" "LOCAL_OVERRIDE_ORIGIN=checkout" "$spaced_review_output"
+spaced_review_shell="$(
+  workflow_repo_root() { printf '%s\n' "$worktree_linked"; }
+  workflow_local_config_file
+)"
+run_test "spaced_review_key_shell_agrees_with_resolver" "$worktree_linked/.ai-dev-workflow.local.yaml" "$spaced_review_shell"
+rm -f "$worktree_linked/.ai-dev-workflow.local.yaml"
+
+# WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT (the #1033 handoff path) beats both.
+override_root_dir="$(fixture_dir worktree-override-root)"
+cat > "$override_root_dir/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    runner: [codex]
+YAML
+env_root_output="$(WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$override_root_dir" workflow_review_override_context "$worktree_linked")"
+run_contains "override_root_env_beats_main_clone" "REVIEW_ON_DRAFT_RUNNER=codex" "$env_root_output"
+run_contains "override_root_env_origin" "LOCAL_OVERRIDE_ORIGIN=override_root" "$env_root_output"
+run_fails_contains \
+  "override_root_env_missing_dir_fails" \
+  "configured local reviewer override source is unavailable" \
+  env WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$override_root_dir/missing" python3 "$RESOLVER" review-overrides --repo-root "$worktree_linked"
+
+# No fallback when the main clone has no file either: report nothing rather
+# than invent a source.
+rm -f "$worktree_main/.ai-dev-workflow.local.yaml"
+bare_worktree_output="$(workflow_review_override_context "$worktree_linked")"
+run_contains "linked_worktree_without_main_file_runner_empty" "REVIEW_ON_DRAFT_RUNNER=" "$bare_worktree_output"
+run_contains "linked_worktree_without_main_file_origin_empty" "LOCAL_OVERRIDE_ORIGIN=" "$bare_worktree_output"
+run_contains "linked_worktree_without_main_file_main_empty" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=" "$bare_worktree_output"
+
+# A plain directory outside any repository is unaffected.
+plain_output="$(workflow_review_override_context "$(fixture_dir plain-no-git)")"
+run_contains "plain_dir_override_origin_empty" "LOCAL_OVERRIDE_ORIGIN=" "$plain_output"
+# A submodule-style `.git` file (gitdir: .../.git/modules/<name>) is not a
+# linked worktree; and detection must not invoke git at all (the policy
+# recommender is forbidden from doing so and reads config through this path).
+submodule_dir="$(fixture_dir fake-submodule)"
+mkdir -p "$worktree_main/.git/modules/fake-submodule"
+printf 'gitdir: %s/.git/modules/fake-submodule\n' "$worktree_main" > "$submodule_dir/.git"
+submodule_output="$(workflow_review_override_context "$submodule_dir")"
+run_contains "submodule_gitdir_is_not_a_linked_worktree" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=" "$submodule_output"
+no_git_bin="$TMP_ROOT/no-git-bin"; mkdir -p "$no_git_bin"
+printf '#!/usr/bin/env bash\ntouch "%s/git-was-called"\nexit 64\n' "$TMP_ROOT" > "$no_git_bin/git"; chmod +x "$no_git_bin/git"
+PATH="$no_git_bin:$PATH" python3 "$RESOLVER" review-overrides --repo-root "$worktree_linked" >/dev/null
+run_test "resolver_detects_worktree_without_invoking_git" "absent" "$([ -e "$TMP_ROOT/git-was-called" ] && echo present || echo absent)"
+git -C "$worktree_main" worktree remove --force "$worktree_linked"
+
+# set-local-path (workflow_hub product_repos local paths) must stay scoped to
+# the checkout's own local file even when run from a linked worktree whose
+# main clone already has a local override — writing into the fallback-resolved
+# path would (a) silently mutate a different checkout's file and (b) store a
+# local_path/checkout_root value relative to repo_root inside a file that
+# lives in a different directory, breaking resolution later.
+hub_worktree_main="$(fixture_dir hub-worktree-main)"
+git -C "$hub_worktree_main" init -q
+cat > "$hub_worktree_main/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: demo
+      github_repo: example/demo
+YAML
+git -C "$hub_worktree_main" add .ai-dev-workflow.yaml
+git -C "$hub_worktree_main" -c user.name=fixture -c user.email=fixture@example.com commit -q -m init
+cat > "$hub_worktree_main/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    runner: [claude]
+YAML
+hub_worktree_linked="$TMP_ROOT/hub-worktree-linked"
+git -C "$hub_worktree_main" worktree add -q "$hub_worktree_linked" -b fixture/hub-worktree-linked HEAD
+python3 "$RESOLVER" set-local-path --repo-root "$hub_worktree_linked" --repo demo --local-path "$TMP_ROOT/demo-checkout" >/dev/null
+run_test "set_local_path_from_worktree_writes_own_file" "present" "$([ -f "$hub_worktree_linked/.ai-dev-workflow.local.yaml" ] && echo present || echo absent)"
+run_test "set_local_path_from_worktree_leaves_main_clone_untouched" "review:
+  on_draft:
+    runner: [claude]" "$(cat "$hub_worktree_main/.ai-dev-workflow.local.yaml")"
+worktree_resolve_output="$(python3 "$RESOLVER" resolve --repo-root "$hub_worktree_linked" --repo demo --require-local)"
+run_contains "set_local_path_from_worktree_resolves_correctly" "TARGET_LOCAL_PATH=$TMP_ROOT/demo-checkout" "$worktree_resolve_output"
+git -C "$hub_worktree_main" worktree remove --force "$hub_worktree_linked"
+unset hub_worktree_main hub_worktree_linked worktree_resolve_output
+
 echo ""
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"

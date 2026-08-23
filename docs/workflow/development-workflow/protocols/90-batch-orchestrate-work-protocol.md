@@ -1071,6 +1071,12 @@ Pre-dispatch validation is mandatory:
   `read_only` and will not edit files, switch branches, create commits, push,
   open or update PRs, modify labels, or update tracker state.
 
+The worktree creator does not seed `.ai-dev-workflow.local.yaml` into the
+worktree, and runners must not copy it by hand: the workflow scripts resolve a
+linked worktree's local override from the main clone (#1560). The contract and
+the post-entry verification live in one place — Protocol 91, ["Worktree isolation for batch dispatch"](91-orchestrate-work-protocol.md#worktree-isolation-for-batch-dispatch),
+under "Local reviewer override continuity".
+
 This requirement is separate from the unsanctioned nested-agent PR guard in
 #1200. The #1200 guard prevents child agents from creating duplicate or
 wrong-base PR artifacts. The isolation manifest prevents multiple sanctioned
