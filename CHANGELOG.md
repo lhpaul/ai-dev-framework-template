@@ -36,6 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **`post-merge-cleanup.sh` now processes every issue a PR resolves**
+  (#1391): a numeric branch (`fix/1520-…`) previously routed cleanup through
+  the branch-derived issue alone, silently ignoring `Closes #N` references in
+  the PR body — and commit-message references were never scanned at all
+  (GitHub only honours them on default-branch merges, and this repo merges to
+  `develop`). Closing references from the PR title, body, and commit messages
+  are now processed in addition to the branch issue, and bare `#N` title
+  references without a closing keyword (e.g. `fix(#2053,#2055): …`) produce a
+  loud warning naming what was not processed. Protocols 91 and 95 now state
+  that post-merge verification is per referenced item.
 - **`/run-epic` helpers no longer bind the jq-reserved identifier `label`**
   (#1523): on jq 1.6 (Ubuntu 22.04 LTS and peers) `label` is a reserved
   keyword, so `run-epic-policy-recommender.sh`, `run-bounded-prelude.sh`, and

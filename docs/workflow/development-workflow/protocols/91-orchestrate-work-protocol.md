@@ -3184,6 +3184,13 @@ state according to this table:
 | `implementation-plan/*`                           | Plan Ready            |
 | `feature/*` / `fix/*` / `refactor/*` / `hotfix/*` | Merged                |
 
+**A PR may resolve more than one item** (#1391). `post-merge-cleanup.sh`
+processes the branch-derived issue plus every closing-keyword reference in the
+PR title, body, and commit messages, and warns about bare `#N` title
+references it did not process. Verify the transition for **each** referenced
+item — do not stop after the first — and act on any "references issue(s) …
+without a closing keyword" warning before reporting cleanup complete.
+
 **Key rules:**
 
 - When a spec or plan PR is merged, set the tracker status to the corresponding **Ready** status (`Spec Ready` or `Plan Ready`) — **not** `Merged`. Only implementation PRs (feature, fix, refactor, hotfix) go to `Merged`.

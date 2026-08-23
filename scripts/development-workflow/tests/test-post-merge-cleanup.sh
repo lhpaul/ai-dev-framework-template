@@ -133,6 +133,12 @@ case "$1 $2" in
       else
         printf '\n'
       fi
+    elif [[ "$args" == *"--json commits"* ]]; then
+      # Emulates '[.commits[] | ...] | join("\n")' — tests control it via
+      # GH_PR_COMMITS_TEXT (already-joined text, may be empty).
+      printf '%s\n' "${GH_PR_COMMITS_TEXT:-}"
+    elif [[ "$args" == *"--json title "* || "$args" == *'--json title'* ]]; then
+      printf '%s\n' "${GH_PR_TITLE:-}"
     elif [[ "$args" == *"--json body,title"* ]]; then
       # Emulates the real command's jq filter
       # '(.title // "") + "\n" + (.body // "")' without invoking jq, so tests
@@ -402,6 +408,56 @@ run_test "failed_delete_local_branch_remains" "yes" "$(
 # the fix: a false-positive slug overridden by the PR body, a team-prefixed
 # slug whose PR body confirms the same issue, and a team-prefixed slug with
 # no PR-body closing reference falling back to the slug-derived issue.
+
+# #1391: a numeric branch names one issue; the PR may resolve more. Closing
+# refs from body/commits are processed as extras, and bare title refs warn.
+multi_branch="fix/1520-retro-followups"
+multi_repo="$(make_repo multi-close "$multi_branch" yes)"
+multi_output="$(
+  GH_MERGED_HEAD="$multi_branch" \
+  GH_MERGED_PR=1521 \
+  GH_PR_TITLE="fix(#1520): retro followups" \
+  GH_PR_BODY="Also resolves the report tracked separately. Closes #1517" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$multi_repo" --base develop --pr 1521 "$multi_branch"
+)"
+run_contains "branch_issue_still_closed" "Closing issue #1520..." "$multi_output"
+run_contains "body_extra_ref_processed" "Processing issue #1517 from PR #1521" "$multi_output"
+run_contains "extras_announced" "PR #1521 also closes: 1517" "$multi_output"
+
+commitmsg_branch="fix/1600-commit-ref"
+commitmsg_repo="$(make_repo commitmsg-close "$commitmsg_branch" yes)"
+commitmsg_output="$(
+  GH_MERGED_HEAD="$commitmsg_branch" \
+  GH_MERGED_PR=1601 \
+  GH_PR_TITLE="fix(#1600): thing" \
+  GH_PR_BODY="No closing keyword in the body." \
+  GH_PR_COMMITS_TEXT="fix: the thing
+Closes #1602" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$commitmsg_repo" --base develop --pr 1601 "$commitmsg_branch"
+)"
+run_contains "commit_message_ref_processed" "Processing issue #1602 from PR #1601" "$commitmsg_output"
+
+bare_branch="fix/2053-first-of-two"
+bare_repo="$(make_repo bare-title "$bare_branch" yes)"
+bare_output="$(
+  GH_MERGED_HEAD="$bare_branch" \
+  GH_MERGED_PR=2060 \
+  GH_PR_TITLE="fix(#2053,#2055): shared component edits" \
+  GH_PR_BODY="No closing keywords." \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$bare_repo" --base develop --pr 2060 "$bare_branch" 2>&1
+)"
+run_contains "bare_title_ref_warns_loudly" "title references issue(s) #2055 without a closing keyword" "$bare_output"
+run_test "bare_title_ref_branch_issue_not_warned" "no" \
+  "$(if grep -Fq "#2053 without" <<<"$bare_output"; then printf yes; else printf no; fi)"
 
 false_positive_branch="fix/retro-517-doc-gaps"
 false_positive_repo="$(make_repo false-positive "$false_positive_branch" yes)"

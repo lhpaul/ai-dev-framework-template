@@ -580,6 +580,14 @@ fetch_pr_closing_issues() {
     return 2
   fi
   pr_body="$(gh pr view "$pr_number" --repo "$pr_repo" --json body,title --jq '(.title // "") + "\n" + (.body // "")' 2>/dev/null)" || return 1
+  # Commit messages carry closing keywords too, and GitHub only honours them
+  # natively on default-branch merges — this repo merges to develop, so the
+  # script must read them itself (#1391, second confirmation: a `Closes #N`
+  # in a commit body was silently ignored).
+  local pr_commit_text
+  pr_commit_text="$(gh pr view "$pr_number" --repo "$pr_repo" --json commits --jq '[.commits[] | ((.messageHeadline // "") + "\n" + (.messageBody // ""))] | join("\n")' 2>/dev/null)" || return 1
+  pr_body="${pr_body}
+${pr_commit_text}"
   if ! stripped_pr_body="$(printf '%s' "$pr_body" | strip_fenced_pr_body_blocks)"; then
     echo "ERROR: could not strip fenced code blocks from PR #${pr_number}." >&2
     return 1
@@ -659,6 +667,30 @@ close_issues_from_pr() {
   if [ "$view_failures" -gt 0 ]; then
     echo "ERROR: could not query ${view_failures} issue(s) from PR #${pr_number} closing refs (gh command failed)." >&2
     return 1
+  fi
+  return 0
+}
+
+# warn_unprocessed_title_refs <pr_repo> <pr_number> <processed_newline_list>
+# A PR title like "fix(#2053,#2055): ..." references issues without a closing
+# keyword; neither GitHub nor this script closes them. Say so loudly instead
+# of silently processing a subset (#1391): list every #N in the title that is
+# not in the processed list.
+warn_unprocessed_title_refs() {
+  local pr_repo="$1" pr_number="$2" processed="$3"
+  local title refs ref unprocessed=""
+  title="$(gh pr view "$pr_number" --repo "$pr_repo" --json title --jq '.title // ""' 2>/dev/null)" || return 0
+  refs="$(printf '%s' "$title" | grep -oE '#[0-9]+' | tr -d '#' | sort -un)" || return 0
+  [ -n "$refs" ] || return 0
+  while IFS= read -r ref; do
+    [ -z "$ref" ] && continue
+    if ! printf '%s
+' "$processed" | grep -qx "$ref"; then
+      unprocessed="${unprocessed} #${ref}"
+    fi
+  done <<< "$refs"
+  if [ -n "$unprocessed" ]; then
+    echo "WARNING: PR #${pr_number} title references issue(s)${unprocessed} without a closing keyword; they were NOT closed or status-updated. If this PR resolved them, update them manually or add closing keywords next time." >&2
   fi
   return 0
 }
@@ -764,6 +796,7 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
     if [ -n "$PR_OVERRIDE_ISSUES" ]; then
       echo "Team-prefixed identifier '$ISSUE_IDENTIFIER' in branch '$TO_DELETE' is ambiguous; using closing keyword refs from PR #${PR_FOR_OVERRIDE} instead: $(printf '%s' "$PR_OVERRIDE_ISSUES" | tr '\n' ' ')"
       close_issues_from_pr "$PR_FOR_OVERRIDE" "$PR_OVERRIDE_ISSUES" || exit 1
+      warn_unprocessed_title_refs "$pr_override_repo" "$PR_FOR_OVERRIDE" "$PR_OVERRIDE_ISSUES"
     else
       # Update the tracker status BEFORE closing the issue so that
       # gh project item-list can still find the item (it only returns items
@@ -774,23 +807,25 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
         echo "ERROR: could not query issue #$ISSUE_NUMBER (gh command failed)." >&2
         exit 1
       fi
+      # Resolve the merged PR up front: the branch-derived issue needs it for
+      # the close comment, and the PR's own closing refs (#1391) need it even
+      # when the branch issue is already closed.
+      merged_pr_repo="$TARGET_GITHUB_REPO"
+      if [ -z "$merged_pr_repo" ]; then
+        if ! merged_pr_repo="$(repo_slug)"; then
+          echo "ERROR: could not resolve GitHub repository for merged PR lookup." >&2
+          exit 1
+        fi
+      fi
+      if [ -n "$merged_pr_number" ]; then
+        MERGED_PR="$merged_pr_number"
+      else
+        MERGED_PR="$(gh pr list --repo "$merged_pr_repo" --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty')" || {
+          echo "ERROR: could not query merged PRs for branch '$TO_DELETE' in '$merged_pr_repo' (gh command failed)." >&2
+          exit 1
+        }
+      fi
       if [ "$ISSUE_STATE" = "OPEN" ]; then
-        # Find the merged PR for this branch.
-        merged_pr_repo="$TARGET_GITHUB_REPO"
-        if [ -z "$merged_pr_repo" ]; then
-          if ! merged_pr_repo="$(repo_slug)"; then
-            echo "ERROR: could not resolve GitHub repository for merged PR lookup." >&2
-            exit 1
-          fi
-        fi
-        if [ -n "$merged_pr_number" ]; then
-          MERGED_PR="$merged_pr_number"
-        else
-          MERGED_PR="$(gh pr list --repo "$merged_pr_repo" --state merged --head "$TO_DELETE" --limit 1 --json number --jq '.[0].number // empty')" || {
-            echo "ERROR: could not query merged PRs for branch '$TO_DELETE' in '$merged_pr_repo' (gh command failed)." >&2
-            exit 1
-          }
-        fi
         if [ -n "$MERGED_PR" ]; then
           CLOSE_COMMENT="Closed by PR #${MERGED_PR}."
         elif [ -n "$VERIFIED_MERGED_PR" ]; then
@@ -810,6 +845,21 @@ if [ -n "$ISSUE_IDENTIFIER" ]; then
         fi
       else
         echo "Issue #$ISSUE_NUMBER is already $ISSUE_STATE, skipping close."
+      fi
+      # The branch names one issue; the PR may resolve more (#1391). Process
+      # every closing reference from the PR title, body, and commit messages
+      # that is not the branch-derived issue, and warn about bare title refs.
+      if [ -n "${MERGED_PR:-}" ]; then
+        if ! EXTRA_CLOSES="$(fetch_pr_closing_issues "$merged_pr_repo" "$MERGED_PR")"; then
+          echo "ERROR: could not fetch PR #${MERGED_PR} closing refs from '$merged_pr_repo' (gh command failed)." >&2
+          exit 1
+        fi
+        EXTRA_CLOSES="$(printf '%s\n' "$EXTRA_CLOSES" | grep -vx "$ISSUE_NUMBER" || true)"
+        if [ -n "$EXTRA_CLOSES" ]; then
+          echo "PR #${MERGED_PR} also closes: $(printf '%s' "$EXTRA_CLOSES" | tr '\n' ' ')"
+          close_issues_from_pr "$MERGED_PR" "$EXTRA_CLOSES" || exit 1
+        fi
+        warn_unprocessed_title_refs "$merged_pr_repo" "$MERGED_PR" "$(printf '%s\n%s' "$ISSUE_NUMBER" "$EXTRA_CLOSES")"
       fi
     fi
   elif [ "$BRANCH_TYPE" = "spec" ]; then
@@ -854,6 +904,7 @@ else
           echo "Found closing keyword refs in PR #${CLOSING_PR}: issues $(printf '%s' "$CLOSES_ISSUES" | tr '\n' ' ')"
           cd "$HUB_REPO_ROOT"
           close_issues_from_pr "$CLOSING_PR" "$CLOSES_ISSUES" || exit 1
+          warn_unprocessed_title_refs "$pr_closes_repo" "$CLOSING_PR" "$CLOSES_ISSUES"
         else
           echo "No issue number in branch name '$TO_DELETE' or PR #${CLOSING_PR} body; skipping issue close and tracker update."
         fi

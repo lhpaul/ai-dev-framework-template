@@ -739,7 +739,10 @@ When all gates permit merge:
    approval evidence described in the delegated gate checklist is present.
 2. Verify GitHub reports the PR state as `MERGED`.
 3. Delete or prune the merged branch as appropriate.
-4. Run post-merge cleanup for the correct base branch. For direct single-PR
+4. Run post-merge cleanup for the correct base branch. A PR may resolve
+   more than one item (#1391): verify tracker state for every issue the PR
+   references, not only the branch-derived one, and act on the cleanup
+   helper's unprocessed-title-reference warning when it appears. For direct single-PR
    merges, use the cleanup helper after merge verification. In `workflow_hub`
    mode, pass `--repo <product-repo>` for product-owned implementation branches:
 
