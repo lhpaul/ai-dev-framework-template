@@ -269,8 +269,12 @@ run_fails "reject_linear_identifier_for_non_linear_provider" "invalid --issue id
 # bind it. Guards the rename from regressing on machines with newer jq.
 reserved_label_count=0
 for _f in run-bounded-prelude.sh run-epic-policy-recommender.sh run-epic-scope-resolver.sh; do
-  _c="$(grep -cE 'as \$label|def [a-z_]+\(\$label|--arg label' "$SCRIPT_DIR/../$_f")" || _c=0
-  reserved_label_count=$((reserved_label_count + _c))
+  _c=0 _st=0
+  _c="$(grep -cE 'as [$]label\b|\([$]label\b|--arg label\b' "$SCRIPT_DIR/../$_f")" || _st=$?
+  if [ "$_st" -gt 1 ]; then
+    echo "FAIL: no_jq_reserved_label_bindings - grep failed ($_st) on $_f"; fail=$((fail + 1)); _c=0
+  fi
+  reserved_label_count=$((reserved_label_count + ${_c:-0}))
 done
 if [ "$reserved_label_count" -eq 0 ]; then
   echo "PASS: no_jq_reserved_label_bindings"; pass=$((pass + 1))
