@@ -456,10 +456,16 @@ After a clean or resolved merge, in order:
    and the CI loop still said green). Any PR that needs another push — a fix,
    a re-review — must resolve the conflict on its branch first, which moves
    the head and voids its verdicts like any other head change. Before routing
-   `resolve_conflict_then_reverify`, check which files conflict — `git
-   merge-tree --write-tree --name-only origin/<base> origin/<head>` — the
-   helper cannot see conflicted files from the GitHub API, which is why this
-   check is the runner's. Holds caused by the PR's own stage
+   `resolve_conflict_then_reverify`, check which files conflict; the helper
+   cannot see conflicted files from the GitHub API, which is why this check is
+   the runner's:
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   git merge-tree --write-tree --name-only "origin/$BASE_BRANCH" "origin/<head-branch>"
+   ```
+
+   Holds caused by the PR's own stage
    (`label_gate_failed`, `draft_pr`) are reported in the record but not
    annotated onto the PR; a PR that later rechecks clean has its hold comment
    marked lifted.
