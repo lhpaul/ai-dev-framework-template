@@ -3188,8 +3188,10 @@ state according to this table:
 processes the branch-derived issue plus every closing-keyword reference in the
 PR title, body, and commit messages, and warns about bare `#N` title
 references it did not process. Verify the transition for **each** referenced
-item — do not stop after the first — and act on any "references issue(s) …
-without a closing keyword" warning before reporting cleanup complete.
+item — do not stop after the first. A "references issue(s) … without a closing
+keyword" warning is **non-terminal**: cleanup stays incomplete until every
+named issue has an explicit disposition — processed (closed and
+status-updated) or confirmed non-closing — recorded in the item report.
 
 **Key rules:**
 

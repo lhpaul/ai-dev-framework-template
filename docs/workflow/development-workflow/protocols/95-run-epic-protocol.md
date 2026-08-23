@@ -741,8 +741,12 @@ When all gates permit merge:
 3. Delete or prune the merged branch as appropriate.
 4. Run post-merge cleanup for the correct base branch. A PR may resolve
    more than one item (#1391): verify tracker state for every issue the PR
-   references, not only the branch-derived one, and act on the cleanup
-   helper's unprocessed-title-reference warning when it appears. For direct single-PR
+   references, not only the branch-derived one. An unprocessed-title-reference
+   warning from the cleanup helper is **non-terminal** — cleanup is not
+   complete until every named issue has an explicit recorded disposition:
+   processed (closed and status-updated), or confirmed non-closing (the PR
+   mentions it but does not resolve it). Record that disposition in the run
+   summary before closeout; acknowledging the warning is not a disposition. For direct single-PR
    merges, use the cleanup helper after merge verification. In `workflow_hub`
    mode, pass `--repo <product-repo>` for product-owned implementation branches:
 

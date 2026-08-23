@@ -693,6 +693,10 @@ close_issues_from_pr() {
 # helper whose whole purpose is avoiding a silent gap could itself go silent
 # on a transient `gh` failure, indistinguishable from "no bare refs found".
 warn_unprocessed_title_refs() {
+  if [ "$#" -ne 3 ] || [ -z "${1:-}" ] || [[ ! "${2:-}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: warn_unprocessed_title_refs requires <pr_repo> (non-empty) <pr_number> (numeric) <processed_newline_list>." >&2
+    return 2
+  fi
   local pr_repo="$1" pr_number="$2" processed="$3"
   local title refs ref unprocessed=""
   title="$(gh pr view "$pr_number" --repo "$pr_repo" --json title --jq '.title // ""' 2>/dev/null)" || {
