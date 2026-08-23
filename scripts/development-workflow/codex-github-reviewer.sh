@@ -1347,7 +1347,8 @@ if [ -n "$TRIGGER_COMMENT_INFO" ]; then
          | sort_by(.created_at) | last | .body // ""'); then
       if [ -n "$CODEX_LAST_REPLY" ] && \
         { codex_response_is_usage_limit "$(codex_strip_quoted_spans "$CODEX_LAST_REPLY")" || \
-          codex_response_is_account_not_connected "$(codex_strip_quoted_spans "$CODEX_LAST_REPLY")"; }; then
+          codex_response_is_account_not_connected "$(codex_strip_quoted_spans "$CODEX_LAST_REPLY")" || \
+          codex_response_is_environment_error "$(codex_strip_quoted_spans "$CODEX_LAST_REPLY")"; }; then
         echo "INFO: previous trigger for commit $CURRENT_SHA was answered with a reviewer-unavailability refusal — re-triggering so a restored quota/connection can review this commit"
         TRIGGER_TIME=""
         TRIGGER_COMMENT_ID=""

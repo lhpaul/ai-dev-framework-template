@@ -3856,6 +3856,41 @@ run_test "codex_refused_trigger_does_not_skip_as_duplicate" "no" \
 rm -rf "$_codex_retrig_dir"
 unset _codex_retrig_dir _codex_retrig_output
 
+# The environment-error refusal is the third unavailability form and must be
+# recovered from identically (pr-agent on PR #1586).
+_codex_envretrig_dir="$(mktemp -d)"
+cat > "$_codex_envretrig_dir/gh" <<'CODEX_ENVRETRIG_GH'
+#!/usr/bin/env bash
+log="$MOCK_POST_LOG"
+case "$*" in
+  *"auth status"*) exit 0 ;;
+  *"pr view"*headRefOid*) printf 'abcenvretrig123456\n'; exit 0 ;;
+  *"--method POST"*)
+    printf 'POST\n' >> "$log"
+    printf '{"id":301,"created_at":"2026-01-01T00:10:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*) printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":200,"created_at":"2026-01-01T00:00:00Z","user":{"login":"runner"},"body":"Review triggered by workflow runner for abcenvretrig123456"},{"id":201,"created_at":"2026-01-01T00:00:05Z","user":{"login":"chatgpt-codex-connector[bot]"},"body":"To use Codex here, create an environment for this repo."}]\n'
+    exit 0 ;;
+  *) printf 'ERROR=unexpected-gh-invocation\n' >&2; exit 64 ;;
+esac
+CODEX_ENVRETRIG_GH
+chmod +x "$_codex_envretrig_dir/gh"
+: > "$_codex_envretrig_dir/posts.log"
+MOCK_POST_LOG="$_codex_envretrig_dir/posts.log" PATH="$_codex_envretrig_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
+  >"$_codex_envretrig_dir/output.txt" 2>&1 || true
+_codex_envretrig_output="$(cat "$_codex_envretrig_dir/output.txt")"
+run_test "codex_env_error_trigger_is_retriggered" "yes" \
+  "$(if grep -Fq "re-triggering so a restored quota/connection can review this commit" <<<"$_codex_envretrig_output"; then printf yes; else printf no; fi)"
+run_test "codex_env_error_trigger_posts_new_comment" "yes" \
+  "$(if grep -Fq POST "$_codex_envretrig_dir/posts.log"; then printf yes; else printf no; fi)"
+rm -rf "$_codex_envretrig_dir"
+unset _codex_envretrig_dir _codex_envretrig_output
+
 # --- #1522 (async-arrival path): the not-connected refusal must still be
 # classified as UNAVAILABLE when it only arrives during the post-poll-window
 # "async grace period" check, not just during the main poll loop. This

@@ -46,8 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trigger-comment idempotency guard, which keys only on the head SHA, made
   any unavailability terminal: once Codex answered a trigger with a refusal,
   every later run for that commit skipped the post and re-read the stale
-  reply. When the newest bot reply to an existing trigger is a refusal, the
-  trigger is now treated as spent and a fresh one is posted.
+  reply. When the newest bot reply to an existing trigger is any refusal —
+  usage limit, account not connected, or missing environment — the trigger is
+  now treated as spent and a fresh one is posted.
 - **`post-merge-cleanup.sh` now processes every issue a PR resolves**
   (#1391): closing references in the PR title, body, and commit messages are
   processed in addition to the branch-derived issue, and bare `#N` title
