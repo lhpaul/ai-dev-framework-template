@@ -226,6 +226,16 @@ run_test() {
   fi
 }
 
+# count_lines_matching <pattern> <file> — prints the match count; a missing or
+# unreadable file is a test-harness failure, not "zero matches".
+count_lines_matching() {
+  local pattern="$1" file="$2" count status=0
+  [ -r "$file" ] || { printf 'FAIL: harness file unreadable: %s\n' "$file" >&2; exit 2; }
+  count="$(grep -c -- "$pattern" "$file")" || status=$?
+  [ "$status" -le 1 ] || { printf 'FAIL: grep failed (%s) reading %s\n' "$status" "$file" >&2; exit 2; }
+  printf '%s\n' "${count:-0}"
+}
+
 json_field() {
   local output="$1"
   local pr="$2"
@@ -375,7 +385,7 @@ run_test "annotate_body_names_action" "yes" "$(grep -q 'resolve_conflict_then_re
 rm -f "$MOCK_GH_STATE_DIR"/*.count
 annotate_again_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --reviewed-head-shas "102:$_sha_a" --annotate)"
 run_test "annotate_updates_in_place" "updated" "$(json_field "$annotate_again_output" 102 annotation)"
-run_test "annotate_patch_call_recorded" "1" "$(grep -c 'issues/comments/777 -X PATCH' "$CALL_LOG" || true)"
+run_test "annotate_patch_call_recorded" "1" "$(count_lines_matching 'issues/comments/777 -X PATCH' "$CALL_LOG")"
 # A PR that rechecks clean after having been held gets its hold lifted in
 # place; one that was never held gets annotation=none and no comment.
 export MOCK_SCENARIO=default
@@ -386,12 +396,12 @@ run_test "lifted_body_says_so" "yes" "$(grep -q 'Hold lifted' "$MOCK_GH_STATE_DI
 # Idempotence: a second clean recheck on an already-lifted comment must not
 # PATCH again or append a second "Hold lifted" line (the guard at the top of
 # annotate_hold_lifted must short-circuit on the marker it already wrote).
-_patch_count_before_second_lift="$(grep -c 'issues/comments/777 -X PATCH' "$CALL_LOG" || true)"
+_patch_count_before_second_lift="$(count_lines_matching 'issues/comments/777 -X PATCH' "$CALL_LOG")"
 rm -f "$MOCK_GH_STATE_DIR"/*.count
 lifted_again_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --annotate)"
 run_test "clean_after_lift_is_still_lifted" "lifted" "$(json_field "$lifted_again_output" 102 annotation)"
-run_test "lifted_idempotent_no_second_patch" "$_patch_count_before_second_lift" "$(grep -c 'issues/comments/777 -X PATCH' "$CALL_LOG" || true)"
-run_test "lifted_body_not_duplicated" "1" "$(grep -o 'Hold lifted' "$MOCK_GH_STATE_DIR/hold-body-102" | wc -l | tr -d ' ')"
+run_test "lifted_idempotent_no_second_patch" "$_patch_count_before_second_lift" "$(count_lines_matching 'issues/comments/777 -X PATCH' "$CALL_LOG")"
+run_test "lifted_body_not_duplicated" "1" "$(count_lines_matching 'Hold lifted' "$MOCK_GH_STATE_DIR/hold-body-102")"
 rm -f "$MOCK_GH_STATE_DIR"/*.count "$MOCK_GH_STATE_DIR"/hold-*
 clean_annotate_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --annotate)"
 run_test "never_held_clean_pr_annotation_none" "none" "$(json_field "$clean_annotate_output" 102 annotation)"
