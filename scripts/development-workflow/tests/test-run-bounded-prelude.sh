@@ -265,5 +265,22 @@ run_fails "reject_whitespace_issue_identifier" "invalid --issue identifier" \
 run_fails "reject_linear_identifier_for_non_linear_provider" "invalid --issue identifier" \
   env AI_DEV_WORKFLOW_CONFIG_FILE="$github_config" "$ITEM_RESOLVER" --issue LEA-185
 
+# #1523: `label` is a jq-reserved keyword on jq 1.6; no /run-epic helper may
+# bind it. Guards the rename from regressing on machines with newer jq.
+reserved_label_count=0
+for _f in run-bounded-prelude.sh run-epic-policy-recommender.sh run-epic-scope-resolver.sh; do
+  _c=0 _st=0
+  _c="$(grep -cE 'as [$]label\b|\([$]label\b|--arg label\b' "$SCRIPT_DIR/../$_f")" || _st=$?
+  if [ "$_st" -gt 1 ]; then
+    echo "FAIL: no_jq_reserved_label_bindings - grep failed ($_st) on $_f"; fail=$((fail + 1)); _c=0
+  fi
+  reserved_label_count=$((reserved_label_count + ${_c:-0}))
+done
+if [ "$reserved_label_count" -eq 0 ]; then
+  echo "PASS: no_jq_reserved_label_bindings"; pass=$((pass + 1))
+else
+  echo "FAIL: no_jq_reserved_label_bindings - found $reserved_label_count bindings"; fail=$((fail + 1))
+fi
+
 printf '\nResults: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

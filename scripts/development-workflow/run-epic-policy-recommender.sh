@@ -217,8 +217,8 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   def data_model_label_signals($item):
     [
       ($item.labels // [])[]?
-      | tostring as $label
-      | ($label | normalize_signal_label) as $normalized
+      | tostring as $labelText
+      | ($labelText | normalize_signal_label) as $normalized
       | select($normalized | IN(
           "migration",
           "database-migration",
@@ -227,7 +227,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
           "schema-change",
           "data-model-change"
         ))
-      | "label '\''\($label)'\''"
+      | "label '\''\($labelText)'\''"
     ];
   def regex_matches($text; $regex):
     [$text | match($regex; "ig").string];

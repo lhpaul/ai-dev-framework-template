@@ -36,6 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **`/run-epic` helpers no longer bind the jq-reserved identifier `label`**
+  (#1523): on jq 1.6 (Ubuntu 22.04 LTS and peers) `label` is a reserved
+  keyword, so `run-epic-policy-recommender.sh`, `run-bounded-prelude.sh`, and
+  `run-epic-scope-resolver.sh` failed to compile their jq programs
+  (`syntax error, unexpected label`) and `/run-epic` preflight could not start
+  on Linux hosts, while jq 1.7+ on macOS accepted the same programs and hid
+  the defect. All `$label` bindings and `--arg label` uses are renamed to
+  `$labelText`; a regression check in `test-run-bounded-prelude.sh` covers
+  the three affected helper scripts.
 
 - **A linked git worktree now resolves the main clone's local reviewer
   override** (#1560): `git worktree add` carries no gitignored files, so every
