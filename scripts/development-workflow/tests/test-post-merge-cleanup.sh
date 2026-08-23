@@ -458,10 +458,7 @@ unclosed_body_fence_output="$(
   GH_MERGED_HEAD="$unclosed_body_fence_branch" \
   GH_MERGED_PR=1611 \
   GH_PR_TITLE="fix(#1610): thing" \
-  GH_PR_BODY='Accidentally unclosed fence below.
-
-```
-some example text' \
+  GH_PR_BODY=$'Accidentally unclosed fence below.\n\n```\nsome example text' \
   GH_PR_COMMITS_TEXT="fix: the thing
 Closes #1612" \
   GH_ISSUE_STATE=OPEN \
