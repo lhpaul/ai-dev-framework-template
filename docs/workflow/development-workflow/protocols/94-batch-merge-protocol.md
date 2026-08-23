@@ -359,12 +359,25 @@ After a clean or resolved merge, in order:
      --prs <comma-separated-approved-pr-list> \
      --after-merged-pr <number> \
      --base "$BASE_BRANCH" \
-     --approved-unready-prs "$APPROVED_UNREADY_PRS"
+     --approved-unready-prs "$APPROVED_UNREADY_PRS" \
+     --reviewed-head-shas "$REVIEWED_HEAD_SHAS" \
+     --annotate
    ```
 
    `APPROVED_UNREADY_PRS` must be the same explicit include list recorded in
    Step 2, not recomputed from current labels. The helper validates that every
    approved-unready PR is still part of the frozen approved PR list.
+
+   `REVIEWED_HEAD_SHAS` is `<pr>:<PR_HEAD_SHA>` for every PR in the frozen
+   list, joined by commas, taken from the `discover` output captured in Step 1
+   (issue #1558). It binds each remaining PR to the head its reviewer-loop,
+   CI, risk-classification and delegated-gate verdicts were produced at. A
+   sibling merge that forces a conflict resolution gives a PR a new head, and
+   every one of those verdicts is then about a commit that no longer exists;
+   a `CLEAN` merge state at the new head is not admission. `--annotate` writes
+   the resulting hold onto the PR itself (a `<!-- batch-merge-hold:v1 -->`
+   comment, updated in place), so the information is never computed and then
+   dropped.
 
    Treat the recheck output as an admission gate before attempting another
    merge or reporting readiness:
@@ -385,7 +398,20 @@ After a clean or resolved merge, in order:
      admission result.
    - `classification=merge_blocked` means record the PR outcome as
      `merge_blocked`, including `invalidating_sibling_pr`, `merge_state`,
-     `checks_state`, and `reason`, then skip that PR without reordering.
+     `checks_state`, `reason`, `head_sha`, `reviewed_head_sha`,
+     `verdicts_voided`, `required_action`, and `annotation`, then skip that
+     PR without reordering. `reason=head_sha_changed` means the head moved
+     after its verdicts were produced: `verdicts_voided` lists
+     `reviewer_loop`, `ci`, `risk_classification` and `delegated_gate`, and
+     `required_action=reverify_at_current_head`. `reason=head_sha_unavailable`
+     means the live head could not be read at all and is treated the same as
+     `head_sha_changed` — an unreadable head must not read as "nothing to
+     re-verify". `reason=merge_state_non_clean`
+     with `required_action=resolve_conflict_then_reverify` means the head has
+     not moved yet but will once the conflict is resolved, so the same
+     re-verification follows. `annotation` reports whether the hold comment
+     was `created`, `updated`, or `failed:<why>` — a failed annotation does
+     not change the classification, but report it.
    - `classification=out_of_scope_observation` is read-only information. Do
      not label, merge, retry for mutation, or add that PR to the frozen list.
    - `classification=helper_failed` or a non-zero helper exit is batch-fatal
@@ -396,6 +422,53 @@ After a clean or resolved merge, in order:
    every sibling PR it rechecks, including PRs that are already merged. Continue
    only with remaining in-scope PRs that independently recheck clean after the
    latest sibling merge.
+
+5a. **Route every hold to its runner — the record is not the notification.**
+
+   For each `merge_blocked` record whose `reason` is not `already_merged`,
+   tell the Work Item Runner that owns the PR (issue #1558 AC-1). When the
+   runner is alive, send it the record verbatim plus this instruction; when it
+   has exited, the annotated PR comment is the handoff and the next dispatch
+   for that item carries the same text:
+
+   > Sibling PR #<invalidating_sibling_pr> merged into `<base>`. Your PR
+   > #<pr> is now `<merge_state>` at head `<head_sha>` (reviewed head:
+   > `<reviewed_head_sha>`). Verdicts void at this head: `<verdicts_voided>`.
+   > Required before any merge decision: `<required_action>`. Treat this as
+   > non-terminal: resolve the conflict if any, then re-run Step 7 (reviewer
+   > loop), Step 8 (CI), and — where delegated merge is in scope — Gate 5
+   > (risk classifier and delegated gate) at the current head. A merge
+   > attempted with the old `--expected-head-sha` is refused by
+   > `batch-merge.sh merge` and by the delegated gate (`stale_verdict_head`).
+
+   A runner that declared its item terminal before this notice must be
+   redispatched (Protocol 90 Step 5 item 4): an unmergeable PR is not
+   `ready-for-human-review` in any sense that matters to the batch.
+
+   **CHANGELOG-only conflicts, and when they do not move the head.** Every PR
+   in a wave adds an `[Unreleased]` entry, so `merge_state_non_clean` after a
+   sibling merge is usually `CHANGELOG.md` alone. Step 4.3 resolves that at
+   merge time inside `batch-merge.sh merge`, without touching the PR branch —
+   **but only a PR whose reviewer verdict and CI already passed at its current
+   head can take that path.** GitHub builds no merge ref for a conflicting PR,
+   so no `pull_request` workflow runs on it (issue #1580: two pushes to PR
+   #1577 after it went `DIRTY` ran "PR policy" only, 4 checks instead of 16,
+   and the CI loop still said green). Any PR that needs another push — a fix,
+   a re-review — must resolve the conflict on its branch first, which moves
+   the head and voids its verdicts like any other head change. Before routing
+   `resolve_conflict_then_reverify`, check which files conflict; the helper
+   cannot see conflicted files from the GitHub API, which is why this check is
+   the runner's:
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   git merge-tree --write-tree --name-only "origin/$BASE_BRANCH" "origin/<head-branch>"
+   ```
+
+   Holds caused by the PR's own stage
+   (`label_gate_failed`, `draft_pr`) are reported in the record but not
+   annotated onto the PR; a PR that later rechecks clean has its hold comment
+   marked lifted.
 
 6. Report the per-PR outcome immediately (see outcome codes in Step 5).
 

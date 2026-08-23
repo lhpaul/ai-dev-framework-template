@@ -37,6 +37,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A sibling merge no longer voids a PR's verdicts silently** (#1558):
+  merging one PR in a wave dirties its siblings on `[Unreleased]`, and the
+  conflict resolution produces a new head SHA that invalidates the reviewer
+  verdict, CI, the risk classification and the delegated-gate decision —
+  nothing flagged it, and two runners on the 2026-08-20/21 run would have
+  declared terminal on unmergeable PRs. `batch-merge.sh recheck-remaining`
+  now accepts `--reviewed-head-shas` (from `discover`'s `PR_HEAD_SHA`) and
+  reports `head_sha_changed` with `verdicts_voided` and `required_action`
+  even when the merge state is `CLEAN`; `--annotate` writes every hold onto
+  the PR as an in-place `<!-- batch-merge-hold:v1 -->` comment, and a new
+  `annotate-hold` subcommand records risk-guardrail and human holds the same
+  way so a held PR carries its reason. `run-epic-delegated-gate.sh` refuses
+  `reviewer.headSha` / `risk.headSha` that differ from `pr.headSha`
+  (`stale_verdict_head`, `fix_required`). Protocol 94 routes each hold to the
+  owning runner (Step 4.5a), Protocol 90 keeps held PRs in the frozen recheck
+  list with the same conflict maintenance, and Protocol 95 records the hold
+  when the classifier scores above `--max-risk`.
 - **Protocol 91's late-thread re-check no longer waits a fixed 10 seconds**
   (#1574): the readiness checklist now consumes `pr-review-loop.sh`'s
   `POST_CLEAN_*` settle fields instead of carrying a wait of its own. A new

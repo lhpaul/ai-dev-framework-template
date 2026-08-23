@@ -1528,6 +1528,28 @@ jq '.pr.inScope = false' "$security_advisory_pending_fixture" > "$security_advis
 run_test "security_advisory_scope_false_not_applicable" "not_applicable" "$(decision_for "$security_advisory_scope_false_fixture")"
 
 echo ""
+echo "=== Per-revision verdict binding (#1558) ==="
+base_decision="$(decision_for "$base_fixture")"
+reviewer_same_fixture="$(write_fixture reviewer-head-same '.reviewer.headSha = .pr.headSha | .risk.headSha = .pr.headSha')"
+run_test "verdict_heads_matching_pr_head_do_not_change_decision" "$base_decision" "$(decision_for "$reviewer_same_fixture")"
+reviewer_stale_fixture="$(write_fixture reviewer-head-stale '.reviewer.headSha = "1111111111111111111111111111111111111111"')"
+run_test "stale_reviewer_head_is_fix_required" "fix_required" "$(decision_for "$reviewer_stale_fixture")"
+run_test "stale_reviewer_head_reason" "yes" \
+  "$("$GATE" --input "$reviewer_stale_fixture" --json | jq -r '.reasons[]' | grep -q '^stale_verdict_head: reviewer-loop verdict' && echo yes || echo no)"
+run_test "stale_reviewer_head_denies_merge" "false" "$("$GATE" --input "$reviewer_stale_fixture" --json | jq -r '.mergePermitted')"
+run_test "stale_reviewer_head_next_action_reverifies" "yes" \
+  "$("$GATE" --input "$reviewer_stale_fixture" --json | jq -r '.nextAction' | grep -q 'at the current head' && echo yes || echo no)"
+risk_stale_fixture="$(write_fixture risk-head-stale '.risk.headSha = "2222222222222222222222222222222222222222"')"
+run_test "stale_risk_head_is_fix_required" "fix_required" "$(decision_for "$risk_stale_fixture")"
+run_test "stale_risk_head_reason" "yes" \
+  "$("$GATE" --input "$risk_stale_fixture" --json | jq -r '.reasons[]' | grep -q '^stale_verdict_head: risk classification' && echo yes || echo no)"
+risk_stale_snake_fixture="$(write_fixture risk-head-stale-snake '.risk.head_sha = "2222222222222222222222222222222222222222"')"
+run_test "stale_risk_head_snake_case_accepted" "fix_required" "$(decision_for "$risk_stale_snake_fixture")"
+# Absent binding fields keep pre-#1558 evidence files working unchanged.
+no_binding_fixture="$(write_fixture no-binding 'del(.reviewer.headSha) | del(.risk.headSha)')"
+run_test "absent_binding_is_compatible" "$base_decision" "$(decision_for "$no_binding_fixture")"
+
+echo ""
 echo "=== Summary ==="
 echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"
