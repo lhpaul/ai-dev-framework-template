@@ -837,7 +837,7 @@ codex_response_priority() {
   # APPROVED (fresh evidence from PR #1490 finding 3796982553).
   if [ "$state" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$body"; then
     printf '3\n'
-  elif codex_response_is_usage_limit "$body" || codex_response_is_environment_error "$body"; then
+  elif codex_response_is_usage_limit "$body" || codex_response_is_environment_error "$body" || codex_response_is_account_not_connected "$body"; then
     printf '1\n'
   elif codex_response_is_approved "$body"; then
     printf '0\n'
@@ -958,7 +958,7 @@ codex_scan_comment_evidence() {
     is_usage_limit=0
     if [ "$is_terminal" -eq 0 ]; then
       codex_response_is_usage_limit "$body" && is_usage_limit=1
-      if [ "$is_usage_limit" -eq 1 ] || codex_response_is_environment_error "$body"; then
+      if [ "$is_usage_limit" -eq 1 ] || codex_response_is_environment_error "$body" || codex_response_is_account_not_connected "$body"; then
         is_actionable=1
       fi
     fi
@@ -1863,6 +1863,9 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
     # Quote-stripped before checking — see the main-loop equivalent above
     # for the rationale (PR #1490 finding 3793259351).
     codex_return_usage_limit "$ASYNC_BOT_RESPONSE"
+  elif codex_response_is_account_not_connected "$(codex_strip_quoted_spans "$ASYNC_BOT_RESPONSE_FULL")"; then
+    # Same shape as the usage-limit branch above (#1522).
+    codex_return_account_not_connected "$ASYNC_BOT_RESPONSE"
   elif [ "$ASYNC_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_BOT_RESPONSE_FULL"; then
     SEEN_ENVIRONMENT_ERROR=1
     SEEN_ENVIRONMENT_RESPONSE="$ASYNC_BOT_RESPONSE"
@@ -1967,6 +1970,9 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
         # Quote-stripped before checking — see the main-loop equivalent
         # above for the rationale (PR #1490 finding 3793259351).
         codex_return_usage_limit "$ASYNC_FINAL_BOT_RESPONSE"
+      elif codex_response_is_account_not_connected "$(codex_strip_quoted_spans "$ASYNC_FINAL_BOT_RESPONSE_FULL")"; then
+        # Same shape as the usage-limit branch above (#1522).
+        codex_return_account_not_connected "$ASYNC_FINAL_BOT_RESPONSE"
       elif [ "$ASYNC_FINAL_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_FINAL_BOT_RESPONSE_FULL"; then
         SEEN_ENVIRONMENT_ERROR=1
         SEEN_ENVIRONMENT_RESPONSE="$ASYNC_FINAL_BOT_RESPONSE"
@@ -2119,6 +2125,9 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
       # Quote-stripped before checking — see the main-loop equivalent
       # above for the rationale (PR #1490 finding 3793259351).
       codex_return_usage_limit "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
+    elif codex_response_is_account_not_connected "$(codex_strip_quoted_spans "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL")"; then
+      # Same shape as the usage-limit branch above (#1522).
+      codex_return_account_not_connected "$ASYNC_REACTION_FINAL_BOT_RESPONSE"
     elif [ "$ASYNC_REACTION_FINAL_BOT_RESPONSE_SOURCE" = "comment" ] && codex_response_is_environment_error "$ASYNC_REACTION_FINAL_BOT_RESPONSE_FULL"; then
       SEEN_ENVIRONMENT_ERROR=1
       SEEN_ENVIRONMENT_RESPONSE="$ASYNC_REACTION_FINAL_BOT_RESPONSE"
