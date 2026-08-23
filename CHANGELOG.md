@@ -43,8 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`syntax error, unexpected label`) and `/run-epic` preflight could not start
   on Linux hosts, while jq 1.7+ on macOS accepted the same programs and hid
   the defect. All `$label` bindings and `--arg label` uses are renamed to
-  `$labelText`; a repo-wide check confirms no workflow script binds the
-  reserved name.
+  `$labelText`; a regression check in `test-run-bounded-prelude.sh` covers
+  the three affected helper scripts.
 
 - **A linked git worktree now resolves the main clone's local reviewer
   override** (#1560): `git worktree add` carries no gitignored files, so every
