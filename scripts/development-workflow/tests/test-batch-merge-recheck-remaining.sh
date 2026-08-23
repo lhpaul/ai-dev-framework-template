@@ -49,8 +49,8 @@ emit_pr() {
   else
     labels_json='[{"name":"needs-fixes"}]'
   fi
-  printf '{"number":%s,"state":"%s","isDraft":%s,"baseRefName":"%s","headRefName":"%s","mergeStateStatus":"%s","labels":%s,"statusCheckRollup":%s}\n' \
-    "$pr" "$state" "$draft" "$base" "$head" "$merge_state" "$labels_json" "$checks"
+  printf '{"number":%s,"state":"%s","isDraft":%s,"baseRefName":"%s","headRefName":"%s","headRefOid":"%s","mergeStateStatus":"%s","labels":%s,"statusCheckRollup":%s}\n' \
+    "$pr" "$state" "$draft" "$base" "$head" "${MOCK_HEAD_OID-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" "$merge_state" "$labels_json" "$checks"
 }
 
 count_for() {
@@ -93,7 +93,7 @@ case "$*" in
         ;;
     esac
     ;;
-  pr\ view\ 102\ --json\ number,state,isDraft,labels,baseRefName,headRefName,mergeStateStatus,statusCheckRollup)
+  pr\ view\ 102\ --json\ number,state,isDraft,labels,baseRefName,headRefName,headRefOid,mergeStateStatus,statusCheckRollup)
     case "${MOCK_SCENARIO:-}" in
       dirty_out_of_scope)
         emit_pr 102 OPEN false develop feature/mock-pr-102 DIRTY "$check_success"
@@ -122,7 +122,18 @@ case "$*" in
         emit_pr 102 OPEN false develop feature/mock-pr-102 CLEAN "$check_placeholder_only"
         ;;
       malformed_response)
-        printf '{"number":102,"state":"OPEN","isDraft":false,"baseRefName":"develop","headRefName":"feature/mock-pr-102","mergeStateStatus":"CLEAN","statusCheckRollup":%s}\n' "$check_success"
+        printf '{"number":102,"state":"OPEN","isDraft":false,"baseRefName":"develop","headRefName":"feature/mock-pr-102","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mergeStateStatus":"CLEAN","statusCheckRollup":%s}\n' "$check_success"
+        ;;
+      head_changed)
+        MOCK_HEAD_OID=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb emit_pr 102 OPEN false develop feature/mock-pr-102 CLEAN "$check_pending"
+        ;;
+      head_changed_annotate)
+        MOCK_HEAD_OID=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb emit_pr 102 OPEN false develop feature/mock-pr-102 DIRTY "$check_success"
+        ;;
+      head_unavailable)
+        # gh omitted headRefOid (transient API gap): with a binding present,
+        # this must not read as "nothing to re-verify" (#1558).
+        MOCK_HEAD_OID="" emit_pr 102 OPEN false develop feature/mock-pr-102 CLEAN "$check_success"
         ;;
       dirty_pending)
         emit_pr 102 OPEN false develop feature/mock-pr-102 DIRTY "$check_pending"
@@ -138,7 +149,7 @@ case "$*" in
         ;;
     esac
     ;;
-  pr\ view\ 103\ --json\ number,state,isDraft,labels,baseRefName,headRefName,mergeStateStatus,statusCheckRollup)
+  pr\ view\ 103\ --json\ number,state,isDraft,labels,baseRefName,headRefName,headRefOid,mergeStateStatus,statusCheckRollup)
     case "${MOCK_SCENARIO:-}" in
       dirty_out_of_scope)
         emit_pr 103 OPEN false develop feature/mock-pr-103 CLEAN "$check_success"
@@ -156,6 +167,38 @@ case "$*" in
         emit_pr 103 OPEN false develop feature/mock-pr-103 BLOCKED "$check_success"
         ;;
     esac
+    ;;
+  api\ --paginate\ repos/\{owner\}/\{repo\}/issues/102/comments?per_page=100)
+    # Annotation lookup: an existing marker comment only once the mock has
+    # "created" one, so the second annotate run exercises the PATCH path.
+    # Real gh api output shape (raw comments, filtered locally by jq now
+    # that the marker match happens outside gh's own --jq).
+    if [ -f "$MOCK_GH_STATE_DIR/hold-comment-102" ]; then
+      printf '[{"id":777,"body":"<!-- batch-merge-hold:v1 -->\\nBatch merge hold"}]\n'
+    else
+      printf '[]\n'
+    fi
+    ;;
+  api\ repos/\{owner\}/\{repo\}/issues/102/comments\ -f\ body=*)
+    : > "$MOCK_GH_STATE_DIR/hold-comment-102"
+    printf '%s\n' "$*" > "$MOCK_GH_STATE_DIR/hold-body-102"
+    printf '{"id":777}\n'
+    ;;
+  api\ repos/\{owner\}/\{repo\}/issues/comments/777\ --jq\ .body)
+    # Body read for the hold-lifted update: the marker plus whatever the last
+    # create/patch stored (the stored line is the whole argv, so take the tail).
+    if [ -f "$MOCK_GH_STATE_DIR/hold-body-102" ]; then
+      sed 's/^.*-f body=//' "$MOCK_GH_STATE_DIR/hold-body-102"
+    else
+      printf '<!-- batch-merge-hold:v1 -->\nBatch merge hold\n'
+    fi
+    ;;
+  api\ repos/\{owner\}/\{repo\}/issues/comments/777\ -X\ PATCH\ -f\ body=*)
+    printf '%s\n' "$*" > "$MOCK_GH_STATE_DIR/hold-body-102"
+    printf '{"id":777}\n'
+    ;;
+  pr\ view\ 102\ --json\ headRefOid,mergeStateStatus,statusCheckRollup)
+    printf '{"headRefOid":"cccccccccccccccccccccccccccccccccccccccc","mergeStateStatus":"DIRTY","statusCheckRollup":%s}\n' "$check_success"
     ;;
   *)
     printf 'unexpected gh invocation: gh %s\n' "$*" >&2
@@ -181,6 +224,16 @@ run_test() {
     printf 'FAIL: %s - expected %s, got %s\n' "$name" "$expected" "$actual"
     FAIL_COUNT=$((FAIL_COUNT + 1))
   fi
+}
+
+# count_lines_matching <pattern> <file> — prints the match count; a missing or
+# unreadable file is a test-harness failure, not "zero matches".
+count_lines_matching() {
+  local pattern="$1" file="$2" count status=0
+  [ -r "$file" ] || { printf 'FAIL: harness file unreadable: %s\n' "$file" >&2; exit 2; }
+  count="$(grep -c -- "$pattern" "$file")" || status=$?
+  [ "$status" -le 1 ] || { printf 'FAIL: grep failed (%s) reading %s\n' "$status" "$file" >&2; exit 2; }
+  printf '%s\n' "${count:-0}"
 }
 
 json_field() {
@@ -248,6 +301,133 @@ run_test "unready_without_exception_blocks" "label_gate_failed" "$(json_field "$
 rm -f "$MOCK_GH_STATE_DIR"/*.count
 unready_approved_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --approved-unready-prs 102)"
 run_test "unready_with_exception_continues" "clean" "$(json_field "$unready_approved_output" 102 classification)"
+
+echo ""
+echo "=== Head binding after a sibling merge (#1558) ==="
+_sha_a="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+_sha_b="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+# A PR whose head moved since its verdicts were produced is held even when the
+# live merge state is CLEAN, and is not retried into a clean result while its
+# new-head CI is pending.
+export MOCK_SCENARIO=head_changed
+rm -f "$MOCK_GH_STATE_DIR"/*.count "$MOCK_GH_STATE_DIR"/hold-*
+head_changed_output="$(BATCH_MERGE_RECHECK_ATTEMPTS=5 BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --reviewed-head-shas "102:$_sha_a")"
+run_test "head_changed_blocks" "merge_blocked" "$(json_field "$head_changed_output" 102 classification)"
+run_test "head_changed_reason" "head_sha_changed" "$(json_field "$head_changed_output" 102 reason)"
+run_test "head_changed_not_retried" "1" "$(json_field "$head_changed_output" 102 attempts)"
+run_test "head_changed_reports_live_head" "$_sha_b" "$(json_field "$head_changed_output" 102 head_sha)"
+run_test "head_changed_reports_reviewed_head" "$_sha_a" "$(json_field "$head_changed_output" 102 reviewed_head_sha)"
+run_test "head_changed_voids_all_verdicts" "reviewer_loop,ci,risk_classification,delegated_gate" \
+  "$(printf '%s\n' "$head_changed_output" | jq -r 'select(.pr == 102) | .verdicts_voided | join(",")')"
+run_test "head_changed_required_action" "reverify_at_current_head" "$(json_field "$head_changed_output" 102 required_action)"
+run_test "head_changed_no_annotation_without_flag" "null" "$(json_field "$head_changed_output" 102 annotation)"
+# An unreadable live head (gh omitted headRefOid) must not read as "nothing
+# to re-verify" -- treat it at least as conservatively as a confirmed change.
+export MOCK_SCENARIO=head_unavailable
+rm -f "$MOCK_GH_STATE_DIR"/*.count "$MOCK_GH_STATE_DIR"/hold-*
+head_unavailable_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --reviewed-head-shas "102:$_sha_a")"
+run_test "head_unavailable_blocks" "merge_blocked" "$(json_field "$head_unavailable_output" 102 classification)"
+run_test "head_unavailable_reason" "head_sha_unavailable" "$(json_field "$head_unavailable_output" 102 reason)"
+run_test "head_unavailable_voids_all_verdicts" "reviewer_loop,ci,risk_classification,delegated_gate" \
+  "$(printf '%s\n' "$head_unavailable_output" | jq -r 'select(.pr == 102) | .verdicts_voided | join(",")')"
+run_test "head_unavailable_required_action" "reverify_at_current_head" "$(json_field "$head_unavailable_output" 102 required_action)"
+# Same PR, same head as reviewed: the binding is satisfied and the normal
+# classification applies (pending CI → retried → clean in the default scenario).
+export MOCK_SCENARIO=default
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+head_same_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --reviewed-head-shas "102:$_sha_a")"
+run_test "head_unchanged_continues" "clean" "$(json_field "$head_same_output" 102 classification)"
+run_test "head_unchanged_reports_head" "$_sha_a" "$(json_field "$head_same_output" 102 head_sha)"
+run_test "clean_record_has_no_required_action" "null" "$(json_field "$head_same_output" 102 required_action)"
+# Records without a binding still carry the live head so the orchestrator can
+# record it; the dirty case names the action the runner must take.
+export MOCK_SCENARIO=dirty_out_of_scope
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+dirty_action_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102,103 --after-merged-pr 101 --base develop)"
+run_test "dirty_required_action" "resolve_conflict_then_reverify" "$(json_field "$dirty_action_output" 102 required_action)"
+run_test "dirty_reports_live_head" "$_sha_a" "$(json_field "$dirty_action_output" 102 head_sha)"
+run_test "dirty_voids_nothing_yet" "0" "$(printf '%s\n' "$dirty_action_output" | jq -r 'select(.pr == 102) | .verdicts_voided | length')"
+# Malformed or out-of-scope bindings are refused, not ignored.
+for bad in "102:abc" "102-$_sha_a" "999:$_sha_a" ",102:$_sha_a"; do
+  bad_status=0
+  "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --reviewed-head-shas "$bad" >/dev/null 2>&1 || bad_status=$?
+  run_test "bad_binding_rejected[$bad]" "2" "$bad_status"
+done
+run_test "out_of_scope_binding_reason" "reviewed_head_sha_not_in_frozen_list" \
+  "$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --reviewed-head-shas "999:$_sha_a" 2>/dev/null | jq -r '.reason' | tail -n 1)"
+# A partial binding map is refused: an unbound remaining PR would skip the
+# head comparison and could recheck clean with every verdict stale.
+partial_status=0
+partial_output="$("$HELPER" recheck-remaining --prs 101,102,103 --after-merged-pr 101 --base develop --reviewed-head-shas "102:$_sha_a" 2>/dev/null)" || partial_status=$?
+run_test "partial_binding_map_rejected" "2" "$partial_status"
+run_test "partial_binding_map_reason" "reviewed_head_sha_missing" "$(printf '%s\n' "$partial_output" | jq -r '.reason' | tail -n 1)"
+# A moved head that is also unmergeable must resolve the conflict first.
+export MOCK_SCENARIO=head_changed_annotate
+rm -f "$MOCK_GH_STATE_DIR"/*.count "$MOCK_GH_STATE_DIR"/hold-*
+dirty_moved_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --reviewed-head-shas "102:$_sha_a")"
+run_test "moved_and_dirty_requires_conflict_resolution" "resolve_conflict_then_reverify" "$(json_field "$dirty_moved_output" 102 required_action)"
+run_test "moved_and_dirty_still_voids_verdicts" "4" "$(printf '%s\n' "$dirty_moved_output" | jq -r 'select(.pr == 102) | .verdicts_voided | length')"
+
+echo ""
+echo "=== Hold annotation on the PR (#1558) ==="
+export MOCK_SCENARIO=head_changed_annotate
+rm -f "$MOCK_GH_STATE_DIR"/*.count "$MOCK_GH_STATE_DIR"/hold-*
+annotate_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --reviewed-head-shas "102:$_sha_a" --annotate)"
+run_test "annotate_creates_comment" "created" "$(json_field "$annotate_output" 102 annotation)"
+# The JSONL contract (one JSON object per line, Protocol 94 Step 4.5) must
+# survive stamping .annotation onto a merge_blocked record.
+run_test "annotate_output_stays_jsonl" "1" "$(printf '%s\n' "$annotate_output" | wc -l | tr -d ' ')"
+run_test "annotate_body_has_marker" "yes" "$(grep -q 'batch-merge-hold:v1' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
+run_test "annotate_body_names_sibling" "yes" "$(grep -q '#101 (merged)' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
+run_test "annotate_body_names_reason" "yes" "$(grep -q 'head_sha_changed' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
+run_test "annotate_body_names_voided_verdicts" "yes" "$(grep -q 'reviewer_loop, ci, risk_classification, delegated_gate' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
+run_test "annotate_body_names_action" "yes" "$(grep -q 'resolve_conflict_then_reverify' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+annotate_again_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --reviewed-head-shas "102:$_sha_a" --annotate)"
+run_test "annotate_updates_in_place" "updated" "$(json_field "$annotate_again_output" 102 annotation)"
+run_test "annotate_patch_call_recorded" "1" "$(count_lines_matching 'issues/comments/777 -X PATCH' "$CALL_LOG")"
+# A PR that rechecks clean after having been held gets its hold lifted in
+# place; one that was never held gets annotation=none and no comment.
+export MOCK_SCENARIO=default
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+lifted_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --annotate)"
+run_test "clean_after_hold_is_lifted" "lifted" "$(json_field "$lifted_output" 102 annotation)"
+run_test "lifted_body_says_so" "yes" "$(grep -q 'Hold lifted' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
+# Idempotence: a second clean recheck on an already-lifted comment must not
+# PATCH again or append a second "Hold lifted" line (the guard at the top of
+# annotate_hold_lifted must short-circuit on the marker it already wrote).
+_patch_count_before_second_lift="$(count_lines_matching 'issues/comments/777 -X PATCH' "$CALL_LOG")"
+rm -f "$MOCK_GH_STATE_DIR"/*.count
+lifted_again_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --annotate)"
+run_test "clean_after_lift_is_still_lifted" "lifted" "$(json_field "$lifted_again_output" 102 annotation)"
+run_test "lifted_idempotent_no_second_patch" "$_patch_count_before_second_lift" "$(count_lines_matching 'issues/comments/777 -X PATCH' "$CALL_LOG")"
+run_test "lifted_body_not_duplicated" "1" "$(count_lines_matching 'Hold lifted' "$MOCK_GH_STATE_DIR/hold-body-102")"
+rm -f "$MOCK_GH_STATE_DIR"/*.count "$MOCK_GH_STATE_DIR"/hold-*
+clean_annotate_output="$(BATCH_MERGE_RECHECK_SLEEP_SECONDS=0 "$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --annotate)"
+run_test "never_held_clean_pr_annotation_none" "none" "$(json_field "$clean_annotate_output" 102 annotation)"
+run_test "clean_pr_no_comment_written" "absent" "$([ -f "$MOCK_GH_STATE_DIR/hold-comment-102" ] && echo present || echo absent)"
+# Holds caused by the PR's own stage are reported, not annotated.
+export MOCK_SCENARIO=unready_approved
+rm -f "$MOCK_GH_STATE_DIR"/*.count "$MOCK_GH_STATE_DIR"/hold-*
+label_hold_output="$("$HELPER" recheck-remaining --prs 101,102 --after-merged-pr 101 --base develop --annotate)"
+run_test "label_gate_hold_reported" "label_gate_failed" "$(json_field "$label_hold_output" 102 reason)"
+run_test "label_gate_hold_not_annotated" "null" "$(json_field "$label_hold_output" 102 annotation)"
+run_test "label_gate_hold_no_comment" "absent" "$([ -f "$MOCK_GH_STATE_DIR/hold-comment-102" ] && echo present || echo absent)"
+
+echo ""
+echo "=== annotate-hold for holds outside a recheck (#1558) ==="
+rm -f "$MOCK_GH_STATE_DIR"/*.count "$MOCK_GH_STATE_DIR"/hold-*
+hold_output="$("$HELPER" annotate-hold --pr 102 --reason risk_guardrail_hold --held-by "run-epic risk classifier" --head-sha "$_sha_a")"
+run_test "annotate_hold_created" "ANNOTATE_RESULT=created" "$(printf '%s\n' "$hold_output" | grep '^ANNOTATE_RESULT=')"
+run_test "annotate_hold_reason_on_pr" "yes" "$(grep -q 'risk_guardrail_hold' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
+run_test "annotate_hold_held_by_on_pr" "yes" "$(grep -q 'run-epic risk classifier' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
+run_test "annotate_hold_keeps_conflict_free" "yes" "$(grep -q 'keep_conflict_free_then_reverify_before_merge' "$MOCK_GH_STATE_DIR/hold-body-102" && echo yes || echo no)"
+hold_again_output="$("$HELPER" annotate-hold --pr 102 --reason human_hold)"
+run_test "annotate_hold_updates_and_reads_head" "HEAD_SHA=cccccccccccccccccccccccccccccccccccccccc" "$(printf '%s\n' "$hold_again_output" | grep '^HEAD_SHA=')"
+run_test "annotate_hold_update_result" "ANNOTATE_RESULT=updated" "$(printf '%s\n' "$hold_again_output" | grep '^ANNOTATE_RESULT=')"
+bad_hold_status=0
+"$HELPER" annotate-hold --pr 102 --reason "not a token" --head-sha "$_sha_a" >/dev/null 2>&1 || bad_hold_status=$?
+run_test "annotate_hold_rejects_free_text_reason" "2" "$bad_hold_status"
 run_test "unready_with_exception_reason" "refreshed_clean" "$(json_field "$unready_approved_output" 102 reason)"
 
 rm -f "$MOCK_GH_STATE_DIR"/*.count

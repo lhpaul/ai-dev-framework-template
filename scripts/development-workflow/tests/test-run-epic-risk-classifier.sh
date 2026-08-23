@@ -49,6 +49,7 @@ case "$*" in
   "title": "Live low risk",
   "baseRefName": "develop-delegated-epic-orchestration",
   "headRefName": "docs/live-low",
+  "headRefOid": "42424242424242424242424242424242424242",
   "headRepository": {"name": "ai-dev-framework-template", "owner": {"login": "lhpaul"}},
   "mergeStateStatus": "CLEAN",
   "isDraft": false,
@@ -185,6 +186,35 @@ low_fixture="$(write_fixture low '{
 low_output="$(classify_fixture "$low_fixture" low)"
 run_test "classifies_low_docs_and_tests" "low" "$(printf '%s\n' "$low_output" | jq -r '.risk')"
 run_test "low_merge_permitted" "true" "$(printf '%s\n' "$low_output" | jq -r '.merge_permitted')"
+
+# --input carrying headRefOid directly (the same shape --pr builds internally)
+# must still surface it as head_sha, not just the normalized head_sha field.
+headrefoid_fixture="$(write_fixture headrefoid-input '{
+  "pr_number": 1,
+  "merge_state": "CLEAN",
+  "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+  "changed_files": ["docs/testing/workflow/919-pr-risk-classification.smoke-test.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+headrefoid_output="$(classify_fixture "$headrefoid_fixture" low)"
+run_test "input_head_sha_falls_back_to_headrefoid" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "$(printf '%s\n' "$headrefoid_output" | jq -r '.head_sha')"
+
+# When both head_sha and headRefOid are present, the already-normalized
+# head_sha field takes precedence over a raw headRefOid.
+both_head_fields_fixture="$(write_fixture both-head-fields '{
+  "pr_number": 1,
+  "merge_state": "CLEAN",
+  "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "headRefOid": "cccccccccccccccccccccccccccccccccccccccc",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+  "changed_files": ["docs/testing/workflow/919-pr-risk-classification.smoke-test.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+both_head_fields_output="$(classify_fixture "$both_head_fields_fixture" low)"
+run_test "input_head_sha_takes_precedence_over_headrefoid" "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "$(printf '%s\n' "$both_head_fields_output" | jq -r '.head_sha')"
 
 no_ci_fixture="$(write_fixture no-ci '{
   "pr_number": 1,
@@ -711,6 +741,7 @@ run_test "max_risk_gate_reason" "yes" "$(printf '%s\n' "$threshold_output" | jq 
 live_output="$("$CLASSIFIER" --pr 42 --max-risk low --json)"
 run_test "live_pr_path_read_only_classifies" "low" "$(printf '%s\n' "$live_output" | jq -r '.risk')"
 run_test "live_pr_path_merge_permitted" "true" "$(printf '%s\n' "$live_output" | jq -r '.merge_permitted')"
+run_test "live_pr_path_head_sha_from_headrefoid" "42424242424242424242424242424242424242" "$(printf '%s\n' "$live_output" | jq -r '.head_sha')"
 run_test "json_read_only_guarantee" "yes" "$(printf '%s\n' "$live_output" | jq -e '.read_only_guarantee | test("No tracker status")' >/dev/null && echo yes || echo no)"
 run_fails_contains "live_pr_view_failure_errors" "failed to read PR #42" env MOCK_GH_MODE=view-fail "$CLASSIFIER" --pr 42 --json
 run_fails_contains "live_pr_empty_response_errors" "empty PR response for #42" env MOCK_GH_MODE=view-empty "$CLASSIFIER" --pr 42 --json

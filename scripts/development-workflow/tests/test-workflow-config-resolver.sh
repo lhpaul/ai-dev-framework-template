@@ -929,6 +929,7 @@ run_contains "plain_dir_override_origin_empty" "LOCAL_OVERRIDE_ORIGIN=" "$plain_
 # linked worktree; and detection must not invoke git at all (the policy
 # recommender is forbidden from doing so and reads config through this path).
 submodule_dir="$(fixture_dir fake-submodule)"
+mkdir -p "$worktree_main/.git/modules/fake-submodule"
 printf 'gitdir: %s/.git/modules/fake-submodule\n' "$worktree_main" > "$submodule_dir/.git"
 submodule_output="$(workflow_review_override_context "$submodule_dir")"
 run_contains "submodule_gitdir_is_not_a_linked_worktree" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=" "$submodule_output"

@@ -725,8 +725,10 @@ mock_git_main_root="$(
   workflow_linked_worktree_main_root "$_WT_LINKED" 2>/dev/null
 )" || mock_git_status=$?
 run_test "linked_worktree_detected_without_invoking_git" "0:$_WT_MAIN" "$mock_git_status:$mock_git_main_root"
-printf 'gitdir: ../elsewhere/.git/modules/sub\n' > "$_WT_MAIN/fake-submodule.git"
-mkdir -p "$_WT_MAIN/fake-submodule"; cp "$_WT_MAIN/fake-submodule.git" "$_WT_MAIN/fake-submodule/.git"
+# The referenced gitdir must exist: otherwise path resolution fails before
+# the worktrees-layout check and the test proves nothing about that check.
+mkdir -p "$_WT_MAIN/.git/modules/sub" "$_WT_MAIN/fake-submodule"
+printf 'gitdir: ../.git/modules/sub\n' > "$_WT_MAIN/fake-submodule/.git"
 submodule_status=0
 workflow_linked_worktree_main_root "$_WT_MAIN/fake-submodule" >/dev/null 2>&1 || submodule_status=$?
 run_test "submodule_gitdir_file_is_not_a_linked_worktree" "1" "$submodule_status"
@@ -14279,12 +14281,174 @@ run_test "post_clean_reports_missing_review" "yes" \
   "$(grep -q 'print_kv POST_CLEAN_NO_SUBMITTED_REVIEW 1' "$_1556_loop" && echo yes || echo no)"
 run_test "post_clean_anchors_since_to_head_commit" "yes" \
   "$(grep -q 'settle_head_iso=' "$_1556_loop" && echo yes || echo no)"
+# The anchor must be the pre-dispatch head, never commits/HEAD: the API
+# resolves HEAD to the default branch, which on PR #1575 was nine days old,
+# so any past review satisfied the require-review settle (issue #1574).
+run_test "post_clean_anchor_uses_pre_dispatch_head" "yes" \
+  "$(grep -q 'commits/${loop_head_sha}' "$_1556_loop" && echo yes || echo no)"
+run_test "post_clean_anchor_never_commits_HEAD" "0" \
+  "$(grep_count_or_zero 'commits/${head_sha:-HEAD}' "$_1556_loop")"
 # The documented knobs must actually appear in --help (AC-4).
 for _knob in POST_CLEAN_SETTLE_QUIET POST_CLEAN_SETTLE_WINDOW POST_CLEAN_POLL; do
   run_test "help_documents_$_knob" "yes" \
     "$(grep -q "$_knob=<" "$_1556_loop" && echo yes || echo no)"
 done
 unset _knob _1556_loop
+
+# ---------------------------------------------------------------------------
+# Area 20: the late-thread re-check is one contract, owned by the loop (#1574)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 20: late-thread re-check contract (#1574) ==="
+
+_1574_loop="$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+_1574_p91="$REPO_ROOT/docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md"
+_1574_p92="$REPO_ROOT/docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md"
+
+# The --help text carried 600/180 for CodeRabbit while the code used 900/120.
+# Read both and compare, so the numbers cannot drift apart again.
+read -r _1574_cw _1574_cq _ _ <<<"$(_settle_config_for_platform coderabbit)"
+_1574_help="$(bash "$_1574_loop" --help 2>&1 || true)"
+run_test "help_window_default_matches_code" "$_1574_cw" \
+  "$(printf '%s\n' "$_1574_help" | grep -oE 'Maximum total time to spend settling \(default: [0-9]+' | grep -oE '[0-9]+$')"
+run_test "help_quiet_default_matches_code" "$_1574_cq" \
+  "$(printf '%s\n' "$_1574_help" | grep -oE 'Defaults per platform: [0-9]+ for coderabbit' | grep -oE '[0-9]+')"
+
+# A skipped recheck must say why, so the checklist can tell "nothing could
+# arrive late" from "settling was suppressed".
+run_test "recheck_skip_reason_emitted" "yes" \
+  "$(grep -q 'print_kv POST_CLEAN_RECHECK_SKIP_REASON' "$_1574_loop" && echo yes || echo no)"
+for _reason in not_clean compare_mode skip_env no_thread_posting_platforms no_pr_number; do
+  run_test "recheck_skip_reason_$_reason" "yes" \
+    "$(grep -q "POST_CLEAN_RECHECK_SKIP_REASON $_reason" "$_1574_loop" && echo yes || echo no)"
+done
+run_test "help_documents_skip_reason" "yes" \
+  "$(printf '%s\n' "$_1574_help" | grep -q 'POST_CLEAN_RECHECK_SKIP_REASON=' && echo yes || echo no)"
+
+# Protocol 91 must defer to the loop's settle fields rather than carry a wait
+# of its own (AC-2), and Protocols 91/92 must describe one contract (AC-3).
+run_test "p91_has_no_fixed_recheck_sleep" "0" \
+  "$(grep_count_or_zero 'sleep 10' "$_1574_p91")"
+# Both clean paths — settled and no-thread-platforms — emit the head binding,
+# and the head is read before any reviewer is dispatched, then compared after.
+run_test "loop_emits_head_sha_on_both_clean_paths" "2" \
+  "$(grep_count_or_zero 'print_kv POST_CLEAN_HEAD_SHA' "$_1574_loop")"
+run_test "loop_reads_head_before_dispatch" "yes" \
+  "$(awk '/^loop_head_sha=""/{h=NR} /^aggregate_result="skipped"/{a=NR} END{exit !(h>0 && a>0 && h>a)}' "$_1574_loop" && echo yes || echo no)"
+run_test "loop_refuses_head_moved_during_run" "yes" \
+  "$(grep -q 'aggregate_reason="head_moved_during_run"' "$_1574_loop" && echo yes || echo no)"
+run_test "p91_names_head_moved_during_run" "yes" \
+  "$(grep -q 'head_moved_during_run' "$_1574_p91" && echo yes || echo no)"
+# A head that moved during a clean run is a re-run, not a fixer cycle: the
+# ledger does not count it and neither cap fires on it.
+_1574_ledger_body="$(jq -nc '{schema:"reviewer_loop_history.v1",pr_number:42,history_status:"available",entries:[
+  {iteration:1,head_sha:"a1",run_id:"r1",result:"needs_fixes",reason:"head_moved_during_run"},
+  {iteration:2,head_sha:"a2",run_id:"r1",result:"needs_fixes",reason:"unresolved_review_threads"}]}' \
+  | { printf '%s\n' "$REVIEWER_LOOP_HISTORY_MARKER" '```json'; cat; printf '```\n'; })"
+run_test "ledger_excludes_head_moved_reruns" "1 1 available" \
+  "$(reviewer_loop_history_entries_count "$_1574_ledger_body" r1)"
+run_test "cap_skipped_for_head_moved" "yes" \
+  "$(grep -q 'if \[ "\$aggregate_reason" = "head_moved_during_run" \]; then' "$_1574_loop" && echo yes || echo no)"
+# The head is re-validated in Check 4 on BOTH paths — before the
+# label-present/absent branch — and a stale existing label is pulled back.
+run_test "p91_revalidates_head_before_label" "yes" \
+  "$(awk '/^# Check 4:/{p=1} p && /SETTLE_APPLIES:-1}" -eq 1 \] && ! settle_head_ok/{found=1} p && /^if \[ "\$HAS_HUMAN_REVIEW_LABEL" -gt 0 \]; then/{ if (found) ok=1 } END{exit !ok}' "$_1574_p91" && echo yes || echo no)"
+run_test "p91_pulls_stale_label_back" "yes" \
+  "$(grep -q 'it covers a head that is no longer the PR head' "$_1574_p91" && echo yes || echo no)"
+# A head-move rerun never escalates on a failed ledger persist: no fixer is
+# dispatched, so there is nothing for the ledger to bound.
+run_test "persist_failure_ignores_head_moved" "1" \
+  "$(reviewer_loop_persist_failure_should_escalate 1 needs_fixes head_moved_during_run; echo $?)"
+run_test "persist_failure_still_escalates_real_needs_fixes" "0" \
+  "$(reviewer_loop_persist_failure_should_escalate 1 needs_fixes unresolved_review_threads; echo $?)"
+run_test "p91_step7_snippet_fails_fast" "yes" \
+  "$(awk '/^set -euo pipefail$/{s=NR} /^# Drop settle telemetry from any earlier invocation first/{ if (s==NR-1) ok=1 } END{exit !ok}' "$_1574_p91" && echo yes || echo no)"
+unset _1574_ledger_body
+for _field in POST_CLEAN_SETTLED POST_CLEAN_SETTLE_TIMEOUT POST_CLEAN_NO_SUBMITTED_REVIEW POST_CLEAN_SETTLED_AT POST_CLEAN_RECHECK_SKIP_REASON POST_CLEAN_HEAD_SHA; do
+  run_test "p91_consumes_$_field" "yes" \
+    "$(grep -q "$_field" "$_1574_p91" && echo yes || echo no)"
+  run_test "p92_names_$_field" "yes" \
+    "$(grep -q "$_field" "$_1574_p92" && echo yes || echo no)"
+done
+# AC-4: an unsettled clean verdict without a submitted review is refused before
+# the label, not merely discouraged after it.
+run_test "p91_checklist_refuses_no_submitted_review" "yes" \
+  "$(grep -q 'POST_CLEAN_NO_SUBMITTED_REVIEW:-0}" = "1"' "$_1574_p91" && echo yes || echo no)"
+# Stale telemetry from a previous invocation must never survive into Check 0.6:
+# the Step 7 block clears POST_CLEAN_* before the loop runs and exports nothing
+# when the loop exits non-zero.
+run_test "p91_step7_clears_stale_settle_vars" "yes" \
+  "$(grep -q "grep -o '^POST_CLEAN_\[A-Z_\]\*'" "$_1574_p91" && echo yes || echo no)"
+run_test "p91_step7_exports_only_on_zero_exit" "yes" \
+  "$(grep -q 'Do not enter Step 8a on this run' "$_1574_p91" && echo yes || echo no)"
+# Protocol 91 carries no wait at all any more: the only sleep in 8a.1 was the
+# fixed one this issue removes, and the timeout path now goes back to Step 7.
+run_test "p91_8a1_has_no_sleep" "0" \
+  "$(awk '/^### 8a\.1:/,/^## Step 8b/' "$_1574_p91" | grep -cE '^[[:space:]]*sleep ' || true)"
+
+
+# Execute the gate, not just grep it: extract Check 0.5 + 0.6 from the
+# readiness checklist fence and run them with a stubbed gh.
+_1574_gate="$(mktemp)"
+{
+  cat <<'STUB'
+set -euo pipefail
+PR_NUMBER=42
+TARGET_REPO=owner/repo
+gh() {
+  case "$*" in
+    *headRefOid*) printf '%s\n' "${MOCK_HEAD:-}" ;;
+    *) printf '%s\n' "${MOCK_SUMMARY:-}" ;;
+  esac
+}
+STUB
+  awk '/^# Check 0\.5:/{p=1} /^# Check 1:/{p=0} p' "$_1574_p91"
+} > "$_1574_gate"
+run_test "gate_extracted_has_check_0_6" "yes" "$(grep -q '^# Check 0.6' "$_1574_gate" && echo yes || echo no)"
+# The extracted gate must parse in every shell the fence's contract names;
+# the Check 0.5 jq filter had an unterminated quote until this PR.
+run_test "gate_parses_in_bash" "yes" "$(bash -n "$_1574_gate" 2>/dev/null && echo yes || echo no)"
+run_test "gate_parses_in_zsh" "yes" "$(if command -v zsh >/dev/null 2>&1; then zsh -n "$_1574_gate" 2>/dev/null && echo yes || echo no; else echo yes; fi)"
+_1574_clean='### Automated Reviewer Loop Summary
+
+**Result:** clean — no blocking findings'
+_1574_skipped='### Automated Reviewer Loop Summary
+
+**Result:** skipped — no review platforms configured'
+_1574_head="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+_1574_run_gate() {
+  # $@ = VAR=value assignments; prints the exit status
+  local status=0
+  env -i PATH="$PATH" MOCK_SUMMARY="$_1574_clean" MOCK_HEAD="$_1574_head" "$@" bash "$_1574_gate" >/dev/null 2>&1 || status=$?
+  printf '%s' "$status"
+}
+run_test "gate_skipped_flag_passes" "0" "$(_1574_run_gate REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true)"
+run_test "gate_skipped_summary_passes" "0" "$(_1574_run_gate MOCK_SUMMARY="$_1574_skipped")"
+run_test "gate_missing_fields_refused" "12" "$(_1574_run_gate)"
+run_test "gate_no_thread_platforms_passes" "0" "$(_1574_run_gate POST_CLEAN_RECHECK=0 POST_CLEAN_RECHECK_SKIP_REASON=no_thread_posting_platforms POST_CLEAN_HEAD_SHA="$_1574_head")"
+# The no-thread path is bound to a head too: a push after Step 7 voids it.
+run_test "gate_no_thread_platforms_unbound_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0 POST_CLEAN_RECHECK_SKIP_REASON=no_thread_posting_platforms)"
+run_test "gate_no_thread_platforms_other_head_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0 POST_CLEAN_RECHECK_SKIP_REASON=no_thread_posting_platforms POST_CLEAN_HEAD_SHA=0123456789012345678901234567890123456789)"
+run_test "gate_suppressed_recheck_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0 POST_CLEAN_RECHECK_SKIP_REASON=skip_env)"
+run_test "gate_recheck_without_reason_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=0)"
+run_test "gate_settled_passes" "0" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_SETTLED_AT=2026-08-22T13:49:18Z POST_CLEAN_HEAD_SHA="$_1574_head")"
+# A settled verdict is bound to one head: telemetry without a head, or for a
+# head the PR has moved past, is refused.
+run_test "gate_settled_without_head_binding_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1)"
+run_test "gate_settled_for_other_head_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_HEAD_SHA=0123456789012345678901234567890123456789)"
+run_test "gate_no_submitted_review_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=0 POST_CLEAN_SETTLE_TIMEOUT=1 POST_CLEAN_NO_SUBMITTED_REVIEW=1)"
+run_test "gate_settle_timeout_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=0 POST_CLEAN_SETTLE_TIMEOUT=1)"
+run_test "gate_unsettled_without_flags_refused" "12" "$(_1574_run_gate POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=0)"
+# Planted violation: invert the settled comparison and the matrix must notice.
+_1574_gate_bad="$(mktemp)"
+sed 's/POST_CLEAN_SETTLED:-0}" = "1"/POST_CLEAN_SETTLED:-0}" = "0"/' "$_1574_gate" > "$_1574_gate_bad"
+_1574_bad_status=0
+env -i PATH="$PATH" MOCK_SUMMARY="$_1574_clean" MOCK_HEAD="$_1574_head" POST_CLEAN_RECHECK=1 POST_CLEAN_SETTLED=1 POST_CLEAN_HEAD_SHA="$_1574_head" bash "$_1574_gate_bad" >/dev/null 2>&1 || _1574_bad_status=$?
+run_test "gate_planted_inversion_is_caught" "12" "$_1574_bad_status"
+rm -f "$_1574_gate" "$_1574_gate_bad"
+unset -f _1574_run_gate
+unset _1574_gate _1574_gate_bad _1574_clean _1574_skipped _1574_bad_status _1574_head
+unset _1574_loop _1574_p91 _1574_p92 _1574_cw _1574_cq _1574_help _reason _field
 
 # ---------------------------------------------------------------------------
 # Summary
