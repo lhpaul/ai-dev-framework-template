@@ -2599,6 +2599,14 @@ fi
 # `pull_request` workflows never start — and the counts above are then both
 # zero. Refuse that instead of labelling on absence. Step 8's
 # CI_EVIDENCE=none / REASON=expected_checks_missing report the same condition.
+# Step 8 reports CI_EVIDENCE=unknown when it could not resolve the head or
+# read its workflow runs. That is not a green signal — refuse it here rather
+# than labelling on a verdict whose subject is unidentified.
+if [ "${CI_EVIDENCE:-}" = "unknown" ]; then
+  echo "ERROR: Step 8 reported CI_EVIDENCE=unknown — the head or its workflow runs could not be read."
+  echo "Re-run Step 8 (pr-ci-loop.sh) and export its output before re-entering Step 8a."
+  exit 5  # Exit code 5 = "CI not green at readiness gate"
+fi
 if [ "$CI_TOTAL" -eq 0 ]; then
   echo "ERROR: no checks ran on $HEAD_SHA — 'green' here would mean 'nothing failed', not 'CI passed'."
   echo "If the PR is CONFLICTING, resolve the conflict so pull_request workflows can run; then re-run Step 8."

@@ -316,6 +316,15 @@ while :; do
   if ! head_sha="$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid' 2>/dev/null)"; then
     head_sha=""
   fi
+  # Only a real object name identifies a head. Anything else (an older gh, a
+  # harness whose stub ignores --jq) means the head is UNKNOWN, which is a
+  # different thing from "the run lookup failed" below: the evidence gate
+  # simply cannot apply, so it is skipped and the result is marked
+  # CI_EVIDENCE=unknown for the readiness gate to refuse.
+  case "$head_sha" in
+    *[!0-9a-fA-F]*|"") head_sha="" ;;
+    *) [ "${#head_sha}" -ge 7 ] || head_sha="" ;;
+  esac
   if ! checks_json="$(gh pr view "$pr_number" --repo "$repo" --json statusCheckRollup 2>/dev/null)"; then
     print_kv RESULT red
     print_kv PR_NUMBER "$pr_number"
@@ -625,7 +634,10 @@ while :; do
       echo "  A conflicting PR gets no pull_request workflows at all; resolve the conflict (or the filter change) and let CI re-run." >&2
       exit 1
     fi
-    if [ "$total_check_count" -eq 0 ]; then
+    if [ -z "$head_sha" ]; then
+      print_kv CI_EVIDENCE unknown
+      echo "WARNING: could not resolve the PR head SHA; the CI-evidence comparison did not run." >&2
+    elif [ "$total_check_count" -eq 0 ]; then
       print_kv CI_EVIDENCE none
       echo "WARNING: no checks ran on $head_sha; 'green' here means 'nothing failed', not 'CI passed'." >&2
     else

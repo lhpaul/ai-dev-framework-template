@@ -39,7 +39,7 @@ make_gh() {
 #!/usr/bin/env bash
 # Defaults are plain variables: a ${VAR:-{...}} default containing braces does
 # not survive bash parameter expansion and silently yields invalid JSON.
-head_default='headsha000000000000'
+head_default='aaaa111000000000000'
 rollup_default='{"statusCheckRollup":[]}'
 runs_default='{"workflow_runs":[]}'
 commits_default='[]'
@@ -101,7 +101,7 @@ make_gh "$_bin"
 _success_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"workflow test harnesses","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"CheckRun","name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"}]}'
 _subset_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"}]}'
 _prev_two='{"workflow_runs":[{"name":"workflow test harnesses"},{"name":"ShellCheck"}]}'
-_commits_two='[{"sha":"prevsha00000000000000"},{"sha":"headsha000000000000"}]'
+_commits_two='[{"sha":"bbbb222000000000000"},{"sha":"aaaa111000000000000"}]'
 
 # A matrix workflow (e.g. workflow-tests.yml) reports one job per selected
 # suite under a single workflowName; the previous head ran two suite leaves
@@ -128,7 +128,7 @@ run_ci() {
 # 1. Same check set as the previous head → green.
 _out="$(run_ci MOCK_ROLLUP="$_success_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CURRENT_RUNS="$_runs_two" MOCK_PR_COMMITS="$_commits_two")"
 run_test "full_check_set_is_green" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
-run_test "green_reports_head_sha" "HEAD_SHA=headsha000000000000" "$(grep '^HEAD_SHA=' <<<"$_out" || true)"
+run_test "green_reports_head_sha" "HEAD_SHA=aaaa111000000000000" "$(grep '^HEAD_SHA=' <<<"$_out" || true)"
 run_test "green_reports_ci_evidence_present" "CI_EVIDENCE=present" "$(grep '^CI_EVIDENCE=' <<<"$_out" || true)"
 
 # 2. A workflow that ran on the previous head is absent now → red, named.
