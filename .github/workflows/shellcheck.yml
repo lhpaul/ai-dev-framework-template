@@ -4,6 +4,10 @@ on:
   pull_request:
     branches:
       - develop
+      # Integration branches (develop-<slug>, protocol 05b). Without this, an
+      # epic's sub-item PRs run zero checks and the whole implementation
+      # reaches the graduation PR untested (#1525).
+      - develop-**
       - main
     paths:
       - 'scripts/development-workflow/**/*.sh'
