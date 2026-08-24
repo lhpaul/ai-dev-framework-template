@@ -282,15 +282,31 @@ is_devin_status_stale() {
 # Devin Review, PR-Agent's bot review) from this comparison, which is correct:
 # those are not GitHub Actions workflow runs and are not what disappears when
 # a PR goes CONFLICTING.
+# workflow_run_names_for_sha <repo> <sha>
+# Prints the distinct workflow-run names for <sha>, one per line. Returns
+# non-zero when the lookup itself failed, so the caller can tell "this head
+# ran no workflows" from "we do not know what it ran" — a gate that exists to
+# stop a false green must not be satisfied by its own lookup erroring out.
+#
+# --slurp is required with --paginate: without it `--jq` runs per page, so a
+# multi-page response yields one result per page instead of one aggregate.
 workflow_run_names_for_sha() {
   local repo="$1" sha="$2"
-  [ -n "$sha" ] || return 0
-  gh api "repos/$repo/actions/runs?head_sha=$sha" --paginate --jq '[.workflow_runs[].name] | unique | .[]' 2>/dev/null || return 0
+  [ -n "$sha" ] || return 1
+  gh api "repos/$repo/actions/runs?head_sha=$sha&per_page=100" --paginate --slurp \
+    --jq '[.[].workflow_runs[]?.name] | unique | .[]' 2>/dev/null
 }
 
+# previous_head_check_names <repo> <pr_number> <current_head_sha>
+# Prints the previous head's workflow-run names. Exit 0 with no output means
+# "no previous head" (single-commit PR, or the same SHA); exit 1 means the
+# lookup failed and the expectation is unknown.
 previous_head_check_names() {
   local repo="$1" pr_number="$2" current_sha="$3" prev_sha=""
-  prev_sha="$(gh api "repos/$repo/pulls/$pr_number/commits" --paginate --jq '[.[].sha] | .[-2] // empty' 2>/dev/null)" || return 0
+  # --slurp: with --paginate alone, `.[-2]` is evaluated per page, so a PR
+  # with more than one page of commits emits one SHA per page.
+  prev_sha="$(gh api "repos/$repo/pulls/$pr_number/commits?per_page=100" --paginate --slurp \
+    --jq '[.[][].sha] | .[-2] // empty' 2>/dev/null)" || return 1
   [ -n "$prev_sha" ] || return 0
   [ "$prev_sha" != "$current_sha" ] || return 0
   workflow_run_names_for_sha "$repo" "$prev_sha"
@@ -549,18 +565,46 @@ while :; do
     # against the PR's previous head; a whole workflow that ran before and is
     # absent now is reported rather than silently accepted.
     missing_checks=""
+    evidence_lookup_failed=0
     if [ -n "$head_sha" ] && [ "${CI_LOOP_SKIP_EVIDENCE_GATE:-0}" != "1" ]; then
       # Both sides come from actions/runs so the comparison is symmetric: the
       # rollup also carries plain commit statuses (CodeRabbit, Devin) and
       # per-job matrix leaves, which have no counterpart in the previous head's
       # workflow-run list and would make the two sets incomparable.
-      current_names="$(workflow_run_names_for_sha "$repo" "$head_sha")"
-      while IFS= read -r prev_name; do
-        [ -n "$prev_name" ] || continue
-        if ! printf '%s\n' "$current_names" | grep -Fxq "$prev_name"; then
-          missing_checks="${missing_checks:+$missing_checks,}$prev_name"
-        fi
-      done <<< "$(previous_head_check_names "$repo" "$pr_number" "$head_sha")"
+      prev_names=""
+      if ! current_names="$(workflow_run_names_for_sha "$repo" "$head_sha")"; then
+        evidence_lookup_failed=1
+      elif ! prev_names="$(previous_head_check_names "$repo" "$pr_number" "$head_sha")"; then
+        evidence_lookup_failed=1
+      else
+        while IFS= read -r prev_name; do
+          [ -n "$prev_name" ] || continue
+          if ! printf '%s\n' "$current_names" | grep -Fxq "$prev_name"; then
+            missing_checks="${missing_checks:+$missing_checks,}$prev_name"
+          fi
+        done <<< "$prev_names"
+      fi
+    fi
+    if [ "$evidence_lookup_failed" -eq 1 ]; then
+      # Fail closed: a gate that exists to stop a false green must not be
+      # satisfied by its own lookup failing (CodeRabbit on PR #1588).
+      print_kv RESULT red
+      print_kv PR_NUMBER "$pr_number"
+      print_kv REPO "$repo"
+      print_kv HEAD_SHA "$head_sha"
+      print_kv REASON ci_evidence_lookup_failed
+      print_kv CI_EVIDENCE unknown
+      print_kv TOTAL_CHECK_COUNT "$total_check_count"
+      print_kv FAILING_CHECK_COUNT 0
+      print_kv FAILING_CHECKS ""
+      print_kv PENDING_CHECK_COUNT 0
+      print_kv PENDING_CHECKS ""
+      print_kv REVIEWER_CHECK_COUNT "$reviewer_check_count"
+      print_kv REVIEWER_CHECKS "$reviewer_check_list"
+      print_kv REVIEWER_CHECKS_JSON "$reviewer_checks_json"
+      echo "ERROR: could not read workflow-run evidence for $head_sha; refusing to report green on an unverified head." >&2
+      echo "  Retry, or set CI_LOOP_SKIP_EVIDENCE_GATE=1 to proceed without the check." >&2
+      exit 1
     fi
     if [ -n "$missing_checks" ]; then
       print_kv RESULT red

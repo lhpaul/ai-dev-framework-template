@@ -47,16 +47,31 @@ runs_default='{"workflow_runs":[]}'
 # The real gh applies --jq locally; a stub that ignores it hands the caller a
 # raw payload where it expects a filtered scalar. Apply the filter for real.
 jq_filter=""
+slurped=0
+case "$*" in *--slurp*) slurped=1 ;; esac
 prev=""
 for arg in "$@"; do
   [ "$prev" = "--jq" ] && jq_filter="$arg"
   prev="$arg"
 done
+# With --slurp, gh wraps each page's payload in an outer array; the filters
+# under test index through that wrapper, so the stub must mimic it. Setting
+# MOCK_PAGINATED=1 returns two identical pages, which is how a per-page --jq
+# bug shows up (duplicate/multiple results) versus a correct aggregate.
 emit() {
+  local payload="$1"
+  case "$*" in *) ;; esac
+  if [ "$slurped" = "1" ]; then
+    if [ "${MOCK_PAGINATED:-0}" = "1" ]; then
+      payload="[$1,$1]"
+    else
+      payload="[$1]"
+    fi
+  fi
   if [ -n "$jq_filter" ]; then
-    printf '%s\n' "$1" | jq -r "$jq_filter"
+    printf '%s\n' "$payload" | jq -r "$jq_filter"
   else
-    printf '%s\n' "$1"
+    printf '%s\n' "$payload"
   fi
 }
 case "$*" in
@@ -64,6 +79,7 @@ case "$*" in
   *"--json headRefOid"*) emit "{\"headRefOid\":\"${MOCK_HEAD_SHA:-$head_default}\"}" ; exit 0 ;;
   *"--json statusCheckRollup"*) emit "${MOCK_ROLLUP:-$rollup_default}" ; exit 0 ;;
   *"/actions/runs"*)
+    [ "${MOCK_RUNS_FAIL:-0}" = "1" ] && exit 1
     # Both sides of the evidence comparison hit this endpoint; distinguish
     # them by the head_sha in the query so a test can make them differ.
     case "$*" in
@@ -151,6 +167,21 @@ run_test "matrix_suite_churn_stays_green" "RESULT=green" "$(grep '^RESULT=' <<<"
 _status_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS"}]}'
 _out="$(run_ci MOCK_ROLLUP="$_status_rollup" MOCK_PREV_CHECKS="$_runs_one" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two")"
 run_test "commit_statuses_are_not_missing_workflows" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
+
+# 4d. A failed evidence lookup is not "no expectation": the gate fails closed
+#     rather than letting its own error produce a green verdict (CodeRabbit on
+#     PR #1588). MOCK_RUNS_FAIL makes actions/runs exit non-zero.
+_out="$(run_ci MOCK_ROLLUP="$_success_rollup" MOCK_PR_COMMITS="$_commits_two" MOCK_RUNS_FAIL=1)"
+run_test "evidence_lookup_failure_is_red" "RESULT=red" "$(grep '^RESULT=' <<<"$_out" || true)"
+run_test "evidence_lookup_failure_reason" "REASON=ci_evidence_lookup_failed" "$(grep '^REASON=' <<<"$_out" || true)"
+run_test "evidence_lookup_failure_marks_unknown" "CI_EVIDENCE=unknown" "$(grep '^CI_EVIDENCE=' <<<"$_out" || true)"
+_out="$(run_ci MOCK_ROLLUP="$_success_rollup" MOCK_PR_COMMITS="$_commits_two" MOCK_RUNS_FAIL=1 CI_LOOP_SKIP_EVIDENCE_GATE=1)"
+run_test "skip_flag_bypasses_lookup_failure" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
+
+# 4e. Paginated responses must be reduced before comparison: with --paginate
+#     but no --slurp, `--jq` runs per page and emits one result per page.
+_out="$(run_ci MOCK_ROLLUP="$_success_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CURRENT_RUNS="$_runs_two" MOCK_PR_COMMITS="$_commits_two" MOCK_PAGINATED=1)"
+run_test "paginated_lookup_still_green" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
 
 # 5. A genuinely failing check is still red (the gate did not displace it).
 _fail_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE"}]}'
