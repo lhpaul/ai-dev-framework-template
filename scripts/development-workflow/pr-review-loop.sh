@@ -4646,6 +4646,61 @@ coderabbit_rate_limit_comment_is_current() {
 }
 
 # ---------------------------------------------------------------------------
+# coderabbit_rate_limit_remaining_seconds
+#
+# How long is left of the window a rate-limit comment announced, given when
+# that comment was posted.
+#
+# coderabbit_rate_limit_wait_seconds returns the FULL announced window, which
+# is only the right thing to sleep at the instant the comment appears. A loop
+# that starts (or re-enters this branch) part-way through the window would
+# otherwise sleep the whole thing again: a 27-minute window on a comment
+# already 26 minutes old would wait a further 27m30s instead of ~90s, pushing
+# the retry a full extra quota cycle past the moment a review became
+# available. Against a one-review-per-hour allowance that is the difference
+# between finishing a PR this hour and finishing it next hour.
+#
+# Args: $1 body, $2 created_at (ISO-8601 UTC), $3 fallback seconds
+# Prints a positive integer. Falls back to the full window whenever the age
+# cannot be computed, which is the pre-existing behaviour.
+coderabbit_rate_limit_remaining_seconds() {
+  local body="${1:-}" created_at="${2:-}" fallback="${3:-}"
+  local full
+  full="$(coderabbit_rate_limit_wait_seconds "$body" "$fallback")"
+
+  # A floor, so a window that has just expired still leaves a beat for the
+  # vendor to settle rather than re-triggering instantly in a tight loop.
+  local floor="${CODERABBIT_RATE_LIMIT_MIN_WAIT:-30}"
+  case "$floor" in
+    '' | *[!0-9]*) floor=30 ;;
+  esac
+  floor="${floor#"${floor%%[!0]*}"}"
+  [ -z "$floor" ] && floor=0
+
+  local created_epoch now_epoch
+  created_epoch="$(_iso8601_to_epoch "$created_at")" || { printf '%s\n' "$full"; return 0; }
+  now_epoch="$(date -u +%s 2>/dev/null)" || { printf '%s\n' "$full"; return 0; }
+  case "$created_epoch" in '' | *[!0-9]*) printf '%s\n' "$full"; return 0 ;; esac
+  case "$now_epoch" in '' | *[!0-9]*) printf '%s\n' "$full"; return 0 ;; esac
+  # Clock skew: a comment stamped in the future has no elapsed age.
+  if [ "$created_epoch" -ge "$now_epoch" ]; then
+    printf '%s\n' "$full"
+    return 0
+  fi
+
+  local age remaining
+  age=$((now_epoch - created_epoch))
+  remaining=$((full - age))
+  if [ "$remaining" -lt "$floor" ]; then
+    remaining="$floor"
+  fi
+  if [ "$remaining" -le 0 ]; then
+    remaining=30
+  fi
+  printf '%s\n' "$remaining"
+}
+
+# ---------------------------------------------------------------------------
 # coderabbit_newest_rate_limit_comment
 #
 # Print the newest CodeRabbit rate-limit comment for this HEAD window as a
@@ -4694,10 +4749,21 @@ coderabbit_newest_rate_limit_comment() {
   selected="$(printf '%s' "$raw" | jq -cs --arg bot "$bot_login" --arg since "$since_iso" '
         [.[].[] | select(
             .user.login == $bot and
-            .created_at > $since and
-            ((.body // "") | test("rate.?limit"; "i"))
+            # CodeRabbit revises its walkthrough comment IN PLACE rather than
+            # posting a new one, so a rate-limit banner can arrive on a comment
+            # created before this HEAD (#1556 documents the same behaviour for
+            # the activity probe). Select on the later of the two timestamps.
+            (.created_at > $since or (.updated_at // .created_at) > $since) and
+            # Three banner shapes have been observed and no single marker
+            # covers them all: the standalone comment matches only the HTML
+            # marker "rate limited by coderabbit.ai" while its visible text
+            # reads "Review limit reached", and the command refusal carries no
+            # marker at all and matches only the visible "Review rate limited."
+            # Matching one of them means a live limit reads as absent, which
+            # spends a review from a one-per-hour allowance.
+            ((.body // "") | test("rate.?limit|review limit reached|next included review"; "i"))
         )]
-        | sort_by(.created_at)
+        | sort_by((.updated_at // .created_at))
         | (last // empty)
       ' 2>/dev/null)" || jq_status=$?
   if [ "$jq_status" -ne 0 ]; then
@@ -5201,7 +5267,7 @@ run_coderabbit_review() {
         # per hour on 2026-08-24), so it either retries far too early — burning
         # the retry budget without a review — or far too late.
         local coderabbit_this_wait
-        coderabbit_this_wait="$(coderabbit_rate_limit_wait_seconds "$rate_limit_comment_body" "$coderabbit_rate_limit_wait")"
+        coderabbit_this_wait="$(coderabbit_rate_limit_remaining_seconds "$rate_limit_comment_body" "$rate_limit_comment_created" "$coderabbit_rate_limit_wait")"
         if [ "$coderabbit_this_wait" != "$coderabbit_rate_limit_wait" ]; then
           echo "INFO: no SUCCESS commit status found — CodeRabbit states its next review window; waiting ${coderabbit_this_wait}s (configured fallback ${coderabbit_rate_limit_wait}s) before re-triggering" >&2
         else

@@ -14501,8 +14501,12 @@ unset _1556_rbin
 _1556_loop="$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
 # The activity probe inside run_coderabbit_review must accept updated_at too;
 # that was the specific created_at-only filter reported on PR #1532.
-run_test "coderabbit_activity_probe_accepts_updated_at" "1" \
-  "$(grep_count_or_zero '(.created_at > $since or (.updated_at // .created_at) > $since)' "$_1556_loop")"
+# Asserted as "present", not "appears exactly once": the rate-limit comment
+# selector adopted the same created_at-or-updated_at filter for the same
+# reason (CodeRabbit edits a comment in place rather than posting a new one),
+# so a fixed count here would fail on a correct change elsewhere in the file.
+run_test "coderabbit_activity_probe_accepts_updated_at" "yes" \
+  "$([ "$(grep_count_or_zero '(.created_at > $since or (.updated_at // .created_at) > $since)' "$_1556_loop")" -ge 1 ] && echo yes || echo no)"
 # The verdict must no longer be a single fixed sleep.
 run_test "post_clean_no_longer_single_wait" "0" \
   "$(grep_count_or_zero '_interruptible_sleep "$post_clean_wait"' "$_1556_loop")"
@@ -14911,6 +14915,49 @@ run_test "1579_lookup_four_valid_args_status" "0" "$(_1579_argcheck owner/repo 1
 rm -rf "$_1579_gh_dir"
 unset -f _1579_probe _1579_probe_has_output _1579_argcheck
 unset _1579_gh_dir
+
+# --- remaining window, not the whole window again --------------------------
+# coderabbit_rate_limit_wait_seconds returns the FULL announced window, which
+# is only correct at the instant the comment appears. Sleeping it again
+# part-way through pushes the retry a full extra quota cycle past the moment a
+# review becomes available.
+_1579_remaining() {
+  coderabbit_rate_limit_remaining_seconds "$_1579_window" "$(_1579_ago_s "$1")" 900
+}
+run_test "1579_remaining_fresh_comment_is_full_window" "1650" "$(_1579_remaining 0)"
+# 27 min window, 26 min elapsed -> ~90s left, not another 1650s.
+run_test "1579_remaining_mid_window_subtracts_age" "90" "$(_1579_remaining 1560)"
+run_test "1579_remaining_half_window" "870" "$(_1579_remaining 780)"
+# Past the window, a floor keeps the retry from spinning instantly.
+run_test "1579_remaining_expired_window_uses_floor" "30" "$(_1579_remaining 3600)"
+# Age that cannot be computed degrades to the previous behaviour, not to zero.
+run_test "1579_remaining_unparseable_created_at" "1650" \
+  "$(coderabbit_rate_limit_remaining_seconds "$_1579_window" "not-a-date" 900)"
+run_test "1579_remaining_future_created_at" "1650" \
+  "$(coderabbit_rate_limit_remaining_seconds "$_1579_window" "2099-01-01T00:00:00Z" 900)"
+run_test "1579_remaining_no_stated_window_uses_fallback" "900" \
+  "$(coderabbit_rate_limit_remaining_seconds "Review rate limited." "$(_1579_ago_s 0)" 900)"
+
+# --- the selector must match every observed banner shape -------------------
+# Three shapes have been seen and no single marker covers them all. Matching
+# only one means a live limit reads as absent, and the loop spends a review
+# from a one-per-hour allowance.
+_1579_sel() {
+  # -R is required: the argument is raw text, not JSON. Without it jq fails to
+  # parse and the test silently compares against an empty string.
+  printf '%s' "$1" | jq -Rsr 'if test("rate.?limit|review limit reached|next included review"; "i") then "yes" else "no" end' 2>/dev/null
+}
+run_test "1579_selector_matches_html_marker_shape" "yes" \
+  "$(_1579_sel '<!-- rate limited by coderabbit.ai --> Review limit reached')"
+run_test "1579_selector_matches_command_refusal_shape" "yes" \
+  "$(_1579_sel 'Review rate limited. Your next included review will be available in 7 minutes.')"
+# The visible-text-only shape: no HTML marker, no literal "rate limit".
+run_test "1579_selector_matches_visible_text_without_marker" "yes" \
+  "$(_1579_sel '## Review limit reached
+**Next included review available in 27 minutes.**')"
+run_test "1579_selector_ignores_ordinary_comment" "no" \
+  "$(_1579_sel 'Thanks, looks good to me.')"
+unset -f _1579_remaining _1579_sel
 
 # --- mutation check --------------------------------------------------------
 # The staleness verdicts above must actually depend on the parsed window. Shadow
