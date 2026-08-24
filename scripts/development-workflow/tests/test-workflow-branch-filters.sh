@@ -29,13 +29,36 @@ run_test() {
   fi
 }
 
-# branch_filter_block <file> — the `branches:` list under `on:`, one entry per
-# line, empty when the workflow has no branch filter (runs on every branch).
+# branch_filter_block <file> — the `branches:` list under `on: pull_request`
+# (or `pull_request_target`), one entry per line, empty when the workflow has
+# no PR-triggered branch filter (runs on every branch, or has no PR trigger).
+#
+# A `push:` trigger can carry its own unrelated `branches:` list in the same
+# `on:` block; PR checks are gated by the `pull_request(_target)` filter, not
+# `push`, so a `push:` list must not be folded into this result. `trigger`
+# tracks which direct child of `on:` the parser is currently inside, and only
+# `branches:` seen while `trigger` is `pull_request`/`pull_request_target` is
+# collected.
+#
+# Known limits (not hit by any workflow this template ships, so left
+# undetected rather than over-engineered): a flow-style `branches: [a, b]`
+# list is not parsed (the workflow is treated as having no filter and is
+# skipped rather than flagged); a quoted `"on":` top-level key is not
+# recognized. Both assume this repo's own convention of a block-style list
+# under a bare `on:` key, two-space YAML indentation per level.
 branch_filter_block() {
   awk '
-    /^on:/ { in_on = 1; next }
-    /^[^[:space:]#]/ { in_on = 0 }
-    in_on && /^[[:space:]]+branches:[[:space:]]*$/ { in_br = 1; next }
+    /^on:/ { in_on = 1; trigger = ""; next }
+    /^[^[:space:]#]/ { in_on = 0; trigger = "" }
+    in_on && /^[[:space:]]{2}[A-Za-z_]+:[[:space:]]*$/ {
+      key = $0
+      sub(/^[[:space:]]*/, "", key)
+      sub(/:.*$/, "", key)
+      trigger = (key == "pull_request" || key == "pull_request_target") ? key : ""
+      in_br = 0
+      next
+    }
+    in_on && trigger != "" && /^[[:space:]]+branches:[[:space:]]*$/ { in_br = 1; next }
     in_br && /^[[:space:]]+-[[:space:]]/ { sub(/^[[:space:]]*-[[:space:]]*/, ""); gsub(/[\047"]/, ""); print; next }
     # Comments and blank lines sit inside the list without ending it.
     in_br && /^[[:space:]]*#/ { next }
@@ -81,6 +104,34 @@ for wf in "$WF_DIR"/*.yml; do
   done <<< "$(branch_filter_block "$wf")"
 done
 run_test "no_hardcoded_integration_branch_slugs" "" "$hardcoded"
+
+# A `push:` filter's `branches:` list is a different trigger than
+# `pull_request:` — PR checks are not gated by it. A parser that folds both
+# lists together would report a workflow as covering integration branches
+# because `develop-**` sits under `push:`, while its actual `pull_request:`
+# filter still omits it and PRs into develop-<slug> still run zero checks.
+FIXTURE_DIR="$(mktemp -d)"
+trap 'rm -rf "$FIXTURE_DIR"' EXIT
+cat > "$FIXTURE_DIR/push-vs-pull-request.yml" <<'FIXTURE'
+name: fixture
+on:
+  push:
+    branches:
+      - develop
+      - develop-**
+      - main
+  pull_request:
+    branches:
+      - develop
+      - main
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+FIXTURE
+fixture_block="$(branch_filter_block "$FIXTURE_DIR/push-vs-pull-request.yml")"
+run_test "branch_filter_block_ignores_push_trigger" "$(printf 'develop\nmain')" "$fixture_block"
 
 printf '\nResults: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
