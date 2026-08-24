@@ -36,6 +36,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **CI "green" now requires evidence that CI ran** (#1514, #1580): a head with
+  no checks, or missing a workflow that ran on the PR's previous head, read as
+  green because nothing was failing or pending. GitHub builds no merge ref for
+  a `CONFLICTING` PR, so its `pull_request` workflows never start — measured on
+  PR #1577, where two pushes after it went `DIRTY` ran 4 checks instead of 16
+  and the loop still reported green. `pr-ci-loop.sh` now compares the current
+  head's *workflow* names (not job/check names — a matrix workflow's selected
+  suite set legitimately narrows or grows between heads by design) against
+  the previous head's and reports
+  `RESULT=red REASON=expected_checks_missing MISSING_CHECKS=…`, emits
+  `HEAD_SHA` and `CI_EVIDENCE=present|none|unknown`, and Protocol 91's
+  readiness
+  Check 0 refuses a head with an empty check set — now counting commit
+  statuses (CodeRabbit, Devin Review) alongside check-runs, since a
+  status-only signal was previously invisible to this gate — and prints
+  `READINESS_HEAD_SHA` / `READINESS_CI_*`. `test-pr-ci-loop.sh` is new, closing
+  one of the four coverage gaps the selector reports.
 - **Codex reviewer unavailability is classified and recoverable** (#1522,
   #1526): the Codex GitHub App's "create a Codex account and connect to
   github" refusal — which it returns per triggering identity, so an org-wide
