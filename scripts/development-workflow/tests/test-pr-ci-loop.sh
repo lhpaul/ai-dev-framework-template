@@ -29,7 +29,8 @@ run_test() {
 
 # make_gh <dir> — a gh stub driven by env vars:
 #   MOCK_ROLLUP        statusCheckRollup JSON
-#   MOCK_PREV_CHECKS   check names on the previous head (JSON array of names)
+#   MOCK_PREV_CHECKS   workflow_runs payload for the previous head
+#                       ({"workflow_runs":[{"name":...}, ...]})
 #   MOCK_PR_COMMITS    commit SHAs for the PR (JSON array)
 make_gh() {
   local dir="$1"
@@ -40,7 +41,7 @@ make_gh() {
 # not survive bash parameter expansion and silently yields invalid JSON.
 head_default='headsha000000000000'
 rollup_default='{"statusCheckRollup":[]}'
-checks_default='{"check_runs":[]}'
+runs_default='{"workflow_runs":[]}'
 commits_default='[]'
 # The real gh applies --jq locally; a stub that ignores it hands the caller a
 # raw payload where it expects a filtered scalar. Apply the filter for real.
@@ -61,7 +62,7 @@ case "$*" in
   *"auth status"*) exit 0 ;;
   *"--json headRefOid"*) emit "{\"headRefOid\":\"${MOCK_HEAD_SHA:-$head_default}\"}" ; exit 0 ;;
   *"--json statusCheckRollup"*) emit "${MOCK_ROLLUP:-$rollup_default}" ; exit 0 ;;
-  *"/check-runs"*) emit "${MOCK_PREV_CHECKS:-$checks_default}" ; exit 0 ;;
+  *"/actions/runs"*) emit "${MOCK_PREV_CHECKS:-$runs_default}" ; exit 0 ;;
   *"/commits"*) emit "${MOCK_PR_COMMITS:-$commits_default}" ; exit 0 ;;
   *"/reviews"*|*"/comments"*) emit '[]' ; exit 0 ;;
   *) emit '{}' ; exit 0 ;;
@@ -75,8 +76,20 @@ make_gh "$_bin"
 
 _success_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"workflow test harnesses","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"CheckRun","name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"}]}'
 _subset_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"}]}'
-_prev_two='{"check_runs":[{"name":"workflow test harnesses"},{"name":"ShellCheck"}]}'
+_prev_two='{"workflow_runs":[{"name":"workflow test harnesses"},{"name":"ShellCheck"}]}'
 _commits_two='[{"sha":"prevsha00000000000000"},{"sha":"headsha000000000000"}]'
+
+# A matrix workflow (e.g. workflow-tests.yml) reports one job per selected
+# suite under a single workflowName; the previous head ran two suite leaves
+# plus the workflow's own aggregator/select jobs, all under "workflow test
+# harnesses". The current head selected a *different, smaller* set of leaves
+# (legitimate — the diff narrowed) but the same workflow, still green.
+_matrix_prev='{"workflow_runs":[{"name":"workflow test harnesses"}]}'
+_matrix_current_rollup='{"statusCheckRollup":[
+  {"__typename":"CheckRun","name":"select suites","workflowName":"workflow test harnesses","status":"COMPLETED","conclusion":"SUCCESS"},
+  {"__typename":"CheckRun","name":"scripts/development-workflow/tests/test-only-this-suite-now.sh","workflowName":"workflow test harnesses","status":"COMPLETED","conclusion":"SUCCESS"},
+  {"__typename":"CheckRun","name":"workflow test harnesses","workflowName":"workflow test harnesses","status":"COMPLETED","conclusion":"SUCCESS"}
+]}'
 
 run_ci() {
   local out status=0
@@ -108,8 +121,17 @@ run_test "no_checks_reports_evidence_none" "CI_EVIDENCE=none" "$(grep '^CI_EVIDE
 #    the previous head ran nothing.
 _out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_prev_two" MOCK_PR_COMMITS="$_commits_two" CI_LOOP_SKIP_EVIDENCE_GATE=1)"
 run_test "evidence_gate_is_skippable" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
-_out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS='{"check_runs":[]}' MOCK_PR_COMMITS="$_commits_two")"
+_out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS='{"workflow_runs":[]}' MOCK_PR_COMMITS="$_commits_two")"
 run_test "no_previous_checks_does_not_fire" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
+
+# 4b. A matrix workflow's selected suite set narrows on the current head
+#     (select-test-suites.sh legitimately picked fewer/different leaves) but
+#     the same workflow ran and passed — must stay green, not read as a
+#     missing check. Comparing at check-run granularity (pre-fix behavior)
+#     would have reported the previous head's leaf name as MISSING_CHECKS
+#     and gone red; workflow-level comparison must not.
+_out="$(run_ci MOCK_ROLLUP="$_matrix_current_rollup" MOCK_PREV_CHECKS="$_matrix_prev" MOCK_PR_COMMITS="$_commits_two")"
+run_test "matrix_suite_churn_stays_green" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
 
 # 5. A genuinely failing check is still red (the gate did not displace it).
 _fail_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE"}]}'

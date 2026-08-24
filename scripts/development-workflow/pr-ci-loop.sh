@@ -254,8 +254,8 @@ is_devin_status_stale() {
 }
 
 # previous_head_check_names <repo> <pr_number> <current_head_sha>
-# Prints the check names that ran on the PR's most recent EARLIER head, one per
-# line (empty when the PR has a single commit or the lookup fails).
+# Prints the WORKFLOW names that ran on the PR's most recent EARLIER head, one
+# per line (empty when the PR has a single commit or the lookup fails).
 #
 # Why this exists (#1514, #1580): "no failing and no pending checks" is not
 # evidence that CI ran. A head can carry zero checks, or only a subset, and
@@ -267,12 +267,27 @@ is_devin_status_stale() {
 #     drops out of the set.
 # Comparing against the previous head turns "a workflow that used to run is
 # absent" into a red result instead of a vacuous pass.
+#
+# Deliberately WORKFLOW-granular, not check/job-granular (review finding on
+# #1588 itself): `workflow-tests.yml` runs one job per selected suite, and the
+# selected set is diff-driven (select-test-suites.sh) — it legitimately grows
+# or shrinks as commits land, by design (see that workflow's own comment: "The
+# matrix job names change with the selection, so they cannot be required
+# directly"). Comparing individual check-run names (e.g.
+# `scripts/.../tests/test-foo.sh`) would treat that expected churn as a missing
+# check and block a PR that should pass — verified live: PR #1588's own head
+# carries 6 such matrix leaves under one workflow, `actions/runs?head_sha=`
+# collapses them to a single "workflow test harnesses" entry. Using
+# `actions/runs` also naturally excludes plain commit statuses (CodeRabbit,
+# Devin Review, PR-Agent's bot review) from this comparison, which is correct:
+# those are not GitHub Actions workflow runs and are not what disappears when
+# a PR goes CONFLICTING.
 previous_head_check_names() {
   local repo="$1" pr_number="$2" current_sha="$3" prev_sha=""
   prev_sha="$(gh api "repos/$repo/pulls/$pr_number/commits" --paginate --jq '[.[].sha] | .[-2] // empty' 2>/dev/null)" || return 0
   [ -n "$prev_sha" ] || return 0
   [ "$prev_sha" != "$current_sha" ] || return 0
-  gh api "repos/$repo/commits/$prev_sha/check-runs" --jq '[.check_runs[].name] | unique | .[]' 2>/dev/null || return 0
+  gh api "repos/$repo/actions/runs?head_sha=$prev_sha" --paginate --jq '[.workflow_runs[].name] | unique | .[]' 2>/dev/null || return 0
 }
 
 while :; do
@@ -524,11 +539,12 @@ while :; do
 
     # CI-evidence gate (#1514, #1580): green must mean "the checks that belong
     # on this head ran and passed", not "nothing failed". Compare the current
-    # head's check names against the PR's previous head; anything that ran
-    # before and is absent now is reported rather than silently accepted.
+    # head's WORKFLOW names (not job/check names — see previous_head_check_names)
+    # against the PR's previous head; a whole workflow that ran before and is
+    # absent now is reported rather than silently accepted.
     missing_checks=""
     if [ -n "$head_sha" ] && [ "${CI_LOOP_SKIP_EVIDENCE_GATE:-0}" != "1" ]; then
-      current_names="$(printf '%s\n' "$normalized_checks_json" | jq -r '[.[] | (.name // .context // .workflowName // "unknown")] | unique | .[]' 2>/dev/null || true)"
+      current_names="$(printf '%s\n' "$normalized_checks_json" | jq -r '[.[] | (.workflowName // .context // .name // "unknown")] | unique | .[]' 2>/dev/null || true)"
       while IFS= read -r prev_name; do
         [ -n "$prev_name" ] || continue
         if ! printf '%s\n' "$current_names" | grep -Fxq "$prev_name"; then
@@ -551,7 +567,7 @@ while :; do
       print_kv REVIEWER_CHECK_COUNT "$reviewer_check_count"
       print_kv REVIEWER_CHECKS "$reviewer_check_list"
       print_kv REVIEWER_CHECKS_JSON "$reviewer_checks_json"
-      echo "ERROR: checks that ran on the PR's previous head are absent on $head_sha: $missing_checks" >&2
+      echo "ERROR: workflow(s) that ran on the PR's previous head are absent on $head_sha: $missing_checks" >&2
       echo "  A conflicting PR gets no pull_request workflows at all; resolve the conflict (or the filter change) and let CI re-run." >&2
       exit 1
     fi

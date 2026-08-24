@@ -2579,6 +2579,16 @@ CI_FAILING=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" \
 CI_PENDING=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" \
   --jq '[.check_runs[] | select(.status != "completed")] | length')
 CI_TOTAL=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" --jq '.check_runs | length')
+# check-runs is GitHub Actions/App checks only — it does not include plain
+# commit statuses (CodeRabbit, Devin Review, and this repo's own
+# "Reviewer-loop completion guard" all post as statuses, not check-runs). A
+# PR whose CI signal is entirely statuses would otherwise read CI_TOTAL=0
+# below and be refused even when green, and a failing status would not count
+# toward CI_FAILING at all. Fold the combined-status endpoint in too.
+STATUS_JSON=$(gh api "repos/$REPO/commits/$HEAD_SHA/status" --jq '.statuses // []')
+CI_FAILING=$((CI_FAILING + $(printf '%s' "$STATUS_JSON" | jq '[.[] | select(.state == "failure" or .state == "error")] | length')))
+CI_PENDING=$((CI_PENDING + $(printf '%s' "$STATUS_JSON" | jq '[.[] | select(.state == "pending")] | length')))
+CI_TOTAL=$((CI_TOTAL + $(printf '%s' "$STATUS_JSON" | jq 'length')))
 if [ "$CI_FAILING" -gt 0 ] || [ "$CI_PENDING" -gt 0 ]; then
   echo "ERROR: CI is not green — ${CI_FAILING} failing and ${CI_PENDING} pending check(s) on $HEAD_SHA."
   echo "Run Step 8 (pr-ci-loop.sh) and resolve all failures before applying ready-for-human-review."
