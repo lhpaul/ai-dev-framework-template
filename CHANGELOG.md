@@ -36,6 +36,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **Release stamping no longer treats "has a merged PR" as "shipped"**
+  (#1512): `detect_omitted_merged_items()` auto-added any Merged board item
+  with a merged PR closed inside the release window — but a PR merged into an
+  in-flight `develop-<slug>` integration branch satisfies all of that while
+  none of its code is in the tag. Downstream this stamped 16 issues onto a
+  release whose changelog named two, across at least five releases. Auto-add
+  is now gated on `git merge-base --is-ancestor <merge-commit> <tag>`;
+  candidates that fail it (or whose merge commit, tag, or git state cannot be
+  read) are reported and left out of the stamped scope, surfacing as
+  `TRACKER_INCOMPLETE`. Protocol 05 §9.1 says `--from-changelog` is not
+  unconditionally safe while integration branches exist.
 - **Codex reviewer unavailability is classified and recoverable** (#1522,
   #1526): the Codex GitHub App's "create a Codex account and connect to
   github" refusal — which it returns per triggering identity, so an org-wide

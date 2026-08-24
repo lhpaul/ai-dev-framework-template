@@ -451,6 +451,17 @@ shipped in that release section. Prefer the helper's `--from-changelog` parser,
 or pass the same explicit scope with `--issue` / `--issues`. Do not infer release
 scope from the whole project board.
 
+`--from-changelog` is not unconditionally safe on its own while integration
+branches exist (#1512). The helper also runs `detect_omitted_merged_items()`,
+which used to auto-add any Merged item that had a merged PR — and a PR merged
+into an in-flight `develop-<slug>` is merged, closed, and inside the release
+window while none of its code is in the tag. Downstream this stamped 16 issues
+onto a release whose changelog named two. Auto-add is now gated on the merge
+commit being an ancestor of the release tag; anything else is reported
+**report-only** and surfaces as `TRACKER_INCOMPLETE`. Read that report rather
+than assuming the changelog-derived scope was the only thing stamped, and pass
+`--issue` / `--issues` for anything the report names that genuinely shipped.
+
 ### 9.2 Preferred command (single entry point)
 
 Use the helper script:
