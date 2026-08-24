@@ -14894,8 +14894,22 @@ run_test "1579_lookup_none_has_no_output" "no" "$(_1579_probe_has_output empty)"
 # A failed API call must be its own signal, not "no rate limit".
 run_test "1579_lookup_gh_failure_status" "2" "$(_1579_probe fail)"
 run_test "1579_lookup_unparseable_status" "2" "$(_1579_probe garbage)"
+# Caller error is reported as a caller error, not as an API outage. Without
+# this, a missing argument builds a malformed endpoint, gh fails, and the
+# result is indistinguishable from a real lookup failure.
+_1579_argcheck() {
+  local st=0
+  PATH="$_1579_gh_dir:$PATH" STUB_MODE=empty coderabbit_newest_rate_limit_comment "$@" >/dev/null 2>&1 || st=$?
+  printf '%s\n' "$st"
+}
+run_test "1579_lookup_no_args_status" "2" "$(_1579_argcheck)"
+run_test "1579_lookup_too_few_args_status" "2" "$(_1579_argcheck a b c)"
+run_test "1579_lookup_too_many_args_status" "2" "$(_1579_argcheck a b c d e)"
+run_test "1579_lookup_blank_repo_status" "2" "$(_1579_argcheck '' 1 bot 2026-01-01T00:00:00Z)"
+run_test "1579_lookup_blank_since_status" "2" "$(_1579_argcheck owner/repo 1 bot '')"
+run_test "1579_lookup_four_valid_args_status" "0" "$(_1579_argcheck owner/repo 1 bot 2026-01-01T00:00:00Z)"
 rm -rf "$_1579_gh_dir"
-unset -f _1579_probe _1579_probe_has_output
+unset -f _1579_probe _1579_probe_has_output _1579_argcheck
 unset _1579_gh_dir
 
 # --- mutation check --------------------------------------------------------

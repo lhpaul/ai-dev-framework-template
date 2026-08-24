@@ -4669,6 +4669,20 @@ coderabbit_rate_limit_comment_is_current() {
 # per hour — on evidence that was never actually read, and with nothing in the
 # log to say so.
 coderabbit_newest_rate_limit_comment() {
+  # Validate before reading positional parameters. A missing argument would
+  # otherwise build a malformed endpoint or an empty `--arg`, and `gh` would
+  # fail in a way that now reports "lookup failure" — technically correct but
+  # indistinguishable from a real API outage, which is the very confusion this
+  # function was just changed to remove. Fail with the same status 2 contract,
+  # but say plainly that the caller, not the API, is at fault.
+  if [ "$#" -ne 4 ]; then
+    echo "ERROR: coderabbit_newest_rate_limit_comment requires 4 arguments (repo pr_number bot_login since_iso), got $#" >&2
+    return 2
+  fi
+  if [ -z "${1:-}" ] || [ -z "${2:-}" ] || [ -z "${3:-}" ] || [ -z "${4:-}" ]; then
+    echo "ERROR: coderabbit_newest_rate_limit_comment requires non-empty repo, pr_number, bot_login and since_iso (got repo='${1:-}' pr_number='${2:-}' bot_login='${3:-}' since_iso='${4:-}')" >&2
+    return 2
+  fi
   local repo="$1" pr_number="$2" bot_login="$3" since_iso="$4"
   local raw="" status=0
   raw="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null)" || status=$?
