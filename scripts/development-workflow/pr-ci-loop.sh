@@ -282,12 +282,18 @@ is_devin_status_stale() {
 # Devin Review, PR-Agent's bot review) from this comparison, which is correct:
 # those are not GitHub Actions workflow runs and are not what disappears when
 # a PR goes CONFLICTING.
+workflow_run_names_for_sha() {
+  local repo="$1" sha="$2"
+  [ -n "$sha" ] || return 0
+  gh api "repos/$repo/actions/runs?head_sha=$sha" --paginate --jq '[.workflow_runs[].name] | unique | .[]' 2>/dev/null || return 0
+}
+
 previous_head_check_names() {
   local repo="$1" pr_number="$2" current_sha="$3" prev_sha=""
   prev_sha="$(gh api "repos/$repo/pulls/$pr_number/commits" --paginate --jq '[.[].sha] | .[-2] // empty' 2>/dev/null)" || return 0
   [ -n "$prev_sha" ] || return 0
   [ "$prev_sha" != "$current_sha" ] || return 0
-  gh api "repos/$repo/actions/runs?head_sha=$prev_sha" --paginate --jq '[.workflow_runs[].name] | unique | .[]' 2>/dev/null || return 0
+  workflow_run_names_for_sha "$repo" "$prev_sha"
 }
 
 while :; do
@@ -544,7 +550,11 @@ while :; do
     # absent now is reported rather than silently accepted.
     missing_checks=""
     if [ -n "$head_sha" ] && [ "${CI_LOOP_SKIP_EVIDENCE_GATE:-0}" != "1" ]; then
-      current_names="$(printf '%s\n' "$normalized_checks_json" | jq -r '[.[] | (.workflowName // .context // .name // "unknown")] | unique | .[]' 2>/dev/null || true)"
+      # Both sides come from actions/runs so the comparison is symmetric: the
+      # rollup also carries plain commit statuses (CodeRabbit, Devin) and
+      # per-job matrix leaves, which have no counterpart in the previous head's
+      # workflow-run list and would make the two sets incomparable.
+      current_names="$(workflow_run_names_for_sha "$repo" "$head_sha")"
       while IFS= read -r prev_name; do
         [ -n "$prev_name" ] || continue
         if ! printf '%s\n' "$current_names" | grep -Fxq "$prev_name"; then

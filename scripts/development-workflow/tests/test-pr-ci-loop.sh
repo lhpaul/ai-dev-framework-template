@@ -43,6 +43,7 @@ head_default='headsha000000000000'
 rollup_default='{"statusCheckRollup":[]}'
 runs_default='{"workflow_runs":[]}'
 commits_default='[]'
+runs_default='{"workflow_runs":[]}'
 # The real gh applies --jq locally; a stub that ignores it hands the caller a
 # raw payload where it expects a filtered scalar. Apply the filter for real.
 jq_filter=""
@@ -62,7 +63,14 @@ case "$*" in
   *"auth status"*) exit 0 ;;
   *"--json headRefOid"*) emit "{\"headRefOid\":\"${MOCK_HEAD_SHA:-$head_default}\"}" ; exit 0 ;;
   *"--json statusCheckRollup"*) emit "${MOCK_ROLLUP:-$rollup_default}" ; exit 0 ;;
-  *"/actions/runs"*) emit "${MOCK_PREV_CHECKS:-$runs_default}" ; exit 0 ;;
+  *"/actions/runs"*)
+    # Both sides of the evidence comparison hit this endpoint; distinguish
+    # them by the head_sha in the query so a test can make them differ.
+    case "$*" in
+      *"head_sha=${MOCK_HEAD_SHA:-$head_default}"*) emit "${MOCK_CURRENT_RUNS:-$runs_default}" ;;
+      *) emit "${MOCK_PREV_CHECKS:-$runs_default}" ;;
+    esac
+    exit 0 ;;
   *"/commits"*) emit "${MOCK_PR_COMMITS:-$commits_default}" ; exit 0 ;;
   *"/reviews"*|*"/comments"*) emit '[]' ; exit 0 ;;
   *) emit '{}' ; exit 0 ;;
@@ -91,6 +99,10 @@ _matrix_current_rollup='{"statusCheckRollup":[
   {"__typename":"CheckRun","name":"workflow test harnesses","workflowName":"workflow test harnesses","status":"COMPLETED","conclusion":"SUCCESS"}
 ]}'
 
+_runs_two='{"workflow_runs":[{"name":"workflow test harnesses"},{"name":"ShellCheck"}]}'
+_runs_one='{"workflow_runs":[{"name":"ShellCheck"}]}'
+_runs_matrix='{"workflow_runs":[{"name":"workflow test harnesses"}]}'
+
 run_ci() {
   local out status=0
   out="$(env PATH="$_bin:$PATH" "$@" bash "$HELPER" 42 --repo owner/repo --poll-interval 1 --max-wait 1 2>/dev/null)" || status=$?
@@ -98,7 +110,7 @@ run_ci() {
 }
 
 # 1. Same check set as the previous head → green.
-_out="$(run_ci MOCK_ROLLUP="$_success_rollup" MOCK_PREV_CHECKS="$_prev_two" MOCK_PR_COMMITS="$_commits_two")"
+_out="$(run_ci MOCK_ROLLUP="$_success_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CURRENT_RUNS="$_runs_two" MOCK_PR_COMMITS="$_commits_two")"
 run_test "full_check_set_is_green" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
 run_test "green_reports_head_sha" "HEAD_SHA=headsha000000000000" "$(grep '^HEAD_SHA=' <<<"$_out" || true)"
 run_test "green_reports_ci_evidence_present" "CI_EVIDENCE=present" "$(grep '^CI_EVIDENCE=' <<<"$_out" || true)"
@@ -106,7 +118,7 @@ run_test "green_reports_ci_evidence_present" "CI_EVIDENCE=present" "$(grep '^CI_
 # 2. A workflow that ran on the previous head is absent now → red, named.
 #    This is the PR #1577 shape: a conflicting PR whose pull_request workflows
 #    never started, leaving a passing subset that used to read as green.
-_out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_prev_two" MOCK_PR_COMMITS="$_commits_two")"
+_out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two")"
 run_test "missing_workflow_is_red" "RESULT=red" "$(grep '^RESULT=' <<<"$_out" || true)"
 run_test "missing_workflow_reason" "REASON=expected_checks_missing" "$(grep '^REASON=' <<<"$_out" || true)"
 run_test "missing_workflow_is_named" "MISSING_CHECKS=workflow test harnesses" "$(grep '^MISSING_CHECKS=' <<<"$_out" || true)"
@@ -119,9 +131,9 @@ run_test "no_checks_reports_evidence_none" "CI_EVIDENCE=none" "$(grep '^CI_EVIDE
 
 # 4. The gate is skippable for callers that know better, and does not fire when
 #    the previous head ran nothing.
-_out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_prev_two" MOCK_PR_COMMITS="$_commits_two" CI_LOOP_SKIP_EVIDENCE_GATE=1)"
+_out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two" CI_LOOP_SKIP_EVIDENCE_GATE=1)"
 run_test "evidence_gate_is_skippable" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
-_out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS='{"workflow_runs":[]}' MOCK_PR_COMMITS="$_commits_two")"
+_out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS='{"workflow_runs":[]}' MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two")"
 run_test "no_previous_checks_does_not_fire" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
 
 # 4b. A matrix workflow's selected suite set narrows on the current head
@@ -130,12 +142,19 @@ run_test "no_previous_checks_does_not_fire" "RESULT=green" "$(grep '^RESULT=' <<
 #     missing check. Comparing at check-run granularity (pre-fix behavior)
 #     would have reported the previous head's leaf name as MISSING_CHECKS
 #     and gone red; workflow-level comparison must not.
-_out="$(run_ci MOCK_ROLLUP="$_matrix_current_rollup" MOCK_PREV_CHECKS="$_matrix_prev" MOCK_PR_COMMITS="$_commits_two")"
+_out="$(run_ci MOCK_ROLLUP="$_matrix_current_rollup" MOCK_PREV_CHECKS="$_runs_matrix" MOCK_CURRENT_RUNS="$_runs_matrix" MOCK_PR_COMMITS="$_commits_two")"
 run_test "matrix_suite_churn_stays_green" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
+
+# 4c. Both sides read from actions/runs, so plain commit statuses and matrix
+#     leaves in the rollup (which have no workflow-run counterpart) can never
+#     be mistaken for a missing workflow (pr-agent on PR #1588).
+_status_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","workflowName":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS"}]}'
+_out="$(run_ci MOCK_ROLLUP="$_status_rollup" MOCK_PREV_CHECKS="$_runs_one" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_two")"
+run_test "commit_statuses_are_not_missing_workflows" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
 
 # 5. A genuinely failing check is still red (the gate did not displace it).
 _fail_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE"}]}'
-_out="$(run_ci MOCK_ROLLUP="$_fail_rollup" MOCK_PREV_CHECKS="$_prev_two" MOCK_PR_COMMITS="$_commits_two")"
+_out="$(run_ci MOCK_ROLLUP="$_fail_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CURRENT_RUNS="$_runs_two" MOCK_PR_COMMITS="$_commits_two")"
 run_test "failing_check_still_red" "RESULT=red" "$(grep '^RESULT=' <<<"$_out" || true)"
 run_test "failing_check_names_it" "FAILING_CHECKS=ShellCheck" "$(grep '^FAILING_CHECKS=' <<<"$_out" || true)"
 
