@@ -187,7 +187,16 @@ rather than an ambiguous one**:
    `CHANGELOG.md` is touched.
 2. The draft `## [X.Y.Z] - YYYY-MM-DD` section written into `CHANGELOG.md`,
    built from exactly the fragment set already recorded in the manifest —
-   never a fresh directory scan. **Written second.**
+   never a fresh directory scan. **Written second**, and with the same
+   atomicity guarantee as the manifest: the full new file content is written
+   to a temp file in the same directory, flushed and `fsync`'d, then renamed
+   over `CHANGELOG.md` in one `rename(2)` call. A process stop during this
+   step therefore never produces a truncated or partially-rewritten
+   `CHANGELOG.md` — on disk, the file is always either byte-for-byte the
+   pre-assembly content or byte-for-byte the fully assembled content, with no
+   third possibility. This is what makes the four states below exhaustive:
+   without it, a stop mid-rewrite would leave a *fifth*, undetectable state (a
+   corrupt file) that none of them names.
 
 Fragment files themselves are **not touched by assembly**. This is the literal
 requirement from the spec ("Assembling a draft never destroys anything") and
@@ -207,20 +216,40 @@ fragments violates the corrected clause.
   - Manifest present, heading present: `ASSEMBLE_RESULT=already_assembled`,
     exit 0, no write. The normal resume path.
   - Manifest present, heading absent: the run was interrupted between the two
-    writes. `assemble` completes the `CHANGELOG.md` write from the
-    already-frozen manifest (not a rescan), then reports
+    writes — and, because the `CHANGELOG.md` write is itself atomic (point 2
+    above), `CHANGELOG.md` on disk is guaranteed to still be exactly its
+    pre-assembly content, never a partial rewrite. `assemble` performs the
+    `CHANGELOG.md` write (temp file, `fsync`, atomic rename) from the
+    already-frozen manifest, not a rescan, then reports
     `ASSEMBLE_RESULT=assembled`, exit 0. Because the set was fixed before the
     interruption, this is safe even if new fragments landed on `develop`
     afterward — "the set is fixed at assembly" still holds.
   - Manifest absent, heading present: the manifest was lost by something other
     than `consume` (which moves it — see below — rather than deleting it),
     since assembly never reaches the `CHANGELOG.md` write before the manifest
-    is committed. `assemble` reports
-    `ASSEMBLE_RESULT=assembled_unmanifested`, a non-zero exit, and names the
-    remediation: `assemble --reassemble`, which recomputes the manifest from
-    the current directory and, by the deterministic-ordering guarantee (Edge
-    case 28), reproduces byte-identical `CHANGELOG.md` content — safe to run
-    even though the version section already exists.
+    is committed. `assemble` reports `ASSEMBLE_RESULT=assembled_unmanifested`,
+    a non-zero exit. **The remediation is `assemble --repair-manifest`, never
+    a live directory rescan.** A rescan is explicitly wrong here: the spec
+    guarantees a note recorded after assembly belongs to the next release,
+    never retroactively to the one being prepared, and a fragment can
+    legitimately have landed in `changelog.d/` between the original assembly
+    and the manifest's loss (a late fix cherry-picked onto the release branch,
+    for instance). Recomputing "the current set" would silently pull that
+    fragment into an already-published-looking section. `--repair-manifest`
+    instead restores the manifest from the one source that reflects the set
+    **as it was at assembly time**: git history. It walks the current
+    branch's log for `changelog.d/manifests/v<X.Y.Z>.txt` and, if a commit
+    wrote that exact path, restores that commit's blob verbatim (`git show
+    <commit>:<path>`) — not a rescan, a byte-for-byte restoration of what was
+    actually frozen. On success it reports `ASSEMBLE_RESULT=repaired`, exit 0.
+    If no commit ever wrote that path (the manifest was lost before the
+    releaser committed it), `--repair-manifest` **refuses to guess**: it
+    reports `ASSEMBLE_RESULT=manifest_unrecoverable`, exit 1, and instructs
+    the operator to reconcile by hand — compare the `## [X.Y.Z]` section's
+    bullets against the fragment bodies still present in `changelog.d/` to
+    reconstruct the original set, or, only as a knowing last resort whose risk
+    the operator accepts explicitly, fall back to `assemble --reassemble` (see
+    below), which is never invoked automatically.
   - Manifest absent, heading absent: nothing has happened yet; `assemble` runs
     normally.
 - **Interrupted preparation resumes intact.** Both artifacts are ordinary
@@ -229,33 +258,64 @@ fragments violates the corrected clause.
   four states above instead of guessing. If the release branch is discarded
   entirely, `develop` still holds every fragment, because nothing was ever
   deleted there.
+- **Consumption requires a publishable section, not just a manifest.** Before
+  deleting anything, `consume` checks the manifest **and** the `## [X.Y.Z]`
+  heading — the same two facts `assemble` checks, in the same order of
+  concern. A manifest can exist while the heading does not: that is exactly
+  the "manifest present, heading absent" interrupted-assembly state above,
+  and it means assembly never finished writing the section. If `consume` ran
+  anyway, it would delete the source fragments and move the manifest with no
+  version section to show for them — the release's notes would be gone with
+  nothing published, which is precisely the "no unreleased note may be
+  silently left behind" failure the spec forbids. So: manifest present,
+  heading absent → `CONSUME_RESULT=not_assembled`, non-zero exit, deletes
+  nothing, and names the remediation: run `assemble` first (which completes
+  the interrupted write and lands on `already_assembled`, at which point
+  `consume` is safe).
 - **Consumption happens at publication, and its idempotence marker is a
-  positive fact, not an absence.** `consume` deletes exactly the fragment
-  files named in the manifest, then **moves** — never deletes — the manifest
-  itself to `changelog.d/manifests/consumed/v<X.Y.Z>.txt`, as a commit on the
-  release branch. This both strengthens the spec's Audit Trail principle (a
-  permanent record of what fed each published release) and removes the
-  ambiguity a delete would otherwise reintroduce:
-  - Manifest present in `changelog.d/manifests/`: normal `consumed` path.
+  positive fact, not an absence.** Once the section-exists precondition
+  passes, `consume` deletes the fragment files named in the manifest one at a
+  time, then **moves** — never deletes — the manifest itself to
+  `changelog.d/manifests/consumed/v<X.Y.Z>.txt` via a single `rename(2)` call
+  (both paths are on the same filesystem, under `changelog.d/`), so the move
+  itself cannot be interrupted into a state where the manifest is absent from
+  both locations — the "absent from both" state below can only result from
+  something outside these two commands, never from `consume`'s own crash
+  window. This both strengthens the spec's Audit Trail principle (a permanent
+  record of what fed each published release) and removes the ambiguity a
+  delete would otherwise reintroduce, as a commit on the release branch:
+  - Heading present, manifest present in `changelog.d/manifests/`, every
+    listed file present: normal `consumed` path.
+  - Heading present, manifest present in `changelog.d/manifests/`, **some or
+    all** listed files already absent: an interrupted consume — a prior run
+    stopped after deleting some fragments but before moving the manifest.
+    Per-file deletion is idempotent (skipping a file that is already gone is
+    not an error), so resuming simply finishes deleting whatever remains and
+    then performs the manifest move. This still reports
+    `CONSUME_RESULT=consumed`, exit 0 — from the operator's point of view, the
+    step that was interrupted just completes.
   - Manifest present in `changelog.d/manifests/consumed/`, absent from
     `changelog.d/manifests/`: `CONSUME_RESULT=already_consumed`, exit 0 —
     confirmed by the moved file's presence, not its absence.
-  - Manifest absent from **both** locations, version section present: no
-    longer conflated with `already_consumed`. Reports
-    `CONSUME_RESULT=inconsistent`, non-zero exit, and instructs the operator
-    to reconcile by hand — this is `assembled_unmanifested`'s sibling failure
-    mode surfacing at `consume` time instead of `assemble` time, and it must
-    fail loudly for the same reason.
+  - Manifest absent from **both** locations, heading present: no longer
+    conflated with `already_consumed`. Reports `CONSUME_RESULT=inconsistent`,
+    non-zero exit, and instructs the operator to reconcile by hand — this is
+    `assembled_unmanifested`'s sibling failure mode surfacing at `consume`
+    time instead of `assemble` time (both manifest locations empty is not a
+    state either command's normal flow produces), and it must fail loudly for
+    the same reason.
   Those deletions and the manifest move reach `main` and `develop` only when
   the release PRs merge — which is what "published" means. An abandoned
   release deletes nothing anywhere that survives.
-- **Re-assembly is possible but explicit.** `assemble --reassemble` recomputes
-  the manifest from the current directory and replaces the existing version
-  section. It prints the section it is about to replace before replacing it,
-  because that section may contain the releaser's editorial pass. Besides the
-  `assembled_unmanifested` recovery path above (which reuses it), it is the
-  only path that discards editorial edits, and it is never invoked by protocol
-  05's normal flow.
+- **Re-assembly is possible but explicit, and is not a recovery mechanism.**
+  `assemble --reassemble` recomputes the manifest from the current directory
+  and replaces the existing version section. It prints the section it is
+  about to replace before replacing it, because that section may contain the
+  releaser's editorial pass. It is the only path that discards editorial
+  edits, it is never invoked by protocol 05's normal flow, and — unlike
+  `--repair-manifest` above — it is never invoked automatically by any
+  recovery path, because a live rescan can pull in a fragment that arrived
+  after the original assembly.
 - **If a fragment is edited between assembly and consumption**, the draft in
   `CHANGELOG.md` wins: it is what the releaser reviewed. `consume` deletes the
   file regardless of its content.
@@ -417,28 +477,37 @@ other workflow helpers, and every exit path prints its documented fields.
       Emits `PENDING_COUNT=<n>` and one `PENDING=<path>` per fragment.
       (Spec "Operational Visibility")
 - [ ] `assemble --version <X.Y.Z> [--date <YYYY-MM-DD>] [--reassemble]
-      [--allow-empty]` — acquire the per-release `mkdir` lock (Concurrent-
-      event-source addendum), write the manifest first (temp file, atomic
-      rename) into `changelog.d/manifests/v<X.Y.Z>.txt`, then rename
-      `## [Unreleased]` to the version heading, merge fragment bullets per
-      kind (from the manifest, not a rescan, when resuming), and insert a
-      fresh empty `## [Unreleased]`. Emits `ASSEMBLE_RESULT`, `VERSION`,
-      `FRAGMENT_COUNT`, `CARRIED_OVER_COUNT`, `MANIFEST_PATH`, and `ITEMS`.
-      `ASSEMBLE_RESULT` includes `assembled_unmanifested` for the
-      manifest-absent, heading-present recovery state, and `locked` when the
-      lock is already held. (Spec AC-3, AC-5, AC-7, AC-10; Decisions 3 and 4)
-- [ ] `consume --version <X.Y.Z>` — acquire the same per-release lock, delete
-      the manifest-listed fragments, then move (not delete) the manifest to
+      [--repair-manifest] [--allow-empty]` — acquire the per-release `mkdir`
+      lock (Concurrent-event-source addendum), write the manifest first (temp
+      file, `fsync`, atomic rename) into `changelog.d/manifests/v<X.Y.Z>.txt`,
+      then write `CHANGELOG.md` the same way (temp file, `fsync`, atomic
+      rename) — rename `## [Unreleased]` to the version heading, merge
+      fragment bullets per kind (from the manifest, not a rescan, when
+      resuming), and insert a fresh empty `## [Unreleased]`. Emits
+      `ASSEMBLE_RESULT`, `VERSION`, `FRAGMENT_COUNT`, `CARRIED_OVER_COUNT`,
+      `MANIFEST_PATH`, and `ITEMS`. `ASSEMBLE_RESULT` includes
+      `assembled_unmanifested` for the manifest-absent, heading-present
+      recovery state; `repaired` when `--repair-manifest` restores the
+      manifest from git history; `manifest_unrecoverable` when
+      `--repair-manifest` finds no committed manifest to restore; and
+      `locked` when the lock is already held. (Spec AC-3, AC-5, AC-7, AC-10;
+      Decisions 3 and 4)
+- [ ] `consume --version <X.Y.Z>` — acquire the same per-release lock, require
+      the `## [X.Y.Z]` heading to exist (else refuse — see below), delete the
+      manifest-listed fragments one at a time (idempotent: a file already
+      absent is not an error), then move (not delete) the manifest to
       `changelog.d/manifests/consumed/v<X.Y.Z>.txt`. Emits `CONSUME_RESULT`,
       `REMOVED_COUNT`, `MANIFEST_PATH`. `CONSUME_RESULT` includes
-      `inconsistent` when neither manifest location holds the target version
-      but the version section is present, and `locked` when the lock is
-      already held. (Spec AC-5, AC-7; Decision 3)
+      `not_assembled` when the manifest exists but the heading does not (do
+      not delete anything in this case); `inconsistent` when neither manifest
+      location holds the target version but the heading is present; and
+      `locked` when the lock is already held. (Spec AC-5, AC-7; Decision 3)
 - [ ] Exit codes: `0` for `clean`, `assembled`, `already_assembled`,
-      `reassembled`, `consumed`, `already_consumed`; `1` for a validation,
-      assembly, `assembled_unmanifested`, `inconsistent`, or `locked` error;
-      `3` for `no_notes` without `--allow-empty`; `64` for a usage error,
-      matching `check-documentation-stage-alignment.sh`.
+      `reassembled`, `repaired`, `consumed`, `already_consumed`; `1` for a
+      validation, assembly, `assembled_unmanifested`,
+      `manifest_unrecoverable`, `not_assembled`, `inconsistent`, or `locked`
+      error; `3` for `no_notes` without `--allow-empty`; `64` for a usage
+      error, matching `check-documentation-stage-alignment.sh`.
 - [ ] Reporting on assembly names each contributing item, and reports bullets
       carried over from the shared block as a single unattributed group, per
       the spec's Operational Visibility section.
@@ -711,10 +780,14 @@ test in `scripts/development-workflow/tests/test-changelog-fragments.sh`.
 | 28 | Deterministic ordering | Bullets sorted by kind rank, then by the item field (numerically when it is all digits, lexicographically otherwise), then by full filename — so two runs on the same input produce identical bytes |
 | 29 | `consume` when the manifest is absent from both `changelog.d/manifests/` and `changelog.d/manifests/consumed/`, and the version section is also absent | `CONSUME_RESULT=manifest_missing`, non-zero, with the remediation named (run `assemble` first) |
 | 30 | `consume` run twice | First run reports `consumed`. Second run finds the manifest already moved to `changelog.d/manifests/consumed/` and reports `CONSUME_RESULT=already_consumed`, exit 0 |
-| 31 | `consume` when a manifest-listed file is already gone and the version section is absent | Rejected — the release state is inconsistent and must not be papered over |
-| 32 | `assemble` when the manifest for the target version is present but the `## [X.Y.Z]` heading is absent (interrupted between the two writes) | `assemble` completes the `CHANGELOG.md` write from the already-frozen manifest, never a rescan. `ASSEMBLE_RESULT=assembled`, exit 0 |
-| 33 | `assemble` when the `## [X.Y.Z]` heading is present but the manifest for that version is absent from both manifest locations | `ASSEMBLE_RESULT=assembled_unmanifested`, exit 1, naming `assemble --reassemble` as the remediation |
+| 31 | `consume` when the `## [X.Y.Z]` heading is absent, a manifest-listed file is already gone, and the manifest is not in either manifest location | Rejected — `CONSUME_RESULT=inconsistent`; the release state is corrupted and must not be papered over |
+| 32 | `assemble` when the manifest for the target version is present but the `## [X.Y.Z]` heading is absent (interrupted between the two writes) | `assemble` performs the `CHANGELOG.md` write (temp file, `fsync`, atomic rename) from the already-frozen manifest, never a rescan. `ASSEMBLE_RESULT=assembled`, exit 0 |
+| 33 | `assemble` when the `## [X.Y.Z]` heading is present but the manifest for that version is absent from both manifest locations | `ASSEMBLE_RESULT=assembled_unmanifested`, exit 1, naming `assemble --repair-manifest` (git-history restore) as the remediation — never a directory rescan |
 | 34 | `consume` when neither manifest location holds the target version but the `## [X.Y.Z]` version section is present | `CONSUME_RESULT=inconsistent`, exit 1 — no longer conflated with `already_consumed`; the operator must reconcile by hand |
+| 35 | `consume` when the manifest is present in `changelog.d/manifests/` but the `## [X.Y.Z]` heading is absent | `CONSUME_RESULT=not_assembled`, exit 1, deletes nothing — assembly never finished; remediation is to run `assemble` first |
+| 36 | `consume` when the heading is present, the manifest is present in `changelog.d/manifests/`, and some or all manifest-listed fragment files are already absent (a prior run stopped after deleting fragments but before moving the manifest) | Resume: finish deleting whatever remains (idempotent — an absent file is not an error), then move the manifest. `CONSUME_RESULT=consumed`, exit 0 |
+| 37 | `assemble --repair-manifest` when a commit on the current branch previously wrote `changelog.d/manifests/v<X.Y.Z>.txt` | Restore that commit's blob verbatim. `ASSEMBLE_RESULT=repaired`, exit 0 — the restored set is exactly what was frozen at the original assembly, never a live rescan |
+| 38 | `assemble --repair-manifest` when no commit on the current branch ever wrote the manifest for the target version | Refuse to guess. `ASSEMBLE_RESULT=manifest_unrecoverable`, exit 1, naming manual reconciliation (or an explicit, risk-accepted `--reassemble`) as the only remaining paths |
 
 **Suppression semantics**: not applicable. `changelog-fragments.sh` recognizes
 no inline suppression directives. Declining to write a release note is
@@ -776,9 +849,11 @@ readiness check.
 | --- | --- | --- | --- |
 | No manifest for the target version; no `## [X.Y.Z]` heading; at least one pending fragment or a non-empty shared block | `assembled` | Continue to the editorial pass (Protocol 05 Step 3) | Protocol 05; `.claude/commands/prepare-release.md`; `.cursor/commands/prepare-release.md`; `.agents/skills/prepare-release/SKILL.md` |
 | Manifest for the target version present; `## [X.Y.Z]` heading also present | `already_assembled` | No write; continue. This is the resume path and the idempotence guarantee — both artifacts, not the heading alone (Decision 3) | Same |
-| Manifest for the target version present; `## [X.Y.Z]` heading absent | `assembled` | Interrupted between the two writes. Complete the `CHANGELOG.md` write from the already-frozen manifest, never a rescan; continue to the editorial pass | Same |
-| Manifest for the target version absent; `## [X.Y.Z]` heading present | `assembled_unmanifested` (exit 1) | Stop; run `assemble --reassemble` to deterministically regenerate the manifest, then continue | Protocol 05 Step 3 |
-| `--reassemble` passed and the heading is present | `reassembled` | Print the replaced section first; the releaser must redo any editorial pass | Same |
+| Manifest for the target version present; `## [X.Y.Z]` heading absent | `assembled` | Interrupted between the two writes. Perform the `CHANGELOG.md` write (temp file, `fsync`, atomic rename) from the already-frozen manifest, never a rescan; continue to the editorial pass | Same |
+| Manifest for the target version absent; `## [X.Y.Z]` heading present | `assembled_unmanifested` (exit 1) | Stop; run `assemble --repair-manifest` to restore the manifest from git history — never a directory rescan (a live rescan can pull in a fragment added since the original assembly) | Protocol 05 Step 3 |
+| `--repair-manifest` passed; a commit on the branch previously wrote the manifest for this version | `repaired` | The manifest is restored verbatim from that commit; continue to `already_assembled` on the next run | Same |
+| `--repair-manifest` passed; no commit on the branch ever wrote the manifest for this version | `manifest_unrecoverable` (exit 1) | Stop; reconcile by hand (compare the published section's bullets against fragments still in `changelog.d/`), or explicitly accept the risk of `--reassemble` | Protocol 05 Step 7.2 |
+| `--reassemble` passed and the heading is present | `reassembled` | Print the replaced section first; the releaser must redo any editorial pass. Not invoked automatically by any recovery path | Same |
 | No pending fragment and an empty shared block | `no_notes` (exit 3) | Stop; either there is nothing to release or a fragment was lost. Pass `--allow-empty` only for a deliberate no-notes release | Same |
 | Any fragment fails the grammar or body checks | `invalid` (exit 1) | Fix the named fragment on `develop` and re-run; never assemble a partial set | Protocol 05; `.github/workflows/markdown-lint.yml` |
 | `CHANGELOG.md` lacks exactly one `## [Unreleased]` heading | `error` (exit 1) | Repair the changelog before releasing | Protocol 05 Step 7.2 |
@@ -787,11 +862,13 @@ readiness check.
 
 | Gate inputs | Outcome | Required next action | Mirror surfaces |
 | --- | --- | --- | --- |
-| Manifest present in `changelog.d/manifests/`, listed files present | `consumed` | Commit the deletions and the manifest move (to `changelog.d/manifests/consumed/`) with the release commit | Protocol 05 Step 3 |
+| Heading present; manifest present in `changelog.d/manifests/`, every listed file present | `consumed` | Commit the deletions and the manifest move (to `changelog.d/manifests/consumed/`) with the release commit | Protocol 05 Step 3 |
+| Manifest present in `changelog.d/manifests/`, `## [X.Y.Z]` heading absent | `not_assembled` (exit 1) | Stop; deletes nothing. Run `assemble` first — assembly never finished writing the section | Protocol 05 Step 3 |
+| Heading present; manifest present in `changelog.d/manifests/`; some or all listed files already absent | `consumed` | Interrupted consume, safe to resume: finish deleting whatever remains (idempotent), then move the manifest | Protocol 05 Step 3 |
 | Manifest present in `changelog.d/manifests/consumed/`, absent from `changelog.d/manifests/` | `already_consumed` | Continue; confirmed by the moved file's presence, not by absence | Protocol 05 Steps 3 and 7.2 |
-| Manifest absent from both locations, version section absent | `manifest_missing` (non-zero) | Run `assemble` first | Protocol 05 Step 3 |
-| Manifest absent from both locations, version section present | `inconsistent` (exit 1) | Stop and reconcile by hand; no longer conflated with `already_consumed` | Protocol 05 Step 7.2 |
-| Manifest present in `changelog.d/manifests/`, a listed file missing, version section absent | `error` (exit 1) | Stop and reconcile by hand; the release state is inconsistent | Protocol 05 Step 7.2 |
+| Manifest absent from both locations, heading absent | `manifest_missing` (non-zero) | Run `assemble` first | Protocol 05 Step 3 |
+| Manifest absent from both locations, heading present | `inconsistent` (exit 1) | Stop and reconcile by hand; no longer conflated with `already_consumed` | Protocol 05 Step 7.2 |
+| Heading absent; manifest absent from both locations; a listed file (from the last-known manifest state) already gone | `inconsistent` (exit 1) | Stop and reconcile by hand; the release state is corrupted | Protocol 05 Step 7.2 |
 
 ### Gate C — release-note readiness (changed, not added)
 
@@ -865,6 +942,7 @@ for execution, not performed during Plan Ready.
 | File-level overlap with open PR #1589 on `.github/workflows/markdown-lint.yml` and `05b-graduate-development-protocol.md` | Med | Low | The edits are in disjoint regions (branch filters and a new top section, versus `paths:`/targets and Step 2.5). If #1589 merges first, rebase; the conflict, if any, is a normal two-region docs conflict, not the combinatorial one this item removes |
 | A release-branch delete of a fragment races an edit of that same fragment on `develop` | Low | Low | Git reports a delete/modify conflict on one file owned by one item. Editing a note after its release is already a mistake; document the resolution (keep the deletion) in Protocol 94's `changelog.d/` clause |
 | `--reassemble` discards a releaser's editorial pass | Low | Med | The flag is never used by Protocol 05's normal flow, and the command prints the section it is about to replace before replacing it |
+| A recovery path (`--repair-manifest`, `assembled_unmanifested`/`not_assembled` handling) is implemented incorrectly, silently reintroducing the truncation or retroactive-inclusion bugs Decision 3 exists to prevent | Low | High | Edge cases 31–38 fixture every recovery combination (interrupted write, lost manifest with and without git history, interrupted consume, premature consume) as red tests before the corresponding code exists (Implementation Order Steps 2, 4, 5) |
 | Downstream projects that have not adopted fragments receive protocol updates describing a convention they do not use | Med | Low | Decision 6 keeps Protocol 94's auto-resolution and states the not-yet-adopted case explicitly; Decision 4's assembly works unchanged on a populated shared block, so adoption needs no migration |
 
 ---
@@ -913,10 +991,13 @@ changelog.d/1589.fixed.integration-branch-ci.md
 
 2. **Write the test suite first, red.** Create
    `scripts/development-workflow/tests/test-changelog-fragments.sh` with one
-   case per row of the three parser-risk tables, one interleaving case per
-   command for the per-release lock (Concurrent-event-source addendum), plus
-   its `# covers:` header lines. Every case fails at this point because the
-   helper does not exist.
+   case per row of the three parser-risk tables (including edge cases 31–38,
+   the recovery-state matrix), one interleaving case per command for the
+   per-release lock (Concurrent-event-source addendum), and a case that
+   verifies `CHANGELOG.md` is left byte-identical to its pre-assembly content
+   when the process is killed after the temp-file write but before the atomic
+   rename, plus its `# covers:` header lines. Every case fails at this point
+   because the helper does not exist.
 
    *Verify*: running the suite reports failures for every case and no case is
    silently skipped.
@@ -928,24 +1009,35 @@ changelog.d/1589.fixed.integration-branch-ci.md
    the changelog-rewriting cases still fail.
 
 4. **Implement `assemble`.** The per-release `mkdir` lock (Concurrent-event-
-   source addendum), manifest-first write (temp file, atomic rename), heading
-   rename, per-kind merge, fresh empty `## [Unreleased]`, deterministic
-   ordering, and all four assembly states from Decision 3 (`assembled`,
-   `already_assembled`, the manifest-present/heading-absent resume, and
-   `assembled_unmanifested`), plus `no_notes`.
+   source addendum); manifest-first write (temp file, `fsync`, atomic
+   rename); then the `CHANGELOG.md` write with the same atomicity guarantee
+   (temp file, `fsync`, atomic rename) — heading rename, per-kind merge,
+   fresh empty `## [Unreleased]`, deterministic ordering; all four assembly
+   states from Decision 3 (`assembled`, `already_assembled`, the
+   manifest-present/heading-absent resume, and `assembled_unmanifested`);
+   `--repair-manifest` (git-history restore, `repaired` or
+   `manifest_unrecoverable`, never a directory rescan); and `no_notes`.
 
    *Verify*: the changelog-rewriting cases pass, and the suite's assembled
    fixtures are checked with `check-changelog-duplicate-headers.sh` and
-   `markdown-heuristic-lint.py` inside the suite itself.
+   `markdown-heuristic-lint.py` inside the suite itself. The kill-before-rename
+   case from Step 2 confirms `CHANGELOG.md` is untouched, not truncated.
 
-5. **Implement `consume`.** The per-release `mkdir` lock, manifest-driven
-   deletion, moving (not deleting) the manifest into
-   `changelog.d/manifests/consumed/`, the `already_consumed` outcome (detected
-   from the moved file's presence), and the `inconsistent` rejection when
-   neither manifest location holds the target version.
+5. **Implement `consume`.** The per-release `mkdir` lock; the `## [X.Y.Z]`
+   heading precondition (`not_assembled` when the manifest exists but the
+   heading does not — deletes nothing); manifest-driven, idempotent
+   per-file deletion (resuming an interrupted consume simply finishes
+   whatever remains); moving (not deleting) the manifest into
+   `changelog.d/manifests/consumed/`; the `already_consumed` outcome
+   (detected from the moved file's presence); and the `inconsistent`
+   rejection when neither manifest location holds the target version.
 
    *Verify*: the whole suite passes. Run `consume` twice in a row and confirm
    the first run reports `consumed` and the second reports `already_consumed`.
+   Run it against a fixture with the heading absent and confirm
+   `not_assembled` with zero fragment files deleted. Run it against a fixture
+   with some manifest-listed fragments pre-deleted and confirm it completes
+   and reports `consumed` rather than erroring.
 
 6. **Wire the lint and CI surfaces.** Update
    `.github/workflows/markdown-lint.yml` (`paths:`, both independent

@@ -136,20 +136,26 @@ duplicated.
    scratch branch — this is what a real release branch looks like at this
    point in Protocol 05 Step 3, and it is what makes the next step a genuine
    resumption test rather than a dirty-working-tree no-op.
-3. Add a new fragment `changelog.d/9002.changed.smoke-late.md` (left
-   uncommitted and untracked — it represents a note written on `develop`
-   after the release branch was cut).
-4. Run `assemble --version 9.9.9` again.
-5. Simulate an interruption: switch to another branch and back (`git status`
-   is clean before the switch, since Step 2 committed everything else, so the
-   switch cannot fail or carry dirty state).
-6. Read `CHANGELOG.md` and `changelog.d/`.
+3. Simulate an interruption: switch to another branch and back. `git status`
+   is genuinely clean before this switch, because step 2 already committed
+   everything on this branch and nothing has touched the working tree since.
+4. Run `assemble --version 9.9.9` again — **after** the switch, so this
+   actually exercises resumption rather than repeating an assembly that ran
+   before any interruption was simulated.
+5. Add a new fragment `changelog.d/9002.changed.smoke-late.md` (left
+   uncommitted and untracked — it represents a note added to the release
+   branch, e.g. via a late cherry-pick, after assembly already ran).
+6. Run `assemble --version 9.9.9` a third time.
+7. Read `CHANGELOG.md` and `changelog.d/`.
 
-**Expected result**: the hand edits are intact (verifiable because they are
-now part of the committed history, not just the working tree), the run
-reports `already_assembled` without rewriting anything, and the late fragment
+**Expected result**: step 4's post-interruption run reports `already_assembled`
+without rewriting anything, and the hand edits are intact — verifiable because
+they are part of the committed history, not just the working tree, so nothing
+was lost by the interruption. Step 6's third run also reports
+`already_assembled` (the manifest still matches the committed set); the late
+fragment from step 5
 is present in `changelog.d/` but absent from both the `## [9.9.9]` section and
-the manifest. Nothing was lost by the interruption.
+the manifest.
 
 ### Step 7: Publish consumes the notes
 
@@ -310,8 +316,10 @@ The following seed data must be present:
 | `ASSEMBLE_RESULT=already_assembled` when you expected a fresh draft | The version section already exists from an earlier run | Intended behaviour. Use `--reassemble` only if you accept losing the editorial pass on that section |
 | `ASSEMBLE_RESULT=no_notes` | Nothing is pending and the shared block is empty | Confirm the notes were not consumed by an earlier release before reaching for `--allow-empty` |
 | `CONSUME_RESULT=manifest_missing` | `consume` ran before `assemble`, or on the wrong branch | Run `assemble` first, and confirm you are on the release branch |
-| `ASSEMBLE_RESULT=assembled_unmanifested` | Assembly completed (the manifest is written before `CHANGELOG.md` — Decision 3), but the manifest was subsequently lost by something other than `consume` (a manual delete, a bad merge, a corrupted checkout) | Run `assemble --reassemble`; this is deterministic and safe here because nothing else has touched the fragments |
-| `CONSUME_RESULT=inconsistent` | Neither `changelog.d/manifests/v<X.Y.Z>.txt` nor `changelog.d/manifests/consumed/v<X.Y.Z>.txt` exists, but the version section is present | Stop and reconcile by hand; do not assume this means already-published |
+| `ASSEMBLE_RESULT=assembled_unmanifested` | Assembly completed (the manifest is written before `CHANGELOG.md` — Decision 3), but the manifest was subsequently lost by something other than `consume` (a manual delete, a bad merge, a corrupted checkout) | Run `assemble --repair-manifest` — restores the manifest from git history. **Never** re-run `--reassemble` as the default fix: it rescans the live directory and can pull in a fragment added since the original assembly, violating "a note recorded after assembly waits for the next release" |
+| `ASSEMBLE_RESULT=manifest_unrecoverable` | `--repair-manifest` found no commit on this branch that ever wrote the manifest for this version | Reconcile by hand: compare the `## [X.Y.Z]` section's bullets against fragment bodies still in `changelog.d/`. Only fall back to `--reassemble` if you have manually confirmed no fragment has landed since the original assembly |
+| `CONSUME_RESULT=not_assembled` | `consume` was run before `assemble` finished writing the `## [X.Y.Z]` section — the manifest exists but the heading does not | Nothing was deleted. Run `assemble` first (it resumes safely from the frozen manifest), then `consume` |
+| `CONSUME_RESULT=inconsistent` | Neither `changelog.d/manifests/v<X.Y.Z>.txt` nor `changelog.d/manifests/consumed/v<X.Y.Z>.txt` exists, but the `## [X.Y.Z]` heading is present | Stop and reconcile by hand; do not assume this means already-published |
 | `ASSEMBLE_RESULT=locked` / `CONSUME_RESULT=locked` | Another `assemble`/`consume` invocation for the same version is already running | Wait for it to finish, or confirm it is stale and remove the lock directory named in the error |
 | A `changelog.d/` path appears in a merge conflict | Two branches used the same item identifier | Treat as non-trivial per Protocol 94; find out which branch is misnamed rather than combining the files |
 | Duplicate `### Category` headings after assembly | A defect in the per-kind merge | Report against this feature; `check-changelog-duplicate-headers.sh` is the detector |
