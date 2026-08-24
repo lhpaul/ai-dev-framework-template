@@ -14921,15 +14921,36 @@ unset _1579_gh_dir
 # is only correct at the instant the comment appears. Sleeping it again
 # part-way through pushes the retry a full extra quota cycle past the moment a
 # review becomes available.
-_1579_remaining() {
-  coderabbit_rate_limit_remaining_seconds "$_1579_window" "$(_1579_ago_s "$1")" 900
+# The timestamp is built by one `date` call and the age computed by another, so
+# a second boundary between them shifts the result by one. Assert the value is
+# within a tolerance of the expectation rather than exactly equal — an exact
+# comparison here is a flaky test, not a strict one.
+_1579_remaining_near() {
+  local age_s="$1" want="$2" tol="${3:-3}"
+  local got delta
+  got="$(coderabbit_rate_limit_remaining_seconds "$_1579_window" "$(_1579_ago_s "$age_s")" 900)"
+  case "$got" in
+    '' | *[!0-9]*) printf 'non-numeric:%s\n' "$got"; return 0 ;;
+  esac
+  delta=$(( got > want ? got - want : want - got ))
+  if [ "$delta" -le "$tol" ]; then
+    printf 'within\n'
+  else
+    printf 'got %s want ~%s\n' "$got" "$want"
+  fi
 }
-run_test "1579_remaining_fresh_comment_is_full_window" "1650" "$(_1579_remaining 0)"
+run_test "1579_remaining_fresh_comment_is_full_window" "within" "$(_1579_remaining_near 0 1650)"
 # 27 min window, 26 min elapsed -> ~90s left, not another 1650s.
-run_test "1579_remaining_mid_window_subtracts_age" "90" "$(_1579_remaining 1560)"
-run_test "1579_remaining_half_window" "870" "$(_1579_remaining 780)"
-# Past the window, a floor keeps the retry from spinning instantly.
-run_test "1579_remaining_expired_window_uses_floor" "30" "$(_1579_remaining 3600)"
+run_test "1579_remaining_mid_window_subtracts_age" "within" "$(_1579_remaining_near 1560 90)"
+run_test "1579_remaining_half_window" "within" "$(_1579_remaining_near 780 870)"
+# The tolerance must not be wide enough to hide the bug this pins: sleeping the
+# full window when only ~90s remains is a 1560s error, far outside it.
+run_test "1579_remaining_tolerance_still_catches_full_window" "got 90 want ~1650" \
+  "$(_1579_remaining_near 1560 1650)"
+# Past the window, a floor keeps the retry from spinning instantly. This one is
+# an exact comparison safely: the floor is a constant, not clock-derived.
+run_test "1579_remaining_expired_window_uses_floor" "30" \
+  "$(coderabbit_rate_limit_remaining_seconds "$_1579_window" "$(_1579_ago_s 3600)" 900)"
 # Age that cannot be computed degrades to the previous behaviour, not to zero.
 run_test "1579_remaining_unparseable_created_at" "1650" \
   "$(coderabbit_rate_limit_remaining_seconds "$_1579_window" "not-a-date" 900)"
@@ -14957,7 +14978,7 @@ run_test "1579_selector_matches_visible_text_without_marker" "yes" \
 **Next included review available in 27 minutes.**')"
 run_test "1579_selector_ignores_ordinary_comment" "no" \
   "$(_1579_sel 'Thanks, looks good to me.')"
-unset -f _1579_remaining _1579_sel
+unset -f _1579_remaining_near _1579_sel
 
 # --- mutation check --------------------------------------------------------
 # The staleness verdicts above must actually depend on the parsed window. Shadow

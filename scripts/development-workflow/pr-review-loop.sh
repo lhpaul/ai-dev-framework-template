@@ -4575,6 +4575,14 @@ coderabbit_rate_limit_comment_is_current() {
   case "$stale_after" in
     '' | *[!0-9]*) stale_after=3600 ;;
   esac
+  # Strip leading zeros before any arithmetic context: a digit-only string like
+  # "008" passes the check above, but bash reads it as an invalid octal literal
+  # and aborts the script under `set -e`. Same guard as the other overrides —
+  # this was the one that still lacked it.
+  stale_after="${stale_after#"${stale_after%%[!0]*}"}"
+  if [ -z "$stale_after" ]; then
+    stale_after=3600
+  fi
   if [ "$stale_after" -le 0 ]; then
     stale_after=3600
   fi
@@ -4765,6 +4773,13 @@ coderabbit_newest_rate_limit_comment() {
         )]
         | sort_by((.updated_at // .created_at))
         | (last // empty)
+        # The filter accepts on, and sorts by, the LATER of created_at and
+        # updated_at, because CodeRabbit revises a comment in place. Emitting
+        # that value as `effective_at` keeps consumers from re-deriving it and
+        # disagreeing: reading `.created_at` for a comment selected on its
+        # updated_at would age it from the wrong instant, and the age is what
+        # the staleness and remaining-window arithmetic depend on.
+        | . + { effective_at: (.updated_at // .created_at) }
       ' 2>/dev/null)" || jq_status=$?
   if [ "$jq_status" -ne 0 ]; then
     echo "WARN: coderabbit_newest_rate_limit_comment: could not parse comments for PR #$pr_number (jq exited $jq_status) — reporting a lookup failure" >&2
@@ -4792,7 +4807,9 @@ coderabbit_rate_limit_is_live() {
   printf '%s' "$comment_json" | jq -e 'type == "object"' >/dev/null 2>&1 || return 1
   local body created
   body="$(printf '%s' "$comment_json" | jq -r '.body // ""' 2>/dev/null)" || body=""
-  created="$(printf '%s' "$comment_json" | jq -r '.created_at // ""' 2>/dev/null)" || created=""
+  # effective_at is what the selector matched and sorted on; fall back to
+  # created_at only for an object that did not come from that selector.
+  created="$(printf '%s' "$comment_json" | jq -r '.effective_at // .created_at // ""' 2>/dev/null)" || created=""
   coderabbit_rate_limit_comment_is_current "$body" "$created" "$last_trigger_iso"
 }
 
@@ -5209,7 +5226,7 @@ run_coderabbit_review() {
         # `-r` on the body is deliberate: it is consumed as text by the regex
         # parser, and a JSON-quoted string would not match.
         rate_limit_comment_body="$(printf '%s' "$rate_limit_comment_json" | jq -r '.body // ""' 2>/dev/null)" || rate_limit_comment_body=""
-        rate_limit_comment_created="$(printf '%s' "$rate_limit_comment_json" | jq -r '.created_at // ""' 2>/dev/null)" || rate_limit_comment_created=""
+        rate_limit_comment_created="$(printf '%s' "$rate_limit_comment_json" | jq -r '.effective_at // .created_at // ""' 2>/dev/null)" || rate_limit_comment_created=""
         if coderabbit_rate_limit_is_live "$rate_limit_comment_json" "$coderabbit_last_trigger_iso"; then
           rate_limit_comment_count=1
         else
