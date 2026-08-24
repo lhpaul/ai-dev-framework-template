@@ -15088,6 +15088,7 @@ chmod +x "$_1579_e2e_mock_dir2/gh"
 
 PATH="$_1579_e2e_mock_dir2:$PATH" \
   CODERABBIT_NO_TRIGGER_TIMEOUT=999 CODERABBIT_RATE_LIMIT_MAX_RETRIES=1 CODERABBIT_RATE_LIMIT_WAIT=1 \
+  CODERABBIT_RATE_LIMIT_MIN_WAIT=1 \
   run_coderabbit_review "42" "fix/42-test" "1" "3" >/dev/null 2>&1 || true
 
 # The mock logs "$*", which joins argv with spaces and drops the quoting the
