@@ -55,16 +55,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one of the four coverage gaps the selector reports.
 - **Integration-branch PRs now run CI** (#1525): `e2e-regression.yml`,
   `markdown-lint.yml`, and `shellcheck.yml` gated on `develop` and `main`
-  only, so an epic's sub-item PRs into `develop-<slug>` ran zero checks and
-  the whole implementation reached the graduation PR untested — measured
-  downstream at 4 checks on a sub-item PR versus 13 on the graduation PR,
-  which then surfaced four real defects in already-merged code. All three now
-  include `develop-**` (as `workflow-tests.yml` already did), Protocol 05b
-  states the requirement for projects that add their own workflows, and
-  `test-workflow-branch-filters.sh` fails when a `develop`-gated workflow
-  omits the glob or hardcodes a slug — a stale
-  `develop-<old-slug>` entry reads as coverage while the current integration
-  branch is absent.
+  only, so an epic's sub-item PRs into `develop-<slug>` ran zero checks —
+  measured downstream at 4 checks on a sub-item PR versus 13 on the
+  graduation PR, which then surfaced four real defects in already-merged
+  code. All three now include `develop-**`, as `workflow-tests.yml` already
+  did, and `test-workflow-branch-filters.sh` enforces it per trigger. The
+  requirement for projects that add their own workflows is stated in
+  [Protocol 05b](docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md).
 - **Codex reviewer unavailability is classified and recoverable** (#1522,
   #1526): the Codex GitHub App's "create a Codex account and connect to
   github" refusal — which it returns per triggering identity, so an org-wide

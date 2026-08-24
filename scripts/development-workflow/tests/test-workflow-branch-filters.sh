@@ -39,7 +39,38 @@ run_test() {
 # of those guesses fails OPEN, reporting "no filter" for a workflow that has
 # one. Downstream repos copy these workflows and reformat them, so a parser
 # that silently skips a differently-indented file defeats the guard.
-branch_filter_block() {
+# Emits one "<trigger>\t<branch>" line per configured branch filter.
+#
+# Keeping the trigger name attached matters: `pull_request` and
+# `pull_request_target` are different triggers and only the former gates the
+# PR checks #1525 is about. Flattening them into one list lets a workflow with
+#   pull_request:        branches: [develop, main]
+#   pull_request_target: branches: [develop, develop-**]
+# read as covered, because `develop-**` appears *somewhere*, while its actual
+# `pull_request` filter still omits it and PRs into develop-<slug> still run
+# zero checks. That is precisely the gap this suite exists to catch, so the
+# parser must not erase the distinction.
+# Bash keeps only the most recently registered EXIT trap, so registering one
+# per temp directory silently leaks every directory but the last. Both are
+# declared and cleaned by a single handler instead.
+FIXTURE_DIR=""
+_fx=""
+_bf_cleanup() {
+  [ -n "${FIXTURE_DIR:-}" ] && rm -rf "$FIXTURE_DIR"
+  [ -n "${_fx:-}" ] && rm -rf "$_fx"
+  return 0
+}
+trap _bf_cleanup EXIT
+
+branch_filter_entries() {
+  if [ "$#" -ne 1 ]; then
+    echo "ERROR: branch_filter_entries requires exactly 1 argument (workflow file), got $#" >&2
+    return 2
+  fi
+  if [ ! -r "$1" ]; then
+    echo "ERROR: branch_filter_entries: '$1' is not a readable file" >&2
+    return 2
+  fi
   python3 - "$1" <<'PYBF'
 import sys
 try:
@@ -47,8 +78,14 @@ try:
 except ImportError:  # pragma: no cover - PyYAML absent
     sys.exit(3)
 
-with open(sys.argv[1], encoding="utf-8") as fh:
-    doc = yaml.safe_load(fh) or {}
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh) or {}
+except (OSError, yaml.YAMLError) as exc:
+    # Report rather than emit a traceback: an unparseable workflow must fail
+    # the guard loudly, not read as "no filter" and be skipped.
+    print("ERROR: could not parse %s: %s" % (sys.argv[1], exc), file=sys.stderr)
+    sys.exit(4)
 
 # YAML 1.1 parses a bare `on:` key as the boolean True; PyYAML keeps `"on"`
 # quoted as the string. Accept either spelling.
@@ -61,8 +98,23 @@ for key in ("pull_request", "pull_request_target"):
     if not isinstance(block, dict):
         continue
     for entry in block.get("branches", []) or []:
-        print(entry)
+        print("%s\t%s" % (key, entry))
 PYBF
+}
+
+# Branches configured for one specific trigger.
+branches_for_trigger() {
+  if [ "$#" -ne 2 ]; then
+    echo "ERROR: branches_for_trigger requires 2 arguments (workflow file, trigger), got $#" >&2
+    return 2
+  fi
+  branch_filter_entries "$1" | awk -F'\t' -v t="$2" '$1 == t { print $2 }'
+}
+
+# Every configured branch, regardless of trigger. Used only where the question
+# is genuinely trigger-agnostic (the hardcoded-slug scan).
+branch_filter_block() {
+  branch_filter_entries "$1" | awk -F'\t' '{ print $2 }'
 }
 
 if ! python3 -c 'import yaml' 2>/dev/null; then
@@ -75,7 +127,11 @@ fi
 missing=""
 checked=0
 for wf in "$WF_DIR"/*.yml; do
-  block="$(branch_filter_block "$wf")"
+  # Each trigger is judged on its own filter list. A workflow can gate on
+  # develop under one trigger and not another, and only the trigger that
+  # actually gates PR checks decides whether a PR into develop-<slug> runs.
+  for trigger in pull_request pull_request_target; do
+  block="$(branches_for_trigger "$wf" "$trigger")"
   # No filter at all → runs everywhere → nothing to assert.
   [ -n "$block" ] || continue
   # Only workflows that gate on `develop` are in scope; a main-only workflow
@@ -90,8 +146,9 @@ for wf in "$WF_DIR"/*.yml; do
   esac
   checked=$((checked + 1))
   if ! printf '%s\n' "$block" | grep -qx "develop-\*\*"; then
-    missing="${missing:+$missing }$(basename "$wf")"
+    missing="${missing:+$missing }$(basename "$wf"):$trigger"
   fi
+  done
 done
 
 run_test "some_workflows_gate_on_develop" "yes" "$([ "$checked" -gt 0 ] && echo yes || echo no)"
@@ -116,7 +173,6 @@ run_test "no_hardcoded_integration_branch_slugs" "" "$hardcoded"
 # because `develop-**` sits under `push:`, while its actual `pull_request:`
 # filter still omits it and PRs into develop-<slug> still run zero checks.
 FIXTURE_DIR="$(mktemp -d)"
-trap 'rm -rf "$FIXTURE_DIR"' EXIT
 cat > "$FIXTURE_DIR/push-vs-pull-request.yml" <<'FIXTURE'
 name: fixture
 on:
@@ -138,11 +194,52 @@ FIXTURE
 fixture_block="$(branch_filter_block "$FIXTURE_DIR/push-vs-pull-request.yml")"
 run_test "branch_filter_block_ignores_push_trigger" "$(printf 'develop\nmain')" "$fixture_block"
 
+# The same confusion one level in: `pull_request` and `pull_request_target` are
+# also different triggers. Flattening them lets this workflow read as covered
+# because `develop-**` appears under pull_request_target, while the trigger
+# that actually gates PR checks still omits it — the exact #1525 gap, passing
+# the guard meant to catch it.
+cat > "$FIXTURE_DIR/pr-vs-pr-target.yml" <<'FIXTURE'
+name: fixture
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+  pull_request_target:
+    branches:
+      - develop
+      - develop-**
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+FIXTURE
+run_test "pull_request_branches_are_trigger_scoped" "$(printf 'develop\nmain')" \
+  "$(branches_for_trigger "$FIXTURE_DIR/pr-vs-pr-target.yml" pull_request)"
+run_test "pull_request_target_branches_are_trigger_scoped" "$(printf 'develop\ndevelop-**')" \
+  "$(branches_for_trigger "$FIXTURE_DIR/pr-vs-pr-target.yml" pull_request_target)"
+# Planted violation: the flattened view is what used to be checked, and it
+# contains develop-**, so the old logic passed this workflow.
+run_test "flattened_view_would_have_passed_this" "yes" \
+  "$(branch_filter_block "$FIXTURE_DIR/pr-vs-pr-target.yml" | grep -qx 'develop-\*\*' && echo yes || echo no)"
+# Trigger-scoped, the pull_request filter is correctly seen as missing it.
+run_test "trigger_scoped_view_catches_the_gap" "no" \
+  "$(branches_for_trigger "$FIXTURE_DIR/pr-vs-pr-target.yml" pull_request | grep -qx 'develop-\*\*' && echo yes || echo no)"
+
+# Argument validation: a missing or unreadable file must be a reported error,
+# not a shell failure or a Python traceback, and must not read as "no filter".
+_bf_status() { local st=0; "$@" >/dev/null 2>&1 || st=$?; printf '%s\n' "$st"; }
+run_test "branch_filter_entries_no_args" "2" "$(_bf_status branch_filter_entries)"
+run_test "branch_filter_entries_two_args" "2" "$(_bf_status branch_filter_entries a b)"
+run_test "branch_filter_entries_unreadable" "2" "$(_bf_status branch_filter_entries "$FIXTURE_DIR/does-not-exist.yml")"
+run_test "branches_for_trigger_wrong_arity" "2" "$(_bf_status branches_for_trigger "$FIXTURE_DIR/pr-vs-pr-target.yml")"
+
 # Formats a hand-rolled parser would miss, each failing OPEN (reporting "no
 # filter" for a workflow that has one). Downstream repos reformat what they
 # copy, so these are the realistic shapes, not exotica.
 _fx="$(mktemp -d)"
-trap 'rm -rf "$_fx"' EXIT
 cat > "$_fx/four-space.yml" <<'YFX'
 name: Four Space
 on:
