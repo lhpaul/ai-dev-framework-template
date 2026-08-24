@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# test-pr-ci-loop.sh - CI loop verdict tests.
+# covers: scripts/development-workflow/pr-ci-loop.sh
+#
+# Focus: the CI-evidence gate (#1514, #1580). "No failing and no pending
+# checks" is not evidence that CI ran — a head can legitimately carry zero
+# checks (GitHub builds no merge ref for a CONFLICTING PR, so its
+# pull_request workflows never start) or only a subset after a filter change.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
+HELPER="$REPO_ROOT/scripts/development-workflow/pr-ci-loop.sh"
+
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TMP_ROOT"' EXIT
+
+pass=0
+fail=0
+run_test() {
+  local name="$1" expected="$2" actual="$3"
+  if [ "$actual" = "$expected" ]; then
+    echo "PASS: $name"; pass=$((pass + 1))
+  else
+    echo "FAIL: $name - expected '$expected', got '$actual'"; fail=$((fail + 1))
+  fi
+}
+
+# make_gh <dir> — a gh stub driven by env vars:
+#   MOCK_ROLLUP        statusCheckRollup JSON
+#   MOCK_PREV_CHECKS   check names on the previous head (JSON array of names)
+#   MOCK_PR_COMMITS    commit SHAs for the PR (JSON array)
+make_gh() {
+  local dir="$1"
+  mkdir -p "$dir"
+  cat > "$dir/gh" <<'GH'
+#!/usr/bin/env bash
+# Defaults are plain variables: a ${VAR:-{...}} default containing braces does
+# not survive bash parameter expansion and silently yields invalid JSON.
+head_default='headsha000000000000'
+rollup_default='{"statusCheckRollup":[]}'
+checks_default='{"check_runs":[]}'
+commits_default='[]'
+# The real gh applies --jq locally; a stub that ignores it hands the caller a
+# raw payload where it expects a filtered scalar. Apply the filter for real.
+jq_filter=""
+prev=""
+for arg in "$@"; do
+  [ "$prev" = "--jq" ] && jq_filter="$arg"
+  prev="$arg"
+done
+emit() {
+  if [ -n "$jq_filter" ]; then
+    printf '%s\n' "$1" | jq -r "$jq_filter"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+case "$*" in
+  *"auth status"*) exit 0 ;;
+  *"--json headRefOid"*) emit "{\"headRefOid\":\"${MOCK_HEAD_SHA:-$head_default}\"}" ; exit 0 ;;
+  *"--json statusCheckRollup"*) emit "${MOCK_ROLLUP:-$rollup_default}" ; exit 0 ;;
+  *"/check-runs"*) emit "${MOCK_PREV_CHECKS:-$checks_default}" ; exit 0 ;;
+  *"/commits"*) emit "${MOCK_PR_COMMITS:-$commits_default}" ; exit 0 ;;
+  *"/reviews"*|*"/comments"*) emit '[]' ; exit 0 ;;
+  *) emit '{}' ; exit 0 ;;
+esac
+GH
+  chmod +x "$dir/gh"
+}
+
+_bin="$TMP_ROOT/bin"
+make_gh "$_bin"
+
+_success_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"workflow test harnesses","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"CheckRun","name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"}]}'
+_subset_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","status":"COMPLETED","conclusion":"SUCCESS"}]}'
+_prev_two='{"check_runs":[{"name":"workflow test harnesses"},{"name":"ShellCheck"}]}'
+_commits_two='[{"sha":"prevsha00000000000000"},{"sha":"headsha000000000000"}]'
+
+run_ci() {
+  local out status=0
+  out="$(env PATH="$_bin:$PATH" "$@" bash "$HELPER" 42 --repo owner/repo --poll-interval 1 --max-wait 1 2>/dev/null)" || status=$?
+  printf '%s\n---STATUS=%s\n' "$out" "$status"
+}
+
+# 1. Same check set as the previous head → green.
+_out="$(run_ci MOCK_ROLLUP="$_success_rollup" MOCK_PREV_CHECKS="$_prev_two" MOCK_PR_COMMITS="$_commits_two")"
+run_test "full_check_set_is_green" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
+run_test "green_reports_head_sha" "HEAD_SHA=headsha000000000000" "$(grep '^HEAD_SHA=' <<<"$_out" || true)"
+run_test "green_reports_ci_evidence_present" "CI_EVIDENCE=present" "$(grep '^CI_EVIDENCE=' <<<"$_out" || true)"
+
+# 2. A workflow that ran on the previous head is absent now → red, named.
+#    This is the PR #1577 shape: a conflicting PR whose pull_request workflows
+#    never started, leaving a passing subset that used to read as green.
+_out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_prev_two" MOCK_PR_COMMITS="$_commits_two")"
+run_test "missing_workflow_is_red" "RESULT=red" "$(grep '^RESULT=' <<<"$_out" || true)"
+run_test "missing_workflow_reason" "REASON=expected_checks_missing" "$(grep '^REASON=' <<<"$_out" || true)"
+run_test "missing_workflow_is_named" "MISSING_CHECKS=workflow test harnesses" "$(grep '^MISSING_CHECKS=' <<<"$_out" || true)"
+
+# 3. Zero checks with no previous head → green (unchanged) but evidence=none,
+#    so the readiness gate can refuse rather than label on absence.
+_out="$(run_ci MOCK_ROLLUP='{"statusCheckRollup":[]}' MOCK_PR_COMMITS='[]')"
+run_test "no_checks_still_green" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
+run_test "no_checks_reports_evidence_none" "CI_EVIDENCE=none" "$(grep '^CI_EVIDENCE=' <<<"$_out" || true)"
+
+# 4. The gate is skippable for callers that know better, and does not fire when
+#    the previous head ran nothing.
+_out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_prev_two" MOCK_PR_COMMITS="$_commits_two" CI_LOOP_SKIP_EVIDENCE_GATE=1)"
+run_test "evidence_gate_is_skippable" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
+_out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS='{"check_runs":[]}' MOCK_PR_COMMITS="$_commits_two")"
+run_test "no_previous_checks_does_not_fire" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
+
+# 5. A genuinely failing check is still red (the gate did not displace it).
+_fail_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE"}]}'
+_out="$(run_ci MOCK_ROLLUP="$_fail_rollup" MOCK_PREV_CHECKS="$_prev_two" MOCK_PR_COMMITS="$_commits_two")"
+run_test "failing_check_still_red" "RESULT=red" "$(grep '^RESULT=' <<<"$_out" || true)"
+run_test "failing_check_names_it" "FAILING_CHECKS=ShellCheck" "$(grep '^FAILING_CHECKS=' <<<"$_out" || true)"
+
+printf '\nResults: %d passed, %d failed\n' "$pass" "$fail"
+[ "$fail" -eq 0 ]

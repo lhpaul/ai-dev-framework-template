@@ -2578,12 +2578,29 @@ CI_FAILING=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" \
   --jq '[.check_runs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
 CI_PENDING=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" \
   --jq '[.check_runs[] | select(.status != "completed")] | length')
+CI_TOTAL=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" --jq '.check_runs | length')
 if [ "$CI_FAILING" -gt 0 ] || [ "$CI_PENDING" -gt 0 ]; then
   echo "ERROR: CI is not green — ${CI_FAILING} failing and ${CI_PENDING} pending check(s) on $HEAD_SHA."
   echo "Run Step 8 (pr-ci-loop.sh) and resolve all failures before applying ready-for-human-review."
   exit 5  # Exit code 5 = "CI not green at readiness gate"
 fi
-echo "✅ CI is green on $HEAD_SHA."
+# "Nothing failed" is not "CI passed" (#1514, #1580). A head can carry zero
+# checks — GitHub builds no merge ref for a CONFLICTING PR, so its
+# `pull_request` workflows never start — and the counts above are then both
+# zero. Refuse that instead of labelling on absence. Step 8's
+# CI_EVIDENCE=none / REASON=expected_checks_missing report the same condition.
+if [ "$CI_TOTAL" -eq 0 ]; then
+  echo "ERROR: no checks ran on $HEAD_SHA — 'green' here would mean 'nothing failed', not 'CI passed'."
+  echo "If the PR is CONFLICTING, resolve the conflict so pull_request workflows can run; then re-run Step 8."
+  echo "For a repository with no CI configured, record that explicitly (issue_tracker/ci policy) rather than labelling on an empty check set."
+  exit 5  # Exit code 5 = "CI not green at readiness gate"
+fi
+echo "✅ CI is green on $HEAD_SHA (${CI_TOTAL} check(s))."
+# Machine-readable readiness evidence — the runner's terminal report must carry
+# the head the CI verdict belongs to, not just the verdict (#1514 AC-4).
+echo "READINESS_HEAD_SHA=$HEAD_SHA"
+echo "READINESS_CI_TOTAL=$CI_TOTAL"
+echo "READINESS_CI_CONCLUSION=success"
 
 # Check 0.5: latest automated reviewer-loop summary must be clean or skipped.
 # A non-clean terminal result such as RESULT=escalate, needs_fixes, timeout, or

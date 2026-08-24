@@ -253,7 +253,32 @@ is_devin_status_stale() {
   return 0  # no findings — stale error status, safe to skip
 }
 
+# previous_head_check_names <repo> <pr_number> <current_head_sha>
+# Prints the check names that ran on the PR's most recent EARLIER head, one per
+# line (empty when the PR has a single commit or the lookup fails).
+#
+# Why this exists (#1514, #1580): "no failing and no pending checks" is not
+# evidence that CI ran. A head can carry zero checks, or only a subset, and
+# read as green:
+#   - GitHub builds no merge ref for a CONFLICTING PR, so `pull_request`
+#     workflows do not start at all — measured on PR #1577, where two pushes
+#     after it went DIRTY ran 4 checks instead of 16 and the loop said green;
+#   - a workflow whose path filter or branch filter stops matching silently
+#     drops out of the set.
+# Comparing against the previous head turns "a workflow that used to run is
+# absent" into a red result instead of a vacuous pass.
+previous_head_check_names() {
+  local repo="$1" pr_number="$2" current_sha="$3" prev_sha=""
+  prev_sha="$(gh api "repos/$repo/pulls/$pr_number/commits" --paginate --jq '[.[].sha] | .[-2] // empty' 2>/dev/null)" || return 0
+  [ -n "$prev_sha" ] || return 0
+  [ "$prev_sha" != "$current_sha" ] || return 0
+  gh api "repos/$repo/commits/$prev_sha/check-runs" --jq '[.check_runs[].name] | unique | .[]' 2>/dev/null || return 0
+}
+
 while :; do
+  if ! head_sha="$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid' 2>/dev/null)"; then
+    head_sha=""
+  fi
   if ! checks_json="$(gh pr view "$pr_number" --repo "$repo" --json statusCheckRollup 2>/dev/null)"; then
     print_kv RESULT red
     print_kv PR_NUMBER "$pr_number"
@@ -497,6 +522,47 @@ while :; do
       continue
     fi
 
+    # CI-evidence gate (#1514, #1580): green must mean "the checks that belong
+    # on this head ran and passed", not "nothing failed". Compare the current
+    # head's check names against the PR's previous head; anything that ran
+    # before and is absent now is reported rather than silently accepted.
+    missing_checks=""
+    if [ -n "$head_sha" ] && [ "${CI_LOOP_SKIP_EVIDENCE_GATE:-0}" != "1" ]; then
+      current_names="$(printf '%s\n' "$normalized_checks_json" | jq -r '[.[] | (.name // .context // .workflowName // "unknown")] | unique | .[]' 2>/dev/null || true)"
+      while IFS= read -r prev_name; do
+        [ -n "$prev_name" ] || continue
+        if ! printf '%s\n' "$current_names" | grep -Fxq "$prev_name"; then
+          missing_checks="${missing_checks:+$missing_checks,}$prev_name"
+        fi
+      done <<< "$(previous_head_check_names "$repo" "$pr_number" "$head_sha")"
+    fi
+    if [ -n "$missing_checks" ]; then
+      print_kv RESULT red
+      print_kv PR_NUMBER "$pr_number"
+      print_kv REPO "$repo"
+      print_kv HEAD_SHA "$head_sha"
+      print_kv REASON expected_checks_missing
+      print_kv TOTAL_CHECK_COUNT "$total_check_count"
+      print_kv FAILING_CHECK_COUNT 0
+      print_kv FAILING_CHECKS ""
+      print_kv MISSING_CHECKS "$missing_checks"
+      print_kv PENDING_CHECK_COUNT 0
+      print_kv PENDING_CHECKS ""
+      print_kv REVIEWER_CHECK_COUNT "$reviewer_check_count"
+      print_kv REVIEWER_CHECKS "$reviewer_check_list"
+      print_kv REVIEWER_CHECKS_JSON "$reviewer_checks_json"
+      echo "ERROR: checks that ran on the PR's previous head are absent on $head_sha: $missing_checks" >&2
+      echo "  A conflicting PR gets no pull_request workflows at all; resolve the conflict (or the filter change) and let CI re-run." >&2
+      exit 1
+    fi
+    if [ "$total_check_count" -eq 0 ]; then
+      print_kv CI_EVIDENCE none
+      echo "WARNING: no checks ran on $head_sha; 'green' here means 'nothing failed', not 'CI passed'." >&2
+    else
+      print_kv CI_EVIDENCE present
+    fi
+
+    print_kv HEAD_SHA "$head_sha"
     print_kv RESULT green
     print_kv PR_NUMBER "$pr_number"
     print_kv REPO "$repo"
