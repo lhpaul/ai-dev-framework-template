@@ -515,12 +515,30 @@ PY
 #   - GITHUB_PROJECT_NUMBER is not configured
 #   - the current or previous release tag cannot be resolved
 #   - the GitHub Projects item-list API call fails
+# pr_merge_is_in_release <merge_sha> <version>
+# 0 when <merge_sha> is an ancestor of the release tag — i.e. the code actually
+# shipped in it. "Has a merged PR" is not that test: a PR merged into an
+# in-flight develop-<slug> integration branch is merged, closed, and inside the
+# release window, yet none of its code is in the tag. Downstream this stamped
+# 16 issues onto a release whose changelog named two (#1512).
+#
+# An unknown SHA, an unfetched tag, or any git failure returns non-zero, so the
+# caller degrades to report-only rather than auto-adding on a guess.
+pr_merge_is_in_release() {
+  local merge_sha="$1" version="$2"
+  [ -n "$merge_sha" ] && [ -n "$version" ] || return 1
+  git rev-parse --verify --quiet "${merge_sha}^{commit}" >/dev/null 2>&1 || return 1
+  git rev-parse --verify --quiet "refs/tags/${version}^{commit}" >/dev/null 2>&1 || return 1
+  git merge-base --is-ancestor "$merge_sha" "refs/tags/${version}" 2>/dev/null
+}
+
 detect_omitted_merged_items() {
   local version="$1"
   local provider project_number owner repo_owner repo_name repo_slug
   local current_tag_date prev_tag_name prev_tag_date project_items merged_items
   local known_scope_arg issue_num issue_closed_at in_window referencing_pr
-  local entry iss detail total_omitted epic_nums
+  local referencing_pr_merge_sha referencing_pr_base
+  local entry iss detail total_omitted epic_nums _ns_rest
   local omitted_epics omitted_shipped
   omitted_epics=""
   omitted_shipped=""
@@ -845,7 +863,7 @@ PY
     # The query is inlined as a single-line variable to avoid <<'PY' heredoc
     # quoting issues in bash 3.2 when the query spans multiple lines.
     # shellcheck disable=SC2016 # GraphQL variables are not Bash variables.
-    local _gql_tl_query='query($owner:String!,$repo:String!,$num:Int!,$after:String){repository(owner:$owner,name:$repo){issue(number:$num){timelineItems(first:100,after:$after,itemTypes:[CROSS_REFERENCED_EVENT,CLOSED_EVENT]){nodes{__typename ...on CrossReferencedEvent{source{__typename ...on PullRequest{number merged}}}...on ClosedEvent{closer{__typename ...on PullRequest{number merged}}}}pageInfo{hasNextPage endCursor}}}}}'
+    local _gql_tl_query='query($owner:String!,$repo:String!,$num:Int!,$after:String){repository(owner:$owner,name:$repo){issue(number:$num){timelineItems(first:100,after:$after,itemTypes:[CROSS_REFERENCED_EVENT,CLOSED_EVENT]){nodes{__typename ...on CrossReferencedEvent{source{__typename ...on PullRequest{number merged baseRefName mergeCommit{oid}}}}...on ClosedEvent{closer{__typename ...on PullRequest{number merged baseRefName mergeCommit{oid}}}}}pageInfo{hasNextPage endCursor}}}}}'
     local gql_pr_cursor="" gql_pr_has_next="true" gql_pr_page=0 gql_pr_max=20
     referencing_pr=""
     while [ "$gql_pr_has_next" = "true" ] && [ "$gql_pr_page" -lt "$gql_pr_max" ] && [ -z "$referencing_pr" ]; do
@@ -881,18 +899,24 @@ tl       = issue.get("timelineItems") or {}
 nodes    = tl.get("nodes") or []
 pi       = tl.get("pageInfo") or {}
 found_pr = None
+found_merge_sha = ""
+found_base = ""
+
+def _take(pr):
+    mc = pr.get("mergeCommit") or {}
+    return pr.get("number"), (mc.get("oid") or ""), (pr.get("baseRefName") or "")
 
 for n in nodes:
     t = n.get("__typename") or ""
     if t == "CrossReferencedEvent":
         src = n.get("source") or {}
         if src.get("__typename") == "PullRequest" and src.get("merged"):
-            found_pr = src.get("number")
+            found_pr, found_merge_sha, found_base = _take(src)
             break
     elif t == "ClosedEvent":
         closer = n.get("closer") or {}
         if closer.get("__typename") == "PullRequest" and closer.get("merged"):
-            found_pr = closer.get("number")
+            found_pr, found_merge_sha, found_base = _take(closer)
             break
 
 has_next   = "true"  if pi.get("hasNextPage") else "false"
@@ -901,6 +925,8 @@ end_cursor = pi.get("endCursor") or ""
 print(str(found_pr) if found_pr is not None else "")
 print(has_next)
 print(end_cursor)
+print(found_merge_sha)
+print(found_base)
 PY
       )" || true
       rm -f "$gql_pr_tmp"
@@ -908,12 +934,20 @@ PY
         break
       fi
       referencing_pr="$(printf '%s\n' "$gql_pr_parse_out" | sed -n '1p')"
+      referencing_pr_merge_sha="$(printf '%s\n' "$gql_pr_parse_out" | sed -n '4p')"
+      referencing_pr_base="$(printf '%s\n' "$gql_pr_parse_out" | sed -n '5p')"
       gql_pr_has_next="$(printf '%s\n' "$gql_pr_parse_out" | sed -n '2p')"
       gql_pr_cursor="$(printf '%s\n' "$gql_pr_parse_out" | sed -n '3p')"
     done
 
-    if [ -n "$referencing_pr" ]; then
+    if [ -n "$referencing_pr" ] && pr_merge_is_in_release "$referencing_pr_merge_sha" "$version"; then
       omitted_shipped="${omitted_shipped}${issue_num}:pr_${referencing_pr}
+"
+    elif [ -n "$referencing_pr" ]; then
+      # Merged, closed, inside the window — but the merge commit is not an
+      # ancestor of the tag, so this code did not ship in this release.
+      # Report it; never auto-add it (#1512).
+      omitted_epics="${omitted_epics}${issue_num}:not_shipped_pr_${referencing_pr}_into_${referencing_pr_base:-unknown}
 "
     else
       omitted_epics="${omitted_epics}${issue_num}:no_merged_pr
@@ -957,6 +991,10 @@ PY
       detail="${entry#*:}"
       case "$detail" in
         no_merged_pr)       echo "    #${iss} (likely parent epic — no merged PR referencing this issue in release window)" ;;
+        not_shipped_pr_*)
+          _ns_rest="${detail#not_shipped_pr_}"
+          echo "    #${iss} [merged PR #${_ns_rest%%_into_*} into ${_ns_rest#*_into_} is not an ancestor of ${version}: merged, but not shipped in this release - report-only]"
+          ;;
         unknown_close_date) echo "    #${iss} (could not determine close date — manual review required)" ;;
         *)                  echo "    #${iss} (${detail})" ;;
       esac
