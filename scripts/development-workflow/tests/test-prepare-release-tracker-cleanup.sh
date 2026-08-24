@@ -215,12 +215,26 @@ run_test() {
 }
 
 run_not_contains() {
+  if [ "$#" -ne 3 ]; then
+    echo "FAIL: run_not_contains called with $# argument(s), expected 3"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    return 0
+  fi
   local name="$1"
   local unexpected="$2"
   local actual="$3"
-  if grep -Fq -- "$unexpected" <<< "$actual"; then
+  # grep exits 0 on a match, 1 on no match, and >1 on an actual error (bad
+  # pattern, unreadable input). Folding >1 into the else branch reports PASS
+  # for an assertion that never ran — the same false pass that let a broken
+  # guard test through in #1523. Only status 1 is a confirmed non-match.
+  local grep_status=0
+  grep -Fq -- "$unexpected" <<< "$actual" || grep_status=$?
+  if [ "$grep_status" -eq 0 ]; then
     echo "FAIL: $name - expected output NOT to contain '${unexpected}'"
     printf 'Actual output:\n%s\n' "$actual"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  elif [ "$grep_status" -gt 1 ]; then
+    echo "FAIL: $name - grep exited ${grep_status}; the assertion could not be evaluated"
     FAIL_COUNT=$((FAIL_COUNT + 1))
   else
     echo "PASS: $name"
