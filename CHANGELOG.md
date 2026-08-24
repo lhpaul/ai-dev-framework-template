@@ -36,6 +36,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **CodeRabbit rate-limit waits are read from the vendor, not guessed** (#1579):
+  the loop decided "CodeRabbit is rate limited" from the mere presence of a
+  rate-limit comment newer than the HEAD commit, so one stale reply suppressed
+  every later trigger on that HEAD — measured on PR #1575, a comment from 16:06
+  still read as live 21 hours later with no CodeRabbit activity in between. It
+  also sized every retry from a fixed constant: against the 1-review-per-hour
+  allowance measured on 2026-08-24, a 4 x 900 s budget spends all four retries
+  inside a window that grants at most one review, then escalates
+  `rate_limit_max_retries` at roughly the moment the review becomes available
+  (PR #1589: four retries, four "Reviews resumed" acknowledgements, zero
+  reviews). CodeRabbit states its own window — "Next included review available
+  in N minutes" — so the loop now parses that sentence to size the wait, treats
+  a comment past its announced window as spent rather than live, and re-triggers
+  with `@coderabbitai review` instead of `@coderabbitai resume`, which only
+  lifts a paused state and reviews nothing against a rate limit. A reply older
+  than this run's own most recent trigger no longer answers that trigger, with
+  a clock-skew tolerance because the anchor is stamped locally while the
+  comment timestamp comes from GitHub. CodeRabbit states the window in at least
+  two wordings — "Next included review available in 27 minutes" and "Your next
+  included review will be available in 7 minutes", both observed within one
+  hour — so the parser tolerates the gap between them rather than matching one.
+  Absent or reworded vendor text falls back to the previous constant, and the
+  wait is clamped by `CODERABBIT_RATE_LIMIT_WAIT_MAX` (default 3600 s) so a
+  malformed window cannot park an unattended run.
 - **Codex reviewer unavailability is classified and recoverable** (#1522,
   #1526): the Codex GitHub App's "create a Codex account and connect to
   github" refusal — which it returns per triggering identity, so an org-wide

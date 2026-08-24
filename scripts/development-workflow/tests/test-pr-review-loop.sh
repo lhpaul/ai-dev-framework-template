@@ -14693,6 +14693,155 @@ unset _1574_gate _1574_gate_bad _1574_clean _1574_skipped _1574_bad_status _1574
 unset _1574_loop _1574_p91 _1574_p92 _1574_cw _1574_cq _1574_help _reason _field
 
 # ---------------------------------------------------------------------------
+# Area 14: CodeRabbit rate-limit window is read from the vendor, not guessed
+# (issue #1579)
+#
+# Two defects, one root cause: the loop decided "CodeRabbit is rate limited"
+# from the mere presence of a rate-limit comment after the HEAD commit, and
+# sized its wait from a fixed constant. Measured 2026-08-24, the org allowance
+# was 1 review/hour while the loop retried 4 x 900 s, so it spent its whole
+# budget inside a window that could grant at most one review; and on PR #1575 a
+# 21-hour-old rate-limit comment still read as live, suppressing every trigger.
+#
+# CodeRabbit states its own window ("Next included review available in N
+# minutes"). These tests pin both the parse and the staleness decision it
+# enables.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 14: CodeRabbit rate-limit window parsing (issue #1579) ==="
+
+_1579_ago() {
+  local mins="$1"
+  date -u -v-"${mins}"M +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
+    || date -u -d "${mins} minutes ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null
+}
+_1579_state() {
+  if coderabbit_rate_limit_comment_is_current "$1" "$2"; then
+    printf 'current\n'
+  else
+    printf 'stale\n'
+  fi
+}
+# The exact sentence CodeRabbit posted on PR #1590 at 2026-08-24T03:12:02Z.
+_1579_window='**Next included review available in 27 minutes.**'
+_1579_nowindow='> [!WARNING]
+> ## Review limit reached'
+
+# --- wait sizing -----------------------------------------------------------
+# 27 minutes + the 30 s boundary buffer. The fixed default (900) is what this
+# replaces: it would have retried 12 minutes before the vendor could answer.
+run_test "1579_wait_parses_stated_minutes" "1650" "$(coderabbit_rate_limit_wait_seconds "$_1579_window" 900)"
+run_test "1579_wait_singular_minute" "90" "$(coderabbit_rate_limit_wait_seconds 'Next included review available in 1 minute.' 900)"
+# CodeRabbit's second wording, observed on PR #1588 at 2026-08-24T03:42:56Z
+# within the same hour as the first. The extra "will be" is exactly what a
+# regex anchored on "review available" cannot span — it silently fell back to
+# the 900 s constant instead of the 7 minutes the vendor stated.
+run_test "1579_wait_parses_will_be_wording" "450" "$(coderabbit_rate_limit_wait_seconds 'Your next included review will be available in 7 minutes.' 900)"
+# The word "included" is what keeps this off unrelated "available in N" prose.
+run_test "1579_wait_ignores_unrelated_available_in" "900" "$(coderabbit_rate_limit_wait_seconds 'The maintainer is available in 5 minutes.' 900)"
+run_test "1579_wait_seconds_unit" "75" "$(coderabbit_rate_limit_wait_seconds 'next included review available in 45 seconds' 900)"
+# Clamped: an unattended run must never park for hours on a vendor string.
+run_test "1579_wait_hours_clamped_to_max" "3600" "$(coderabbit_rate_limit_wait_seconds 'Next included review available in 2 hours' 900)"
+run_test "1579_wait_absent_phrase_uses_fallback" "900" "$(coderabbit_rate_limit_wait_seconds "$_1579_nowindow" 900)"
+run_test "1579_wait_empty_body_uses_fallback" "900" "$(coderabbit_rate_limit_wait_seconds '' 900)"
+# Wording drift must degrade to the fallback, never to zero or to an error.
+run_test "1579_wait_non_numeric_uses_fallback" "900" "$(coderabbit_rate_limit_wait_seconds 'Next included review available in twelve minutes' 900)"
+# "05" must not be read as an octal literal (that aborts the script under set -e).
+run_test "1579_wait_leading_zero_not_octal" "330" "$(coderabbit_rate_limit_wait_seconds 'Next included review available in 05 minutes' 900)"
+# Seven digits would overflow the multiplication; refuse rather than wrap.
+run_test "1579_wait_absurd_value_refused" "900" "$(coderabbit_rate_limit_wait_seconds 'Next included review available in 1000000 minutes' 900)"
+run_test "1579_wait_never_zero_for_zero_window" "30" "$(coderabbit_rate_limit_wait_seconds 'Next included review available in 0 minutes' 900)"
+run_test "1579_wait_respects_max_override" "100" "$(CODERABBIT_RATE_LIMIT_WAIT_MAX=100 coderabbit_rate_limit_wait_seconds "$_1579_window" 900)"
+run_test "1579_wait_respects_buffer_override" "1620" "$(CODERABBIT_RATE_LIMIT_WAIT_BUFFER=0 coderabbit_rate_limit_wait_seconds "$_1579_window" 900)"
+# A junk override degrades to the documented default, never to a zero wait
+# (a zero wait would busy-spin the retry against the vendor).
+run_test "1579_wait_junk_buffer_uses_default" "1650" "$(CODERABBIT_RATE_LIMIT_WAIT_BUFFER=abc coderabbit_rate_limit_wait_seconds "$_1579_window" 900)"
+run_test "1579_wait_junk_fallback_arg_uses_default" "900" "$(coderabbit_rate_limit_wait_seconds "$_1579_nowindow" notanumber)"
+
+# --- staleness -------------------------------------------------------------
+run_test "1579_live_within_stated_window" "current" "$(_1579_state "$_1579_window" "$(_1579_ago 5)")"
+run_test "1579_live_just_inside_stated_window" "current" "$(_1579_state "$_1579_window" "$(_1579_ago 26)")"
+run_test "1579_spent_past_stated_window" "stale" "$(_1579_state "$_1579_window" "$(_1579_ago 60)")"
+# Without a stated window, CODERABBIT_RATE_LIMIT_STALE_AFTER (one vendor hour)
+# bounds how long the comment stays believable.
+run_test "1579_unstated_window_recent_is_live" "current" "$(_1579_state "$_1579_nowindow" "$(_1579_ago 30)")"
+run_test "1579_unstated_window_old_is_spent" "stale" "$(_1579_state "$_1579_nowindow" "$(_1579_ago 90)")"
+# The PR #1575 case that motivated the issue: 21 hours later, still "live".
+run_test "1579_pr1575_21h_old_comment_is_spent" "stale" "$(_1579_state "$_1579_nowindow" "$(_1579_ago 1260)")"
+# Unknown or skewed timestamps degrade to the previous conservative behaviour
+# (wait) rather than to spending a review attempt the caller may not have.
+run_test "1579_unparseable_timestamp_stays_live" "current" "$(_1579_state "$_1579_window" "not-a-date")"
+run_test "1579_empty_timestamp_stays_live" "current" "$(_1579_state "$_1579_window" "")"
+run_test "1579_future_timestamp_stays_live" "current" "$(_1579_state "$_1579_window" "2099-01-01T00:00:00Z")"
+
+# --- AC-1: a reply older than this run's own trigger is not an answer ------
+# Without this, the loop reads its own pre-trigger evidence as the response to
+# the trigger it just posted and reports "rate limited" without ever giving
+# CodeRabbit a chance to answer.
+run_test "1579_reply_before_this_runs_trigger_is_not_current" "stale" \
+  "$(coderabbit_rate_limit_comment_is_current "$_1579_window" "$(_1579_ago 5)" "$(_1579_ago 2)" && printf 'current\n' || printf 'stale\n')"
+run_test "1579_reply_after_this_runs_trigger_is_current" "current" \
+  "$(coderabbit_rate_limit_comment_is_current "$_1579_window" "$(_1579_ago 2)" "$(_1579_ago 5)" && printf 'current\n' || printf 'stale\n')"
+# On a fresh run there is no trigger yet. The anchor must not then discard a
+# genuinely live limit — the window rule has to decide alone.
+run_test "1579_empty_anchor_falls_back_to_window_rule" "current" \
+  "$(coderabbit_rate_limit_comment_is_current "$_1579_window" "$(_1579_ago 5)" "" && printf 'current\n' || printf 'stale\n')"
+# Clock skew: the anchor is stamped locally, the timestamp comes from GitHub.
+# A reply a few seconds "before" the trigger is still the answer to it.
+run_test "1579_anchor_tolerates_small_clock_skew" "current" \
+  "$(CODERABBIT_TRIGGER_ANCHOR_SKEW=60 coderabbit_rate_limit_comment_is_current "$_1579_window" "2026-08-24T03:41:00Z" "2026-08-24T03:41:30Z" && printf 'current\n' || printf 'stale\n')"
+# ...but a reply from well before the trigger is not.
+run_test "1579_anchor_rejects_large_gap" "stale" \
+  "$(CODERABBIT_TRIGGER_ANCHOR_SKEW=60 coderabbit_rate_limit_comment_is_current "$_1579_window" "2026-08-24T03:30:00Z" "2026-08-24T03:41:30Z" && printf 'current\n' || printf 'stale\n')"
+# An unparseable anchor must not silently discard the comment either.
+run_test "1579_junk_anchor_falls_back_to_window_rule" "current" \
+  "$(coderabbit_rate_limit_comment_is_current "$_1579_window" "$(_1579_ago 5)" "not-a-date" && printf 'current\n' || printf 'stale\n')"
+
+# --- the JSON wrapper both call sites share --------------------------------
+_1579_live() {
+  if coderabbit_rate_limit_is_live "$1"; then printf 'live\n'; else printf 'not-live\n'; fi
+}
+run_test "1579_is_live_empty_json_not_live" "not-live" "$(_1579_live '')"
+run_test "1579_is_live_recent_window" "live" \
+  "$(_1579_live "$(jq -cn --arg b "$_1579_window" --arg c "$(_1579_ago 5)" '{body:$b, created_at:$c}')")"
+run_test "1579_is_live_expired_window" "not-live" \
+  "$(_1579_live "$(jq -cn --arg b "$_1579_window" --arg c "$(_1579_ago 60)" '{body:$b, created_at:$c}')")"
+# Malformed JSON must not read as live — an unparseable object is no evidence
+# of a live limit, and reading it as one would re-create the #1579 stall.
+run_test "1579_is_live_malformed_json_not_live" "not-live" "$(_1579_live 'not json at all')"
+
+# --- AC-2: the post-rate-limit re-trigger asks for a review ----------------
+# "resume" only lifts a paused state; against a rate limit CodeRabbit answers
+# "Reviews resumed" and reviews nothing (PR #1589: four resumes, zero reviews).
+# This reads the rate-limit branch itself, so the guarantee cannot be lost to a
+# later edit that reverts the verb.
+_1579_loop_src="$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
+_1579_rl_branch="$(awk '/no SUCCESS commit status found/,/_interruptible_sleep "\$poll_interval"/' "$_1579_loop_src")"
+run_test "1579_rate_limit_branch_posts_review" "1" \
+  "$(printf '%s' "$_1579_rl_branch" | grep -c -- '--body "@coderabbitai review"' || true)"
+run_test "1579_rate_limit_branch_does_not_post_resume" "0" \
+  "$(printf '%s' "$_1579_rl_branch" | grep -c -- '--body "@coderabbitai resume"' || true)"
+# The extraction must actually have found the branch; an empty window would
+# make both counts trivially pass.
+run_test "1579_rate_limit_branch_extraction_nonempty" "yes" \
+  "$([ -n "$_1579_rl_branch" ] && printf 'yes\n' || printf 'no\n')"
+
+# --- mutation check --------------------------------------------------------
+# The staleness verdicts above must actually depend on the parsed window. Shadow
+# the parser with one that always reports a huge window: the 21-hour-old comment
+# must then flip to "current". If it does not, the assertions above are passing
+# for some reason other than the logic they claim to test.
+_1579_real_parser="$(declare -f coderabbit_rate_limit_wait_seconds)"
+coderabbit_rate_limit_wait_seconds() { printf '999999\n'; }
+run_test "1579_mutation_huge_window_flips_verdict" "current" "$(_1579_state "$_1579_nowindow" "$(_1579_ago 1260)")"
+eval "$_1579_real_parser"
+# Restored parser must give the real answer again.
+run_test "1579_mutation_restored_parser_is_stale" "stale" "$(_1579_state "$_1579_nowindow" "$(_1579_ago 1260)")"
+
+unset -f _1579_ago _1579_state _1579_live
+unset _1579_window _1579_nowindow _1579_real_parser _1579_loop_src _1579_rl_branch
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
