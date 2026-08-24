@@ -214,6 +214,34 @@ run_test() {
   fi
 }
 
+run_not_contains() {
+  if [ "$#" -ne 3 ]; then
+    echo "FAIL: run_not_contains called with $# argument(s), expected 3"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    return 0
+  fi
+  local name="$1"
+  local unexpected="$2"
+  local actual="$3"
+  # grep exits 0 on a match, 1 on no match, and >1 on an actual error (bad
+  # pattern, unreadable input). Folding >1 into the else branch reports PASS
+  # for an assertion that never ran — the same false pass that let a broken
+  # guard test through in #1523. Only status 1 is a confirmed non-match.
+  local grep_status=0
+  grep -Fq -- "$unexpected" <<< "$actual" || grep_status=$?
+  if [ "$grep_status" -eq 0 ]; then
+    echo "FAIL: $name - expected output NOT to contain '${unexpected}'"
+    printf 'Actual output:\n%s\n' "$actual"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  elif [ "$grep_status" -gt 1 ]; then
+    echo "FAIL: $name - grep exited ${grep_status}; the assertion could not be evaluated"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  else
+    echo "PASS: $name"
+    PASS_COUNT=$((PASS_COUNT + 1))
+  fi
+}
+
 run_contains() {
   local name="$1"
   local expected="$2"
@@ -995,7 +1023,7 @@ case "$*" in
     printf '{"data":{"node":{"items":{"nodes":[{"type":"ISSUE","content":{"__typename":"Issue","number":101},"status":{"name":"Merged"}},{"type":"ISSUE","content":{"__typename":"Issue","number":200},"status":{"name":"Merged"}},{"type":"ISSUE","content":{"__typename":"Issue","number":201},"status":{"name":"Merged"}},{"type":"ISSUE","content":{"__typename":"Issue","number":99},"status":{"name":"Released"}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}\n' ;;
   # detect_omitted_merged_items: issue timeline for #200 — merged PR #500 references it
   *"num=200"*"timelineItems"*|*"num = 200"*"timelineItems"*)
-    printf '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[{"__typename":"CrossReferencedEvent","source":{"__typename":"PullRequest","number":500,"merged":true}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}\n' ;;
+    printf '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[{"__typename":"CrossReferencedEvent","source":{"__typename":"PullRequest","number":500,"merged":true,"baseRefName":"develop","mergeCommit":{"oid":"aaaa111shipped"}}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}\n' ;;
   # detect_omitted_merged_items: issue timeline for #201 — no merged PR
   *"num=201"*"timelineItems"*|*"num = 201"*"timelineItems"*)
     printf '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}\n' ;;
@@ -1038,6 +1066,9 @@ case "$*" in
   "ls-remote --exit-code --heads origin release/v1.17.0") exit 2 ;;
   "show-ref --quiet refs/heads/release/v1.17.0") exit 1 ;;
   "remote get-url origin") printf 'https://github.com/test-owner/test-repo.git\n' ;;
+  # #1512: a merge commit that is NOT an ancestor of the release tag — the
+  # shape of a PR merged into an in-flight develop-<slug> integration branch.
+  "merge-base --is-ancestor bbbb222unshipped"*) exit 1 ;;
   *) exit 0 ;;
 esac
 MOCK_GIT_DETECT
@@ -1062,6 +1093,26 @@ run_contains "detect_shipped_item_auto_added" "RELEASE_STAMPED issue=200" "$outp
 
 # AC-4: Parent epic #201 triggers TRACKER_INCOMPLETE.
 run_contains "detect_parent_epic_incomplete" "TRACKER_INCOMPLETE=1 REASON=omitted_parent_epics" "$output"
+
+# #1512: an item whose merged PR is NOT an ancestor of the release tag is
+# reported but never auto-added. "Has a merged PR" is not "shipped": a PR
+# merged into an in-flight develop-<slug> integration branch is merged,
+# closed, and inside the release window, yet none of its code is in the tag.
+DETECT_UNSHIPPED_BIN="$(mktemp -d)"
+cp "$DETECT_BIN/gh" "$DETECT_UNSHIPPED_BIN/gh"
+cp "$DETECT_BIN/git" "$DETECT_UNSHIPPED_BIN/git"
+# Same fixture, but #200's merged PR carries the non-ancestor merge commit.
+sed -i.bak 's/aaaa111shipped/bbbb222unshipped/' "$DETECT_UNSHIPPED_BIN/gh"
+rm -f "$DETECT_UNSHIPPED_BIN/gh.bak"
+chmod +x "$DETECT_UNSHIPPED_BIN/gh" "$DETECT_UNSHIPPED_BIN/git"
+repo_unshipped="$(fixture_github_projects_repo detect-unshipped)"
+unshipped_result="$(run_cleanup_with_bin "$DETECT_UNSHIPPED_BIN" "$repo_unshipped" v1.17.0 --from-changelog --best-effort)"
+unshipped_output="$(printf '%s\n' "$unshipped_result" | sed '1d')"
+run_contains "unshipped_item_is_reported" "#200 [merged PR #500 into develop is not an ancestor of v1.17.0" "$unshipped_output"
+run_not_contains "unshipped_item_not_auto_added" "RELEASE_STAMPED issue=200" "$unshipped_output"
+run_not_contains "unshipped_item_not_in_shipped_section" "Regular shipped items" "$unshipped_output"
+run_contains "unshipped_item_marks_incomplete" "TRACKER_INCOMPLETE=1 REASON=omitted_parent_epics" "$unshipped_output"
+rm -rf "$DETECT_UNSHIPPED_BIN"
 run_contains "detect_parent_epic_issues_list" "ISSUES=201" "$output"
 
 echo ""
