@@ -29,7 +29,8 @@ repository root.
 | Item | Value |
 | --- | --- |
 | Fragment directory | `changelog.d/` |
-| Manifest directory | `changelog.d/manifests/` |
+| Manifest directory (assembled, not yet published) | `changelog.d/manifests/` |
+| Manifest archive (published/consumed) | `changelog.d/manifests/consumed/` |
 | Helper | `scripts/development-workflow/changelog-fragments.sh` |
 | Rehearsal version | `9.9.9` (never released; used only for this runbook) |
 | Scratch item identifiers | `9001`, `9002`, `9003` |
@@ -131,41 +132,68 @@ duplicated.
 
 1. Edit the `## [9.9.9]` section by hand: merge two bullets and shorten a third,
    the way the release editorial pass does.
-2. Add a new fragment `changelog.d/9002.changed.smoke-late.md`.
-3. Run `assemble --version 9.9.9` again.
-4. Simulate an interruption: switch to another branch and back.
-5. Read `CHANGELOG.md` and `changelog.d/`.
+2. Commit the assembled draft, the manifest, and the editorial edit on the
+   scratch branch — this is what a real release branch looks like at this
+   point in Protocol 05 Step 3, and it is what makes the next step a genuine
+   resumption test rather than a dirty-working-tree no-op.
+3. Add a new fragment `changelog.d/9002.changed.smoke-late.md` (left
+   uncommitted and untracked — it represents a note written on `develop`
+   after the release branch was cut).
+4. Run `assemble --version 9.9.9` again.
+5. Simulate an interruption: switch to another branch and back (`git status`
+   is clean before the switch, since Step 2 committed everything else, so the
+   switch cannot fail or carry dirty state).
+6. Read `CHANGELOG.md` and `changelog.d/`.
 
-**Expected result**: the hand edits are intact, the run reports
-`already_assembled` without rewriting anything, and the late fragment is present
-in `changelog.d/` but absent from both the `## [9.9.9]` section and the
-manifest. Nothing was lost by the interruption.
+**Expected result**: the hand edits are intact (verifiable because they are
+now part of the committed history, not just the working tree), the run
+reports `already_assembled` without rewriting anything, and the late fragment
+is present in `changelog.d/` but absent from both the `## [9.9.9]` section and
+the manifest. Nothing was lost by the interruption.
 
 ### Step 7: Publish consumes the notes
 
 **Maps to**: Acceptance Criteria 5, 7, and 8
 
 1. Run `bash scripts/development-workflow/changelog-fragments.sh consume --version 9.9.9`.
-2. List `changelog.d/` and `changelog.d/manifests/`.
+2. List `changelog.d/`, `changelog.d/manifests/`, and
+   `changelog.d/manifests/consumed/`.
 3. Run `consume --version 9.9.9` a second time.
 4. Add the `[9.9.9]` link-reference definition at the bottom of `CHANGELOG.md`
    and update the `[Unreleased]` definition, following Protocol 05.
 5. Run `bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md`.
 
 **Expected result**: `CONSUME_RESULT=consumed` with a removed count matching the
-manifest. Every manifest-listed fragment and the manifest itself are gone; the
-late fragment from Step 6 remains. The second run reports `already_consumed` and
-exits 0. The duplicate-header and link-reference checks both pass, so the
-changelog is ready to accumulate the next release's notes and its version links
-resolve.
+manifest. Every manifest-listed fragment is gone; `changelog.d/manifests/` no
+longer has a `v9.9.9.txt` entry, but `changelog.d/manifests/consumed/v9.9.9.txt`
+now exists (moved, not deleted — Decision 3's durable "already consumed"
+record). The late fragment from Step 6 remains. The second run reports
+`already_consumed` and exits 0, confirmed by the file's presence under
+`consumed/`. The duplicate-header and link-reference checks both pass (the one
+script performs both), so the changelog is ready to accumulate the next
+release's notes and its version links resolve.
 
 ### Step 8: The published section passes the repository's document checks
 
 **Maps to**: Acceptance Criterion 9
 
-1. Run the repository's `markdownlint-cli2` command over the changelog.
-2. Run `python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md`.
-3. Run `bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md`.
+1. Run:
+
+   ```bash
+   npx markdownlint-cli2 "CHANGELOG.md"
+   ```
+
+2. Run:
+
+   ```bash
+   python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md
+   ```
+
+3. Run:
+
+   ```bash
+   bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md
+   ```
 
 **Expected result**: all three exit 0 with no violations reported.
 
@@ -199,9 +227,16 @@ identical to the pre-change version.
 
 **Maps to**: Acceptance Criterion 2
 
-1. Open Protocol 90's Step 5.1 artifact table and read the release-note row.
-2. Against a real implementation PR that carries a fragment and no
-   `CHANGELOG.md` change, run the row's documented query.
+1. Open Protocol 90's Step 5.1 artifact table and read the release-note row,
+   and the [implementation plan's Decision 5](../../specs/developments/20260821080421_1554-changelog-fragments/2_1554-changelog-fragments_implementation-plan.md#decision-5--readiness-checks-that-must-accept-a-fragment)
+   for the exact pass condition.
+2. Against a real `feature/*`, `fix/*`, or `refactor/*` implementation PR that
+   carries a fragment and no `CHANGELOG.md` change, run:
+
+   ```bash
+   gh pr view <pr_number> --json files --jq \
+     '[.files[].path] | any(test("^changelog\\.d/[A-Za-z0-9][A-Za-z0-9_-]*\\.(added|changed|deprecated|removed|fixed|security)\\.[a-z0-9][a-z0-9-]*\\.md$"))'
+   ```
 
 **Expected result**: the query returns `true`, so the PR satisfies the
 release-note readiness check without having edited the shared changelog.
@@ -233,33 +268,25 @@ configuration, no directory creation, and no manifest edit.
 
 ## Assertions Checklist
 
-Each checkbox maps to an acceptance criterion from the spec.
+The canonical acceptance criteria live in the
+[spec's Acceptance Criteria section](../../specs/developments/20260821080421_1554-changelog-fragments/1_1554-changelog-fragments_specs.md#acceptance-criteria)
+(AC-1 through AC-13, in spec order); this checklist tracks execution against
+each one without restating its full text, to avoid the two documents drifting
+apart.
 
-- [ ] Two items completed at the same time merge one after the other with no
-      conflict, and both notes are present afterward (Step 2)
-- [ ] A pull request recording a note the new way passes the release-note
-      readiness check without editing the shared changelog (Steps 1 and 11)
-- [ ] Preparing a release gathers every unreleased note into a draft version
-      section grouped by kind, with none missing (Step 4)
-- [ ] The releaser can edit the assembled draft, and the published section
-      reflects those edits (Steps 6 and 7)
-- [ ] A release preparation interrupted after assembly resumes with no note lost
-      and the edits intact (Step 6)
-- [ ] A note recorded after assembly is absent from that release and available
-      for the next one (Step 6)
-- [ ] After the release no consumed note remains, and running assembly again
-      produces no duplicate entries (Steps 5 and 7)
-- [ ] After publishing, the changelog is ready for the next release and every
-      version link resolves (Step 7)
-- [ ] The published version section passes the repository's existing document
-      checks (Steps 3 and 8)
-- [ ] A release cut during the transition includes both the shared-block notes
-      and the per-item notes, each exactly once (Step 4)
-- [ ] An urgent production fix still writes its own versioned section and is
-      unaffected by gathering (Step 10)
-- [ ] A project created from this template records release notes the new way
-      without additional setup (Step 12)
-- [ ] The changelog's existing published history is unchanged (Step 9)
+- [ ] AC-1 — no merge conflict, both notes survive (Step 2)
+- [ ] AC-2 — readiness passes on a fragment alone (Steps 1 and 11)
+- [ ] AC-3 — assembly gathers every pending note, grouped by kind (Step 4)
+- [ ] AC-4 — editorial edits survive to publication (Steps 6 and 7)
+- [ ] AC-5 — interrupted-then-resumed preparation loses nothing (Step 6)
+- [ ] AC-6 — a post-assembly note waits for the next release (Step 6)
+- [ ] AC-7 — no duplicate entries after a repeat assembly (Steps 5 and 7)
+- [ ] AC-8 — changelog and version links are ready for the next release (Step 7)
+- [ ] AC-9 — the published section passes existing document checks (Steps 3 and 8)
+- [ ] AC-10 — transition release merges shared-block and per-item notes once each (Step 4)
+- [ ] AC-11 — the hotfix path is unaffected (Step 10)
+- [ ] AC-12 — a fresh consumer needs no setup (Step 12)
+- [ ] AC-13 — published history is unchanged (Step 9)
 
 ---
 
@@ -283,6 +310,9 @@ The following seed data must be present:
 | `ASSEMBLE_RESULT=already_assembled` when you expected a fresh draft | The version section already exists from an earlier run | Intended behaviour. Use `--reassemble` only if you accept losing the editorial pass on that section |
 | `ASSEMBLE_RESULT=no_notes` | Nothing is pending and the shared block is empty | Confirm the notes were not consumed by an earlier release before reaching for `--allow-empty` |
 | `CONSUME_RESULT=manifest_missing` | `consume` ran before `assemble`, or on the wrong branch | Run `assemble` first, and confirm you are on the release branch |
+| `ASSEMBLE_RESULT=assembled_unmanifested` | Assembly completed (the manifest is written before `CHANGELOG.md` — Decision 3), but the manifest was subsequently lost by something other than `consume` (a manual delete, a bad merge, a corrupted checkout) | Run `assemble --reassemble`; this is deterministic and safe here because nothing else has touched the fragments |
+| `CONSUME_RESULT=inconsistent` | Neither `changelog.d/manifests/v<X.Y.Z>.txt` nor `changelog.d/manifests/consumed/v<X.Y.Z>.txt` exists, but the version section is present | Stop and reconcile by hand; do not assume this means already-published |
+| `ASSEMBLE_RESULT=locked` / `CONSUME_RESULT=locked` | Another `assemble`/`consume` invocation for the same version is already running | Wait for it to finish, or confirm it is stale and remove the lock directory named in the error |
 | A `changelog.d/` path appears in a merge conflict | Two branches used the same item identifier | Treat as non-trivial per Protocol 94; find out which branch is misnamed rather than combining the files |
 | Duplicate `### Category` headings after assembly | A defect in the per-kind merge | Report against this feature; `check-changelog-duplicate-headers.sh` is the detector |
 
