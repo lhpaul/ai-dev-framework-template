@@ -5218,6 +5218,12 @@ run_coderabbit_review() {
       local rate_limit_lookup_status=0
       rate_limit_comment_json="$(coderabbit_newest_rate_limit_comment "$repo" "$pr_number" "$bot_login" "$since_iso")" || rate_limit_lookup_status=$?
       if [ "$rate_limit_lookup_status" -ne 0 ]; then
+        # Say so. Clearing the value silently is how a lookup that never
+        # happened becomes "there is no rate limit" — the exact conflation the
+        # status-2 contract was introduced to remove. The retry branch below
+        # is skipped either way, but a silent skip leaves nothing in the log to
+        # explain why the loop went on to spend a review.
+        echo "WARN: could not read the rate-limit comment for PR #$pr_number (lookup exit $rate_limit_lookup_status) — proceeding without rate-limit evidence for this pass, NOT concluding that no limit exists" >&2
         rate_limit_comment_json=""
       fi
 

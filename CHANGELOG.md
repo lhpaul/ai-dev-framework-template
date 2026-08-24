@@ -88,8 +88,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wait is clamped by `CODERABBIT_RATE_LIMIT_WAIT_MAX` (default 3600 s) so a
   malformed window cannot park an unattended run. The same leading-zero-safe
   arithmetic that protects the vendor-parsed number now also applies to the
-  `CODERABBIT_RATE_LIMIT_WAIT_BUFFER`, `CODERABBIT_RATE_LIMIT_WAIT_MAX`, and
-  `CODERABBIT_TRIGGER_ANCHOR_SKEW` operator overrides — a zero-padded value
+  `CODERABBIT_RATE_LIMIT_WAIT_BUFFER`, `CODERABBIT_RATE_LIMIT_WAIT_MAX`,
+  `CODERABBIT_TRIGGER_ANCHOR_SKEW`, `CODERABBIT_RATE_LIMIT_STALE_AFTER`
+  (default 3600 s — how long a comment stating no window stays believable) and
+  `CODERABBIT_RATE_LIMIT_MIN_WAIT` (default 30 s — the floor applied once the
+  comment's age is subtracted from its stated window) operator overrides — a zero-padded value
   like `008` previously reached `$((...))` unstripped and aborted the whole
   script under `set -e` ("008: value too great for base") instead of
   degrading like every other malformed override.

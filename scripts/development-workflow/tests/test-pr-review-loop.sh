@@ -13958,7 +13958,7 @@ chmod +x "$_cr_mock_dir_1531b/gh"
 
 actual_output="$(
   PATH="$_cr_mock_dir_1531b:$PATH" CR_CALL_LOG="$_cr_call_log_1531b" \
-    CODERABBIT_NO_TRIGGER_TIMEOUT=1 CODERABBIT_RATE_LIMIT_WAIT=1 \
+    CODERABBIT_NO_TRIGGER_TIMEOUT=1 CODERABBIT_RATE_LIMIT_WAIT=1 CODERABBIT_RATE_LIMIT_MIN_WAIT=1 \
     CODERABBIT_RATE_LIMIT_MAX_RETRIES=1 \
     run_coderabbit_review "42" "fix/42-test" "1" "3" 2>/dev/null || true
 )"
@@ -14065,7 +14065,7 @@ chmod +x "$_cr_mock_dir_1531d/gh"
 
 actual_output="$(
   PATH="$_cr_mock_dir_1531d:$PATH" CR_CALL_LOG="$_cr_call_log_1531d" \
-    CODERABBIT_NO_TRIGGER_TIMEOUT=1 CODERABBIT_RATE_LIMIT_WAIT=1 \
+    CODERABBIT_NO_TRIGGER_TIMEOUT=1 CODERABBIT_RATE_LIMIT_WAIT=1 CODERABBIT_RATE_LIMIT_MIN_WAIT=1 \
     CODERABBIT_RATE_LIMIT_MAX_RETRIES=1 \
     run_coderabbit_review "42" "fix/42-test" "1" "3" 2>/dev/null || true
 )"
@@ -14105,7 +14105,7 @@ chmod +x "$_cr_mock_dir_1531e/gh"
 
 actual_output="$(
   PATH="$_cr_mock_dir_1531e:$PATH" CR_CALL_LOG="$_cr_call_log_1531e" \
-    CODERABBIT_NO_TRIGGER_TIMEOUT=1 CODERABBIT_RATE_LIMIT_WAIT=1 \
+    CODERABBIT_NO_TRIGGER_TIMEOUT=1 CODERABBIT_RATE_LIMIT_WAIT=1 CODERABBIT_RATE_LIMIT_MIN_WAIT=1 \
     CODERABBIT_RATE_LIMIT_MAX_RETRIES=1 \
     run_coderabbit_review "42" "fix/42-test" "1" "3" 2>/dev/null || true
 )"
@@ -14945,8 +14945,22 @@ run_test "1579_remaining_mid_window_subtracts_age" "within" "$(_1579_remaining_n
 run_test "1579_remaining_half_window" "within" "$(_1579_remaining_near 780 870)"
 # The tolerance must not be wide enough to hide the bug this pins: sleeping the
 # full window when only ~90s remains is a 1560s error, far outside it.
-run_test "1579_remaining_tolerance_still_catches_full_window" "got 90 want ~1650" \
-  "$(_1579_remaining_near 1560 1650)"
+# Assert only that the mismatch branch fired, not the exact computed value:
+# that value is clock-derived (89, 90 or 91), so pinning it reintroduces the
+# flakiness this whole block exists to remove.
+_1579_tolerance_rejects() {
+  # Did the near-comparison report a mismatch? Only that, deliberately: the
+  # computed value is clock-derived (89, 90 or 91), so asserting it exactly
+  # would reintroduce the flakiness this block exists to remove.
+  local out
+  out="$(_1579_remaining_near "$1" "$2")"
+  case "$out" in
+    within) printf 'accepted\n' ;;
+    *) printf 'rejected\n' ;;
+  esac
+}
+run_test "1579_remaining_tolerance_still_catches_full_window" "rejected" \
+  "$(_1579_tolerance_rejects 1560 1650)"
 # Past the window, a floor keeps the retry from spinning instantly. This one is
 # an exact comparison safely: the floor is a constant, not clock-derived.
 run_test "1579_remaining_expired_window_uses_floor" "30" \
@@ -14978,7 +14992,7 @@ run_test "1579_selector_matches_visible_text_without_marker" "yes" \
 **Next included review available in 27 minutes.**')"
 run_test "1579_selector_ignores_ordinary_comment" "no" \
   "$(_1579_sel 'Thanks, looks good to me.')"
-unset -f _1579_remaining_near _1579_sel
+unset -f _1579_remaining_near _1579_tolerance_rejects _1579_sel
 
 # --- mutation check --------------------------------------------------------
 # The staleness verdicts above must actually depend on the parsed window. Shadow
