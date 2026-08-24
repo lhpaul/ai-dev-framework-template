@@ -59,7 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hour — so the parser tolerates the gap between them rather than matching one.
   Absent or reworded vendor text falls back to the previous constant, and the
   wait is clamped by `CODERABBIT_RATE_LIMIT_WAIT_MAX` (default 3600 s) so a
-  malformed window cannot park an unattended run.
+  malformed window cannot park an unattended run. The same leading-zero-safe
+  arithmetic that protects the vendor-parsed number now also applies to the
+  `CODERABBIT_RATE_LIMIT_WAIT_BUFFER`, `CODERABBIT_RATE_LIMIT_WAIT_MAX`, and
+  `CODERABBIT_TRIGGER_ANCHOR_SKEW` operator overrides — a zero-padded value
+  like `008` previously reached `$((...))` unstripped and aborted the whole
+  script under `set -e` ("008: value too great for base") instead of
+  degrading like every other malformed override.
 - **Codex reviewer unavailability is classified and recoverable** (#1522,
   #1526): the Codex GitHub App's "create a Codex account and connect to
   github" refusal — which it returns per triggering identity, so an org-wide

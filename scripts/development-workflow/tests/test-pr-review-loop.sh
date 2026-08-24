@@ -14715,6 +14715,11 @@ _1579_ago() {
   date -u -v-"${mins}"M +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
     || date -u -d "${mins} minutes ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null
 }
+_1579_ago_s() {
+  local secs="$1"
+  date -u -v-"${secs}"S +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
+    || date -u -d "${secs} seconds ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null
+}
 _1579_state() {
   if coderabbit_rate_limit_comment_is_current "$1" "$2"; then
     printf 'current\n'
@@ -14757,6 +14762,19 @@ run_test "1579_wait_respects_buffer_override" "1620" "$(CODERABBIT_RATE_LIMIT_WA
 # (a zero wait would busy-spin the retry against the vendor).
 run_test "1579_wait_junk_buffer_uses_default" "1650" "$(CODERABBIT_RATE_LIMIT_WAIT_BUFFER=abc coderabbit_rate_limit_wait_seconds "$_1579_window" 900)"
 run_test "1579_wait_junk_fallback_arg_uses_default" "900" "$(coderabbit_rate_limit_wait_seconds "$_1579_nowindow" notanumber)"
+# PLANTED VIOLATION: a digit-only override with a leading zero and an 8 or 9
+# ("008") passes the `*[!0-9]*` check unchanged and is not "junk" by that
+# check's definition, but bash reads a leading-zero literal as octal inside
+# $((...)) and "008" is not a valid octal literal (8 is not an octal digit) —
+# this must not reach that arithmetic unstripped, or it aborts the whole
+# script under `set -e` instead of degrading like every other override above.
+# Reverting the leading-zero strip on buffer/max_seconds (pr-review-loop.sh,
+# coderabbit_rate_limit_wait_seconds) reproduces the crash: manually confirmed
+# during review (PR #1592) with `CODERABBIT_RATE_LIMIT_WAIT_BUFFER=008
+# coderabbit_rate_limit_wait_seconds` — the process exits nonzero with "008:
+# value too great for base" instead of returning a wait.
+run_test "1579_wait_buffer_leading_zero_with_8_not_octal" "1628" "$(CODERABBIT_RATE_LIMIT_WAIT_BUFFER=008 coderabbit_rate_limit_wait_seconds "$_1579_window" 900)"
+run_test "1579_wait_max_leading_zero_with_8_not_octal" "8" "$(CODERABBIT_RATE_LIMIT_WAIT_MAX=008 coderabbit_rate_limit_wait_seconds "$_1579_window" 900)"
 
 # --- staleness -------------------------------------------------------------
 run_test "1579_live_within_stated_window" "current" "$(_1579_state "$_1579_window" "$(_1579_ago 5)")"
@@ -14787,15 +14805,31 @@ run_test "1579_reply_after_this_runs_trigger_is_current" "current" \
 run_test "1579_empty_anchor_falls_back_to_window_rule" "current" \
   "$(coderabbit_rate_limit_comment_is_current "$_1579_window" "$(_1579_ago 5)" "" && printf 'current\n' || printf 'stale\n')"
 # Clock skew: the anchor is stamped locally, the timestamp comes from GitHub.
-# A reply a few seconds "before" the trigger is still the answer to it.
+# A reply a few seconds "before" the trigger is still the answer to it. Timestamps
+# are computed relative to real "now" (like _1579_ago above), not hardcoded to a
+# fixed calendar moment: a hardcoded pair only satisfies the window check in
+# coderabbit_rate_limit_comment_is_current while the wall clock is still close to
+# whenever the test was written, and silently starts failing once real time moves
+# past that window — this was caught live during review (PR #1592).
 run_test "1579_anchor_tolerates_small_clock_skew" "current" \
-  "$(CODERABBIT_TRIGGER_ANCHOR_SKEW=60 coderabbit_rate_limit_comment_is_current "$_1579_window" "2026-08-24T03:41:00Z" "2026-08-24T03:41:30Z" && printf 'current\n' || printf 'stale\n')"
+  "$(CODERABBIT_TRIGGER_ANCHOR_SKEW=60 coderabbit_rate_limit_comment_is_current "$_1579_window" "$(_1579_ago_s 300)" "$(_1579_ago_s 270)" && printf 'current\n' || printf 'stale\n')"
 # ...but a reply from well before the trigger is not.
 run_test "1579_anchor_rejects_large_gap" "stale" \
-  "$(CODERABBIT_TRIGGER_ANCHOR_SKEW=60 coderabbit_rate_limit_comment_is_current "$_1579_window" "2026-08-24T03:30:00Z" "2026-08-24T03:41:30Z" && printf 'current\n' || printf 'stale\n')"
+  "$(CODERABBIT_TRIGGER_ANCHOR_SKEW=60 coderabbit_rate_limit_comment_is_current "$_1579_window" "$(_1579_ago_s 990)" "$(_1579_ago_s 270)" && printf 'current\n' || printf 'stale\n')"
 # An unparseable anchor must not silently discard the comment either.
 run_test "1579_junk_anchor_falls_back_to_window_rule" "current" \
   "$(coderabbit_rate_limit_comment_is_current "$_1579_window" "$(_1579_ago 5)" "not-a-date" && printf 'current\n' || printf 'stale\n')"
+# PLANTED VIOLATION: same octal-literal class as the wait-sizing overrides
+# above, on the one operator override in this function that reaches $((...))
+# arithmetic. CODERABBIT_TRIGGER_ANCHOR_SKEW=008 passes the digit-only check
+# unchanged; "008" is not a valid octal literal, so the anchor-skew arithmetic
+# aborts the whole script under `set -e` without the leading-zero strip.
+# Manually confirmed during review (PR #1592): reverting the strip on
+# anchor_skew reproduces "008: value too great for base" from a comment 5 s
+# before the trigger with an 8 s configured skew (created a few seconds
+# outside a 0-padded skew window, which used to be within a 60 s skew).
+run_test "1579_anchor_skew_leading_zero_with_8_not_octal" "current" \
+  "$(CODERABBIT_TRIGGER_ANCHOR_SKEW=008 coderabbit_rate_limit_comment_is_current "$_1579_window" "$(_1579_ago_s 5)" "$(_1579_ago_s 1)" && printf 'current\n' || printf 'stale\n')"
 
 # --- the JSON wrapper both call sites share --------------------------------
 _1579_live() {
@@ -14838,7 +14872,102 @@ eval "$_1579_real_parser"
 # Restored parser must give the real answer again.
 run_test "1579_mutation_restored_parser_is_stale" "stale" "$(_1579_state "$_1579_nowindow" "$(_1579_ago 1260)")"
 
-unset -f _1579_ago _1579_state _1579_live
+# --- AC-3(a): end-to-end — a stale rate-limit reply must not suppress the
+# silent non-trigger retrigger. This is the PR #1575 defect itself: a
+# rate-limit comment whose window elapsed 21 hours earlier still read as "CodeRabbit
+# is rate limited" and silenced the loop's own proactive "@coderabbitai review"
+# nudge. Runs the real run_coderabbit_review poll loop against a scripted `gh`,
+# not just the extracted decision functions above, so the wiring between
+# coderabbit_rate_limit_is_live and the silent-non-trigger guard is proven, not
+# just each side in isolation.
+_1579_e2e_mock_dir="$(mktemp -d)"
+_1579_e2e_call_log="$_1579_e2e_mock_dir/calls.log"
+export _1579_E2E_CALL_LOG="$_1579_e2e_call_log"
+export _1579_E2E_STALE_CREATED
+_1579_E2E_STALE_CREATED="$(date -u -v-2H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d '2 hours ago' +"%Y-%m-%dT%H:%M:%SZ")"
+cat > "$_1579_e2e_mock_dir/gh" <<'CR_GH_1579A'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$_1579_E2E_CALL_LOG"
+case "$*" in
+  "auth status") exit 0 ;;
+  *"repo view"*"nameWithOwner"*) printf 'owner/repo\n'; exit 0 ;;
+  *"pulls/42 --jq .head.sha"*) printf 'sha1579a\n'; exit 0 ;;
+  *"commits/sha1579a --jq .commit.committer.date"*) printf '2000-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pr comment 42"*) exit 0 ;;
+  *"issues/42/comments"*)
+    printf '[{"user":{"login":"coderabbitai[bot]"},"created_at":"%s","updated_at":"%s","body":"Review rate limited."}]\n' \
+      "$_1579_E2E_STALE_CREATED" "$_1579_E2E_STALE_CREATED"
+    exit 0 ;;
+  *"api graphql"*)
+    printf '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}\n'; exit 0 ;;
+  *) printf '[]\n'; exit 0 ;;
+esac
+CR_GH_1579A
+chmod +x "$_1579_e2e_mock_dir/gh"
+
+PATH="$_1579_e2e_mock_dir:$PATH" \
+  CODERABBIT_NO_TRIGGER_TIMEOUT=1 CODERABBIT_RATE_LIMIT_MAX_RETRIES=1 \
+  run_coderabbit_review "42" "fix/42-test" "1" "3" >/dev/null 2>&1 || true
+
+run_test "1579_stale_reply_does_not_block_silent_retrigger" "yes" \
+  "$([ "$(grep_count_or_zero '@coderabbitai review' "$_1579_e2e_call_log")" -ge 1 ] && echo yes || echo no)"
+# The mock's default case is permissive ("[]" for anything unenumerated), so a
+# renamed endpoint could silently return empty and still look clean. Assert the
+# comments endpoint that carries the rate-limit reply was actually queried.
+run_test "1579_stale_reply_queried_issue_comments" "yes" \
+  "$([ "$(grep_count_or_zero 'issues/42/comments' "$_1579_e2e_call_log")" -ge 1 ] && echo yes || echo no)"
+
+rm -rf "$_1579_e2e_mock_dir"
+unset _1579_E2E_CALL_LOG _1579_E2E_STALE_CREATED _1579_e2e_mock_dir _1579_e2e_call_log
+
+# --- AC-3(b) / AC-2: end-to-end — a LIVE rate limit re-triggers with "review",
+# not "resume". PR #1589 measured four "@coderabbitai resume" posts answered
+# with four "Reviews resumed" acknowledgements and zero reviews, because
+# "resume" only lifts CodeRabbit's auto-pause and does nothing against a rate
+# limit. Runs the real rate-limit wait/retrigger branch end to end so the
+# posted verb is proven from actual execution, not only from the static
+# source-text check above.
+_1579_e2e_mock_dir2="$(mktemp -d)"
+_1579_e2e_call_log2="$_1579_e2e_mock_dir2/calls.log"
+export _1579_E2E_CALL_LOG2="$_1579_e2e_call_log2"
+export _1579_E2E_LIVE_CREATED
+_1579_E2E_LIVE_CREATED="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+cat > "$_1579_e2e_mock_dir2/gh" <<'CR_GH_1579B'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$_1579_E2E_CALL_LOG2"
+case "$*" in
+  "auth status") exit 0 ;;
+  *"repo view"*"nameWithOwner"*) printf 'owner/repo\n'; exit 0 ;;
+  *"pulls/42 --jq .head.sha"*) printf 'sha1579b\n'; exit 0 ;;
+  *"commits/sha1579b --jq .commit.committer.date"*) printf '2000-01-01T00:00:00Z\n'; exit 0 ;;
+  *"pr comment 42"*) exit 0 ;;
+  *"issues/42/comments"*)
+    printf '[{"user":{"login":"coderabbitai[bot]"},"created_at":"%s","updated_at":"%s","body":"Review rate limited."}]\n' \
+      "$_1579_E2E_LIVE_CREATED" "$_1579_E2E_LIVE_CREATED"
+    exit 0 ;;
+  *"api graphql"*)
+    printf '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}\n'; exit 0 ;;
+  *) printf '[]\n'; exit 0 ;;
+esac
+CR_GH_1579B
+chmod +x "$_1579_e2e_mock_dir2/gh"
+
+PATH="$_1579_e2e_mock_dir2:$PATH" \
+  CODERABBIT_NO_TRIGGER_TIMEOUT=999 CODERABBIT_RATE_LIMIT_MAX_RETRIES=1 CODERABBIT_RATE_LIMIT_WAIT=1 \
+  run_coderabbit_review "42" "fix/42-test" "1" "3" >/dev/null 2>&1 || true
+
+# The mock logs "$*", which joins argv with spaces and drops the quoting the
+# real gh invocation used — matching the convention the #1531 mock already
+# established (pr comment 42 --body @coderabbitai review, no literal quotes).
+run_test "1579_live_rate_limit_reretrigger_posts_review" "yes" \
+  "$([ "$(grep_count_or_zero 'pr comment 42 --body @coderabbitai review' "$_1579_e2e_call_log2")" -ge 1 ] && echo yes || echo no)"
+run_test "1579_live_rate_limit_reretrigger_never_posts_resume" "0" \
+  "$(grep_count_or_zero 'pr comment 42 --body @coderabbitai resume' "$_1579_e2e_call_log2")"
+
+rm -rf "$_1579_e2e_mock_dir2"
+unset _1579_E2E_CALL_LOG2 _1579_E2E_LIVE_CREATED _1579_e2e_mock_dir2 _1579_e2e_call_log2
+
+unset -f _1579_ago _1579_ago_s _1579_state _1579_live
 unset _1579_window _1579_nowindow _1579_real_parser _1579_loop_src _1579_rl_branch
 
 # ---------------------------------------------------------------------------

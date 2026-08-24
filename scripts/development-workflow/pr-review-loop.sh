@@ -4445,12 +4445,25 @@ coderabbit_rate_limit_wait_seconds() {
   case "$max_seconds" in
     '' | *[!0-9]*) max_seconds=3600 ;;
   esac
-  if [ "$max_seconds" -le 0 ]; then
-    max_seconds=3600
-  fi
   case "$fallback" in
     '' | *[!0-9]*) fallback="$CODERABBIT_RATE_LIMIT_WAIT_DEFAULT" ;;
   esac
+  # Strip leading zeros from every digit-only override before it can reach an
+  # arithmetic context: a digit-only string like "008" passes the checks above
+  # unchanged, but $((...)) below reads a leading-zero literal as octal, and
+  # "008" is not a valid octal literal (8 is not an octal digit) — an operator
+  # override of CODERABBIT_RATE_LIMIT_WAIT_BUFFER=008 aborts the whole script
+  # under `set -e` without this. Same idiom used below for the vendor-parsed
+  # value, applied here to the three operator-supplied numbers instead.
+  buffer="${buffer#"${buffer%%[!0]*}"}"
+  [ -z "$buffer" ] && buffer=0
+  max_seconds="${max_seconds#"${max_seconds%%[!0]*}"}"
+  [ -z "$max_seconds" ] && max_seconds=0
+  fallback="${fallback#"${fallback%%[!0]*}"}"
+  [ -z "$fallback" ] && fallback=0
+  if [ "$max_seconds" -le 0 ]; then
+    max_seconds=3600
+  fi
   if [ "$fallback" -le 0 ]; then
     fallback="$CODERABBIT_RATE_LIMIT_WAIT_DEFAULT"
   fi
@@ -4603,6 +4616,13 @@ coderabbit_rate_limit_comment_is_current() {
           case "$anchor_skew" in
             '' | *[!0-9]*) anchor_skew=60 ;;
           esac
+          # Strip leading zeros before the arithmetic below: a digit-only
+          # string like "008" passes the check above unchanged, but bash reads
+          # it as an invalid octal literal in `$((...))` and aborts the whole
+          # script under `set -e` (same class of bug guarded against for the
+          # vendor-parsed value in coderabbit_rate_limit_wait_seconds).
+          anchor_skew="${anchor_skew#"${anchor_skew%%[!0]*}"}"
+          [ -z "$anchor_skew" ] && anchor_skew=0
           if [ "$created_epoch" -lt "$((trigger_epoch - anchor_skew))" ]; then
             return 1
           fi
