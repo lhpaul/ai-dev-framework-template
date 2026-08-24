@@ -122,6 +122,19 @@ Two notes from the **same** item (for example one `added` and one `fixed`) live
 on one branch, where the author sees both files; that is an ordinary
 same-branch edit, not a cross-branch merge.
 
+**Named exception — an explicitly approved split.** The guard's
+`--allow-split true` path (Protocol 03) exists precisely to let two branches
+carry the same tracker identifier at once, on explicit parent-run approval.
+In that documented case two split branches could each write a fragment for
+the same `<item>`, and if both authors independently choose the same
+`<kind>.<slug>` the paths collide — this is the one case where "impossible"
+is not literal. It surfaces as an ordinary same-path git conflict, which
+Decision 6 already classifies as non-trivial and routes to human resolution
+rather than auto-combining, so no note is silently lost or merged
+incorrectly; only the "cannot happen at all" framing is narrowed to "cannot
+happen outside an explicitly human-approved split, and is safely caught as a
+conflict if it does."
+
 Repositories with no issue tracker fall back to the branch slug as `<item>`.
 Uniqueness then rests on branch-name uniqueness, which git already enforces for
 concurrently existing branches.
@@ -379,16 +392,32 @@ New directory:
 ### Infrastructure / Configuration
 
 - [ ] `.github/workflows/markdown-lint.yml` — add `changelog.d/**` to the
-      `paths:` filter, add the directory to the file-collection step and the
-      `markdownlint-cli2` target list, and add a step running
-      `changelog-fragments.sh validate` so a malformed fragment fails on the
-      item's own PR rather than at release time. (Spec AC-9)
+      `paths:` filter. The file has **two independent file-discovery blocks**,
+      not one: the `find` in the "Collect target markdown files" step, and a
+      second, separately duplicated `find` inside the "Run heuristic lint
+      checks" step; the `markdownlint-cli2` step uses its own literal glob
+      list. Add `changelog.d/**` to all three (the two `find` commands and the
+      `markdownlint-cli2` glob list) so fragments get both lint passes, not
+      only `markdownlint-cli2`. Add a step running `changelog-fragments.sh
+      validate` so a malformed fragment fails on the item's own PR rather than
+      at release time. (Spec AC-9)
 - [ ] `sync-manifest.yaml` — one `always_sync` entry for
       `changelog.d/README.md`, `mode_scope: shared`, with a note recording that
       fragment files are intentionally unlisted. (Spec AC-12; Decision 7)
 - [ ] `.haystack/pr-rules.yml` — retarget the
       `keep-single-unreleased-changelog-section` rule message to hotfix and
       release edits.
+- [ ] `.haystack/review-policy.md` — add `changelog.d/**` to the "Review
+      release and changelog automation" section's path list (currently
+      `CHANGELOG.md`, `.github/workflows/auto-tag-release.yml`, severity
+      `critical`). That section's stated reason — "version parsing or
+      changelog structure mistakes can create incorrect release tags that are
+      hard to undo" — applies verbatim to `changelog-fragments.sh`'s
+      `assemble`/`consume` rewriting and to the `changelog.d/manifests/*.txt`
+      state files; without this the new automation and state files fall back
+      to the generic `scripts/development-workflow/**` = `high` policy row (or
+      no row at all for `changelog.d/manifests/`), one severity level below
+      what its own risk rationale calls for.
 - [ ] Verified as needing **no** change: `.github/workflows/auto-tag-release.yml`
       (reads published version sections only), `.markdownlint.jsonc` and
       `.markdownlint-cli2.jsonc` (rule set is file-agnostic),
@@ -807,13 +836,16 @@ changelog.d/1589.fixed.integration-branch-ci.md
    second run reports the same result as the first.
 
 6. **Wire the lint and CI surfaces.** Update
-   `.github/workflows/markdown-lint.yml` (`paths:`, the collection step, the
-   lint targets, and a `validate` step).
+   `.github/workflows/markdown-lint.yml` (`paths:`, both independent
+   file-discovery `find` blocks, the `markdownlint-cli2` glob list, and a
+   `validate` step).
 
    *Verify*: `bash scripts/development-workflow/select-test-suites.sh
    --changed-files <file listing the changed paths>` lists
-   `test-changelog-fragments.sh`, and running the repository's markdown lint
-   commands locally passes.
+   `test-changelog-fragments.sh`; running the repository's markdown lint
+   commands locally passes; and running `python3
+   scripts/lint/markdown-heuristic-lint.py` against a file under
+   `changelog.d/` confirms it is picked up (not just `markdownlint-cli2`).
 
 7. **Update the release path.** Protocol 05 Step 3 (assemble, editorial pass,
    link definitions, consume) and Step 7.2's artifact validation, then the three
@@ -843,11 +875,12 @@ changelog.d/1589.fixed.integration-branch-ci.md
    change was introduced.
 
 10. **Update the review contract and remaining documentation.** `REVIEW.md`,
-    `LLM_RULES.md`, `.haystack/pr-rules.yml`, the `haystack-reviewer.sh`
-    comment block (including the corrected rule id),
-    `haystack-triage.md`, `AGENTS.md`, `README.md`, both best-practices files,
-    both script READMEs, the spec and plan protocols, the plan template, and
-    `docs/testing/workflow/batch-merge.smoke-test.md`.
+    `LLM_RULES.md`, `.haystack/pr-rules.yml`, `.haystack/review-policy.md`
+    (add `changelog.d/**` to the release-and-changelog-automation path list),
+    the `haystack-reviewer.sh` comment block (including the corrected rule
+    id), `haystack-triage.md`, `AGENTS.md`, `README.md`, both best-practices
+    files, both script READMEs, the spec and plan protocols, the plan
+    template, and `docs/testing/workflow/batch-merge.smoke-test.md`.
 
     *Verify*: `bash scripts/development-workflow/tests/test-haystack-reviewer.sh`
     passes, and the rule id quoted in the script matches an id present in
