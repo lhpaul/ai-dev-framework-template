@@ -46,7 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suite set legitimately narrows or grows between heads by design) against
   the previous head's and reports
   `RESULT=red REASON=expected_checks_missing MISSING_CHECKS=…`, emits
-  `HEAD_SHA` and `CI_EVIDENCE=present|none`, and Protocol 91's readiness
+  `HEAD_SHA` and `CI_EVIDENCE=present|none|unknown`, and Protocol 91's
+  readiness
   Check 0 refuses a head with an empty check set — now counting commit
   statuses (CodeRabbit, Devin Review) alongside check-runs, since a
   status-only signal was previously invisible to this gate — and prints

@@ -2574,21 +2574,38 @@ esac
 # failing or still pending. Run Step 8 (pr-ci-loop.sh) first if CI is not green.
 HEAD_SHA=$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
-CI_FAILING=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" \
-  --jq '[.check_runs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
-CI_PENDING=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" \
-  --jq '[.check_runs[] | select(.status != "completed")] | length')
-CI_TOTAL=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" --jq '.check_runs | length')
+# Read every page. The REST default page size is 30 and this repository
+# routinely exceeds it: the test matrix is diff-driven and adds one job per
+# selected suite, so PR #1568 carried 75 check-runs. A single-page read of
+# that head sees 30 of them, and a failure among the other 45 is invisible to
+# the very gate that decides "CI is green".
+#
+# `--slurp` cannot be combined with `--jq`, so each call returns an array of
+# whole pages and the aggregation is done by an external jq.
+#
+# Both reads fail closed. If either endpoint cannot be read, the gate does not
+# know the CI state, and "unknown" must never be labelled as green — the same
+# rule the CI_TOTAL check below applies to an empty check set.
+if ! CHECKS_PAGES=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100" --paginate --slurp); then
+  echo "ERROR: could not read check-runs for $HEAD_SHA — refusing to label on an incomplete CI read."
+  exit 5
+fi
 # check-runs is GitHub Actions/App checks only — it does not include plain
 # commit statuses (CodeRabbit, Devin Review, and this repo's own
 # "Reviewer-loop completion guard" all post as statuses, not check-runs). A
 # PR whose CI signal is entirely statuses would otherwise read CI_TOTAL=0
 # below and be refused even when green, and a failing status would not count
 # toward CI_FAILING at all. Fold the combined-status endpoint in too.
-STATUS_JSON=$(gh api "repos/$REPO/commits/$HEAD_SHA/status" --jq '.statuses // []')
-CI_FAILING=$((CI_FAILING + $(printf '%s' "$STATUS_JSON" | jq '[.[] | select(.state == "failure" or .state == "error")] | length')))
-CI_PENDING=$((CI_PENDING + $(printf '%s' "$STATUS_JSON" | jq '[.[] | select(.state == "pending")] | length')))
-CI_TOTAL=$((CI_TOTAL + $(printf '%s' "$STATUS_JSON" | jq 'length')))
+if ! STATUS_PAGES=$(gh api "repos/$REPO/commits/$HEAD_SHA/status?per_page=100" --paginate --slurp); then
+  echo "ERROR: could not read commit statuses for $HEAD_SHA — refusing to label on an incomplete CI read."
+  exit 5
+fi
+CI_FAILING=$(printf '%s' "$CHECKS_PAGES" | jq '[.[].check_runs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
+CI_PENDING=$(printf '%s' "$CHECKS_PAGES" | jq '[.[].check_runs[] | select(.status != "completed")] | length')
+CI_TOTAL=$(printf '%s' "$CHECKS_PAGES" | jq '[.[].check_runs[]] | length')
+CI_FAILING=$((CI_FAILING + $(printf '%s' "$STATUS_PAGES" | jq '[.[].statuses[]? | select(.state == "failure" or .state == "error")] | length')))
+CI_PENDING=$((CI_PENDING + $(printf '%s' "$STATUS_PAGES" | jq '[.[].statuses[]? | select(.state == "pending")] | length')))
+CI_TOTAL=$((CI_TOTAL + $(printf '%s' "$STATUS_PAGES" | jq '[.[].statuses[]?] | length')))
 if [ "$CI_FAILING" -gt 0 ] || [ "$CI_PENDING" -gt 0 ]; then
   echo "ERROR: CI is not green — ${CI_FAILING} failing and ${CI_PENDING} pending check(s) on $HEAD_SHA."
   echo "Run Step 8 (pr-ci-loop.sh) and resolve all failures before applying ready-for-human-review."

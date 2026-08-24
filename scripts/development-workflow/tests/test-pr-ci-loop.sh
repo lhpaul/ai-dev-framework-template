@@ -18,12 +18,22 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 pass=0
 fail=0
+# Holds the helper's stderr from the most recent run_ci call. Printed only when
+# an assertion fails: the assertions compare the helper's stdout exactly, so
+# stderr cannot be folded into the compared value, but discarding it outright
+# leaves a failure with no diagnostic beyond the diff.
+_last_stderr_file=""
+
 run_test() {
   local name="$1" expected="$2" actual="$3"
   if [ "$actual" = "$expected" ]; then
     echo "PASS: $name"; pass=$((pass + 1))
   else
     echo "FAIL: $name - expected '$expected', got '$actual'"; fail=$((fail + 1))
+    if [ -n "$_last_stderr_file" ] && [ -s "$_last_stderr_file" ]; then
+      echo "  helper stderr:"
+      sed 's/^/    /' "$_last_stderr_file"
+    fi
   fi
 }
 
@@ -121,7 +131,8 @@ _runs_matrix='{"workflow_runs":[{"name":"workflow test harnesses"}]}'
 
 run_ci() {
   local out status=0
-  out="$(env PATH="$_bin:$PATH" "$@" bash "$HELPER" 42 --repo owner/repo --poll-interval 1 --max-wait 1 2>/dev/null)" || status=$?
+  _last_stderr_file="$TMP_ROOT/last-stderr"
+  out="$(env PATH="$_bin:$PATH" "$@" bash "$HELPER" 42 --repo owner/repo --poll-interval 1 --max-wait 1 2>"$_last_stderr_file")" || status=$?
   printf '%s\n---STATUS=%s\n' "$out" "$status"
 }
 
