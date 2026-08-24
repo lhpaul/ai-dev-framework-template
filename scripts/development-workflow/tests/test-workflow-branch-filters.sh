@@ -99,6 +99,14 @@ for key in ("pull_request", "pull_request_target"):
         continue
     for entry in block.get("branches", []) or []:
         print("%s\t%s" % (key, entry))
+    # branches-ignore is the restrictive form of the same filter, and GitHub
+    # treats it as mutually exclusive with branches. Emitting it under a
+    # distinct pseudo-trigger keeps every existing caller untouched while
+    # making exclusions queryable: a workflow that excludes develop-** has no
+    # integration-branch coverage, yet reports "no filter" to a reader that
+    # only looks at branches.
+    for entry in block.get("branches-ignore", []) or []:
+        print("%s-ignore\t%s" % (key, entry))
 PYBF
 }
 
@@ -138,6 +146,24 @@ for wf in "$WF_DIR"/*.yml; do
   # fixture below).
   trigger=pull_request
   block="$(branches_for_trigger "$wf" "$trigger")"
+  ignores="$(branches_for_trigger "$wf" "${trigger}-ignore")"
+  # An exclusion that names an integration branch removes coverage exactly as
+  # an omission from a positive list does — a workflow with only
+  # `branches-ignore: [develop-**]` runs on every base branch EXCEPT the one
+  # #1525 is about. Judge it before the "no positive filter" early return,
+  # which would otherwise let it through as "runs everywhere".
+  if [ -n "$ignores" ]; then
+    case "$(basename "$wf")" in
+      update-tracker-on-merge.yml) : ;;
+      *)
+        if printf '%s\n' "$ignores" | grep -qE '^develop(-|$)'; then
+          checked=$((checked + 1))
+          missing="${missing:+$missing }$(basename "$wf"):${trigger}-ignore"
+          continue
+        fi
+        ;;
+    esac
+  fi
   # No filter at all → runs everywhere → nothing to assert.
   [ -n "$block" ] || continue
   # Only workflows that gate on `develop` are in scope; a main-only workflow
@@ -223,6 +249,44 @@ jobs:
     steps:
       - run: echo hi
 FIXTURE
+# branches-ignore is the restrictive form of the same filter. A workflow using
+# it to exclude integration branches has no coverage there, but a parser that
+# reads only `branches:` sees nothing and reports "runs everywhere" — so the
+# exclusion escapes the guard entirely.
+cat > "$FIXTURE_DIR/branches-ignore-excludes-integration.yml" <<'FIXTURE'
+name: fixture
+on:
+  pull_request:
+    branches-ignore:
+      - develop-**
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+FIXTURE
+run_test "branches_ignore_is_parsed_under_its_own_trigger" "develop-**" \
+  "$(branches_for_trigger "$FIXTURE_DIR/branches-ignore-excludes-integration.yml" pull_request-ignore)"
+# The positive list is empty, which is exactly why the old parser saw nothing.
+run_test "branches_ignore_leaves_positive_list_empty" "" \
+  "$(branches_for_trigger "$FIXTURE_DIR/branches-ignore-excludes-integration.yml" pull_request)"
+# An exclusion that does not name an integration branch is fine: the workflow
+# still runs on develop-<slug>.
+cat > "$FIXTURE_DIR/branches-ignore-unrelated.yml" <<'FIXTURE'
+name: fixture
+on:
+  pull_request:
+    branches-ignore:
+      - gh-pages
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+FIXTURE
+run_test "branches_ignore_unrelated_exclusion_parsed" "gh-pages" \
+  "$(branches_for_trigger "$FIXTURE_DIR/branches-ignore-unrelated.yml" pull_request-ignore)"
+
 run_test "pull_request_branches_are_trigger_scoped" "$(printf 'develop\nmain')" \
   "$(branches_for_trigger "$FIXTURE_DIR/pr-vs-pr-target.yml" pull_request)"
 run_test "pull_request_target_branches_are_trigger_scoped" "$(printf 'develop\ndevelop-**')" \
