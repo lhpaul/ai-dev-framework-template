@@ -4656,10 +4656,28 @@ coderabbit_rate_limit_comment_is_current() {
 # previously each ran their own count query, which is how a spent rate-limit
 # comment could suppress the retrigger in one place while the other waited on
 # it (#1579).
+# Exit status is the caller's signal, and the three cases are NOT equivalent:
+#   0 with output  - a rate-limit comment was found (printed as compact JSON)
+#   0 with nothing - the lookup succeeded and there is no rate-limit comment
+#   2              - the lookup could not be performed
+#
+# The previous form piped straight into jq without `pipefail` and ended in
+# `|| printf ''`, so a failed `gh api` (network, auth, secondary rate limit)
+# was indistinguishable from "no rate-limit comment". Both call sites then
+# concluded CodeRabbit was not rate limited and posted a fresh
+# `@coderabbitai review`, spending a review from an allowance measured at 1
+# per hour — on evidence that was never actually read, and with nothing in the
+# log to say so.
 coderabbit_newest_rate_limit_comment() {
   local repo="$1" pr_number="$2" bot_login="$3" since_iso="$4"
-  gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-    | jq -cs --arg bot "$bot_login" --arg since "$since_iso" '
+  local raw="" status=0
+  raw="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null)" || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "WARN: coderabbit_newest_rate_limit_comment: could not read comments for PR #$pr_number (gh exited $status) — reporting a lookup failure, not an absence of rate limiting" >&2
+    return 2
+  fi
+  local selected="" jq_status=0
+  selected="$(printf '%s' "$raw" | jq -cs --arg bot "$bot_login" --arg since "$since_iso" '
         [.[].[] | select(
             .user.login == $bot and
             .created_at > $since and
@@ -4667,7 +4685,12 @@ coderabbit_newest_rate_limit_comment() {
         )]
         | sort_by(.created_at)
         | (last // empty)
-      ' 2>/dev/null || printf ''
+      ' 2>/dev/null)" || jq_status=$?
+  if [ "$jq_status" -ne 0 ]; then
+    echo "WARN: coderabbit_newest_rate_limit_comment: could not parse comments for PR #$pr_number (jq exited $jq_status) — reporting a lookup failure" >&2
+    return 2
+  fi
+  printf '%s' "$selected"
 }
 
 # ---------------------------------------------------------------------------
@@ -5048,9 +5071,16 @@ run_coderabbit_review() {
       if [ "${silent_paused_count:-0}" -gt 0 ]; then
         silent_blocked=1
       else
-        local silent_rate_limit_json
-        silent_rate_limit_json="$(coderabbit_newest_rate_limit_comment "$repo" "$pr_number" "$bot_login" "$since_iso")" || silent_rate_limit_json=""
-        if [ -n "$silent_rate_limit_json" ]; then
+        local silent_rate_limit_json="" silent_lookup_status=0
+        silent_rate_limit_json="$(coderabbit_newest_rate_limit_comment "$repo" "$pr_number" "$bot_login" "$since_iso")" || silent_lookup_status=$?
+        if [ "$silent_lookup_status" -ne 0 ]; then
+          # The lookup failed, so whether CodeRabbit is rate limited is unknown.
+          # Hold the retrigger rather than spend a review on a guess: the
+          # allowance was measured at 1 per hour, so a wasted trigger costs the
+          # PR an hour, while holding costs one poll interval.
+          echo "WARN: could not determine CodeRabbit rate-limit state for PR #$pr_number — holding the silent non-trigger retrigger rather than spending a review on an unread signal" >&2
+          silent_blocked=1
+        elif [ -n "$silent_rate_limit_json" ]; then
           if coderabbit_rate_limit_is_live "$silent_rate_limit_json" "$coderabbit_last_trigger_iso"; then
             silent_blocked=1
           else
@@ -5087,8 +5117,12 @@ run_coderabbit_review() {
       # included review available in N minutes") and its created_at says when
       # that window started — the two inputs needed to size the wait and to
       # tell a live limit from a spent one (#1579).
-      local rate_limit_comment_json rate_limit_comment_body="" rate_limit_comment_created=""
-      rate_limit_comment_json="$(coderabbit_newest_rate_limit_comment "$repo" "$pr_number" "$bot_login" "$since_iso")" || rate_limit_comment_json=""
+      local rate_limit_comment_json="" rate_limit_comment_body="" rate_limit_comment_created=""
+      local rate_limit_lookup_status=0
+      rate_limit_comment_json="$(coderabbit_newest_rate_limit_comment "$repo" "$pr_number" "$bot_login" "$since_iso")" || rate_limit_lookup_status=$?
+      if [ "$rate_limit_lookup_status" -ne 0 ]; then
+        rate_limit_comment_json=""
+      fi
 
       local rate_limit_comment_count=0
       if [ -n "$rate_limit_comment_json" ]; then

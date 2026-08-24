@@ -14860,6 +14860,44 @@ run_test "1579_rate_limit_branch_does_not_post_resume" "0" \
 run_test "1579_rate_limit_branch_extraction_nonempty" "yes" \
   "$([ -n "$_1579_rl_branch" ] && printf 'yes\n' || printf 'no\n')"
 
+# --- a failed lookup is not an absence of rate limiting ---------------------
+# coderabbit_newest_rate_limit_comment previously piped gh straight into jq and
+# ended in `|| printf ''`, so a failed API call and "no rate-limit comment"
+# were the same answer. Both call sites then posted a fresh review trigger,
+# spending from an allowance measured at 1 per hour on evidence never read.
+_1579_gh_dir="$(mktemp -d)"
+cat > "$_1579_gh_dir/gh" <<'_1579_GH_EOF'
+#!/bin/bash
+case "${STUB_MODE:-ok}" in
+  fail)    echo "gh: API error" >&2; exit 1 ;;
+  garbage) printf 'not json at all\n' ;;
+  empty)   printf '[]\n' ;;
+  *)       printf '[{"user":{"login":"coderabbitai[bot]"},"created_at":"2026-08-24T03:12:02Z","body":"rate limited by coderabbit.ai. Next included review available in 27 minutes."}]\n' ;;
+esac
+_1579_GH_EOF
+chmod +x "$_1579_gh_dir/gh"
+_1579_probe() {
+  local out st=0
+  out="$(PATH="$_1579_gh_dir:$PATH" STUB_MODE="$1" coderabbit_newest_rate_limit_comment owner/repo 1 "coderabbitai[bot]" 2026-08-24T00:00:00Z 2>/dev/null)" || st=$?
+  printf '%s\n' "$st"
+}
+_1579_probe_has_output() {
+  local out
+  out="$(PATH="$_1579_gh_dir:$PATH" STUB_MODE="$1" coderabbit_newest_rate_limit_comment owner/repo 1 "coderabbitai[bot]" 2026-08-24T00:00:00Z 2>/dev/null)" || true
+  if [ -n "$out" ]; then printf 'yes\n'; else printf 'no\n'; fi
+}
+run_test "1579_lookup_found_status" "0" "$(_1579_probe ok)"
+run_test "1579_lookup_found_has_output" "yes" "$(_1579_probe_has_output ok)"
+# Success with nothing to report is status 0 and empty — distinct from failure.
+run_test "1579_lookup_none_status" "0" "$(_1579_probe empty)"
+run_test "1579_lookup_none_has_no_output" "no" "$(_1579_probe_has_output empty)"
+# A failed API call must be its own signal, not "no rate limit".
+run_test "1579_lookup_gh_failure_status" "2" "$(_1579_probe fail)"
+run_test "1579_lookup_unparseable_status" "2" "$(_1579_probe garbage)"
+rm -rf "$_1579_gh_dir"
+unset -f _1579_probe _1579_probe_has_output
+unset _1579_gh_dir
+
 # --- mutation check --------------------------------------------------------
 # The staleness verdicts above must actually depend on the parsed window. Shadow
 # the parser with one that always reports a huge window: the 21-hour-old comment
