@@ -46,13 +46,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suite set legitimately narrows or grows between heads by design) against
   the previous head's and reports
   `RESULT=red REASON=expected_checks_missing MISSING_CHECKS=…`, emits
-  `HEAD_SHA` and `CI_EVIDENCE=present|none|unknown`, and Protocol 91's
-  readiness
+  `HEAD_SHA` and `CI_EVIDENCE=present|none|unknown`, and Protocol 91's readiness
   Check 0 refuses a head with an empty check set — now counting commit
   statuses (CodeRabbit, Devin Review) alongside check-runs, since a
   status-only signal was previously invisible to this gate — and prints
   `READINESS_HEAD_SHA` / `READINESS_CI_*`. `test-pr-ci-loop.sh` is new, closing
   one of the four coverage gaps the selector reports.
+- **Release stamping no longer treats "has a merged PR" as "shipped"**
+  (#1512): `detect_omitted_merged_items()` auto-added any Merged board item
+  with a merged PR closed inside the release window — but a PR merged into an
+  in-flight `develop-<slug>` integration branch satisfies all of that while
+  none of its code is in the tag. Downstream this stamped 16 issues onto a
+  release whose changelog named two, across at least five releases. Auto-add
+  is now gated on `git merge-base --is-ancestor <merge-commit> <tag>`;
+  candidates that fail it (or whose merge commit, tag, or git state cannot be
+  read) are reported and left out of the stamped scope, surfacing as
+  `TRACKER_INCOMPLETE`. The operational guidance lives in
+  [Protocol 05 §9.1](docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md).
 - **Integration-branch PRs now run CI** (#1525): `e2e-regression.yml`,
   `markdown-lint.yml`, and `shellcheck.yml` gated on `develop` and `main`
   only, so an epic's sub-item PRs into `develop-<slug>` ran zero checks —
