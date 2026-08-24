@@ -127,10 +127,16 @@ fi
 missing=""
 checked=0
 for wf in "$WF_DIR"/*.yml; do
-  # Each trigger is judged on its own filter list. A workflow can gate on
-  # develop under one trigger and not another, and only the trigger that
-  # actually gates PR checks decides whether a PR into develop-<slug> runs.
-  for trigger in pull_request pull_request_target; do
+  # Scoped to `pull_request` deliberately. Protocol 05b states the requirement
+  # as "must include develop-** in their `pull_request` branch filters", and
+  # that is the trigger whose checks a sub-item PR into develop-<slug> needs.
+  # Enforcing it on `pull_request_target` too would fail a workflow whose PR
+  # checks are fully covered but which deliberately gates its target-context
+  # job on develop and main only — a finding the documented rule does not make.
+  # The parser stays trigger-aware regardless: that is what stops a develop-**
+  # under one trigger from vouching for another (see the pr-vs-pr-target
+  # fixture below).
+  trigger=pull_request
   block="$(branches_for_trigger "$wf" "$trigger")"
   # No filter at all → runs everywhere → nothing to assert.
   [ -n "$block" ] || continue
@@ -148,7 +154,6 @@ for wf in "$WF_DIR"/*.yml; do
   if ! printf '%s\n' "$block" | grep -qx "develop-\*\*"; then
     missing="${missing:+$missing }$(basename "$wf"):$trigger"
   fi
-  done
 done
 
 run_test "some_workflows_gate_on_develop" "yes" "$([ "$checked" -gt 0 ] && echo yes || echo no)"
@@ -158,12 +163,14 @@ run_test "develop_gated_workflows_cover_integration_branches" "" "$missing"
 # integration branch is absent (the zeki-cl/zeki-platform trap in #1525).
 hardcoded=""
 for wf in "$WF_DIR"/*.yml; do
+  # Same scope as the coverage scan above: the rule Protocol 05b states is
+  # about `pull_request` filters, so a stale slug is judged there.
   while IFS= read -r entry; do
     case "$entry" in
       develop-\*\*|develop-\*) continue ;;
       develop-?*) hardcoded="${hardcoded:+$hardcoded }$(basename "$wf"):$entry" ;;
     esac
-  done <<< "$(branch_filter_block "$wf")"
+  done <<< "$(branches_for_trigger "$wf" pull_request)"
 done
 run_test "no_hardcoded_integration_branch_slugs" "" "$hardcoded"
 

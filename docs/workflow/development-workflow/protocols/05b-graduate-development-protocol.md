@@ -17,7 +17,7 @@ PR, which then surfaced four real defects in already-merged code).
 
 Use the `develop-**` glob, never a hardcoded slug: a stale
 `develop-<old-slug>` entry reads as coverage while the current integration
-branch is absent. `scripts/development-workflow/tests/test-workflow-branch-filters.sh`
+branch is absent. [`scripts/development-workflow/tests/test-workflow-branch-filters.sh`](../../../../scripts/development-workflow/tests/test-workflow-branch-filters.sh)
 enforces both rules for the workflows this template ships.
 
 ## Release Evidence Ownership
