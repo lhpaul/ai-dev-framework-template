@@ -29,43 +29,48 @@ run_test() {
   fi
 }
 
-# branch_filter_block <file> — the `branches:` list under `on: pull_request`
-# (or `pull_request_target`), one entry per line, empty when the workflow has
-# no PR-triggered branch filter (runs on every branch, or has no PR trigger).
+# branch_filter_block <file> — the pull_request / pull_request_target branch
+# filter, one entry per line; empty when the workflow has no such filter (it
+# then runs on every branch and there is nothing to assert).
 #
-# A `push:` trigger can carry its own unrelated `branches:` list in the same
-# `on:` block; PR checks are gated by the `pull_request(_target)` filter, not
-# `push`, so a `push:` list must not be folded into this result. `trigger`
-# tracks which direct child of `on:` the parser is currently inside, and only
-# `branches:` seen while `trigger` is `pull_request`/`pull_request_target` is
-# collected.
-#
-# Known limits (not hit by any workflow this template ships, so left
-# undetected rather than over-engineered): a flow-style `branches: [a, b]`
-# list is not parsed (the workflow is treated as having no filter and is
-# skipped rather than flagged); a quoted `"on":` top-level key is not
-# recognized. Both assume this repo's own convention of a block-style list
-# under a bare `on:` key, two-space YAML indentation per level.
+# Uses a real YAML parse rather than line matching. A hand-rolled parser has to
+# guess at indentation, flow-style lists (`branches: [a, b]`), and the quoted
+# `"on":` key that YAML 1.1 loaders produce for the `on` token — and every one
+# of those guesses fails OPEN, reporting "no filter" for a workflow that has
+# one. Downstream repos copy these workflows and reformat them, so a parser
+# that silently skips a differently-indented file defeats the guard.
 branch_filter_block() {
-  awk '
-    /^on:/ { in_on = 1; trigger = ""; next }
-    /^[^[:space:]#]/ { in_on = 0; trigger = "" }
-    in_on && /^[[:space:]]{2}[A-Za-z_]+:[[:space:]]*$/ {
-      key = $0
-      sub(/^[[:space:]]*/, "", key)
-      sub(/:.*$/, "", key)
-      trigger = (key == "pull_request" || key == "pull_request_target") ? key : ""
-      in_br = 0
-      next
-    }
-    in_on && trigger != "" && /^[[:space:]]+branches:[[:space:]]*$/ { in_br = 1; next }
-    in_br && /^[[:space:]]+-[[:space:]]/ { sub(/^[[:space:]]*-[[:space:]]*/, ""); gsub(/[\047"]/, ""); print; next }
-    # Comments and blank lines sit inside the list without ending it.
-    in_br && /^[[:space:]]*#/ { next }
-    in_br && /^[[:space:]]*$/ { next }
-    in_br { in_br = 0 }
-  ' "$1"
+  python3 - "$1" <<'PYBF'
+import sys
+try:
+    import yaml
+except ImportError:  # pragma: no cover - PyYAML absent
+    sys.exit(3)
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    doc = yaml.safe_load(fh) or {}
+
+# YAML 1.1 parses a bare `on:` key as the boolean True; PyYAML keeps `"on"`
+# quoted as the string. Accept either spelling.
+triggers = doc.get("on", doc.get(True, {}))
+if not isinstance(triggers, dict):
+    sys.exit(0)
+
+for key in ("pull_request", "pull_request_target"):
+    block = triggers.get(key)
+    if not isinstance(block, dict):
+        continue
+    for entry in block.get("branches", []) or []:
+        print(entry)
+PYBF
 }
+
+if ! python3 -c 'import yaml' 2>/dev/null; then
+  echo "FAIL: pyyaml_available - PyYAML is required to parse workflow triggers"
+  fail=$((fail + 1))
+  printf '\nResults: %d passed, %d failed\n' "$pass" "$fail"
+  exit 1
+fi
 
 missing=""
 checked=0
@@ -132,6 +137,39 @@ jobs:
 FIXTURE
 fixture_block="$(branch_filter_block "$FIXTURE_DIR/push-vs-pull-request.yml")"
 run_test "branch_filter_block_ignores_push_trigger" "$(printf 'develop\nmain')" "$fixture_block"
+
+# Formats a hand-rolled parser would miss, each failing OPEN (reporting "no
+# filter" for a workflow that has one). Downstream repos reformat what they
+# copy, so these are the realistic shapes, not exotica.
+_fx="$(mktemp -d)"
+trap 'rm -rf "$_fx"' EXIT
+cat > "$_fx/four-space.yml" <<'YFX'
+name: Four Space
+on:
+    pull_request:
+        branches:
+            - develop
+            - main
+YFX
+cat > "$_fx/flow-style.yml" <<'YFX'
+name: Flow Style
+on:
+  pull_request:
+    branches: [develop, "develop-**", 'main']
+YFX
+cat > "$_fx/quoted-on.yml" <<'YFX'
+name: Quoted On
+"on":
+  pull_request_target:
+    branches:
+      - develop
+YFX
+run_test "parses_four_space_indentation" "develop main" \
+  "$(branch_filter_block "$_fx/four-space.yml" | tr '\n' ' ' | sed 's/ $//')"
+run_test "parses_flow_style_list" "develop develop-** main" \
+  "$(branch_filter_block "$_fx/flow-style.yml" | tr '\n' ' ' | sed 's/ $//')"
+run_test "parses_quoted_on_key" "develop" \
+  "$(branch_filter_block "$_fx/quoted-on.yml" | tr '\n' ' ' | sed 's/ $//')"
 
 printf '\nResults: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
