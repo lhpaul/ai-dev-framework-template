@@ -125,6 +125,19 @@ branch_filter_block() {
   branch_filter_entries "$1" | awk -F'\t' '{ print $2 }'
 }
 
+# True when a branches-ignore list (one entry per line, as returned by
+# branches_for_trigger with a "-ignore" pseudo-trigger) excludes an
+# integration branch. Requires the dash: branches-ignore matches each entry
+# exactly, with no implicit wildcard, so `branches-ignore: [develop]` excludes
+# only the literal `develop` branch — the workflow still runs on
+# `develop-<slug>` — and must NOT be flagged. `develop-**`, `develop-*`, and a
+# literal `develop-<slug>` all do exclude integration-branch coverage and must
+# be flagged. `developer-branch` must not match either: the dash anchors the
+# boundary so `develop` cannot match as a prefix of an unrelated branch name.
+ignores_integration_branch() {
+  printf '%s\n' "$1" | grep -qE '^develop-'
+}
+
 if ! python3 -c 'import yaml' 2>/dev/null; then
   echo "FAIL: pyyaml_available - PyYAML is required to parse workflow triggers"
   fail=$((fail + 1))
@@ -156,7 +169,7 @@ for wf in "$WF_DIR"/*.yml; do
     case "$(basename "$wf")" in
       update-tracker-on-merge.yml) : ;;
       *)
-        if printf '%s\n' "$ignores" | grep -qE '^develop(-|$)'; then
+        if ignores_integration_branch "$ignores"; then
           checked=$((checked + 1))
           missing="${missing:+$missing }$(basename "$wf"):${trigger}-ignore"
           continue
@@ -286,6 +299,35 @@ jobs:
 FIXTURE
 run_test "branches_ignore_unrelated_exclusion_parsed" "gh-pages" \
   "$(branches_for_trigger "$FIXTURE_DIR/branches-ignore-unrelated.yml" pull_request-ignore)"
+
+# `branches-ignore: [develop]` (no dash) excludes only the literal `develop`
+# branch — not `develop-<slug>` — so the workflow still runs on integration
+# branches. Flagging it would be a false positive: #1525 is about
+# `develop-<slug>` coverage, not `develop` itself.
+cat > "$FIXTURE_DIR/branches-ignore-bare-develop.yml" <<'FIXTURE'
+name: fixture
+on:
+  pull_request:
+    branches-ignore:
+      - develop
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+FIXTURE
+run_test "branches_ignore_bare_develop_is_not_flagged" "no" \
+  "$(ignores_integration_branch "$(branches_for_trigger "$FIXTURE_DIR/branches-ignore-bare-develop.yml" pull_request-ignore)" && echo yes || echo no)"
+# The actual guard predicate, not just the parser, must flag a develop-**
+# exclusion and must not flag an unrelated one or a bare-`develop` one.
+run_test "guard_predicate_flags_develop_slug_exclusion" "yes" \
+  "$(ignores_integration_branch "$(branches_for_trigger "$FIXTURE_DIR/branches-ignore-excludes-integration.yml" pull_request-ignore)" && echo yes || echo no)"
+run_test "guard_predicate_ignores_unrelated_exclusion" "no" \
+  "$(ignores_integration_branch "$(branches_for_trigger "$FIXTURE_DIR/branches-ignore-unrelated.yml" pull_request-ignore)" && echo yes || echo no)"
+# A different branch that merely starts with the same letters must not match:
+# the dash anchors the boundary.
+run_test "guard_predicate_does_not_match_developer_branch" "no" \
+  "$(ignores_integration_branch "developer-branch" && echo yes || echo no)"
 
 run_test "pull_request_branches_are_trigger_scoped" "$(printf 'develop\nmain')" \
   "$(branches_for_trigger "$FIXTURE_DIR/pr-vs-pr-target.yml" pull_request)"
