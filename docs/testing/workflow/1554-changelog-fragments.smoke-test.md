@@ -72,15 +72,19 @@ than Step 0's, and the only changed path is the new fragment.
 
 **Maps to**: Acceptance Criterion 1
 
-1. From a scratch clone or worktree, create two branches from the same base.
-2. On the first, add `changelog.d/9002.added.smoke-beta.md`; commit.
-3. On the second, add `changelog.d/9003.fixed.smoke-gamma.md`; commit.
-4. Merge the first branch into the base.
-5. Merge the second branch into the base.
+1. From a scratch clone or worktree, create a local `base` branch from the
+   branch under test: `git checkout -b base`.
+2. From `base`, create two branches: `git checkout -b item-a base` and
+   `git checkout -b item-b base`.
+3. On `item-a`, add `changelog.d/9002.added.smoke-beta.md`; commit.
+4. On `item-b`, add `changelog.d/9003.fixed.smoke-gamma.md`; commit.
+5. Check out `base` and merge `item-a` into it (`git merge item-a`).
+6. Merge `item-b` into `base` (`git merge item-b`).
 
 **Expected result**: neither merge reports a conflict, no manual resolution is
-performed, and after both merges the base contains both fragment files with
-their original content.
+performed, and after both merges `base` contains both fragment files with
+their original content. Discard `base`, `item-a`, and `item-b` (or the whole
+scratch clone) once this step is done — they are not reused by later steps.
 
 ### Step 3: Malformed notes are rejected at the item's own PR
 
@@ -100,12 +104,17 @@ case, a non-bullet body in the second.
 
 **Maps to**: Acceptance Criteria 3 and 10
 
-1. On a scratch branch, run
+1. Create and check out a scratch branch **from the branch under test** (so it
+   carries the `9001.fixed.smoke-alpha.md` fragment from Step 1 and any
+   fragments the real implementation already added):
+   `git checkout -b smoke-test/1554-release-rehearsal`. Steps 4 through 7 all
+   run on this branch; the "Last Step" discards it.
+2. Run
    `bash scripts/development-workflow/changelog-fragments.sh assemble --version 9.9.9`.
-2. Read the reported `FRAGMENT_COUNT`, `CARRIED_OVER_COUNT`, and `ITEMS`.
-3. Open `CHANGELOG.md` and read the new `## [9.9.9]` section.
-4. Open `changelog.d/manifests/v9.9.9.txt`.
-5. Run `git status --short` on `changelog.d/`.
+3. Read the reported `FRAGMENT_COUNT`, `CARRIED_OVER_COUNT`, and `ITEMS`.
+4. Open `CHANGELOG.md` and read the new `## [9.9.9]` section.
+5. Open `changelog.d/manifests/v9.9.9.txt`.
+6. Run `git status --short` on `changelog.d/`.
 
 **Expected result**: `ASSEMBLE_RESULT=assembled`. The version section groups
 entries by kind and contains both every pending fragment's bullet and every
@@ -132,30 +141,40 @@ duplicated.
 
 1. Edit the `## [9.9.9]` section by hand: merge two bullets and shorten a third,
    the way the release editorial pass does.
-2. Commit the assembled draft, the manifest, and the editorial edit on the
-   scratch branch — this is what a real release branch looks like at this
-   point in Protocol 05 Step 3, and it is what makes the next step a genuine
-   resumption test rather than a dirty-working-tree no-op.
-3. Simulate an interruption: switch to another branch and back. `git status`
-   is genuinely clean before this switch, because step 2 already committed
+2. Add the `[9.9.9]` link-reference definition at the bottom of `CHANGELOG.md`
+   and update the `[Unreleased]` definition, following Protocol 05 — this is
+   Protocol 05 Step 3's "link-reference definitions" sub-step, which happens
+   before `consume`, not after (Step 7 below only verifies it).
+3. Commit the assembled draft, the manifest, the editorial edit, and the
+   link-reference definitions on the scratch branch — this is what a real
+   release branch looks like at this point in Protocol 05 Step 3, and it is
+   what makes the next step a genuine resumption test rather than a
+   dirty-working-tree no-op. (The restructured Protocol 05 Step 3 actually
+   commits **twice** before `consume` — once right after `assemble`, once
+   here, after the editorial pass — so that `--repair-manifest` always has a
+   commit to restore from; this rehearsal folds both into the one commit
+   below, since the property being tested is "was anything committed before
+   the interruption," not the exact commit count.)
+4. Simulate an interruption: switch to another branch and back. `git status`
+   is genuinely clean before this switch, because step 3 already committed
    everything on this branch and nothing has touched the working tree since.
-4. Run `assemble --version 9.9.9` again — **after** the switch, so this
+5. Run `assemble --version 9.9.9` again — **after** the switch, so this
    actually exercises resumption rather than repeating an assembly that ran
    before any interruption was simulated.
-5. Add a new fragment `changelog.d/9002.changed.smoke-late.md` (left
+6. Add a new fragment `changelog.d/9002.changed.smoke-late.md` (left
    uncommitted and untracked — it represents a note added to the release
    branch, e.g. via a late cherry-pick, after assembly already ran).
-6. Run `assemble --version 9.9.9` a third time.
-7. Read `CHANGELOG.md` and `changelog.d/`.
+7. Run `assemble --version 9.9.9` a third time.
+8. Read `CHANGELOG.md` and `changelog.d/`.
 
-**Expected result**: step 4's post-interruption run reports `already_assembled`
-without rewriting anything, and the hand edits are intact — verifiable because
-they are part of the committed history, not just the working tree, so nothing
-was lost by the interruption. Step 6's third run also reports
+**Expected result**: step 5's post-interruption run reports `already_assembled`
+without rewriting anything, and the hand edits (including the link-reference
+definitions from step 2) are intact — verifiable because they are part of the
+committed history, not just the working tree, so nothing was lost by the
+interruption. Step 6's third run (item 7 above) also reports
 `already_assembled` (the manifest still matches the committed set); the late
-fragment from step 5
-is present in `changelog.d/` but absent from both the `## [9.9.9]` section and
-the manifest.
+fragment from item 6 above is present in `changelog.d/` but absent from both
+the `## [9.9.9]` section and the manifest.
 
 ### Step 7: Publish consumes the notes
 
@@ -165,9 +184,9 @@ the manifest.
 2. List `changelog.d/`, `changelog.d/manifests/`, and
    `changelog.d/manifests/consumed/`.
 3. Run `consume --version 9.9.9` a second time.
-4. Add the `[9.9.9]` link-reference definition at the bottom of `CHANGELOG.md`
-   and update the `[Unreleased]` definition, following Protocol 05.
-5. Run `bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md`.
+4. Run `bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md`
+   to verify the `[9.9.9]` and `[Unreleased]` link-reference definitions added
+   in Step 6 are both well-formed.
 
 **Expected result**: `CONSUME_RESULT=consumed` with a removed count matching the
 manifest. Every manifest-listed fragment is gone; `changelog.d/manifests/` no
@@ -264,8 +283,16 @@ configuration, no directory creation, and no manifest edit.
 
 ### Last Step: Restore the working tree
 
-1. Discard the scratch branch, the rehearsal `## [9.9.9]` section, and every
-   `9001`, `9002`, and `9003` fragment.
+1. Check out the branch under test, then delete the scratch branch
+   (`git branch -D smoke-test/1554-release-rehearsal`) — this removes the
+   scratch branch's own committed history, including the rehearsal
+   `## [9.9.9]` section. Branch deletion does not remove untracked files, so
+   also run `git clean -fdx -- 'changelog.d/9001.*' 'changelog.d/9002.*'
+   'changelog.d/9003.*' 'changelog.d/manifests'` (or remove those paths by
+   hand) from the branch under test, to catch the Step 6 late fragment (added
+   uncommitted on the scratch branch, and therefore still present as an
+   untracked file after the branch switch) along with Steps 1 and 3's
+   fragments and the rehearsal manifest directory.
 2. Run `git status` and confirm the working tree matches the branch under test.
 3. Run `bash scripts/development-workflow/changelog-fragments.sh list` and
    confirm the pending count matches Step 0's recording.
@@ -317,10 +344,11 @@ The following seed data must be present:
 | `ASSEMBLE_RESULT=no_notes` | Nothing is pending and the shared block is empty | Confirm the notes were not consumed by an earlier release before reaching for `--allow-empty` |
 | `CONSUME_RESULT=manifest_missing` | `consume` ran before `assemble`, or on the wrong branch | Run `assemble` first, and confirm you are on the release branch |
 | `ASSEMBLE_RESULT=assembled_unmanifested` | Assembly completed (the manifest is written before `CHANGELOG.md` — Decision 3), but the manifest was subsequently lost by something other than `consume` (a manual delete, a bad merge, a corrupted checkout) | Run `assemble --repair-manifest` — restores the manifest from git history. **Never** re-run `--reassemble` as the default fix: it rescans the live directory and can pull in a fragment added since the original assembly, violating "a note recorded after assembly waits for the next release" |
-| `ASSEMBLE_RESULT=manifest_unrecoverable` | `--repair-manifest` found no commit on this branch that ever wrote the manifest for this version | Reconcile by hand: compare the `## [X.Y.Z]` section's bullets against fragment bodies still in `changelog.d/`. Only fall back to `--reassemble` if you have manually confirmed no fragment has landed since the original assembly |
+| `ASSEMBLE_RESULT=manifest_unrecoverable` | `--repair-manifest` ran on a full (non-shallow) clone and found no commit on this branch that ever wrote the manifest for this version | Reconcile by hand: compare the `## [X.Y.Z]` section's bullets against fragment bodies still in `changelog.d/`. Only fall back to `--reassemble` if you have manually confirmed no fragment has landed since the original assembly |
+| `ASSEMBLE_RESULT=history_truncated` | `--repair-manifest` ran on a **shallow** clone (`git rev-parse --is-shallow-repository` is true), so it cannot rule out a commit that exists outside the fetched depth | Run `git fetch --unshallow`, then re-run `assemble --repair-manifest`. Do not treat this as `manifest_unrecoverable` — the data may still exist, only the clone is incomplete |
 | `CONSUME_RESULT=not_assembled` | `consume` was run before `assemble` finished writing the `## [X.Y.Z]` section — the manifest exists but the heading does not | Nothing was deleted. Run `assemble` first (it resumes safely from the frozen manifest), then `consume` |
 | `CONSUME_RESULT=inconsistent` | Neither `changelog.d/manifests/v<X.Y.Z>.txt` nor `changelog.d/manifests/consumed/v<X.Y.Z>.txt` exists, but the `## [X.Y.Z]` heading is present | Stop and reconcile by hand; do not assume this means already-published |
-| `ASSEMBLE_RESULT=locked` / `CONSUME_RESULT=locked` | Another `assemble`/`consume` invocation for the same version is already running | Wait for it to finish, or confirm it is stale and remove the lock directory named in the error |
+| `ASSEMBLE_RESULT=locked` / `CONSUME_RESULT=locked` | Another `assemble`/`consume` invocation for the same version is already running, **or** a prior invocation was killed and left its lock directory behind | Read the `owner` file inside the reported lock directory (PID, hostname, start time). If that PID is running on that host, wait for it to finish. If it is not, the lock is stale — remove the lock directory only after confirming this; guessing wrong recreates the interleaving the lock exists to prevent |
 | A `changelog.d/` path appears in a merge conflict | Two branches used the same item identifier | Treat as non-trivial per Protocol 94; find out which branch is misnamed rather than combining the files |
 | Duplicate `### Category` headings after assembly | A defect in the per-kind merge | Report against this feature; `check-changelog-duplicate-headers.sh` is the detector |
 

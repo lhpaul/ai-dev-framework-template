@@ -238,26 +238,64 @@ fragments violates the corrected clause.
     fragment into an already-published-looking section. `--repair-manifest`
     instead restores the manifest from the one source that reflects the set
     **as it was at assembly time**: git history. It walks the current
-    branch's log for `changelog.d/manifests/v<X.Y.Z>.txt` and, if a commit
-    wrote that exact path, restores that commit's blob verbatim (`git show
-    <commit>:<path>`) — not a rescan, a byte-for-byte restoration of what was
-    actually frozen. On success it reports `ASSEMBLE_RESULT=repaired`, exit 0.
-    If no commit ever wrote that path (the manifest was lost before the
-    releaser committed it), `--repair-manifest` **refuses to guess**: it
+    branch's log for `changelog.d/manifests/v<X.Y.Z>.txt` and selects the
+    **most recent** commit that wrote that exact path — the path can
+    legitimately be written more than once (an earlier `--repair-manifest`, or
+    an explicit `--reassemble`, both write it again), and the most recent
+    write is always the one that reflects the currently-authoritative content,
+    never an earlier one. If such a commit exists, it restores that commit's
+    blob verbatim (`git show <commit>:<path>`), through the same temp-file,
+    `fsync`, atomic-rename discipline as every other write in this plan — a
+    stop mid-restore therefore lands on the still-absent manifest (safe to
+    retry), never a half-written one, which is what keeps this recovery path
+    from reopening the "fifth, undetectable corrupt state" the atomic-rename
+    discipline exists to rule out. On success it reports
+    `ASSEMBLE_RESULT=repaired`, exit 0. Before concluding no commit exists,
+    `--repair-manifest` checks `git rev-parse --is-shallow-repository`: a
+    shallow clone truncates the log before it reaches a commit that exists but
+    is outside the fetched depth, which is a clone-configuration problem, not
+    a data-loss one. In that case it reports a distinct
+    `ASSEMBLE_RESULT=history_truncated`, exit 1, naming `git fetch
+    --unshallow` as the remediation, rather than `manifest_unrecoverable`,
+    which would wrongly imply the data itself is gone. Only on a full clone,
+    with no commit ever having written that path (the manifest was lost before
+    it was committed), does `--repair-manifest` **refuse to guess**: it
     reports `ASSEMBLE_RESULT=manifest_unrecoverable`, exit 1, and instructs
     the operator to reconcile by hand — compare the `## [X.Y.Z]` section's
     bullets against the fragment bodies still present in `changelog.d/` to
     reconstruct the original set, or, only as a knowing last resort whose risk
     the operator accepts explicitly, fall back to `assemble --reassemble` (see
-    below), which is never invoked automatically.
+    below), which is never invoked automatically. `--reassemble` recomputes
+    and writes the manifest and rewrites `CHANGELOG.md` in the identical
+    manifest-first, atomic-rename order as a normal `assemble`, so a stop
+    mid-`--reassemble` also lands on one of the named states above rather than
+    a sixth, undocumented one.
   - Manifest absent, heading absent: nothing has happened yet; `assemble` runs
     normally.
-- **Interrupted preparation resumes intact.** Both artifacts are ordinary
-  committed files on the release branch, so resuming is `git checkout` of that
-  branch followed by re-running `assemble`, which always lands on one of the
-  four states above instead of guessing. If the release branch is discarded
-  entirely, `develop` still holds every fragment, because nothing was ever
-  deleted there.
+- **Interrupted preparation resumes intact — because Protocol 05 commits
+  twice inside Step 3, not only once at Step 5.** "Both artifacts are
+  ordinary committed files on the release branch" is true only if something
+  commits them, and Protocol 05's existing single "Commit" step (Step 5) runs
+  *after* Step 3's assemble, editorial pass, link-reference definitions, and
+  `consume` have all already happened. Left at that, the manifest and the
+  editorial pass would sit uncommitted for the entire span this design exists
+  to protect, and `--repair-manifest`'s git-history restore would find
+  nothing to restore for the whole of that span. The Layer-by-Layer Changes
+  entry restructuring Protocol 05 Step 3 therefore adds two commits inside it,
+  both before Step 5's version-bump commit: one immediately after `assemble` succeeds
+  (before the editorial pass touches anything), and one after the editorial
+  pass and link-reference definitions, immediately before `consume` runs.
+  With those in place, resuming on the *same* working tree needs no git
+  operation at all — the temp+rename writes already persisted to disk — and
+  resuming on a *different* clone, or after the original working tree is
+  lost, is `git checkout` of the release branch followed by re-running
+  `assemble`, which lands on one of the four states above because the
+  manifest and the editorial pass are both already committed. If the release
+  branch is discarded entirely, `develop` still holds every fragment, because
+  nothing was ever deleted there — but the releaser's editorial pass is not
+  on `develop`, and is genuinely lost in that specific scenario; only a
+  discarded *working tree*, not a discarded *branch*, is protected by the two
+  intermediate commits.
 - **Consumption requires a publishable section, not just a manifest.** Before
   deleting anything, `consume` checks the manifest **and** the `## [X.Y.Z]`
   heading — the same two facts `assemble` checks, in the same order of
@@ -488,10 +526,15 @@ other workflow helpers, and every exit path prints its documented fields.
       `MANIFEST_PATH`, and `ITEMS`. `ASSEMBLE_RESULT` includes
       `assembled_unmanifested` for the manifest-absent, heading-present
       recovery state; `repaired` when `--repair-manifest` restores the
-      manifest from git history; `manifest_unrecoverable` when
-      `--repair-manifest` finds no committed manifest to restore; and
-      `locked` when the lock is already held. (Spec AC-3, AC-5, AC-7, AC-10;
-      Decisions 3 and 4)
+      manifest from the most recent commit that wrote it, via the same
+      atomic temp-file-and-rename write as every other write in this plan;
+      `history_truncated` when `--repair-manifest` is run against a shallow
+      clone whose fetched depth cannot rule out an existing-but-unreachable
+      commit; `manifest_unrecoverable` when `--repair-manifest` finds no
+      committed manifest to restore on a full clone; and `locked` when the
+      lock is already held. `--reassemble` follows the identical
+      manifest-first, atomic-rename write order as a normal assembly. (Spec
+      AC-3, AC-5, AC-7, AC-10; Decisions 3 and 4)
 - [ ] `consume --version <X.Y.Z>` — acquire the same per-release lock, require
       the `## [X.Y.Z]` heading to exist (else refuse — see below), delete the
       manifest-listed fragments one at a time (idempotent: a file already
@@ -505,8 +548,9 @@ other workflow helpers, and every exit path prints its documented fields.
 - [ ] Exit codes: `0` for `clean`, `assembled`, `already_assembled`,
       `reassembled`, `repaired`, `consumed`, `already_consumed`; `1` for a
       validation, assembly, `assembled_unmanifested`,
-      `manifest_unrecoverable`, `not_assembled`, `inconsistent`, or `locked`
-      error; `3` for `no_notes` without `--allow-empty`; `64` for a usage
+      `manifest_unrecoverable`, `history_truncated`, `not_assembled`,
+      `inconsistent`, or `locked` error; `3` for `no_notes` without
+      `--allow-empty`; `64` for a usage
       error, matching `check-documentation-stage-alignment.sh`.
 - [ ] Reporting on assembly names each contributing item, and reports bullets
       carried over from the shared block as a single unattributed group, per
@@ -590,14 +634,20 @@ Protocols:
       byte-for-byte unchanged. Rename both "CHANGELOG entry preview" PR-body
       bullets to "release note preview". (Spec AC-2, AC-11)
 - [ ] `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md`
-      — restructure Step 3 into: assemble the draft, editorial pass (today's
-      polish guidance retargeted at the assembled draft, unchanged in
-      substance), link-reference definitions (unchanged), consume the notes.
-      Extend Step 7.2's release-artifact validation with the two checks that
-      prove consumption ran: `changelog.d/manifests/consumed/v<X.Y.Z>.txt` is
-      present (not merely `changelog.d/manifests/v<X.Y.Z>.txt` absent — see
-      Decision 3) and `## [X.Y.Z] - YYYY-MM-DD` is present. (Spec AC-3, AC-4,
-      AC-5, AC-8)
+      — restructure Step 3 into: assemble the draft; **commit** (the manifest
+      and the rewritten `CHANGELOG.md`); editorial pass (today's polish
+      guidance retargeted at the assembled draft, unchanged in substance);
+      link-reference definitions (unchanged); **commit** (the editorial pass
+      and link-reference definitions); consume the notes. The two commits are
+      both new and both precede Step 5's existing version-bump commit — see
+      Decision 3's "Interrupted preparation resumes intact" bullet: without
+      them, neither artifact is a "committed file on the release branch" until
+      Step 5, and `--repair-manifest`'s git-history restore has no commit to
+      find for the entire span between assembly and Step 5. Extend Step 7.2's
+      release-artifact validation with the two checks that prove consumption
+      ran: `changelog.d/manifests/consumed/v<X.Y.Z>.txt` is present (not
+      merely `changelog.d/manifests/v<X.Y.Z>.txt` absent — see Decision 3) and
+      `## [X.Y.Z] - YYYY-MM-DD` is present. (Spec AC-3, AC-4, AC-5, AC-8)
 - [ ] `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`
       — extend Step 2.5 so the graduation PR is verified to carry the
       `changelog.d/` additions accumulated on `develop-<slug>`, alongside the
@@ -786,8 +836,10 @@ test in `scripts/development-workflow/tests/test-changelog-fragments.sh`.
 | 34 | `consume` when neither manifest location holds the target version but the `## [X.Y.Z]` version section is present | `CONSUME_RESULT=inconsistent`, exit 1 — no longer conflated with `already_consumed`; the operator must reconcile by hand |
 | 35 | `consume` when the manifest is present in `changelog.d/manifests/` but the `## [X.Y.Z]` heading is absent | `CONSUME_RESULT=not_assembled`, exit 1, deletes nothing — assembly never finished; remediation is to run `assemble` first |
 | 36 | `consume` when the heading is present, the manifest is present in `changelog.d/manifests/`, and some or all manifest-listed fragment files are already absent (a prior run stopped after deleting fragments but before moving the manifest) | Resume: finish deleting whatever remains (idempotent — an absent file is not an error), then move the manifest. `CONSUME_RESULT=consumed`, exit 0 |
-| 37 | `assemble --repair-manifest` when a commit on the current branch previously wrote `changelog.d/manifests/v<X.Y.Z>.txt` | Restore that commit's blob verbatim. `ASSEMBLE_RESULT=repaired`, exit 0 — the restored set is exactly what was frozen at the original assembly, never a live rescan |
-| 38 | `assemble --repair-manifest` when no commit on the current branch ever wrote the manifest for the target version | Refuse to guess. `ASSEMBLE_RESULT=manifest_unrecoverable`, exit 1, naming manual reconciliation (or an explicit, risk-accepted `--reassemble`) as the only remaining paths |
+| 37 | `assemble --repair-manifest` when a commit on the current branch previously wrote `changelog.d/manifests/v<X.Y.Z>.txt` | Restore that commit's blob verbatim, via the same atomic temp-file-and-rename write as every other write in this plan. `ASSEMBLE_RESULT=repaired`, exit 0 — the restored set is exactly what was frozen at the original assembly, never a live rescan |
+| 38 | `assemble --repair-manifest` when the path was written by more than one commit (for example, an earlier `--repair-manifest` or `--reassemble`) | Restore the **most recent** commit's blob — the one that reflects the currently-authoritative content, not an earlier one. `ASSEMBLE_RESULT=repaired`, exit 0 |
+| 39 | `assemble --repair-manifest` on a shallow clone, where no commit in the fetched history wrote the manifest but one may exist outside the fetched depth | `ASSEMBLE_RESULT=history_truncated`, exit 1, naming `git fetch --unshallow` as the remediation — distinct from `manifest_unrecoverable`, which asserts no such commit exists at all |
+| 40 | `assemble --repair-manifest` on a full (non-shallow) clone when no commit on the current branch ever wrote the manifest for the target version | Refuse to guess. `ASSEMBLE_RESULT=manifest_unrecoverable`, exit 1, naming manual reconciliation (or an explicit, risk-accepted `--reassemble`) as the only remaining paths |
 
 **Suppression semantics**: not applicable. `changelog-fragments.sh` recognizes
 no inline suppression directives. Declining to write a release note is
@@ -829,10 +881,36 @@ waits or retries silently. This is a bounded, single-checkout mitigation, the
 same known limitation `prepare-release-post-merge-cleanup.sh` documents for
 its own lock: it does not exclude a concurrent run from a different clone or
 worktree of the same release branch, and the plan does not claim otherwise.
+
+**Staleness — a gap the precedent script leaves open, which this plan does
+not repeat.** `prepare-release-post-merge-cleanup.sh`'s lock has no built-in
+staleness recovery at all: if its owning process is killed, the lock directory
+is empty (`mkdir` with no marker file inside it) and stays held forever, with
+no documented way for an operator to tell "still running" apart from "leaked."
+Copying that as-is would mean this plan's own troubleshooting guidance — "wait
+for it to finish, or confirm it is stale and remove the lock directory" —
+gives the operator no actual mechanism to confirm staleness, which risks the
+operator guessing wrong and `rmdir`-ing a lock a still-running invocation
+holds, recreating the exact interleaving the lock exists to prevent. This plan
+closes that gap: at acquisition, `assemble`/`consume` write a single file
+inside the lock directory, `owner` (PID, hostname, and UTC start timestamp, one
+per line — no atomicity requirement on this file, since it exists only after
+the `mkdir` that already committed the lock). When `mkdir` fails, the reported
+remediation reads that file and instructs the operator to check
+`ps -p <pid>` (or the equivalent on the owner's host, if different from the
+current one) before removing the lock directory — remove it only when the
+recorded PID is confirmed not running on the recorded host. This is still a
+manual, human-in-the-loop judgment (there is no cross-host liveness protocol),
+so a wrong manual judgment remains possible; it is a strict improvement over
+"confirm it is stale" with no data to confirm it against, not a hard
+guarantee.
+
 The test suite (Implementation Order Step 2) adds one interleaving case per
 command: start a run, hold its lock open, start a second run of the same
 command against the same version, and assert the second run reports `locked`
-and makes no write.
+and makes no write; and one stale-lock case: create a lock directory with an
+`owner` file naming a PID that is not running, and assert the reported
+remediation names that file rather than only the lock directory path.
 
 ---
 
@@ -851,8 +929,9 @@ readiness check.
 | Manifest for the target version present; `## [X.Y.Z]` heading also present | `already_assembled` | No write; continue. This is the resume path and the idempotence guarantee — both artifacts, not the heading alone (Decision 3) | Same |
 | Manifest for the target version present; `## [X.Y.Z]` heading absent | `assembled` | Interrupted between the two writes. Perform the `CHANGELOG.md` write (temp file, `fsync`, atomic rename) from the already-frozen manifest, never a rescan; continue to the editorial pass | Same |
 | Manifest for the target version absent; `## [X.Y.Z]` heading present | `assembled_unmanifested` (exit 1) | Stop; run `assemble --repair-manifest` to restore the manifest from git history — never a directory rescan (a live rescan can pull in a fragment added since the original assembly) | Protocol 05 Step 3 |
-| `--repair-manifest` passed; a commit on the branch previously wrote the manifest for this version | `repaired` | The manifest is restored verbatim from that commit; continue to `already_assembled` on the next run | Same |
-| `--repair-manifest` passed; no commit on the branch ever wrote the manifest for this version | `manifest_unrecoverable` (exit 1) | Stop; reconcile by hand (compare the published section's bullets against fragments still in `changelog.d/`), or explicitly accept the risk of `--reassemble` | Protocol 05 Step 7.2 |
+| `--repair-manifest` passed; a commit on the branch previously wrote the manifest for this version (the most recent such commit, if more than one) | `repaired` | The manifest is restored verbatim from that commit, via the same atomic temp-file-and-rename write as every other write in this plan; continue to `already_assembled` on the next run | Same |
+| `--repair-manifest` passed; the clone is shallow and cannot rule out a commit outside the fetched depth | `history_truncated` (exit 1) | Stop; run `git fetch --unshallow`, then retry `--repair-manifest` — this is a clone-configuration gap, not evidence the manifest is unrecoverable | Protocol 05 Step 7.2 |
+| `--repair-manifest` passed; the clone is not shallow and no commit on the branch ever wrote the manifest for this version | `manifest_unrecoverable` (exit 1) | Stop; reconcile by hand (compare the published section's bullets against fragments still in `changelog.d/`), or explicitly accept the risk of `--reassemble` | Protocol 05 Step 7.2 |
 | `--reassemble` passed and the heading is present | `reassembled` | Print the replaced section first; the releaser must redo any editorial pass. Not invoked automatically by any recovery path | Same |
 | No pending fragment and an empty shared block | `no_notes` (exit 3) | Stop; either there is nothing to release or a fragment was lost. Pass `--allow-empty` only for a deliberate no-notes release | Same |
 | Any fragment fails the grammar or body checks | `invalid` (exit 1) | Fix the named fragment on `develop` and re-run; never assemble a partial set | Protocol 05; `.github/workflows/markdown-lint.yml` |
@@ -1015,8 +1094,11 @@ changelog.d/1589.fixed.integration-branch-ci.md
    fresh empty `## [Unreleased]`, deterministic ordering; all four assembly
    states from Decision 3 (`assembled`, `already_assembled`, the
    manifest-present/heading-absent resume, and `assembled_unmanifested`);
-   `--repair-manifest` (git-history restore, `repaired` or
-   `manifest_unrecoverable`, never a directory rescan); and `no_notes`.
+   `--repair-manifest` (git-history restore of the most recent writing
+   commit, itself written atomically; `repaired`, `history_truncated` on a
+   shallow clone, or `manifest_unrecoverable` on a full clone, never a
+   directory rescan); `--reassemble` (identical manifest-first, atomic-rename
+   write order as normal assembly); and `no_notes`.
 
    *Verify*: the changelog-rewriting cases pass, and the suite's assembled
    fixtures are checked with `check-changelog-duplicate-headers.sh` and
@@ -1053,11 +1135,22 @@ changelog.d/1589.fixed.integration-branch-ci.md
 
 7. **Update the release path.** Protocol 05 Step 3 (assemble, editorial pass,
    link definitions, consume) and Step 7.2's artifact validation, then the three
-   prepare-release command and skill surfaces.
+   prepare-release command and skill surfaces. **Add two commits inside the
+   restructured Step 3, both before Step 5's existing version-bump commit**:
+   one immediately after `assemble` succeeds (before the editorial pass touches
+   anything) and one immediately after the editorial pass and link-reference
+   definitions, before `consume` runs. Without these, the manifest and the
+   editorial pass sit uncommitted for the whole span Decision 3's recovery
+   design protects, and `--repair-manifest`'s git-history restore has nothing
+   to restore from until Step 5 — see Decision 3's "Interrupted preparation
+   resumes intact" bullet, which this step implements.
 
    *Verify*: read Step 3 end to end and confirm a releaser can execute it
-   without consulting this plan, and that the editorial pass still appears
-   between assembly and consumption.
+   without consulting this plan, that the editorial pass still appears
+   between assembly and consumption, and that the two new commit points are
+   both present and both precede Step 5. Confirm by inspection that a
+   `--repair-manifest` run immediately after the first of the two commits
+   (i.e. before the editorial pass) would find that commit in `git log`.
 
 8. **Update the implementation path.** Protocol 03 Paths 1–3, leaving Path 4
    untouched; then `.claude/agents/developer.md`,
