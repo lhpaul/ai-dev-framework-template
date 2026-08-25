@@ -32,6 +32,7 @@ missing local command is a setup failure and emits `RESULT=escalate`.
 
 Set the local command in the runner environment:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 export LOCAL_AI_REVIEWER_COMMAND='my-review-command "$CONTEXT_BUNDLE_PATH"'
 ```
@@ -123,6 +124,7 @@ Graph context is optional. The default strategy is no graph context.
 
 Set:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 export LOCAL_AI_REVIEWER_GRAPH_STRATEGY=auto
 ```
