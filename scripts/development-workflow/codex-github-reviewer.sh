@@ -68,7 +68,8 @@
 #     here from the non-[bot] account (e.g. "chatgpt-codex-connector").
 #   - pulls/{PR}/reviews   — GitHub Review objects; matches both logins. Codex
 #     posts findings here from the [bot]-suffixed account. Only submitted
-#     reviews whose commit_id starts with the current head SHA are considered.
+#     reviews whose commit_id exactly matches the full current head SHA are
+#     considered.
 #     The review body safe-fails to NEEDS_REVISION, which causes
 #     pr-review-loop.sh to count unresolved inline threads.
 #
@@ -194,13 +195,14 @@ fi
 # Guard the assignment with 'if !' to prevent set -e from exiting with code 1
 # (NEEDS_REVISION) before the empty-check guard below can emit the VERDICT line.
 
-if ! CURRENT_SHA=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | head -c 100); then
+if ! CURRENT_SHA_FULL=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | head -c 100); then
   echo "ERROR: could not resolve PR #$PR_NUMBER HEAD SHA" >&2
   echo "VERDICT: TIMED_OUT — could not resolve PR HEAD SHA (treated as unavailable)"
   exit 2
 fi
-CURRENT_SHA=$(printf '%s' "$CURRENT_SHA" | cut -c1-12)
-if [ -z "$CURRENT_SHA" ]; then
+CURRENT_SHA_FULL=$(printf '%s' "$CURRENT_SHA_FULL" | tr -d '\n' | cut -c1-40)
+CURRENT_SHA=$(printf '%s' "$CURRENT_SHA_FULL" | cut -c1-12)
+if [ -z "$CURRENT_SHA_FULL" ]; then
   echo "ERROR: could not resolve PR #$PR_NUMBER HEAD SHA (empty result)" >&2
   echo "VERDICT: TIMED_OUT — could not resolve PR HEAD SHA (treated as unavailable)"
   exit 2
@@ -249,8 +251,8 @@ codex_inline_review_comment_count_since() {
   local review_comment_tmpfile
   review_comment_tmpfile=$(mktemp)
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate \
-    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$trigger_time" --arg sha "$CURRENT_SHA" \
-      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .created_at >= $trigger_time and ((.commit_id // "") | startswith($sha)))] | length' \
+    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$trigger_time" --arg sha "$CURRENT_SHA_FULL" \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .created_at >= $trigger_time and ((.commit_id // "") == $sha))] | length' \
     > "$review_comment_tmpfile"; then
     cat "$review_comment_tmpfile"
   else
@@ -1344,21 +1346,22 @@ codex_return_head_changed() {
 }
 
 codex_require_current_head() {
-  local latest_sha
-  if ! latest_sha=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | head -c 100); then
+  local latest_sha latest_sha_full
+  if ! latest_sha_full=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' | head -c 100); then
     echo "ERROR: could not revalidate PR #$PR_NUMBER HEAD SHA" >&2
     echo "VERDICT: TIMED_OUT — could not revalidate PR HEAD SHA (treated as unavailable)"
     echo "REASON=codex-github-head-unavailable"
     exit 2
   fi
-  latest_sha=$(printf '%s' "$latest_sha" | cut -c1-12)
-  if [ -z "$latest_sha" ]; then
+  latest_sha_full=$(printf '%s' "$latest_sha_full" | tr -d '\n' | cut -c1-40)
+  latest_sha=$(printf '%s' "$latest_sha_full" | cut -c1-12)
+  if [ -z "$latest_sha_full" ]; then
     echo "ERROR: could not revalidate PR #$PR_NUMBER HEAD SHA (empty result)" >&2
     echo "VERDICT: TIMED_OUT — could not revalidate PR HEAD SHA (treated as unavailable)"
     echo "REASON=codex-github-head-unavailable"
     exit 2
   fi
-  if [ "$latest_sha" != "$CURRENT_SHA" ]; then
+  if [ "$latest_sha_full" != "$CURRENT_SHA_FULL" ]; then
     echo "INFO: PR head changed during Codex polling (started at $CURRENT_SHA, now $latest_sha)"
     codex_return_head_changed
   fi
@@ -1396,8 +1399,8 @@ codex_fetch_existing_current_head_evidence() {
   EXISTING_REVIEW_STATE=""
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>"$existing_reviews_stderr" \
-    | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg sha "$CURRENT_SHA" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and ((.commit_id // "") | startswith($sha)) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
+    | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg sha "$CURRENT_SHA_FULL" \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
     > "$existing_reviews_tmpfile"; then
     codex_select_review_evidence "$existing_reviews_tmpfile"
     EXISTING_REVIEW_BODY="$SELECTED_REVIEW_BODY"
@@ -1701,8 +1704,8 @@ while true; do
   REVIEW_TMPFILE=$(mktemp)
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>"$REVIEW_STDERR" \
-    | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
+    | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA_FULL" \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
     > "$REVIEW_TMPFILE" 2>"$REVIEW_STDERR"; then
     # Selects every review tied at the latest submitted_at timestamp (not
     # just one via sort_by | last) and picks the one requiring attention if
@@ -2021,8 +2024,8 @@ fi
 ASYNC_REVIEW_TMPFILE=$(mktemp)
 if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
   2>/dev/null \
-  | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
+  | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA_FULL" \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
   > "$ASYNC_REVIEW_TMPFILE" 2>/dev/null; then
   # Selects every review tied at the latest timestamp and picks the one
   # requiring attention, if any (see rationale above the main-loop
@@ -2131,8 +2134,8 @@ if [ -n "$ASYNC_BOT_RESPONSE_TIME" ]; then
     ASYNC_FINAL_REVIEW_TMPFILE=$(mktemp)
     if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
       2>/dev/null \
-      | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
+      | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA_FULL" \
+          '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
       > "$ASYNC_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
       # Selects every review tied at the latest timestamp and picks the one
       # requiring attention, if any (see rationale above the main-loop
@@ -2287,8 +2290,8 @@ if [ "$ASYNC_APPROVAL_REACTION_COUNT" -gt 0 ]; then
   ASYNC_REACTION_FINAL_REVIEW_TMPFILE=$(mktemp)
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>/dev/null \
-    | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA" \
-        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") | startswith($sha)) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
+    | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg trigger_time "$TRIGGER_TIME" --arg sha "$CURRENT_SHA_FULL" \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and .submitted_at >= $trigger_time and ((.commit_id // "") == $sha) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
     > "$ASYNC_REACTION_FINAL_REVIEW_TMPFILE" 2>/dev/null; then
     # Selects every review tied at the latest timestamp and picks the one
     # requiring attention, if any (see rationale above the main-loop

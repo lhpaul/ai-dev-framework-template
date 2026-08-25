@@ -4241,6 +4241,50 @@ run_test "codex_stale_existing_evidence_no_fast_path" "yes" \
 rm -rf "$_codex_stale_existing_mock_dir"
 unset _codex_stale_existing_mock_dir _codex_stale_existing_exit
 
+_codex_prefix_mismatch_mock_dir="$(mktemp -d)"
+cat > "$_codex_prefix_mismatch_mock_dir/gh" <<'CODEX_PREFIX_MISMATCH_GH'
+#!/usr/bin/env bash
+log="$MOCK_POST_LOG"
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcdefab1234567890abcdefab1234567890abcd\n'; exit 0 ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}\n'
+    exit 0 ;;
+  *"--method POST"*)
+    printf 'POST\n' >> "$log"
+    printf '{"id":106,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"abcdefab1234567890abcdefab1234567890abce",state:"APPROVED",user:{login:"chatgpt-codex-connector[bot]"},body:("Codex Review: Didn'\''t find any major issues. Swish! **Reviewed commit:** `abcdefab1234` <details> <summary>ℹ️ About Codex in GitHub</summary> <br/> [Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you - Open a pull request for review - Mark a draft as ready - Comment \"@codex review\". If Codex has suggestions, it will comment; otherwise it will react with 👍. Codex can also answer questions or update the PR. Try commenting \"@codex address that feedback\". </details>")}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_PREFIX_MISMATCH_GH
+chmod +x "$_codex_prefix_mismatch_mock_dir/gh"
+: > "$_codex_prefix_mismatch_mock_dir/posts.log"
+_codex_prefix_mismatch_exit=0
+MOCK_POST_LOG="$_codex_prefix_mismatch_mock_dir/posts.log" PATH="$_codex_prefix_mismatch_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --pre-trigger-wait 1 --max-retriggers 0 \
+  >"$_codex_prefix_mismatch_mock_dir/output.txt" 2>&1 || _codex_prefix_mismatch_exit=$?
+run_test "codex_prefix_mismatch_review_posts_trigger" "1" \
+  "$(wc -l < "$_codex_prefix_mismatch_mock_dir/posts.log" | tr -d ' ')"
+run_test "codex_prefix_mismatch_review_no_fast_path" "yes" \
+  "$(if grep -Fq "no existing current-head Codex evidence found before trigger window elapsed" "$_codex_prefix_mismatch_mock_dir/output.txt"; then printf yes; else printf no; fi)"
+rm -rf "$_codex_prefix_mismatch_mock_dir"
+unset _codex_prefix_mismatch_mock_dir _codex_prefix_mismatch_exit
+
 _codex_reaction_mock_dir="$(mktemp -d)"
 cat > "$_codex_reaction_mock_dir/gh" <<'CODEX_REACTION_GH'
 #!/usr/bin/env bash
