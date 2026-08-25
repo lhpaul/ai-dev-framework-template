@@ -4326,6 +4326,44 @@ run_test "codex_provisional_reply_skips_trigger" "0" \
 rm -rf "$_codex_provisional_reply_mock_dir"
 unset _codex_provisional_reply_mock_dir _codex_provisional_reply_exit
 
+_codex_provisional_missing_author_mock_dir="$(mktemp -d)"
+cat > "$_codex_provisional_missing_author_mock_dir/gh" <<'CODEX_PROVISIONAL_MISSING_AUTHOR_GH'
+#!/usr/bin/env bash
+log="$MOCK_POST_LOG"
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf '1212121212121212121212121212121212121212\n'; exit 0 ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"headRef":{"target":{"committedDate":"2026-01-01T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false,"isOutdated":false,"firstComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"body":"Blocking issue"}]},"lastComment":{"nodes":[{"author":null,"createdAt":"2026-01-01T00:00:01Z"}]}}]}}}}}\n'
+    exit 0 ;;
+  *"--method POST"*)
+    printf 'POST\n' >> "$log"
+    printf '{"id":115,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_PROVISIONAL_MISSING_AUTHOR_GH
+chmod +x "$_codex_provisional_missing_author_mock_dir/gh"
+: > "$_codex_provisional_missing_author_mock_dir/posts.log"
+_codex_provisional_missing_author_output=""
+_codex_provisional_missing_author_exit=0
+MOCK_POST_LOG="$_codex_provisional_missing_author_mock_dir/posts.log" PATH="$_codex_provisional_missing_author_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --pre-trigger-wait 1 --max-retriggers 0 \
+  >"$_codex_provisional_missing_author_mock_dir/output.txt" 2>&1 || _codex_provisional_missing_author_exit=$?
+_codex_provisional_missing_author_output="$(cat "$_codex_provisional_missing_author_mock_dir/output.txt")"
+run_test "codex_provisional_missing_author_exit_needs_revision" "1" "$_codex_provisional_missing_author_exit"
+run_test "codex_provisional_missing_author_verdict" "VERDICT: NEEDS_REVISION" \
+  "$(printf '%s\n' "$_codex_provisional_missing_author_output" | grep "^VERDICT:")"
+run_test "codex_provisional_missing_author_skips_trigger" "0" \
+  "$(wc -l < "$_codex_provisional_missing_author_mock_dir/posts.log" | tr -d ' ')"
+rm -rf "$_codex_provisional_missing_author_mock_dir"
+unset _codex_provisional_missing_author_mock_dir _codex_provisional_missing_author_output _codex_provisional_missing_author_exit
+
 _codex_provisional_changes_requested_mock_dir="$(mktemp -d)"
 cat > "$_codex_provisional_changes_requested_mock_dir/gh" <<'CODEX_PROVISIONAL_CHANGES_REQUESTED_GH'
 #!/usr/bin/env bash

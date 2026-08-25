@@ -330,7 +330,7 @@ codex_review_thread_evidence_counts() {
 	              | select((.isOutdated // false) == false)
 	              | select($first_author == $bot or $first_author == $bot_plain)
 	              | {
-	                  cleared: ((.isResolved // false) or ($first_body | test("✅ Addressed")) or (($head_date != "") and ($last_author != $bot) and ($last_author != $bot_plain) and ($last_created > $head_date)))
+	                  cleared: ((.isResolved // false) or ($first_body | test("✅ Addressed")) or (($head_date != "") and ($last_author != "") and ($last_author != $bot) and ($last_author != $bot_plain) and ($last_created > $head_date)))
 	                }
             ] as $candidate_threads
           | ($candidate_threads | map(select(.cleared | not)) | length) as $count
