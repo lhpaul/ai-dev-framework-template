@@ -67,7 +67,8 @@ jobs:
           EVENT_BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           COMMENT_BODY: ${{ github.event.comment.body }}
-          REGRESSION_WORKFLOW: "e2e-regression.yml"
+          REGRESSION_DISPATCH_ENABLED: ${{ vars.PR_POLICY_REGRESSION_DISPATCH_ENABLED || 'true' }}
+          REGRESSION_WORKFLOW: ${{ vars.PR_POLICY_REGRESSION_WORKFLOW || 'e2e-regression.yml' }}
           # Override IN_SCOPE_PREFIXES in your repository to customise which branches
           # are subject to implementation PR policy. Default covers the four standard
           # implementation prefixes. Branches outside this list always pass the guard
@@ -133,7 +134,7 @@ jobs:
             fi
 
             printf '%s\n' "$labels_json" \
-              | jq -e --arg name "$LABEL_NAME" '.labels[].name | select(. == $name)' > /dev/null
+              | jq -e --arg name "$LABEL_NAME" '[.labels[].name | select(. == $name)] | length > 0' > /dev/null
           }
 
           dispatch_regression_workflow() {
@@ -284,7 +285,9 @@ jobs:
                   LABEL_POLICY_FAILED=true
                 else
                   echo "Label '${LABEL_NAME}' applied to PR #${PR_NUMBER}."
-                  if [ "$regression_base_in_scope" != "true" ]; then
+                  if [ "$REGRESSION_DISPATCH_ENABLED" != "true" ]; then
+                    echo "Regression workflow dispatch disabled by PR_POLICY_REGRESSION_DISPATCH_ENABLED='${REGRESSION_DISPATCH_ENABLED}'."
+                  elif [ "$regression_base_in_scope" != "true" ]; then
                     echo "PR #${PR_NUMBER} targets '${BASE_BRANCH}', which is outside regression workflow branch scope. Skipping regression dispatch."
                   elif dispatch_regression_workflow; then
                     echo "Dispatched '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER} at ${HEAD_SHA}."

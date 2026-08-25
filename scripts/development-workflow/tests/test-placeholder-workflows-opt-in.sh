@@ -87,6 +87,10 @@ assert_contains "$DEPLOY_DOC" 'confirm_placeholder' \
   "deployment docs must name the placeholder confirmation input"
 assert_contains "$REGRESSION_DOC" 'ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION' \
   "regression docs must name the opt-in variable"
+assert_contains "$REGRESSION_DOC" 'PR_POLICY_REGRESSION_WORKFLOW' \
+  "regression docs must name the dispatch workflow override variable"
+assert_contains "$REGRESSION_DOC" 'PR_POLICY_REGRESSION_DISPATCH_ENABLED=false' \
+  "regression docs must document the dispatch disable switch"
 assert_contains "$REGRESSION_DOC" 'inactive by default|disabled by default' \
   "regression docs must explain the inactive default"
 assert_contains "$CI_DOC" 'inactive placeholder|explicitly enabled placeholder' \

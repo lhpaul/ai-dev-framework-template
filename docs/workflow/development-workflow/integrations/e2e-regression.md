@@ -4,14 +4,22 @@ This template includes a label-gated GitHub Actions workflow for e2e/regression 
 
 - `.github/workflows/e2e-regression.yml`
 
-The placeholder workflow listens for PRs targeting `develop` or `main` when the
-`ready-for-regression` label is present, and it can also be dispatched directly
-for a PR head by `pr-policy.yml`. The placeholder job is disabled by default.
-It installs dependencies and browsers only when the repository variable
+The placeholder workflow listens for PRs targeting `develop`, `develop-*`, or
+`main` when the `ready-for-regression` label is present, and it can also be
+dispatched directly for a qualifying PR head by `pr-policy.yml`. The placeholder
+job is disabled by default. It installs dependencies and browsers only when the
+repository variable
 `ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION` is set to `true`.
 
 The file is intentionally generic so downstream repositories can replace it with
 their own label-gated test suites.
+
+If a downstream repository replaces or splits the regression workflow, keep a
+`workflow_dispatch` entrypoint that accepts `pr_number`, `head_sha`, `head_ref`,
+and `base_ref`, or set `PR_POLICY_REGRESSION_WORKFLOW` to the dispatchable
+workflow filename. Set `PR_POLICY_REGRESSION_DISPATCH_ENABLED=false` only when
+regression is intentionally manual and the repository does not want
+`pr-policy.yml` to dispatch it.
 
 ---
 
@@ -44,8 +52,8 @@ The CI loop (`pr-ci-loop.sh`) naturally picks up the e2e check result as part of
 ## Label Gate Pattern
 
 The workflow supports both explicit dispatches from `pr-policy.yml` and PR-event
-label checks. Its `if` condition accepts any `workflow_dispatch` invocation, then
-falls back to the PR label state for PR-triggered runs:
+label checks. Its `if` condition accepts qualifying `workflow_dispatch`
+invocations, then falls back to the PR label state for PR-triggered runs:
 
 ```yaml
 if: >-
@@ -69,7 +77,8 @@ if: >-
 - Third clause: fires on `synchronize` (new push) or `reopened` if the label is
   already present
 
-This means e2e tests re-run automatically after fixer pushes — the label stays on the PR, and `synchronize` triggers the second clause.
+This means e2e tests re-run automatically after fixer pushes — the label stays
+on the PR, and `synchronize` triggers the third clause.
 
 ---
 
@@ -101,6 +110,8 @@ You may also:
 - Remove the `ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION` guard once the placeholder
   steps are replaced by a real suite that should always run after
   `ready-for-regression`.
+- Keep the workflow dispatchable with the template's four inputs, or point
+  `PR_POLICY_REGRESSION_WORKFLOW` at the dispatchable replacement workflow.
 - Add the real e2e/regression check as a required status check in branch
   protection rules.
 - Split into multiple workflow files for different test suites (each gated on `ready-for-regression`).
@@ -122,6 +133,8 @@ The `ready-for-regression` label is applied to implementation PRs (`feature/*`, 
 - If `pr-policy.yml` applies `ready-for-regression` but cannot dispatch the
   regression workflow, it marks the policy run failed and removes the label when
   the label was not already present.
+- `PR_POLICY_REGRESSION_DISPATCH_ENABLED=false` disables the explicit dispatch
+  path for repositories that intentionally keep regression manual.
 - This workflow does not store test credentials or environment URLs in the template.
 - For projects without e2e tests, keep the placeholder disabled and do not
   configure it as a required check. The orchestrator will still apply the label,
