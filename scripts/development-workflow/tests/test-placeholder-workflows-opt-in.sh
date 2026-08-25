@@ -52,6 +52,20 @@ assert_not_contains "$DEPLOY_WORKFLOW" "github\\.event_name == 'push'" \
 
 assert_contains "$REGRESSION_WORKFLOW" "ready-for-regression" \
   "regression placeholder must preserve ready-for-regression label semantics"
+assert_contains "$REGRESSION_WORKFLOW" '^[[:space:]]*workflow_dispatch:' \
+  "regression placeholder must support explicit dispatch from pr-policy"
+assert_contains "$REGRESSION_WORKFLOW" 'pr_number:' \
+  "regression placeholder dispatch must accept the PR number"
+assert_contains "$REGRESSION_WORKFLOW" 'head_sha:' \
+  "regression placeholder dispatch must accept the PR head SHA"
+assert_contains "$REGRESSION_WORKFLOW" 'base_ref:' \
+  "regression placeholder dispatch must accept the PR base branch"
+assert_contains "$REGRESSION_WORKFLOW" "github\\.event_name == 'workflow_dispatch'" \
+  "regression placeholder must run when explicitly dispatched"
+assert_contains "$REGRESSION_WORKFLOW" "startsWith\\(inputs\\.base_ref, 'develop-'\\)" \
+  "regression placeholder dispatch must preserve the integration-branch base gate"
+assert_contains "$REGRESSION_WORKFLOW" 'github\.sha' \
+  "regression placeholder checkout must use the dispatch run SHA"
 assert_contains "$REGRESSION_WORKFLOW" "ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION" \
   "regression placeholder must document the explicit opt-in variable in workflow logic"
 assert_contains "$REGRESSION_WORKFLOW" "vars\\.ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION == 'true'" \
@@ -73,6 +87,10 @@ assert_contains "$DEPLOY_DOC" 'confirm_placeholder' \
   "deployment docs must name the placeholder confirmation input"
 assert_contains "$REGRESSION_DOC" 'ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION' \
   "regression docs must name the opt-in variable"
+assert_contains "$REGRESSION_DOC" 'PR_POLICY_REGRESSION_WORKFLOW' \
+  "regression docs must name the dispatch workflow override variable"
+assert_contains "$REGRESSION_DOC" 'PR_POLICY_REGRESSION_DISPATCH_ENABLED=false' \
+  "regression docs must document the dispatch disable switch"
 assert_contains "$REGRESSION_DOC" 'inactive by default|disabled by default' \
   "regression docs must explain the inactive default"
 assert_contains "$CI_DOC" 'inactive placeholder|explicitly enabled placeholder' \

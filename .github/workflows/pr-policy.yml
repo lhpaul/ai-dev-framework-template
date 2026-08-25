@@ -7,6 +7,7 @@
 # Event routing:
 #   pull_request_target opened/reopened/ready_for_review
 #     - same-repository implementation PRs: ensure and apply ready-for-regression
+#       and dispatch the e2e/regression workflow for the PR head
 #     - all same-repository PRs: evaluate reviewer-loop guard status
 #   pull_request_target synchronize
 #     - same-repository implementation PRs: remove stale ready-for-regression
@@ -48,6 +49,7 @@ jobs:
     if: github.event_name != 'issue_comment' || github.event.issue.pull_request
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       issues: write
       pull-requests: write
       statuses: write
@@ -62,8 +64,11 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EVENT_BRANCH: ${{ github.event.pull_request.head.ref }}
+          EVENT_BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           COMMENT_BODY: ${{ github.event.comment.body }}
+          REGRESSION_DISPATCH_ENABLED: ${{ vars.PR_POLICY_REGRESSION_DISPATCH_ENABLED || 'true' }}
+          REGRESSION_WORKFLOW: ${{ vars.PR_POLICY_REGRESSION_WORKFLOW || 'e2e-regression.yml' }}
           # Override IN_SCOPE_PREFIXES in your repository to customise which branches
           # are subject to implementation PR policy. Default covers the four standard
           # implementation prefixes. Branches outside this list always pass the guard
@@ -116,6 +121,53 @@ jobs:
                 return 1
               fi
             fi
+          }
+
+          dispatch_regression_workflow() {
+            gh workflow run "$REGRESSION_WORKFLOW" \
+              --repo "$REPO" \
+              --ref "$BRANCH" \
+              -f pr_number="$PR_NUMBER" \
+              -f head_sha="$HEAD_SHA" \
+              -f head_ref="$BRANCH" \
+              -f base_ref="$BASE_BRANCH"
+          }
+
+          branch_is_in_scope() {
+            local candidate="$1"
+            local prefix
+
+            for prefix in $IN_SCOPE_PREFIXES; do
+              if [[ "$candidate" == "${prefix}"* ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          refresh_pr_metadata() {
+            local latest_pr_json
+
+            if ! latest_pr_json="$(gh api "repos/$REPO/pulls/$PR_NUMBER")"; then
+              echo "WARN: failed to refresh PR #${PR_NUMBER} metadata before applying ${LABEL_NAME}." >&2
+              return 1
+            fi
+
+            if ! latest_head_sha="$(printf '%s\n' "$latest_pr_json" | jq -er '.head.sha')" ||
+               ! latest_branch="$(printf '%s\n' "$latest_pr_json" | jq -er '.head.ref')" ||
+               ! latest_base_branch="$(printf '%s\n' "$latest_pr_json" | jq -er '.base.ref')" ||
+               ! latest_head_repo="$(printf '%s\n' "$latest_pr_json" | jq -er '.head.repo.full_name')"; then
+              echo "WARN: failed to parse refreshed PR #${PR_NUMBER} metadata before applying ${LABEL_NAME}." >&2
+              return 1
+            fi
+          }
+
+          refreshed_metadata_matches_current_head() {
+            refresh_pr_metadata &&
+              [ "$latest_head_sha" = "$HEAD_SHA" ] &&
+              [ "$latest_branch" = "$BRANCH" ] &&
+              [ "$latest_base_branch" = "$BASE_BRANCH" ] &&
+              [ "$latest_head_repo" = "$HEAD_REPO" ]
           }
 
           fetch_reviewer_loop_summary_count() {
@@ -177,6 +229,13 @@ jobs:
               "Could not resolve PR head branch. Re-run the workflow to retry."
             exit 1
           fi
+          if ! BASE_BRANCH="$(printf '%s\n' "$pr_json" | jq -er '.base.ref')"; then
+            echo "ERROR: pull request base branch is missing for PR #${PR_NUMBER}." >&2
+            post_failure_status_if_possible \
+              "$HEAD_SHA" \
+              "Could not resolve PR base branch. Re-run the workflow to retry."
+            exit 1
+          fi
           if ! HEAD_REPO="$(printf '%s\n' "$pr_json" | jq -er '.head.repo.full_name')"; then
             echo "ERROR: pull request head repository is missing for PR #${PR_NUMBER}." >&2
             post_failure_status_if_possible \
@@ -188,25 +247,18 @@ jobs:
           if [ "$EVENT_NAME" != "issue_comment" ]; then
             HEAD_SHA="${EVENT_HEAD_SHA:-$HEAD_SHA}"
             BRANCH="${EVENT_BRANCH:-$BRANCH}"
+            BASE_BRANCH="${EVENT_BASE_BRANCH:-$BASE_BRANCH}"
             HEAD_REPO="${EVENT_HEAD_REPO:-$HEAD_REPO}"
           fi
 
-          echo "PR #${PR_NUMBER}: evaluating branch '${BRANCH}' against in-scope prefixes: ${IN_SCOPE_PREFIXES}"
+          echo "PR #${PR_NUMBER}: evaluating branch '${BRANCH}' targeting '${BASE_BRANCH}' against in-scope prefixes: ${IN_SCOPE_PREFIXES}"
 
           if [ "$HEAD_REPO" != "$REPO" ]; then
             echo "PR #${PR_NUMBER} head repository '${HEAD_REPO}' differs from base '${REPO}'; skipping privileged PR policy mutation."
             exit 0
           fi
 
-          in_scope=false
-          for prefix in $IN_SCOPE_PREFIXES; do
-            if [[ "$BRANCH" == "${prefix}"* ]]; then
-              in_scope=true
-              break
-            fi
-          done
-
-          if [ "$in_scope" = "false" ]; then
+          if ! branch_is_in_scope "$BRANCH"; then
             echo "Branch '${BRANCH}' is not in scope; posting success status (guard skipped)."
             gh api \
               --method POST \
@@ -217,13 +269,86 @@ jobs:
             exit 0
           fi
 
+          regression_base_in_scope=false
+          case "$BASE_BRANCH" in
+            develop|develop-*|main) regression_base_in_scope=true ;;
+          esac
+
           if [ "$EVENT_NAME" != "issue_comment" ]; then
             case "$EVENT_ACTION" in
               opened|reopened|ready_for_review)
-                echo "Branch '${BRANCH}' is in scope; ensuring and applying ${LABEL_NAME}."
-                if ! ensure_regression_label_exists; then
+                echo "Branch '${BRANCH}' is in scope; evaluating ${LABEL_NAME} dispatch policy."
+                should_apply_regression_label=true
+
+                if [ "$REGRESSION_DISPATCH_ENABLED" != "true" ]; then
+                  echo "Regression workflow dispatch disabled by PR_POLICY_REGRESSION_DISPATCH_ENABLED='${REGRESSION_DISPATCH_ENABLED}'; skipping ${LABEL_NAME}."
+                  should_apply_regression_label=false
+                elif [ "$regression_base_in_scope" != "true" ]; then
+                  echo "PR #${PR_NUMBER} targets '${BASE_BRANCH}', which is outside regression workflow branch scope. Skipping ${LABEL_NAME}."
+                  should_apply_regression_label=false
+                else
+                  dispatch_attempt=1
+                  while [ "$dispatch_attempt" -le 2 ]; do
+                    if ! dispatch_regression_workflow; then
+                      echo "WARN: Failed to dispatch '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER}. Skipping ${LABEL_NAME} and continuing to reviewer-loop guard status." >&2
+                      should_apply_regression_label=false
+                      break
+                    fi
+
+                    echo "Dispatched '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER} at ${HEAD_SHA}."
+                    if ! refresh_pr_metadata; then
+                      echo "WARN: Could not verify PR head after dispatch. Skipping ${LABEL_NAME} to avoid a stale regression-readiness signal." >&2
+                      should_apply_regression_label=false
+                      break
+                    fi
+
+                    if [ "$latest_head_sha" = "$HEAD_SHA" ] &&
+                       [ "$latest_branch" = "$BRANCH" ] &&
+                       [ "$latest_base_branch" = "$BASE_BRANCH" ] &&
+                       [ "$latest_head_repo" = "$HEAD_REPO" ]; then
+                      break
+                    fi
+
+                    if [ "$dispatch_attempt" -ge 2 ]; then
+                      echo "PR #${PR_NUMBER} changed again after regression dispatch (${HEAD_SHA} -> ${latest_head_sha}). Skipping ${LABEL_NAME} to avoid a stale regression-readiness signal."
+                      should_apply_regression_label=false
+                      break
+                    fi
+
+                    echo "PR #${PR_NUMBER} changed after regression dispatch (${HEAD_SHA} -> ${latest_head_sha}). Redispatching regression for the current head."
+                    HEAD_SHA="$latest_head_sha"
+                    BRANCH="$latest_branch"
+                    BASE_BRANCH="$latest_base_branch"
+                    HEAD_REPO="$latest_head_repo"
+                    if [ "$HEAD_REPO" != "$REPO" ]; then
+                      echo "Refreshed PR #${PR_NUMBER} head repository '${HEAD_REPO}' differs from base '${REPO}'. Skipping ${LABEL_NAME}."
+                      should_apply_regression_label=false
+                      break
+                    fi
+                    if ! branch_is_in_scope "$BRANCH"; then
+                      echo "Refreshed PR #${PR_NUMBER} branch '${BRANCH}' is not in scope. Skipping ${LABEL_NAME}."
+                      should_apply_regression_label=false
+                      break
+                    fi
+                    case "$BASE_BRANCH" in
+                      develop|develop-*|main) ;;
+                      *)
+                        echo "Refreshed PR #${PR_NUMBER} target '${BASE_BRANCH}' is outside regression workflow branch scope. Skipping ${LABEL_NAME}."
+                        should_apply_regression_label=false
+                        break
+                        ;;
+                    esac
+                    dispatch_attempt=$((dispatch_attempt + 1))
+                  done
+                fi
+
+                if [ "$should_apply_regression_label" != "true" ]; then
+                  :
+                elif ! ensure_regression_label_exists; then
                   echo "WARN: Failed to ensure ${LABEL_NAME} label exists. Continuing to reviewer-loop guard status." >&2
                   LABEL_POLICY_FAILED=true
+                elif ! refreshed_metadata_matches_current_head; then
+                  echo "WARN: PR #${PR_NUMBER} changed immediately before applying ${LABEL_NAME}. Skipping label to avoid a stale regression-readiness signal." >&2
                 elif ! gh pr edit "$PR_NUMBER" \
                   --repo "$REPO" \
                   --add-label "$LABEL_NAME"; then
