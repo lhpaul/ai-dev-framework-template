@@ -1363,6 +1363,9 @@ codex_fetch_existing_current_head_evidence() {
   local existing_reviews_stderr existing_reviews_tmpfile
   existing_reviews_stderr=$(mktemp)
   existing_reviews_tmpfile=$(mktemp)
+  EXISTING_REVIEW_BODY=""
+  EXISTING_REVIEW_TIME=""
+  EXISTING_REVIEW_STATE=""
   if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
     2>"$existing_reviews_stderr" \
     | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg sha "$CURRENT_SHA" \
