@@ -15057,13 +15057,24 @@ chmod +x "$_1579_e2e_mock_dir/gh"
 # skipped. If the staleness logic ever regresses, an unbounded invocation would
 # sleep the default wait and the suite would *stall* rather than fail — a
 # regression that hangs is harder to diagnose than one that goes red.
+# stderr is captured, not discarded: both the silent-non-trigger path and the
+# rate-limit retry post the identical `@coderabbitai review` body, so the call
+# log alone cannot say which one fired. The two paths log distinct lines, and
+# that is what distinguishes them.
+_1579_e2e_stderr="$(mktemp)"
 PATH="$_1579_e2e_mock_dir:$PATH" \
   CODERABBIT_NO_TRIGGER_TIMEOUT=1 CODERABBIT_RATE_LIMIT_MAX_RETRIES=1 \
   CODERABBIT_RATE_LIMIT_WAIT=1 CODERABBIT_RATE_LIMIT_MIN_WAIT=1 \
-  run_coderabbit_review "42" "fix/42-test" "1" "3" >/dev/null 2>&1 || true
+  run_coderabbit_review "42" "fix/42-test" "1" "3" >/dev/null 2>"$_1579_e2e_stderr" || true
 
 run_test "1579_stale_reply_does_not_block_silent_retrigger" "yes" \
   "$([ "$(grep_count_or_zero '@coderabbitai review' "$_1579_e2e_call_log")" -ge 1 ] && echo yes || echo no)"
+# It must be the SILENT NON-TRIGGER path: a spent rate-limit comment should not
+# route the loop through the rate-limit retry at all.
+run_test "1579_stale_reply_took_the_silent_non_trigger_path" "yes" \
+  "$([ "$(grep_count_or_zero 'silent non-trigger' "$_1579_e2e_stderr")" -ge 1 ] && echo yes || echo no)"
+run_test "1579_stale_reply_did_not_take_the_rate_limit_path" "yes" \
+  "$([ "$(grep_count_or_zero 'after rate-limit wait' "$_1579_e2e_stderr")" -eq 0 ] && echo yes || echo no)"
 # The mock's default case is permissive ("[]" for anything unenumerated), so a
 # renamed endpoint could silently return empty and still look clean. Assert the
 # comments endpoint that carries the rate-limit reply was actually queried.
@@ -15071,7 +15082,8 @@ run_test "1579_stale_reply_queried_issue_comments" "yes" \
   "$([ "$(grep_count_or_zero 'issues/42/comments' "$_1579_e2e_call_log")" -ge 1 ] && echo yes || echo no)"
 
 rm -rf "$_1579_e2e_mock_dir"
-unset _1579_E2E_CALL_LOG _1579_E2E_STALE_CREATED _1579_e2e_mock_dir _1579_e2e_call_log
+rm -f "$_1579_e2e_stderr"
+unset _1579_E2E_CALL_LOG _1579_E2E_STALE_CREATED _1579_e2e_mock_dir _1579_e2e_call_log _1579_e2e_stderr
 
 # --- AC-3(b) / AC-2: end-to-end — a LIVE rate limit re-triggers with "review",
 # not "resume". PR #1589 measured four "@coderabbitai resume" posts answered
