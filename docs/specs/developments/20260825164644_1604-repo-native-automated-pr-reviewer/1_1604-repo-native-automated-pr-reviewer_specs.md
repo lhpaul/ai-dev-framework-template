@@ -138,12 +138,13 @@ The local reviewer companion script must emit key-value output that `pr-review-l
 | --- | --- | --- | --- |
 | `RESULT` | `clean` | Clean platform result. | `COMMENT_COUNT=0`, `BLOCKING_COUNT=0`, `SUGGESTION_COUNT=0`, reviewed head. |
 | `RESULT` | `needs_fixes` | Blocking platform result. | `BLOCKING_COUNT`, finding summaries, reviewed head. |
-| `RESULT` | `advisory` | Non-blocking advisory result. | `SUGGESTION_COUNT`, advisory summaries, reviewed head. |
 | `RESULT` | `skipped` | Intentional skip or warn-and-continue availability result. | `REASON`, no-fresh-review warning, reviewed head when available. |
 | `RESULT` | `needs_rerun` | Blocking result that asks the loop to rerun after fixes or state refresh. | `REASON`, finding or retry summary. |
 | `RESULT` | `escalate` | Unavailable, timed out, malformed, or unsafe-to-classify result. | `REASON`, reviewed head when available, operator action. |
 
 Raw values must use underscores where the existing normalizer expects them, such as `needs_fixes`, not display labels such as "needs-fixes". Display text may say "needs fixes", but machine output must use the accepted raw values above.
+
+Advisory-only output must not emit `RESULT=advisory` unless a follow-up implementation first adds normal-loop support for that raw value. For this MVP contract, scope-expanding or decision-bound suggestions emit `RESULT=clean` with `SUGGESTION_COUNT` greater than zero, advisory summaries, and a field that states no blocking local findings were present.
 
 Reason values must distinguish at least: `missing_command`, `missing_model_access`, `missing_credentials`, `head_mismatch`, `review_contract_missing`, `timeout`, `malformed_output`, `graph_context_skipped`, and `disabled_by_config`.
 
@@ -247,7 +248,7 @@ The spike may propose additional policy modes, but the MVP must define the defau
 
 The rollout metric compares local reviewer findings with ready-phase Codex GitHub findings only when both were produced for the same pull request head commit.
 
-The local reviewer must retain comparison evidence for each finding:
+The local reviewer must retain comparison evidence for each local and Codex GitHub finding:
 
 - Reviewed head commit.
 - Severity after normalization.
@@ -258,6 +259,13 @@ The local reviewer must retain comparison evidence for each finding:
 - Canonical failure-mode key, using lowercase kebab-case for the failure class.
 - One-sentence finding summary.
 
+Canonical keys for Codex GitHub findings are derived by the same classifier used for local findings:
+
+1. Normalize reviewer prose by stripping Markdown chrome, lowercasing text, collapsing whitespace, and keeping file path and line metadata separate.
+2. Match explicit taxonomy phrases first, such as review-contract, current-head-binding, result-wire-contract, deterministic-check-failure, graph-adoption-criteria, net-new-metric, and follow-up-work.
+3. Derive the failure-mode key from the primary violated obligation, such as ambiguous-policy, missing-threshold, unsupported-result-token, missing-default-outcome, or non-reproducible-matching.
+4. If no deterministic taxonomy match exists, set the missing key to `unclassified` and record the normalized title/body excerpt used for the attempt.
+
 A Codex GitHub finding is **not net-new** when it matches a local finding on the same head by either:
 
 - Exact canonical requirement key and failure-mode key.
@@ -265,6 +273,8 @@ A Codex GitHub finding is **not net-new** when it matches a local finding on the
 - Same stable category plus the same canonical failure-mode key.
 
 A Codex GitHub finding is **net-new** when no same-head local finding matches by those rules.
+
+If either side has an `unclassified` key, the finding may match only by exact affected path plus normalized title. Otherwise it is ambiguous.
 
 Duplicate local findings collapse by reviewed head, affected path, line or range, canonical requirement key, and canonical failure-mode key before comparison.
 
@@ -344,7 +354,7 @@ If the spike/MVP design is accepted, follow-up implementation should be split in
 | Blocking local findings | Needs fixes | Return the pull request for fixes and rerun review after a push. | Review-loop output, fixer handoff, PR summary | The local reviewer finds an uncovered workflow-contract edge case. |
 | Important local findings | Needs fixes | Return the pull request for fixes by default, or escalate when the finding requires a human decision. | Review-loop output, fixer handoff, PR summary | The reviewer finds an incomplete workflow update that should be fixed before readiness. |
 | Clear in-scope suggestion | Needs fixes | Return the pull request for fixes by default. | Review-loop output, fixer handoff, PR summary | The reviewer suggests clearer documentation wording that is mechanical to apply. |
-| Scope-expanding or decision-bound suggestion | Advisory | Continue with visible advisories and record why the suggestion did not block readiness. | Review-loop output, PR summary | The reviewer suggests a broader policy change that needs human approval. |
+| Scope-expanding or decision-bound suggestion | Clean with advisory fields | Continue with visible advisories and record why the suggestion did not block readiness. | Review-loop output, PR summary | The reviewer suggests a broader policy change that needs human approval. |
 | Skipped by configuration | Skipped | Continue only as an intentional skipped reviewer, not as clean local review evidence. | Review-loop output, PR summary | The local reviewer is disabled in a downstream repository. |
 | Missing local dependency or access | Escalate | Stop for operator action unless a future explicit warn-and-continue policy converts the result to skipped with a no-fresh-review warning. | Review-loop output, operator summary | The local LLM command is not installed or authenticated. |
 | Missing optional graph dependency | Continue with no-graph fallback | Record graph context as skipped with a reason, then continue local review using the no-graph context strategy. | Review-loop output, operator summary | `code-review-graph` is not installed while graph context is optional. |
