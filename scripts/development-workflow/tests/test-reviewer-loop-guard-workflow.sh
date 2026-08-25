@@ -106,6 +106,7 @@ run_test "regression_dispatch_gates_base_branch" "yes" "$(contains "develop|deve
 run_test "dispatch_disabled_skips_label" "yes" "$(contains "skipping \${LABEL_NAME}")"
 run_test "dispatch_failure_skips_label" "yes" "$(contains "Skipping \${LABEL_NAME} and continuing to reviewer-loop guard status.")"
 run_test "dispatch_revalidates_head_before_label" "yes" "$(contains "refresh_pr_metadata()")"
+run_test "dispatch_revalidates_immediately_before_label" "yes" "$(contains "changed immediately before applying \${LABEL_NAME}")"
 run_test "dispatch_revalidates_branch_scope_after_refresh" "yes" "$(contains "Refreshed PR #\${PR_NUMBER} branch '\${BRANCH}' is not in scope.")"
 run_test "dispatch_redispatches_on_stale_head" "yes" "$(contains "Redispatching regression for the current head.")"
 run_test "dispatch_skips_label_after_repeated_head_change" "yes" "$(contains "changed again after regression dispatch")"

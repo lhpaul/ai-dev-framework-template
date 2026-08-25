@@ -162,6 +162,14 @@ jobs:
             fi
           }
 
+          refreshed_metadata_matches_current_head() {
+            refresh_pr_metadata &&
+              [ "$latest_head_sha" = "$HEAD_SHA" ] &&
+              [ "$latest_branch" = "$BRANCH" ] &&
+              [ "$latest_base_branch" = "$BASE_BRANCH" ] &&
+              [ "$latest_head_repo" = "$HEAD_REPO" ]
+          }
+
           fetch_reviewer_loop_summary_count() {
             local comments_output
 
@@ -339,6 +347,8 @@ jobs:
                 elif ! ensure_regression_label_exists; then
                   echo "WARN: Failed to ensure ${LABEL_NAME} label exists. Continuing to reviewer-loop guard status." >&2
                   LABEL_POLICY_FAILED=true
+                elif ! refreshed_metadata_matches_current_head; then
+                  echo "WARN: PR #${PR_NUMBER} changed immediately before applying ${LABEL_NAME}. Skipping label to avoid a stale regression-readiness signal." >&2
                 elif ! gh pr edit "$PR_NUMBER" \
                   --repo "$REPO" \
                   --add-label "$LABEL_NAME"; then
