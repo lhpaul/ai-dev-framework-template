@@ -141,22 +141,79 @@ branch_filter_block() {
 # `develop` exclusion (which leaves develop-<slug> covered), and `^develop-`
 # then missed `develop*` and `dev*`, both of which genuinely do exclude it.
 # GitHub's branch filters are globs, so ask the glob.
-ignores_integration_branch() {
-  local sample="develop-example" pat
+# GitHub evaluates a branch-filter list in order, and a later `!pattern`
+# overrides an earlier match. So `branches: [develop-**, '!develop-old']`
+# advertises integration-branch coverage while leaving develop-old with none.
+# Both helpers below therefore replay the list in order rather than asking
+# whether any single entry matches.
+#
+# Samples: one ordinary integration branch, plus one that a negation is likely
+# to name. A filter must cover BOTH to count as covering integration branches.
+BF_SAMPLES="develop-example
+develop-old"
+
+# Is <sample> included by a positive `branches:` list?
+filter_includes() {
+  local sample="$1" list="$2" pat neg included has_positive=0
   while IFS= read -r pat; do
     [ -n "$pat" ] || continue
-    # Shell pattern matching treats `**` as `*`, which is the same answer here:
-    # integration branch names carry no `/`, the only character the two forms
-    # differ on in GitHub's syntax.
-    # shellcheck disable=SC2254  # unquoted on purpose: $pat IS a glob, and
-    # interpreting it as one is the whole point of this check. Quoting it would
-    # make every pattern an exact-match test and the guard would stop working.
-    case "$sample" in
-      $pat) return 0 ;;
+    case "$pat" in '!'*) : ;; *) has_positive=1 ;; esac
+  done <<< "$list"
+  # With no positive pattern the list only subtracts, so everything starts in.
+  if [ "$has_positive" -eq 1 ]; then included=0; else included=1; fi
+  while IFS= read -r pat; do
+    [ -n "$pat" ] || continue
+    case "$pat" in
+      '!'*)
+        neg="${pat#!}"
+        # shellcheck disable=SC2254  # $neg is a glob by design
+        case "$sample" in $neg) included=0 ;; esac
+        ;;
+      *)
+        # shellcheck disable=SC2254  # $pat is a glob by design
+        case "$sample" in $pat) included=1 ;; esac
+        ;;
     esac
-  done <<< "$1"
+  done <<< "$list"
+  [ "$included" -eq 1 ]
+}
+
+# Does a positive `branches:` list cover every integration-branch sample?
+covers_integration_branches() {
+  local sample
+  while IFS= read -r sample; do
+    [ -n "$sample" ] || continue
+    filter_includes "$sample" "$1" || return 1
+  done <<< "$BF_SAMPLES"
+  return 0
+}
+
+# Does a `branches-ignore:` list exclude any integration-branch sample? Same
+# ordered replay; here a match means excluded, and `!` un-excludes.
+ignores_integration_branch() {
+  local sample pat neg excluded
+  while IFS= read -r sample; do
+    [ -n "$sample" ] || continue
+    excluded=0
+    while IFS= read -r pat; do
+      [ -n "$pat" ] || continue
+      case "$pat" in
+        '!'*)
+          neg="${pat#!}"
+          # shellcheck disable=SC2254  # glob by design
+          case "$sample" in $neg) excluded=0 ;; esac
+          ;;
+        *)
+          # shellcheck disable=SC2254  # glob by design
+          case "$sample" in $pat) excluded=1 ;; esac
+          ;;
+      esac
+    done <<< "$1"
+    [ "$excluded" -eq 1 ] && return 0
+  done <<< "$BF_SAMPLES"
   return 1
 }
+
 
 if ! python3 -c 'import yaml' 2>/dev/null; then
   echo "FAIL: pyyaml_available - PyYAML is required to parse workflow triggers"
@@ -213,7 +270,10 @@ for wf in "$WF_DIR"/*.yml "$WF_DIR"/*.yaml; do
     update-tracker-on-merge.yml) continue ;;
   esac
   checked=$((checked + 1))
-  if ! printf '%s\n' "$block" | grep -qx "develop-\*\*"; then
+  # Replay the list the way GitHub does rather than looking for a literal
+  # `develop-**` entry: an ordered filter can advertise the glob and then
+  # withdraw part of it with a later negation.
+  if ! covers_integration_branches "$block"; then
     missing="${missing:+$missing }$(basename "$wf"):$trigger"
   fi
 done
@@ -357,6 +417,19 @@ run_test "guard_predicate_ignores_unrelated_exclusion" "no" \
 # develop-<slug> covered, while `develop*` and `dev*` genuinely exclude it even
 # though neither starts with the literal `develop-`.
 _bf_excl() { if ignores_integration_branch "$1"; then printf 'excludes\n'; else printf 'no\n'; fi; }
+# GitHub replays a branch-filter list in order and a later `!pattern` overrides
+# an earlier match. A literal search for `develop-**` therefore passes a filter
+# that advertises the glob and then withdraws part of it.
+_bf_cov() { if covers_integration_branches "$1"; then printf 'covers\n'; else printf 'gap\n'; fi; }
+run_test "guard_ordered_plain_glob_covers" "covers" "$(_bf_cov "$(printf 'develop\ndevelop-**\nmain')")"
+run_test "guard_ordered_negation_withdraws_coverage" "gap" "$(_bf_cov "$(printf 'develop\ndevelop-**\n!develop-old')")"
+run_test "guard_ordered_no_glob_is_a_gap" "gap" "$(_bf_cov "$(printf 'develop\nmain')")"
+run_test "guard_ordered_develop_star_covers" "covers" "$(_bf_cov 'develop*')"
+# Negation in an ignore list un-excludes, but only for what it names: the other
+# integration-branch sample stays excluded, so the workflow is still short.
+run_test "guard_ignore_negation_still_excludes_others" "excludes" \
+  "$(if ignores_integration_branch "$(printf 'develop-**\n!develop-old')"; then printf 'excludes\n'; else printf 'no\n'; fi)"
+
 run_test "guard_glob_develop_star_excludes" "excludes" "$(_bf_excl 'develop*')"
 run_test "guard_glob_dev_star_excludes" "excludes" "$(_bf_excl 'dev*')"
 run_test "guard_glob_double_star_excludes" "excludes" "$(_bf_excl '**')"
