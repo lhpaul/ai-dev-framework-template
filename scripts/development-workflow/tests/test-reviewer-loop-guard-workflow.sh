@@ -104,6 +104,8 @@ run_test "regression_dispatch_uses_base_ref" "yes" "$(contains '-f base_ref="$BA
 run_test "regression_dispatch_gates_base_branch" "yes" "$(contains "develop|develop-*|main)")"
 run_test "dispatch_disabled_skips_label" "yes" "$(contains "skipping \${LABEL_NAME}")"
 run_test "dispatch_failure_skips_label" "yes" "$(contains "Skipping \${LABEL_NAME} and continuing to reviewer-loop guard status.")"
+run_test "dispatch_revalidates_head_before_label" "yes" "$(contains "refresh_pr_metadata()")"
+run_test "dispatch_skips_label_on_stale_head" "yes" "$(contains "changed after regression dispatch")"
 run_test "synchronize_removes_stale_label" "yes" "$(contains 'EVENT_ACTION" = "synchronize"')"
 run_test "label_remove_preserved" "yes" "$(contains '--remove-label "$LABEL_NAME"')"
 run_test "label_removal_skips_on_comment_failure" "yes" "$(contains "Skipping label removal to avoid dropping a loop-applied label on API failure.")"

@@ -133,6 +133,23 @@ jobs:
               -f base_ref="$BASE_BRANCH"
           }
 
+          refresh_pr_metadata() {
+            local latest_pr_json
+
+            if ! latest_pr_json="$(gh api "repos/$REPO/pulls/$PR_NUMBER")"; then
+              echo "WARN: failed to refresh PR #${PR_NUMBER} metadata before applying ${LABEL_NAME}." >&2
+              return 1
+            fi
+
+            if ! latest_head_sha="$(printf '%s\n' "$latest_pr_json" | jq -er '.head.sha')" ||
+               ! latest_branch="$(printf '%s\n' "$latest_pr_json" | jq -er '.head.ref')" ||
+               ! latest_base_branch="$(printf '%s\n' "$latest_pr_json" | jq -er '.base.ref')" ||
+               ! latest_head_repo="$(printf '%s\n' "$latest_pr_json" | jq -er '.head.repo.full_name')"; then
+              echo "WARN: failed to parse refreshed PR #${PR_NUMBER} metadata before applying ${LABEL_NAME}." >&2
+              return 1
+            fi
+          }
+
           fetch_reviewer_loop_summary_count() {
             local comments_output
 
@@ -259,9 +276,18 @@ jobs:
                   should_apply_regression_label=false
                 elif dispatch_regression_workflow; then
                   echo "Dispatched '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER} at ${HEAD_SHA}."
+                  if ! refresh_pr_metadata; then
+                    echo "WARN: Could not verify PR head after dispatch. Skipping ${LABEL_NAME} to avoid a stale regression-readiness signal." >&2
+                    should_apply_regression_label=false
+                  elif [ "$latest_head_sha" != "$HEAD_SHA" ] ||
+                       [ "$latest_branch" != "$BRANCH" ] ||
+                       [ "$latest_base_branch" != "$BASE_BRANCH" ] ||
+                       [ "$latest_head_repo" != "$HEAD_REPO" ]; then
+                    echo "PR #${PR_NUMBER} changed after regression dispatch (${HEAD_SHA} -> ${latest_head_sha}). Skipping ${LABEL_NAME}; the synchronize policy run will evaluate the new head."
+                    should_apply_regression_label=false
+                  fi
                 else
                   echo "WARN: Failed to dispatch '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER}. Skipping ${LABEL_NAME} and continuing to reviewer-loop guard status." >&2
-                  LABEL_POLICY_FAILED=true
                   should_apply_regression_label=false
                 fi
 

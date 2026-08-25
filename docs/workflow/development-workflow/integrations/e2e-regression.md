@@ -30,10 +30,11 @@ The `ready-for-regression` label is applied by the orchestrator (Step 7b in
 clean, and before the CI loop (Step 8). The `pr-policy.yml` workflow also
 auto-applies the label to same-repository implementation PRs on open, reopen, or
 ready-for-review, dispatches this regression workflow on the PR head ref, applies
-the label only after dispatch succeeds, and removes stale labels on new pushes
-only when the reviewer loop has not yet posted its canonical summary. The
-explicit dispatch matters because labels applied with the default GitHub Actions
-token do not reliably create downstream workflow runs from `labeled` events. The
+the label only after dispatch succeeds and the PR head still matches, and removes
+stale labels on new pushes only when the reviewer loop has not yet posted its
+canonical summary. The explicit dispatch matters because labels applied with the
+default GitHub Actions token do not reliably create downstream workflow runs from
+`labeled` events. The
 prepare-release flow applies the same label on production release PRs per
 `05-prepare-release-protocol.md` Step 7.4. This means:
 
@@ -131,7 +132,11 @@ The `ready-for-regression` label is applied to implementation PRs (`feature/*`, 
   implementation PRs only when `pr-policy.yml` sees a new push before the
   reviewer-loop summary exists.
 - If `pr-policy.yml` cannot dispatch the regression workflow, it marks the
-  policy run failed and skips automatic `ready-for-regression` labeling.
+  condition in the policy logs and skips automatic `ready-for-regression`
+  labeling. The reviewer-loop guard status is still evaluated independently.
+- If the PR head changes after dispatch but before labeling, `pr-policy.yml`
+  skips automatic labeling so a newer head is not marked ready using an older
+  dispatch.
 - `PR_POLICY_REGRESSION_DISPATCH_ENABLED=false` disables the explicit dispatch
   path for repositories that intentionally keep regression manual.
 - This workflow does not store test credentials or environment URLs in the template.
