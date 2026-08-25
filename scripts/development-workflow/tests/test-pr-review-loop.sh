@@ -13882,6 +13882,7 @@ chmod +x "$_cr_mock_dir_1531/gh"
 actual_output="$(
   PATH="$_cr_mock_dir_1531:$PATH" CR_CALL_LOG="$_cr_call_log_1531" \
     CODERABBIT_NO_TRIGGER_TIMEOUT=1 \
+    CODERABBIT_RATE_LIMIT_WAIT=1 CODERABBIT_RATE_LIMIT_MIN_WAIT=1 \
     run_coderabbit_review "42" "fix/42-test" "1" "3" 2>/dev/null || true
 )"
 
@@ -14015,6 +14016,7 @@ chmod +x "$_cr_mock_dir_1531c/gh"
 actual_output="$(
   PATH="$_cr_mock_dir_1531c:$PATH" CR_CALL_LOG="$_cr_call_log_1531c" \
     CODERABBIT_NO_TRIGGER_TIMEOUT=1 \
+    CODERABBIT_RATE_LIMIT_WAIT=1 CODERABBIT_RATE_LIMIT_MIN_WAIT=1 \
     run_coderabbit_review "42" "fix/42-test" "1" "3" 2>/dev/null || true
 )"
 
@@ -15039,8 +15041,14 @@ esac
 CR_GH_1579A
 chmod +x "$_1579_e2e_mock_dir/gh"
 
+# The wait is bounded even though this path should never take it: the fixture's
+# comment is two hours old and therefore spent, so the rate-limit branch is
+# skipped. If the staleness logic ever regresses, an unbounded invocation would
+# sleep the default wait and the suite would *stall* rather than fail — a
+# regression that hangs is harder to diagnose than one that goes red.
 PATH="$_1579_e2e_mock_dir:$PATH" \
   CODERABBIT_NO_TRIGGER_TIMEOUT=1 CODERABBIT_RATE_LIMIT_MAX_RETRIES=1 \
+  CODERABBIT_RATE_LIMIT_WAIT=1 CODERABBIT_RATE_LIMIT_MIN_WAIT=1 \
   run_coderabbit_review "42" "fix/42-test" "1" "3" >/dev/null 2>&1 || true
 
 run_test "1579_stale_reply_does_not_block_silent_retrigger" "yes" \
