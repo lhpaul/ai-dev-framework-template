@@ -14972,8 +14972,19 @@ run_test "1579_remaining_unparseable_created_at" "1650" \
   "$(coderabbit_rate_limit_remaining_seconds "$_1579_window" "not-a-date" 900)"
 run_test "1579_remaining_future_created_at" "1650" \
   "$(coderabbit_rate_limit_remaining_seconds "$_1579_window" "2099-01-01T00:00:00Z" 900)"
-run_test "1579_remaining_no_stated_window_uses_fallback" "900" \
-  "$(coderabbit_rate_limit_remaining_seconds "Review rate limited." "$(_1579_ago_s 0)" 900)"
+# Clock-derived like the others above: the fallback is 900 minus the comment's
+# age, and a fresh comment's age is 0 or 1 depending on where the two `date`
+# reads land. Compared within a tolerance rather than pinned exactly.
+_1579_fallback_near() {
+  local got delta
+  got="$(coderabbit_rate_limit_remaining_seconds "Review rate limited." "$(_1579_ago_s 0)" 900)"
+  case "$got" in
+    '' | *[!0-9]*) printf 'non-numeric:%s\n' "$got"; return 0 ;;
+  esac
+  delta=$(( got > 900 ? got - 900 : 900 - got ))
+  if [ "$delta" -le 3 ]; then printf 'within\n'; else printf 'got %s want ~900\n' "$got"; fi
+}
+run_test "1579_remaining_no_stated_window_uses_fallback" "within" "$(_1579_fallback_near)"
 
 # --- the selector must match every observed banner shape -------------------
 # Three shapes have been seen and no single marker covers them all. Matching
@@ -14994,7 +15005,7 @@ run_test "1579_selector_matches_visible_text_without_marker" "yes" \
 **Next included review available in 27 minutes.**')"
 run_test "1579_selector_ignores_ordinary_comment" "no" \
   "$(_1579_sel 'Thanks, looks good to me.')"
-unset -f _1579_remaining_near _1579_tolerance_rejects _1579_sel
+unset -f _1579_remaining_near _1579_tolerance_rejects _1579_fallback_near _1579_sel
 
 # --- mutation check --------------------------------------------------------
 # The staleness verdicts above must actually depend on the parsed window. Shadow
