@@ -36,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **Codex GitHub reviewer avoids duplicate trigger cycles** (#1601):
+  `codex-github-reviewer.sh` now checks for existing current-head Codex review
+  evidence before posting `@codex review`, reusing submitted reviews,
+  SHA-pinned root comments, or current-head inline review comments when GitHub
+  already started Codex automatically. Stale evidence for older heads is
+  ignored, and `CODEX_GITHUB_PRE_TRIGGER_WAIT` / `--pre-trigger-wait` controls
+  the short pre-trigger wait window.
 - **Regression label dispatch now creates a regression run** (#1600):
   `pr-policy.yml`
   no longer relies on a `labeled` event produced by the default GitHub Actions

@@ -19,6 +19,9 @@
 #   --poll-interval  <seconds>   Seconds between polling attempts. Default: 60
 #   --max-wait       <seconds>   Maximum total wait time for bot response across
 #                                all attempts. Default: 1800
+#   --pre-trigger-wait <seconds> Seconds to wait for existing current-head Codex
+#                                evidence before posting a trigger. Default: 60
+#                                Set to 0 to skip the pre-trigger check.
 #   --max-retriggers <count>     How many times to re-post the trigger after a timeout
 #                                before giving up. Default: 1 (so up to 2 attempts total).
 #                                Set to 0 to disable retriggering.
@@ -80,7 +83,7 @@ set -euo pipefail
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 if [ $# -lt 3 ]; then
-  echo "Usage: $0 <pr_number> <owner> <repo> [--trigger-phrase <phrase>] [--bot-login <login>] [--poll-interval <seconds>] [--max-wait <seconds>] [--max-retriggers <count>]" >&2
+  echo "Usage: $0 <pr_number> <owner> <repo> [--trigger-phrase <phrase>] [--bot-login <login>] [--poll-interval <seconds>] [--max-wait <seconds>] [--pre-trigger-wait <seconds>] [--max-retriggers <count>]" >&2
   exit 2
 fi
 
@@ -118,6 +121,7 @@ TRIGGER_PHRASE="${CODEX_GITHUB_TRIGGER_PHRASE:-@codex review}"
 BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
 POLL_INTERVAL=60
 MAX_WAIT=1800
+PRE_TRIGGER_WAIT="${CODEX_GITHUB_PRE_TRIGGER_WAIT:-60}"
 MAX_RETRIGGERS=1
 
 while [ $# -gt 0 ]; do
@@ -134,6 +138,9 @@ while [ $# -gt 0 ]; do
     --max-wait)
       if [ $# -lt 2 ]; then echo "ERROR: --max-wait requires a value" >&2; exit 2; fi
       MAX_WAIT="$2"; shift 2;;
+    --pre-trigger-wait)
+      if [ $# -lt 2 ]; then echo "ERROR: --pre-trigger-wait requires a value" >&2; exit 2; fi
+      PRE_TRIGGER_WAIT="$2"; shift 2;;
     --max-retriggers)
       if [ $# -lt 2 ]; then echo "ERROR: --max-retriggers requires a value" >&2; exit 2; fi
       MAX_RETRIGGERS="$2"; shift 2;;
@@ -156,6 +163,13 @@ esac
 case "$MAX_WAIT" in
   ''|0|*[!0-9]*)
     echo "ERROR: --max-wait value '$MAX_WAIT' is not a positive integer (must be >= 1)" >&2
+    exit 2
+    ;;
+esac
+# PRE_TRIGGER_WAIT may be 0 (skip the pre-trigger check) but must be non-negative.
+case "$PRE_TRIGGER_WAIT" in
+  ''|*[!0-9]*)
+    echo "ERROR: --pre-trigger-wait value '$PRE_TRIGGER_WAIT' is not a non-negative integer (must be >= 0)" >&2
     exit 2
     ;;
 esac
@@ -198,6 +212,7 @@ if [ "$POLL_INTERVAL" -gt "$MAX_WAIT" ]; then
   POLL_INTERVAL="$MAX_WAIT"
 fi
 echo "INFO: Poll interval: ${POLL_INTERVAL}s, Max wait (total): ${MAX_WAIT}s"
+echo "INFO: Pre-trigger wait: ${PRE_TRIGGER_WAIT}s"
 
 # Derive plain bot login (without [bot] suffix) for matching PR-comment
 # acknowledgements from the non-[bot] account (e.g. "chatgpt-codex-connector").
@@ -240,6 +255,22 @@ codex_inline_review_comment_count_since() {
   else
     rm -f "$review_comment_tmpfile"
     echo "ERROR: failed to fetch or parse Codex inline review comments" >&2
+    return 3
+  fi
+  rm -f "$review_comment_tmpfile"
+}
+
+codex_inline_review_comment_count_current_head() {
+  local review_comment_tmpfile
+  review_comment_tmpfile=$(mktemp)
+  if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate \
+    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg sha "$CURRENT_SHA" \
+      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and ((.commit_id // "") | startswith($sha)))] | length' \
+    > "$review_comment_tmpfile"; then
+    cat "$review_comment_tmpfile"
+  else
+    rm -f "$review_comment_tmpfile"
+    echo "ERROR: failed to fetch or parse existing Codex inline review comments" >&2
     return 3
   fi
   rm -f "$review_comment_tmpfile"
@@ -1304,6 +1335,134 @@ codex_require_current_head() {
     codex_return_head_changed
   fi
 }
+
+codex_fetch_existing_current_head_evidence() {
+  local existing_comments_stderr existing_comments_tmpfile
+  existing_comments_stderr=$(mktemp)
+  existing_comments_tmpfile=$(mktemp)
+  COMMENT_TERMINAL_BODY=""
+  COMMENT_TERMINAL_TIME=""
+  COMMENT_LATEST_BODY=""
+  COMMENT_LATEST_TIME=""
+  COMMENT_LATEST_IS_TERMINAL=0
+  if gh api "repos/$OWNER/$REPO/issues/$PR_NUMBER/comments" --paginate \
+    2>"$existing_comments_stderr" \
+    | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
+        '(add // []) | [.[] | select(.user.login == $bot or .user.login == $bot_plain)] | sort_by(.created_at, .id) | .[] | {created_at:(.created_at // ""), body:(.body // "")}' \
+    > "$existing_comments_tmpfile"; then
+    codex_scan_comment_evidence "$existing_comments_tmpfile"
+  else
+    local existing_comments_err
+    existing_comments_err=$(cat "$existing_comments_stderr")
+    rm -f "$existing_comments_stderr" "$existing_comments_tmpfile"
+    echo "WARNING: failed to fetch existing Codex root comments before trigger; continuing to trigger path: $existing_comments_err" >&2
+    return 1
+  fi
+  rm -f "$existing_comments_stderr" "$existing_comments_tmpfile"
+
+  local existing_reviews_stderr existing_reviews_tmpfile
+  existing_reviews_stderr=$(mktemp)
+  existing_reviews_tmpfile=$(mktemp)
+  if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
+    2>"$existing_reviews_stderr" \
+    | jq -sc --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg sha "$CURRENT_SHA" \
+        '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and .submitted_at != null and ((.commit_id // "") | startswith($sha)) and ((.state // "") != "DISMISSED"))] | if length == 0 then empty else (map(.submitted_at) | max) as $latest | .[] | select(.submitted_at == $latest) | {created_at:(.submitted_at // ""), body:(.body // ""), state:(.state // "")} end' \
+    > "$existing_reviews_tmpfile"; then
+    codex_select_review_evidence "$existing_reviews_tmpfile"
+    EXISTING_REVIEW_BODY="$SELECTED_REVIEW_BODY"
+    EXISTING_REVIEW_TIME="$SELECTED_REVIEW_TIME"
+    EXISTING_REVIEW_STATE="$SELECTED_REVIEW_STATE"
+  else
+    local existing_reviews_err
+    existing_reviews_err=$(cat "$existing_reviews_stderr")
+    rm -f "$existing_reviews_stderr" "$existing_reviews_tmpfile"
+    echo "WARNING: failed to fetch existing Codex PR reviews before trigger; continuing to trigger path: $existing_reviews_err" >&2
+    return 1
+  fi
+  rm -f "$existing_reviews_stderr" "$existing_reviews_tmpfile"
+
+  codex_combine_terminal_evidence "existing current-head Codex evidence" \
+    "$COMMENT_TERMINAL_BODY" "$COMMENT_TERMINAL_TIME" \
+    "" "" \
+    "$EXISTING_REVIEW_BODY" "$EXISTING_REVIEW_TIME" 0 "$EXISTING_REVIEW_STATE"
+  EXISTING_BOT_RESPONSE="$COMBINED_BODY"
+  EXISTING_BOT_RESPONSE_SOURCE="$COMBINED_SOURCE"
+  EXISTING_BOT_RESPONSE_TIME="$COMBINED_TIME"
+  EXISTING_BOT_RESPONSE_REVIEW_STATE="$COMBINED_REVIEW_STATE"
+  return 0
+}
+
+codex_classify_existing_current_head_evidence() {
+  local inline_count response_display
+  if ! inline_count=$(codex_inline_review_comment_count_current_head); then
+    echo "WARNING: failed to fetch existing Codex inline comments before trigger; continuing to trigger path" >&2
+    return 1
+  fi
+  if [ "$inline_count" -gt 0 ]; then
+    codex_require_current_head
+    echo "INFO: existing current-head Codex evidence detected; no trigger comment will be posted"
+    echo "VERDICT: NEEDS_REVISION"
+    echo "INFO: detected $inline_count existing Codex inline review comment(s) on current head"
+    exit 1
+  fi
+
+  codex_fetch_existing_current_head_evidence || return 1
+  [ -n "$EXISTING_BOT_RESPONSE_TIME" ] || return 1
+
+  echo "INFO: existing current-head Codex evidence detected; no trigger comment will be posted"
+  codex_require_current_head
+  response_display=$(printf '%s' "$EXISTING_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq reads raw text for display truncation only.
+
+  if [ "$EXISTING_BOT_RESPONSE_SOURCE" = "review" ] && { [ "$EXISTING_BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$EXISTING_BOT_RESPONSE"; }; then
+    echo "VERDICT: NEEDS_REVISION"
+    echo "---BEGIN BOT RESPONSE---"
+    echo "$response_display"
+    echo "---END BOT RESPONSE---"
+    exit 1
+  elif codex_response_is_usage_limit "$(codex_strip_quoted_spans "$EXISTING_BOT_RESPONSE")"; then
+    codex_return_usage_limit "$response_display"
+  elif codex_response_is_account_not_connected "$(codex_strip_quoted_spans "$EXISTING_BOT_RESPONSE")"; then
+    codex_return_account_not_connected "$response_display"
+  elif [ "$EXISTING_BOT_RESPONSE_SOURCE" = "review" ] && codex_response_is_approved "$EXISTING_BOT_RESPONSE"; then
+    echo "VERDICT: APPROVED"
+    echo "---BEGIN BOT RESPONSE---"
+    echo "$response_display"
+    echo "---END BOT RESPONSE---"
+    exit 0
+  else
+    echo "VERDICT: NEEDS_REVISION (unrecognized response format — safe-fail)"
+    echo "---BEGIN BOT RESPONSE---"
+    echo "$response_display"
+    echo "---END BOT RESPONSE---"
+    exit 1
+  fi
+}
+
+codex_wait_for_existing_current_head_evidence() {
+  local elapsed=0 sleep_for remaining
+  if [ "$PRE_TRIGGER_WAIT" -eq 0 ]; then
+    echo "INFO: pre-trigger existing-evidence check disabled"
+    return 0
+  fi
+  echo "INFO: checking for existing current-head Codex review evidence before posting trigger (max ${PRE_TRIGGER_WAIT}s)"
+  while :; do
+    codex_classify_existing_current_head_evidence || true
+    if [ "$elapsed" -ge "$PRE_TRIGGER_WAIT" ]; then
+      echo "INFO: no existing current-head Codex evidence found before trigger window elapsed"
+      return 0
+    fi
+    remaining=$((PRE_TRIGGER_WAIT - elapsed))
+    sleep_for="$POLL_INTERVAL"
+    if [ "$sleep_for" -gt "$remaining" ]; then
+      sleep_for="$remaining"
+    fi
+    echo "INFO: no existing current-head Codex evidence yet; waiting ${sleep_for}s before posting trigger"
+    sleep "$sleep_for"
+    elapsed=$((elapsed + sleep_for))
+  done
+}
+
+codex_wait_for_existing_current_head_evidence
 
 # ── Idempotency guard (BR-10) ─────────────────────────────────────────────────
 # Check whether a trigger comment for the current commit SHA already exists.

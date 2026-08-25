@@ -124,10 +124,12 @@ review:
   #                                  (default: "chatgpt-codex-connector[bot]"; verify from GitHub App settings)
   #   CODEX_GITHUB_POLL_INTERVAL   — default polling interval for codex-github via pr-review-loop.sh (default: 60)
   #   CODEX_GITHUB_MAX_WAIT        — default maximum wait for codex-github via pr-review-loop.sh (default: 1800)
+  #   CODEX_GITHUB_PRE_TRIGGER_WAIT — wait for existing current-head Codex evidence before posting a trigger; 0 disables (default: 60)
   #
   # Additional options available as script flags to codex-github-reviewer.sh (passed via pr-review-loop.sh):
   #   --poll-interval <seconds>    — polling interval while waiting for bot response
   #   --max-wait      <seconds>    — maximum total wait time for bot response
+  #   --pre-trigger-wait <seconds> — wait for existing current-head evidence before posting a trigger; 0 disables
   #
   # Copilot platform options:
   #   Prerequisites: an active GitHub Copilot seat or the Copilot for Pull Requests feature
