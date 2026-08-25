@@ -52,6 +52,16 @@ assert_not_contains "$DEPLOY_WORKFLOW" "github\\.event_name == 'push'" \
 
 assert_contains "$REGRESSION_WORKFLOW" "ready-for-regression" \
   "regression placeholder must preserve ready-for-regression label semantics"
+assert_contains "$REGRESSION_WORKFLOW" '^[[:space:]]*workflow_dispatch:' \
+  "regression placeholder must support explicit dispatch from pr-policy"
+assert_contains "$REGRESSION_WORKFLOW" 'pr_number:' \
+  "regression placeholder dispatch must accept the PR number"
+assert_contains "$REGRESSION_WORKFLOW" 'head_sha:' \
+  "regression placeholder dispatch must accept the PR head SHA"
+assert_contains "$REGRESSION_WORKFLOW" "github\\.event_name == 'workflow_dispatch'" \
+  "regression placeholder must run when explicitly dispatched"
+assert_contains "$REGRESSION_WORKFLOW" 'inputs\.head_sha' \
+  "regression placeholder checkout must use the dispatched PR head SHA"
 assert_contains "$REGRESSION_WORKFLOW" "ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION" \
   "regression placeholder must document the explicit opt-in variable in workflow logic"
 assert_contains "$REGRESSION_WORKFLOW" "vars\\.ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION == 'true'" \

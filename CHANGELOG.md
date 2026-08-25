@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+- **Regression label dispatch now creates a regression run**: `pr-policy.yml`
+  no longer relies on a `labeled` event produced by the default GitHub Actions
+  token to wake `e2e-regression.yml`. After applying `ready-for-regression`, it
+  dispatches the regression workflow explicitly for the PR head SHA, and removes
+  a newly applied label if that dispatch fails. The placeholder regression
+  workflow now accepts `workflow_dispatch` inputs for the PR number and head SHA.
 - **CI "green" now requires evidence that CI ran** (#1514, #1580): a head with
   no checks, or missing a workflow that ran on the PR's previous head, read as
   green because nothing was failing or pending. GitHub builds no merge ref for

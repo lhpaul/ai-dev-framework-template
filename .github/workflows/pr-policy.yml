@@ -7,6 +7,7 @@
 # Event routing:
 #   pull_request_target opened/reopened/ready_for_review
 #     - same-repository implementation PRs: ensure and apply ready-for-regression
+#       and dispatch the e2e/regression workflow for the PR head
 #     - all same-repository PRs: evaluate reviewer-loop guard status
 #   pull_request_target synchronize
 #     - same-repository implementation PRs: remove stale ready-for-regression
@@ -48,6 +49,7 @@ jobs:
     if: github.event_name != 'issue_comment' || github.event.issue.pull_request
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       issues: write
       pull-requests: write
       statuses: write
@@ -64,6 +66,7 @@ jobs:
           EVENT_BRANCH: ${{ github.event.pull_request.head.ref }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           COMMENT_BODY: ${{ github.event.comment.body }}
+          REGRESSION_WORKFLOW: "e2e-regression.yml"
           # Override IN_SCOPE_PREFIXES in your repository to customise which branches
           # are subject to implementation PR policy. Default covers the four standard
           # implementation prefixes. Branches outside this list always pass the guard
@@ -116,6 +119,28 @@ jobs:
                 return 1
               fi
             fi
+          }
+
+          pr_has_regression_label() {
+            local labels_json
+
+            if ! labels_json=$(gh pr view "$PR_NUMBER" \
+              --repo "$REPO" \
+              --json labels); then
+              echo "WARN: Failed to read labels for PR #${PR_NUMBER}." >&2
+              return 2
+            fi
+
+            printf '%s\n' "$labels_json" \
+              | jq -e --arg name "$LABEL_NAME" '.labels[].name | select(. == $name)' > /dev/null
+          }
+
+          dispatch_regression_workflow() {
+            gh workflow run "$REGRESSION_WORKFLOW" \
+              --repo "$REPO" \
+              -f pr_number="$PR_NUMBER" \
+              -f head_sha="$HEAD_SHA" \
+              -f head_ref="$BRANCH"
           }
 
           fetch_reviewer_loop_summary_count() {
@@ -220,6 +245,11 @@ jobs:
           if [ "$EVENT_NAME" != "issue_comment" ]; then
             case "$EVENT_ACTION" in
               opened|reopened|ready_for_review)
+                label_present_before=false
+                if pr_has_regression_label; then
+                  label_present_before=true
+                fi
+
                 echo "Branch '${BRANCH}' is in scope; ensuring and applying ${LABEL_NAME}."
                 if ! ensure_regression_label_exists; then
                   echo "WARN: Failed to ensure ${LABEL_NAME} label exists. Continuing to reviewer-loop guard status." >&2
@@ -231,6 +261,22 @@ jobs:
                   LABEL_POLICY_FAILED=true
                 else
                   echo "Label '${LABEL_NAME}' applied to PR #${PR_NUMBER}."
+                  if dispatch_regression_workflow; then
+                    echo "Dispatched '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER} at ${HEAD_SHA}."
+                  else
+                    echo "WARN: Failed to dispatch '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER}. Continuing to reviewer-loop guard status." >&2
+                    LABEL_POLICY_FAILED=true
+                    if [ "$label_present_before" = "false" ]; then
+                      echo "Removing '${LABEL_NAME}' because regression dispatch failed after this workflow applied it."
+                      if ! gh pr edit "$PR_NUMBER" \
+                        --repo "$REPO" \
+                        --remove-label "$LABEL_NAME"; then
+                        echo "WARN: Failed to remove ${LABEL_NAME} from PR #${PR_NUMBER} after dispatch failure." >&2
+                      fi
+                    else
+                      echo "Leaving pre-existing '${LABEL_NAME}' in place after dispatch failure."
+                    fi
+                  fi
                 fi
                 ;;
             esac
