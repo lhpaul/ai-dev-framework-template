@@ -4150,6 +4150,52 @@ run_test "codex_pre_trigger_wait_normalizes_leading_zero" "INFO: Pre-trigger wai
 rm -rf "$_codex_existing_clean_mock_dir"
 unset _codex_existing_clean_mock_dir _codex_existing_clean_output _codex_existing_clean_exit
 
+_codex_existing_fetch_failure_mock_dir="$(mktemp -d)"
+cat > "$_codex_existing_fetch_failure_mock_dir/gh" <<'CODEX_EXISTING_FETCH_FAILURE_GH'
+#!/usr/bin/env bash
+log="$MOCK_POST_LOG"
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'abcfetchfail1234567890\n'; exit 0 ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}\n'
+    exit 0 ;;
+  *"--method POST"*)
+    printf 'POST\n' >> "$log"
+    printf '{"id":105,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf 'api unavailable\n' >&2
+    exit 1 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_EXISTING_FETCH_FAILURE_GH
+chmod +x "$_codex_existing_fetch_failure_mock_dir/gh"
+: > "$_codex_existing_fetch_failure_mock_dir/posts.log"
+_codex_existing_fetch_failure_output=""
+_codex_existing_fetch_failure_exit=0
+MOCK_POST_LOG="$_codex_existing_fetch_failure_mock_dir/posts.log" PATH="$_codex_existing_fetch_failure_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --pre-trigger-wait 1 --max-retriggers 0 \
+  >"$_codex_existing_fetch_failure_mock_dir/output.txt" 2>&1 || _codex_existing_fetch_failure_exit=$?
+_codex_existing_fetch_failure_output="$(cat "$_codex_existing_fetch_failure_mock_dir/output.txt")"
+run_test "codex_existing_fetch_failure_exit_unavailable" "2" "$_codex_existing_fetch_failure_exit"
+run_test "codex_existing_fetch_failure_verdict" \
+  "VERDICT: TIMED_OUT — could not fetch existing Codex evidence before trigger (treated as unavailable)" \
+  "$(printf '%s\n' "$_codex_existing_fetch_failure_output" | grep "^VERDICT:")"
+run_test "codex_existing_fetch_failure_skips_trigger" "0" \
+  "$(wc -l < "$_codex_existing_fetch_failure_mock_dir/posts.log" | tr -d ' ')"
+rm -rf "$_codex_existing_fetch_failure_mock_dir"
+unset _codex_existing_fetch_failure_mock_dir _codex_existing_fetch_failure_output _codex_existing_fetch_failure_exit
+
 _codex_stale_existing_mock_dir="$(mktemp -d)"
 cat > "$_codex_stale_existing_mock_dir/gh" <<'CODEX_STALE_EXISTING_GH'
 #!/usr/bin/env bash

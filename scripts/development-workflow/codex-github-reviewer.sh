@@ -1383,8 +1383,8 @@ codex_fetch_existing_current_head_evidence() {
     local existing_comments_err
     existing_comments_err=$(cat "$existing_comments_stderr")
     rm -f "$existing_comments_stderr" "$existing_comments_tmpfile"
-    echo "WARNING: failed to fetch existing Codex root comments before trigger; continuing to trigger path: $existing_comments_err" >&2
-    return 1
+    echo "WARNING: failed to fetch existing Codex root comments before trigger: $existing_comments_err" >&2
+    return 2
   fi
   rm -f "$existing_comments_stderr" "$existing_comments_tmpfile"
 
@@ -1407,8 +1407,8 @@ codex_fetch_existing_current_head_evidence() {
     local existing_reviews_err
     existing_reviews_err=$(cat "$existing_reviews_stderr")
     rm -f "$existing_reviews_stderr" "$existing_reviews_tmpfile"
-    echo "WARNING: failed to fetch existing Codex PR reviews before trigger; continuing to trigger path: $existing_reviews_err" >&2
-    return 1
+    echo "WARNING: failed to fetch existing Codex PR reviews before trigger: $existing_reviews_err" >&2
+    return 2
   fi
   rm -f "$existing_reviews_stderr" "$existing_reviews_tmpfile"
 
@@ -1424,10 +1424,11 @@ codex_fetch_existing_current_head_evidence() {
 }
 
 codex_classify_existing_current_head_evidence() {
-  local unresolved_thread_count response_display
+  local unresolved_thread_count response_display fetch_status
   if ! unresolved_thread_count=$(codex_unresolved_review_thread_count); then
-    echo "WARNING: failed to fetch existing Codex review threads before trigger; continuing to trigger path" >&2
-    return 1
+    echo "WARNING: failed to fetch existing Codex review threads before trigger" >&2
+    echo "VERDICT: TIMED_OUT — could not fetch existing Codex thread state before trigger (treated as unavailable)"
+    exit 2
   fi
   if [ "$unresolved_thread_count" -gt 0 ]; then
     codex_require_current_head
@@ -1437,7 +1438,17 @@ codex_classify_existing_current_head_evidence() {
     exit 1
   fi
 
-  codex_fetch_existing_current_head_evidence || return 1
+  set +e
+  codex_fetch_existing_current_head_evidence
+  fetch_status=$?
+  set -e
+  if [ "$fetch_status" -eq 2 ]; then
+    echo "VERDICT: TIMED_OUT — could not fetch existing Codex evidence before trigger (treated as unavailable)"
+    exit 2
+  fi
+  if [ "$fetch_status" -ne 0 ]; then
+    return 1
+  fi
   [ -n "$EXISTING_BOT_RESPONSE_TIME" ] || return 1
 
   echo "INFO: existing current-head Codex evidence detected; no trigger comment will be posted"
