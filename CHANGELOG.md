@@ -43,7 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already started Codex automatically. Stale evidence for older heads and
   resolved threads are ignored, and `CODEX_GITHUB_PRE_TRIGGER_WAIT` /
   `--pre-trigger-wait` controls the short pre-trigger wait window from either
-  `codex-github-reviewer.sh` or `pr-review-loop.sh`.
+  `codex-github-reviewer.sh` or `pr-review-loop.sh`. The repository default
+  ready-phase reviewer is now Bugbot, and CodeRabbit auto-review is disabled so
+  it remains an explicit opt-in reviewer.
 - **Regression label dispatch now creates a regression run** (#1600):
   `pr-policy.yml`
   no longer relies on a `labeled` event produced by the default GitHub Actions

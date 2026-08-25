@@ -3,12 +3,10 @@
 # This file controls CodeRabbit's behavior for this repository.
 # Docs: https://docs.coderabbit.ai/reference/configuration
 #
-# This repository has OPTED IN to CodeRabbit GitHub App review (issue #1531).
-# CodeRabbit runs as the ready-phase reviewer via review.on_ready.github in
-# .ai-dev-workflow.yaml (or .ai-dev-workflow.local.yaml). The two files must stay
-# consistent: listing "coderabbit" in a lifecycle bucket that auto_review below
-# does not cover makes CodeRabbit post a "Review skipped" banner instead of a
-# review, which pr-review-loop.sh escalates as REASON=review_skipped_banner.
+# This repository keeps CodeRabbit available for explicit, manual review only.
+# The official ready-phase reviewer is configured in .ai-dev-workflow.yaml.
+# Keep auto_review disabled unless "coderabbit" is also restored to a workflow
+# lifecycle bucket; otherwise CodeRabbit may spend quota on every pushed PR.
 #
 # This file is NOT in sync-manifest.yaml, so it is repository-local and does not
 # change the CodeRabbit defaults inherited by projects created from this template.
@@ -19,10 +17,9 @@ reviews:
       enabled: true
       timeout_ms: 600000
   auto_review:
-    enabled: true
-    # drafts stays false on purpose: CodeRabbit is configured as the *ready-phase*
-    # reviewer only (review.on_ready.github), and pr-agent covers the draft phase.
-    # Reviewing drafts would spend hourly quota on revisions that are still moving.
+    enabled: false
+    # drafts stays false because this repository does not use CodeRabbit as an
+    # automatic draft or ready-phase reviewer by default.
     drafts: false
     # Raised from 1. CodeRabbit pauses auto review after this many reviewed commits
     # arrive without human interaction; at 1, every reviewer-loop fix commit tripped
