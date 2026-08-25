@@ -13,8 +13,9 @@ spending another full poll cycle on a duplicate trigger. The scan waits up to
 the pre-trigger check. Existing evidence is accepted only when it is tied to the
 current head: a submitted review whose `commit_id` matches the current
 `headRefOid`, a SHA-pinned root comment whose `Reviewed commit` marker matches
-that head, or current-head inline review comments. Stale review evidence for an
-older head is ignored and the normal trigger path still runs.
+that head, or unresolved non-outdated Codex review threads. Stale review
+evidence for an older head and resolved threads are ignored and the normal
+trigger path still runs.
 
 The reviewer requires terminal evidence that can be tied to the current PR head:
 a submitted GitHub review whose `commit_id` matches the current `headRefOid`, or

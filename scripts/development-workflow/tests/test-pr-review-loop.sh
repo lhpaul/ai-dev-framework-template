@@ -932,6 +932,9 @@ else
 fi
 run_test "codex_github_defaults_ignore_telemetry_only_platform" "no" "$_codex_defaults_apply_telemetry"
 
+run_test "codex_github_pre_trigger_wait_forwarded" "yes" \
+  "$(if grep -q -- '--pre-trigger-wait "$pre_trigger_wait"' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then printf yes; else printf no; fi)"
+
 platforms=()
 phase_after_clean_platforms=()
 unset CODEX_GITHUB_MAX_WAIT CODEX_GITHUB_POLL_INTERVAL _codex_timeout_output _codex_poll_output _codex_defaults_apply_active _codex_defaults_apply_telemetry
@@ -4107,6 +4110,9 @@ case "$*" in
     exit 0 ;;
   *"pr view"*headRefOid*)
     printf 'abcef1234567890abcde\n'; exit 0 ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":true,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"chatgpt-codex-connector"}}]}}]}}}}}\n'
+    exit 0 ;;
   *"--method POST"*)
     printf 'POST\n' >> "$log"
     printf '{"id":102,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
@@ -4153,6 +4159,9 @@ case "$*" in
     exit 0 ;;
   *"pr view"*headRefOid*)
     printf 'abcnewhead1234567890\n'; exit 0 ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}\n'
+    exit 0 ;;
   *"--method POST"*)
     printf 'POST\n' >> "$log"
     printf '{"id":104,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;

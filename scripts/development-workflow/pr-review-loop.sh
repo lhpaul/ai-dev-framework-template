@@ -285,7 +285,7 @@ _skip_next=0
 for _arg in "$@"; do
   if [ "$_skip_next" -eq 1 ]; then _skip_next=0; continue; fi
   case "$_arg" in
-    --branch|--platform|--poll-interval|--max-wait|--repo|--product-repo|--repo-root) _skip_next=1 ;;
+    --branch|--platform|--poll-interval|--max-wait|--pre-trigger-wait|--repo|--product-repo|--repo-root) _skip_next=1 ;;
     [0-9]*) _PR_ARG="$_arg"; break ;;
   esac
 done
@@ -386,7 +386,7 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,coderabbit-cli,codex-github,claude-code-action,copilot,haystack,bugbot] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,coderabbit-cli,codex-github,claude-code-action,copilot,haystack,bugbot] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--pre-trigger-wait seconds] [--post-final-summary] [--compare]
        ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number>
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
@@ -1052,6 +1052,7 @@ run_codex_github_review() {
   local branch_name="$2"
   local poll_interval="$3"
   local max_wait="$4"
+  local pre_trigger_wait="${5:-${CODEX_GITHUB_PRE_TRIGGER_WAIT:-}}"
   local platform="codex-github"
   local bot_login="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
   # REST API endpoints (e.g. /pulls/{n}/reviews, /issues/{n}/comments) return
@@ -1127,12 +1128,18 @@ run_codex_github_review() {
   if [ "$effective_poll_interval" -gt "$max_wait" ]; then
     effective_poll_interval="$max_wait"
   fi
+  local reviewer_args=(
+    "$pr_number" "$owner" "$repo_name"
+    --bot-login "$bot_login"
+    --poll-interval "$effective_poll_interval"
+    --max-wait "$max_wait"
+    --max-retriggers "$max_retriggers"
+  )
+  if [ -n "$pre_trigger_wait" ]; then
+    reviewer_args+=(--pre-trigger-wait "$pre_trigger_wait")
+  fi
   set +e
-  script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" \
-    --bot-login "$bot_login" \
-    --poll-interval "$effective_poll_interval" \
-    --max-wait "$max_wait" \
-    --max-retriggers "$max_retriggers" 2>&1)"
+  script_output="$("$reviewer_script" "${reviewer_args[@]}" 2>&1)"
   script_exit=$?
   set -e
 
@@ -5877,7 +5884,7 @@ run_platform_review() {
       run_pr_agent_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     codex-github)
-      run_codex_github_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      run_codex_github_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait" "$codex_github_pre_trigger_wait"
       ;;
     claude-code-action)
       run_claude_code_action_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
@@ -7590,6 +7597,7 @@ poll_interval=120
 poll_interval_explicit=0
 max_wait=1200
 max_wait_explicit=0
+codex_github_pre_trigger_wait=""
 post_final_summary=0
 compare_mode=0
 pre_after_clean_only=0
@@ -7662,6 +7670,11 @@ while [ "$#" -gt 0 ]; do
       require_option_value "$@"
       max_wait="$2"
       max_wait_explicit=1
+      shift 2
+      ;;
+    --pre-trigger-wait)
+      require_option_value "$@"
+      codex_github_pre_trigger_wait="$2"
       shift 2
       ;;
     --post-final-summary)

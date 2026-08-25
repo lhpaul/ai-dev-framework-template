@@ -261,20 +261,47 @@ codex_inline_review_comment_count_since() {
   rm -f "$review_comment_tmpfile"
 }
 
-codex_inline_review_comment_count_current_head() {
-  local review_comment_tmpfile
-  review_comment_tmpfile=$(mktemp)
-  if gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" --paginate \
-    | jq -sr --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" --arg sha "$CURRENT_SHA" \
-      '(add // []) | [.[] | select((.user.login == $bot or .user.login == $bot_plain) and ((.commit_id // "") | startswith($sha)))] | length' \
-    > "$review_comment_tmpfile"; then
-    cat "$review_comment_tmpfile"
+codex_unresolved_review_thread_count() {
+  local thread_tmpfile thread_stderr
+  thread_tmpfile=$(mktemp)
+  thread_stderr=$(mktemp)
+  if gh api graphql \
+    -f owner="$OWNER" \
+    -f repo="$REPO" \
+    -F number="$PR_NUMBER" \
+    -f query='query($owner:String!, $repo:String!, $number:Int!) {
+      repository(owner:$owner, name:$repo) {
+        pullRequest(number:$number) {
+          reviewThreads(first:100) {
+            nodes {
+              isResolved
+              isOutdated
+              comments(first:20) {
+                nodes {
+                  author { login }
+                }
+              }
+            }
+          }
+        }
+      }
+    }' 2>"$thread_stderr" \
+    | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
+      '[.data.repository.pullRequest.reviewThreads.nodes[]?
+        | select((.isResolved // false) == false)
+        | select((.isOutdated // false) == false)
+        | select((.comments.nodes // []) | any((.author.login // "") == $bot or (.author.login // "") == $bot_plain))
+       ] | length' \
+    > "$thread_tmpfile"; then
+    cat "$thread_tmpfile"
   else
-    rm -f "$review_comment_tmpfile"
-    echo "ERROR: failed to fetch or parse existing Codex inline review comments" >&2
+    local thread_err
+    thread_err=$(cat "$thread_stderr")
+    rm -f "$thread_tmpfile" "$thread_stderr"
+    echo "ERROR: failed to fetch or parse existing Codex review threads: $thread_err" >&2
     return 3
   fi
-  rm -f "$review_comment_tmpfile"
+  rm -f "$thread_tmpfile" "$thread_stderr"
 }
 
 # All classification helpers below match against the response via a
@@ -1397,16 +1424,16 @@ codex_fetch_existing_current_head_evidence() {
 }
 
 codex_classify_existing_current_head_evidence() {
-  local inline_count response_display
-  if ! inline_count=$(codex_inline_review_comment_count_current_head); then
-    echo "WARNING: failed to fetch existing Codex inline comments before trigger; continuing to trigger path" >&2
+  local unresolved_thread_count response_display
+  if ! unresolved_thread_count=$(codex_unresolved_review_thread_count); then
+    echo "WARNING: failed to fetch existing Codex review threads before trigger; continuing to trigger path" >&2
     return 1
   fi
-  if [ "$inline_count" -gt 0 ]; then
+  if [ "$unresolved_thread_count" -gt 0 ]; then
     codex_require_current_head
     echo "INFO: existing current-head Codex evidence detected; no trigger comment will be posted"
     echo "VERDICT: NEEDS_REVISION"
-    echo "INFO: detected $inline_count existing Codex inline review comment(s) on current head"
+    echo "INFO: detected $unresolved_thread_count existing unresolved Codex review thread(s)"
     exit 1
   fi
 
