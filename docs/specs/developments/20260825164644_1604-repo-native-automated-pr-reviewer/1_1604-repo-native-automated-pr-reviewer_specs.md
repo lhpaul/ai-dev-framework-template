@@ -281,12 +281,17 @@ If either side has an `unclassified` key, the finding may match only by exact af
 
 Duplicate local findings collapse by reviewed head, affected scope key, canonical requirement key, and canonical failure-mode key before comparison.
 
+Duplicate Codex findings collapse only when reviewed head, affected scope key, canonical requirement key, canonical failure-mode key, and normalized title all match.
+
+Matching is one-to-one. After a local finding matches one Codex finding, that local finding is consumed and cannot match another Codex finding. Additional Codex findings with the same scope and keys remain net-new unless they collapse as exact Codex duplicates under the rule above.
+
 Ambiguous matches are counted as net-new for the metric and must be listed as ambiguous in the review summary with the candidate local finding IDs. This keeps rollout measurement conservative and reproducible: unclear credit goes to the ready-phase reviewer, not the local reviewer.
 
 Follow-up fixture coverage must include:
 
 - Same path with different requirement keys.
 - Same category with ambiguous failure-mode keys.
+- Multiple Codex findings that could otherwise match one local finding.
 - Rephrased finding with the same requirement and failure-mode keys.
 - Severity-promoted finding with the same requirement and failure-mode keys.
 
