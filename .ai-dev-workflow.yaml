@@ -70,7 +70,7 @@ review:
     # Ordered list of GitHub/App/CLI reviewers that run only after draft gates
     # are clean and the PR has been converted with `gh pr ready`.
     github:
-      - codex-github
+      - bugbot
 
   # Optional: TWO independent reviewer-loop cycle caps enforced by
   # pr-review-loop.sh (issue #1502; dual-cap decision recorded on PR #1507's
@@ -108,6 +108,7 @@ review:
   # max_cycles: 10
   # max_total_cycles: 25
   #
+  # Bugbot is the default ready-phase GitHub reviewer for this repository.
   # CodeRabbit remains supported as an opt-in reviewer (`coderabbit` for the
   # GitHub App, `coderabbit-cli` for the local CLI), but it is not a default
   # gate because vendor rate limits/spending caps can block otherwise-clean PRs.
@@ -124,10 +125,12 @@ review:
   #                                  (default: "chatgpt-codex-connector[bot]"; verify from GitHub App settings)
   #   CODEX_GITHUB_POLL_INTERVAL   — default polling interval for codex-github via pr-review-loop.sh (default: 60)
   #   CODEX_GITHUB_MAX_WAIT        — default maximum wait for codex-github via pr-review-loop.sh (default: 1800)
+  #   CODEX_GITHUB_PRE_TRIGGER_WAIT — wait for existing current-head Codex evidence before posting a trigger; 0 disables (default: 60)
   #
   # Additional options available as script flags to codex-github-reviewer.sh (passed via pr-review-loop.sh):
   #   --poll-interval <seconds>    — polling interval while waiting for bot response
   #   --max-wait      <seconds>    — maximum total wait time for bot response
+  #   --pre-trigger-wait <seconds> — wait for existing current-head evidence before posting a trigger; 0 disables
   #
   # Copilot platform options:
   #   Prerequisites: an active GitHub Copilot seat or the Copilot for Pull Requests feature

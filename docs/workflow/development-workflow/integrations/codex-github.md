@@ -5,6 +5,18 @@ It is triggered by `scripts/development-workflow/codex-github-reviewer.sh`,
 which posts the configured Codex trigger phrase to the pull request and waits
 for Codex review evidence on the current head commit.
 
+Before posting a trigger, the script first checks for existing Codex evidence on
+the current PR head. This catches reviews that GitHub/Codex already started
+automatically when the PR was opened, marked ready, or updated, and avoids
+spending another full poll cycle on a duplicate trigger. The scan waits up to
+`CODEX_GITHUB_PRE_TRIGGER_WAIT` seconds, default `60`; set it to `0` to skip
+the pre-trigger check. Existing evidence is accepted only when it is tied to the
+current head: a submitted review whose `commit_id` matches the current
+`headRefOid`, a SHA-pinned root comment whose `Reviewed commit` marker matches
+that head, or unresolved non-outdated Codex review threads. Stale review
+evidence for an older head and resolved threads are ignored and the normal
+trigger path still runs.
+
 The reviewer requires terminal evidence that can be tied to the current PR head:
 a submitted GitHub review whose `commit_id` matches the current `headRefOid`, or
 current-head inline review comments. Codex-authored root PR comments are terminal
