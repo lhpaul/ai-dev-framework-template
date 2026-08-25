@@ -41,7 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer relies on a `labeled` event produced by the default GitHub Actions
   token to wake `e2e-regression.yml`. After applying `ready-for-regression`, it
   dispatches the regression workflow explicitly on the PR head ref with the PR
-  head SHA as an input, and removes a newly applied label if that dispatch fails.
+  head SHA as an input before applying the label, and skips automatic labeling
+  if that dispatch fails.
   The placeholder regression workflow now accepts `workflow_dispatch` inputs for
   the PR number, head SHA, and base branch while preserving the regression base
   branch gate. Downstreams can set `PR_POLICY_REGRESSION_WORKFLOW` for a renamed

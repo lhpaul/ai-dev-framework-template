@@ -123,20 +123,6 @@ jobs:
             fi
           }
 
-          pr_has_regression_label() {
-            local labels_json
-
-            if ! labels_json=$(gh pr view "$PR_NUMBER" \
-              --repo "$REPO" \
-              --json labels); then
-              echo "WARN: Failed to read labels for PR #${PR_NUMBER}." >&2
-              return 2
-            fi
-
-            printf '%s\n' "$labels_json" \
-              | jq -e --arg name "$LABEL_NAME" '[.labels[].name | select(. == $name)] | length > 0' > /dev/null
-          }
-
           dispatch_regression_workflow() {
             gh workflow run "$REGRESSION_WORKFLOW" \
               --repo "$REPO" \
@@ -262,20 +248,26 @@ jobs:
           if [ "$EVENT_NAME" != "issue_comment" ]; then
             case "$EVENT_ACTION" in
               opened|reopened|ready_for_review)
-                label_present_before=unknown
-                if pr_has_regression_label; then
-                  label_present_before=present
+                echo "Branch '${BRANCH}' is in scope; evaluating ${LABEL_NAME} dispatch policy."
+                should_apply_regression_label=true
+
+                if [ "$REGRESSION_DISPATCH_ENABLED" != "true" ]; then
+                  echo "Regression workflow dispatch disabled by PR_POLICY_REGRESSION_DISPATCH_ENABLED='${REGRESSION_DISPATCH_ENABLED}'; skipping ${LABEL_NAME}."
+                  should_apply_regression_label=false
+                elif [ "$regression_base_in_scope" != "true" ]; then
+                  echo "PR #${PR_NUMBER} targets '${BASE_BRANCH}', which is outside regression workflow branch scope. Skipping ${LABEL_NAME}."
+                  should_apply_regression_label=false
+                elif dispatch_regression_workflow; then
+                  echo "Dispatched '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER} at ${HEAD_SHA}."
                 else
-                  label_lookup_status=$?
-                  if [ "$label_lookup_status" -eq 1 ]; then
-                    label_present_before=absent
-                  else
-                    echo "WARN: Could not determine whether '${LABEL_NAME}' existed before this run; dispatch-failure cleanup will preserve the label." >&2
-                  fi
+                  echo "WARN: Failed to dispatch '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER}. Skipping ${LABEL_NAME} and continuing to reviewer-loop guard status." >&2
+                  LABEL_POLICY_FAILED=true
+                  should_apply_regression_label=false
                 fi
 
-                echo "Branch '${BRANCH}' is in scope; ensuring and applying ${LABEL_NAME}."
-                if ! ensure_regression_label_exists; then
+                if [ "$should_apply_regression_label" != "true" ]; then
+                  :
+                elif ! ensure_regression_label_exists; then
                   echo "WARN: Failed to ensure ${LABEL_NAME} label exists. Continuing to reviewer-loop guard status." >&2
                   LABEL_POLICY_FAILED=true
                 elif ! gh pr edit "$PR_NUMBER" \
@@ -285,26 +277,6 @@ jobs:
                   LABEL_POLICY_FAILED=true
                 else
                   echo "Label '${LABEL_NAME}' applied to PR #${PR_NUMBER}."
-                  if [ "$REGRESSION_DISPATCH_ENABLED" != "true" ]; then
-                    echo "Regression workflow dispatch disabled by PR_POLICY_REGRESSION_DISPATCH_ENABLED='${REGRESSION_DISPATCH_ENABLED}'."
-                  elif [ "$regression_base_in_scope" != "true" ]; then
-                    echo "PR #${PR_NUMBER} targets '${BASE_BRANCH}', which is outside regression workflow branch scope. Skipping regression dispatch."
-                  elif dispatch_regression_workflow; then
-                    echo "Dispatched '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER} at ${HEAD_SHA}."
-                  else
-                    echo "WARN: Failed to dispatch '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER}. Continuing to reviewer-loop guard status." >&2
-                    LABEL_POLICY_FAILED=true
-                    if [ "$label_present_before" = "absent" ]; then
-                      echo "Removing '${LABEL_NAME}' because regression dispatch failed after this workflow applied it."
-                      if ! gh pr edit "$PR_NUMBER" \
-                        --repo "$REPO" \
-                        --remove-label "$LABEL_NAME"; then
-                        echo "WARN: Failed to remove ${LABEL_NAME} from PR #${PR_NUMBER} after dispatch failure." >&2
-                      fi
-                    else
-                      echo "Leaving '${LABEL_NAME}' in place after dispatch failure because its prior state was '${label_present_before}'."
-                    fi
-                  fi
                 fi
                 ;;
             esac
