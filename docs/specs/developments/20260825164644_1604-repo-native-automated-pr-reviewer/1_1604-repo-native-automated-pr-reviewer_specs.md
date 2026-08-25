@@ -136,7 +136,7 @@ The local reviewer companion script must emit key-value output that `pr-review-l
 
 | Emitted key | Accepted raw value | Review-loop meaning | Required preserved fields |
 | --- | --- | --- | --- |
-| `RESULT` | `clean` | Clean platform result. | `COMMENT_COUNT=0`, `BLOCKING_COUNT=0`, `SUGGESTION_COUNT=0`, reviewed head. |
+| `RESULT` | `clean` | Clean platform result. | `BLOCKING_COUNT=0`, reviewed head, and `COMMENT_COUNT` equal to the total advisory comments when `SUGGESTION_COUNT` is greater than zero. |
 | `RESULT` | `needs_fixes` | Blocking platform result. | `BLOCKING_COUNT`, finding summaries, reviewed head. |
 | `RESULT` | `skipped` | Intentional skip or warn-and-continue availability result. | `REASON`, no-fresh-review warning, reviewed head when available. |
 | `RESULT` | `needs_rerun` | Blocking result that asks the loop to rerun after fixes or state refresh. | `REASON`, finding or retry summary. |
@@ -253,6 +253,7 @@ The local reviewer must retain comparison evidence for each local and Codex GitH
 - Reviewed head commit.
 - Severity after normalization.
 - Affected file path and line or range when available.
+- Affected scope key, derived from file path plus line/range when available, or from a named repo-wide obligation when no path is available.
 - Short finding title.
 - Stable category such as workflow-contract, missing-validation, stale-marker, docs-consistency, or unavailable-evidence.
 - Canonical requirement key, using lowercase kebab-case for the violated obligation.
@@ -268,15 +269,17 @@ Canonical keys for Codex GitHub findings are derived by the same classifier used
 
 A Codex GitHub finding is **not net-new** when it matches a local finding on the same head by either:
 
-- Exact canonical requirement key and failure-mode key.
-- Same affected path plus the same canonical requirement key.
-- Same stable category plus the same canonical failure-mode key.
+- Same affected scope key plus exact canonical requirement key and failure-mode key.
+- Same affected path plus overlapping line or range plus the same canonical requirement key.
+- Same named repo-wide obligation plus exact canonical requirement key and failure-mode key.
 
 A Codex GitHub finding is **net-new** when no same-head local finding matches by those rules.
 
-If either side has an `unclassified` key, the finding may match only by exact affected path plus normalized title. Otherwise it is ambiguous.
+Findings with the same requirement and failure-mode keys but different affected scope keys do not match. They are net-new unless a human records them as duplicates with a concrete explanation.
 
-Duplicate local findings collapse by reviewed head, affected path, line or range, canonical requirement key, and canonical failure-mode key before comparison.
+If either side has an `unclassified` key, the finding may match only by exact affected scope key plus normalized title. Otherwise it is ambiguous.
+
+Duplicate local findings collapse by reviewed head, affected scope key, canonical requirement key, and canonical failure-mode key before comparison.
 
 Ambiguous matches are counted as net-new for the metric and must be listed as ambiguous in the review summary with the candidate local finding IDs. This keeps rollout measurement conservative and reproducible: unclear credit goes to the ready-phase reviewer, not the local reviewer.
 
