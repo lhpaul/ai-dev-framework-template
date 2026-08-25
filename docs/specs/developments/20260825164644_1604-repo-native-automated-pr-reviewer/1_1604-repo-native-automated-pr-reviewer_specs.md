@@ -6,6 +6,8 @@ Workflow operators need a faster, cheaper first review pass for routine pull req
 
 The MVP is intentionally scoped to local command-line review and design validation. Graph-assisted context tools may be evaluated as inputs, but they are not mandatory unless the spike proves that they materially improve review quality or cost.
 
+The local reviewer lifecycle bucket is the automated PR reviewer loop, not the internal Step 7a runner gate. It is expected to behave like other `pr-review-loop.sh` platforms and emit normalized result evidence before ready-phase reviewers run.
+
 ---
 
 ## Use Cases
@@ -13,7 +15,7 @@ The MVP is intentionally scoped to local command-line review and design validati
 ### Run local CLI review before ready-phase validation
 
 **Actor**: Workflow operator.
-**Preconditions**: A pull request is in the workflow review path and the repository has enabled the local reviewer option for the relevant stage.
+**Preconditions**: A pull request is in the workflow review path and the repository has enabled the local reviewer as a `pr-review-loop.sh` platform.
 
 **Steps**:
 
@@ -117,6 +119,8 @@ The MVP is intentionally scoped to local command-line review and design validati
 
 - The first deliverable is a spike/MVP design, not the full reviewer subsystem.
 - The MVP reviewer is local-only CLI review; native GitHub inline comments are deferred.
+- The local reviewer belongs in the `pr-review-loop.sh` platform lifecycle, such as a draft-phase platform that runs after internal Step 7a approval and before ready-phase `codex-github`.
+- The local reviewer is not a `review.on_draft.runner` internal reviewer and does not replace the stage-specific native review gate.
 - The reviewer must fit the existing automated reviewer contract: clean, needs-fixes, skipped, unavailable, malformed, timeout, or escalation states remain distinguishable.
 - `codex-github` remains in the ready-phase during rollout and measurement.
 - The local reviewer may reduce external review rounds, but it does not replace human review, merge approval, CI, or current-head ready-phase evidence.
@@ -206,6 +210,30 @@ The spike may propose additional policy modes, but the MVP must define the defau
 
 ---
 
+## Net-New Codex Finding Measurement
+
+The rollout metric compares local reviewer findings with ready-phase Codex GitHub findings only when both were produced for the same pull request head commit.
+
+The local reviewer must retain comparison evidence for each finding:
+
+- Reviewed head commit.
+- Severity after normalization.
+- Affected file path and line or range when available.
+- Short finding title.
+- Stable category such as workflow-contract, missing-validation, stale-marker, docs-consistency, or unavailable-evidence.
+- One-sentence finding summary.
+
+A Codex GitHub finding is **not net-new** when it matches a local finding on the same head by either:
+
+- The same affected path plus substantially the same requirement or failure mode, even if wording, line number, or severity differs.
+- The same stable category plus the same missing or violated workflow obligation.
+
+A Codex GitHub finding is **net-new** when no same-head local finding matches by those rules.
+
+Ambiguous matches are counted as net-new for the metric and must be listed as ambiguous in the review summary. This keeps rollout measurement conservative and reproducible: unclear credit goes to the ready-phase reviewer, not the local reviewer.
+
+---
+
 ## Acceptance Criteria
 
 - [ ] A workflow maintainer can read the spike/MVP design and understand the local-only CLI reviewer boundary.
@@ -229,6 +257,19 @@ The spike may propose additional policy modes, but the MVP must define the defau
 
 ---
 
+## Follow-Up Implementation Work
+
+If the spike/MVP design is accepted, follow-up implementation should be split into separate work items or plan steps:
+
+- Add a `local-ai-reviewer` companion script that emits the standard reviewer-loop key-value result contract.
+- Add a `pr-review-loop.sh` platform adapter for `local-ai-reviewer`.
+- Add deterministic pre-review checks and fixture coverage for each required failure state.
+- Add configuration documentation showing the local reviewer before ready-phase `codex-github`.
+- Add optional graph-context support only if the spike adoption criteria classify a graph strategy as required or optional.
+- Add rollout measurement evidence that reports ready-phase Codex GitHub net-new blockers after local review.
+
+---
+
 ## Brief Objective List
 
 1. Compare a no-graph baseline, `code-review-graph`, and `graphify` for local PR-review context selection.
@@ -247,7 +288,8 @@ The spike may propose additional policy modes, but the MVP must define the defau
 | Identify deterministic pre-review checks | Deterministic Pre-Review Checks; AC4 |
 | Propose failure and finding behavior | Failure Policy; Business Rules; AC6 |
 | Preserve and measure Codex GitHub | Use case "Preserve ready-phase Codex GitHub validation"; AC3 |
-| Keep local-only CLI MVP | Overview; Business Rules; AC1, AC7 |
+| Keep local-only CLI MVP | Overview; Business Rules; AC1 |
+| Separate follow-up implementation work | Follow-Up Implementation Work; AC7 |
 
 ## Complex Workflow Decision Matrix
 
