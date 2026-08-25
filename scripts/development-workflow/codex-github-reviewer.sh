@@ -264,45 +264,91 @@ codex_inline_review_comment_count_since() {
 }
 
 codex_unresolved_review_thread_count() {
-  local thread_tmpfile thread_stderr
+  local thread_tmpfile thread_stderr cursor page max_pages count page_count has_next end_cursor
   thread_tmpfile=$(mktemp)
   thread_stderr=$(mktemp)
-  if gh api graphql \
-    -f owner="$OWNER" \
-    -f repo="$REPO" \
-    -F number="$PR_NUMBER" \
-    -f query='query($owner:String!, $repo:String!, $number:Int!) {
-      repository(owner:$owner, name:$repo) {
-        pullRequest(number:$number) {
-          reviewThreads(first:100) {
-            nodes {
-              isResolved
-              isOutdated
-              comments(first:20) {
-                nodes {
-                  author { login }
+  cursor=""
+  page=0
+  max_pages=20
+  count=0
+  while :; do
+    page=$((page + 1))
+    if [ "$page" -gt "$max_pages" ]; then
+      rm -f "$thread_tmpfile" "$thread_stderr"
+      echo "ERROR: existing Codex review thread scan exceeded $max_pages pages" >&2
+      return 3
+    fi
+    : > "$thread_stderr"
+    if ! gh api graphql \
+      -f owner="$OWNER" \
+      -f repo="$REPO" \
+      -F number="$PR_NUMBER" \
+      -f cursor="$cursor" \
+      -f query='query($owner:String!, $repo:String!, $number:Int!, $cursor:String) {
+        repository(owner:$owner, name:$repo) {
+          pullRequest(number:$number) {
+            headRef {
+              target {
+                ... on Commit { committedDate }
+              }
+            }
+            reviewThreads(first:100, after:$cursor) {
+              pageInfo { hasNextPage endCursor }
+              nodes {
+                isResolved
+                isOutdated
+                firstComment: comments(first:1) {
+                  nodes {
+                    author { login }
+                  }
+                }
+                lastComment: comments(last:1) {
+                  nodes {
+                    author { login }
+                    createdAt
+                  }
                 }
               }
             }
           }
         }
-      }
-    }' 2>"$thread_stderr" \
-    | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" \
-      '[.data.repository.pullRequest.reviewThreads.nodes[]?
-        | select((.isResolved // false) == false)
-        | select((.isOutdated // false) == false)
-        | select((.comments.nodes // []) | any((.author.login // "") == $bot or (.author.login // "") == $bot_plain))
-       ] | length' \
-    > "$thread_tmpfile"; then
-    cat "$thread_tmpfile"
-  else
-    local thread_err
-    thread_err=$(cat "$thread_stderr")
-    rm -f "$thread_tmpfile" "$thread_stderr"
-    echo "ERROR: failed to fetch or parse existing Codex review threads: $thread_err" >&2
-    return 3
-  fi
+      }' 2>"$thread_stderr" \
+      | jq -r --arg bot "$BOT_LOGIN" --arg bot_plain "$BOT_LOGIN_PLAIN" '
+          .data.repository.pullRequest as $pr
+          | ($pr.headRef.target.committedDate // "") as $head_date
+          | ($pr.reviewThreads.pageInfo.hasNextPage // false) as $has_next
+          | ($pr.reviewThreads.pageInfo.endCursor // "") as $end_cursor
+          | ([
+              $pr.reviewThreads.nodes[]?
+              | (.firstComment.nodes[0].author.login // "") as $first_author
+              | (.lastComment.nodes[0].author.login // "") as $last_author
+              | (.lastComment.nodes[0].createdAt // "") as $last_created
+              | select((.isResolved // false) == false)
+              | select((.isOutdated // false) == false)
+              | select($first_author == $bot or $first_author == $bot_plain)
+              | select((($head_date != "") and ($last_author != $bot) and ($last_author != $bot_plain) and ($last_created > $head_date)) | not)
+            ] | length) as $count
+          | [$count, $has_next, $end_cursor] | @tsv' \
+      > "$thread_tmpfile"; then
+      local thread_err
+      thread_err=$(cat "$thread_stderr")
+      rm -f "$thread_tmpfile" "$thread_stderr"
+      echo "ERROR: failed to fetch or parse existing Codex review threads: $thread_err" >&2
+      return 3
+    fi
+    IFS=$'\t' read -r page_count has_next end_cursor < "$thread_tmpfile"
+    count=$((count + page_count))
+    if [ "$has_next" != "true" ]; then
+      break
+    fi
+    if [ -z "$end_cursor" ]; then
+      rm -f "$thread_tmpfile" "$thread_stderr"
+      echo "ERROR: existing Codex review thread scan had hasNextPage=true without endCursor" >&2
+      return 3
+    fi
+    cursor="$end_cursor"
+  done
+  printf '%s\n' "$count"
   rm -f "$thread_tmpfile" "$thread_stderr"
 }
 
