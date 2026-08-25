@@ -4653,6 +4653,11 @@ case "$*" in
     printf '{"data":{"repository":{"pullRequest":{"headRef":{"target":{"committedDate":"2026-01-01T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false,"isOutdated":false,"firstComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"}}]},"lastComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"createdAt":"2026-01-01T00:00:01Z"}]}}]}}}}}\n'
     exit 0 ;;
   *"api graphql"*)
+    case " $* " in
+      *" -f cursor="*)
+        printf 'ERROR=first-page-cursor-sent\n' >&2
+        exit 65 ;;
+    esac
     printf '{"data":{"repository":{"pullRequest":{"headRef":{"target":{"committedDate":"2026-01-01T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"cursor1"},"nodes":[]}}}}}\n'
     exit 0 ;;
   *"--method POST"*)

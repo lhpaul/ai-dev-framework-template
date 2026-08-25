@@ -266,6 +266,7 @@ codex_inline_review_comment_count_since() {
 
 codex_review_thread_evidence_counts() {
   local thread_tmpfile thread_stderr cursor page max_pages count cleared_count page_count page_cleared_count has_next end_cursor
+  local -a gh_graphql_args
   thread_tmpfile=$(mktemp)
   thread_stderr=$(mktemp)
   cursor=""
@@ -281,11 +282,11 @@ codex_review_thread_evidence_counts() {
       return 3
     fi
     : > "$thread_stderr"
-    if ! gh api graphql \
-      -f owner="$OWNER" \
-      -f repo="$REPO" \
-      -F number="$PR_NUMBER" \
-      -f cursor="$cursor" \
+    gh_graphql_args=(api graphql -f owner="$OWNER" -f repo="$REPO" -F number="$PR_NUMBER")
+    if [ -n "$cursor" ]; then
+      gh_graphql_args+=(-f cursor="$cursor")
+    fi
+    if ! gh "${gh_graphql_args[@]}" \
       -f query='query($owner:String!, $repo:String!, $number:Int!, $cursor:String) {
         repository(owner:$owner, name:$repo) {
           pullRequest(number:$number) {
