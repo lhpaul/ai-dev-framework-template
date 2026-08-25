@@ -1,4 +1,4 @@
-# Repo-Native Automated PR Reviewer Spike/MVP — Spec
+# Repo-Native Automated PR Reviewer Spike/MVP - Spec
 
 ## Overview
 
@@ -189,4 +189,3 @@ The MVP is intentionally scoped to local command-line review and design validati
 | Timeout | Escalate or unavailable with reason | Stop or continue according to explicit policy, without claiming clean review. | Review-loop output, operator summary | The local review exceeds its allowed runtime. |
 | Malformed output | Escalate | Treat the result as unreliable and require operator action or a retry. | Review-loop output, operator summary | The local reviewer emits text that cannot be parsed into the required result contract. |
 | Codex GitHub net-new blocker after local clean | Needs fixes | Fix the branch and rerun the configured review loop. | Ready-phase review evidence, PR summary | Codex GitHub catches a workflow edge case missed by local review. |
-
