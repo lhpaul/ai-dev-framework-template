@@ -542,6 +542,21 @@ def strip_inline_code_spans(line):
         i = closing + len(ticks)
     return "".join(out)
 
+def strip_inline_code_spans_by_paragraph(lines):
+    out_lines = []
+    paragraph = []
+    for line in lines:
+        if line.strip() == "":
+            if paragraph:
+                out_lines.extend(strip_inline_code_spans("\n".join(paragraph)).split("\n"))
+                paragraph = []
+            out_lines.append(line)
+        else:
+            paragraph.append(line)
+    if paragraph:
+        out_lines.extend(strip_inline_code_spans("\n".join(paragraph)).split("\n"))
+    return "\n".join(out_lines)
+
 lines = sys.stdin.read().split("\n")
 out = []
 fence_char = None
@@ -564,7 +579,7 @@ for line in lines:
             fence_char = None
             fence_len = 0
         continue
-sys.stdout.write(strip_inline_code_spans("\n".join(out)))
+sys.stdout.write(strip_inline_code_spans_by_paragraph(out))
 '
 }
 

@@ -735,6 +735,27 @@ run_test \
     fi
   )"
 
+# An unmatched backtick in an earlier paragraph must not swallow a later live
+# closing reference after a blank-line paragraph break.
+unmatched_inline_branch="fix/retro-528-doc-gaps"
+unmatched_inline_repo="$(make_repo unmatched-inline "$unmatched_inline_branch" yes)"
+unmatched_inline_pr_body='Cleans up doc gaps with an unmatched `example marker.
+
+Closes #613'
+unmatched_inline_output="$(
+  GH_MERGED_HEAD="$unmatched_inline_branch" \
+  GH_MERGED_PR=661 \
+  GH_PR_BODY="$unmatched_inline_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$unmatched_inline_repo" --base develop --pr 661 "$unmatched_inline_branch"
+)"
+run_contains \
+  "unmatched_inline_previous_paragraph_closes_real_issue" \
+  "Closing issue #613..." \
+  "$unmatched_inline_output"
+
 # Blockquoted closing-keyword examples must not be treated as live references.
 blockquote_branch="fix/retro-526-doc-gaps"
 blockquote_repo="$(make_repo blockquote "$blockquote_branch" yes)"
