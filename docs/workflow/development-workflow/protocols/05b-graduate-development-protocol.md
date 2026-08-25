@@ -5,6 +5,21 @@
 
 ---
 
+## CI coverage for integration branches
+
+A project's own CI workflows must include `develop-**` in their
+`pull_request` branch filters, alongside `develop`. Sub-item PRs in an epic
+target `develop-<slug>`; a workflow that gates only on `develop` runs **zero
+checks** on them, and the epic's entire implementation reaches this
+graduation PR having never been tested, linted, or typechecked (#1525 —
+measured downstream at 4 checks on a sub-item PR versus 13 on the graduation
+PR, which then surfaced four real defects in already-merged code).
+
+Use the `develop-**` glob, never a hardcoded slug: a stale
+`develop-<old-slug>` entry reads as coverage while the current integration
+branch is absent. [`scripts/development-workflow/tests/test-workflow-branch-filters.sh`](../../../../scripts/development-workflow/tests/test-workflow-branch-filters.sh)
+enforces both rules for the workflows this template ships.
+
 ## Release Evidence Ownership
 
 For workflow-hub product releases, graduation evidence must preserve the

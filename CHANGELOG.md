@@ -63,6 +63,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read) are reported and left out of the stamped scope, surfacing as
   `TRACKER_INCOMPLETE`. The operational guidance lives in
   [Protocol 05 §9.1](docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md).
+- **Integration-branch PRs now run CI** (#1525): `e2e-regression.yml`,
+  `markdown-lint.yml`, and `shellcheck.yml` gated on `develop` and `main`
+  only, so an epic's sub-item PRs into `develop-<slug>` ran zero checks —
+  measured downstream at 4 checks on a sub-item PR versus 13 on the
+  graduation PR, which then surfaced four real defects in already-merged
+  code. All three now include `develop-**`, as `workflow-tests.yml` already
+  did, and `test-workflow-branch-filters.sh` enforces it per trigger. The
+  requirement for projects that add their own workflows is stated in
+  [Protocol 05b](docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md).
 - **CodeRabbit rate-limit waits are read from the vendor, not guessed** (#1579):
   the loop decided "CodeRabbit is rate limited" from the mere presence of a
   rate-limit comment newer than the HEAD commit, so one stale reply suppressed
