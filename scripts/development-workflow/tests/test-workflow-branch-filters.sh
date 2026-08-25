@@ -134,8 +134,28 @@ branch_filter_block() {
 # literal `develop-<slug>` all do exclude integration-branch coverage and must
 # be flagged. `developer-branch` must not match either: the dash anchors the
 # boundary so `develop` cannot match as a prefix of an unrelated branch name.
+# Does any of these branches-ignore patterns actually exclude an integration
+# branch? Decided by *matching a representative branch name against the glob*
+# rather than by inspecting the pattern's text. Pattern-shape matching kept
+# getting this wrong in both directions: `^develop(-|$)` wrongly flagged a bare
+# `develop` exclusion (which leaves develop-<slug> covered), and `^develop-`
+# then missed `develop*` and `dev*`, both of which genuinely do exclude it.
+# GitHub's branch filters are globs, so ask the glob.
 ignores_integration_branch() {
-  printf '%s\n' "$1" | grep -qE '^develop-'
+  local sample="develop-example" pat
+  while IFS= read -r pat; do
+    [ -n "$pat" ] || continue
+    # Shell pattern matching treats `**` as `*`, which is the same answer here:
+    # integration branch names carry no `/`, the only character the two forms
+    # differ on in GitHub's syntax.
+    # shellcheck disable=SC2254  # unquoted on purpose: $pat IS a glob, and
+    # interpreting it as one is the whole point of this check. Quoting it would
+    # make every pattern an exact-match test and the guard would stop working.
+    case "$sample" in
+      $pat) return 0 ;;
+    esac
+  done <<< "$1"
+  return 1
 }
 
 if ! python3 -c 'import yaml' 2>/dev/null; then
@@ -147,7 +167,10 @@ fi
 
 missing=""
 checked=0
-for wf in "$WF_DIR"/*.yml; do
+# Both extensions: GitHub honours .yaml as well as .yml, so a *.yml-only
+# glob would let a .yaml workflow escape this guard entirely.
+for wf in "$WF_DIR"/*.yml "$WF_DIR"/*.yaml; do
+  [ -e "$wf" ] || continue
   # Scoped to `pull_request` deliberately. Protocol 05b states the requirement
   # as "must include develop-** in their `pull_request` branch filters", and
   # that is the trigger whose checks a sub-item PR into develop-<slug> needs.
@@ -201,7 +224,10 @@ run_test "develop_gated_workflows_cover_integration_branches" "" "$missing"
 # A hardcoded slug is not coverage: it reads as covered while the current
 # integration branch is absent (the zeki-cl/zeki-platform trap in #1525).
 hardcoded=""
-for wf in "$WF_DIR"/*.yml; do
+# Both extensions: GitHub honours .yaml as well as .yml, so a *.yml-only
+# glob would let a .yaml workflow escape this guard entirely.
+for wf in "$WF_DIR"/*.yml "$WF_DIR"/*.yaml; do
+  [ -e "$wf" ] || continue
   # Same scope as the coverage scan above: the rule Protocol 05b states is
   # about `pull_request` filters, so a stale slug is judged there.
   while IFS= read -r entry; do
@@ -326,6 +352,33 @@ run_test "guard_predicate_ignores_unrelated_exclusion" "no" \
   "$(ignores_integration_branch "$(branches_for_trigger "$FIXTURE_DIR/branches-ignore-unrelated.yml" pull_request-ignore)" && echo yes || echo no)"
 # A different branch that merely starts with the same letters must not match:
 # the dash anchors the boundary.
+# The predicate asks the glob, not the pattern's shape. These are the cases
+# that pattern-matching got wrong in both directions: `develop` alone leaves
+# develop-<slug> covered, while `develop*` and `dev*` genuinely exclude it even
+# though neither starts with the literal `develop-`.
+_bf_excl() { if ignores_integration_branch "$1"; then printf 'excludes\n'; else printf 'no\n'; fi; }
+run_test "guard_glob_develop_star_excludes" "excludes" "$(_bf_excl 'develop*')"
+run_test "guard_glob_dev_star_excludes" "excludes" "$(_bf_excl 'dev*')"
+run_test "guard_glob_double_star_excludes" "excludes" "$(_bf_excl '**')"
+run_test "guard_glob_bare_develop_does_not_exclude" "no" "$(_bf_excl 'develop')"
+run_test "guard_glob_release_prefix_does_not_exclude" "no" "$(_bf_excl 'release/*')"
+# A .yaml workflow must not escape the scan; GitHub honours both extensions.
+cat > "$FIXTURE_DIR/dot-yaml-extension.yaml" <<'FIXTURE'
+name: fixture
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+FIXTURE
+run_test "yaml_extension_is_parsed" "$(printf 'develop\nmain')" \
+  "$(branches_for_trigger "$FIXTURE_DIR/dot-yaml-extension.yaml" pull_request)"
+
 run_test "guard_predicate_does_not_match_developer_branch" "no" \
   "$(ignores_integration_branch "developer-branch" && echo yes || echo no)"
 
