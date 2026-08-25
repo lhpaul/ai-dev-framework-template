@@ -386,7 +386,7 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,coderabbit-cli,codex-github,claude-code-action,copilot,haystack,bugbot] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--pre-trigger-wait seconds] [--post-final-summary] [--compare]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,coderabbit-cli,local-ai-reviewer,codex-github,claude-code-action,copilot,haystack,bugbot] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--pre-trigger-wait seconds] [--post-final-summary] [--compare]
        ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number>
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
@@ -2756,9 +2756,16 @@ run_coderabbit_cli_review() {
       return 0
       ;;
     1)
-      [ "$blocking_count" -eq 0 ] && blocking_count=1
-      [ "$comment_count" -eq 0 ] && comment_count=1
-      print_kv RESULT needs_fixes
+      local coderabbit_cli_script_result
+      coderabbit_cli_script_result="$(kv_value_default RESULT "$script_output" needs_fixes)"
+      if [ "$coderabbit_cli_script_result" != "needs_rerun" ]; then
+        [ "$blocking_count" -eq 0 ] && blocking_count=1
+        [ "$comment_count" -eq 0 ] && comment_count=1
+      fi
+      case "$coderabbit_cli_script_result" in
+        needs_rerun) print_kv RESULT needs_rerun ;;
+        *) print_kv RESULT needs_fixes ;;
+      esac
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -2806,6 +2813,139 @@ run_coderabbit_cli_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT "$blocking_count"
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      return 0
+      ;;
+  esac
+}
+
+run_local_ai_reviewer_review() {
+  # Runs local-ai-reviewer.sh and maps its exit codes to the standard
+  # pr-review-loop key=value output contract.
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="local-ai-reviewer"
+  local reviewer_script
+  local script_exit=0
+  local script_output=""
+  local blocking_count=0
+  local suggestion_count=0
+  local comment_count=0
+
+  : "$poll_interval"
+  require_gh
+  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/local-ai-reviewer.sh"
+  review_repo_root="${repo_root:-$(workflow_repo_root)}"
+  cd "$review_repo_root"
+
+  local owner repo_name repo
+  repo="$(repo_slug)"
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  local local_ai_stderr_file
+  local local_ai_config_file="${AI_DEV_WORKFLOW_CONFIG_FILE:-${config_file:-}}"
+  local_ai_stderr_file="$(mktemp)"
+  trap 'rm -f "${local_ai_stderr_file:-}"' RETURN
+
+  set +e
+  if [ -n "$local_ai_config_file" ] && [ -f "$local_ai_config_file" ]; then
+    script_output="$(AI_DEV_WORKFLOW_CONFIG_FILE="$local_ai_config_file" "$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" --repo-root "$review_repo_root" 2>"$local_ai_stderr_file")"
+  else
+    script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" --repo-root "$review_repo_root" 2>"$local_ai_stderr_file")"
+  fi
+  script_exit=$?
+  set -e
+
+  if [ -s "$local_ai_stderr_file" ]; then
+    echo "INFO: local-ai-reviewer.sh stderr:" >&2
+    cat "$local_ai_stderr_file" >&2
+  fi
+  rm -f "$local_ai_stderr_file"
+
+  blocking_count="$(kv_value_default BLOCKING_COUNT "$script_output" 0)"
+  suggestion_count="$(kv_value_default SUGGESTION_COUNT "$script_output" 0)"
+  comment_count="$(kv_value_default COMMENT_COUNT "$script_output" 0)"
+
+  case "$script_exit" in
+    0)
+      print_kv RESULT clean
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+      print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
+      return 0
+      ;;
+    1)
+      local local_ai_script_result
+      local_ai_script_result="$(kv_value_default RESULT "$script_output" needs_fixes)"
+      if [ "$local_ai_script_result" != "needs_rerun" ]; then
+        [ "$blocking_count" -eq 0 ] && blocking_count=1
+        [ "$comment_count" -eq 0 ] && comment_count=1
+      fi
+      case "$local_ai_script_result" in
+        needs_rerun) print_kv RESULT needs_rerun ;;
+        *) print_kv RESULT needs_fixes ;;
+      esac
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REASON "$(kv_value_default REASON "$script_output" local_ai_review_findings)"
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT "$blocking_count"
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      for index in $(seq 1 "$blocking_count"); do
+        print_kv "BLOCKING_${index}_PATH" "$(kv_value_default "BLOCKING_${index}_PATH" "$script_output" "")"
+        print_kv "BLOCKING_${index}_LINE" "$(kv_value_default "BLOCKING_${index}_LINE" "$script_output" "")"
+        print_kv "BLOCKING_${index}_BODY" "$(kv_value_default "BLOCKING_${index}_BODY" "$script_output" "")"
+      done
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+      print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
+      return 1
+      ;;
+    2)
+      local local_ai_reason
+      local local_ai_display_result
+      local_ai_reason="$(kv_value_default REASON "$script_output" malformed_output)"
+      local_ai_display_result="$(kv_value_default DISPLAY_RESULT "$script_output" "")"
+      print_kv RESULT escalate
+      print_kv REASON "$local_ai_reason"
+      [ -n "$local_ai_display_result" ] && print_kv DISPLAY_RESULT "$local_ai_display_result"
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT "$blocking_count"
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+      print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
+      return 2
+      ;;
+    *)
+      local local_ai_reason
+      local local_ai_display_result
+      local_ai_reason="$(kv_value_default REASON "$script_output" disabled_by_config)"
+      local_ai_display_result="$(kv_value_default DISPLAY_RESULT "$script_output" "")"
+      print_kv RESULT skipped
+      print_kv REASON "$local_ai_reason"
+      [ -n "$local_ai_display_result" ] && print_kv DISPLAY_RESULT "$local_ai_display_result"
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT "$blocking_count"
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+      print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
       return 0
       ;;
   esac
@@ -5676,6 +5816,7 @@ bot_login_for_platform() {
   case "$1" in
     coderabbit)   printf 'coderabbitai\n' ;;
     coderabbit-cli) printf '\n' ;;
+    local-ai-reviewer) printf '\n' ;;
     devin)        printf 'devin-ai-integration\n' ;;
     greptile)     printf 'greptile-apps\n' ;;
     pr-agent)     printf '\n' ;;
@@ -5879,6 +6020,9 @@ run_platform_review() {
       ;;
     coderabbit-cli)
       run_coderabbit_cli_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
+    local-ai-reviewer)
+      run_local_ai_reviewer_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     pr-agent)
       run_pr_agent_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
