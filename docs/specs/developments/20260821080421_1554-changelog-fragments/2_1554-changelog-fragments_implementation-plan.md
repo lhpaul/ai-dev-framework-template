@@ -170,16 +170,30 @@ This is exactly the same allocation model as an issue tracker's own
 identifiers (Decision 1's primary case), just issued by the hosting platform
 instead of the tracker.
 
-**Consequence for authoring order**: in no-tracker mode, the fragment's
-final filename cannot be written before the PR exists, because the number
-it depends on does not exist yet. An author working before opening a PR
-uses any locally convenient temporary name and **renames** the file to the
-assigned PR number as part of opening the PR (or promptly afterward) — the
-rename is a single `git mv`, not a data migration, since the body content is
-unaffected. `changelog.d/README.md` states this explicitly, and `validate`
-does not special-case it: the readiness gate (Decision 5) that checks for a
-fragment on the PR's file list already runs *after* the PR exists, so by the
-time it matters the number is always known.
+**Consequence for authoring order — the PR opens before the fragment is
+named, not after.** In no-tracker mode, the fragment's final filename cannot
+be written before the PR exists, because the number it depends on does not
+exist yet. Protocol 03 Paths 1–3 normally write the release note as one of
+the last steps before opening the PR (Layer-by-Layer Changes); in no-tracker
+mode that order is reversed for this one step: **open the PR first — a
+draft is sufficient — note its number, then create the fragment directly as
+`<PR-number>.<kind>.<slug>.md` and run `validate` on it**, exactly like the
+tracker case, because by that point it is the tracker case in every way that
+matters to `validate` — the identifier already exists and is already known.
+This needs no change to `validate` itself and no second, body-only
+validation mode: there is no temporary name for `validate` to special-case,
+because there is no longer a step where the fragment is written before its
+final identifier is known. `changelog.d/README.md` and the no-tracker
+carve-out in Protocol 03 (Layer-by-Layer Changes) both state this ordering
+explicitly, so an author is never instructed to validate a name that is
+about to change.
+
+An author who genuinely wants to draft the note's body before any PR
+exists — a personal preference, not something this workflow requires — may
+do so in a scratch file outside `changelog.d/` (so it is not a candidate for
+`validate` or the readiness scan at all) and move the finished text into the
+correctly-named fragment once the PR is open. This is ordinary editing
+practice, not a second code path.
 
 In this mode the body's `(#N)` reference (Decision 2's worked examples) is
 **omitted entirely** — there is no issue number to reference (the PR number
@@ -263,12 +277,20 @@ record that the commit's own diff doesn't already show.
 **How the three spec rules hold, by construction, not by a state machine:**
 
 1. **Gathering is repeatable.** `assemble --version <X.Y.Z>` checks exactly
-   one fact: does `## [X.Y.Z] - YYYY-MM-DD` already exist in `CHANGELOG.md`?
-   If yes, `ASSEMBLE_RESULT=already_assembled`, exit 0, no write — the
-   idempotence guarantee, decidable from the working tree alone, no second
-   artifact to cross-check. (See "Residual interruption window" below for the
-   one narrow case this check alone does not fully close, and how it is
-   closed without a new artifact.)
+   one fact: does a `## [X.Y.Z]` section — matched on the **version label
+   alone**, never the trailing `- YYYY-MM-DD` — already exist in
+   `CHANGELOG.md`? If yes, `ASSEMBLE_RESULT=already_assembled`, exit 0, no
+   write — the idempotence guarantee, decidable from the working tree alone,
+   no second artifact to cross-check. The date is display data written once,
+   at assembly time, from `--date` (default: the day `assemble` runs); it is
+   never part of the identity `assemble` compares against on a later run. A
+   version is assembled once per release regardless of what calendar date
+   that assembly happens to fall on or be retried on — keying the check on
+   the dated string as well would make a same-day-vs-next-day retry
+   indistinguishable from "not yet assembled," which is exactly backwards.
+   (See "Interrupted assembly is a dirty working tree" below for the one
+   narrow case this check alone does not fully close, and why it needs no
+   new artifact, sweep, or identity scheme to close it.)
 2. **Notes are consumed at publish, not at assembly.** `assemble` runs on
    the release branch's local working tree. Its edits — the new
    `CHANGELOG.md` section and the fragment deletions — are ordinary
@@ -289,80 +311,118 @@ record that the commit's own diff doesn't already show.
    `already_assembled` and never looks at `changelog.d/` again — the late
    fragment is untouched, stays in `changelog.d/`, and is picked up by the
    next assembly. It is included in *this* release only if the releaser
-   deliberately discards the assembled state first (below, "There is no
-   `--reassemble` flag") and re-runs `assemble` fresh — a human editorial
-   choice, never something any part of `assemble` itself does automatically.
+   deliberately discards the assembled state first (below, "Recovering from
+   an interrupted or unwanted `assemble` run") and re-runs `assemble` fresh —
+   a human editorial choice, never something any part of `assemble` itself
+   does automatically.
 
-**Assembly, concretely.** When the heading does not yet exist, `assemble`:
-validates every top-level fragment in `changelog.d/` (Decision 1's grammar);
-builds the new section (Decision 4: rename `## [Unreleased]`, merge fragment
-bullets by kind, carry over the existing shared-block bullets); writes
-`CHANGELOG.md` via a temp file, `fsync`, and one atomic `rename(2)` call (kept
-from the earlier design — it is one `mktemp`/`mv` pair, not a state machine,
-and it means a process kill mid-write leaves `CHANGELOG.md` exactly at its
-pre-assembly content, never truncated); then deletes each fragment file that
-fed the section. It reports `ASSEMBLE_RESULT=assembled`, `VERSION`,
-`FRAGMENT_COUNT`, `CARRIED_OVER_COUNT`, and `ITEMS` — the same reporting the
-manifest previously existed partly to support, now emitted directly from the
-one live scan `assemble` already performed, with nothing persisted to disk
-for later inspection because nothing needs to be inspected later: the commit
-diff is that record (see "Audit trail" below).
+**Assembly, concretely.** When no `## [X.Y.Z]` section (any date) exists yet,
+`assemble`: validates every top-level fragment in `changelog.d/` (Decision
+1's grammar); builds the new section (Decision 4: rename `## [Unreleased]`,
+merge fragment bullets by kind, carry over the existing shared-block
+bullets); writes `CHANGELOG.md` via a temp file, `fsync`, and one atomic
+`rename(2)` call (kept from the earlier design — it is one `mktemp`/`mv`
+pair, not a state machine, and it means a process kill mid-write leaves
+`CHANGELOG.md` exactly at its pre-assembly content, never truncated); then
+deletes each fragment file that fed the section. It reports
+`ASSEMBLE_RESULT=assembled`, `VERSION`, `FRAGMENT_COUNT`,
+`CARRIED_OVER_COUNT`, and `ITEMS` — the same reporting the manifest
+previously existed partly to support, now emitted directly from the one live
+scan `assemble` already performed, with nothing persisted to disk for later
+inspection because nothing needs to be inspected later: the commit diff is
+that record (see "Audit trail" below).
 
-**Residual interruption window, and why it does not need a manifest.** A
+**`--allow-empty`, defined.** When there is no pending fragment and the
+shared block is empty, the default is `ASSEMBLE_RESULT=no_notes`, exit 3,
+and no write (Gate A). `--allow-empty` overrides that stop for a release the
+team has decided to cut with no user-facing notes. It follows exactly the
+same "Assembly, concretely" path above with a zero-length fragment and
+carried-over set: it renames `## [Unreleased]` to the version heading (still
+performed — Decision 4's step 1 is unconditional), merges nothing (there is
+nothing to merge), inserts a fresh empty `## [Unreleased]` above it, and
+deletes nothing (there is nothing to delete — the whole reason this path
+exists is that no fragment fed it). The published section is therefore an
+empty version heading with no bullets under it, exactly as a human
+publishing a deliberately empty release would write by hand today.
+`ASSEMBLE_RESULT=assembled`, exit 0, with `FRAGMENT_COUNT=0` and
+`CARRIED_OVER_COUNT=0` — the same result and fields as any other successful
+assembly, not a distinct outcome, because from `CHANGELOG.md`'s point of
+view it is not distinct: the only difference is which counts came out as
+zero.
+
+**Interrupted assembly is a dirty working tree, not a state to identify.** A
 process kill *between* the `CHANGELOG.md` write succeeding and the fragment
 deletions finishing is still possible (deleting N small files is not one
-atomic operation). Left unaddressed, a re-run's idempotence check would see
-the heading and stop before finishing those deletions, permanently orphaning
-the undeleted fragment — which a *later* release's assembly would then
-gather again, publishing its bullet a second time.
+atomic operation). Two earlier fixes tried to name and recover that specific
+partial state — first by matching a fragment's tracker/PR-number reference
+against the published section, then, when that was shown to collide with a
+second pending fragment for the same item, by matching the fragment's exact
+body text instead. The body-matching fix has the identical flaw one level
+down: bullet text is not a durable identity either — the same normalized
+body can legitimately appear in more than one fragment (or already be part
+of the carried-over shared-block content), and the releaser's own editorial
+pass *edits the published text*, so "does this fragment's body still appear
+verbatim" can go from true to false through completely intended action, not
+just through interruption. Three attempts at naming this partial state
+follow the same trend Decision 3's manifest removal already diagnosed: each
+fix's own identity scheme was the thing wrong with it, not an oversight in
+applying it. **The fix is to stop trying to identify the partial state at
+all.**
 
-**The sweep matches on the fragment's own body, not on the item reference.**
-An earlier version of this fix matched by searching the published section for
-`(#<item>)` — the item's tracker or PR-number reference. That is not precise
-enough: this plan explicitly permits more than one fragment for the same
-item (two notes from the same item "live on one branch," Decision 1), and in
-no-tracker mode the body carries no `(#N)` at all, so there would be nothing
-to match against. Matching on the item reference cannot distinguish "this
-exact fragment's bullet was published" from "some fragment for this item was
-published" — a second, still-pending fragment for the same item would match
-and be wrongly deleted, exactly reproducing the loss the sweep exists to
-prevent, just relocated to a same-item case instead of the interruption case.
+Nothing `assemble` does is committed until Step 5, so an interrupted run
+never leaves anything durable to reconcile — it leaves an ordinary dirty
+working tree, the same kind Step 3's editorial pass already sits in for as
+long as the polish takes. The recovery for a dirty working tree is the
+ordinary one: discard the uncommitted changes and start over. There is
+nothing to *identify*, because the *entire* set of `assemble`'s uncommitted
+changes — however far it got — is exactly what must be discarded, and
+"however far it got" is never partially wrong for the fragments it did
+finish deleting, because it deletes only fragments it also just gathered
+into the write that preceded them.
 
-The corrected check matches on **the fragment's own body**: `assemble`
-normalizes each remaining fragment's body the same way `validate` already
-does (CRLF to LF, trailing whitespace trimmed) and checks whether that exact
-text — the complete bullet, including any continuation lines, as one
-contiguous block — appears verbatim inside the already-published
-`## [X.Y.Z]` section. Only then is the fragment deleted. This is precise by
-construction, in every mode: two fragments for the same item necessarily
-have different bodies (they are different bullets), so body matching tells
-them apart where item-number matching could not; and no-tracker fragments
-are matched the same way, since the check never depended on `(#N)` existing
-in the first place. A fragment is only ever removed by this path if its own
-content is already visible in the published section, so a genuinely late
-fragment — for a new item, a second fragment on the same item, or a
-no-tracker fragment — is never touched by it. Rule 3 still holds. This
-closes the gap with a body-text comparison inside the idempotence check, not
-a new command, file, exit code, or recovery flag.
+**Recovering from an interrupted or unwanted `assemble` run — one precise
+operation, not two.** Both "assemble was killed mid-run" and "the releaser
+wants to deliberately discard a completed assembly and redo it before the
+editorial pass" resolve to the same fix, because both are still entirely
+uncommitted:
 
-**There is no `--reassemble` flag.** An earlier draft included one, to let
-the releaser deliberately discard the published section and redo assembly
-from a live rescan — but a CodeRabbit round found it non-transactional (it
-deleted the existing section before validating and building the
-replacement, so a failure between those two steps left `CHANGELOG.md`
-without a section at all, and without one to restore from). Rather than add
-the machinery to make deletion-then-rebuild safe (build the replacement
-first, then swap it in — itself a second atomic-write path to design and
-test), this plan asks whether the flag is still pulling its weight now that
-there is no manifest for it to repair, and the answer is no: nothing is
-committed until the releaser's own Step 5, so "discard and redo" is already
-an ordinary git operation with no data at risk — `git checkout -- CHANGELOG.md
-changelog.d/` before any commit, or `git revert`/`git reset` after one,
-followed by a fresh `assemble` run, which naturally rescans because nothing
-still claims `already_assembled`. Removing the flag deletes the
-transactionality problem along with it, rather than solving it, and shrinks
-the interface `assemble` presents to exactly one command with no redo path
-to keep safe.
+- **Exact paths**: `git checkout -- CHANGELOG.md changelog.d/`. Nothing
+  else needs to be touched, and nothing else may safely be — no other path
+  is part of what `assemble` mutates.
+- **When it is safe — before this command, check one thing**: did `assemble`
+  print its `ASSEMBLE_RESULT=assembled` completion line (with
+  `FRAGMENT_COUNT`, `CARRIED_OVER_COUNT`, and `ITEMS`) on this attempt? If
+  **no** — the process was killed, crashed, or is still running — discarding
+  is safe by construction: assembly never finished, so the editorial pass
+  (Protocol 05's next sub-step) cannot have started yet, and there is
+  nothing of the releaser's to lose. If **yes** — assembly completed, and
+  anything now present beyond the raw assembled output (however small) may
+  be the releaser's own edit — **do not run this command**; there is
+  nothing to recover from, and running it would discard real editorial
+  work. Resume normally instead: the working tree already holds exactly
+  what it should.
+- **What the operator sees**: after a safe discard, `git status --porcelain`
+  reports nothing for `CHANGELOG.md` or `changelog.d/` — the working tree is
+  back to its pre-assembly state, identical to before `assemble` was ever
+  run for this version. A fresh `assemble --version <X.Y.Z>` run then
+  behaves exactly like a first attempt, because it is one: the version
+  label is absent again, so the idempotence check (fact 1) does not
+  short-circuit it.
+- **This does not extend past Step 5.** Once Step 5's commit exists, there
+  is no single command this plan can specify safely in the abstract: that
+  commit also carries the version-manifest bump and whatever else Step 4
+  added, which Decision 3 has no visibility into, and a blanket
+  `git revert`/`git reset` risks undoing those alongside the assembly. A
+  releaser who wants to redo assembly after Step 5 has already committed
+  reconciles that specific commit by hand — `git commit --amend` if it is
+  the tip and unpushed, or a new follow-up commit otherwise — not through
+  guidance this plan states in general terms.
+
+This closes the interruption gap with an operator check the releaser already
+has the information to answer (did the command finish?) and one `git`
+invocation whose safety follows from Protocol 05's own step ordering, not
+from a new command, file, exit code, or identity scheme for `assemble` to
+maintain.
 
 **Audit trail.** The spec's Operational Visibility principle — "released"
 and "not yet released" visible from repository state rather than inferred —
@@ -474,7 +534,7 @@ recorded", each of which must accept a fragment:
 | Surface | What it asserts today | Change |
 | --- | --- | --- |
 | `docs/workflow/development-workflow/protocols/90-batch-orchestrate-work-protocol.md` Step 5.1 table | `CHANGELOG.md` in `files` for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` | Split into two branch-specific conditions: `feature/*`, `fix/*`, `refactor/*` require a strict-grammar `changelog.d/` fragment (not `CHANGELOG.md`, and not README/manifest/malformed paths under `changelog.d/`); `hotfix/*` still requires `CHANGELOG.md` exclusively — a fragment does not satisfy the hotfix gate |
-| `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` | Four per-path "Update CHANGELOG" steps and two PR-body "CHANGELOG entry preview" bullets | Paths 1–3 write a fragment; Path 4 (hotfix) unchanged; previews renamed to "release note preview" |
+| `docs/workflow/development-workflow/protocols/03-implement-development-protocol.md` | Four per-path "Update CHANGELOG" steps and two PR-body "CHANGELOG entry preview" bullets | Paths 1–3 write a fragment; Path 4 (hotfix) unchanged; previews renamed to "release note preview"; add a no-tracker carve-out noting the fragment step comes *after* opening the PR (a draft is sufficient), not before, so the filename's PR-number identifier (Decision 1) is already known when the fragment is created and `validate` runs |
 | `REVIEW.md` (spec exemption, plan exemption, code-review checklist, reviewer-finding list) | Spec and plan branches must not touch `CHANGELOG.md`; code review flags a missing entry | Extend the exemptions to `changelog.d/`; restate the code-review item in terms of a release note |
 | `LLM_RULES.md` | "Do not skip CHANGELOG updates for feature/fix PRs" | Restate as "record a release note"; point at the fragment convention |
 | `.haystack/pr-rules.yml` rule `keep-single-unreleased-changelog-section` | Agents must not create duplicate `[Unreleased]` headers | Keep the rule (it still guards hotfix and release edits); retarget its message to those contexts |
@@ -583,17 +643,22 @@ other workflow helpers, and every exit path prints its documented fields.
          `ASSEMBLE_RESULT=invalid`, exit 1, regardless of the heading or
          shared-block state — a malformed fragment is never assembled and
          never mistaken for "nothing pending."
-      2. Else, if `## [X.Y.Z] - YYYY-MM-DD` already exists in `CHANGELOG.md`:
-         perform the residual-interruption sweep (delete any remaining
-         fragment whose exact, normalized body already appears verbatim in
-         that section — see Decision 3's "Residual interruption window"),
-         then report `ASSEMBLE_RESULT=already_assembled`, exit 0, no
-         `CHANGELOG.md` write.
+      2. Else, if a `## [X.Y.Z]` section already exists in `CHANGELOG.md`
+         — matched on the version label alone, never the trailing
+         `- YYYY-MM-DD` (Decision 3, fact 1) — report
+         `ASSEMBLE_RESULT=already_assembled`, exit 0, no write, no scan of
+         `changelog.d/`. There is no sweep (Decision 3,
+         "Interrupted assembly is a dirty working tree"): an interrupted run
+         is recovered by discarding the uncommitted working tree and
+         re-running, never by identifying and cleaning up a partial state.
       3. Else, if there is no pending fragment and the shared block is
-         empty: `ASSEMBLE_RESULT=no_notes`, exit 3, unless `--allow-empty`.
+         empty: `ASSEMBLE_RESULT=no_notes`, exit 3, unless `--allow-empty`
+         (Decision 3, "`--allow-empty`, defined").
       4. Else: build the version section (Decision 4), write `CHANGELOG.md`
          via temp file, `fsync`, and one atomic `rename(2)`, then delete each
-         fragment that fed the section. `ASSEMBLE_RESULT=assembled`, exit 0.
+         fragment that fed the section. `ASSEMBLE_RESULT=assembled`, exit 0
+         (also the outcome for a `--allow-empty` run with nothing pending —
+         see Decision 3).
       Emits `ASSEMBLE_RESULT`, `VERSION`, `FRAGMENT_COUNT`,
       `CARRIED_OVER_COUNT`, and `ITEMS`. (Spec AC-3, AC-5, AC-6, AC-7, AC-10;
       Decisions 3 and 4)
@@ -611,8 +676,11 @@ New directory:
 - [ ] `changelog.d/README.md` — the filename grammar, the six kinds, the body
       convention (a complete markdown bullet including the `**Bold Title**
       (#N):` prefix, and the no-tracker exception that drops `(#N)`
-      entirely — Decision 1), and a worked example. It is excluded from the
-      fragment scan by name.
+      entirely — Decision 1), the no-tracker authoring order (open the PR
+      *before* naming the fragment, so `<item>` — the PR number — is already
+      known when `validate` runs; never write a fragment under a temporary
+      name and validate that instead), and a worked example. It is excluded
+      from the fragment scan by name.
 
 `changelog.d/` has no other new directory to create: Decision 3 introduces no
 manifest, so there is nothing for a fresh downstream clone to be missing —
@@ -873,16 +941,16 @@ test in `scripts/development-workflow/tests/test-changelog-fragments.sh`.
 | 21 | No `## [Unreleased]` heading | Rejected; the heading is a precondition that `auto-tag-release.yml` also depends on |
 | 22 | Two `## [Unreleased]` headings | Rejected |
 | 23 | Any fragment fails validation, regardless of whether `## [X.Y.Z]` already exists or the shared block is empty | `ASSEMBLE_RESULT=invalid`, exit 1 — validation is checked first (Gate A), so this is never overridden by `already_assembled` or `no_notes` |
-| 24 | `## [X.Y.Z]` already present, every fragment valid | `ASSEMBLE_RESULT=already_assembled`, exit 0, no `CHANGELOG.md` write — the idempotence mechanism (Decision 3). Before returning, the residual-interruption sweep (row 32) still runs |
+| 24 | `## [X.Y.Z]` already present, every fragment valid | `ASSEMBLE_RESULT=already_assembled`, exit 0, no `CHANGELOG.md` write, no scan of `changelog.d/` — the idempotence mechanism (Decision 3). There is no sweep |
 | 25 | Populated shared block plus pending fragments, every fragment valid | Both merged into one version section, each entry once, with no duplicate `### Category` heading; every merged fragment is deleted in the same pass |
 | 26 | Populated shared block, zero fragments | Rename only — the pre-fragment behaviour, preserved. Nothing to delete |
-| 27 | Empty shared block, zero fragments | `ASSEMBLE_RESULT=no_notes`, exit 3, unless `--allow-empty` |
-| 28 | A kind present in fragments but absent from the shared block | Heading created in canonical Keep a Changelog order |
-| 29 | Deterministic ordering | Bullets sorted by kind rank, then by the item field (numerically when it is all digits, lexicographically otherwise), then by full filename — so two runs on the same input produce identical bytes |
-| 30 | `assemble` run twice in a row, no interruption in between | First run: `assembled`, writes the section, deletes every fragment that fed it. Second run: `already_assembled`, exit 0, no write — `changelog.d/` already has nothing left for that version to delete |
-| 31 | `assemble` interrupted after the `CHANGELOG.md` rename succeeds but before every fed fragment is deleted | On the next run, the idempotence check (row 24) fires, then the residual-interruption sweep deletes any fragment still present whose exact, normalized body already appears verbatim in the published `## [X.Y.Z]` section — closing the gap without a rescan of "what should this release contain" (only "what does this section already say") |
-| 32 | A second fragment for the same item as one already published, still pending when the sweep runs | Left untouched — the sweep matches the fragment's own body, not its item reference, so a same-item fragment whose bullet is *not* in the section is correctly distinguished from the one that already fed it |
-| 33 | A fragment sitting in `changelog.d/` whose body does **not** appear in the published `## [X.Y.Z]` section, encountered during the sweep (including a no-tracker fragment, whose body carries no `(#N)` to match on in the first place) | Left untouched — this is what keeps the sweep from ever behaving like a rescan: a fragment is deleted only when its own content is already visible in the published section, never merely because the section exists or because another fragment for the same item is there |
+| 27 | Empty shared block, zero fragments, `--allow-empty` not passed | `ASSEMBLE_RESULT=no_notes`, exit 3 |
+| 28 | Empty shared block, zero fragments, `--allow-empty` passed | `ASSEMBLE_RESULT=assembled`, exit 0, `FRAGMENT_COUNT=0`, `CARRIED_OVER_COUNT=0` — the heading is still renamed and a fresh empty `## [Unreleased]` still inserted, per Decision 4 step 1; nothing is merged or deleted because nothing fed it |
+| 29 | A kind present in fragments but absent from the shared block | Heading created in canonical Keep a Changelog order |
+| 30 | Deterministic ordering | Bullets sorted by kind rank, then by the item field (numerically when it is all digits, lexicographically otherwise), then by full filename — so two runs on the same input produce identical bytes |
+| 31 | `assemble` run twice in a row, no interruption in between | First run: `assembled`, writes the section, deletes every fragment that fed it. Second run: `already_assembled`, exit 0, no write |
+| 32 | `assemble --version 0.44.0` run, then retried later with a different `--date` (e.g. the retry crosses midnight) | Still `already_assembled`, exit 0, no write — the idempotence check matches the version label `[0.44.0]` alone; the `- YYYY-MM-DD` suffix already written is display data from the *first* run and is never re-derived or re-compared |
+| 33 | `assemble` interrupted after the `CHANGELOG.md` rename succeeds but before every fed fragment is deleted | `## [X.Y.Z]` now exists with some fragments still present in `changelog.d/`. Nothing in `assemble` identifies or repairs this automatically — it is an ordinary dirty working tree. The documented recovery is `git checkout -- CHANGELOG.md changelog.d/`, safe here because `assemble` never printed its completion line, so no editorial edit could exist yet (Decision 3, "Recovering from an interrupted or unwanted `assemble` run"); then re-run `assemble`, which behaves as a first attempt |
 
 **Suppression semantics**: not applicable. `changelog-fragments.sh` recognizes
 no inline suppression directives. Declining to write a release note is
@@ -949,7 +1017,7 @@ the first is qualified by every earlier row not matching:
 | --- | --- | --- | --- | --- |
 | 1 | `CHANGELOG.md` lacks exactly one `## [Unreleased]` heading | `error` (exit 1) | Repair the changelog before releasing | Protocol 05 Step 7.2 |
 | 2 | Any fragment fails the grammar or body checks (checked before the heading or shared-block state is considered) | `invalid` (exit 1) | Fix the named fragment on `develop` and re-run; never assemble a partial set, and never report `already_assembled` or `no_notes` for an input that also has a malformed fragment | Protocol 05; `.github/workflows/markdown-lint.yml` |
-| 3 | Every fragment valid; `## [X.Y.Z]` heading already present | `already_assembled` | No `CHANGELOG.md` write (the residual-interruption sweep may still delete leftover fragments — edge cases 31–33); continue | Same |
+| 3 | Every fragment valid; `## [X.Y.Z]` section already present (version label only — the date is never compared) | `already_assembled` | No `CHANGELOG.md` write, no scan of `changelog.d/`; continue | Same |
 | 4 | Every fragment valid; heading absent; no pending fragment and an empty shared block | `no_notes` (exit 3) | Stop; either there is nothing to release or a fragment was lost. Pass `--allow-empty` only for a deliberate no-notes release | Same |
 | 5 | Every fragment valid; heading absent; at least one pending fragment or a non-empty shared block | `assembled` | Continue to the editorial pass (Protocol 05 Step 3) | Protocol 05; `.claude/commands/prepare-release.md`; `.cursor/commands/prepare-release.md`; `.agents/skills/prepare-release/SKILL.md` |
 
@@ -1022,12 +1090,12 @@ for execution, not performed during Plan Ready.
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| An entry is lost or duplicated at the transition release, which is the hardest failure to detect after the fact | Med | High | Design the transition first, not last (tracker handoff). Assembly **moves** the shared block by renaming its heading rather than copying bullets, so duplication requires a coding error rather than an oversight; edge cases 25, 26, and 28 are asserted by fixtures before any protocol text is written |
+| An entry is lost or duplicated at the transition release, which is the hardest failure to detect after the fact | Med | High | Design the transition first, not last (tracker handoff). Assembly **moves** the shared block by renaming its heading rather than copying bullets, so duplication requires a coding error rather than an oversight; edge cases 25, 26, and 29 are asserted by fixtures before any protocol text is written |
 | The sweep misses a surface, leaving one agent instructed to edit `[Unreleased]` and reintroducing the conflict for whatever it builds | Med | High | The residual verification strategy below requires the implementation PR to re-run the repository-wide scan and account for every hit, either as changed or with a written no-change rationale |
 | The risk classifier grades the implementation PR `high` because it touches `.github/workflows/`, blocking delegated merge under the `medium` ceiling | High | Low | Known and filed as #1565. Expect an explicit merge authorization request rather than treating it as a failure |
 | File-level overlap with open PR #1589 on `.github/workflows/markdown-lint.yml` and `05b-graduate-development-protocol.md` | Med | Low | The edits are in disjoint regions (branch filters and a new top section, versus `paths:`/targets and Step 2.5). If #1589 merges first, rebase; the conflict, if any, is a normal two-region docs conflict, not the combinatorial one this item removes |
 | A release-branch delete of a fragment races an edit of that same fragment on `develop` | Low | Low | Git reports a delete/modify conflict on one file owned by one item. Editing a note after its release is already a mistake; document the resolution (keep the deletion) in Protocol 94's `changelog.d/` clause |
-| The residual-interruption sweep (edge cases 31–33) matches a fragment it should not, either deleting an unpublished same-item fragment or leaving an orphan behind | Low | Med | Edge cases 30–33 fixture the interruption, the same-item case, and the no-match case as red tests before the code exists (Implementation Order Steps 2 and 4); the sweep's correctness bar is exact-body matching, not item-reference matching, precisely because item-reference matching was tried and found imprecise in review |
+| An operator misjudges whether `assemble` finished and runs the interruption-recovery discard (`git checkout -- CHANGELOG.md changelog.d/`) after real editorial edits already exist, losing them | Low | Low | The one signal to check — did `assemble` print its `ASSEMBLE_RESULT=assembled` completion line — is unambiguous and already visible in the operator's own terminal; nothing is committed at this point either way (Decision 3), so the worst case is redoing a few minutes of editorial work, discovered immediately, not a silent or unrecoverable loss. Three prior identity schemes for this same interruption (item reference, then exact body text) were each found imprecise in review; this is deliberately not a fourth — it asks the operator a question they can already answer instead of adding another thing for `assemble` to get right |
 | Downstream projects that have not adopted fragments receive protocol updates describing a convention they do not use | Med | Low | Decision 6 keeps Protocol 94's auto-resolution and states the not-yet-adopted case explicitly; Decision 4's assembly works unchanged on a populated shared block, so adoption needs no migration |
 
 ---
@@ -1068,8 +1136,9 @@ There is no manifest file to sample: Decision 3 does not introduce one.
 
 2. **Write the test suite first, red.** Create
    `scripts/development-workflow/tests/test-changelog-fragments.sh` with one
-   case per row of the three parser-risk tables (including edge cases 30–33,
-   the interruption and residual-sweep cases), plus its `# covers:` header
+   case per row of the three parser-risk tables (including edge cases 27–33:
+   `--allow-empty`, deterministic ordering, repeatability, the cross-date
+   retry, and the interrupted-run recovery), plus its `# covers:` header
    lines. Every case fails at this point because the helper does not exist.
 
    *Verify*: running the suite reports failures for every case and no case is
@@ -1082,31 +1151,28 @@ There is no manifest file to sample: Decision 3 does not introduce one.
    the changelog-rewriting cases still fail.
 
 4. **Implement `assemble`.** Precedence order (Gate A: invalid before
-   already_assembled/no_notes/assembled); the idempotence check (does
-   `## [X.Y.Z]` already exist); the residual-interruption sweep on that path,
-   matching each remaining fragment's exact normalized body against the
-   published section text, never its item reference (edge cases 31–33);
-   otherwise: validate pending fragments, build the section (heading rename,
-   per-kind merge, fresh empty `## [Unreleased]`, deterministic ordering),
-   write `CHANGELOG.md` via temp file, `fsync`, and one atomic `rename(2)`,
-   then delete every fragment that fed the section; and `no_notes`. There is
-   no lock, no manifest, and no `--reassemble` flag to implement (Decision 3).
+   already_assembled/no_notes/assembled); the idempotence check, matched on
+   the version label alone, never the trailing date (edge case 32);
+   `--allow-empty`'s defined outcome (edge case 28); otherwise: validate
+   pending fragments, build the section (heading rename, per-kind merge,
+   fresh empty `## [Unreleased]`, deterministic ordering), write
+   `CHANGELOG.md` via temp file, `fsync`, and one atomic `rename(2)`, then
+   delete every fragment that fed the section; and `no_notes`. There is no
+   lock, no manifest, no `--reassemble` flag, and no residual-interruption
+   sweep to implement (Decision 3) — an interrupted run is left exactly as
+   it is; recovery is documented, not automated.
 
    *Verify*: the changelog-rewriting cases pass, and the suite's assembled
    fixtures are checked with `node_modules/.bin/markdownlint-cli2`,
    `markdown-heuristic-lint.py`, and `check-changelog-duplicate-headers.sh`
    inside the suite itself — all three AC-9 checks, not two. A case that
-   kills the process after the `CHANGELOG.md` write but before every fed
-   fragment is deleted, then re-runs `assemble`, confirms the sweep finishes
-   the deletions and `CHANGELOG.md` is unchanged by the second run. A case
-   with a genuinely unrelated fragment present during that same re-run
-   confirms the sweep does not touch it. A case with a **second, still-pending
-   fragment for the same item** as the one just published (edge case 32)
-   confirms the sweep leaves it alone — proving the match is on body content,
-   not the item reference. A case with a no-tracker fragment (no `(#N)` in
-   its body) present during the same re-run confirms the sweep still
-   correctly leaves it untouched when it was never published, and still
-   correctly deletes it when it was.
+   asserts the idempotence check for a second run passing a **different**
+   `--date` than the first still reports `already_assembled` with
+   `CHANGELOG.md` unchanged (edge case 32). A case that kills the process
+   after the `CHANGELOG.md` write but before every fed fragment is deleted,
+   then runs `git checkout -- CHANGELOG.md changelog.d/` followed by a fresh
+   `assemble`, confirms the documented recovery (edge case 33) reproduces
+   the same result as an uninterrupted run, byte-for-byte.
 
 5. **Wire the lint and CI surfaces.** Update
    `.github/workflows/markdown-lint.yml` (`paths:`, both independent

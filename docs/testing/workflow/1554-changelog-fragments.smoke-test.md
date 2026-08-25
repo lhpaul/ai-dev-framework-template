@@ -110,22 +110,45 @@ case, a non-bullet body in the second.
    carries the `9001.fixed.smoke-alpha.md` fragment from Step 1 and any
    fragments the real implementation already added):
    `git checkout -b smoke-test/1554-release-rehearsal`. Steps 4 through 7 all
-   run on this branch; the "Last Step" discards it.
-2. Record, by name, every fragment `list` currently reports as pending.
-3. Run
+   run on this branch; the "Last Step" discards it. Capture the pre-assembly
+   commit for Step 8's independent verification:
+
+   ```bash
+   BASE_COMMIT="$(git rev-parse HEAD)"
+   ```
+
+2. **Confirm the transition scenario (AC-10) has something to carry over
+   before proceeding** — open `CHANGELOG.md` and count the bullets under
+   `## [Unreleased]`. This step exists to exercise carrying over the shared
+   block alongside per-item fragments; a `develop` where that block is
+   already empty (expected *after* this feature's own transition release
+   has merged) would let step 5 below pass without testing AC-10 at all. If
+   the count is zero, add one synthetic bullet by hand before continuing —
+   for example, under a `### Fixed` heading (create it if absent):
+   `- Smoke-test carry-over fixture bullet.` This is scratch-branch-only and
+   discarded with the rest of the rehearsal in the "Last Step"; it is never
+   committed to the branch under test.
+3. Record, by name, every fragment `list` currently reports as pending, and
+   record the shared-block bullet count from step 2 (including the fixture
+   bullet if you added one).
+4. Run
    `bash scripts/development-workflow/changelog-fragments.sh assemble --version 9.9.9`.
-4. Read the reported `FRAGMENT_COUNT`, `CARRIED_OVER_COUNT`, and `ITEMS`.
-5. Open `CHANGELOG.md` and read the new `## [9.9.9]` section.
-6. Run `git status --short` on `changelog.d/`, and confirm against the list
-   from step 2.
+5. Read the reported `FRAGMENT_COUNT`, `CARRIED_OVER_COUNT`, and `ITEMS`, and
+   confirm `CARRIED_OVER_COUNT` matches the count from step 3 — not zero.
+6. Open `CHANGELOG.md` and read the new `## [9.9.9]` section.
+7. Run `git status --short` on `changelog.d/`, and confirm against the list
+   from step 3.
 
 **Expected result**: `ASSEMBLE_RESULT=assembled`. The version section groups
 entries by kind and contains both every pending fragment's bullet and every
-bullet that was previously in `## [Unreleased]`, each appearing once. A fresh,
-empty `## [Unreleased]` heading sits above it. **Every fragment recorded in
-step 2 is now gone from `changelog.d/`** — assembly deletes the fragments it
-gathers in the same operation that writes the section (Decision 3); this is
-the check that the two are inseparable, not that nothing was touched.
+bullet that was previously in `## [Unreleased]` (including the fixture bullet
+from step 2 if one was needed), each appearing once. `CARRIED_OVER_COUNT` is
+never zero, so this step provably exercised the carry-over behavior rather
+than silently skipping it. A fresh, empty `## [Unreleased]` heading sits
+above the new section. **Every fragment recorded in step 3 is now gone from
+`changelog.d/`** — assembly deletes the fragments it gathers in the same
+operation that writes the section (Decision 3); this is the check that the
+two are inseparable, not that nothing was touched.
 
 ### Step 5: Assembly is repeatable
 
@@ -137,9 +160,9 @@ the check that the two are inseparable, not that nothing was touched.
 
 **Expected result**: `ASSEMBLE_RESULT=already_assembled`, exit 0, and
 `CHANGELOG.md` is byte-identical to before the second run. No entry is
-duplicated. There is nothing left in `changelog.d/` for this version to
-delete, so the second run's residual-interruption sweep (Step 4's design,
-Decision 3) is a no-op.
+duplicated, and `changelog.d/` is not scanned at all on this run — the
+idempotence check is decided purely from the `## [9.9.9]` heading already
+being present (Decision 3).
 
 ### Step 6: The releaser's edits survive an interruption, and a late note waits for the next release
 
@@ -185,9 +208,9 @@ definitions from step 2) are intact — verifiable because they are part of the
 committed history, not just the working tree, so nothing was lost by the
 interruption. Step 6's third run (item 7 above) also reports
 `already_assembled`; the late fragment from item 6 above is present in
-`changelog.d/` but absent from both the `## [9.9.9]` section and — because it
-was never gathered — was never a candidate for deletion by the
-residual-interruption sweep either. The duplicate-header and link-reference
+`changelog.d/` but absent from both the `## [9.9.9]` section — because
+`already_assembled` never scans `changelog.d/` at all (Decision 3), it was
+never a candidate for deletion in the first place. The duplicate-header and link-reference
 checks (item 8) both pass (the one script performs both), so the changelog is
 ready to accumulate the next release's notes and its version links resolve.
 
@@ -219,7 +242,12 @@ ready to accumulate the next release's notes and its version links resolve.
 
 **Maps to**: Acceptance Criterion 13
 
-1. Run `git diff` on `CHANGELOG.md` against the pre-assembly commit.
+1. Using the `BASE_COMMIT` captured in Step 4, run:
+
+   ```bash
+   git diff "$BASE_COMMIT" -- CHANGELOG.md
+   ```
+
 2. Read the diff hunks.
 
 **Expected result**: every change is confined to the new `## [Unreleased]`
@@ -239,9 +267,21 @@ altered.
 3. Read Protocol 03 Path 4 and confirm no step instructs the author to write a
    fragment.
 4. **Before switching away**, discard the uncommitted hotfix edit on this
-   branch — its content is not needed by any later step: run
-   `git checkout -- CHANGELOG.md`, then `git status --porcelain` and confirm
-   it prints nothing.
+   branch — its content is not needed by any later step. `git checkout --
+   CHANGELOG.md` discards *every* tracked change in that file, not only the
+   hotfix edit, so confirm the hotfix edit is the only tracked change before
+   running it:
+
+   ```bash
+   changed="$(git diff --name-only)"
+   [ "$changed" = "CHANGELOG.md" ] || {
+     printf 'Refusing to discard unexpected tracked changes:\n%s\n' "$changed" >&2
+     exit 1
+   }
+   git checkout -- CHANGELOG.md
+   ```
+
+   Then run `git status --porcelain` and confirm it prints nothing.
 5. Now switch and discard the branch itself:
    `git checkout <branch under test> && git branch -D <the throwaway branch>`.
 
@@ -275,7 +315,11 @@ release-note readiness check without having edited the shared changelog.
    that has synced the template.
 2. Confirm `changelog.d/README.md` and
    `scripts/development-workflow/changelog-fragments.sh` are present.
-3. Create a fragment following only the README's instructions and run `validate`.
+3. Create a fragment following only the README's instructions, then run:
+
+   ```bash
+   bash scripts/development-workflow/changelog-fragments.sh validate
+   ```
 4. Read `sync-manifest.yaml` and confirm `changelog.d/README.md` is listed under
    `always_sync` and that no entry claims the fragment files themselves.
 
@@ -363,9 +407,9 @@ The following seed data must be present:
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | `VALIDATE_RESULT=invalid` naming a file you did not create | A stray non-markdown file or a leftover rehearsal fragment in `changelog.d/` | Remove it; only fragments and `README.md` belong at the top level of `changelog.d/` |
-| `ASSEMBLE_RESULT=already_assembled` when you expected a fresh draft | The version section already exists from an earlier run | Intended behaviour. There is no `--reassemble` flag (Decision 3). To deliberately redo the section, discard the assembled state first — `git checkout -- CHANGELOG.md changelog.d/` if nothing is committed yet, or `git revert`/`git reset` if it is — accepting that this loses the editorial pass, then re-run `assemble` |
+| `ASSEMBLE_RESULT=already_assembled` when you expected a fresh draft | Either an earlier run completed (check for its `ASSEMBLE_RESULT=assembled` output — if you find it, this is not a bug: resume the editorial pass, do not discard anything), or a run was interrupted before finishing but still wrote the heading | There is no `--reassemble` flag (Decision 3). **Only if you confirmed no completed-assembly output exists and no editorial edits could have started**, discard with `git checkout -- CHANGELOG.md changelog.d/`, confirm `git status --porcelain` is empty, then re-run `assemble`. Once Step 5's real release commit exists, there is no safe blanket command — reconcile that commit by hand instead |
 | `ASSEMBLE_RESULT=no_notes` | Nothing is pending and the shared block is empty | Confirm the notes were not already assembled by an earlier release before reaching for `--allow-empty` |
-| A fragment you expected `assemble` to gather is still present in `changelog.d/` after a run that reported `assembled` | It arrived after that run started (a late cherry-pick or a fresh scan started before the fragment landed) | Correct behaviour, not a bug — Decision 3 requires a note recorded after assembly to wait for the next release. To deliberately include it now, discard the assembled state (see the `already_assembled` row above) and re-run `assemble` fresh |
+| A fragment you expected `assemble` to gather is still present in `changelog.d/` after a run that reported `assembled` | It arrived after that run started (a late cherry-pick or a fresh scan started before the fragment landed) | Correct behaviour, not a bug — Decision 3 requires a note recorded after assembly to wait for the next release. To deliberately include it now, apply the same discard-and-rerun guidance as the `already_assembled` row above, with the same safety check |
 | A `changelog.d/` path appears in a merge conflict | Two branches used the same item identifier | Treat as non-trivial per Protocol 94; find out which branch is misnamed rather than combining the files |
 | Duplicate `### Category` headings after assembly | A defect in the per-kind merge | Report against this feature; `check-changelog-duplicate-headers.sh` is the detector |
 
