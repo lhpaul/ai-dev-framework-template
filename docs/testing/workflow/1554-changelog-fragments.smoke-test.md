@@ -29,11 +29,13 @@ repository root.
 | Item | Value |
 | --- | --- |
 | Fragment directory | `changelog.d/` |
-| Manifest directory (assembled, not yet published) | `changelog.d/manifests/` |
-| Manifest archive (published/consumed) | `changelog.d/manifests/consumed/` |
 | Helper | `scripts/development-workflow/changelog-fragments.sh` |
 | Rehearsal version | `9.9.9` (never released; used only for this runbook) |
 | Scratch item identifiers | `9001`, `9002`, `9003` |
+
+There is no manifest directory: `assemble` writes `CHANGELOG.md` and deletes
+the fragments it gathered in the same invocation, so there is no second
+artifact for this runbook to inspect.
 
 ---
 
@@ -74,12 +76,12 @@ than Step 0's, and the only changed path is the new fragment.
 
 1. From a scratch clone or worktree, create a local `base` branch from the
    branch under test: `git checkout -b base`.
-2. From `base`, create two branches: `git checkout -b item-a base` and
-   `git checkout -b item-b base`.
+2. From `base`, create `item-a` and switch to it: `git checkout -b item-a base`.
 3. On `item-a`, add `changelog.d/9002.added.smoke-beta.md`; commit.
-4. On `item-b`, add `changelog.d/9003.fixed.smoke-gamma.md`; commit.
-5. Check out `base` and merge `item-a` into it (`git merge item-a`).
-6. Merge `item-b` into `base` (`git merge item-b`).
+4. From `base`, create `item-b` and switch to it: `git checkout -b item-b base`.
+5. On `item-b`, add `changelog.d/9003.fixed.smoke-gamma.md`; commit.
+6. Check out `base` and merge `item-a` into it (`git merge item-a`).
+7. Merge `item-b` into `base` (`git merge item-b`).
 
 **Expected result**: neither merge reports a conflict, no manual resolution is
 performed, and after both merges `base` contains both fragment files with
@@ -100,28 +102,30 @@ scratch clone) once this step is done — they are not reused by later steps.
 each names the offending path and the reason — an unrecognized kind in the first
 case, a non-bullet body in the second.
 
-### Step 4: Assemble the draft
+### Step 4: Assemble the draft — and its fragments are gone in the same step
 
-**Maps to**: Acceptance Criteria 3 and 10
+**Maps to**: Acceptance Criteria 3, 7, and 10
 
 1. Create and check out a scratch branch **from the branch under test** (so it
    carries the `9001.fixed.smoke-alpha.md` fragment from Step 1 and any
    fragments the real implementation already added):
    `git checkout -b smoke-test/1554-release-rehearsal`. Steps 4 through 7 all
    run on this branch; the "Last Step" discards it.
-2. Run
+2. Record, by name, every fragment `list` currently reports as pending.
+3. Run
    `bash scripts/development-workflow/changelog-fragments.sh assemble --version 9.9.9`.
-3. Read the reported `FRAGMENT_COUNT`, `CARRIED_OVER_COUNT`, and `ITEMS`.
-4. Open `CHANGELOG.md` and read the new `## [9.9.9]` section.
-5. Open `changelog.d/manifests/v9.9.9.txt`.
-6. Run `git status --short` on `changelog.d/`.
+4. Read the reported `FRAGMENT_COUNT`, `CARRIED_OVER_COUNT`, and `ITEMS`.
+5. Open `CHANGELOG.md` and read the new `## [9.9.9]` section.
+6. Run `git status --short` on `changelog.d/`, and confirm against the list
+   from step 2.
 
 **Expected result**: `ASSEMBLE_RESULT=assembled`. The version section groups
 entries by kind and contains both every pending fragment's bullet and every
 bullet that was previously in `## [Unreleased]`, each appearing once. A fresh,
-empty `## [Unreleased]` heading sits above it. The manifest names exactly the
-fragments that contributed. **No fragment file has been deleted or modified** —
-this is the check that assembly destroys nothing.
+empty `## [Unreleased]` heading sits above it. **Every fragment recorded in
+step 2 is now gone from `changelog.d/`** — assembly deletes the fragments it
+gathers in the same operation that writes the section (Decision 3); this is
+the check that the two are inseparable, not that nothing was touched.
 
 ### Step 5: Assembly is repeatable
 
@@ -133,28 +137,27 @@ this is the check that assembly destroys nothing.
 
 **Expected result**: `ASSEMBLE_RESULT=already_assembled`, exit 0, and
 `CHANGELOG.md` is byte-identical to before the second run. No entry is
-duplicated.
+duplicated. There is nothing left in `changelog.d/` for this version to
+delete, so the second run's residual-interruption sweep (Step 4's design,
+Decision 3) is a no-op.
 
-### Step 6: The releaser's edits survive, and a late note waits for the next release
+### Step 6: The releaser's edits survive an interruption, and a late note waits for the next release
 
-**Maps to**: Acceptance Criteria 4, 5, and 6
+**Maps to**: Acceptance Criteria 4, 5, 6, and 8
 
 1. Edit the `## [9.9.9]` section by hand: merge two bullets and shorten a third,
    the way the release editorial pass does.
 2. Add the `[9.9.9]` link-reference definition at the bottom of `CHANGELOG.md`
-   and update the `[Unreleased]` definition, following Protocol 05 — this is
-   Protocol 05 Step 3's "link-reference definitions" sub-step, which happens
-   before `consume`, not after (Step 7 below only verifies it).
-3. Commit the assembled draft, the manifest, the editorial edit, and the
-   link-reference definitions on the scratch branch — this is what a real
-   release branch looks like at this point in Protocol 05 Step 3, and it is
-   what makes the next step a genuine resumption test rather than a
-   dirty-working-tree no-op. (The restructured Protocol 05 Step 3 actually
-   commits **twice** before `consume` — once right after `assemble`, once
-   here, after the editorial pass — so that `--repair-manifest` always has a
-   commit to restore from; this rehearsal folds both into the one commit
-   below, since the property being tested is "was anything committed before
-   the interruption," not the exact commit count.)
+   and update the `[Unreleased]` definition, following Protocol 05 Step 3's
+   link-reference sub-step.
+3. Commit `CHANGELOG.md` on the scratch branch — this is what a real release
+   branch looks like just before Protocol 05's Step 5 commit, and it is what
+   makes the next step a genuine resumption test rather than a
+   dirty-working-tree no-op. (In the real protocol this is the *only* commit
+   in the whole sequence — Step 5, unmodified. This rehearsal commits early
+   purely to simulate the interruption in step 4 below; a real release
+   preparation would still be sitting uncommitted at this point, exactly like
+   today's editorial pass, and that is fine — see Known Limitations.)
 4. Simulate an interruption: switch to another branch and back. `git status`
    is genuinely clean before this switch, because step 3 already committed
    everything on this branch and nothing has touched the working tree since.
@@ -165,40 +168,24 @@ duplicated.
    uncommitted and untracked — it represents a note added to the release
    branch, e.g. via a late cherry-pick, after assembly already ran).
 7. Run `assemble --version 9.9.9` a third time.
-8. Read `CHANGELOG.md` and `changelog.d/`.
+8. Run `bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md`
+   to verify the `[9.9.9]` and `[Unreleased]` link-reference definitions added
+   in step 2 are both well-formed.
+9. Read `CHANGELOG.md` and `changelog.d/`.
 
 **Expected result**: step 5's post-interruption run reports `already_assembled`
 without rewriting anything, and the hand edits (including the link-reference
 definitions from step 2) are intact — verifiable because they are part of the
 committed history, not just the working tree, so nothing was lost by the
 interruption. Step 6's third run (item 7 above) also reports
-`already_assembled` (the manifest still matches the committed set); the late
-fragment from item 6 above is present in `changelog.d/` but absent from both
-the `## [9.9.9]` section and the manifest.
+`already_assembled`; the late fragment from item 6 above is present in
+`changelog.d/` but absent from both the `## [9.9.9]` section and — because it
+was never gathered — was never a candidate for deletion by the
+residual-interruption sweep either. The duplicate-header and link-reference
+checks (item 8) both pass (the one script performs both), so the changelog is
+ready to accumulate the next release's notes and its version links resolve.
 
-### Step 7: Publish consumes the notes
-
-**Maps to**: Acceptance Criteria 5, 7, and 8
-
-1. Run `bash scripts/development-workflow/changelog-fragments.sh consume --version 9.9.9`.
-2. List `changelog.d/`, `changelog.d/manifests/`, and
-   `changelog.d/manifests/consumed/`.
-3. Run `consume --version 9.9.9` a second time.
-4. Run `bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md`
-   to verify the `[9.9.9]` and `[Unreleased]` link-reference definitions added
-   in Step 6 are both well-formed.
-
-**Expected result**: `CONSUME_RESULT=consumed` with a removed count matching the
-manifest. Every manifest-listed fragment is gone; `changelog.d/manifests/` no
-longer has a `v9.9.9.txt` entry, but `changelog.d/manifests/consumed/v9.9.9.txt`
-now exists (moved, not deleted — Decision 3's durable "already consumed"
-record). The late fragment from Step 6 remains. The second run reports
-`already_consumed` and exits 0, confirmed by the file's presence under
-`consumed/`. The duplicate-header and link-reference checks both pass (the one
-script performs both), so the changelog is ready to accumulate the next
-release's notes and its version links resolve.
-
-### Step 8: The published section passes the repository's document checks
+### Step 7: The published section passes the repository's document checks
 
 **Maps to**: Acceptance Criterion 9
 
@@ -222,7 +209,7 @@ release's notes and its version links resolve.
 
 **Expected result**: all three exit 0 with no violations reported.
 
-### Step 9: Published history is untouched
+### Step 8: Published history is untouched
 
 **Maps to**: Acceptance Criterion 13
 
@@ -234,21 +221,25 @@ heading, the new `## [9.9.9]` section, and the link-reference definitions. No
 line inside any previously published version section is added, removed, or
 altered.
 
-### Step 10: Hotfixes are unaffected
+### Step 9: Hotfixes are unaffected
 
 **Maps to**: Acceptance Criterion 11
 
-1. Follow Protocol 03 Path 4's changelog step on a scratch branch: write a new
-   versioned section directly below `## [Unreleased]`.
+1. Create and check out a separate, throwaway scratch branch — not
+   `smoke-test/1554-release-rehearsal` — and follow Protocol 03 Path 4's
+   changelog step on it: write a new versioned section directly below
+   `## [Unreleased]`.
 2. Run `bash scripts/development-workflow/changelog-fragments.sh list`.
 3. Read Protocol 03 Path 4 and confirm no step instructs the author to write a
    fragment.
+4. Discard this branch (`git checkout <branch under test> && git branch -D
+   <the throwaway branch>`); its changes are not needed by any later step.
 
 **Expected result**: the hotfix section is written directly into `CHANGELOG.md`,
 the pending-note list is unchanged by it, and the hotfix path's instructions are
 identical to the pre-change version.
 
-### Step 11: Readiness accepts a fragment
+### Step 10: Readiness accepts a fragment
 
 **Maps to**: Acceptance Criterion 2
 
@@ -266,7 +257,7 @@ identical to the pre-change version.
 **Expected result**: the query returns `true`, so the PR satisfies the
 release-note readiness check without having edited the shared changelog.
 
-### Step 12: A fresh consumer needs no setup
+### Step 11: A fresh consumer needs no setup
 
 **Maps to**: Acceptance Criterion 12
 
@@ -283,18 +274,35 @@ configuration, no directory creation, and no manifest edit.
 
 ### Last Step: Restore the working tree
 
-1. Check out the branch under test, then delete the scratch branch
+1. Commit or discard any remaining uncommitted change on the rehearsal branch
+   (Step 6 leaves the late fragment `changelog.d/9002.changed.smoke-late.md`
+   untracked): switch to `smoke-test/1554-release-rehearsal`, run
+   `git status --short`, and resolve anything it reports before the next
+   step, so the branch switch below cannot be refused or carry rehearsal
+   state forward. (Step 9 uses its own separate scratch branch for the
+   hotfix scenario and is unaffected by this step.)
+2. Check out the branch under test, then delete the scratch branch
    (`git branch -D smoke-test/1554-release-rehearsal`) — this removes the
    scratch branch's own committed history, including the rehearsal
-   `## [9.9.9]` section. Branch deletion does not remove untracked files, so
-   also run `git clean -fdx -- 'changelog.d/9001.*' 'changelog.d/9002.*'
-   'changelog.d/9003.*' 'changelog.d/manifests'` (or remove those paths by
-   hand) from the branch under test, to catch the Step 6 late fragment (added
-   uncommitted on the scratch branch, and therefore still present as an
-   untracked file after the branch switch) along with Steps 1 and 3's
-   fragments and the rehearsal manifest directory.
-2. Run `git status` and confirm the working tree matches the branch under test.
-3. Run `bash scripts/development-workflow/changelog-fragments.sh list` and
+   `## [9.9.9]` section.
+3. Branch deletion does not remove untracked files. From the branch under
+   test, remove exactly the rehearsal artifacts by name — never a directory
+   glob, which could delete files this runbook did not create:
+
+   ```bash
+   rm -f changelog.d/9001.fixed.smoke-alpha.md \
+         changelog.d/9001.improved.smoke-bad.md \
+         changelog.d/9001.fixed.smoke-bad.md \
+         changelog.d/9002.added.smoke-beta.md \
+         changelog.d/9002.changed.smoke-late.md \
+         changelog.d/9003.fixed.smoke-gamma.md
+   ```
+
+   Before running it, run `git status --short -- 'changelog.d/900*'` and
+   confirm every path it lists is one of the six above — if anything else
+   appears, stop and remove files by hand instead of running the command.
+4. Run `git status` and confirm the working tree matches the branch under test.
+5. Run `bash scripts/development-workflow/changelog-fragments.sh list` and
    confirm the pending count matches Step 0's recording.
 
 ---
@@ -308,18 +316,18 @@ each one without restating its full text, to avoid the two documents drifting
 apart.
 
 - [ ] AC-1 — no merge conflict, both notes survive (Step 2)
-- [ ] AC-2 — readiness passes on a fragment alone (Steps 1 and 11)
+- [ ] AC-2 — readiness passes on a fragment alone (Steps 1 and 10)
 - [ ] AC-3 — assembly gathers every pending note, grouped by kind (Step 4)
-- [ ] AC-4 — editorial edits survive to publication (Steps 6 and 7)
+- [ ] AC-4 — editorial edits survive to publication (Step 6)
 - [ ] AC-5 — interrupted-then-resumed preparation loses nothing (Step 6)
 - [ ] AC-6 — a post-assembly note waits for the next release (Step 6)
-- [ ] AC-7 — no duplicate entries after a repeat assembly (Steps 5 and 7)
-- [ ] AC-8 — changelog and version links are ready for the next release (Step 7)
-- [ ] AC-9 — the published section passes existing document checks (Steps 3 and 8)
+- [ ] AC-7 — no duplicate entries after a repeat assembly (Steps 4 and 5)
+- [ ] AC-8 — changelog and version links are ready for the next release (Step 6)
+- [ ] AC-9 — the published section passes existing document checks (Steps 3 and 7)
 - [ ] AC-10 — transition release merges shared-block and per-item notes once each (Step 4)
-- [ ] AC-11 — the hotfix path is unaffected (Step 10)
-- [ ] AC-12 — a fresh consumer needs no setup (Step 12)
-- [ ] AC-13 — published history is unchanged (Step 9)
+- [ ] AC-11 — the hotfix path is unaffected (Step 9)
+- [ ] AC-12 — a fresh consumer needs no setup (Step 11)
+- [ ] AC-13 — published history is unchanged (Step 8)
 
 ---
 
@@ -331,7 +339,7 @@ The following seed data must be present:
 | --- | --- | --- |
 | Scratch fragments `9001`, `9002`, `9003` | Valid notes across several kinds, plus two deliberately malformed ones | Created by hand in Steps 1, 2, 3, and 6 |
 | Populated shared block | The transition-release case | Present on `develop` until the first release after this change merges; recreate by hand in a scratch branch afterwards |
-| Rehearsal version `9.9.9` | Assembly and consumption without touching a real release | Passed with `--version` in Steps 4 through 7 |
+| Rehearsal version `9.9.9` | Assembly without touching a real release | Passed with `--version` in Steps 4 through 6 |
 
 ---
 
@@ -339,16 +347,10 @@ The following seed data must be present:
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| `VALIDATE_RESULT=invalid` naming a file you did not create | A stray non-markdown file or a leftover rehearsal fragment in `changelog.d/` | Remove it; only fragments, `README.md`, and the manifests directory belong there |
+| `VALIDATE_RESULT=invalid` naming a file you did not create | A stray non-markdown file or a leftover rehearsal fragment in `changelog.d/` | Remove it; only fragments and `README.md` belong at the top level of `changelog.d/` |
 | `ASSEMBLE_RESULT=already_assembled` when you expected a fresh draft | The version section already exists from an earlier run | Intended behaviour. Use `--reassemble` only if you accept losing the editorial pass on that section |
-| `ASSEMBLE_RESULT=no_notes` | Nothing is pending and the shared block is empty | Confirm the notes were not consumed by an earlier release before reaching for `--allow-empty` |
-| `CONSUME_RESULT=manifest_missing` | `consume` ran before `assemble`, or on the wrong branch | Run `assemble` first, and confirm you are on the release branch |
-| `ASSEMBLE_RESULT=assembled_unmanifested` | Assembly completed (the manifest is written before `CHANGELOG.md` — Decision 3), but the manifest was subsequently lost by something other than `consume` (a manual delete, a bad merge, a corrupted checkout) | Run `assemble --repair-manifest` — restores the manifest from git history. **Never** re-run `--reassemble` as the default fix: it rescans the live directory and can pull in a fragment added since the original assembly, violating "a note recorded after assembly waits for the next release" |
-| `ASSEMBLE_RESULT=manifest_unrecoverable` | `--repair-manifest` ran on a full (non-shallow) clone and found no commit on this branch that ever wrote the manifest for this version | Reconcile by hand: compare the `## [X.Y.Z]` section's bullets against fragment bodies still in `changelog.d/`. Only fall back to `--reassemble` if you have manually confirmed no fragment has landed since the original assembly |
-| `ASSEMBLE_RESULT=history_truncated` | `--repair-manifest` ran on a **shallow** clone (`git rev-parse --is-shallow-repository` is true), so it cannot rule out a commit that exists outside the fetched depth | Run `git fetch --unshallow`, then re-run `assemble --repair-manifest`. Do not treat this as `manifest_unrecoverable` — the data may still exist, only the clone is incomplete |
-| `CONSUME_RESULT=not_assembled` | `consume` was run before `assemble` finished writing the `## [X.Y.Z]` section — the manifest exists but the heading does not | Nothing was deleted. Run `assemble` first (it resumes safely from the frozen manifest), then `consume` |
-| `CONSUME_RESULT=inconsistent` | Neither `changelog.d/manifests/v<X.Y.Z>.txt` nor `changelog.d/manifests/consumed/v<X.Y.Z>.txt` exists, but the `## [X.Y.Z]` heading is present | Stop and reconcile by hand; do not assume this means already-published |
-| `ASSEMBLE_RESULT=locked` / `CONSUME_RESULT=locked` | Another `assemble`/`consume` invocation for the same version is already running, **or** a prior invocation was killed and left its lock directory behind | Read the `owner` file inside the reported lock directory (PID, hostname, start time). If that PID is running on that host, wait for it to finish. If it is not, the lock is stale — remove the lock directory only after confirming this; guessing wrong recreates the interleaving the lock exists to prevent |
+| `ASSEMBLE_RESULT=no_notes` | Nothing is pending and the shared block is empty | Confirm the notes were not already assembled by an earlier release before reaching for `--allow-empty` |
+| A fragment you expected `assemble` to gather is still present in `changelog.d/` after a run that reported `assembled` | It arrived after that run started (a late cherry-pick or a fresh scan started before the fragment landed) | Correct behaviour, not a bug — Decision 3 requires a note recorded after assembly to wait for the next release. Run `assemble --reassemble` only if you deliberately want to redo the section and include it now |
 | A `changelog.d/` path appears in a merge conflict | Two branches used the same item identifier | Treat as non-trivial per Protocol 94; find out which branch is misnamed rather than combining the files |
 | Duplicate `### Category` headings after assembly | A defect in the per-kind merge | Report against this feature; `check-changelog-duplicate-headers.sh` is the detector |
 
@@ -356,12 +358,28 @@ The following seed data must be present:
 
 ## Known Limitations
 
-- Steps 4 through 7 rehearse a release using version `9.9.9` rather than cutting
-  a real one. A genuine release additionally opens the production and backport
-  PRs, which this runbook does not exercise; Protocol 05's own steps cover that.
-- Step 12's downstream check inspects a fresh clone of this repository. Verifying
-  a real consumer project requires a sync-template run in that project, which is
-  outside this runbook's scope.
+- Steps 4 through 6 rehearse a release using version `9.9.9` rather than
+  cutting a real one. A genuine release additionally opens the production and
+  backport PRs, which this runbook does not exercise; Protocol 05's own steps
+  cover that.
+- Step 6 commits the assembled draft and the editorial pass on the scratch
+  branch before simulating the interruption, so the interruption-and-resume
+  behaviour this runbook exercises is "resume on a different clone or after
+  the local working tree is lost." A real release preparation more often sits
+  uncommitted through the whole of Protocol 05's existing Step 3 — exactly
+  like today's manual editorial pass already does — and resumes simply by
+  returning to the same working tree, with no git operation involved at all.
+  Both cases are covered by the design (Decision 3); this runbook exercises
+  the git-level one because it is the one that needs a "does it actually
+  work" check, not the trivial one.
+- The one narrow interruption window Decision 3 still names — a process
+  killed after the `CHANGELOG.md` write but before every fed fragment is
+  deleted — is exercised by the implementation's automated test suite
+  (edge cases 30–31), not by this runbook: reliably killing a process
+  mid-loop is not something a manual runbook can script.
+- Step 11's downstream check inspects a fresh clone of this repository.
+  Verifying a real consumer project requires a sync-template run in that
+  project, which is outside this runbook's scope.
 - The transition-release case (Step 4 with a populated shared block) can be
   exercised faithfully only once against real data. Afterwards it must be
   reproduced with a hand-built fixture, which is why the implementation's test
