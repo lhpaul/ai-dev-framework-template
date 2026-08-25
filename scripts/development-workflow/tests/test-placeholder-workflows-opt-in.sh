@@ -58,8 +58,12 @@ assert_contains "$REGRESSION_WORKFLOW" 'pr_number:' \
   "regression placeholder dispatch must accept the PR number"
 assert_contains "$REGRESSION_WORKFLOW" 'head_sha:' \
   "regression placeholder dispatch must accept the PR head SHA"
+assert_contains "$REGRESSION_WORKFLOW" 'base_ref:' \
+  "regression placeholder dispatch must accept the PR base branch"
 assert_contains "$REGRESSION_WORKFLOW" "github\\.event_name == 'workflow_dispatch'" \
   "regression placeholder must run when explicitly dispatched"
+assert_contains "$REGRESSION_WORKFLOW" "startsWith\\(inputs\\.base_ref, 'develop-'\\)" \
+  "regression placeholder dispatch must preserve the integration-branch base gate"
 assert_contains "$REGRESSION_WORKFLOW" 'inputs\.head_sha' \
   "regression placeholder checkout must use the dispatched PR head SHA"
 assert_contains "$REGRESSION_WORKFLOW" "ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION" \

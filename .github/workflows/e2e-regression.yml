@@ -12,6 +12,9 @@ on:
       head_ref:
         description: Pull request head branch name.
         required: false
+      base_ref:
+        description: Pull request base branch name.
+        required: true
   pull_request:
     types: [labeled, synchronize, reopened]
     branches:
@@ -35,7 +38,14 @@ jobs:
     if: >-
       vars.ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION == 'true' &&
       (
-        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          (
+            inputs.base_ref == 'develop' ||
+            startsWith(inputs.base_ref, 'develop-') ||
+            inputs.base_ref == 'main'
+          )
+        ) ||
         (github.event.action == 'labeled' && github.event.label.name == 'ready-for-regression') ||
         (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'ready-for-regression'))
       )

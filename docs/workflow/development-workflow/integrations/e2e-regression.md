@@ -21,7 +21,7 @@ The `ready-for-regression` label is applied by the orchestrator (Step 7b in
 `91-orchestrate-work-protocol.md`) after the automated reviewer loop (Step 7) is
 clean, and before the CI loop (Step 8). The `pr-policy.yml` workflow also
 auto-applies the label to same-repository implementation PRs on open, reopen, or
-ready-for-review, dispatches this regression workflow for the PR head after a
+ready-for-review, dispatches this regression workflow on the PR head ref after a
 successful label application, and removes stale labels on new pushes only when
 the reviewer loop has not yet posted its canonical summary. The explicit
 dispatch matters because labels applied with the default GitHub Actions token do
@@ -49,13 +49,21 @@ falls back to the PR label state for PR-triggered runs:
 
 ```yaml
 if: >-
-  github.event_name == 'workflow_dispatch' ||
+  (
+    github.event_name == 'workflow_dispatch' &&
+    (
+      inputs.base_ref == 'develop' ||
+      startsWith(inputs.base_ref, 'develop-') ||
+      inputs.base_ref == 'main'
+    )
+  ) ||
   (github.event.action == 'labeled' && github.event.label.name == 'ready-for-regression') ||
   (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'ready-for-regression'))
 ```
 
 - First clause: runs when `pr-policy.yml` explicitly dispatches regression for
-  the PR head after applying `ready-for-regression`
+  the PR head after applying `ready-for-regression`, preserving the same base
+  branch scope as the PR trigger
 - Second clause: fires when the label is just applied by a human or by a token
   that creates downstream workflow events
 - Third clause: fires on `synchronize` (new push) or `reopened` if the label is

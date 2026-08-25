@@ -64,6 +64,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EVENT_BRANCH: ${{ github.event.pull_request.head.ref }}
+          EVENT_BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           COMMENT_BODY: ${{ github.event.comment.body }}
           REGRESSION_WORKFLOW: "e2e-regression.yml"
@@ -138,9 +139,11 @@ jobs:
           dispatch_regression_workflow() {
             gh workflow run "$REGRESSION_WORKFLOW" \
               --repo "$REPO" \
+              --ref "$BRANCH" \
               -f pr_number="$PR_NUMBER" \
               -f head_sha="$HEAD_SHA" \
-              -f head_ref="$BRANCH"
+              -f head_ref="$BRANCH" \
+              -f base_ref="$BASE_BRANCH"
           }
 
           fetch_reviewer_loop_summary_count() {
@@ -202,6 +205,13 @@ jobs:
               "Could not resolve PR head branch. Re-run the workflow to retry."
             exit 1
           fi
+          if ! BASE_BRANCH="$(printf '%s\n' "$pr_json" | jq -er '.base.ref')"; then
+            echo "ERROR: pull request base branch is missing for PR #${PR_NUMBER}." >&2
+            post_failure_status_if_possible \
+              "$HEAD_SHA" \
+              "Could not resolve PR base branch. Re-run the workflow to retry."
+            exit 1
+          fi
           if ! HEAD_REPO="$(printf '%s\n' "$pr_json" | jq -er '.head.repo.full_name')"; then
             echo "ERROR: pull request head repository is missing for PR #${PR_NUMBER}." >&2
             post_failure_status_if_possible \
@@ -213,10 +223,11 @@ jobs:
           if [ "$EVENT_NAME" != "issue_comment" ]; then
             HEAD_SHA="${EVENT_HEAD_SHA:-$HEAD_SHA}"
             BRANCH="${EVENT_BRANCH:-$BRANCH}"
+            BASE_BRANCH="${EVENT_BASE_BRANCH:-$BASE_BRANCH}"
             HEAD_REPO="${EVENT_HEAD_REPO:-$HEAD_REPO}"
           fi
 
-          echo "PR #${PR_NUMBER}: evaluating branch '${BRANCH}' against in-scope prefixes: ${IN_SCOPE_PREFIXES}"
+          echo "PR #${PR_NUMBER}: evaluating branch '${BRANCH}' targeting '${BASE_BRANCH}' against in-scope prefixes: ${IN_SCOPE_PREFIXES}"
 
           if [ "$HEAD_REPO" != "$REPO" ]; then
             echo "PR #${PR_NUMBER} head repository '${HEAD_REPO}' differs from base '${REPO}'; skipping privileged PR policy mutation."
@@ -242,12 +253,24 @@ jobs:
             exit 0
           fi
 
+          regression_base_in_scope=false
+          case "$BASE_BRANCH" in
+            develop|develop-*|main) regression_base_in_scope=true ;;
+          esac
+
           if [ "$EVENT_NAME" != "issue_comment" ]; then
             case "$EVENT_ACTION" in
               opened|reopened|ready_for_review)
-                label_present_before=false
+                label_present_before=unknown
                 if pr_has_regression_label; then
-                  label_present_before=true
+                  label_present_before=present
+                else
+                  label_lookup_status=$?
+                  if [ "$label_lookup_status" -eq 1 ]; then
+                    label_present_before=absent
+                  else
+                    echo "WARN: Could not determine whether '${LABEL_NAME}' existed before this run; dispatch-failure cleanup will preserve the label." >&2
+                  fi
                 fi
 
                 echo "Branch '${BRANCH}' is in scope; ensuring and applying ${LABEL_NAME}."
@@ -261,12 +284,14 @@ jobs:
                   LABEL_POLICY_FAILED=true
                 else
                   echo "Label '${LABEL_NAME}' applied to PR #${PR_NUMBER}."
-                  if dispatch_regression_workflow; then
+                  if [ "$regression_base_in_scope" != "true" ]; then
+                    echo "PR #${PR_NUMBER} targets '${BASE_BRANCH}', which is outside regression workflow branch scope. Skipping regression dispatch."
+                  elif dispatch_regression_workflow; then
                     echo "Dispatched '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER} at ${HEAD_SHA}."
                   else
                     echo "WARN: Failed to dispatch '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER}. Continuing to reviewer-loop guard status." >&2
                     LABEL_POLICY_FAILED=true
-                    if [ "$label_present_before" = "false" ]; then
+                    if [ "$label_present_before" = "absent" ]; then
                       echo "Removing '${LABEL_NAME}' because regression dispatch failed after this workflow applied it."
                       if ! gh pr edit "$PR_NUMBER" \
                         --repo "$REPO" \
@@ -274,7 +299,7 @@ jobs:
                         echo "WARN: Failed to remove ${LABEL_NAME} from PR #${PR_NUMBER} after dispatch failure." >&2
                       fi
                     else
-                      echo "Leaving pre-existing '${LABEL_NAME}' in place after dispatch failure."
+                      echo "Leaving '${LABEL_NAME}' in place after dispatch failure because its prior state was '${label_present_before}'."
                     fi
                   fi
                 fi
