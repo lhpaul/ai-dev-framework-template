@@ -132,9 +132,9 @@ Before invoking `LOCAL_AI_REVIEWER_COMMAND`, `local-ai-reviewer.sh` performs the
 - Check unresolved reviewer threads when GitHub metadata is available.
 - Classify missing tools, credentials, timeout, malformed payloads, and head mismatch before normalization.
 
-If a deterministic check finds a blocking workflow violation, the script may return `RESULT=needs_fixes`
-without invoking the model command. If it cannot determine whether the result is safe, it returns
-`RESULT=escalate`.
+If a deterministic check finds a blocking workflow violation, important workflow gap, or clear in-scope
+suggestion that should be fixed before readiness, the script may return `RESULT=needs_fixes` without invoking
+the model command. If it cannot determine whether the result is safe, it returns `RESULT=escalate`.
 
 ### Decision 4 - Context bundle is explicit and auditable
 
@@ -215,9 +215,11 @@ The companion script emits only these terminal raw result values:
 - `skipped`
 - `escalate`
 
-Advisory-only local findings emit `RESULT=clean`, `BLOCKING_COUNT=0`, `SUGGESTION_COUNT>0`, and
-`COMMENT_COUNT` equal to total advisory suggestions. Do not emit `RESULT=advisory` unless a separate item
-adds normal-loop support for that raw value.
+Scope-expanding or decision-bound advisory-only local findings emit `RESULT=clean`, `BLOCKING_COUNT=0`,
+`SUGGESTION_COUNT>0`, and `COMMENT_COUNT` equal to total advisory suggestions. Clear in-scope suggestions,
+important findings, and blocking findings emit `RESULT=needs_fixes` because they should be addressed before
+the PR reaches readiness. Do not emit `RESULT=advisory` unless a separate item adds normal-loop support for
+that raw value.
 
 The `pr-review-loop.sh` adapter maps companion exit codes to this contract and forwards structured fields
 without silently downgrading malformed output.
@@ -231,7 +233,8 @@ platform is used as a workflow gate.
 Minimum parser fixtures:
 
 - Clean output with advisory count zero.
-- Clean output with advisory suggestions and no blocking findings.
+- Clean output with scope-expanding or decision-bound advisory suggestions and no blocking findings.
+- `needs_fixes` output for clear in-scope suggestions and important findings.
 - Blocking finding with file path and line.
 - Blocking repo-wide finding without line.
 - `needs_rerun` with retry reason.
@@ -266,7 +269,8 @@ surfaces, and examples.
 | Deterministic stage-boundary violation | `RESULT=needs_fixes` | Return PR for fixes before invoking local model command | `local-ai-reviewer.sh`, stage-alignment docs/tests | Plan branch includes implementation script changes |
 | Deterministic pre-review check unavailable | `RESULT=escalate` with specific reason | Stop; operator fixes metadata/tooling before trusting local review | `local-ai-reviewer.sh`, tests | `REVIEW.md` cannot be read |
 | Local command emits clean findings | `RESULT=clean`, `BLOCKING_COUNT=0` | Continue to remaining draft platforms and then configured ready-phase platform | `local-ai-reviewer.sh`, `pr-review-loop.sh`, smoke runbook | Mock command emits valid empty finding set |
-| Local command emits advisory-only findings | `RESULT=clean`, `SUGGESTION_COUNT>0`, `COMMENT_COUNT=SUGGESTION_COUNT` | Continue; summary records advisory suggestions as non-blocking | `local-ai-reviewer.sh`, `pr-review-loop.sh`, tests | Local reviewer flags optional wording improvement |
+| Local command emits scope-expanding or decision-bound suggestions only | `RESULT=clean`, `SUGGESTION_COUNT>0`, `COMMENT_COUNT=SUGGESTION_COUNT` | Continue; summary records advisory suggestions as non-blocking | `local-ai-reviewer.sh`, `pr-review-loop.sh`, tests | Local reviewer flags optional wording improvement outside approved scope |
+| Local command emits clear in-scope suggestions or important findings | `RESULT=needs_fixes`, `BLOCKING_COUNT>0` | Stop loop and route back to fix agent | `local-ai-reviewer.sh`, `pr-review-loop.sh`, tests | Local reviewer flags an in-scope missing test or incomplete workflow doc update |
 | Local command emits blocking findings | `RESULT=needs_fixes`, `BLOCKING_COUNT>0` | Stop loop and route back to fix agent | `local-ai-reviewer.sh`, `pr-review-loop.sh`, tests | Local reviewer detects missing validation evidence |
 | Local command emits malformed output | `RESULT=escalate`, `REASON=malformed_output` | Stop; parser failure is not clean evidence | `local-ai-reviewer.sh`, tests | Command exits 0 but omits `RESULT` |
 | Local command times out | `RESULT=escalate`, `REASON=timeout` | Stop; operator adjusts timeout or local command | `local-ai-reviewer.sh`, tests | Model command exceeds `--timeout` |
