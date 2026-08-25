@@ -699,6 +699,42 @@ run_test \
     fi
   )"
 
+# Multi-line inline code spans must stay excluded until their closing delimiter.
+multiline_inline_branch="fix/retro-527-doc-gaps"
+multiline_inline_repo="$(make_repo multiline-inline "$multiline_inline_branch" yes)"
+multiline_inline_pr_body='Cleans up doc gaps.
+
+This quoted inline example starts here: `Closes #992
+and keeps quoting Closes #991`
+
+Closes #612'
+multiline_inline_output="$(
+  GH_MERGED_HEAD="$multiline_inline_branch" \
+  GH_MERGED_PR=660 \
+  GH_PR_BODY="$multiline_inline_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$multiline_inline_repo" --base develop --pr 660 "$multiline_inline_branch"
+)"
+run_contains \
+  "multiline_inline_code_example_closes_real_issue" \
+  "Closing issue #612..." \
+  "$multiline_inline_output"
+run_test \
+  "multiline_inline_code_example_does_not_close_quoted_issues" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #992" <<<"$multiline_inline_output" \
+      || grep -Fq "Processing issue #992" <<<"$multiline_inline_output" \
+      || grep -Fq "Closing issue #991" <<<"$multiline_inline_output" \
+      || grep -Fq "Processing issue #991" <<<"$multiline_inline_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
 # Blockquoted closing-keyword examples must not be treated as live references.
 blockquote_branch="fix/retro-526-doc-gaps"
 blockquote_repo="$(make_repo blockquote "$blockquote_branch" yes)"

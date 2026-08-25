@@ -556,7 +556,7 @@ for line in lines:
             continue
         if re.match(r"^\s*>", line):
             continue
-        out.append(strip_inline_code_spans(line))
+        out.append(line)
     else:
         if (match and match.group(1)[0] == fence_char
                 and len(match.group(1)) >= fence_len
@@ -564,7 +564,7 @@ for line in lines:
             fence_char = None
             fence_len = 0
         continue
-sys.stdout.write("\n".join(out))
+sys.stdout.write(strip_inline_code_spans("\n".join(out)))
 '
 }
 
