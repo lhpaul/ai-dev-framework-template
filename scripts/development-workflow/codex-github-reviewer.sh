@@ -1522,9 +1522,10 @@ EOF
   response_display=$(printf '%s' "$EXISTING_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq reads raw text for display truncation only.
 
   if [ "$EXISTING_BOT_RESPONSE_SOURCE" = "review" ] && [ "$cleared_thread_count" -gt 0 ] && \
-    { [ "$EXISTING_BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_inline_review_summary "$EXISTING_BOT_RESPONSE"; } && \
+    [ "$EXISTING_BOT_RESPONSE_REVIEW_STATE" != "CHANGES_REQUESTED" ] && \
+    codex_response_is_inline_review_summary "$EXISTING_BOT_RESPONSE" && \
     ! codex_response_is_blocking "$EXISTING_BOT_RESPONSE"; then
-    echo "INFO: existing Codex blocking review has only cleared thread findings; posting a fresh trigger"
+    echo "INFO: existing Codex inline-review summary has only cleared thread findings; posting a fresh trigger"
     FORCE_RETRIGGER_AFTER_CLEARED_FINDINGS=1
     return 1
   fi
