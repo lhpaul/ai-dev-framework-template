@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-repository releases.
 
 ### Fixed
+
+- **Quoted closing keywords are ignored during post-merge cleanup** (#1585):
+  `post-merge-cleanup.sh` now excludes inline code spans and blockquote lines
+  before scanning PR bodies for closing keywords, preventing quoted examples
+  such as `` `Closes #123` `` from closing unrelated issues while preserving
+  ordinary live `Closes #N` references.
 - **Codex GitHub reviewer avoids duplicate trigger cycles** (#1601):
   `codex-github-reviewer.sh` now checks for existing current-head Codex review
   evidence before posting `@codex review`, reusing submitted reviews,
