@@ -4326,6 +4326,107 @@ run_test "codex_provisional_reply_skips_trigger" "0" \
 rm -rf "$_codex_provisional_reply_mock_dir"
 unset _codex_provisional_reply_mock_dir _codex_provisional_reply_exit
 
+_codex_provisional_changes_requested_mock_dir="$(mktemp -d)"
+cat > "$_codex_provisional_changes_requested_mock_dir/gh" <<'CODEX_PROVISIONAL_CHANGES_REQUESTED_GH'
+#!/usr/bin/env bash
+log="$MOCK_POST_LOG"
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf 'cccccccccccccccccccccccccccccccccccccccc\n'; exit 0 ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"headRef":{"target":{"committedDate":"2026-01-01T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false,"isOutdated":false,"firstComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"}}]},"lastComment":{"nodes":[{"author":{"login":"lhpaul"},"createdAt":"2026-01-01T00:00:01Z"}]}}]}}}}}\n'
+    exit 0 ;;
+  *"--method POST"*)
+    printf 'POST\n' >> "$log"
+    printf '{"id":109,"created_at":"2026-01-01T00:00:10Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"cccccccccccccccccccccccccccccccccccccccc",state:"CHANGES_REQUESTED",user:{login:"chatgpt-codex-connector[bot]"},body:"Codex Review: stale finding replied to after head commit."}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_PROVISIONAL_CHANGES_REQUESTED_GH
+chmod +x "$_codex_provisional_changes_requested_mock_dir/gh"
+: > "$_codex_provisional_changes_requested_mock_dir/posts.log"
+_codex_provisional_changes_requested_exit=0
+MOCK_POST_LOG="$_codex_provisional_changes_requested_mock_dir/posts.log" PATH="$_codex_provisional_changes_requested_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --pre-trigger-wait 1 --max-retriggers 0 \
+  >"$_codex_provisional_changes_requested_mock_dir/output.txt" 2>&1 || _codex_provisional_changes_requested_exit=$?
+run_test "codex_provisional_changes_requested_posts_trigger" "1" \
+  "$(wc -l < "$_codex_provisional_changes_requested_mock_dir/posts.log" | tr -d ' ')"
+run_test "codex_provisional_changes_requested_no_fast_path" "yes" \
+  "$(if grep -Fq "only provisionally cleared thread findings; posting a fresh trigger" "$_codex_provisional_changes_requested_mock_dir/output.txt"; then printf yes; else printf no; fi)"
+rm -rf "$_codex_provisional_changes_requested_mock_dir"
+unset _codex_provisional_changes_requested_mock_dir _codex_provisional_changes_requested_exit
+
+_codex_pre_trigger_head_changed_mock_dir="$(mktemp -d)"
+cat > "$_codex_pre_trigger_head_changed_mock_dir/gh" <<'CODEX_PRE_TRIGGER_HEAD_CHANGED_GH'
+#!/usr/bin/env bash
+log="$MOCK_POST_LOG"
+counter_file="$MOCK_PR_VIEW_COUNTER"
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    count=0
+    if [ -f "$counter_file" ]; then
+      count="$(cat "$counter_file")"
+    fi
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$counter_file"
+    if [ "$count" -eq 1 ]; then
+      printf 'dddddddddddddddddddddddddddddddddddddddd\n'
+    else
+      printf 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n'
+    fi
+    exit 0 ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"headRef":{"target":{"committedDate":"2026-01-01T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}\n'
+    exit 0 ;;
+  *"--method POST"*)
+    printf 'POST\n' >> "$log"
+    printf '{"id":110,"created_at":"2026-01-01T00:00:00Z"}\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    printf '[]\n'; exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_PRE_TRIGGER_HEAD_CHANGED_GH
+chmod +x "$_codex_pre_trigger_head_changed_mock_dir/gh"
+: > "$_codex_pre_trigger_head_changed_mock_dir/posts.log"
+: > "$_codex_pre_trigger_head_changed_mock_dir/pr-view-count"
+_codex_pre_trigger_head_changed_exit=0
+MOCK_POST_LOG="$_codex_pre_trigger_head_changed_mock_dir/posts.log" \
+  MOCK_PR_VIEW_COUNTER="$_codex_pre_trigger_head_changed_mock_dir/pr-view-count" \
+  PATH="$_codex_pre_trigger_head_changed_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --pre-trigger-wait 1 --max-retriggers 0 \
+  >"$_codex_pre_trigger_head_changed_mock_dir/output.txt" 2>&1 || _codex_pre_trigger_head_changed_exit=$?
+run_test "codex_pre_trigger_head_changed_exit_unavailable" "2" "$_codex_pre_trigger_head_changed_exit"
+run_test "codex_pre_trigger_head_changed_skips_trigger" "0" \
+  "$(wc -l < "$_codex_pre_trigger_head_changed_mock_dir/posts.log" | tr -d ' ')"
+run_test "codex_pre_trigger_head_changed_reason" "REASON=codex-github-head-changed" \
+  "$(grep "^REASON=" "$_codex_pre_trigger_head_changed_mock_dir/output.txt")"
+rm -rf "$_codex_pre_trigger_head_changed_mock_dir"
+unset _codex_pre_trigger_head_changed_mock_dir _codex_pre_trigger_head_changed_exit
+
 _codex_paginated_thread_mock_dir="$(mktemp -d)"
 cat > "$_codex_paginated_thread_mock_dir/gh" <<'CODEX_PAGINATED_THREAD_GH'
 #!/usr/bin/env bash
