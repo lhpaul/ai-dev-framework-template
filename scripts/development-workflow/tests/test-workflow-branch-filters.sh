@@ -150,7 +150,30 @@ branch_filter_block() {
 # Samples: one ordinary integration branch, plus one that a negation is likely
 # to name. A filter must cover BOTH to count as covering integration branches.
 BF_SAMPLES="develop-example
-develop-old"
+develop-old
+develop-team/thing"
+
+# GitHub's branch-filter globs are not shell globs: `*` does not cross `/`,
+# `**` does, and `?` matches one non-`/` character. Shell `case` crosses `/`
+# for both stars, so it reports `develop-*` as covering `develop-team/thing`
+# when GitHub would not. Translate to an anchored regex instead of asking the
+# shell, so the guard answers the question GitHub actually asks.
+bf_glob_matches() {
+  local sample="$1" pat="$2" re="" i=0 c n
+  while [ "$i" -lt "${#pat}" ]; do
+    c="${pat:i:1}"; n="${pat:i+1:1}"
+    case "$c" in
+      '*')
+        if [ "$n" = '*' ]; then re="${re}.*"; i=$((i+2)); continue; fi
+        re="${re}[^/]*"; i=$((i+1)); continue ;;
+      '?') re="${re}[^/]" ;;
+      '.'|'['|']'|'('|')'|'{'|'}'|'+'|'^'|'$'|'|'|'\\') re="${re}\\$c" ;;
+      *) re="${re}${c}" ;;
+    esac
+    i=$((i+1))
+  done
+  printf '%s' "$sample" | grep -qE "^${re}\$"
+}
 
 # Is <sample> included by a positive `branches:` list?
 filter_includes() {
@@ -166,12 +189,10 @@ filter_includes() {
     case "$pat" in
       '!'*)
         neg="${pat#!}"
-        # shellcheck disable=SC2254  # $neg is a glob by design
-        case "$sample" in $neg) included=0 ;; esac
+        bf_glob_matches "$sample" "$neg" && included=0
         ;;
       *)
-        # shellcheck disable=SC2254  # $pat is a glob by design
-        case "$sample" in $pat) included=1 ;; esac
+        bf_glob_matches "$sample" "$pat" && included=1
         ;;
     esac
   done <<< "$list"
@@ -200,12 +221,10 @@ ignores_integration_branch() {
       case "$pat" in
         '!'*)
           neg="${pat#!}"
-          # shellcheck disable=SC2254  # glob by design
-          case "$sample" in $neg) excluded=0 ;; esac
+          bf_glob_matches "$sample" "$neg" && excluded=0
           ;;
         *)
-          # shellcheck disable=SC2254  # glob by design
-          case "$sample" in $pat) excluded=1 ;; esac
+          bf_glob_matches "$sample" "$pat" && excluded=1
           ;;
       esac
     done <<< "$1"
@@ -424,12 +443,19 @@ _bf_cov() { if covers_integration_branches "$1"; then printf 'covers\n'; else pr
 run_test "guard_ordered_plain_glob_covers" "covers" "$(_bf_cov "$(printf 'develop\ndevelop-**\nmain')")"
 run_test "guard_ordered_negation_withdraws_coverage" "gap" "$(_bf_cov "$(printf 'develop\ndevelop-**\n!develop-old')")"
 run_test "guard_ordered_no_glob_is_a_gap" "gap" "$(_bf_cov "$(printf 'develop\nmain')")"
-run_test "guard_ordered_develop_star_covers" "covers" "$(_bf_cov 'develop*')"
+# Under GitHub's semantics a single star does not cross `/`, so `develop*`
+# covers develop-example but NOT develop-team/thing. Only the double-star form
+# covers a nested integration branch — which is exactly why Protocol 05b
+# specifies `develop-**` rather than any glob that happens to match.
+run_test "guard_ordered_develop_star_misses_nested" "gap" "$(_bf_cov 'develop*')"
+run_test "guard_ordered_double_star_covers_nested" "covers" "$(_bf_cov "$(printf 'develop\ndevelop-**')")"
 # Negation in an ignore list un-excludes, but only for what it names: the other
 # integration-branch sample stays excluded, so the workflow is still short.
 run_test "guard_ignore_negation_still_excludes_others" "excludes" \
   "$(if ignores_integration_branch "$(printf 'develop-**\n!develop-old')"; then printf 'excludes\n'; else printf 'no\n'; fi)"
 
+# Still an exclusion: it matches develop-example even though it misses the
+# nested sample, and excluding any integration branch is a coverage gap.
 run_test "guard_glob_develop_star_excludes" "excludes" "$(_bf_excl 'develop*')"
 run_test "guard_glob_dev_star_excludes" "excludes" "$(_bf_excl 'dev*')"
 run_test "guard_glob_double_star_excludes" "excludes" "$(_bf_excl '**')"
