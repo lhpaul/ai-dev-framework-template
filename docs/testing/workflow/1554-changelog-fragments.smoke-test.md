@@ -150,17 +150,23 @@ Decision 3) is a no-op.
 2. Add the `[9.9.9]` link-reference definition at the bottom of `CHANGELOG.md`
    and update the `[Unreleased]` definition, following Protocol 05 Step 3's
    link-reference sub-step.
-3. Commit `CHANGELOG.md` on the scratch branch — this is what a real release
-   branch looks like just before Protocol 05's Step 5 commit, and it is what
-   makes the next step a genuine resumption test rather than a
-   dirty-working-tree no-op. (In the real protocol this is the *only* commit
-   in the whole sequence — Step 5, unmodified. This rehearsal commits early
-   purely to simulate the interruption in step 4 below; a real release
-   preparation would still be sitting uncommitted at this point, exactly like
-   today's editorial pass, and that is fine — see Known Limitations.)
-4. Simulate an interruption: switch to another branch and back. `git status`
-   is genuinely clean before this switch, because step 3 already committed
-   everything on this branch and nothing has touched the working tree since.
+3. Commit **everything** changed on the scratch branch so far — `CHANGELOG.md`
+   *and* the fragment deletions Step 4's `assemble` already made (they are
+   still sitting uncommitted; `git commit CHANGELOG.md` alone would leave
+   those deletions behind): run `git add -A` then
+   `git commit -m "rehearsal: assembled draft + editorial pass"`. This is
+   what a real release branch looks like just before Protocol 05's Step 5
+   commit, and it is what makes the next step a genuine resumption test
+   rather than a dirty-working-tree no-op. (In the real protocol this is the
+   *only* commit in the whole sequence — Step 5, unmodified. This rehearsal
+   commits early purely to simulate the interruption in step 4 below; a real
+   release preparation would still be sitting uncommitted at this point,
+   exactly like today's editorial pass, and that is fine — see Known
+   Limitations.)
+4. Simulate an interruption: run `git status --porcelain` and confirm it
+   prints nothing (step 3 committed everything on this branch; an empty
+   result is what makes the switch below guaranteed-clean, not merely
+   assumed clean), then switch to another branch and back.
 5. Run `assemble --version 9.9.9` again — **after** the switch, so this
    actually exercises resumption rather than repeating an assembly that ran
    before any interruption was simulated.
@@ -232,8 +238,12 @@ altered.
 2. Run `bash scripts/development-workflow/changelog-fragments.sh list`.
 3. Read Protocol 03 Path 4 and confirm no step instructs the author to write a
    fragment.
-4. Discard this branch (`git checkout <branch under test> && git branch -D
-   <the throwaway branch>`); its changes are not needed by any later step.
+4. **Before switching away**, discard the uncommitted hotfix edit on this
+   branch — its content is not needed by any later step: run
+   `git checkout -- CHANGELOG.md`, then `git status --porcelain` and confirm
+   it prints nothing.
+5. Now switch and discard the branch itself:
+   `git checkout <branch under test> && git branch -D <the throwaway branch>`.
 
 **Expected result**: the hotfix section is written directly into `CHANGELOG.md`,
 the pending-note list is unchanged by it, and the hotfix path's instructions are
@@ -298,9 +308,14 @@ configuration, no directory creation, and no manifest edit.
          changelog.d/9003.fixed.smoke-gamma.md
    ```
 
-   Before running it, run `git status --short -- 'changelog.d/900*'` and
-   confirm every path it lists is one of the six above — if anything else
-   appears, stop and remove files by hand instead of running the command.
+   Before running it, run
+   `git status --short --ignored -- 'changelog.d/900*'`. Plain
+   `git status --short` does not list ignored files, so an ignored file that
+   happens to share one of the six names above would pass a narrower check
+   and still be deleted by `rm -f`; `--ignored` closes that. Confirm every
+   path it lists is one of the six above — if anything else appears
+   (including an `!! ` ignored-file line), stop and remove files by hand
+   instead of running the command.
 4. Run `git status` and confirm the working tree matches the branch under test.
 5. Run `bash scripts/development-workflow/changelog-fragments.sh list` and
    confirm the pending count matches Step 0's recording.
@@ -348,9 +363,9 @@ The following seed data must be present:
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | `VALIDATE_RESULT=invalid` naming a file you did not create | A stray non-markdown file or a leftover rehearsal fragment in `changelog.d/` | Remove it; only fragments and `README.md` belong at the top level of `changelog.d/` |
-| `ASSEMBLE_RESULT=already_assembled` when you expected a fresh draft | The version section already exists from an earlier run | Intended behaviour. Use `--reassemble` only if you accept losing the editorial pass on that section |
+| `ASSEMBLE_RESULT=already_assembled` when you expected a fresh draft | The version section already exists from an earlier run | Intended behaviour. There is no `--reassemble` flag (Decision 3). To deliberately redo the section, discard the assembled state first — `git checkout -- CHANGELOG.md changelog.d/` if nothing is committed yet, or `git revert`/`git reset` if it is — accepting that this loses the editorial pass, then re-run `assemble` |
 | `ASSEMBLE_RESULT=no_notes` | Nothing is pending and the shared block is empty | Confirm the notes were not already assembled by an earlier release before reaching for `--allow-empty` |
-| A fragment you expected `assemble` to gather is still present in `changelog.d/` after a run that reported `assembled` | It arrived after that run started (a late cherry-pick or a fresh scan started before the fragment landed) | Correct behaviour, not a bug — Decision 3 requires a note recorded after assembly to wait for the next release. Run `assemble --reassemble` only if you deliberately want to redo the section and include it now |
+| A fragment you expected `assemble` to gather is still present in `changelog.d/` after a run that reported `assembled` | It arrived after that run started (a late cherry-pick or a fresh scan started before the fragment landed) | Correct behaviour, not a bug — Decision 3 requires a note recorded after assembly to wait for the next release. To deliberately include it now, discard the assembled state (see the `already_assembled` row above) and re-run `assemble` fresh |
 | A `changelog.d/` path appears in a merge conflict | Two branches used the same item identifier | Treat as non-trivial per Protocol 94; find out which branch is misnamed rather than combining the files |
 | Duplicate `### Category` headings after assembly | A defect in the per-kind merge | Report against this feature; `check-changelog-duplicate-headers.sh` is the detector |
 
