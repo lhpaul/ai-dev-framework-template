@@ -167,9 +167,12 @@ For each strategy, record:
 
 Adoption decision rules:
 
-- **Required for MVP** only if graph context finds at least one material review concern missed by the no-graph baseline in two or more representative inputs, with low or medium setup effort and no high-noise result.
-- **Optional for MVP** if graph context improves context quality or ergonomics in at least one representative input, but does not meet the required threshold.
-- **Deferred** if graph context adds high setup effort, high noise, no material net-new review concern, or unclear operational value.
+Evaluate the outcomes in this order so every strategy maps to exactly one category:
+
+1. **Deferred** if graph context adds high setup effort, high noise, no material net-new review concern, or unclear operational value.
+2. **Required for MVP** only if the strategy is not deferred and graph context finds at least one material review concern missed by the no-graph baseline in two or more representative inputs, with low or medium setup effort.
+3. **Optional for MVP** only if the strategy is not deferred or required, and graph context improves context quality or ergonomics in at least one representative input.
+4. **Deferred** if none of the above rules match.
 
 ---
 
@@ -177,12 +180,19 @@ Adoption decision rules:
 
 The MVP default policy is fail-closed for unreliable local review results:
 
-- Missing local reviewer command, missing model access, missing credentials, timeout, and malformed output produce `unavailable` or `escalate` with an explicit reason; they never produce `clean`.
+- Missing local reviewer command, missing model access, and missing credentials default to `escalate` with an explicit reason; they never produce `clean` or an implicit `skipped`.
 - Timeout defaults to `escalate` for the local reviewer MVP because no current-head review evidence was produced.
 - Malformed output defaults to `escalate` because the workflow cannot trust the reported counts or disposition.
 - Missing optional graph tooling is not a local-review failure when graph context is configured as optional; the reviewer falls back to no-graph context and records `GRAPH_CONTEXT=skipped` with a reason.
 - Missing mandatory graph tooling is a configuration error only if a future human-approved policy makes graph context required.
 - Skipped local review is allowed only when the platform is disabled by configuration or explicitly unavailable under a documented warn-and-continue policy.
+- A future warn-and-continue policy may convert a setup/access failure from `escalate` to `skipped`, but only when the policy is explicitly configured and the summary states that no fresh local review evidence was produced.
+
+Finding normalization follows the repository review contract:
+
+- `blocking` findings produce `needs_fixes`.
+- `important` findings produce `needs_fixes` by default because the repository review contract says to fix them unless a human decision is required.
+- `suggestion` findings remain advisory and allow the loop to continue unless the reviewer explicitly restates them as blocking.
 
 The spike may propose additional policy modes, but the MVP must define the default branch for every failure class above.
 
@@ -245,9 +255,10 @@ The spike may propose additional policy modes, but the MVP must define the defau
 | --- | --- | --- | --- | --- |
 | Clean local review | Continue | Proceed to the next configured reviewer stage, including ready-phase `codex-github` when applicable. | Review-loop output, PR summary, stage handoff | The local reviewer reports no blocking findings for the current head. |
 | Blocking local findings | Needs fixes | Return the pull request for fixes and rerun review after a push. | Review-loop output, fixer handoff, PR summary | The local reviewer finds an uncovered workflow-contract edge case. |
-| Advisory local findings | Continue with visible advisories | Keep suggestions non-blocking unless restated as blocking by the review contract. | Review-loop output, PR summary | The reviewer suggests clearer documentation wording. |
+| Important local findings | Needs fixes | Return the pull request for fixes by default, or escalate when the finding requires a human decision. | Review-loop output, fixer handoff, PR summary | The reviewer finds an incomplete workflow update that should be fixed before readiness. |
+| Suggestion local findings | Continue with visible advisories | Keep suggestions non-blocking unless restated as blocking by the review contract. | Review-loop output, PR summary | The reviewer suggests clearer documentation wording. |
 | Skipped by configuration | Skipped | Continue only as an intentional skipped reviewer, not as clean local review evidence. | Review-loop output, PR summary | The local reviewer is disabled in a downstream repository. |
-| Missing local dependency or access | Unavailable | Surface the reason and stop short of clean review evidence. | Review-loop output, operator summary | The local LLM command is not installed or authenticated. |
+| Missing local dependency or access | Escalate | Stop for operator action unless a future explicit warn-and-continue policy converts the result to skipped with a no-fresh-review warning. | Review-loop output, operator summary | The local LLM command is not installed or authenticated. |
 | Missing optional graph dependency | Continue with no-graph fallback | Record graph context as skipped with a reason, then continue local review using the no-graph context strategy. | Review-loop output, operator summary | `code-review-graph` is not installed while graph context is optional. |
 | Timeout | Escalate | Stop for operator action or retry without claiming clean review. | Review-loop output, operator summary | The local review exceeds its allowed runtime. |
 | Malformed output | Escalate | Treat the result as unreliable and require operator action or a retry. | Review-loop output, operator summary | The local reviewer emits text that cannot be parsed into the required result contract. |
