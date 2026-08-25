@@ -89,6 +89,14 @@ except (OSError, yaml.YAMLError) as exc:
 
 # YAML 1.1 parses a bare `on:` key as the boolean True; PyYAML keeps `"on"`
 # quoted as the string. Accept either spelling.
+# A workflow file is a mapping. A top-level list or scalar would make the
+# .get() below raise AttributeError outside the try, producing a traceback
+# rather than the structured error every other malformed input gets — and a
+# traceback is harder to act on and easier to mistake for a harness bug.
+if not isinstance(doc, dict):
+    print("ERROR: %s is not a YAML mapping (got %s)" % (sys.argv[1], type(doc).__name__), file=sys.stderr)
+    sys.exit(4)
+
 triggers = doc.get("on", doc.get(True, {}))
 if not isinstance(triggers, dict):
     sys.exit(0)
@@ -308,7 +316,16 @@ hardcoded=""
 for wf in "$WF_DIR"/*.yml "$WF_DIR"/*.yaml; do
   [ -e "$wf" ] || continue
   # Same scope as the coverage scan above: the rule Protocol 05b states is
-  # about `pull_request` filters, so a stale slug is judged there.
+  # about `pull_request` filters, so a stale slug is judged there — in the
+  # exclusion list as well as the positive one. `branches-ignore:
+  # [develop-oldslug]` is a hardcoded integration-branch reference exactly as
+  # a positive `develop-oldslug` entry is, and rots the same way.
+  while IFS= read -r entry; do
+    case "$entry" in
+      develop-\*\*|develop-\*) continue ;;
+      develop-?*) hardcoded="${hardcoded:+$hardcoded }$(basename "$wf"):ignore:$entry" ;;
+    esac
+  done <<< "$(branches_for_trigger "$wf" pull_request-ignore)"
   while IFS= read -r entry; do
     case "$entry" in
       develop-\*\*|develop-\*) continue ;;
@@ -475,6 +492,43 @@ jobs:
     steps:
       - run: echo hi
 FIXTURE
+# A top-level list or scalar is not a workflow. It must produce the structured
+# parser error, not an AttributeError traceback that reads like a harness bug.
+printf -- '- a\n- b\n' > "$FIXTURE_DIR/toplevel-list.yml"
+printf 'just-a-scalar\n' > "$FIXTURE_DIR/toplevel-scalar.yml"
+_bf_status() { local st=0; branch_filter_entries "$1" >/dev/null 2>&1 || st=$?; printf '%s\n' "$st"; }
+run_test "toplevel_list_is_a_parser_error" "4" "$(_bf_status "$FIXTURE_DIR/toplevel-list.yml")"
+run_test "toplevel_scalar_is_a_parser_error" "4" "$(_bf_status "$FIXTURE_DIR/toplevel-scalar.yml")"
+# stderr captured to a variable first: the suite runs with `pipefail`, so
+# piping straight from a function that exits non-zero makes the pipeline
+# inherit that status and the assertion would measure the exit code instead of
+# the message it claims to check.
+_bf_says_not_mapping() {
+  local out
+  out="$(branch_filter_entries "$1" 2>&1 >/dev/null || true)"
+  case "$out" in
+    *"not a YAML mapping"*) printf 'yes\n' ;;
+    *) printf 'no\n' ;;
+  esac
+}
+run_test "toplevel_list_reports_on_stderr" "yes" \
+  "$(_bf_says_not_mapping "$FIXTURE_DIR/toplevel-list.yml")"
+# A hardcoded slug in an EXCLUSION rots exactly as one in a positive list does.
+cat > "$FIXTURE_DIR/hardcoded-ignore-slug.yml" <<'FIXTURE'
+name: fixture
+on:
+  pull_request:
+    branches-ignore:
+      - develop-oldslug
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+FIXTURE
+run_test "hardcoded_slug_in_ignore_list_is_visible" "develop-oldslug" \
+  "$(branches_for_trigger "$FIXTURE_DIR/hardcoded-ignore-slug.yml" pull_request-ignore)"
+
 run_test "yaml_extension_is_parsed" "$(printf 'develop\nmain')" \
   "$(branches_for_trigger "$FIXTURE_DIR/dot-yaml-extension.yaml" pull_request)"
 
