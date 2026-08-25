@@ -4129,7 +4129,7 @@ _codex_existing_clean_output=""
 _codex_existing_clean_exit=0
 MOCK_POST_LOG="$_codex_existing_clean_mock_dir/posts.log" PATH="$_codex_existing_clean_mock_dir:$PATH" \
   "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
-  42 owner repo --poll-interval 1 --max-wait 1 --pre-trigger-wait 1 --max-retriggers 0 \
+  42 owner repo --poll-interval 1 --max-wait 1 --pre-trigger-wait 08 --max-retriggers 0 \
   >"$_codex_existing_clean_mock_dir/output.txt" 2>&1 || _codex_existing_clean_exit=$?
 _codex_existing_clean_output="$(cat "$_codex_existing_clean_mock_dir/output.txt")"
 run_test "codex_existing_current_head_review_exit_clean" "0" "$_codex_existing_clean_exit"
@@ -4139,6 +4139,8 @@ run_test "codex_existing_current_head_review_skips_trigger" "0" \
   "$(wc -l < "$_codex_existing_clean_mock_dir/posts.log" | tr -d ' ')"
 run_test "codex_existing_current_head_review_logs_no_trigger" "yes" \
   "$(if grep -Fq "existing current-head Codex evidence detected; no trigger comment will be posted" "$_codex_existing_clean_mock_dir/output.txt"; then printf yes; else printf no; fi)"
+run_test "codex_pre_trigger_wait_normalizes_leading_zero" "INFO: Pre-trigger wait: 8s" \
+  "$(grep "^INFO: Pre-trigger wait:" "$_codex_existing_clean_mock_dir/output.txt")"
 rm -rf "$_codex_existing_clean_mock_dir"
 unset _codex_existing_clean_mock_dir _codex_existing_clean_output _codex_existing_clean_exit
 

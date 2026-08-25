@@ -173,6 +173,7 @@ case "$PRE_TRIGGER_WAIT" in
     exit 2
     ;;
 esac
+PRE_TRIGGER_WAIT=$((10#$PRE_TRIGGER_WAIT))
 # MAX_RETRIGGERS may be 0 (disable retriggering) but must be a non-negative integer.
 case "$MAX_RETRIGGERS" in
   ''|*[!0-9]*)
