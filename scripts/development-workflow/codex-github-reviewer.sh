@@ -224,6 +224,7 @@ BOT_LOGIN_PLAIN="${BOT_LOGIN%\[bot\]}"
 echo "INFO: Bot login (plain, for PR-comment matching): $BOT_LOGIN_PLAIN"
 
 TRIGGER_COMMENT_ID=""
+FORCE_RETRIGGER_AFTER_CLEARED_FINDINGS=0
 
 codex_trigger_approval_reaction_count() {
   local comment_id="$1"
@@ -458,6 +459,11 @@ codex_response_is_environment_error() {
     return 1
   fi
   grep -qiE "to[[:space:]]+use[[:space:]]+codex[[:space:]]+here,[[:space:]]+create[[:space:]]+an[[:space:]]+environment[[:space:]]+for[[:space:]]+this[[:space:]]+repo" <<< "$response"
+}
+
+codex_response_is_inline_review_summary() {
+  local response="$1"
+  grep -q "Here are some automated review suggestions for this pull request." <<< "$response"
 }
 
 # codex_response_is_account_not_connected <response>
@@ -1512,14 +1518,17 @@ EOF
   fi
   [ -n "$EXISTING_BOT_RESPONSE_TIME" ] || return 1
 
-  echo "INFO: existing current-head Codex evidence detected; no trigger comment will be posted"
   codex_require_current_head
   response_display=$(printf '%s' "$EXISTING_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq reads raw text for display truncation only.
 
-  if [ "$EXISTING_BOT_RESPONSE_SOURCE" = "review" ] && { [ "$EXISTING_BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$EXISTING_BOT_RESPONSE"; } && [ "$cleared_thread_count" -gt 0 ]; then
+  if [ "$EXISTING_BOT_RESPONSE_SOURCE" = "review" ] && [ "$cleared_thread_count" -gt 0 ] && \
+    { [ "$EXISTING_BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_inline_review_summary "$EXISTING_BOT_RESPONSE"; } && \
+    ! codex_response_is_blocking "$EXISTING_BOT_RESPONSE"; then
     echo "INFO: existing Codex blocking review has only cleared thread findings; posting a fresh trigger"
+    FORCE_RETRIGGER_AFTER_CLEARED_FINDINGS=1
     return 1
   fi
+  echo "INFO: existing current-head Codex evidence detected; no trigger comment will be posted"
   if [ "$EXISTING_BOT_RESPONSE_SOURCE" = "review" ] && { [ "$EXISTING_BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$EXISTING_BOT_RESPONSE"; }; then
     echo "VERDICT: NEEDS_REVISION"
     echo "---BEGIN BOT RESPONSE---"
@@ -1634,11 +1643,18 @@ if [ -n "$TRIGGER_COMMENT_INFO" ]; then
       fi
     else
       echo "WARNING: could not read bot replies to check whether the existing trigger was refused; keeping the existing trigger" >&2
-    fi
-  fi
-  if [ -n "$TRIGGER_TIME" ]; then
-    echo "INFO: trigger comment already posted for commit $CURRENT_SHA (at $TRIGGER_TIME) — skipping duplicate post"
-  fi
+	  fi
+	fi
+	if [ -n "$TRIGGER_TIME" ]; then
+	  if [ "$FORCE_RETRIGGER_AFTER_CLEARED_FINDINGS" -eq 1 ]; then
+	    echo "INFO: existing trigger for commit $CURRENT_SHA already produced only cleared Codex findings — posting a fresh trigger"
+	    TRIGGER_TIME=""
+	    TRIGGER_COMMENT_ID=""
+	  fi
+	fi
+	if [ -n "$TRIGGER_TIME" ]; then
+	  echo "INFO: trigger comment already posted for commit $CURRENT_SHA (at $TRIGGER_TIME) — skipping duplicate post"
+	fi
 fi
 
 # ── Post trigger comment (if no duplicate found) ──────────────────────────────
