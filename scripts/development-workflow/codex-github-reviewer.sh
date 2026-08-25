@@ -298,11 +298,12 @@ codex_review_thread_evidence_counts() {
               nodes {
                 isResolved
                 isOutdated
-                firstComment: comments(first:1) {
-                  nodes {
-                    author { login }
-                  }
-                }
+	                firstComment: comments(first:1) {
+	                  nodes {
+	                    author { login }
+	                    body
+	                  }
+	                }
                 lastComment: comments(last:1) {
                   nodes {
                     author { login }
@@ -321,14 +322,15 @@ codex_review_thread_evidence_counts() {
           | ($pr.reviewThreads.pageInfo.endCursor // "") as $end_cursor
           | [
               $pr.reviewThreads.nodes[]?
-              | (.firstComment.nodes[0].author.login // "") as $first_author
-              | (.lastComment.nodes[0].author.login // "") as $last_author
-              | (.lastComment.nodes[0].createdAt // "") as $last_created
-              | select((.isOutdated // false) == false)
-              | select($first_author == $bot or $first_author == $bot_plain)
-              | {
-                  cleared: ((.isResolved // false) or (($head_date != "") and ($last_author != $bot) and ($last_author != $bot_plain) and ($last_created > $head_date)))
-                }
+	              | (.firstComment.nodes[0].author.login // "") as $first_author
+	              | (.firstComment.nodes[0].body // "") as $first_body
+	              | (.lastComment.nodes[0].author.login // "") as $last_author
+	              | (.lastComment.nodes[0].createdAt // "") as $last_created
+	              | select((.isOutdated // false) == false)
+	              | select($first_author == $bot or $first_author == $bot_plain)
+	              | {
+	                  cleared: ((.isResolved // false) or ($first_body | test("✅ Addressed")) or (($head_date != "") and ($last_author != $bot) and ($last_author != $bot_plain) and ($last_created > $head_date)))
+	                }
             ] as $candidate_threads
           | ($candidate_threads | map(select(.cleared | not)) | length) as $count
           | ($candidate_threads | map(select(.cleared)) | length) as $cleared_count

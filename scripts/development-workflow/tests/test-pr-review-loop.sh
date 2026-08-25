@@ -4414,6 +4414,50 @@ run_test "codex_resolved_changes_requested_no_fast_path" "yes" \
 rm -rf "$_codex_resolved_changes_requested_mock_dir"
 unset _codex_resolved_changes_requested_mock_dir _codex_resolved_changes_requested_exit
 
+_codex_addressed_changes_requested_mock_dir="$(mktemp -d)"
+cat > "$_codex_addressed_changes_requested_mock_dir/gh" <<'CODEX_ADDRESSED_CHANGES_REQUESTED_GH'
+#!/usr/bin/env bash
+log="$MOCK_POST_LOG"
+case "$*" in
+  *"auth status"*)
+    exit 0 ;;
+  *"pr view"*headRefOid*)
+    printf '9999999999999999999999999999999999999999\n'; exit 0 ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"headRef":{"target":{"committedDate":"2026-01-01T00:00:00Z"}},"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false,"isOutdated":false,"firstComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"body":"✅ Addressed in latest commit"}]},"lastComment":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"createdAt":"2026-01-01T00:00:01Z"}]}}]}}}}}\n'
+    exit 0 ;;
+  *"--method POST"*)
+    printf 'POST\n' >> "$log"
+    printf '{"id":112,"created_at":"2026-01-01T00:00:10Z"}\n'; exit 0 ;;
+  *"issues/comments/"*"/reactions"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*)
+    jq -nc '[{submitted_at:"2026-01-01T00:00:01Z",commit_id:"9999999999999999999999999999999999999999",state:"CHANGES_REQUESTED",user:{login:"chatgpt-codex-connector[bot]"},body:"Codex Review: stale finding self-marked addressed."}]'
+    exit 0 ;;
+  *)
+    printf 'ERROR=unexpected-gh-invocation\n' >&2
+    printf 'ARGS=%q\n' "$*" >&2
+    exit 64 ;;
+esac
+CODEX_ADDRESSED_CHANGES_REQUESTED_GH
+chmod +x "$_codex_addressed_changes_requested_mock_dir/gh"
+: > "$_codex_addressed_changes_requested_mock_dir/posts.log"
+_codex_addressed_changes_requested_exit=0
+MOCK_POST_LOG="$_codex_addressed_changes_requested_mock_dir/posts.log" PATH="$_codex_addressed_changes_requested_mock_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --pre-trigger-wait 1 --max-retriggers 0 \
+  >"$_codex_addressed_changes_requested_mock_dir/output.txt" 2>&1 || _codex_addressed_changes_requested_exit=$?
+run_test "codex_addressed_changes_requested_posts_trigger" "1" \
+  "$(wc -l < "$_codex_addressed_changes_requested_mock_dir/posts.log" | tr -d ' ')"
+run_test "codex_addressed_changes_requested_no_fast_path" "yes" \
+  "$(if grep -Fq "only cleared thread findings; posting a fresh trigger" "$_codex_addressed_changes_requested_mock_dir/output.txt"; then printf yes; else printf no; fi)"
+rm -rf "$_codex_addressed_changes_requested_mock_dir"
+unset _codex_addressed_changes_requested_mock_dir _codex_addressed_changes_requested_exit
+
 _codex_pre_trigger_head_changed_mock_dir="$(mktemp -d)"
 cat > "$_codex_pre_trigger_head_changed_mock_dir/gh" <<'CODEX_PRE_TRIGGER_HEAD_CHANGED_GH'
 #!/usr/bin/env bash
