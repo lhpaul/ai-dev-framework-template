@@ -126,6 +126,68 @@ The MVP is intentionally scoped to local command-line review and design validati
 
 ---
 
+## Deterministic Pre-Review Checks
+
+The spike/MVP design must define these deterministic checks before any LLM-backed review pass:
+
+- **Current-head binding**: confirm the reviewed checkout, pull request metadata, and emitted result all refer to the same pull request head commit.
+- **Diff scope**: list changed files and classify the PR stage from branch name and changed artifact paths.
+- **Stage artifact boundary**: verify spec branches contain only spec-stage artifacts, plan branches contain only plan-stage artifacts, and implementation branches do not silently mix documentation-stage artifacts.
+- **Review contract loading**: confirm `REVIEW.md` and the applicable stage checklist are available before local review starts.
+- **Placeholder and stale-marker scan**: run the stage-appropriate placeholder, TODO, FIXME, debug-comment, and review-marker checks before LLM review.
+- **Validation evidence scan**: collect relevant local validation commands already run or required by the stage so the LLM reviewer can flag missing evidence instead of guessing.
+- **Unresolved-thread scan**: identify existing unresolved blocking reviewer threads before claiming a clean local review.
+- **Failure-state classification**: classify missing tools, missing credentials, timeout, and malformed result separately before any result is normalized.
+
+These checks are the MVP floor. The implementation plan may add more checks, but it must not remove these without a new human-approved scope decision.
+
+---
+
+## Graph Context Adoption Criteria
+
+The spike compares three context strategies:
+
+1. No graph: changed files, `REVIEW.md`, relevant workflow docs, and targeted `rg` context.
+2. `code-review-graph`: graph-assisted impact/context selection for the same representative pull requests.
+3. `graphify`: broader code/docs/config graph context for the same representative pull requests when setup is practical.
+
+The spike must use at least three representative pull requests or historical changesets:
+
+- One spec or plan documentation-only workflow PR.
+- One workflow script or reviewer-loop change.
+- One mixed documentation plus script change, or the closest available historical equivalent.
+
+For each strategy, record:
+
+- Setup effort: none, low, medium, or high.
+- Additional context returned beyond changed files.
+- Whether the context exposed a real review concern missed by the no-graph baseline.
+- Whether the context created false leads or excessive noise.
+- Runtime or operator effort impact, using concrete observed timings when available.
+
+Adoption decision rules:
+
+- **Required for MVP** only if graph context finds at least one material review concern missed by the no-graph baseline in two or more representative inputs, with low or medium setup effort and no high-noise result.
+- **Optional for MVP** if graph context improves context quality or ergonomics in at least one representative input, but does not meet the required threshold.
+- **Deferred** if graph context adds high setup effort, high noise, no material net-new review concern, or unclear operational value.
+
+---
+
+## Failure Policy
+
+The MVP default policy is fail-closed for unreliable local review results:
+
+- Missing local reviewer command, missing model access, missing credentials, timeout, and malformed output produce `unavailable` or `escalate` with an explicit reason; they never produce `clean`.
+- Timeout defaults to `escalate` for the local reviewer MVP because no current-head review evidence was produced.
+- Malformed output defaults to `escalate` because the workflow cannot trust the reported counts or disposition.
+- Missing optional graph tooling is not a local-review failure when graph context is configured as optional; the reviewer falls back to no-graph context and records `GRAPH_CONTEXT=skipped` with a reason.
+- Missing mandatory graph tooling is a configuration error only if a future human-approved policy makes graph context required.
+- Skipped local review is allowed only when the platform is disabled by configuration or explicitly unavailable under a documented warn-and-continue policy.
+
+The spike may propose additional policy modes, but the MVP must define the default branch for every failure class above.
+
+---
+
 ## Operational Visibility
 
 - **Logs**: The review loop records the local reviewer platform name, result, reason, counts, reviewed head, and context source summary.
@@ -140,7 +202,7 @@ The MVP is intentionally scoped to local command-line review and design validati
 - [ ] The design explains how the local reviewer fits the existing automated reviewer result contract.
 - [ ] The design preserves `codex-github` as ready-phase validation and explains how to measure net-new Codex findings.
 - [ ] The design identifies deterministic checks that should run before any LLM-backed review pass.
-- [ ] The design classifies graph-assisted context as required, optional, or deferred based on spike evidence.
+- [ ] The design classifies graph-assisted context as required, optional, or deferred using representative inputs, recorded measurements, and explicit decision thresholds.
 - [ ] The design defines unavailable, skipped, timeout, malformed-output, clean, and needs-fixes behavior without treating availability failures as clean review evidence.
 - [ ] The design calls out follow-up implementation work separately from the spike/MVP scope.
 
@@ -172,8 +234,8 @@ The MVP is intentionally scoped to local command-line review and design validati
 | --- | --- |
 | Compare context strategies | Use case "Evaluate graph-assisted context selection"; AC5 |
 | Define review-loop platform contract | Use case "Run local CLI review before ready-phase validation"; AC2, AC6 |
-| Identify deterministic pre-review checks | Business Rules; AC4 |
-| Propose failure and finding behavior | Business Rules; AC6 |
+| Identify deterministic pre-review checks | Deterministic Pre-Review Checks; AC4 |
+| Propose failure and finding behavior | Failure Policy; Business Rules; AC6 |
 | Preserve and measure Codex GitHub | Use case "Preserve ready-phase Codex GitHub validation"; AC3 |
 | Keep local-only CLI MVP | Overview; Business Rules; AC1, AC7 |
 
@@ -185,7 +247,8 @@ The MVP is intentionally scoped to local command-line review and design validati
 | Blocking local findings | Needs fixes | Return the pull request for fixes and rerun review after a push. | Review-loop output, fixer handoff, PR summary | The local reviewer finds an uncovered workflow-contract edge case. |
 | Advisory local findings | Continue with visible advisories | Keep suggestions non-blocking unless restated as blocking by the review contract. | Review-loop output, PR summary | The reviewer suggests clearer documentation wording. |
 | Skipped by configuration | Skipped | Continue only as an intentional skipped reviewer, not as clean local review evidence. | Review-loop output, PR summary | The local reviewer is disabled in a downstream repository. |
-| Missing local dependency or access | Unavailable or skipped with reason | Surface the reason and follow the configured reviewer-loop policy. | Review-loop output, operator summary | The local LLM command is not installed or authenticated. |
-| Timeout | Escalate or unavailable with reason | Stop or continue according to explicit policy, without claiming clean review. | Review-loop output, operator summary | The local review exceeds its allowed runtime. |
+| Missing local dependency or access | Unavailable | Surface the reason and stop short of clean review evidence. | Review-loop output, operator summary | The local LLM command is not installed or authenticated. |
+| Missing optional graph dependency | Continue with no-graph fallback | Record graph context as skipped with a reason, then continue local review using the no-graph context strategy. | Review-loop output, operator summary | `code-review-graph` is not installed while graph context is optional. |
+| Timeout | Escalate | Stop for operator action or retry without claiming clean review. | Review-loop output, operator summary | The local review exceeds its allowed runtime. |
 | Malformed output | Escalate | Treat the result as unreliable and require operator action or a retry. | Review-loop output, operator summary | The local reviewer emits text that cannot be parsed into the required result contract. |
 | Codex GitHub net-new blocker after local clean | Needs fixes | Fix the branch and rerun the configured review loop. | Ready-phase review evidence, PR summary | Codex GitHub catches a workflow edge case missed by local review. |
