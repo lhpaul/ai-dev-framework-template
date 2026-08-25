@@ -97,6 +97,10 @@ reset_mocks() {
   unset LOCAL_AI_REVIEWER_GRAPH_STRATEGY
 }
 
+set_mock_stdout() {
+  MOCK_LOCAL_REVIEWER_STDOUT="$1"
+}
+
 init_repo_root_fixture() {
   git -C "$VALID_REPO_ROOT" init -q
   git -C "$VALID_REPO_ROOT" config user.email "test@example.com"
@@ -144,7 +148,7 @@ run_test "missing_command_exit" "2" "$(exit_code)"
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
-MOCK_LOCAL_REVIEWER_STDOUT='{"result":"clean","findings":[]}'
+set_mock_stdout '{"result":"clean","findings":[]}'
 export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "clean_result" "RESULT=clean" "$(line_for RESULT)"
@@ -153,7 +157,7 @@ run_test "clean_exit" "0" "$(exit_code)"
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
-MOCK_LOCAL_REVIEWER_STDOUT='{"findings":[{"severity":"low","advisory":true,"message":"optional wording"}]}'
+set_mock_stdout '{"findings":[{"severity":"low","advisory":true,"message":"optional wording"}]}'
 export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "advisory_result" "RESULT=clean" "$(line_for RESULT)"
@@ -161,7 +165,7 @@ run_test "advisory_suggestions" "SUGGESTION_COUNT=1" "$(line_for SUGGESTION_COUN
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
-MOCK_LOCAL_REVIEWER_STDOUT='{"findings":[{"severity":"suggestion","clear_in_scope":true,"message":"add missing test"}]}'
+set_mock_stdout '{"findings":[{"severity":"suggestion","clear_in_scope":true,"message":"add missing test"}]}'
 export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "clear_in_scope_suggestion_result" "RESULT=needs_fixes" "$(line_for RESULT)"
@@ -169,21 +173,21 @@ run_test "clear_in_scope_suggestion_blocking" "BLOCKING_COUNT=1" "$(line_for BLO
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
-MOCK_LOCAL_REVIEWER_STDOUT='{"findings":[{"severity":"important","message":"fix before ready"}]}'
+set_mock_stdout '{"findings":[{"severity":"important","message":"fix before ready"}]}'
 export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "important_result" "RESULT=needs_fixes" "$(line_for RESULT)"
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
-MOCK_LOCAL_REVIEWER_STDOUT='{"result":"clean","findings":[{"severity":"important","message":"fix before ready"}]}'
+set_mock_stdout '{"result":"clean","findings":[{"severity":"important","message":"fix before ready"}]}'
 export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "explicit_clean_with_important_result" "RESULT=needs_fixes" "$(line_for RESULT)"
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
-MOCK_LOCAL_REVIEWER_STDOUT='{"result":"needs_rerun","reason":"state_changed","findings":[]}'
+set_mock_stdout '{"result":"needs_rerun","reason":"state_changed","findings":[]}'
 export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "needs_rerun_result" "RESULT=needs_rerun" "$(line_for RESULT)"
@@ -192,7 +196,7 @@ run_test "needs_rerun_exit" "1" "$(exit_code)"
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
-MOCK_LOCAL_REVIEWER_STDOUT='not json'
+set_mock_stdout 'not json'
 export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "malformed_result" "RESULT=escalate" "$(line_for RESULT)"
@@ -228,7 +232,7 @@ run_test "timeout_reason" "REASON=timeout" "$(line_for REASON)"
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 LOCAL_AI_REVIEWER_GRAPH_STRATEGY=auto
-MOCK_LOCAL_REVIEWER_STDOUT='{"result":"clean","findings":[]}'
+set_mock_stdout '{"result":"clean","findings":[]}'
 export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_GRAPH_STRATEGY MOCK_LOCAL_REVIEWER_STDOUT
 run_reviewer "$MOCK_BIN:$NO_GRAPH_BIN"
 run_test "graph_skipped_result" "RESULT=clean" "$(line_for RESULT)"
@@ -236,7 +240,7 @@ run_test "graph_skipped_context" "GRAPH_CONTEXT=skipped" "$(line_for GRAPH_CONTE
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
-MOCK_LOCAL_REVIEWER_STDOUT='{"result":"clean","findings":[]}'
+set_mock_stdout '{"result":"clean","findings":[]}'
 MOCK_PR_HEAD_SHA="0000000000000000000000000000000000000000"
 export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT MOCK_PR_HEAD_SHA
 run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
