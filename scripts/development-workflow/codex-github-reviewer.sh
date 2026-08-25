@@ -264,14 +264,14 @@ codex_inline_review_comment_count_since() {
 }
 
 codex_review_thread_evidence_counts() {
-  local thread_tmpfile thread_stderr cursor page max_pages count provisional_count page_count page_provisional_count has_next end_cursor
+  local thread_tmpfile thread_stderr cursor page max_pages count cleared_count page_count page_cleared_count has_next end_cursor
   thread_tmpfile=$(mktemp)
   thread_stderr=$(mktemp)
   cursor=""
   page=0
   max_pages=20
   count=0
-  provisional_count=0
+  cleared_count=0
   while :; do
     page=$((page + 1))
     if [ "$page" -gt "$max_pages" ]; then
@@ -324,16 +324,15 @@ codex_review_thread_evidence_counts() {
               | (.firstComment.nodes[0].author.login // "") as $first_author
               | (.lastComment.nodes[0].author.login // "") as $last_author
               | (.lastComment.nodes[0].createdAt // "") as $last_created
-              | select((.isResolved // false) == false)
               | select((.isOutdated // false) == false)
               | select($first_author == $bot or $first_author == $bot_plain)
               | {
-                  provisional: (($head_date != "") and ($last_author != $bot) and ($last_author != $bot_plain) and ($last_created > $head_date))
+                  cleared: ((.isResolved // false) or (($head_date != "") and ($last_author != $bot) and ($last_author != $bot_plain) and ($last_created > $head_date)))
                 }
             ] as $candidate_threads
-          | ($candidate_threads | map(select(.provisional | not)) | length) as $count
-          | ($candidate_threads | map(select(.provisional)) | length) as $provisional_count
-          | [$count, $provisional_count, $has_next, $end_cursor] | @tsv' \
+          | ($candidate_threads | map(select(.cleared | not)) | length) as $count
+          | ($candidate_threads | map(select(.cleared)) | length) as $cleared_count
+          | [$count, $cleared_count, $has_next, $end_cursor] | @tsv' \
       > "$thread_tmpfile"; then
       local thread_err
       thread_err=$(cat "$thread_stderr")
@@ -341,9 +340,9 @@ codex_review_thread_evidence_counts() {
       echo "ERROR: failed to fetch or parse existing Codex review threads: $thread_err" >&2
       return 3
     fi
-    IFS=$'\t' read -r page_count page_provisional_count has_next end_cursor < "$thread_tmpfile"
+    IFS=$'\t' read -r page_count page_cleared_count has_next end_cursor < "$thread_tmpfile"
     count=$((count + page_count))
-    provisional_count=$((provisional_count + page_provisional_count))
+    cleared_count=$((cleared_count + page_cleared_count))
     if [ "$has_next" != "true" ]; then
       break
     fi
@@ -354,7 +353,7 @@ codex_review_thread_evidence_counts() {
     fi
     cursor="$end_cursor"
   done
-  printf '%s\t%s\n' "$count" "$provisional_count"
+  printf '%s\t%s\n' "$count" "$cleared_count"
   rm -f "$thread_tmpfile" "$thread_stderr"
 }
 
@@ -1479,17 +1478,17 @@ codex_fetch_existing_current_head_evidence() {
 }
 
 codex_classify_existing_current_head_evidence() {
-  local thread_counts unresolved_thread_count provisionally_cleared_thread_count response_display fetch_status
+  local thread_counts unresolved_thread_count cleared_thread_count response_display fetch_status
   if ! thread_counts=$(codex_review_thread_evidence_counts); then
     echo "WARNING: failed to fetch existing Codex review threads before trigger" >&2
     echo "VERDICT: TIMED_OUT — could not fetch existing Codex thread state before trigger (treated as unavailable)"
     exit 2
   fi
-  IFS=$'\t' read -r unresolved_thread_count provisionally_cleared_thread_count <<EOF
+  IFS=$'\t' read -r unresolved_thread_count cleared_thread_count <<EOF
 $thread_counts
 EOF
   unresolved_thread_count="${unresolved_thread_count:-0}"
-  provisionally_cleared_thread_count="${provisionally_cleared_thread_count:-0}"
+  cleared_thread_count="${cleared_thread_count:-0}"
   if [ "$unresolved_thread_count" -gt 0 ]; then
     codex_require_current_head
     echo "INFO: existing current-head Codex evidence detected; no trigger comment will be posted"
@@ -1515,8 +1514,8 @@ EOF
   codex_require_current_head
   response_display=$(printf '%s' "$EXISTING_BOT_RESPONSE" | jq -Rrs '.[0:10000]')  # workflow-shell-guard: allow SH003 - jq reads raw text for display truncation only.
 
-  if [ "$EXISTING_BOT_RESPONSE_SOURCE" = "review" ] && [ "$EXISTING_BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] && [ "$provisionally_cleared_thread_count" -gt 0 ]; then
-    echo "INFO: existing Codex CHANGES_REQUESTED review has only provisionally cleared thread findings; posting a fresh trigger"
+  if [ "$EXISTING_BOT_RESPONSE_SOURCE" = "review" ] && { [ "$EXISTING_BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$EXISTING_BOT_RESPONSE"; } && [ "$cleared_thread_count" -gt 0 ]; then
+    echo "INFO: existing Codex blocking review has only cleared thread findings; posting a fresh trigger"
     return 1
   fi
   if [ "$EXISTING_BOT_RESPONSE_SOURCE" = "review" ] && { [ "$EXISTING_BOT_RESPONSE_REVIEW_STATE" = "CHANGES_REQUESTED" ] || codex_response_is_blocking "$EXISTING_BOT_RESPONSE"; }; then
