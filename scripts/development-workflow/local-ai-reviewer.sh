@@ -384,6 +384,8 @@ parse_result="$(
         | ($findings | map(select((blocking | not) and (advisory | not))) | length) as $unknown
         | if $unknown > 0 then
             "PARSE_STATUS=ok\nRESULT=needs_fixes\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=\($blocking + $unknown)\nSUGGESTION_COUNT=\($advisory)"
+          elif $result == "clean" and $blocking > 0 then
+            "PARSE_STATUS=ok\nRESULT=needs_fixes\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=\($blocking)\nSUGGESTION_COUNT=\($advisory)"
           elif $result == "" then
             (if $blocking > 0 then "needs_fixes" else "clean" end) as $inferred
             | "PARSE_STATUS=ok\nRESULT=\($inferred)\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=\($blocking)\nSUGGESTION_COUNT=\($advisory)"

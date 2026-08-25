@@ -42,6 +42,13 @@ run_local_ai_reviewer_review() {
 run_platform_review "local-ai-reviewer" "999" "feature/test" "30" "120" >/dev/null 2>&1 || true
 run_test "run_platform_review_routes_to_local_ai_reviewer" "1" "$_local_ai_dispatch_called"
 
+if grep -q 'needs_rerun) print_kv RESULT needs_rerun' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"; then
+  actual="present"
+else
+  actual="missing"
+fi
+run_test "local_ai_reviewer_preserves_needs_rerun_mapping" "present" "$actual"
+
 unset -f run_local_ai_reviewer_review
 
 if [ "$FAIL_COUNT" -ne 0 ]; then

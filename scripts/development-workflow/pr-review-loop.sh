@@ -2756,9 +2756,16 @@ run_coderabbit_cli_review() {
       return 0
       ;;
     1)
-      [ "$blocking_count" -eq 0 ] && blocking_count=1
-      [ "$comment_count" -eq 0 ] && comment_count=1
-      print_kv RESULT needs_fixes
+      local local_ai_script_result
+      local_ai_script_result="$(kv_value_default RESULT "$script_output" needs_fixes)"
+      if [ "$local_ai_script_result" != "needs_rerun" ]; then
+        [ "$blocking_count" -eq 0 ] && blocking_count=1
+        [ "$comment_count" -eq 0 ] && comment_count=1
+      fi
+      case "$local_ai_script_result" in
+        needs_rerun) print_kv RESULT needs_rerun ;;
+        *) print_kv RESULT needs_fixes ;;
+      esac
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"

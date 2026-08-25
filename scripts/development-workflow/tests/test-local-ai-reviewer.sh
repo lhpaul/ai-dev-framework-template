@@ -176,6 +176,22 @@ run_test "important_result" "RESULT=needs_fixes" "$(line_for RESULT)"
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+MOCK_LOCAL_REVIEWER_STDOUT='{"result":"clean","findings":[{"severity":"important","message":"fix before ready"}]}'
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "explicit_clean_with_important_result" "RESULT=needs_fixes" "$(line_for RESULT)"
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+MOCK_LOCAL_REVIEWER_STDOUT='{"result":"needs_rerun","reason":"state_changed","findings":[]}'
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "needs_rerun_result" "RESULT=needs_rerun" "$(line_for RESULT)"
+run_test "needs_rerun_reason" "REASON=state_changed" "$(line_for REASON)"
+run_test "needs_rerun_exit" "1" "$(exit_code)"
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 MOCK_LOCAL_REVIEWER_STDOUT='not json'
 export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT
 run_reviewer "$MOCK_BIN:$PATH"
