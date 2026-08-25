@@ -133,6 +133,18 @@ jobs:
               -f base_ref="$BASE_BRANCH"
           }
 
+          branch_is_in_scope() {
+            local candidate="$1"
+            local prefix
+
+            for prefix in $IN_SCOPE_PREFIXES; do
+              if [[ "$candidate" == "${prefix}"* ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
           refresh_pr_metadata() {
             local latest_pr_json
 
@@ -238,15 +250,7 @@ jobs:
             exit 0
           fi
 
-          in_scope=false
-          for prefix in $IN_SCOPE_PREFIXES; do
-            if [[ "$BRANCH" == "${prefix}"* ]]; then
-              in_scope=true
-              break
-            fi
-          done
-
-          if [ "$in_scope" = "false" ]; then
+          if ! branch_is_in_scope "$BRANCH"; then
             echo "Branch '${BRANCH}' is not in scope; posting success status (guard skipped)."
             gh api \
               --method POST \
@@ -310,6 +314,11 @@ jobs:
                     HEAD_REPO="$latest_head_repo"
                     if [ "$HEAD_REPO" != "$REPO" ]; then
                       echo "Refreshed PR #${PR_NUMBER} head repository '${HEAD_REPO}' differs from base '${REPO}'. Skipping ${LABEL_NAME}."
+                      should_apply_regression_label=false
+                      break
+                    fi
+                    if ! branch_is_in_scope "$BRANCH"; then
+                      echo "Refreshed PR #${PR_NUMBER} branch '${BRANCH}' is not in scope. Skipping ${LABEL_NAME}."
                       should_apply_regression_label=false
                       break
                     fi

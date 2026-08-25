@@ -86,6 +86,7 @@ run_test "fork_head_skip_no_mutation" "yes" "$(contains "skipping privileged PR 
 run_test "out_of_scope_success_preserved" "yes" "$(contains "Not an implementation branch; guard skipped.")"
 run_test "status_context_preserved" "yes" "$(contains 'Reviewer-loop completion guard (#${PR_NUMBER})')"
 run_test "in_scope_prefixes_preserved" "yes" "$(contains "IN_SCOPE_PREFIXES: \"feature/ fix/ refactor/ hotfix/\"")"
+run_test "branch_scope_helper_present" "yes" "$(contains "branch_is_in_scope()")"
 
 run_test "regression_label_constant_preserved" "yes" "$(contains "LABEL_NAME=\"ready-for-regression\"")"
 run_test "regression_label_create_preserved" "yes" "$(contains 'gh label create "$LABEL_NAME"')"
@@ -105,6 +106,7 @@ run_test "regression_dispatch_gates_base_branch" "yes" "$(contains "develop|deve
 run_test "dispatch_disabled_skips_label" "yes" "$(contains "skipping \${LABEL_NAME}")"
 run_test "dispatch_failure_skips_label" "yes" "$(contains "Skipping \${LABEL_NAME} and continuing to reviewer-loop guard status.")"
 run_test "dispatch_revalidates_head_before_label" "yes" "$(contains "refresh_pr_metadata()")"
+run_test "dispatch_revalidates_branch_scope_after_refresh" "yes" "$(contains "Refreshed PR #\${PR_NUMBER} branch '\${BRANCH}' is not in scope.")"
 run_test "dispatch_redispatches_on_stale_head" "yes" "$(contains "Redispatching regression for the current head.")"
 run_test "dispatch_skips_label_after_repeated_head_change" "yes" "$(contains "changed again after regression dispatch")"
 run_test "synchronize_removes_stale_label" "yes" "$(contains 'EVENT_ACTION" = "synchronize"')"
