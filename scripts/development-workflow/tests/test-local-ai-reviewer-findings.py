@@ -62,6 +62,20 @@ same_ready = norm([
 ])
 check("same_class_matches", 0, helper.compare(same_local, same_ready)["net_new_count"])
 
+missing_head_local = norm([
+    {
+        "id": "l1",
+        "path": "scripts/a.sh",
+        "line": 10,
+        "affected_scope": "scripts/a.sh",
+        "category_key": "validation",
+        "requirement_key": "tests",
+        "failure_mode_key": "missing",
+        "title": "Add test",
+    }
+])
+check("missing_local_head_does_not_match_ready_head", 1, helper.compare(missing_head_local, same_ready)["net_new_count"])
+
 different_key_ready = norm([
     {
         "id": "r2",

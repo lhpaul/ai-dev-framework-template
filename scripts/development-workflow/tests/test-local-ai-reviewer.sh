@@ -59,6 +59,9 @@ case "$*" in
     exit 0
     ;;
   *"pr diff 123"*"--name-only"*)
+    if [ "${MOCK_PR_DIFF_EXIT:-0}" -ne 0 ]; then
+      exit "$MOCK_PR_DIFF_EXIT"
+    fi
     printf 'scripts/example.sh\nREVIEW.md\n'
     exit 0
     ;;
@@ -91,7 +94,7 @@ reset_mocks() {
   rm -f "$MOCK_BIN/gh" "$MOCK_BIN/local-reviewer-mock"
   install_gh_mock
   install_local_reviewer_mock
-  unset MOCK_PR_HEAD_SHA MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR
+  unset MOCK_PR_HEAD_SHA MOCK_PR_DIFF_EXIT MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR
   unset MOCK_LOCAL_REVIEWER_EXIT MOCK_LOCAL_REVIEWER_SLEEP
   unset LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_DISABLED LOCAL_AI_REVIEWER_TIMEOUT
   unset LOCAL_AI_REVIEWER_GRAPH_STRATEGY
@@ -187,6 +190,16 @@ run_test "explicit_clean_with_important_result" "RESULT=needs_fixes" "$(line_for
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+set_mock_stdout '{"findings":[{"severity":"important","path":"scripts/example.sh","line":42,"message":"unauthorized text in a real finding"}]}'
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "finding_text_does_not_trigger_auth_escalation_result" "RESULT=needs_fixes" "$(line_for RESULT)"
+run_test "blocking_detail_path" "BLOCKING_1_PATH=scripts/example.sh" "$(line_for BLOCKING_1_PATH)"
+run_test "blocking_detail_line" "BLOCKING_1_LINE=42" "$(line_for BLOCKING_1_LINE)"
+run_test "blocking_detail_body" "BLOCKING_1_BODY=unauthorized text in a real finding" "$(line_for BLOCKING_1_BODY)"
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 set_mock_stdout '{"result":"needs_rerun","reason":"state_changed","findings":[]}'
 export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDOUT
 run_reviewer "$MOCK_BIN:$PATH"
@@ -219,6 +232,15 @@ export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "missing_credentials_result" "RESULT=escalate" "$(line_for RESULT)"
 run_test "missing_credentials_reason" "REASON=missing_credentials" "$(line_for REASON)"
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+MOCK_PR_DIFF_EXIT=1
+set_mock_stdout '{"result":"clean","findings":[]}'
+export LOCAL_AI_REVIEWER_COMMAND MOCK_PR_DIFF_EXIT MOCK_LOCAL_REVIEWER_STDOUT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "diff_unavailable_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "diff_unavailable_reason" "REASON=diff_unavailable" "$(line_for REASON)"
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock

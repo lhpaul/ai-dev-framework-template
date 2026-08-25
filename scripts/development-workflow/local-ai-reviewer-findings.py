@@ -106,7 +106,7 @@ def same_class(left: dict[str, Any], right: dict[str, Any]) -> bool:
 
 
 def matches(local: dict[str, Any], ready: dict[str, Any]) -> bool:
-    if local["head"] and ready["head"] and local["head"] != ready["head"]:
+    if local["head"] != ready["head"]:
         return False
     if "unclassified" in {local["category_key"], local["requirement_key"], local["failure_mode_key"],
                           ready["category_key"], ready["requirement_key"], ready["failure_mode_key"]}:

@@ -2756,13 +2756,13 @@ run_coderabbit_cli_review() {
       return 0
       ;;
     1)
-      local local_ai_script_result
-      local_ai_script_result="$(kv_value_default RESULT "$script_output" needs_fixes)"
-      if [ "$local_ai_script_result" != "needs_rerun" ]; then
+      local coderabbit_cli_script_result
+      coderabbit_cli_script_result="$(kv_value_default RESULT "$script_output" needs_fixes)"
+      if [ "$coderabbit_cli_script_result" != "needs_rerun" ]; then
         [ "$blocking_count" -eq 0 ] && blocking_count=1
         [ "$comment_count" -eq 0 ] && comment_count=1
       fi
-      case "$local_ai_script_result" in
+      case "$coderabbit_cli_script_result" in
         needs_rerun) print_kv RESULT needs_rerun ;;
         *) print_kv RESULT needs_fixes ;;
       esac
@@ -2883,9 +2883,16 @@ run_local_ai_reviewer_review() {
       return 0
       ;;
     1)
-      [ "$blocking_count" -eq 0 ] && blocking_count=1
-      [ "$comment_count" -eq 0 ] && comment_count=1
-      print_kv RESULT needs_fixes
+      local local_ai_script_result
+      local_ai_script_result="$(kv_value_default RESULT "$script_output" needs_fixes)"
+      if [ "$local_ai_script_result" != "needs_rerun" ]; then
+        [ "$blocking_count" -eq 0 ] && blocking_count=1
+        [ "$comment_count" -eq 0 ] && comment_count=1
+      fi
+      case "$local_ai_script_result" in
+        needs_rerun) print_kv RESULT needs_rerun ;;
+        *) print_kv RESULT needs_fixes ;;
+      esac
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -2894,6 +2901,11 @@ run_local_ai_reviewer_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT "$blocking_count"
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      for index in $(seq 1 "$blocking_count"); do
+        print_kv "BLOCKING_${index}_PATH" "$(kv_value_default "BLOCKING_${index}_PATH" "$script_output" "")"
+        print_kv "BLOCKING_${index}_LINE" "$(kv_value_default "BLOCKING_${index}_LINE" "$script_output" "")"
+        print_kv "BLOCKING_${index}_BODY" "$(kv_value_default "BLOCKING_${index}_BODY" "$script_output" "")"
+      done
       print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
       print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
       return 1

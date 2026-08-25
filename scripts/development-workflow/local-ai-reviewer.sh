@@ -183,6 +183,7 @@ BASE_BRANCH=""
 HEAD_BRANCH=""
 HEAD_SHA=""
 changed_files_json="[]"
+diff_fetch_failed=0
 if command -v gh >/dev/null 2>&1; then
   pr_json=""
   if pr_json="$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json baseRefName,headRefName,headRefOid 2>/dev/null)"; then
@@ -192,6 +193,7 @@ if command -v gh >/dev/null 2>&1; then
   fi
   if ! diff_output="$(gh pr diff "$PR_NUMBER" --repo "$OWNER/$REPO" --name-only 2>/dev/null)"; then
     diff_output=""
+    diff_fetch_failed=1
   fi
   if [ -n "$diff_output" ]; then
     changed_files_json="$(printf '%s\n' "$diff_output" | jq -R -s -c 'split("\n") | map(select(length > 0))')"
@@ -205,6 +207,11 @@ fi
 if [ -z "$HEAD_SHA" ]; then
   echo "ERROR: could not resolve pull request head SHA for #$PR_NUMBER" >&2
   print_result escalate 0 0 0 head_sha_unavailable head_sha_unavailable
+  exit 2
+fi
+if [ "$diff_fetch_failed" -ne 0 ]; then
+  echo "ERROR: could not fetch pull request diff for #$PR_NUMBER" >&2
+  print_result escalate 0 0 0 diff_unavailable diff_unavailable
   exit 2
 fi
 
@@ -323,11 +330,15 @@ fi
 
 combined_output="${command_stdout}
 ${command_stderr}"
-if printf '%s\n' "$combined_output" | grep -Eiq 'missing[[:space:]_-]+model|model[[:space:]_-]+access|model.*unavailable'; then
+setup_probe_output="$command_stderr"
+if ! printf '%s\n' "$command_stdout" | jq -e . >/dev/null 2>&1; then
+  setup_probe_output="$combined_output"
+fi
+if printf '%s\n' "$setup_probe_output" | grep -Eiq 'missing[[:space:]_-]+model|model[[:space:]_-]+access|model.*unavailable'; then
   print_result escalate 0 0 0 missing_model_access missing_model_access
   exit 2
 fi
-if printf '%s\n' "$combined_output" | grep -Eiq 'missing[[:space:]_-]+credentials|credentials[[:space:]_-]+missing|unauthori[sz]ed|forbidden|(^|[^[:alnum:]_])(401|403)([^[:alnum:]_]|$)'; then
+if printf '%s\n' "$setup_probe_output" | grep -Eiq 'missing[[:space:]_-]+credentials|credentials[[:space:]_-]+missing|unauthori[sz]ed|forbidden|(^|[^[:alnum:]_])(401|403)([^[:alnum:]_]|$)'; then
   print_result escalate 0 0 0 missing_credentials missing_credentials
   exit 2
 fi
@@ -382,15 +393,27 @@ parse_result="$(
         | ($findings | map(select(blocking)) | length) as $blocking
         | ($findings | map(select((blocking | not) and advisory)) | length) as $advisory
         | ($findings | map(select((blocking | not) and (advisory | not))) | length) as $unknown
+        | ($findings | map(select(blocking or ((blocking | not) and (advisory | not))))) as $blocking_findings
+        | ($blocking_findings
+            | to_entries
+            | map(
+                [
+                  "BLOCKING_\(.key + 1)_PATH=\(.value | path_value)",
+                  "BLOCKING_\(.key + 1)_LINE=\(.value | line_value)",
+                  "BLOCKING_\(.key + 1)_BODY=\(.value | text_value | gsub("\n"; "\\n"))"
+                ]
+              )
+            | flatten
+            | join("\n")) as $blocking_lines
         | if $unknown > 0 then
-            "PARSE_STATUS=ok\nRESULT=needs_fixes\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=\($blocking + $unknown)\nSUGGESTION_COUNT=\($advisory)"
+            "PARSE_STATUS=ok\nRESULT=needs_fixes\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=\($blocking + $unknown)\nSUGGESTION_COUNT=\($advisory)\n\($blocking_lines)"
           elif $result == "clean" and $blocking > 0 then
-            "PARSE_STATUS=ok\nRESULT=needs_fixes\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=\($blocking)\nSUGGESTION_COUNT=\($advisory)"
+            "PARSE_STATUS=ok\nRESULT=needs_fixes\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=\($blocking)\nSUGGESTION_COUNT=\($advisory)\n\($blocking_lines)"
           elif $result == "" then
             (if $blocking > 0 then "needs_fixes" else "clean" end) as $inferred
-            | "PARSE_STATUS=ok\nRESULT=\($inferred)\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=\($blocking)\nSUGGESTION_COUNT=\($advisory)"
+            | "PARSE_STATUS=ok\nRESULT=\($inferred)\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=\($blocking)\nSUGGESTION_COUNT=\($advisory)\n\(if $blocking > 0 then $blocking_lines else "" end)"
           else
-            "PARSE_STATUS=ok\nRESULT=\($result)\nREASON=\($root.reason // "")\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=\($blocking)\nSUGGESTION_COUNT=\($advisory)"
+            "PARSE_STATUS=ok\nRESULT=\($result)\nREASON=\($root.reason // "")\nCOMMENT_COUNT=\($comments)\nBLOCKING_COUNT=\($blocking)\nSUGGESTION_COUNT=\($advisory)\n\(if $result == "needs_fixes" then $blocking_lines else "" end)"
           end
       end
   ' 2>/dev/null
@@ -434,6 +457,7 @@ case "$result" in
     [ "$blocking_count" -eq 0 ] && blocking_count=1
     [ "$comment_count" -eq 0 ] && comment_count=1
     print_result needs_fixes "$comment_count" "$blocking_count" "$suggestion_count" local_ai_review_findings
+    printf '%s\n' "$parse_result" | awk '/^BLOCKING_[0-9]+_(PATH|LINE|BODY)=/ { print }'
     exit 1
     ;;
   needs_rerun)
