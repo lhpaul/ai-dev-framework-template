@@ -4,7 +4,7 @@
 
 Workflow operators need a faster, cheaper first review pass for routine pull requests before the existing ready-phase Codex GitHub review runs. This spike/MVP defines a local-only CLI reviewer that lives in the repository workflow, produces auditable review evidence, and helps reduce repeated external review rounds without replacing the ready-phase `codex-github` gate.
 
-The MVP is intentionally scoped to local command-line review and design validation. Graph-assisted context tools may be evaluated as inputs, but they are not mandatory unless the spike proves that they materially improve review quality or cost.
+The MVP is intentionally scoped to local command-line review and design validation. Graph-assisted context tools may be evaluated as inputs, but they are not mandatory unless the spike proves that they materially improve review quality.
 
 The local reviewer lifecycle bucket is the automated PR reviewer loop, not the internal Step 7a runner gate. It is expected to behave like other `pr-review-loop.sh` platforms and emit normalized result evidence before ready-phase reviewers run.
 
@@ -130,6 +130,25 @@ The local reviewer lifecycle bucket is the automated PR reviewer loop, not the i
 
 ---
 
+## Result Wire Contract
+
+The local reviewer companion script must emit key-value output that `pr-review-loop.sh` can consume without lossy remapping.
+
+| Emitted key | Accepted raw value | Review-loop meaning | Required preserved fields |
+| --- | --- | --- | --- |
+| `RESULT` | `clean` | Clean platform result. | `COMMENT_COUNT=0`, `BLOCKING_COUNT=0`, `SUGGESTION_COUNT=0`, reviewed head. |
+| `RESULT` | `needs_fixes` | Blocking platform result. | `BLOCKING_COUNT`, finding summaries, reviewed head. |
+| `RESULT` | `advisory` | Non-blocking advisory result. | `SUGGESTION_COUNT`, advisory summaries, reviewed head. |
+| `RESULT` | `skipped` | Intentional skip or warn-and-continue availability result. | `REASON`, no-fresh-review warning, reviewed head when available. |
+| `RESULT` | `needs_rerun` | Blocking result that asks the loop to rerun after fixes or state refresh. | `REASON`, finding or retry summary. |
+| `RESULT` | `escalate` | Unavailable, timed out, malformed, or unsafe-to-classify result. | `REASON`, reviewed head when available, operator action. |
+
+Raw values must use underscores where the existing normalizer expects them, such as `needs_fixes`, not display labels such as "needs-fixes". Display text may say "needs fixes", but machine output must use the accepted raw values above.
+
+Reason values must distinguish at least: `missing_command`, `missing_model_access`, `missing_credentials`, `head_mismatch`, `review_contract_missing`, `timeout`, `malformed_output`, `graph_context_skipped`, and `disabled_by_config`.
+
+---
+
 ## Deterministic Pre-Review Checks
 
 The spike/MVP design must define these deterministic checks before any LLM-backed review pass:
@@ -192,11 +211,25 @@ The MVP default policy is fail-closed for unreliable local review results:
 - Skipped local review is allowed only when the platform is disabled by configuration or explicitly unavailable under a documented warn-and-continue policy.
 - A future warn-and-continue policy may convert a setup/access failure from `escalate` to `skipped`, but only when the policy is explicitly configured and the summary states that no fresh local review evidence was produced.
 
+Deterministic-check failures map to these default outcomes:
+
+| Check failure | Default result | Required next action |
+| --- | --- | --- |
+| Current-head binding mismatch | `escalate` with `REASON=head_mismatch` | Stop before ready-phase review and exclude the run from net-new Codex comparison evidence. |
+| Diff scope cannot be read | `escalate` | Stop because changed-file context is unavailable. |
+| Stage artifact boundary violation | `needs_fixes` | Return for fixes before LLM review can claim clean. |
+| `REVIEW.md` or applicable stage checklist missing | `escalate` with `REASON=review_contract_missing` | Stop because the reviewer cannot apply the repository contract. |
+| Placeholder or stale-marker scan finds violations | `needs_fixes` | Return for fixes and include the matched markers. |
+| Required validation evidence is missing | `needs_fixes` | Return for fixes unless the stage explicitly records the validation as not applicable. |
+| Existing unresolved blocking reviewer thread is present | `needs_fixes` | Return for fixes or require explicit thread resolution before clean evidence. |
+| Failure-state classification cannot classify the failure | `escalate` | Stop because the result would be ambiguous. |
+
 Finding normalization follows the repository review contract:
 
 - `blocking` findings produce `needs_fixes`.
 - `important` findings produce `needs_fixes` by default because the repository review contract says to fix them unless a human decision is required.
-- `suggestion` findings remain advisory and allow the loop to continue unless the reviewer explicitly restates them as blocking.
+- `suggestion` findings produce `needs_fixes` by default when the fix is clear and in scope.
+- `suggestion` findings may be emitted as `advisory` only when the reviewer records that the suggestion is scope-expanding, optional polish, or requires a product/human decision.
 
 The spike may propose additional policy modes, but the MVP must define the default branch for every failure class above.
 
@@ -221,16 +254,28 @@ The local reviewer must retain comparison evidence for each finding:
 - Affected file path and line or range when available.
 - Short finding title.
 - Stable category such as workflow-contract, missing-validation, stale-marker, docs-consistency, or unavailable-evidence.
+- Canonical requirement key, using lowercase kebab-case for the violated obligation.
+- Canonical failure-mode key, using lowercase kebab-case for the failure class.
 - One-sentence finding summary.
 
 A Codex GitHub finding is **not net-new** when it matches a local finding on the same head by either:
 
-- The same affected path plus substantially the same requirement or failure mode, even if wording, line number, or severity differs.
-- The same stable category plus the same missing or violated workflow obligation.
+- Exact canonical requirement key and failure-mode key.
+- Same affected path plus the same canonical requirement key.
+- Same stable category plus the same canonical failure-mode key.
 
 A Codex GitHub finding is **net-new** when no same-head local finding matches by those rules.
 
-Ambiguous matches are counted as net-new for the metric and must be listed as ambiguous in the review summary. This keeps rollout measurement conservative and reproducible: unclear credit goes to the ready-phase reviewer, not the local reviewer.
+Duplicate local findings collapse by reviewed head, affected path, line or range, canonical requirement key, and canonical failure-mode key before comparison.
+
+Ambiguous matches are counted as net-new for the metric and must be listed as ambiguous in the review summary with the candidate local finding IDs. This keeps rollout measurement conservative and reproducible: unclear credit goes to the ready-phase reviewer, not the local reviewer.
+
+Follow-up fixture coverage must include:
+
+- Same path with different requirement keys.
+- Same category with ambiguous failure-mode keys.
+- Rephrased finding with the same requirement and failure-mode keys.
+- Severity-promoted finding with the same requirement and failure-mode keys.
 
 ---
 
@@ -298,7 +343,8 @@ If the spike/MVP design is accepted, follow-up implementation should be split in
 | Clean local review | Continue | Proceed to the next configured reviewer stage, including ready-phase `codex-github` when applicable. | Review-loop output, PR summary, stage handoff | The local reviewer reports no blocking findings for the current head. |
 | Blocking local findings | Needs fixes | Return the pull request for fixes and rerun review after a push. | Review-loop output, fixer handoff, PR summary | The local reviewer finds an uncovered workflow-contract edge case. |
 | Important local findings | Needs fixes | Return the pull request for fixes by default, or escalate when the finding requires a human decision. | Review-loop output, fixer handoff, PR summary | The reviewer finds an incomplete workflow update that should be fixed before readiness. |
-| Suggestion local findings | Continue with visible advisories | Keep suggestions non-blocking unless restated as blocking by the review contract. | Review-loop output, PR summary | The reviewer suggests clearer documentation wording. |
+| Clear in-scope suggestion | Needs fixes | Return the pull request for fixes by default. | Review-loop output, fixer handoff, PR summary | The reviewer suggests clearer documentation wording that is mechanical to apply. |
+| Scope-expanding or decision-bound suggestion | Advisory | Continue with visible advisories and record why the suggestion did not block readiness. | Review-loop output, PR summary | The reviewer suggests a broader policy change that needs human approval. |
 | Skipped by configuration | Skipped | Continue only as an intentional skipped reviewer, not as clean local review evidence. | Review-loop output, PR summary | The local reviewer is disabled in a downstream repository. |
 | Missing local dependency or access | Escalate | Stop for operator action unless a future explicit warn-and-continue policy converts the result to skipped with a no-fresh-review warning. | Review-loop output, operator summary | The local LLM command is not installed or authenticated. |
 | Missing optional graph dependency | Continue with no-graph fallback | Record graph context as skipped with a reason, then continue local review using the no-graph context strategy. | Review-loop output, operator summary | `code-review-graph` is not installed while graph context is optional. |
