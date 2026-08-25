@@ -3,7 +3,7 @@
 **Feature**: Add an opt-in local-only Step 7 review platform
 **Spec**: [1_1604-repo-native-automated-pr-reviewer_specs.md](../../specs/developments/20260825164644_1604-repo-native-automated-pr-reviewer/1_1604-repo-native-automated-pr-reviewer_specs.md)
 **Created in**: Plan Ready stage
-**Updated in**: Plan Ready stage
+**Updated in**: In Development stage
 
 ---
 
@@ -29,6 +29,7 @@ Before running this smoke test:
 | Draft-phase platform | `local-ai-reviewer` |
 | Current ready-phase platform | `bugbot` |
 | Mock command | A local script that emits clean, blocking, malformed, timeout, and advisory fixtures |
+| Focused automated tests | `test-local-ai-reviewer.sh`, `test-local-ai-reviewer-findings.py`, `test-local-ai-reviewer-pr-review-loop-dispatch.sh` |
 
 ---
 
@@ -49,6 +50,12 @@ Before running this smoke test:
 
 **Expected result**: The reviewer loop accepts the new platform without invoking Bugbot or another platform.
 
+**Automated fixture**:
+
+```bash
+bash scripts/development-workflow/tests/test-local-ai-reviewer-pr-review-loop-dispatch.sh
+```
+
 ### Step 2: Confirm missing command escalates
 
 **Maps to**: Failure-state classification
@@ -58,6 +65,9 @@ Before running this smoke test:
 3. Confirm output includes `RESULT=escalate` and `REASON=missing_command`.
 
 **Expected result**: Missing local reviewer setup is unavailable evidence, not clean review evidence.
+
+**Automated fixture**: `missing_command_result` in
+`scripts/development-workflow/tests/test-local-ai-reviewer.sh`.
 
 ### Step 3: Confirm clean and advisory-only mapping
 
@@ -71,6 +81,10 @@ Before running this smoke test:
 
 **Expected result**: Advisory-only feedback never emits raw `RESULT=advisory`.
 
+**Automated fixtures**: `clean_result`, `advisory_result`,
+`clear_in_scope_suggestion_result`, and `important_result` in
+`scripts/development-workflow/tests/test-local-ai-reviewer.sh`.
+
 ### Step 4: Confirm blocking mapping
 
 **Maps to**: Result Wire Contract
@@ -81,6 +95,9 @@ Before running this smoke test:
 
 **Expected result**: Blocking local findings stop the loop for fixes.
 
+**Automated fixture**: `clear_in_scope_suggestion_blocking` in
+`scripts/development-workflow/tests/test-local-ai-reviewer.sh`.
+
 ### Step 5: Confirm head mismatch escalates
 
 **Maps to**: Current-head binding
@@ -90,6 +107,9 @@ Before running this smoke test:
 3. Confirm output includes `RESULT=escalate` and `REASON=head_mismatch`.
 
 **Expected result**: The local reviewer never reports clean evidence for a stale or wrong head.
+
+**Automated fixture**: `head_mismatch_result` in
+`scripts/development-workflow/tests/test-local-ai-reviewer.sh`.
 
 ### Step 6: Confirm malformed and timeout behavior
 
@@ -102,6 +122,9 @@ Before running this smoke test:
 
 **Expected result**: Unsafe output and timeout fail closed.
 
+**Automated fixtures**: `malformed_result` and `timeout_result` in
+`scripts/development-workflow/tests/test-local-ai-reviewer.sh`.
+
 ### Step 7: Confirm optional graph context behavior
 
 **Maps to**: Graph Context Adoption Criteria
@@ -113,6 +136,9 @@ Before running this smoke test:
    extra context, noise, and runtime.
 
 **Expected result**: Missing optional graph tooling does not block local review.
+
+**Automated fixture**: `graph_skipped_result` in
+`scripts/development-workflow/tests/test-local-ai-reviewer.sh`.
 
 ### Step 8: Confirm ready-phase Bugbot remains separate
 
@@ -134,6 +160,12 @@ Before running this smoke test:
 4. Confirm one local finding cannot consume multiple ready-phase findings.
 
 **Expected result**: The matcher is conservative and does not hide ready-phase findings.
+
+**Automated fixture**:
+
+```bash
+python3 scripts/development-workflow/tests/test-local-ai-reviewer-findings.py
+```
 
 ### Last Step: Validate & Shut Down
 

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Repo-native local AI reviewer platform** (#1604): adds an opt-in
+  `local-ai-reviewer` Step 7 platform with a local companion script,
+  conservative result parsing, current-head binding, optional graph-context
+  status, finding comparison fixtures, and integration docs so repositories can
+  run a local review pass before ready-phase reviewers such as Bugbot.
 - **Change-scoped CI test selection with a coverage-gap report** (#1537): adds
   `scripts/development-workflow/select-test-suites.sh`, which resolves the
   suites a change set requires from the repository itself — a `test-<name>.sh`
