@@ -63,6 +63,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read) are reported and left out of the stamped scope, surfacing as
   `TRACKER_INCOMPLETE`. The operational guidance lives in
   [Protocol 05 §9.1](docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md).
+- **CodeRabbit rate-limit waits are read from the vendor, not guessed** (#1579):
+  the loop decided "CodeRabbit is rate limited" from the mere presence of a
+  rate-limit comment newer than the HEAD commit, so one stale reply suppressed
+  every later trigger on that HEAD — measured on PR #1575, a comment from 16:06
+  still read as live 21 hours later with no CodeRabbit activity in between. It
+  also sized every retry from a fixed constant: against the 1-review-per-hour
+  allowance measured on 2026-08-24, a 4 x 900 s budget spends all four retries
+  inside a window that grants at most one review, then escalates
+  `rate_limit_max_retries` at roughly the moment the review becomes available
+  (PR #1589: four retries, four "Reviews resumed" acknowledgements, zero
+  reviews). CodeRabbit states its own window — "Next included review available
+  in N minutes" — so the loop now parses that sentence to size the wait, treats
+  a comment past its announced window as spent rather than live, and re-triggers
+  with `@coderabbitai review` instead of `@coderabbitai resume`, which only
+  lifts a paused state and reviews nothing against a rate limit. A reply older
+  than this run's own most recent trigger no longer answers that trigger, with
+  a clock-skew tolerance because the anchor is stamped locally while the
+  comment timestamp comes from GitHub. CodeRabbit states the window in at least
+  two wordings — "Next included review available in 27 minutes" and "Your next
+  included review will be available in 7 minutes", both observed within one
+  hour — so the parser tolerates the gap between them rather than matching one.
+  Absent or reworded vendor text falls back to the previous constant, and the
+  wait is clamped by `CODERABBIT_RATE_LIMIT_WAIT_MAX` (default 3600 s) so a
+  malformed window cannot park an unattended run. The same leading-zero-safe
+  arithmetic that protects the vendor-parsed number now also applies to the
+  `CODERABBIT_RATE_LIMIT_WAIT_BUFFER`, `CODERABBIT_RATE_LIMIT_WAIT_MAX`,
+  `CODERABBIT_TRIGGER_ANCHOR_SKEW`, `CODERABBIT_RATE_LIMIT_STALE_AFTER`
+  (default 3600 s — how long a comment stating no window stays believable) and
+  `CODERABBIT_RATE_LIMIT_MIN_WAIT` (default 30 s — the floor applied once the
+  comment's age is subtracted from its stated window) operator overrides — a zero-padded value
+  like `008` previously reached `$((...))` unstripped and aborted the whole
+  script under `set -e` ("008: value too great for base") instead of
+  degrading like every other malformed override.
 - **Codex reviewer unavailability is classified and recoverable** (#1522,
   #1526): the Codex GitHub App's "create a Codex account and connect to
   github" refusal — which it returns per triggering identity, so an org-wide

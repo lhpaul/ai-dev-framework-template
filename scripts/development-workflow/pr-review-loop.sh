@@ -4404,6 +4404,415 @@ coderabbit_resolve_no_trigger_timeout() {
   printf '%s\n' "$override"
 }
 
+# ---------------------------------------------------------------------------
+# coderabbit_rate_limit_wait_seconds
+#
+# CodeRabbit states how long the caller must wait inside its rate-limit
+# comment, e.g.
+#
+#     **Next included review available in 27 minutes.**
+#
+# Sizing the retry wait from that sentence rather than from a fixed constant is
+# what lets a retry land when the vendor can actually answer. See issue #1579:
+# measured on 2026-08-24 the org allowance was 1 review per hour, against which
+# a fixed 4 x 900 s budget spends every retry inside a window that grants at
+# most one review, then escalates at roughly the moment the review becomes
+# available (PR #1589: four retries, four "Reviews resumed" acknowledgements,
+# zero reviews, then RESULT=escalate REASON=rate_limit_max_retries).
+#
+# Args:
+#   $1 - body of the newest CodeRabbit rate-limit comment (may be empty)
+#   $2 - fallback wait in seconds, used when the sentence is absent or
+#        unparseable. Vendor wording changes, so absence is never fatal.
+#
+# Prints the wait in seconds on stdout, always a positive integer.
+#
+# CODERABBIT_RATE_LIMIT_WAIT_BUFFER (default 30) is added to the stated window
+# so the retry lands just after the vendor boundary rather than exactly on it.
+# CODERABBIT_RATE_LIMIT_WAIT_MAX (default 3600) clamps the result so that a
+# malformed or hostile "available in 100000 minutes" cannot park an unattended
+# run for a day. Both are validated here: a non-numeric or non-positive
+# override degrades to the documented default instead of yielding a zero wait
+# (a zero wait would busy-spin the retry against the vendor).
+coderabbit_rate_limit_wait_seconds() {
+  local body="${1:-}" fallback="${2:-}"
+  local buffer="${CODERABBIT_RATE_LIMIT_WAIT_BUFFER:-30}"
+  local max_seconds="${CODERABBIT_RATE_LIMIT_WAIT_MAX:-3600}"
+
+  case "$buffer" in
+    '' | *[!0-9]*) buffer=30 ;;
+  esac
+  case "$max_seconds" in
+    '' | *[!0-9]*) max_seconds=3600 ;;
+  esac
+  case "$fallback" in
+    '' | *[!0-9]*) fallback="$CODERABBIT_RATE_LIMIT_WAIT_DEFAULT" ;;
+  esac
+  # Strip leading zeros from every digit-only override before it can reach an
+  # arithmetic context: a digit-only string like "008" passes the checks above
+  # unchanged, but $((...)) below reads a leading-zero literal as octal, and
+  # "008" is not a valid octal literal (8 is not an octal digit) — an operator
+  # override of CODERABBIT_RATE_LIMIT_WAIT_BUFFER=008 aborts the whole script
+  # under `set -e` without this. Same idiom used below for the vendor-parsed
+  # value, applied here to the three operator-supplied numbers instead.
+  buffer="${buffer#"${buffer%%[!0]*}"}"
+  [ -z "$buffer" ] && buffer=0
+  max_seconds="${max_seconds#"${max_seconds%%[!0]*}"}"
+  [ -z "$max_seconds" ] && max_seconds=0
+  fallback="${fallback#"${fallback%%[!0]*}"}"
+  [ -z "$fallback" ] && fallback=0
+  if [ "$max_seconds" -le 0 ]; then
+    max_seconds=3600
+  fi
+  if [ "$fallback" -le 0 ]; then
+    fallback="$CODERABBIT_RATE_LIMIT_WAIT_DEFAULT"
+  fi
+
+  # Lowercase, then treat every run of non-alphanumeric bytes between the
+  # fixed words as a separator. That absorbs markdown emphasis, line wraps and
+  # the non-breaking spaces CodeRabbit sometimes emits, none of which the
+  # vendor guarantees to keep stable, without having to enumerate them.
+  local flat
+  flat="$(printf '%s' "$body" | tr '[:upper:]' '[:lower:]' | tr '\n' ' ')"
+
+  local parsed=""
+  # CodeRabbit uses at least two wordings for the same fact, both observed on
+  # 2026-08-24 within one hour:
+  #
+  #   "**Next included review available in 27 minutes.**"          (PR #1590)
+  #   "Your next included review will be available in 7 minutes."  (PR #1588)
+  #
+  # So the gap between "included" and "available" cannot be assumed to be just
+  # " review ". Allow a bounded run of non-digits there — bounded, not `*`, so
+  # the match cannot reach across unrelated prose to a number elsewhere in the
+  # comment. Requiring the word "included" keeps this off any other "available
+  # in N minutes" sentence the vendor might add.
+  if [[ "$flat" =~ included[^0-9]{0,40}available[^a-z0-9]*in[^a-z0-9]*([0-9]+)[^a-z0-9]*(second|minute|hour) ]]; then
+    local value="${BASH_REMATCH[1]}" unit="${BASH_REMATCH[2]}"
+    # Strip leading zeros before any arithmetic: bash reads "08" as an invalid
+    # octal literal and aborts the whole script under `set -e`.
+    value="${value#"${value%%[!0]*}"}"
+    if [ -z "$value" ]; then
+      value=0
+    fi
+    # More than six digits is not a real vendor window. Refuse to multiply it
+    # rather than letting the product wrap a signed 64-bit integer negative.
+    if [ "${#value}" -le 6 ]; then
+      local multiplier=1
+      case "$unit" in
+        second) multiplier=1 ;;
+        minute) multiplier=60 ;;
+        hour) multiplier=3600 ;;
+      esac
+      parsed=$((value * multiplier + buffer))
+    fi
+  fi
+
+  if [ -n "$parsed" ]; then
+    if [ "$parsed" -gt "$max_seconds" ]; then
+      parsed="$max_seconds"
+    fi
+    if [ "$parsed" -le 0 ]; then
+      parsed=30
+    fi
+    printf '%s\n' "$parsed"
+    return 0
+  fi
+
+  printf '%s\n' "$fallback"
+}
+
+# ---------------------------------------------------------------------------
+# _iso8601_to_epoch
+#
+# Convert an ISO-8601 UTC timestamp ("2026-08-24T03:12:02Z", the form every
+# GitHub REST timestamp uses) to seconds since the epoch. BSD date (macOS,
+# where this is developed) needs `-j -f`; GNU date (Linux, where CI runs)
+# needs `-d` and rejects `-j`. Try BSD first, fall back to GNU, and return
+# non-zero rather than printing garbage if neither parses the input.
+_iso8601_to_epoch() {
+  local iso="${1:-}"
+  [ -n "$iso" ] || return 1
+  date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null && return 0
+  date -u -d "$iso" +%s 2>/dev/null && return 0
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# coderabbit_rate_limit_comment_is_current
+#
+# Decide whether a CodeRabbit rate-limit comment still describes a live limit.
+#
+# This is the core of issue #1579. Detection previously asked only "does a
+# rate-limit comment exist after the HEAD commit time", so a single stale reply
+# suppressed every later trigger on that HEAD forever. Measured on PR #1575: a
+# rate-limit comment at 16:06 was still being treated as live 21 hours later,
+# with no CodeRabbit activity of any kind in between, and the loop waited out
+# its whole retry budget without ever posting a fresh review request.
+#
+# A rate-limit comment announces its own expiry ("Next included review
+# available in N minutes"), so the honest test is whether that window has
+# passed — not how the comment's timestamp compares to the HEAD commit.
+#
+# Args:
+#   $1 - comment body
+#   $2 - comment created_at (ISO-8601 UTC)
+#
+# Returns 0 when the announced window has not yet elapsed (the limit is live
+# and the caller should wait), 1 when it has (the comment is spent and must not
+# suppress a fresh trigger).
+#
+# When the body states no window, CODERABBIT_RATE_LIMIT_STALE_AFTER (default
+# 3600s, one vendor quota hour) bounds how long the comment stays believable.
+# When the timestamp cannot be parsed at all the comment is reported as
+# current: that preserves the previous behaviour exactly, so a date-parsing
+# failure degrades to today's conservative wait rather than to spending a
+# review attempt the caller may not have.
+coderabbit_rate_limit_comment_is_current() {
+  local body="${1:-}" created_at="${2:-}" last_trigger_iso="${3:-}"
+  local stale_after="${CODERABBIT_RATE_LIMIT_STALE_AFTER:-3600}"
+
+  case "$stale_after" in
+    '' | *[!0-9]*) stale_after=3600 ;;
+  esac
+  # Strip leading zeros before any arithmetic context: a digit-only string like
+  # "008" passes the check above, but bash reads it as an invalid octal literal
+  # and aborts the script under `set -e`. Same guard as the other overrides —
+  # this was the one that still lacked it.
+  stale_after="${stale_after#"${stale_after%%[!0]*}"}"
+  if [ -z "$stale_after" ]; then
+    stale_after=3600
+  fi
+  if [ "$stale_after" -le 0 ]; then
+    stale_after=3600
+  fi
+
+  local created_epoch now_epoch
+  created_epoch="$(_iso8601_to_epoch "$created_at")" || return 0
+  now_epoch="$(date -u +%s 2>/dev/null)" || return 0
+  case "$created_epoch" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+  case "$now_epoch" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+
+  # A comment stamped in the future (clock skew) is not stale.
+  if [ "$created_epoch" -ge "$now_epoch" ]; then
+    return 0
+  fi
+
+  # A reply older than this run's most recent trigger describes a limit the
+  # loop has already waited on. It must not stand in for an answer to the
+  # trigger just posted, or the loop reports "rate limited" without ever
+  # letting CodeRabbit respond (issue #1579, AC-1). Only applied when the
+  # caller has actually posted a trigger this run: on a fresh run the anchor
+  # is empty and the announced-window rule below decides alone, which is what
+  # keeps a genuinely live limit from being ignored at startup.
+  if [ -n "$last_trigger_iso" ]; then
+    local trigger_epoch
+    if trigger_epoch="$(_iso8601_to_epoch "$last_trigger_iso")"; then
+      case "$trigger_epoch" in
+        '' | *[!0-9]*) : ;;
+        *)
+          # Tolerance, because the two sides come from different clocks: the
+          # anchor is stamped locally with `date`, the comment timestamp comes
+          # from GitHub. Without slack, a few seconds of skew would discard
+          # CodeRabbit's genuine answer to the trigger just posted, and the
+          # loop would re-trigger and spend quota it may not have.
+          local anchor_skew="${CODERABBIT_TRIGGER_ANCHOR_SKEW:-60}"
+          case "$anchor_skew" in
+            '' | *[!0-9]*) anchor_skew=60 ;;
+          esac
+          # Strip leading zeros before the arithmetic below: a digit-only
+          # string like "008" passes the check above unchanged, but bash reads
+          # it as an invalid octal literal in `$((...))` and aborts the whole
+          # script under `set -e` (same class of bug guarded against for the
+          # vendor-parsed value in coderabbit_rate_limit_wait_seconds).
+          anchor_skew="${anchor_skew#"${anchor_skew%%[!0]*}"}"
+          [ -z "$anchor_skew" ] && anchor_skew=0
+          if [ "$created_epoch" -lt "$((trigger_epoch - anchor_skew))" ]; then
+            return 1
+          fi
+          ;;
+      esac
+    fi
+  fi
+
+  # Reuse the same parser the wait uses, so the window that governs staleness
+  # and the window the loop actually sleeps for can never drift apart.
+  local window
+  window="$(coderabbit_rate_limit_wait_seconds "$body" "$stale_after")"
+  case "$window" in
+    '' | *[!0-9]*) window="$stale_after" ;;
+  esac
+
+  if [ "$((now_epoch - created_epoch))" -lt "$window" ]; then
+    return 0
+  fi
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# coderabbit_rate_limit_remaining_seconds
+#
+# How long is left of the window a rate-limit comment announced, given when
+# that comment was posted.
+#
+# coderabbit_rate_limit_wait_seconds returns the FULL announced window, which
+# is only the right thing to sleep at the instant the comment appears. A loop
+# that starts (or re-enters this branch) part-way through the window would
+# otherwise sleep the whole thing again: a 27-minute window on a comment
+# already 26 minutes old would wait a further 27m30s instead of ~90s, pushing
+# the retry a full extra quota cycle past the moment a review became
+# available. Against a one-review-per-hour allowance that is the difference
+# between finishing a PR this hour and finishing it next hour.
+#
+# Args: $1 body, $2 created_at (ISO-8601 UTC), $3 fallback seconds
+# Prints a positive integer. Falls back to the full window whenever the age
+# cannot be computed, which is the pre-existing behaviour.
+coderabbit_rate_limit_remaining_seconds() {
+  local body="${1:-}" created_at="${2:-}" fallback="${3:-}"
+  local full
+  full="$(coderabbit_rate_limit_wait_seconds "$body" "$fallback")"
+
+  # A floor, so a window that has just expired still leaves a beat for the
+  # vendor to settle rather than re-triggering instantly in a tight loop.
+  local floor="${CODERABBIT_RATE_LIMIT_MIN_WAIT:-30}"
+  case "$floor" in
+    '' | *[!0-9]*) floor=30 ;;
+  esac
+  floor="${floor#"${floor%%[!0]*}"}"
+  [ -z "$floor" ] && floor=0
+
+  local created_epoch now_epoch
+  created_epoch="$(_iso8601_to_epoch "$created_at")" || { printf '%s\n' "$full"; return 0; }
+  now_epoch="$(date -u +%s 2>/dev/null)" || { printf '%s\n' "$full"; return 0; }
+  case "$created_epoch" in '' | *[!0-9]*) printf '%s\n' "$full"; return 0 ;; esac
+  case "$now_epoch" in '' | *[!0-9]*) printf '%s\n' "$full"; return 0 ;; esac
+  # Clock skew: a comment stamped in the future has no elapsed age.
+  if [ "$created_epoch" -ge "$now_epoch" ]; then
+    printf '%s\n' "$full"
+    return 0
+  fi
+
+  local age remaining
+  age=$((now_epoch - created_epoch))
+  remaining=$((full - age))
+  if [ "$remaining" -lt "$floor" ]; then
+    remaining="$floor"
+  fi
+  if [ "$remaining" -le 0 ]; then
+    remaining=30
+  fi
+  printf '%s\n' "$remaining"
+}
+
+# ---------------------------------------------------------------------------
+# coderabbit_newest_rate_limit_comment
+#
+# Print the newest CodeRabbit rate-limit comment for this HEAD window as a
+# compact JSON object, or print nothing when there is none.
+#
+# Shared by the rate-limit retry block and the silent-non-trigger guard so both
+# decide "is CodeRabbit rate limited right now" from the same evidence. They
+# previously each ran their own count query, which is how a spent rate-limit
+# comment could suppress the retrigger in one place while the other waited on
+# it (#1579).
+# Exit status is the caller's signal, and the three cases are NOT equivalent:
+#   0 with output  - a rate-limit comment was found (printed as compact JSON)
+#   0 with nothing - the lookup succeeded and there is no rate-limit comment
+#   2              - the lookup could not be performed
+#
+# The previous form piped straight into jq without `pipefail` and ended in
+# `|| printf ''`, so a failed `gh api` (network, auth, secondary rate limit)
+# was indistinguishable from "no rate-limit comment". Both call sites then
+# concluded CodeRabbit was not rate limited and posted a fresh
+# `@coderabbitai review`, spending a review from an allowance measured at 1
+# per hour — on evidence that was never actually read, and with nothing in the
+# log to say so.
+coderabbit_newest_rate_limit_comment() {
+  # Validate before reading positional parameters. A missing argument would
+  # otherwise build a malformed endpoint or an empty `--arg`, and `gh` would
+  # fail in a way that now reports "lookup failure" — technically correct but
+  # indistinguishable from a real API outage, which is the very confusion this
+  # function was just changed to remove. Fail with the same status 2 contract,
+  # but say plainly that the caller, not the API, is at fault.
+  if [ "$#" -ne 4 ]; then
+    echo "ERROR: coderabbit_newest_rate_limit_comment requires 4 arguments (repo pr_number bot_login since_iso), got $#" >&2
+    return 2
+  fi
+  if [ -z "${1:-}" ] || [ -z "${2:-}" ] || [ -z "${3:-}" ] || [ -z "${4:-}" ]; then
+    echo "ERROR: coderabbit_newest_rate_limit_comment requires non-empty repo, pr_number, bot_login and since_iso (got repo='${1:-}' pr_number='${2:-}' bot_login='${3:-}' since_iso='${4:-}')" >&2
+    return 2
+  fi
+  local repo="$1" pr_number="$2" bot_login="$3" since_iso="$4"
+  local raw="" status=0
+  raw="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null)" || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "WARN: coderabbit_newest_rate_limit_comment: could not read comments for PR #$pr_number (gh exited $status) — reporting a lookup failure, not an absence of rate limiting" >&2
+    return 2
+  fi
+  local selected="" jq_status=0
+  selected="$(printf '%s' "$raw" | jq -cs --arg bot "$bot_login" --arg since "$since_iso" '
+        [.[].[] | select(
+            .user.login == $bot and
+            # CodeRabbit revises its walkthrough comment IN PLACE rather than
+            # posting a new one, so a rate-limit banner can arrive on a comment
+            # created before this HEAD (#1556 documents the same behaviour for
+            # the activity probe). Select on the later of the two timestamps.
+            (.created_at > $since or (.updated_at // .created_at) > $since) and
+            # Three banner shapes have been observed and no single marker
+            # covers them all: the standalone comment matches only the HTML
+            # marker "rate limited by coderabbit.ai" while its visible text
+            # reads "Review limit reached", and the command refusal carries no
+            # marker at all and matches only the visible "Review rate limited."
+            # Matching one of them means a live limit reads as absent, which
+            # spends a review from a one-per-hour allowance.
+            ((.body // "") | test("rate.?limit|review limit reached|next included review"; "i"))
+        )]
+        | sort_by((.updated_at // .created_at))
+        | (last // empty)
+        # The filter accepts on, and sorts by, the LATER of created_at and
+        # updated_at, because CodeRabbit revises a comment in place. Emitting
+        # that value as `effective_at` keeps consumers from re-deriving it and
+        # disagreeing: reading `.created_at` for a comment selected on its
+        # updated_at would age it from the wrong instant, and the age is what
+        # the staleness and remaining-window arithmetic depend on.
+        | . + { effective_at: (.updated_at // .created_at) }
+      ' 2>/dev/null)" || jq_status=$?
+  if [ "$jq_status" -ne 0 ]; then
+    echo "WARN: coderabbit_newest_rate_limit_comment: could not parse comments for PR #$pr_number (jq exited $jq_status) — reporting a lookup failure" >&2
+    return 2
+  fi
+  printf '%s' "$selected"
+}
+
+# ---------------------------------------------------------------------------
+# coderabbit_rate_limit_is_live
+#
+# Given the JSON object from coderabbit_newest_rate_limit_comment, return 0
+# when CodeRabbit is rate limited right now and 1 when it is not (no comment,
+# or a comment whose announced window has already elapsed).
+coderabbit_rate_limit_is_live() {
+  local comment_json="${1:-}" last_trigger_iso="${2:-}"
+  [ -n "$comment_json" ] || return 1
+  # Reject anything that is not a JSON object before reading fields. Without
+  # this, a malformed blob yields two empty strings, and an empty timestamp is
+  # deliberately treated as "still current" by
+  # coderabbit_rate_limit_comment_is_current — so garbage would read as a live
+  # rate limit and stall the loop for the full retry budget. An unparseable
+  # blob is no evidence of a limit at all, which is a different question from
+  # a real comment whose timestamp could not be read.
+  printf '%s' "$comment_json" | jq -e 'type == "object"' >/dev/null 2>&1 || return 1
+  local body created
+  body="$(printf '%s' "$comment_json" | jq -r '.body // ""' 2>/dev/null)" || body=""
+  # effective_at is what the selector matched and sorted on; fall back to
+  # created_at only for an object that did not come from that selector.
+  created="$(printf '%s' "$comment_json" | jq -r '.effective_at // .created_at // ""' 2>/dev/null)" || created=""
+  coderabbit_rate_limit_comment_is_current "$body" "$created" "$last_trigger_iso"
+}
+
 run_coderabbit_review() {
   local pr_number="$1"
   local branch_name="$2"
@@ -4599,6 +5008,10 @@ run_coderabbit_review() {
   # Initialize retrigger flag from Phase 0 so Phase 2 does not double-post a resume.
   local coderabbit_retrigger_attempted=$coderabbit_phase0_retrigger
   local coderabbit_rate_limit_retries=0
+  # When this run last asked CodeRabbit for a review. Anchors rate-limit
+  # staleness so a reply the loop has already waited on cannot answer a newer
+  # trigger (#1579, AC-1). Empty until this run posts its first trigger.
+  local coderabbit_last_trigger_iso=""
   # Defaults are sized against CodeRabbit's *hourly* quota reset: 4 retries x 900 s
   # covers 60 minutes of waiting, so a loop that hits the cap early in an hour can
   # still succeed once the vendor window rolls over. The previous 2 x 180 s (~6 min)
@@ -4732,26 +5145,51 @@ run_coderabbit_review() {
         && [ "$coderabbit_retrigger_attempted" -eq 0 ] \
         && [ "$coderabbit_no_trigger_retriggers" -lt "$coderabbit_rate_limit_max_retries" ] \
         && [ "$elapsed" -ge "$coderabbit_no_trigger_timeout" ]; then
-      # Confirm neither the "paused" nor the "rate limit" comment is present —
+      # Confirm neither a "paused" comment nor a *live* rate limit is present —
       # those are handled by their own dedicated blocks above/below.
-      local silent_no_paused_count
-      silent_no_paused_count="$(
+      #
+      # The rate-limit half is deliberately not a presence check. A rate-limit
+      # comment whose announced window has already elapsed is spent, and must
+      # not suppress this retrigger: a spent comment doing exactly that is what
+      # left PR #1575 with no CodeRabbit activity for 21 hours while the loop
+      # declined to post a trigger (#1579).
+      local silent_paused_count
+      silent_paused_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
           | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
               [.[].[] | select(
                   .user.login == $bot and
                   .created_at > $since and
-                  (
-                    ((.body // "") | test("Reviews paused|review paused"; "i")) or
-                    ((.body // "") | test("rate.?limit"; "i"))
-                  )
+                  ((.body // "") | test("Reviews paused|review paused"; "i"))
               )] | length
             '
       )"
-      if [ "${silent_no_paused_count:-0}" -eq 0 ]; then
+      local silent_blocked=0
+      if [ "${silent_paused_count:-0}" -gt 0 ]; then
+        silent_blocked=1
+      else
+        local silent_rate_limit_json="" silent_lookup_status=0
+        silent_rate_limit_json="$(coderabbit_newest_rate_limit_comment "$repo" "$pr_number" "$bot_login" "$since_iso")" || silent_lookup_status=$?
+        if [ "$silent_lookup_status" -ne 0 ]; then
+          # The lookup failed, so whether CodeRabbit is rate limited is unknown.
+          # Hold the retrigger rather than spend a review on a guess: the
+          # allowance was measured at 1 per hour, so a wasted trigger costs the
+          # PR an hour, while holding costs one poll interval.
+          echo "WARN: could not determine CodeRabbit rate-limit state for PR #$pr_number — holding the silent non-trigger retrigger rather than spending a review on an unread signal" >&2
+          silent_blocked=1
+        elif [ -n "$silent_rate_limit_json" ]; then
+          if coderabbit_rate_limit_is_live "$silent_rate_limit_json" "$coderabbit_last_trigger_iso"; then
+            silent_blocked=1
+          else
+            echo "INFO: a spent CodeRabbit rate-limit comment is present but its window has elapsed — not letting it suppress the silent non-trigger retrigger (#1579)" >&2
+          fi
+        fi
+      fi
+      if [ "$silent_blocked" -eq 0 ]; then
         coderabbit_no_trigger_retriggers=$((coderabbit_no_trigger_retriggers + 1))
         echo "INFO: CodeRabbit has not auto-triggered after ${elapsed}s (silent non-trigger, attempt ${coderabbit_no_trigger_retriggers}/${coderabbit_rate_limit_max_retries}) — posting @coderabbitai review" >&2
         if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+          coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           echo "INFO: @coderabbitai review trigger posted" >&2
         else
           echo "WARN: failed to post @coderabbitai review trigger for silent non-trigger" >&2
@@ -4771,17 +5209,36 @@ run_coderabbit_review() {
     # When retries are exhausted, the timeout block below escalates instead of returning
     # a false-clean no_review result (see the incomplete-review guard before no_review exit).
     if [ "$coderabbit_any_activity" -eq 0 ] && [ "$coderabbit_rate_limit_retries" -lt "$coderabbit_rate_limit_max_retries" ]; then
-      local rate_limit_comment_count
-      rate_limit_comment_count="$(
-        gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-          | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
-              [.[].[] | select(
-                  .user.login == $bot and
-                  .created_at > $since and
-                  ((.body // "") | test("rate.?limit"; "i"))
-              )] | length
-            '
-      )"
+      # Select the NEWEST matching rate-limit comment as a whole object, not a
+      # count. Its body carries the vendor's own remaining window ("Next
+      # included review available in N minutes") and its created_at says when
+      # that window started — the two inputs needed to size the wait and to
+      # tell a live limit from a spent one (#1579).
+      local rate_limit_comment_json="" rate_limit_comment_body="" rate_limit_comment_created=""
+      local rate_limit_lookup_status=0
+      rate_limit_comment_json="$(coderabbit_newest_rate_limit_comment "$repo" "$pr_number" "$bot_login" "$since_iso")" || rate_limit_lookup_status=$?
+      if [ "$rate_limit_lookup_status" -ne 0 ]; then
+        # Say so. Clearing the value silently is how a lookup that never
+        # happened becomes "there is no rate limit" — the exact conflation the
+        # status-2 contract was introduced to remove. The retry branch below
+        # is skipped either way, but a silent skip leaves nothing in the log to
+        # explain why the loop went on to spend a review.
+        echo "WARN: could not read the rate-limit comment for PR #$pr_number (lookup exit $rate_limit_lookup_status) — proceeding without rate-limit evidence for this pass, NOT concluding that no limit exists" >&2
+        rate_limit_comment_json=""
+      fi
+
+      local rate_limit_comment_count=0
+      if [ -n "$rate_limit_comment_json" ]; then
+        # `-r` on the body is deliberate: it is consumed as text by the regex
+        # parser, and a JSON-quoted string would not match.
+        rate_limit_comment_body="$(printf '%s' "$rate_limit_comment_json" | jq -r '.body // ""' 2>/dev/null)" || rate_limit_comment_body=""
+        rate_limit_comment_created="$(printf '%s' "$rate_limit_comment_json" | jq -r '.effective_at // .created_at // ""' 2>/dev/null)" || rate_limit_comment_created=""
+        if coderabbit_rate_limit_is_live "$rate_limit_comment_json" "$coderabbit_last_trigger_iso"; then
+          rate_limit_comment_count=1
+        else
+          echo "INFO: newest CodeRabbit rate-limit comment (${rate_limit_comment_created:-unknown time}) is past the window it announced — treating it as spent rather than waiting on it again (#1579)" >&2
+        fi
+      fi
       if [ "${rate_limit_comment_count:-0}" -gt 0 ]; then
         coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
         echo "INFO: CodeRabbit rate limit detected (retry $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — checking for SUCCESS commit status before waiting" >&2
@@ -4827,15 +5284,32 @@ run_coderabbit_review() {
             return "$cr_early_gate_rc"
           fi
         fi
-        echo "INFO: no SUCCESS commit status found — waiting ${coderabbit_rate_limit_wait}s before re-triggering" >&2
-        _interruptible_sleep "$coderabbit_rate_limit_wait"
+        # Size this wait from the vendor's own stated window when it gives one,
+        # falling back to the configured constant otherwise. A fixed constant
+        # cannot track an allowance the vendor changes (measured at 1 review
+        # per hour on 2026-08-24), so it either retries far too early — burning
+        # the retry budget without a review — or far too late.
+        local coderabbit_this_wait
+        coderabbit_this_wait="$(coderabbit_rate_limit_remaining_seconds "$rate_limit_comment_body" "$rate_limit_comment_created" "$coderabbit_rate_limit_wait")"
+        if [ "$coderabbit_this_wait" != "$coderabbit_rate_limit_wait" ]; then
+          echo "INFO: no SUCCESS commit status found — CodeRabbit states its next review window; waiting ${coderabbit_this_wait}s (configured fallback ${coderabbit_rate_limit_wait}s) before re-triggering" >&2
+        else
+          echo "INFO: no SUCCESS commit status found — waiting ${coderabbit_this_wait}s before re-triggering" >&2
+        fi
+        _interruptible_sleep "$coderabbit_this_wait"
         # Do NOT reset since_iso — keep the original HEAD-commit timestamp so any review
         # posted by CodeRabbit during or after the wait is still within the detection window.
         elapsed=0
-        if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
-          echo "INFO: posted @coderabbitai resume after rate-limit wait" >&2
+        # Re-trigger with "review", not "resume". "resume" only lifts a paused
+        # state; against a rate limit CodeRabbit answers "Reviews resumed" and
+        # reviews nothing, so the loop spends its whole budget on
+        # acknowledgements (PR #1589: four resumes, zero reviews). A pause and a
+        # rate limit need different verbs, and this branch is the rate-limit one.
+        if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+          coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          echo "INFO: posted @coderabbitai review after rate-limit wait" >&2
         else
-          echo "WARN: failed to post @coderabbitai resume after rate-limit wait" >&2
+          echo "WARN: failed to post @coderabbitai review after rate-limit wait" >&2
         fi
         _interruptible_sleep "$poll_interval"
         elapsed=$((elapsed + poll_interval))
