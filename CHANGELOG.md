@@ -47,6 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Stop local reviewer loop while Codex is pending** (#1603):
+  Codex GitHub review timeouts after a current-head trigger now surface
+  `RESULT=waiting_on_reviewer` with trigger/head telemetry instead of
+  escalating as reviewer unavailable or posting duplicate triggers.
 - **Reviewer settle ignores empty review containers** (#1596):
   `pr-review-loop.sh` now requires a substantive review body before
   `POST_CLEAN_REQUIRE_REVIEW` can settle, and binds that evidence to the

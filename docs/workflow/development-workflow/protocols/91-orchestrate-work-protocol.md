@@ -2052,6 +2052,7 @@ Interpret the result as follows:
 | `needs_fixes` and `cycle < max_cycles`  | Summary comment posted or updated automatically by the script. Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again                                                                                                                                                                                                                                |
 | `needs_fixes` and `cycle >= max_cycles` | Summary comment posted or updated automatically by the script. Escalate to human                                                                                                                                                                                                                                                                                                          |
 | `needs_rerun` (exit code 3)             | (Reserved — not currently emitted.) Treat as `escalate` if encountered unexpectedly.                                                                                                                                                                                                                                                                                                      |
+| `waiting_on_reviewer` (exit code 4)     | Summary comment posted automatically by the script. Stop this local runner as waiting on the named reviewer; do not dispatch fixes, post duplicate triggers, apply readiness labels, enter CI readiness gates, or merge. Re-run Step 7 after the reviewer posts current-head terminal evidence or the human explicitly asks to poll again.                                                                                                                 |
 | `escalate`                              | Summary comment posted automatically by the script. Escalate to human                                                                                                                                                                                                                                                                                                                      |
 
 ### PR-Agent "Possible Issue" advisory labels
@@ -2638,8 +2639,9 @@ echo "READINESS_CI_TOTAL=$CI_TOTAL"
 echo "READINESS_CI_CONCLUSION=success"
 
 # Check 0.5: latest automated reviewer-loop summary must be clean or skipped.
-# A non-clean terminal result such as RESULT=escalate, needs_fixes, timeout, or
-# pending_timeout must never advance to ready-for-human-review, even if CI is green.
+# A non-clean terminal result such as RESULT=escalate, needs_fixes,
+# waiting_on_reviewer, timeout, or pending_timeout must never advance to
+# ready-for-human-review, even if CI is green.
 if ! LOOP_SUMMARY_BODY=$(gh pr view "$PR_NUMBER" --json comments --jq '
   [.comments[]
    | select(.body | test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"))]

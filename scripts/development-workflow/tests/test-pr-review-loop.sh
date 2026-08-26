@@ -960,6 +960,9 @@ run_test "verdict_skipped" "unavailable" "$actual"
 actual="$(normalize_platform_verdict "needs_rerun" "")"
 run_test "verdict_needs_rerun" "blocking" "$actual"
 
+actual="$(normalize_platform_verdict "waiting_on_reviewer" "REASON=codex-github-review-pending")"
+run_test "verdict_waiting_on_reviewer" "waiting" "$actual"
+
 actual="$(normalize_platform_verdict "escalate" "REASON=timeout")"
 run_test "verdict_escalate_timeout" "timed out" "$actual"
 
@@ -2923,6 +2926,7 @@ run_test "persist_failure_escalates_on_needs_fixes" "yes"   "$(reviewer_loop_per
 run_test "persist_failure_escalates_on_needs_rerun" "yes"   "$(reviewer_loop_persist_failure_should_escalate 1 needs_rerun && echo yes || echo no)"
 run_test "persist_failure_does_not_escalate_on_clean" "no"   "$(reviewer_loop_persist_failure_should_escalate 1 clean && echo yes || echo no)"
 run_test "persist_failure_does_not_escalate_on_already_escalate" "no"   "$(reviewer_loop_persist_failure_should_escalate 1 escalate && echo yes || echo no)"
+run_test "persist_failure_does_not_escalate_on_waiting_on_reviewer" "no"   "$(reviewer_loop_persist_failure_should_escalate 1 waiting_on_reviewer && echo yes || echo no)"
 run_test "persist_failure_does_not_fire_when_persist_succeeded" "no"   "$(reviewer_loop_persist_failure_should_escalate 0 needs_fixes && echo yes || echo no)"
 
 # --- reviewer_loop_history_build_entry writes run_id from the
@@ -3282,6 +3286,7 @@ run_test "reviewer_failed_skipped_file_limit" "no" "$(_reviewer_failed_required 
 run_test "reviewer_failed_clean_no" "no" "$(_reviewer_failed_required clean timeout)"
 run_test "reviewer_failed_needs_fixes_no" "no" "$(_reviewer_failed_required needs_fixes '')"
 run_test "reviewer_failed_needs_rerun_no" "no" "$(_reviewer_failed_required needs_rerun '')"
+run_test "reviewer_failed_waiting_on_reviewer_no" "no" "$(_reviewer_failed_required waiting_on_reviewer codex-github-review-pending)"
 
 _rf_accumulated=0
 if reviewer_failed_label_required_for_result clean ""; then
@@ -3856,6 +3861,44 @@ run_test "codex_trigger_idempotency_paginated_selects_newest" "222" \
 run_test "codex_trigger_idempotency_paginated_single_object" "1" \
   "$(printf '%s\n' "$_codex_paginated_selected_trigger" | wc -l | tr -d ' ')"
 unset _codex_trigger_comments _codex_selected_trigger _codex_paginated_trigger_comments _codex_paginated_selected_trigger
+
+_codex_pending_idempotent_dir="$(mktemp -d)"
+cat > "$_codex_pending_idempotent_dir/gh" <<'CODEX_PENDING_IDEMPOTENT_GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*) exit 0 ;;
+  *"pr view"*headRefOid*) printf 'abc123pending0000000000000000000000000000\n'; exit 0 ;;
+  *"--method POST"*)
+    printf 'ERROR=duplicate-trigger-post\n' >&2
+    exit 64 ;;
+  *"issues/comments/"*"/reactions"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/comments"*) printf '[]\n'; exit 0 ;;
+  *"pulls/"*"/reviews"*) printf '[]\n'; exit 0 ;;
+  *"issues/"*"/comments"*)
+    printf '[{"id":901,"created_at":"2026-01-01T00:00:00Z","user":{"login":"alice"},"body":"@codex review (review triggered by workflow runner, commit: abc123pending0000000000000000000000000000)"}]\n'
+    exit 0 ;;
+  *) printf 'ERROR=unexpected-gh-invocation\n' >&2; printf 'ARGS=%q\n' "$*" >&2; exit 64 ;;
+esac
+CODEX_PENDING_IDEMPOTENT_GH
+chmod +x "$_codex_pending_idempotent_dir/gh"
+_codex_pending_idempotent_exit=0
+PATH="$_codex_pending_idempotent_dir:$PATH" \
+  "$REPO_ROOT/scripts/development-workflow/codex-github-reviewer.sh" \
+  42 owner repo --poll-interval 1 --max-wait 1 --pre-trigger-wait 0 --max-retriggers 0 \
+  >"$_codex_pending_idempotent_dir/output.txt" 2>&1 || _codex_pending_idempotent_exit=$?
+_codex_pending_idempotent_output="$(cat "$_codex_pending_idempotent_dir/output.txt")"
+run_test "codex_pending_existing_trigger_exit_waiting" "4" "$_codex_pending_idempotent_exit"
+run_test "codex_pending_existing_trigger_verdict" \
+  "VERDICT: WAITING_ON_REVIEWER — current-head Codex review is still pending after 1s (budget 1s) across up to 1 attempt(s)" \
+  "$(printf '%s\n' "$_codex_pending_idempotent_output" | grep "^VERDICT:")"
+run_test "codex_pending_existing_trigger_no_duplicate_post" "0" \
+  "$(grep_count_or_zero 'duplicate-trigger-post' "$_codex_pending_idempotent_dir/output.txt")"
+run_test "codex_pending_existing_trigger_reason" "REASON=codex-github-review-pending" \
+  "$(printf '%s\n' "$_codex_pending_idempotent_output" | grep "^REASON=")"
+run_test "codex_pending_existing_trigger_id" "PENDING_REVIEW_TRIGGER_COMMENT_ID=901" \
+  "$(printf '%s\n' "$_codex_pending_idempotent_output" | grep "^PENDING_REVIEW_TRIGGER_COMMENT_ID=")"
+rm -rf "$_codex_pending_idempotent_dir"
+unset _codex_pending_idempotent_dir _codex_pending_idempotent_exit _codex_pending_idempotent_output
 
 # --- #1522: the account-not-connected refusal is unavailability, not a finding
 _codex_notconn_dir="$(mktemp -d)"
@@ -4908,7 +4951,7 @@ PATH="$_codex_stale_root_review_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_stale_root_review_comment_mock_dir/output.txt" 2>&1 || _codex_stale_root_review_comment_exit=$?
 _codex_stale_root_review_comment_output="$(cat "$_codex_stale_root_review_comment_mock_dir/output.txt")"
-run_test "codex_stale_root_review_comment_exit_unavailable" "2" "$_codex_stale_root_review_comment_exit"
+run_test "codex_stale_root_review_comment_exit_waiting" "4" "$_codex_stale_root_review_comment_exit"
 if printf '%s\n' "$_codex_stale_root_review_comment_output" | grep -q "^VERDICT: APPROVED"; then
   _codex_stale_root_review_comment_approved="yes"
 else
@@ -8236,9 +8279,9 @@ PATH="$_codex_dismissed_review_excluded_root_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_dismissed_review_excluded_root_comment_mock_dir/output.txt" 2>&1 || _codex_dismissed_review_excluded_root_comment_exit=$?
 _codex_dismissed_review_excluded_root_comment_output="$(cat "$_codex_dismissed_review_excluded_root_comment_mock_dir/output.txt")"
-run_test "codex_dismissed_review_excluded_root_comment_exit_timed_out" "2" "$_codex_dismissed_review_excluded_root_comment_exit"
-run_test "codex_dismissed_review_excluded_root_comment_verdict_not_approved" "TIMED_OUT" \
-  "$(printf '%s\n' "$_codex_dismissed_review_excluded_root_comment_output" | grep -oE 'VERDICT: (TIMED_OUT|APPROVED)' | grep -oE 'TIMED_OUT|APPROVED')"
+run_test "codex_dismissed_review_excluded_root_comment_exit_waiting" "4" "$_codex_dismissed_review_excluded_root_comment_exit"
+run_test "codex_dismissed_review_excluded_root_comment_verdict_not_approved" "WAITING_ON_REVIEWER" \
+  "$(printf '%s\n' "$_codex_dismissed_review_excluded_root_comment_output" | grep -oE 'VERDICT: (WAITING_ON_REVIEWER|APPROVED)' | grep -oE 'WAITING_ON_REVIEWER|APPROVED')"
 rm -rf "$_codex_dismissed_review_excluded_root_comment_mock_dir"
 unset _codex_dismissed_review_excluded_root_comment_mock_dir _codex_dismissed_review_excluded_root_comment_output _codex_dismissed_review_excluded_root_comment_exit
 
@@ -9590,7 +9633,7 @@ PATH="$_codex_stale_review_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_stale_review_mock_dir/output.txt" 2>&1 || _codex_stale_review_exit=$?
 _codex_stale_review_output="$(cat "$_codex_stale_review_mock_dir/output.txt")"
-run_test "codex_stale_review_exit_unavailable" "2" "$_codex_stale_review_exit"
+run_test "codex_stale_review_exit_waiting" "4" "$_codex_stale_review_exit"
 if printf '%s\n' "$_codex_stale_review_output" | grep -q "^VERDICT: APPROVED"; then
   _codex_stale_review_approved="yes"
 else
@@ -9634,7 +9677,7 @@ PATH="$_codex_stale_inline_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_stale_inline_mock_dir/output.txt" 2>&1 || _codex_stale_inline_exit=$?
 _codex_stale_inline_output="$(cat "$_codex_stale_inline_mock_dir/output.txt")"
-run_test "codex_stale_inline_exit_unavailable" "2" "$_codex_stale_inline_exit"
+run_test "codex_stale_inline_exit_waiting" "4" "$_codex_stale_inline_exit"
 if printf '%s\n' "$_codex_stale_inline_output" | grep -q "^VERDICT: NEEDS_REVISION"; then
   _codex_stale_inline_needs_revision="yes"
 else
@@ -9943,7 +9986,7 @@ PATH="$_codex_final_ack_clean_comment_mock_dir:$PATH" \
   42 owner repo --poll-interval 1 --max-wait 1 --max-retriggers 0 \
   >"$_codex_final_ack_clean_comment_mock_dir/output.txt" 2>&1 || _codex_final_ack_clean_comment_exit=$?
 _codex_final_ack_clean_comment_output="$(cat "$_codex_final_ack_clean_comment_mock_dir/output.txt")"
-run_test "codex_final_ack_clean_comment_exit_unavailable" "2" "$_codex_final_ack_clean_comment_exit"
+run_test "codex_final_ack_clean_comment_exit_waiting" "4" "$_codex_final_ack_clean_comment_exit"
 if printf '%s\n' "$_codex_final_ack_clean_comment_output" | grep -q "^VERDICT: APPROVED"; then
   _codex_final_ack_clean_comment_approved="yes"
 else
@@ -12423,6 +12466,45 @@ run_test "codex_usage_limit_loop_suggestion_zero" "SUGGESTION_COUNT=0" \
 run_test "codex_usage_limit_loop_exit_code" "2" "$actual_exit"
 rm -rf "$_codex_usage_loop_tmp"
 unset _codex_usage_loop_tmp _codex_overrides actual_output actual_exit
+
+_codex_pending_loop_tmp="$(mktemp -d)"
+mkdir -p "$_codex_pending_loop_tmp/scripts/development-workflow"
+cat > "$_codex_pending_loop_tmp/scripts/development-workflow/codex-github-reviewer.sh" <<'CODEX_PENDING_LOOP_REVIEWER'
+#!/usr/bin/env bash
+printf 'VERDICT: WAITING_ON_REVIEWER — current-head Codex review is still pending\n'
+printf 'REASON=codex-github-review-pending\n'
+printf 'PENDING_REVIEWER=codex-github\n'
+printf 'PENDING_REVIEW_HEAD_SHA=abc123pending\n'
+printf 'PENDING_REVIEW_TRIGGER_COMMENT_ID=901\n'
+printf 'PENDING_REVIEW_TRIGGER_TIME=2026-01-01T00:00:00Z\n'
+exit 4
+CODEX_PENDING_LOOP_REVIEWER
+chmod +x "$_codex_pending_loop_tmp/scripts/development-workflow/codex-github-reviewer.sh"
+_codex_overrides='
+  cd_workflow_repo_root() { :; }
+  repo_slug() { printf "owner/repo\n"; }
+  require_gh() { :; }
+  workflow_repo_root() { printf "%s\n" "$_codex_pending_loop_tmp"; }
+  check_unresolved_threads() { printf "0\n"; return 0; }
+'
+actual_output=""
+actual_exit=0
+actual_output="$(
+  eval "$_codex_overrides"
+  _ec=0
+  run_codex_github_review "42" "fix/42-test" "1" "5" || _ec=$?
+  printf 'EXIT=%s\n' "$_ec"
+)"
+actual_exit="$(printf '%s\n' "$actual_output" | grep "^EXIT=" | cut -d= -f2)"
+run_test "codex_pending_loop_result" "RESULT=waiting_on_reviewer" \
+  "$(printf '%s\n' "$actual_output" | grep "^RESULT=")"
+run_test "codex_pending_loop_reason" "REASON=codex-github-review-pending" \
+  "$(printf '%s\n' "$actual_output" | grep "^REASON=")"
+run_test "codex_pending_loop_trigger_id" "PENDING_REVIEW_TRIGGER_COMMENT_ID=901" \
+  "$(printf '%s\n' "$actual_output" | grep "^PENDING_REVIEW_TRIGGER_COMMENT_ID=")"
+run_test "codex_pending_loop_exit_code" "4" "$actual_exit"
+rm -rf "$_codex_pending_loop_tmp"
+unset _codex_pending_loop_tmp _codex_overrides actual_output actual_exit
 
 _post_summary_source="$(awk '/^_post_review_summary\(\)/,/^}$/' \
   "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
