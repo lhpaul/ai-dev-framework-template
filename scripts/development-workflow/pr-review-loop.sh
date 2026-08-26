@@ -478,7 +478,7 @@ Large-diff poll-window extension:
   key=value output includes CHANGED_FILES_COUNT so callers can inspect the value.
 
 Outputs stable key=value lines including:
-  RESULT=clean|needs_fixes|needs_rerun|escalate|skipped
+  RESULT=clean|needs_fixes|needs_rerun|waiting_on_reviewer|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
   REASON=lock_contention (when exit code is 75)
   CHANGED_FILES_COUNT=<n> (PR's changed-files count, or -1 when the fetch failed)
@@ -1191,6 +1191,22 @@ run_codex_github_review() {
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT 0
       return 2
+      ;;
+    4)
+      print_kv RESULT waiting_on_reviewer
+      print_kv REASON "$(kv_value_default REASON "$script_output" codex-github-review-pending)"
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      print_kv PENDING_REVIEWER "$(kv_value_default PENDING_REVIEWER "$script_output" "$platform")"
+      print_kv PENDING_REVIEW_HEAD_SHA "$(kv_value_default PENDING_REVIEW_HEAD_SHA "$script_output" "")"
+      print_kv PENDING_REVIEW_TRIGGER_COMMENT_ID "$(kv_value_default PENDING_REVIEW_TRIGGER_COMMENT_ID "$script_output" "")"
+      print_kv PENDING_REVIEW_TRIGGER_TIME "$(kv_value_default PENDING_REVIEW_TRIGGER_TIME "$script_output" "")"
+      return 4
       ;;
     *)
       local codex_reason
@@ -6267,8 +6283,8 @@ run_project_advisory_checks() {
 # the test harness can load them via HARNESS_MODE=1 sourcing without executing
 # the argument-parsing and main-loop sections below.
 
-# normalize_platform_verdict: map a raw platform result token to one of the five
-# canonical compare-mode verdict values: clean, blocking, advisory, timed out, unavailable.
+# normalize_platform_verdict: map a raw platform result token to one of the six
+# canonical compare-mode verdict values: clean, blocking, advisory, waiting, timed out, unavailable.
 # $1 = platform_result token (e.g. clean, needs_fixes, skipped, escalate, needs_rerun)
 # $2 = full platform output (key=value block; used to inspect REASON for timeout detection)
 normalize_platform_verdict() {
@@ -6286,6 +6302,7 @@ normalize_platform_verdict() {
     advisory)    printf 'advisory' ;;
     skipped)     printf 'unavailable' ;;
     needs_rerun) printf 'blocking' ;;
+    waiting_on_reviewer) printf 'waiting' ;;
     escalate)
       # Distinguish timeout from service-unavailable via REASON.
       case "$reason" in
@@ -8678,6 +8695,21 @@ for index in "${!platforms[@]}"; do
       fi
       aggregate_result="clean"
       ;;
+    waiting_on_reviewer)
+      aggregate_result="$platform_result"
+      aggregate_reason="$(kv_value_default REASON "$platform_output" "")"
+      aggregate_output="$platform_output"
+      aggregate_status=$platform_status
+      if [ "$compare_mode" -eq 0 ]; then
+        break
+      fi
+      if [ -z "$compare_first_blocking_result" ]; then
+        compare_first_blocking_result="$platform_result"
+        compare_first_blocking_reason="$aggregate_reason"
+        compare_first_blocking_output="$platform_output"
+        compare_first_blocking_status=$platform_status
+      fi
+      ;;
     needs_fixes|escalate)
       if [ "$phase_after_clean_enabled" -eq 1 ] \
           && [ "$phase_after_clean_started" -eq 1 ] \
@@ -8795,6 +8827,9 @@ _post_review_summary() {
       ;;
     escalate)
       result_line="escalated (${reason:-unknown})"
+      ;;
+    waiting_on_reviewer)
+      result_line="waiting_on_reviewer (${reason:-codex-github-review-pending}) — current-head review trigger posted; reviewer has not returned terminal evidence yet"
       ;;
     skipped)
       result_line="skipped — no GitHub reviewers configured in review.on_draft.github or review.on_ready.github"
@@ -9657,6 +9692,9 @@ case "$aggregate_result" in
     # already persisted above so retrospective retry metrics do not lose
     # the fix-pushed run.
     exit 3
+    ;;
+  waiting_on_reviewer)
+    exit 4
     ;;
   escalate)
     exit 2

@@ -29,9 +29,10 @@
 # Exit codes:
 #   0 — APPROVED   (bot responded with no blocking findings)
 #   1 — NEEDS_REVISION (bot responded with blocking findings)
-#   2 — TIMED_OUT  (no bot response within max-wait; treat as unavailable under
-#                   configured internal_reviewers_unavailable_policy)
+#   2 — TIMED_OUT  (API/auth/setup failures while waiting; treat as unavailable
+#                   under configured internal_reviewers_unavailable_policy)
 #   3 — UNAVAILABLE (bot responded with review-capacity/quota exhaustion)
+#   4 — WAITING_ON_REVIEWER (current-head trigger exists, no bot review yet)
 #
 # Verdict parsing (three-path, blocking markers checked first per safe-fail):
 #   1. Blocking markers present → NEEDS_REVISION (exit 1)
@@ -2472,7 +2473,11 @@ echo "INFO: no bot response during async grace period"
 # ── Timeout ───────────────────────────────────────────────────────────────────
 
 TOTAL_ATTEMPTS=$((MAX_RETRIGGERS + 1))
-echo "VERDICT: TIMED_OUT — no response from '$BOT_LOGIN' after ${TOTAL_ELAPSED}s (budget ${MAX_WAIT}s) across up to ${TOTAL_ATTEMPTS} attempt(s)"
-echo "INFO: remediation — verify the Codex GitHub App is installed on $OWNER/$REPO."
-echo "INFO: You can manually trigger the review by posting: $TRIGGER_PHRASE"
-exit 2
+echo "VERDICT: WAITING_ON_REVIEWER — current-head Codex review is still pending after ${TOTAL_ELAPSED}s (budget ${MAX_WAIT}s) across up to ${TOTAL_ATTEMPTS} attempt(s)"
+echo "REASON=codex-github-review-pending"
+echo "PENDING_REVIEWER=codex-github"
+echo "PENDING_REVIEW_HEAD_SHA=$CURRENT_SHA_FULL"
+echo "PENDING_REVIEW_TRIGGER_COMMENT_ID=$TRIGGER_COMMENT_ID"
+echo "PENDING_REVIEW_TRIGGER_TIME=$TRIGGER_TIME"
+echo "INFO: no duplicate trigger needed; the existing current-head trigger is still pending."
+exit 4
