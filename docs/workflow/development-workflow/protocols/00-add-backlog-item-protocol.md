@@ -22,6 +22,8 @@ Optional deterministic helper (destination resolution and GitHub issue creation)
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+
 ./scripts/development-workflow/add-backlog-item.sh resolve
 ./scripts/development-workflow/add-backlog-item.sh create --title "..." --body-file - --type Workflow
 ```
@@ -107,11 +109,11 @@ field, not repository labels.
 | Plan-only restructuring or non-feature refactor | `--type Refactor` |
 | AI-development-framework/process/tooling item | `--type Workflow` |
 
-When two signals appear to conflict, prefer the project classification that
-best controls the workflow path. For example, a workflow-process bug that
-should move through the Fast Track path may use `--type Bug`; a framework
-process improvement that should be routed as workflow/tooling may use
-`--type Workflow`.
+When two signals appear to conflict, prefer the classification that preserves
+the repository's routing source of truth. AI-development-framework,
+workflow-process, and tooling items use `--type Workflow` even when the item
+fixes a defect in that workflow surface. Use `--type Bug` for defects outside
+the framework/process/tooling classification.
 
 **Priority** — infer from the request. When no explicit urgency/low signal
 applies (the routine case), **omit `--priority` entirely** and let the
