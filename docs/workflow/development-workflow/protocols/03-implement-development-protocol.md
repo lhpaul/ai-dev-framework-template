@@ -825,6 +825,7 @@ reference from the bullet body.
 
 Validate fragments before staging:
 
+<!-- workflow-shell-contract: bash -->
 ```bash
 bash scripts/development-workflow/changelog-fragments.sh validate
 ```
@@ -1173,6 +1174,7 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
 
    The body must be the finished changelog bullet, written from the user's perspective. Use the bare tracker identifier as `<item>`; in repositories with no issue tracker configured, open the PR first, use the PR number as `<item>`, and omit the `(#N)` issue reference from the bullet body. Validate before staging:
 
+   <!-- workflow-shell-contract: bash -->
    ```bash
    bash scripts/development-workflow/changelog-fragments.sh validate
    ```
@@ -1430,6 +1432,7 @@ no issue tracker configured, open the PR first, use the PR number as `<item>`,
 and omit the `(#N)` issue reference from the bullet body. Validate before
 staging:
 
+<!-- workflow-shell-contract: bash -->
 ```bash
 bash scripts/development-workflow/changelog-fragments.sh validate
 ```

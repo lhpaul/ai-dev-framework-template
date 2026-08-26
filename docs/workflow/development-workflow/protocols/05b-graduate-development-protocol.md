@@ -199,6 +199,7 @@ Prepare Release.
 
 **Verification**:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 # Check whether changelog fragments differ between develop and develop-<slug>
 git diff --name-only origin/develop..origin/develop-<slug> -- changelog.d/

@@ -62,6 +62,7 @@ These conventions apply across all languages and frameworks in this project.
   Rules are configured in `.markdownlint.jsonc` (trailing whitespace, relative links, newline at EOF).
   Run locally:
 
+  <!-- workflow-shell-contract: bash-zsh -->
   ```bash
   npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "changelog.d/**/*.md" "CHANGELOG.md"
   find docs/specs/developments docs/testing/workflow changelog.d -name "*.md" -print0 \
