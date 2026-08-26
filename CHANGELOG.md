@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-08-26
+
 ### Added
 
 - **Local Codex reviewer preset and dogfood evidence** (#1609): adds a short
@@ -44,6 +46,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Add multi-repository release adoption assurance** (#1359): add
   workflow-hub adoption guidance and deterministic assurance coverage for
   multi-repository releases.
+
+### Changed
+
+- **Local AI reviewer default promotion** (#1617): runs
+  `local-ai-reviewer` before PR-Agent in the default draft reviewer path, while
+  keeping Bugbot as the ready-phase reviewer and documenting setup/opt-out
+  controls for local runner environments.
+- **Conservative Codex verdict classifier** (#1491): `codex-github-reviewer.sh` now requires the response —
+  whitespace-normalized, with no truncation step of any kind — to be an exact match, from its first
+  character to its last, against one of a small set of clean-response templates captured verbatim from real
+  Codex responses (each template including the complete vendor `<details>` footer text), and safe-fails to
+  `NEEDS_REVISION` for anything else, including responses that are plausibly clean but use different
+  wording anywhere in the body. This replaces both the open-ended negated-approval vocabulary enumeration
+  this plan originally targeted and the allow-list/closed-grammar/truncate-then-match designs this plan
+  shipped and then found further false-`APPROVED` gaps in across subsequent review rounds — no vocabulary,
+  grammar, or partial-body match converged, so this revision applies exact literal comparison to the entire
+  response, leaving no discarded byte range for a novel construction to hide in. GitHub's structured
+  `CHANGES_REQUESTED` review-state short-circuit and the blocking classifier are unchanged. The template's one
+  "flavor" slot (the word or phrase directly after "Didn't find any major issues.") is a single bounded
+  placeholder (up to 40 characters, excluding `*`, backtick, and control characters), not a fixed literal —
+  the vendor rotates this slot, confirmed after the shipped single-literal version safe-failed on this
+  feature's own first real-traffic PR. A first fix enumerated every observed token as a literal alternation,
+  but a 14-token discovery rate from under 50 samples showed that vocabulary would not converge by
+  enumeration either, so the bounded placeholder replaced it before merge — the accepted residual is a
+  disclosed, narrow false-`APPROVED` surface (self-contradictory vendor output only), not an enumeration that
+  needs ongoing maintenance.
+
+- **Changelog fragments** (#1554): Development PRs now write per-item release note fragments, reducing shared changelog conflicts in parallel batches.
 
 ### Fixed
 
@@ -1617,32 +1647,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   oversized `gh` mock payload across repeated runs, including a stdout/stderr
   separation check for the fd 3 fix, to confirm the fix holds.
 
-### Changed
-
-- **Local AI reviewer default promotion** (#1617): runs
-  `local-ai-reviewer` before PR-Agent in the default draft reviewer path, while
-  keeping Bugbot as the ready-phase reviewer and documenting setup/opt-out
-  controls for local runner environments.
-- **Conservative Codex verdict classifier** (#1491): `codex-github-reviewer.sh` now requires the response —
-  whitespace-normalized, with no truncation step of any kind — to be an exact match, from its first
-  character to its last, against one of a small set of clean-response templates captured verbatim from real
-  Codex responses (each template including the complete vendor `<details>` footer text), and safe-fails to
-  `NEEDS_REVISION` for anything else, including responses that are plausibly clean but use different
-  wording anywhere in the body. This replaces both the open-ended negated-approval vocabulary enumeration
-  this plan originally targeted and the allow-list/closed-grammar/truncate-then-match designs this plan
-  shipped and then found further false-`APPROVED` gaps in across subsequent review rounds — no vocabulary,
-  grammar, or partial-body match converged, so this revision applies exact literal comparison to the entire
-  response, leaving no discarded byte range for a novel construction to hide in. GitHub's structured
-  `CHANGES_REQUESTED` review-state short-circuit and the blocking classifier are unchanged. The template's one
-  "flavor" slot (the word or phrase directly after "Didn't find any major issues.") is a single bounded
-  placeholder (up to 40 characters, excluding `*`, backtick, and control characters), not a fixed literal —
-  the vendor rotates this slot, confirmed after the shipped single-literal version safe-failed on this
-  feature's own first real-traffic PR. A first fix enumerated every observed token as a literal alternation,
-  but a 14-token discovery rate from under 50 samples showed that vocabulary would not converge by
-  enumeration either, so the bounded placeholder replaced it before merge — the accepted residual is a
-  disclosed, narrow false-`APPROVED` surface (self-contradictory vendor output only), not an enumeration that
-  needs ongoing maintenance.
-
 ## [0.42.0] - 2026-08-13
 
 ### Added
@@ -3045,7 +3049,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.39.0...v0.40.0
