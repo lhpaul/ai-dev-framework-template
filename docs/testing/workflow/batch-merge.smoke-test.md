@@ -22,11 +22,12 @@ Before running this smoke test:
 
 Create the following test PRs before running the smoke test. Each PR should be a small, real change (e.g., adding a comment to a file, creating a test file) so merges are meaningful.
 
-| Item                  | Description                                                                                                                                                                                                                                          |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PR A (no CHANGELOG)   | Targets `develop`, has `ready-for-human-review` label, does NOT modify `CHANGELOG.md`. Lowest PR number of the batch.                                                                                                                                |
-| PR B (with CHANGELOG) | Targets `develop`, has `ready-for-human-review` label, adds an entry under `[Unreleased]` in `CHANGELOG.md`.                                                                                                                                         |
-| PR C (with CHANGELOG) | Targets `develop`, has `ready-for-human-review` label, adds a different entry under `[Unreleased]` in `CHANGELOG.md`. Higher PR number than PR B.                                                                                                    |
+| Item                              | Description                                                                                                                                                                                                                                          |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PR A (fragment)                   | Targets `develop`, has `ready-for-human-review` label, adds or updates a valid top-level `changelog.d/<item>.<kind>.<slug>.md` fragment. Lowest PR number of the normal implementation batch.                                                        |
+| PR B (fragment)                   | Targets `develop`, has `ready-for-human-review` label, adds a different valid top-level `changelog.d/<item>.<kind>.<slug>.md` fragment.                                                                                                              |
+| PR C (fragment)                   | Targets `develop`, has `ready-for-human-review` label, adds a different valid top-level `changelog.d/<item>.<kind>.<slug>.md` fragment. Higher PR number than PR B.                                                                                  |
+| PR G (legacy direct CHANGELOG.md) | Targets `develop`, has `ready-for-human-review` label, edits `CHANGELOG.md` directly. Used only to verify the legacy direct-CHANGELOG conflict path; normal implementation PRs should use `changelog.d/` fragments instead.                           |
 | PR D (no label)       | Targets `develop`, does NOT have `ready-for-human-review` label. Used for readiness gate testing.                                                                                                                                                    |
 | PR E (conflict)       | Targets `develop`, has `ready-for-human-review` label, modifies a non-doc code file that will conflict with an earlier PR (e.g., same line in a script). Used for non-trivial conflict testing.                                                      |
 | PR F (doc conflict)   | Targets `develop`, has `ready-for-human-review` label, modifies a documentation file (e.g., a file under `docs/`) in non-overlapping line ranges compared to another PR that also modifies the same file. Used for doc file auto-resolution testing. |
@@ -98,11 +99,11 @@ Create the following test PRs before running the smoke test. Each PR should be a
 
 **Maps to**: AC 4
 
-1. Run `/batch-merge` with PRs A (no CHANGELOG), B (with CHANGELOG), C (with CHANGELOG), ensuring A has the lowest PR number.
+1. Run `/batch-merge` with PRs A, B, and C, ensuring they all use `changelog.d/` fragments and A has the lowest PR number.
 
 **Expected result**:
 
-- The merge order displayed in the plan is: PR A first (no CHANGELOG, lowest number), then PR B (CHANGELOG, lower number), then PR C (CHANGELOG, higher number).
+- The merge order displayed in the plan is ascending PR number for the normal fragment-based implementation PRs: PR A, then PR B, then PR C.
 - Execution proceeds immediately after the plan is printed.
 
 ---
@@ -123,24 +124,17 @@ Create the following test PRs before running the smoke test. Each PR should be a
 
 ---
 
-### Step 7: CHANGELOG conflict auto-resolution
+### Step 7: Legacy CHANGELOG conflict auto-resolution
 
 **Maps to**: AC 6
 
-1. Continue from Step 6 (PR B is next in the queue after PR A was merged).
-2. PR B adds a CHANGELOG entry under `[Unreleased]`. After PR A was merged, PR B's branch diverges from `develop`.
+1. Run a focused batch containing PR G and another intentionally prepared legacy PR that both edit `CHANGELOG.md` directly.
+2. Confirm both PRs are legacy or manual direct-CHANGELOG cases. Normal feature, fix, and refactor PRs should use `changelog.d/` fragments and should not enter this path.
 
 **Expected result**:
 
-- When PR B is merged, a CHANGELOG conflict is detected (if PR A also modified CHANGELOG or the base has diverged).
-- If a CHANGELOG conflict occurs: the command auto-resolves it by combining all `[Unreleased]` entries from both sides, preserving all entries (none dropped), and reports `merged_auto` with a description of what was combined.
-- If no conflict occurs (PR A did not touch CHANGELOG): the merge is clean and reports `merged_clean`.
-
-3. PR C is next. Since PR B just merged with CHANGELOG changes, PR C's CHANGELOG changes will conflict.
-
-**Expected result**:
-
-- The CHANGELOG conflict is auto-resolved: entries from PR B (already in develop) appear first, followed by entries from PR C.
+- When a legacy direct-CHANGELOG conflict occurs, the command auto-resolves it by combining all `[Unreleased]` entries from both sides, preserving all entries (none dropped), and reports `merged_auto` with a description of what was combined.
+- Fragment-only implementation PRs do not require direct `CHANGELOG.md` conflict ordering; their release notes remain isolated under `changelog.d/` until Prepare Release assembles them.
 - The command reports `merged_auto` with details of the combined entries.
 - No entries are dropped.
 
@@ -166,7 +160,7 @@ Create the following test PRs before running the smoke test. Each PR should be a
 
 **Maps to**: AC 8, AC 9
 
-1. Set up PR E so it conflicts with a file already in `develop` (a non-doc, non-CHANGELOG file).
+1. Set up PR E so it conflicts with a file already in `develop` (a non-doc, non-`CHANGELOG.md` file).
 2. Run `/batch-merge` with PR E.
 
 **Expected result**:
@@ -251,7 +245,7 @@ Each checkbox maps to an acceptance criterion from the spec.
 - [ ] AC 1: Auto-discovery finds all `ready-for-human-review` PRs and displays candidate list before merging
 - [ ] AC 2: Merge plan is printed for visibility; execution proceeds immediately without confirmation
 - [ ] AC 3: Missing `ready-for-human-review` label causes warning and requires explicit human decision
-- [ ] AC 4: PRs merge in correct order (non-CHANGELOG first by PR number, then CHANGELOG by PR number)
+- [ ] AC 4: Normal fragment-based implementation PRs merge by PR number; legacy direct-`CHANGELOG.md` PRs are isolated to the legacy changelog conflict path
 - [ ] AC 5: Merge preserves individual PR history, PR threads intact, no force-push
 - [ ] AC 6: CHANGELOG conflict auto-resolved with all entries preserved
 - [ ] AC 7: Documentation file conflict with non-overlapping changes auto-resolved

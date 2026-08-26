@@ -1024,7 +1024,7 @@ Use this when:
 
 ### `batch-merge.sh`
 
-Deterministic merge pipeline for parallel batch PRs. Handles PR discovery (auto or explicit), metadata collection, merge ordering (non-CHANGELOG PRs first by ascending PR number, then CHANGELOG PRs by ascending PR number), and single-PR merge execution with structured key-value output.
+Deterministic merge pipeline for parallel batch PRs. Handles PR discovery (auto or explicit), metadata collection, PR-number ordering for normal fragment-based implementation PRs, legacy direct-`CHANGELOG.md` ordering when needed, and single-PR merge execution with structured key-value output.
 
 Usage:
 
