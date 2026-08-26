@@ -105,6 +105,13 @@ disabled in the template default so the App does not review every PR or consume
 review quota unless the repository explicitly opts in with both configuration
 changes above.
 
+When several PRs are queued, trigger CodeRabbit one PR at a time. CodeRabbit's
+included allowance is based on trigger attempts, and parallel `@coderabbitai`
+requests can spend the same hourly quota without producing additional reviews.
+The reviewer loop reports `CODERABBIT_TRIGGER_ATTEMPTS` and
+`CODERABBIT_REVIEWS_RECEIVED` so the attempt-to-review ratio is visible in the
+run summary.
+
 ---
 
 ## Step 7a — Internal Reviewer (Draft PRs)

@@ -52,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `POST_CLEAN_REQUIRE_REVIEW` can settle, and binds that evidence to the
   current head when GitHub reports a review `commit_id`, so reply-container
   review objects cannot make an unreviewed head look clean.
+- **CodeRabbit retry attempts respect live quota windows** (#1597):
+  `pr-review-loop.sh` no longer spends a trigger while a current CodeRabbit
+  rate-limit comment remains live, reports `CODERABBIT_TRIGGER_ATTEMPTS` and
+  `CODERABBIT_REVIEWS_RECEIVED` in CodeRabbit results, and treats quota
+  refusals as waiting state rather than retry-budget consumption.
 - **Quoted closing keywords are ignored during post-merge cleanup** (#1585):
   `post-merge-cleanup.sh` now excludes inline code spans and blockquote lines
   before scanning PR bodies for closing keywords, preventing quoted examples

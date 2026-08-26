@@ -4988,6 +4988,7 @@ run_coderabbit_review() {
   local index=1
   local blocking_json=""
   local stale_file=""
+  local coderabbit_trigger_attempts=0
 
   trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}" "${stale_file:-}"' RETURN
 
@@ -5004,6 +5005,8 @@ run_coderabbit_review() {
     print_kv BRANCH "$branch_name"
     print_kv REVIEW_COMMENT_ID ""
     print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+    print_kv CODERABBIT_REVIEWS_RECEIVED 0
     return 2
   fi
   since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
@@ -5072,6 +5075,8 @@ run_coderabbit_review() {
     print_kv COMMENT_COUNT "$((existing_blocking_count + existing_suggestion_count))"
     print_kv BLOCKING_COUNT "$existing_blocking_count"
     print_kv SUGGESTION_COUNT "$existing_suggestion_count"
+    print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+    print_kv CODERABBIT_REVIEWS_RECEIVED 0
     while IFS= read -r blocking_json; do
       [ -z "${blocking_json:-}" ] && continue
       print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
@@ -5124,6 +5129,7 @@ run_coderabbit_review() {
     phase0_resume_since_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
       coderabbit_phase0_retrigger=1
+      coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
       since_iso="$phase0_resume_since_iso"
       echo "INFO: @coderabbitai resume posted; since_iso reset to $since_iso" >&2
     else
@@ -5142,6 +5148,8 @@ run_coderabbit_review() {
       print_kv COMMENT_COUNT 0
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT 0
+      print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+      print_kv CODERABBIT_REVIEWS_RECEIVED 0
       return 2
     fi
   fi
@@ -5159,6 +5167,8 @@ run_coderabbit_review() {
   # staleness so a reply the loop has already waited on cannot answer a newer
   # trigger (#1579, AC-1). Empty until this run posts its first trigger.
   local coderabbit_last_trigger_iso=""
+  local coderabbit_last_quota_refusal_trigger_iso=""
+  local coderabbit_rate_limit_hold_seen=0
   # Defaults are sized against CodeRabbit's *hourly* quota reset: 4 retries x 900 s
   # covers 60 minutes of waiting, so a loop that hits the cap early in an hour can
   # still succeed once the vendor window rolls over. The previous 2 x 180 s (~6 min)
@@ -5266,6 +5276,7 @@ run_coderabbit_review() {
         echo "INFO: CodeRabbit reviews are paused — posting @coderabbitai resume to trigger a fresh review" >&2
         if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
           coderabbit_retrigger_attempted=1
+          coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
           # Reset the elapsed timer to give the retrigger time to complete.
           elapsed=0
         else
@@ -5290,6 +5301,7 @@ run_coderabbit_review() {
     # both mechanisms.
     if [ "$coderabbit_any_activity" -eq 0 ] \
         && [ "$coderabbit_retrigger_attempted" -eq 0 ] \
+        && [ "$coderabbit_rate_limit_hold_seen" -eq 0 ] \
         && [ "$coderabbit_no_trigger_retriggers" -lt "$coderabbit_rate_limit_max_retries" ] \
         && [ "$elapsed" -ge "$coderabbit_no_trigger_timeout" ]; then
       # Confirm neither a "paused" comment nor a *live* rate limit is present —
@@ -5336,6 +5348,8 @@ run_coderabbit_review() {
         coderabbit_no_trigger_retriggers=$((coderabbit_no_trigger_retriggers + 1))
         echo "INFO: CodeRabbit has not auto-triggered after ${elapsed}s (silent non-trigger, attempt ${coderabbit_no_trigger_retriggers}/${coderabbit_rate_limit_max_retries}) — posting @coderabbitai review" >&2
         if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+          coderabbit_rate_limit_hold_seen=0
+          coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
           coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           echo "INFO: @coderabbitai review trigger posted" >&2
         else
@@ -5381,14 +5395,36 @@ run_coderabbit_review() {
         rate_limit_comment_body="$(printf '%s' "$rate_limit_comment_json" | jq -r '.body // ""' 2>/dev/null)" || rate_limit_comment_body=""
         rate_limit_comment_created="$(printf '%s' "$rate_limit_comment_json" | jq -r '.effective_at // .created_at // ""' 2>/dev/null)" || rate_limit_comment_created=""
         if coderabbit_rate_limit_is_live "$rate_limit_comment_json" "$coderabbit_last_trigger_iso"; then
+          if [ -n "$coderabbit_last_trigger_iso" ] && [ "$coderabbit_last_quota_refusal_trigger_iso" != "$coderabbit_last_trigger_iso" ]; then
+            coderabbit_last_quota_refusal_trigger_iso="$coderabbit_last_trigger_iso"
+            if [ "$coderabbit_rate_limit_retries" -gt 0 ]; then
+              coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries - 1))
+            fi
+            echo "INFO: CodeRabbit quota refusal observed for last trigger — not counting it toward CODERABBIT_RATE_LIMIT_MAX_RETRIES" >&2
+          fi
           rate_limit_comment_count=1
         else
           echo "INFO: newest CodeRabbit rate-limit comment (${rate_limit_comment_created:-unknown time}) is past the window it announced — treating it as spent rather than waiting on it again (#1579)" >&2
+          if [ "$coderabbit_rate_limit_hold_seen" -eq 1 ] && [ "$coderabbit_rate_limit_retries" -lt "$coderabbit_rate_limit_max_retries" ]; then
+            echo "INFO: CodeRabbit rate-limit window elapsed after a held wait — posting @coderabbitai review" >&2
+            if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+              coderabbit_rate_limit_hold_seen=0
+              coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
+              coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
+              coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+              echo "INFO: posted @coderabbitai review after rate-limit window elapsed" >&2
+            else
+              echo "WARN: failed to post @coderabbitai review after rate-limit window elapsed" >&2
+            fi
+            elapsed=0
+            _interruptible_sleep "$poll_interval"
+            elapsed=$((elapsed + poll_interval))
+            continue
+          fi
         fi
       fi
       if [ "${rate_limit_comment_count:-0}" -gt 0 ]; then
-        coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
-        echo "INFO: CodeRabbit rate limit detected (retry $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — checking for SUCCESS commit status before waiting" >&2
+        echo "INFO: CodeRabbit rate limit detected (retry attempts spent $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — checking for SUCCESS commit status before waiting" >&2
         # --- Early SUCCESS check before retry wait ---
         # Check whether CodeRabbit already posted a genuine SUCCESS commit status for
         # the current HEAD SHA (state == "success" AND description is not a rate-limit
@@ -5425,6 +5461,8 @@ run_coderabbit_review() {
             print_kv COMMENT_COUNT 0
             print_kv BLOCKING_COUNT 0
             print_kv SUGGESTION_COUNT 0
+            print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+            print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
             return 0
           fi
           if [ "$cr_early_gate_rc" -eq 1 ] || [ "$cr_early_gate_rc" -eq 2 ]; then
@@ -5444,23 +5482,51 @@ run_coderabbit_review() {
           echo "INFO: no SUCCESS commit status found — waiting ${coderabbit_this_wait}s before re-triggering" >&2
         fi
         _interruptible_sleep "$coderabbit_this_wait"
-        # Do NOT reset since_iso — keep the original HEAD-commit timestamp so any review
-        # posted by CodeRabbit during or after the wait is still within the detection window.
-        elapsed=0
-        # Re-trigger with "review", not "resume". "resume" only lifts a paused
-        # state; against a rate limit CodeRabbit answers "Reviews resumed" and
-        # reviews nothing, so the loop spends its whole budget on
-        # acknowledgements (PR #1589: four resumes, zero reviews). A pause and a
-        # rate limit need different verbs, and this branch is the rate-limit one.
-        if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
-          coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-          echo "INFO: posted @coderabbitai review after rate-limit wait" >&2
-        else
-          echo "WARN: failed to post @coderabbitai review after rate-limit wait" >&2
+        local coderabbit_post_wait_rate_limit_json="" coderabbit_post_wait_lookup_status=0
+        local coderabbit_skip_rate_limit_retrigger=0
+        coderabbit_post_wait_rate_limit_json="$(coderabbit_newest_rate_limit_comment "$repo" "$pr_number" "$bot_login" "$since_iso")" || coderabbit_post_wait_lookup_status=$?
+        if [ "$coderabbit_post_wait_lookup_status" -ne 0 ]; then
+          echo "WARN: could not re-check CodeRabbit rate-limit state after waiting for PR #$pr_number — holding retrigger rather than spending a review attempt on unread quota state" >&2
+          _interruptible_sleep "$poll_interval"
+          elapsed=$((elapsed + coderabbit_this_wait + poll_interval))
+          if [ "$elapsed" -lt "$max_wait" ]; then
+            coderabbit_rate_limit_hold_seen=1
+            continue
+          fi
+          coderabbit_skip_rate_limit_retrigger=1
         fi
-        _interruptible_sleep "$poll_interval"
-        elapsed=$((elapsed + poll_interval))
-        continue
+        if coderabbit_rate_limit_is_live "$coderabbit_post_wait_rate_limit_json" "$coderabbit_last_trigger_iso"; then
+          echo "INFO: CodeRabbit rate limit is still live after waiting — not posting a trigger while quota refusal remains outstanding" >&2
+          _interruptible_sleep "$poll_interval"
+          elapsed=$((elapsed + coderabbit_this_wait + poll_interval))
+          if [ "$elapsed" -lt "$max_wait" ]; then
+            coderabbit_rate_limit_hold_seen=1
+            continue
+          fi
+          coderabbit_skip_rate_limit_retrigger=1
+        fi
+        if [ "$coderabbit_skip_rate_limit_retrigger" -eq 0 ]; then
+          # Do NOT reset since_iso — keep the original HEAD-commit timestamp so any review
+          # posted by CodeRabbit during or after the wait is still within the detection window.
+          elapsed=0
+          # Re-trigger with "review", not "resume". "resume" only lifts a paused
+          # state; against a rate limit CodeRabbit answers "Reviews resumed" and
+          # reviews nothing, so the loop spends its whole budget on
+          # acknowledgements (PR #1589: four resumes, zero reviews). A pause and a
+          # rate limit need different verbs, and this branch is the rate-limit one.
+          if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+            coderabbit_rate_limit_hold_seen=0
+            coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
+            coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
+            coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            echo "INFO: posted @coderabbitai review after rate-limit wait" >&2
+          else
+            echo "WARN: failed to post @coderabbitai review after rate-limit wait" >&2
+          fi
+          _interruptible_sleep "$poll_interval"
+          elapsed=$((elapsed + poll_interval))
+          continue
+        fi
       fi
     fi
 
@@ -5502,6 +5568,8 @@ run_coderabbit_review() {
             print_kv COMMENT_COUNT 0
             print_kv BLOCKING_COUNT 0
             print_kv SUGGESTION_COUNT 0
+            print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+            print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
             return 0
           fi
           if [ "$cr_success_gate_rc" -eq 1 ] || [ "$cr_success_gate_rc" -eq 2 ]; then
@@ -5564,6 +5632,8 @@ run_coderabbit_review() {
           print_kv COMMENT_COUNT "$stale_count"
           print_kv BLOCKING_COUNT "$stale_blocking_count"
           print_kv SUGGESTION_COUNT "$((stale_count - stale_blocking_count))"
+          print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+          print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
           while IFS= read -r blocking_json; do
             [ -z "${blocking_json:-}" ] && continue
             print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
@@ -5668,6 +5738,8 @@ run_coderabbit_review() {
           print_kv COMMENT_COUNT 0
           print_kv BLOCKING_COUNT 0
           print_kv SUGGESTION_COUNT 0
+          print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+          print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
           return 2
         fi
         if [ "${timeout_incomplete_count:-0}" -gt 0 ] || [ "$coderabbit_phase0_retrigger" -eq 1 ]; then
@@ -5682,6 +5754,8 @@ run_coderabbit_review() {
           print_kv COMMENT_COUNT 0
           print_kv BLOCKING_COUNT 0
           print_kv SUGGESTION_COUNT 0
+          print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+          print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
           return 2
         fi
 
@@ -5695,6 +5769,8 @@ run_coderabbit_review() {
         print_kv COMMENT_COUNT 0
         print_kv BLOCKING_COUNT 0
         print_kv SUGGESTION_COUNT 0
+        print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+        print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
         return 0
       fi
       print_kv RESULT escalate
@@ -5704,6 +5780,8 @@ run_coderabbit_review() {
       print_kv BRANCH "$branch_name"
       print_kv REVIEW_COMMENT_ID ""
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+      print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
       return 2
     fi
 
@@ -5778,6 +5856,8 @@ run_coderabbit_review() {
     print_kv COMMENT_COUNT "$comment_count"
     print_kv BLOCKING_COUNT "$blocking_count"
     print_kv SUGGESTION_COUNT "$suggestion_count"
+    print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+    print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
     while IFS= read -r blocking_json; do
       [ -z "${blocking_json:-}" ] && continue
       print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
@@ -5804,6 +5884,8 @@ run_coderabbit_review() {
   print_kv COMMENT_COUNT "$comment_count"
   print_kv BLOCKING_COUNT 0
   print_kv SUGGESTION_COUNT "$suggestion_count"
+  print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+  print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
   return 0
 }
 

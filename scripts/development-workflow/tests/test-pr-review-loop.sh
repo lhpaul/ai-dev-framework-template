@@ -15468,15 +15468,24 @@ run_test "1579_is_live_expired_window" "not-live" \
 # of a live limit, and reading it as one would re-create the #1579 stall.
 run_test "1579_is_live_malformed_json_not_live" "not-live" "$(_1579_live 'not json at all')"
 
-# --- AC-2: the post-rate-limit re-trigger asks for a review ----------------
+# --- AC-2 / AC-4: the post-rate-limit branch re-checks before posting -------
 # "resume" only lifts a paused state; against a rate limit CodeRabbit answers
-# "Reviews resumed" and reviews nothing (PR #1589: four resumes, zero reviews).
-# This reads the rate-limit branch itself, so the guarantee cannot be lost to a
-# later edit that reverts the verb.
+# "Reviews resumed" and reviews nothing. The branch may post `review` only after
+# re-reading the rate-limit state; while that state is live, it must hold.
 _1579_loop_src="$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh"
-_1579_rl_branch="$(awk '/no SUCCESS commit status found/,/_interruptible_sleep "\$poll_interval"/' "$_1579_loop_src")"
-run_test "1579_rate_limit_branch_posts_review" "1" \
-  "$(printf '%s' "$_1579_rl_branch" | grep -c -- '--body "@coderabbitai review"' || true)"
+_1579_rl_branch="$(awk '/no SUCCESS commit status found/,/CodeRabbit did.not review this HEAD/' "$_1579_loop_src")"
+run_test "1597_rate_limit_branch_rechecks_after_wait" "yes" \
+  "$([ "$(printf '%s' "$_1579_rl_branch" | grep -c 'coderabbit_post_wait_rate_limit_json' || true)" -ge 1 ] && echo yes || echo no)"
+run_test "1597_rate_limit_branch_holds_live_window" "yes" \
+  "$([ "$(printf '%s' "$_1579_rl_branch" | grep -c 'not posting a trigger while quota refusal remains outstanding' || true)" -ge 1 ] && echo yes || echo no)"
+run_test "1597_rate_limit_refusal_refunds_retry_budget" "yes" \
+  "$([ "$(grep_count_or_zero 'not counting it toward CODERABBIT_RATE_LIMIT_MAX_RETRIES' "$_1579_loop_src")" -ge 1 ] && echo yes || echo no)"
+run_test "1597_held_rate_limit_posts_when_spent" "yes" \
+  "$([ "$(grep_count_or_zero 'rate-limit window elapsed after a held wait' "$_1579_loop_src")" -ge 1 ] && echo yes || echo no)"
+run_test "1597_held_rate_limit_blocks_silent_preemption" "yes" \
+  "$([ "$(grep_count_or_zero 'coderabbit_rate_limit_hold_seen\" -eq 0' "$_1579_loop_src")" -ge 1 ] && echo yes || echo no)"
+run_test "1597_review_trigger_posts_clear_held_rate_limit" "3" \
+  "$(grep_count_or_zero '^[[:space:]]*coderabbit_rate_limit_hold_seen=0' "$_1579_loop_src")"
 run_test "1579_rate_limit_branch_does_not_post_resume" "0" \
   "$(printf '%s' "$_1579_rl_branch" | grep -c -- '--body "@coderabbitai resume"' || true)"
 # The extraction must actually have found the branch; an empty window would
@@ -15703,15 +15712,13 @@ rm -rf "$_1579_e2e_mock_dir"
 rm -f "$_1579_e2e_stderr"
 unset _1579_E2E_CALL_LOG _1579_E2E_STALE_CREATED _1579_e2e_mock_dir _1579_e2e_call_log _1579_e2e_stderr
 
-# --- AC-3(b) / AC-2: end-to-end — a LIVE rate limit re-triggers with "review",
-# not "resume". PR #1589 measured four "@coderabbitai resume" posts answered
-# with four "Reviews resumed" acknowledgements and zero reviews, because
-# "resume" only lifts CodeRabbit's auto-pause and does nothing against a rate
-# limit. Runs the real rate-limit wait/retrigger branch end to end so the
-# posted verb is proven from actual execution, not only from the static
-# source-text check above.
+# --- AC-3(b) / AC-2 / AC-4: end-to-end — a LIVE rate limit is a refusal, not
+# a review-attempt retry. Waiting is free; posting while the live quota refusal
+# is still outstanding spends the same allowance the loop is waiting on.
 _1579_e2e_mock_dir2="$(mktemp -d)"
 _1579_e2e_call_log2="$_1579_e2e_mock_dir2/calls.log"
+_1579_e2e_stdout2="$_1579_e2e_mock_dir2/stdout.log"
+_1579_e2e_stderr2="$_1579_e2e_mock_dir2/stderr.log"
 export _1579_E2E_CALL_LOG2="$_1579_e2e_call_log2"
 export _1579_E2E_LIVE_CREATED
 _1579_E2E_LIVE_CREATED="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
@@ -15738,18 +15745,24 @@ chmod +x "$_1579_e2e_mock_dir2/gh"
 PATH="$_1579_e2e_mock_dir2:$PATH" \
   CODERABBIT_NO_TRIGGER_TIMEOUT=999 CODERABBIT_RATE_LIMIT_MAX_RETRIES=1 CODERABBIT_RATE_LIMIT_WAIT=1 \
   CODERABBIT_RATE_LIMIT_MIN_WAIT=1 \
-  run_coderabbit_review "42" "fix/42-test" "1" "3" >/dev/null 2>&1 || true
+  run_coderabbit_review "42" "fix/42-test" "1" "3" >"$_1579_e2e_stdout2" 2>"$_1579_e2e_stderr2" || true
 
 # The mock logs "$*", which joins argv with spaces and drops the quoting the
-# real gh invocation used — matching the convention the #1531 mock already
-# established (pr comment 42 --body @coderabbitai review, no literal quotes).
-run_test "1579_live_rate_limit_reretrigger_posts_review" "yes" \
-  "$([ "$(grep_count_or_zero 'pr comment 42 --body @coderabbitai review' "$_1579_e2e_call_log2")" -ge 1 ] && echo yes || echo no)"
-run_test "1579_live_rate_limit_reretrigger_never_posts_resume" "0" \
+# real gh invocation used. A live rate-limit refusal must not produce either
+# trigger verb while it remains live after the wait.
+run_test "1597_live_rate_limit_does_not_post_review" "0" \
+  "$(grep_count_or_zero 'pr comment 42 --body @coderabbitai review' "$_1579_e2e_call_log2")"
+run_test "1597_live_rate_limit_does_not_post_resume" "0" \
   "$(grep_count_or_zero 'pr comment 42 --body @coderabbitai resume' "$_1579_e2e_call_log2")"
+run_test "1597_live_rate_limit_reports_zero_attempts" "CODERABBIT_TRIGGER_ATTEMPTS=0" \
+  "$(grep '^CODERABBIT_TRIGGER_ATTEMPTS=' "$_1579_e2e_stdout2" | tail -n 1)"
+run_test "1597_live_rate_limit_reports_zero_reviews" "CODERABBIT_REVIEWS_RECEIVED=0" \
+  "$(grep '^CODERABBIT_REVIEWS_RECEIVED=' "$_1579_e2e_stdout2" | tail -n 1)"
+run_test "1597_live_rate_limit_logs_hold_after_wait" "yes" \
+  "$([ "$(grep_count_or_zero 'not posting a trigger while quota refusal remains outstanding' "$_1579_e2e_stderr2")" -ge 1 ] && echo yes || echo no)"
 
 rm -rf "$_1579_e2e_mock_dir2"
-unset _1579_E2E_CALL_LOG2 _1579_E2E_LIVE_CREATED _1579_e2e_mock_dir2 _1579_e2e_call_log2
+unset _1579_E2E_CALL_LOG2 _1579_E2E_LIVE_CREATED _1579_e2e_mock_dir2 _1579_e2e_call_log2 _1579_e2e_stdout2 _1579_e2e_stderr2
 
 unset -f _1579_ago _1579_ago_s _1579_state _1579_live
 unset _1579_window _1579_nowindow _1579_real_parser _1579_loop_src _1579_rl_branch
