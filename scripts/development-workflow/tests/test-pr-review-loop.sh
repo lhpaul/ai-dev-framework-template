@@ -2435,7 +2435,7 @@ run_test "small_findings_prior_consecutive_stops_at_non_tail" "1" \
 run_test "small_findings_main_branch_requires_zero_thread_audit" "yes" \
   "$(
     _sf_loop_src="$(cat "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
-    if printf '%s\n' "$_sf_loop_src" | grep -qF '[ "$unresolved_thread_count" -eq 0 ]'; then
+    if grep -qF '[ "$unresolved_thread_count" -eq 0 ]' <<<"$_sf_loop_src"; then
       echo yes
     else
       echo no
