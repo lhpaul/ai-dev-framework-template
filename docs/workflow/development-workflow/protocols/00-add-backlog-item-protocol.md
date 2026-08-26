@@ -20,9 +20,12 @@ Before creating anything, read:
 
 Optional deterministic helper (destination resolution and GitHub issue creation):
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
+set -euo pipefail
+
 ./scripts/development-workflow/add-backlog-item.sh resolve
-./scripts/development-workflow/add-backlog-item.sh create --title "..." --body-file -
+./scripts/development-workflow/add-backlog-item.sh create --title "..." --body-file - --type Workflow
 ```
 
 ---
@@ -85,14 +88,32 @@ assets or a fidelity baseline.
 
 1. Create **one** item in the **confirmed** destination.
 2. For **GitHub Issues** (including when `issue_tracker.provider` is `github_projects`), prefer:
-   - `./scripts/development-workflow/add-backlog-item.sh create --title "..." --body-file - [--priority <value>] [--size <value>]` (requires `gh` authenticated), **or**
+   - `./scripts/development-workflow/add-backlog-item.sh create --title "..." --body-file - --type <Feature|Bug|Refactor|Workflow> [--priority <value>] [--size <value>]` (requires `gh` authenticated), **or**
    - Equivalent `gh issue create` with the same title/body, followed by manual project field updates.
 3. For **Linear**, use the Linear API/MCP per [`linear.md`](../integrations/linear.md). `add-backlog-item.sh create` now emits `TRACKER_ACTION_REQUIRED=create_item title=<title>` to stdout and exits 0 (not non-zero) when the configured provider is Linear. Multi-word titles are single-quoted (e.g., `title='My New Feature'`); strip the quotes before passing to the Linear MCP `createIssue` tool. Guidance referencing `linear.md` is also written to stderr for operator visibility.
 4. For **GitHub Projects** after the issue exists: if the team uses a project board, add/update the project item per `github-projects.md` (optional field updates such as Status = Backlog and Type = Feature/Bug/Refactor/Workflow) **only when** the human or repo docs supply enough context (project number, owner). If project context is missing, **ask** rather than guessing.
 5. When GitHub Projects is configured, use the project **Type** field for classification instead of repository labels. Set `Type = Workflow` for AI-development-framework/process/tooling work, `Type = Feature` for full-pipeline product work, `Type = Bug` for fast-track fixes, and `Type = Refactor` for plan-only refactors. Do not apply legacy classification labels such as `workflow`, `bug`, `enhancement`, or `type:*`; operational labels such as `integration-branch:<slug>` remain valid when the protocol requires them.
-6. When GitHub Projects is configured, set **Priority** and **Size** on the project item. Use the inference heuristics below to determine values without asking the human for every routine item.
+6. When GitHub Projects is configured, set **Type**, **Priority**, and **Size** on the project item. Use the inference heuristics below to determine values without asking the human for every routine item.
 
-### Priority and Size inference heuristics (GitHub Projects)
+### Type, Priority, and Size inference heuristics (GitHub Projects)
+
+**Type** — infer from the intended workflow path and pass it with `--type`.
+When GitHub Projects is configured, omitting Type makes the item harder for
+Protocol 90 to route because Backlog classification comes from the project
+field, not repository labels.
+
+| Signal | Type |
+| ------ | ---- |
+| Full Pipeline feature or product capability | `--type Feature` |
+| Fast Track bug fix, defect, or simple corrective change | `--type Bug` |
+| Plan-only restructuring or non-feature refactor | `--type Refactor` |
+| AI-development-framework/process/tooling item | `--type Workflow` |
+
+When two signals appear to conflict, prefer the classification that preserves
+the repository's routing source of truth. AI-development-framework,
+workflow-process, and tooling items use `--type Workflow` even when the item
+fixes a defect in that workflow surface. Use `--type Bug` for defects outside
+the framework/process/tooling classification.
 
 **Priority** — infer from the request. When no explicit urgency/low signal
 applies (the routine case), **omit `--priority` entirely** and let the
@@ -131,14 +152,20 @@ silent no-op:
 
 Pass inferred values directly to the helper:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/add-backlog-item.sh create \
   --title "..." \
   --body-file - \
+  --type Workflow \
   --size S
 ```
 
 This example omits `--priority` for the routine case shown in the table above, so the helper script's adaptive default applies. Pass `--priority Urgent`, `--priority High`, or `--priority Low` explicitly only when the corresponding signal from the table applies.
+
+Always pass `--type` for GitHub Projects when the request has enough context to
+classify the item. If the type is genuinely unclear after reading the request,
+ask a targeted clarification instead of creating an untyped project item.
 
 When the scope is genuinely unclear after reading the request, omit `--size` (leave it unset) rather than guessing.
 
