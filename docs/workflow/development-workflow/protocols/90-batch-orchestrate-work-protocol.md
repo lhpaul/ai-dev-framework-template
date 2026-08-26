@@ -192,7 +192,7 @@ Step 2.5), apply the backlog-start gate:
 - PR opening, labeling, or editing
 - Tracker status updates
 - Subagent dispatch (Work Item Runner or stage agent)
-- CHANGELOG edits
+- changelog fragment edits
 
 **Detection**: An explicit item list is present when the human invocation or handoff metadata includes a bounded set of issue numbers, tracker IDs, branch names, or PR numbers. An unrestricted invocation ("run everything that can advance") does **not** set the scope guard.
 
