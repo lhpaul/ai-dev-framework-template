@@ -15045,6 +15045,8 @@ run_test "review_probe_defined" "yes" \
   "$(type -t _bot_review_submitted_since >/dev/null 2>&1 && echo yes || echo no)"
 run_test "review_substantive_helper_defined" "yes" \
   "$(type -t _review_body_is_substantive >/dev/null 2>&1 && echo yes || echo no)"
+run_test "review_substantive_helper_rejects_ack_punctuation" "no" \
+  "$(_review_body_is_substantive "Thanks!" && echo yes || echo no)"
 
 _1556_rbin="$(mktemp -d)"
 _1556_mkreviews() {

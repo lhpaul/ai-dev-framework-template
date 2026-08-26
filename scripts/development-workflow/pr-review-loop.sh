@@ -7660,12 +7660,13 @@ _settle_config_for_platform() {
 # the current code and must not satisfy POST_CLEAN_REQUIRE_REVIEW.
 _review_body_is_substantive() {
   local body="${1:-}"
-  local normalized
+  local normalized normalized_key
   normalized="$(printf '%s' "$body" | tr '\r\n\t' '   ' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
   [ -n "$normalized" ] || return 1
+  normalized_key="$(printf '%s' "$normalized" | tr '[:upper:]' '[:lower:]' | sed 's/[[:space:][:punct:]]*$//')"
 
-  case "$(printf '%s' "$normalized" | tr '[:upper:]' '[:lower:]')" in
-    "thanks"|"thanks."|"thank you"|"thank you."|"acknowledged"|"acknowledged."|"got it"|"got it."|"the change is correct"|"the change is correct.")
+  case "$normalized_key" in
+    "thanks"|"thank you"|"acknowledged"|"got it"|"the change is correct")
       return 1
       ;;
   esac
