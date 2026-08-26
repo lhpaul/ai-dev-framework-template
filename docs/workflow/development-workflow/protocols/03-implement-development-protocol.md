@@ -819,10 +819,11 @@ If this PR fixes or adjusts unreleased work that already has a fragment, update
 that existing fragment instead of adding a duplicate. If the fragment already
 describes the corrected behavior, leave it unchanged.
 
-If the repository has no issue tracker configured, use the branch slug as
-`<item>` before the PR exists and omit the `(#N)` issue reference from the
-bullet body. If a PR is already open before the fragment is created, using the
-PR number as `<item>` is also valid.
+If the repository has no issue tracker configured, open the PR as a draft
+before creating the fragment, then use the PR number as `<item>` and omit the
+`(#N)` issue reference from the bullet body. In that no-tracker case, validate
+and push the fragment in a follow-up commit before marking the PR ready for
+review.
 
 Validate fragments before staging:
 
@@ -1173,7 +1174,7 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
    changelog.d/<item>.changed.<slug>.md
    ```
 
-   The body must be the finished changelog bullet, written from the user's perspective. Use the bare tracker identifier as `<item>`; in repositories with no issue tracker configured, use the branch slug as `<item>` before the PR exists and omit the `(#N)` issue reference from the bullet body. If a PR is already open before the fragment is created, using the PR number as `<item>` is also valid. Validate before staging:
+   The body must be the finished changelog bullet, written from the user's perspective. Use the bare tracker identifier as `<item>`; in repositories with no issue tracker configured, open the PR as a draft before creating the fragment, then use the PR number as `<item>` and omit the `(#N)` issue reference from the bullet body. In that no-tracker case, validate and push the fragment in a follow-up commit before marking the PR ready for review. Validate before staging the fragment commit:
 
    <!-- workflow-shell-contract: bash -->
    ```bash
@@ -1429,10 +1430,11 @@ changelog.d/<item>.fixed.<slug>.md
 
 The body must be the finished changelog bullet, written from the user's
 perspective. Use the bare tracker identifier as `<item>`; in repositories with
-no issue tracker configured, use the branch slug as `<item>` before the PR
-exists and omit the `(#N)` issue reference from the bullet body. If a PR is
-already open before the fragment is created, using the PR number as `<item>` is
-also valid. Validate before staging:
+no issue tracker configured, open the PR as a draft before creating the
+fragment, then use the PR number as `<item>` and omit the `(#N)` issue reference
+from the bullet body. In that no-tracker case, validate and push the fragment in
+a follow-up commit before marking the PR ready for review. Validate before
+staging the fragment commit:
 
 <!-- workflow-shell-contract: bash -->
 ```bash
