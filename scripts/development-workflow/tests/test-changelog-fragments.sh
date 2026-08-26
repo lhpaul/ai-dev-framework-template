@@ -155,17 +155,27 @@ run_test "list_empty_count" "yes" "$(contains "PENDING_COUNT=0" "$out")"
 out="$("$HELPER" list --dir "$dir/changelog.d" --json)"
 run_test "list_empty_json" '{"pending":[]}' "$(printf '%s\n' "$out" | jq -c .)"
 dir="$(new_case assemble)"
+python3 - "$dir/CHANGELOG.md" <<'PY'
+import sys
+p = sys.argv[1]
+text = open(p, encoding="utf-8").read()
+marker = "### Added"
+open(p, "w", encoding="utf-8").write(
+    text.replace(marker, "- **Legacy top-level** (#3): preserve me.\n\n" + marker, 1)
+)
+PY
 write_fragment "$dir" "902.changed.gamma.md" "- **Gamma** (#902): changed."
 write_fragment "$dir" "900.added.alpha.md" "- **Alpha** (#900): added."
 write_fragment "$dir" "901.fixed.beta.md" "- **Beta** (#901): fixed."
 out="$(assemble_case "$dir" --version 0.2.0 --date 2026-02-03)"
 run_test "assemble_result" "yes" "$(contains "ASSEMBLE_RESULT=assembled" "$out")"
 run_test "assemble_counts_fragments" "yes" "$(contains "FRAGMENT_COUNT=3" "$out")"
-run_test "assemble_counts_carried" "yes" "$(contains "CARRIED_OVER_COUNT=2" "$out")"
+run_test "assemble_counts_carried" "yes" "$(contains "CARRIED_OVER_COUNT=3" "$out")"
 run_test "assemble_items" "yes" "$(contains "ITEMS=900,902,901" "$out")"
 run_test "assemble_deletes_fragments" "0" "$(find "$dir/changelog.d" -maxdepth 1 -name '*.md' ! -name README.md | wc -l | tr -d ' ')"
 run_test "assemble_version_present" "yes" "$(contains "## [0.2.0] - 2026-02-03" "$(cat "$dir/CHANGELOG.md")")"
 run_test "assemble_fresh_unreleased" "yes" "$(contains $'## [Unreleased]\n\n## [0.2.0]' "$(cat "$dir/CHANGELOG.md")")"
+run_test "assemble_preserves_unsectioned" "yes" "$(contains "- **Legacy top-level** (#3): preserve me." "$(cat "$dir/CHANGELOG.md")")"
 run_test "assemble_added_before_changed" "yes" "$(
   awk '/### Added/{a=NR} /### Changed/{c=NR} END{print (a<c ? "yes" : "no")}' "$dir/CHANGELOG.md"
 )"

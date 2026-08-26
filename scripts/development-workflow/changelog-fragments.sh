@@ -283,6 +283,7 @@ prefix = lines[:start]
 old_block = lines[start + 1:end]
 suffix = lines[end:]
 
+unsectioned = []
 sections: OrderedDict[str, list[str]] = OrderedDict((k, []) for k in kind_order)
 current = None
 for line in old_block:
@@ -292,6 +293,8 @@ for line in old_block:
         continue
     if current is not None:
         sections[current].append(line)
+    else:
+        unsectioned.append(line)
 
 current_kind = None
 with open(bodies_path, encoding="utf-8", newline="") as f:
@@ -303,6 +306,13 @@ with open(bodies_path, encoding="utf-8", newline="") as f:
             sections[current_kind].append(raw)
 
 version_lines = [f"## [{version}] - {date}"]
+while unsectioned and unsectioned[0] == "":
+    unsectioned.pop(0)
+while unsectioned and unsectioned[-1] == "":
+    unsectioned.pop()
+if unsectioned:
+    version_lines.append("")
+    version_lines.extend(unsectioned)
 for kind in kind_order:
     body = sections[kind]
     while body and body[0] == "":
