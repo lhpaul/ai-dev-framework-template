@@ -162,10 +162,10 @@ list_fragments() {
     paths+=("$path")
   done < <(collect_entries "$dir" | LC_ALL=C sort -t $'\t' -k2,2n -k3,3 -k4,4)
   if [ "$json" = "true" ]; then
-    printf '%s\n' "${paths[@]}" | jq -R -s '{pending: (split("\n") | map(select(length > 0)))}'
+    printf '%s\n' ${paths[@]+"${paths[@]}"} | jq -R -s '{pending: (split("\n") | map(select(length > 0)))}'
   else
     printf 'PENDING_COUNT=%s\n' "${#paths[@]}"
-    for path in "${paths[@]}"; do
+    for path in ${paths[@]+"${paths[@]}"}; do
       printf 'PENDING=%s\n' "$path"
     done
   fi
