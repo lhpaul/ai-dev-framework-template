@@ -2381,6 +2381,8 @@ run_test "small_findings_tests_path_non_shipped" "yes" \
   "$(reviewer_loop_path_is_non_shipped_artifact "scripts/development-workflow/tests/test-pr-review-loop.sh" && echo yes || echo no)"
 run_test "small_findings_source_path_shipped" "no" \
   "$(reviewer_loop_path_is_non_shipped_artifact "scripts/development-workflow/pr-review-loop.sh" && echo yes || echo no)"
+run_test "small_findings_source_test_filename_shipped_without_test_dir" "no" \
+  "$(reviewer_loop_path_is_non_shipped_artifact "src/foo.test.ts" && echo yes || echo no)"
 run_test "small_findings_all_paths_requires_a_path" "no" \
   "$(printf '\n' | reviewer_loop_all_paths_non_shipped && echo yes || echo no)"
 run_test "small_findings_all_paths_rejects_mixed_source" "no" \
@@ -2430,8 +2432,17 @@ $(printf '%s\n' "$_sf_history_interrupted_payload" | jq '.')
 \`\`\`"
 run_test "small_findings_prior_consecutive_stops_at_non_tail" "1" \
   "$(reviewer_loop_small_findings_prior_consecutive_count "$_sf_history_interrupted_body")"
+run_test "small_findings_main_branch_requires_zero_thread_audit" "yes" \
+  "$(
+    _sf_loop_src="$(cat "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+    if printf '%s\n' "$_sf_loop_src" | grep -qF '[ "$unresolved_thread_count" -eq 0 ]'; then
+      echo yes
+    else
+      echo no
+    fi
+  )"
 unset _sf_paths_output _sf_history_payload _sf_history_body
-unset _sf_history_interrupted_payload _sf_history_interrupted_body
+unset _sf_history_interrupted_payload _sf_history_interrupted_body _sf_loop_src
 
 _mc_marker_no_json_body=$'### Automated Reviewer Loop Summary\n<!-- reviewer-loop-history:v1 -->\nNo fenced JSON block here.'
 run_test "cycles_entries_count_marker_no_json" "-1 -1 unavailable" \

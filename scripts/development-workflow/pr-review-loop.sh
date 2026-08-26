@@ -6719,7 +6719,7 @@ reviewer_loop_path_is_non_shipped_artifact() {
   local path="${1:-}"
 
   case "$path" in
-    ""|docs/*|test/*|tests/*|fixtures/*|fixture/*|__fixtures__/*|__tests__/*|*.md|*.mdx|*.test.*|*.spec.*|test-*|*.snap)
+    ""|docs/*|test/*|tests/*|fixtures/*|fixture/*|__fixtures__/*|__tests__/*|*.md|*.mdx|test-*|*.snap)
       return 0
       ;;
   esac
@@ -9215,7 +9215,9 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ] \
     # No BLOCKING_N_* entries are emitted for thread findings — callers must use
     # REASON=unresolved_review_threads and UNRESOLVED_THREAD_COUNT to handle this case.
     total_blocking_count=$((total_blocking_count + unresolved_thread_count))
-  elif [ "$small_findings_only" -eq 1 ]; then
+  elif [ "$aggregate_result" = "needs_fixes" ] \
+      && [ "$unresolved_thread_count" -eq 0 ] \
+      && [ "$small_findings_only" -eq 1 ]; then
     reviewer_loop_latest_summary_body="$(reviewer_loop_fetch_latest_summary_body "$pr_number")"
     small_findings_prior_count="$(reviewer_loop_small_findings_prior_consecutive_count "$reviewer_loop_latest_summary_body")"
     [[ "${small_findings_prior_count:-}" =~ ^[0-9]+$ ]] || small_findings_prior_count=0
