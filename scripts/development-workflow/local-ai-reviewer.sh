@@ -191,16 +191,18 @@ fi
 BASE_BRANCH=""
 HEAD_BRANCH=""
 HEAD_SHA=""
+PR_BODY=""
 changed_files_json="[]"
 diff_name_status=""
 diff_stat=""
 diff_fetch_failed=0
 if command -v gh >/dev/null 2>&1; then
   pr_json=""
-  if pr_json="$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json baseRefName,headRefName,headRefOid 2>/dev/null)"; then
+  if pr_json="$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json baseRefName,headRefName,headRefOid,body 2>/dev/null)"; then
     BASE_BRANCH="$(printf '%s\n' "$pr_json" | jq -r '.baseRefName // empty' 2>/dev/null || true)"
     HEAD_BRANCH="$(printf '%s\n' "$pr_json" | jq -r '.headRefName // empty' 2>/dev/null || true)"
     HEAD_SHA="$(printf '%s\n' "$pr_json" | jq -r '.headRefOid // empty' 2>/dev/null || true)"
+    PR_BODY="$(printf '%s\n' "$pr_json" | jq -r '.body // empty' 2>/dev/null || true)"
   fi
   if ! diff_output="$(gh pr diff "$PR_NUMBER" --repo "$OWNER/$REPO" --name-only 2>/dev/null)"; then
     diff_output=""
@@ -309,6 +311,7 @@ jq -n \
   --arg head_branch "$HEAD_BRANCH" \
   --arg reviewed_head "$HEAD_SHA" \
   --arg graph_context "$graph_context" \
+  --arg pr_body "$PR_BODY" \
   --arg diff_name_status "$diff_name_status" \
   --arg diff_stat "$diff_stat" \
   --argjson changed_files "$changed_files_json" \
@@ -321,6 +324,7 @@ jq -n \
     head_branch: $head_branch,
     reviewed_head: $reviewed_head,
     changed_files: $changed_files,
+    pr_body: ($pr_body[0:20000]),
     diff_name_status: $diff_name_status,
     diff_stat: $diff_stat,
     review_contract: "REVIEW.md",
@@ -491,6 +495,7 @@ write_evidence_file() {
     --arg head_branch "$HEAD_BRANCH" \
     --arg reviewed_head "$HEAD_SHA" \
     --arg graph_context "$graph_context" \
+    --arg pr_body "$PR_BODY" \
     --arg diff_name_status "$diff_name_status" \
     --arg diff_stat "$diff_stat" \
     --argjson changed_files "$changed_files_json" \
@@ -515,6 +520,7 @@ write_evidence_file() {
       },
       context_summary: {
         changed_files: $changed_files,
+        pr_body: ($pr_body[0:20000]),
         diff_name_status: $diff_name_status,
         diff_stat: $diff_stat
       }

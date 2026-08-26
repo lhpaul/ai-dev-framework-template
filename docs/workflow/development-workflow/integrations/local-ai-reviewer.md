@@ -71,6 +71,8 @@ local_ai_reviewer_context.v1` and includes:
 
 - PR metadata and `reviewed_head`
 - `changed_files`
+- bounded `pr_body` text, so validation notes and planted-violation proof in
+  the PR description are visible to the local model
 - compact `diff_name_status` and `diff_stat` fields when the base ref is
   available in the checkout
 - `review_contract`
