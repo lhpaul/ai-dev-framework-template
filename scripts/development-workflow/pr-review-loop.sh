@@ -5129,6 +5129,7 @@ run_coderabbit_review() {
     phase0_resume_since_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
       coderabbit_phase0_retrigger=1
+      coderabbit_rate_limit_hold_seen=0
       coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
       since_iso="$phase0_resume_since_iso"
       echo "INFO: @coderabbitai resume posted; since_iso reset to $since_iso" >&2
@@ -5276,6 +5277,7 @@ run_coderabbit_review() {
         echo "INFO: CodeRabbit reviews are paused — posting @coderabbitai resume to trigger a fresh review" >&2
         if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
           coderabbit_retrigger_attempted=1
+          coderabbit_rate_limit_hold_seen=0
           coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
           # Reset the elapsed timer to give the retrigger time to complete.
           elapsed=0
@@ -5301,6 +5303,7 @@ run_coderabbit_review() {
     # both mechanisms.
     if [ "$coderabbit_any_activity" -eq 0 ] \
         && [ "$coderabbit_retrigger_attempted" -eq 0 ] \
+        && [ "$coderabbit_rate_limit_hold_seen" -eq 0 ] \
         && [ "$coderabbit_no_trigger_retriggers" -lt "$coderabbit_rate_limit_max_retries" ] \
         && [ "$elapsed" -ge "$coderabbit_no_trigger_timeout" ]; then
       # Confirm neither a "paused" comment nor a *live* rate limit is present —
@@ -5347,6 +5350,7 @@ run_coderabbit_review() {
         coderabbit_no_trigger_retriggers=$((coderabbit_no_trigger_retriggers + 1))
         echo "INFO: CodeRabbit has not auto-triggered after ${elapsed}s (silent non-trigger, attempt ${coderabbit_no_trigger_retriggers}/${coderabbit_rate_limit_max_retries}) — posting @coderabbitai review" >&2
         if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+          coderabbit_rate_limit_hold_seen=0
           coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
           coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           echo "INFO: @coderabbitai review trigger posted" >&2
@@ -5407,6 +5411,7 @@ run_coderabbit_review() {
             coderabbit_rate_limit_hold_seen=0
             echo "INFO: CodeRabbit rate-limit window elapsed after a held wait — posting @coderabbitai review" >&2
             if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+              coderabbit_rate_limit_hold_seen=0
               coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
               coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
               coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
@@ -5513,6 +5518,7 @@ run_coderabbit_review() {
           # acknowledgements (PR #1589: four resumes, zero reviews). A pause and a
           # rate limit need different verbs, and this branch is the rate-limit one.
           if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+            coderabbit_rate_limit_hold_seen=0
             coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
             coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
             coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
