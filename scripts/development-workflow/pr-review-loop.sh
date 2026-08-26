@@ -6565,22 +6565,15 @@ METRICS_HEADER
 #   - Runs only for feature/*, fix/*, refactor/*, hotfix/* branches.
 #   - Checks current label state via `gh pr view --json labels`.
 #     On gh failure the check is skipped (fail-open; WARN emitted to stderr).
-#   - When the label is absent, gates the restore on prior-loop evidence:
-#     checks whether an "Automated Reviewer Loop Summary" comment already exists
-#     on the PR via `gh api repos/.../issues/.../comments --paginate`.
-#       • summary comment PRESENT + label missing  → RESTORE.
-#         Within the reviewer-loop operating model, ready-for-regression is
-#         owned by the loop and should be present whenever the loop runs after
-#         the first summary comment. A label drop after the summary comment exists
-#         means the PR policy workflow removed a stale label after a new push
-#         (the #805 scenario), so restoring here is correct.
-#       • summary comment ABSENT + label missing   → do NOT restore.
-#         This is the normal initial state (loop has never run), and the only
-#         window in which a human intentional removal is unambiguous. A deliberate
-#         removal AFTER the loop has run while still re-invoking the loop is
-#         treated as out-of-model (the loop will re-apply on the next invocation).
-#     The summary-comment gate prevents overriding an intentional removal that
-#     occurs before the loop has ever applied the label.
+#   - When the label is absent, gates the restore on current-head clean-loop
+#     evidence from the newest "Automated Reviewer Loop Summary" comment:
+#       • latest summary result clean/skipped + head_sha matches current PR head
+#         → RESTORE.
+#       • no summary, stale-head summary, non-clean summary, or unreadable
+#         summary history → do NOT restore.
+#     This keeps the helper aligned with the PR policy workflow: a historical
+#     clean summary must not resurrect ready-for-regression after later pushes
+#     introduce reviewer findings.
 #   - If the comment-presence query fails (gh/API error): fail-open — the restore
 #     IS attempted and a WARN is emitted. This mirrors the higher-frequency
 #     real-world failure (#805) being more harmful than a spurious re-apply.
@@ -6607,10 +6600,9 @@ restore_regression_label_if_missing() {
         return 0
       fi
       if [ "${_rfr_has_label:-}" = "false" ]; then
-        # Gate the restore on prior-loop evidence: only restore when an
-        # "Automated Reviewer Loop Summary" comment already exists on the PR.
-        # This prevents overriding a human intentional label removal that occurs
-        # before the loop has ever applied the label.
+        # Gate the restore on current-head clean-loop evidence. A historical
+        # clean summary on an older head must not resurrect a stale label after
+        # a push that introduced reviewer findings.
         local _rfr_repo=""
         # repo_slug failure is handled explicitly below: an empty slug falls
         # into the else branch (fail-open WARN + restore). Do not use || true
@@ -6619,28 +6611,59 @@ restore_regression_label_if_missing() {
         if ! _rfr_repo="$(repo_slug 2>/dev/null)"; then
           _rfr_repo=""
         fi
-        local _rfr_loop_comment=0
+        local _rfr_current_head_sha=""
+        if ! _rfr_current_head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid // ""' 2>/dev/null)" \
+            || [ -z "${_rfr_current_head_sha:-}" ]; then
+          echo "WARN: could not resolve current head for ready-for-regression restore on PR #${pr_number}; skipping restore." >&2
+          return 0
+        fi
+        local _rfr_latest_summary_record=""
+        local _rfr_latest_summary_body=""
+        local _rfr_latest_summary_json=""
+        local _rfr_latest_summary_result=""
+        local _rfr_latest_summary_head=""
+        local _rfr_restore_allowed=0
+        local _rfr_restore_reason="current-head clean reviewer-loop summary found"
         local _rfr_comments_raw=""
         if [ -n "${_rfr_repo:-}" ] && _rfr_comments_raw="$(gh api \
             "repos/${_rfr_repo}/issues/${pr_number}/comments" \
             --paginate 2>/dev/null)"; then
-          _rfr_loop_comment="$(printf '%s\n' "$_rfr_comments_raw" \
-            | jq -rs 'add // [] | [.[] | select(
-                (.body // "" | contains("### Automated Reviewer Loop Summary"))
-              )] | length' 2>/dev/null)" || _rfr_loop_comment=0
+          _rfr_latest_summary_record="$(printf '%s\n' "$_rfr_comments_raw" \
+            | reviewer_loop_history_select_latest_summary_record 2>/dev/null)" || _rfr_latest_summary_record=""
+          if [ -n "${_rfr_latest_summary_record:-}" ]; then
+            _rfr_latest_summary_body="$(printf '%s\n' "$_rfr_latest_summary_record" \
+              | jq -r '.body // ""' 2>/dev/null)" || _rfr_latest_summary_body=""
+          fi
+          if [ -n "${_rfr_latest_summary_body:-}" ]; then
+            _rfr_latest_summary_json="$(printf '%s\n' "$_rfr_latest_summary_body" \
+              | reviewer_loop_history_extract_latest_json 2>/dev/null)" || _rfr_latest_summary_json=""
+          fi
+          if [ -n "${_rfr_latest_summary_json:-}" ]; then
+            _rfr_latest_summary_result="$(printf '%s\n' "$_rfr_latest_summary_json" \
+              | jq -r '(.entries // []) | last | .result // ""' 2>/dev/null)" || _rfr_latest_summary_result=""
+            _rfr_latest_summary_head="$(printf '%s\n' "$_rfr_latest_summary_json" \
+              | jq -r '(.entries // []) | last | .head_sha // ""' 2>/dev/null)" || _rfr_latest_summary_head=""
+          fi
+          if { [ "${_rfr_latest_summary_result:-}" = "clean" ] \
+              || [ "${_rfr_latest_summary_result:-}" = "skipped" ]; } \
+              && [ -n "${_rfr_latest_summary_head:-}" ] \
+              && [ "${_rfr_latest_summary_head:-}" = "${_rfr_current_head_sha:-}" ]; then
+            _rfr_restore_allowed=1
+          fi
         else
           echo "WARN: gh api failed for summary-comment gate on PR ${pr_number}; failing open — restoring label." >&2
-          _rfr_loop_comment=1
+          _rfr_restore_allowed=1
+          _rfr_restore_reason="summary-comment lookup failed; fail-open restore"
         fi
-        if [ "${_rfr_loop_comment:-0}" -gt 0 ]; then
-          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); reviewer loop summary comment found — restoring before loop runs." >&2
+        if [ "${_rfr_restore_allowed:-0}" -eq 1 ]; then
+          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); ${_rfr_restore_reason} — restoring before loop runs." >&2
           # Do NOT redirect stderr here: surface gh errors so failures are observable
           # rather than silently swallowed. The || branch handles the non-zero exit.
           if ! gh pr edit "$pr_number" --add-label "ready-for-regression"; then
             echo "WARN: failed to restore ready-for-regression label on PR #${pr_number}; proceeding without it" >&2
           fi
         else
-          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); no reviewer loop summary comment found — skipping restore (label not yet applied by loop)." >&2
+          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); no current-head clean reviewer-loop summary found — skipping restore." >&2
         fi
       fi
       ;;
