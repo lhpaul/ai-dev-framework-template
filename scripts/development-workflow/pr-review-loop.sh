@@ -5129,7 +5129,6 @@ run_coderabbit_review() {
     phase0_resume_since_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
       coderabbit_phase0_retrigger=1
-      coderabbit_rate_limit_hold_seen=0
       coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
       since_iso="$phase0_resume_since_iso"
       echo "INFO: @coderabbitai resume posted; since_iso reset to $since_iso" >&2
@@ -5277,7 +5276,6 @@ run_coderabbit_review() {
         echo "INFO: CodeRabbit reviews are paused — posting @coderabbitai resume to trigger a fresh review" >&2
         if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
           coderabbit_retrigger_attempted=1
-          coderabbit_rate_limit_hold_seen=0
           coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
           # Reset the elapsed timer to give the retrigger time to complete.
           elapsed=0
@@ -5408,7 +5406,6 @@ run_coderabbit_review() {
         else
           echo "INFO: newest CodeRabbit rate-limit comment (${rate_limit_comment_created:-unknown time}) is past the window it announced — treating it as spent rather than waiting on it again (#1579)" >&2
           if [ "$coderabbit_rate_limit_hold_seen" -eq 1 ] && [ "$coderabbit_rate_limit_retries" -lt "$coderabbit_rate_limit_max_retries" ]; then
-            coderabbit_rate_limit_hold_seen=0
             echo "INFO: CodeRabbit rate-limit window elapsed after a held wait — posting @coderabbitai review" >&2
             if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
               coderabbit_rate_limit_hold_seen=0
