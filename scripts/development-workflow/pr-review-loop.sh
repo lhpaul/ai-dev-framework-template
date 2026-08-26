@@ -8695,7 +8695,22 @@ for index in "${!platforms[@]}"; do
       fi
       aggregate_result="clean"
       ;;
-    needs_fixes|waiting_on_reviewer|escalate)
+    waiting_on_reviewer)
+      aggregate_result="$platform_result"
+      aggregate_reason="$(kv_value_default REASON "$platform_output" "")"
+      aggregate_output="$platform_output"
+      aggregate_status=$platform_status
+      if [ "$compare_mode" -eq 0 ]; then
+        break
+      fi
+      if [ -z "$compare_first_blocking_result" ]; then
+        compare_first_blocking_result="$platform_result"
+        compare_first_blocking_reason="$aggregate_reason"
+        compare_first_blocking_output="$platform_output"
+        compare_first_blocking_status=$platform_status
+      fi
+      ;;
+    needs_fixes|escalate)
       if [ "$phase_after_clean_enabled" -eq 1 ] \
           && [ "$phase_after_clean_started" -eq 1 ] \
           && is_phase_after_clean_platform "$platform_name"; then

@@ -3288,6 +3288,19 @@ run_test "reviewer_failed_needs_fixes_no" "no" "$(_reviewer_failed_required need
 run_test "reviewer_failed_needs_rerun_no" "no" "$(_reviewer_failed_required needs_rerun '')"
 run_test "reviewer_failed_waiting_on_reviewer_no" "no" "$(_reviewer_failed_required waiting_on_reviewer codex-github-review-pending)"
 
+_waiting_case_source="$(awk '
+  /case "\\$platform_result" in/ {capture=1}
+  capture {print}
+  /^  esac$/ && capture {exit}
+' "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh")"
+if printf '%s\n' "$_waiting_case_source" | grep -q 'needs_fixes|waiting_on_reviewer|escalate'; then
+  _waiting_folded_into_blocker="yes"
+else
+  _waiting_folded_into_blocker="no"
+fi
+run_test "waiting_on_reviewer_not_folded_into_blocker_arm" "no" "$_waiting_folded_into_blocker"
+unset _waiting_case_source _waiting_folded_into_blocker
+
 _rf_accumulated=0
 if reviewer_failed_label_required_for_result clean ""; then
   _rf_accumulated=1
