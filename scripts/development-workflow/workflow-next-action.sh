@@ -94,6 +94,94 @@ cd "$repo_root"
 mode_context="$(workflow_repository_mode "$repo_root")"
 workflow_mode="$(workflow_context_value WORKFLOW_MODE "$mode_context")"
 
+implementation_issue_number() {
+  local source="${branch_name:-}"
+  local slug=""
+
+  if [ -n "$source" ]; then
+    if [[ "$source" =~ ^(feature|fix|refactor|hotfix)/([A-Za-z]{2,8}-)?([0-9]+)($|-) ]]; then
+      printf '%s\n' "${BASH_REMATCH[3]}"
+      return 0
+    fi
+  fi
+
+  if [ -n "$development_path" ]; then
+    slug="$(basename "$development_path" | sed 's/^[0-9]\{14\}_//')"
+    if [[ "$slug" =~ ^([0-9]+)- ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+repo_root_tracker_provider() {
+  local config_file="$repo_root/.ai-dev-workflow.yaml"
+  local raw_provider=""
+
+  if [ -f "$config_file" ]; then
+    if ! raw_provider="$(workflow_config_provider issue_tracker "$config_file")"; then
+      echo "ERROR: could not resolve issue tracker provider for $config_file." >&2
+      return 2
+    fi
+  fi
+  workflow_normalize_issue_tracker_provider "$raw_provider"
+}
+
+implementation_item_is_hub_only() {
+  local issue_number=""
+  local tracker_provider=""
+  local tracker_type=""
+
+  issue_number="$(implementation_issue_number 2>/dev/null)" || return 1
+  if ! tracker_provider="$(repo_root_tracker_provider)"; then
+    return 2
+  fi
+  if [ "$tracker_provider" != "github_projects" ]; then
+    return 1
+  fi
+  if ! tracker_type="$(get_tracker_type_for_issue "$issue_number")"; then
+    return 2
+  fi
+  [ "$tracker_type" = "Workflow" ]
+}
+
+_implementation_hub_only_cache=""
+_implementation_hub_only_cache_key=""
+
+implementation_item_identity_key() {
+  printf '%s|%s|%s|%s\n' "$repo_root" "${branch_name:-}" "${development_path:-}" "${pr_number:-}"
+}
+
+implementation_item_is_hub_only_cached() {
+  local cache_key=""
+  local hub_only_status=0
+
+  cache_key="$(implementation_item_identity_key)"
+  if [ "$_implementation_hub_only_cache_key" != "$cache_key" ]; then
+    _implementation_hub_only_cache=""
+    _implementation_hub_only_cache_key="$cache_key"
+  fi
+
+  if [ -z "$_implementation_hub_only_cache" ]; then
+    if implementation_item_is_hub_only; then
+      _implementation_hub_only_cache="true"
+    else
+      hub_only_status=$?
+      case "$hub_only_status" in
+        2) _implementation_hub_only_cache="error" ;;
+        *) _implementation_hub_only_cache="false" ;;
+      esac
+    fi
+  fi
+  case "$_implementation_hub_only_cache" in
+    true) return 0 ;;
+    error) return 2 ;;
+    *) return 1 ;;
+  esac
+}
+
 repository_context_for_action() {
   local action_kind="$1"
   local context=""
@@ -101,17 +189,77 @@ repository_context_for_action() {
   local action_repository=""
   local action_github_repo=""
   local action_local_path=""
+  local routing_json=""
+  local routing_outcome=""
+  local routing_continue=""
+  local routing_args=()
 
   if [ "$workflow_mode" = "workflow_hub" ]; then
     case "$action_kind" in
       implementation)
-        if ! context="$(workflow_repository_context "$target_repo" "$repo_root")"; then
+        routing_args=(
+          python3 "$SCRIPT_DIR/work-item-repository-routing.py"
+          --repo-root "$repo_root"
+          --repository-mode "$workflow_mode"
+          --stage implementation
+          --item-identifier "${branch_name:-${development_path:-${pr_number:-implementation}}}"
+          --json
+        )
+        if [ -n "$target_repo" ]; then
+          routing_args+=(--selected-product-repo-key "$target_repo")
+        fi
+        set +e
+        implementation_item_is_hub_only_cached
+        hub_only_status=$?
+        set -e
+        case "$hub_only_status" in
+          0) routing_args+=(--hub-only) ;;
+          2) return 1 ;;
+        esac
+        if ! routing_json="$("${routing_args[@]}")"; then
           return 1
         fi
-        action_repository_kind="product_repo_owned"
-        action_repository="$(workflow_context_value TARGET_REPO_NAME "$context")"
-        action_github_repo="$(workflow_github_repo_from_context "$context")"
-        action_local_path="$(workflow_context_value TARGET_LOCAL_PATH "$context")"
+        if ! printf '%s\n' "$routing_json" | jq -e '
+          .schema_version == "work_item_repository_routing.v1"
+          and (.outcome_code | type == "string" and length > 0)
+          and (.display_label | type == "string" and length > 0)
+          and (.continue_allowed | type == "boolean")
+          and (.artifact_owner | type == "string" and length > 0)
+          and (.selected_product_repo_key == null or (.selected_product_repo_key | type == "string"))
+          and (.stop_reason == null or (.stop_reason | type == "string"))
+          and (.required_human_action == null or (.required_human_action | type == "string"))
+          and (.configured_product_repo_keys | type == "array")
+          and (.selected_product_repo_keys | type == "array")
+          and (.fingerprint | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+        ' >/dev/null 2>&1; then
+          print_kv ROUTING_INTERNAL_ERROR "invalid_classifier_response"
+          return 1
+        fi
+        routing_outcome="$(printf '%s\n' "$routing_json" | jq -r '.outcome_code')"
+        print_kv ROUTING_OUTCOME_CODE "$routing_outcome"
+        print_kv ROUTING_DISPLAY_LABEL "$(printf '%s\n' "$routing_json" | jq -r '.display_label')"
+        print_kv ROUTING_CONTINUE_ALLOWED "$(printf '%s\n' "$routing_json" | jq -r '.continue_allowed')"
+        print_kv ROUTING_ARTIFACT_OWNER "$(printf '%s\n' "$routing_json" | jq -r '.artifact_owner')"
+        print_kv ROUTING_SELECTED_PRODUCT_REPO_KEY "$(printf '%s\n' "$routing_json" | jq -r '.selected_product_repo_key // ""')"
+        print_kv ROUTING_STOP_REASON "$(printf '%s\n' "$routing_json" | jq -r '.stop_reason // ""')"
+        print_kv ROUTING_REQUIRED_HUMAN_ACTION "$(printf '%s\n' "$routing_json" | jq -r '.required_human_action // ""')"
+        print_kv ROUTING_FINGERPRINT "$(printf '%s\n' "$routing_json" | jq -r '.fingerprint')"
+        routing_continue="$(printf '%s\n' "$routing_json" | jq -r '.continue_allowed')"
+        if [ "$routing_continue" != "true" ]; then
+          return 2
+        fi
+        if [ "$routing_outcome" = "hub_only" ]; then
+          action_repository_kind="hub_owned"
+          action_repository="$(basename "$repo_root")"
+        else
+          if ! context="$(workflow_repository_context "$target_repo" "$repo_root")"; then
+            return 1
+          fi
+          action_repository_kind="product_repo_owned"
+          action_repository="$(workflow_context_value TARGET_REPO_NAME "$context")"
+          action_github_repo="$(workflow_github_repo_from_context "$context")"
+          action_local_path="$(workflow_context_value TARGET_LOCAL_PATH "$context")"
+        fi
         ;;
       *)
         action_repository_kind="hub_owned"
@@ -137,8 +285,19 @@ github_repo_args_for_action() {
   local action_kind="$1"
   local context=""
   local action_github_repo=""
+  local hub_only_status=0
 
   if [ "$workflow_mode" = "workflow_hub" ] && [ "$action_kind" = "implementation" ]; then
+    set +e
+    implementation_item_is_hub_only_cached
+    hub_only_status=$?
+    set -e
+    if [ "$hub_only_status" -eq 0 ]; then
+      return 0
+    fi
+    if [ "$hub_only_status" -eq 2 ]; then
+      return 1
+    fi
     context="$(workflow_repository_context "$target_repo" "$repo_root")"
     action_github_repo="$(workflow_github_repo_from_context "$context")"
     if [ -n "$action_github_repo" ]; then
@@ -149,8 +308,52 @@ github_repo_args_for_action() {
 }
 
 if [ -n "$pr_number" ]; then
+  require_gh
+  pr_hub_probe_json=""
+  pr_probe_needs_implementation_routing=true
   if [ "$workflow_mode" = "workflow_hub" ] && [ -z "$target_repo" ]; then
-    if ! pr_action_context="$(repository_context_for_action implementation 2>&1)"; then
+    # Opportunistically read the PR from the current (hub) checkout before
+    # routing classification runs. Routing needs branch_name to derive the
+    # tracker issue number and recognize a hub-only item
+    # (implementation_issue_number()/implementation_item_is_hub_only()), but
+    # branch_name was previously only populated by the gh pr view call below,
+    # which itself ran after routing -- so every hub-only spec, plan, and
+    # hub-owned implementation PR (all of which live in the hub repository
+    # and are already readable here with no --repo args) was misclassified
+    # as needing product-repository selection. A genuine product-repo PR
+    # lives in a different repository's PR-number namespace and is expected
+    # to fail this read; that failure is discarded and routing proceeds
+    # exactly as it did before this probe was added.
+    if pr_hub_probe_json="$(gh pr view "$pr_number" --json headRefName,labels,isDraft,comments 2>/dev/null)"; then
+      branch_name="$(printf '%s\n' "$pr_hub_probe_json" | jq -er '.headRefName | strings | select(length > 0)' 2>/dev/null)" || branch_name=""
+      # implementation_issue_number()/implementation_item_is_hub_only() (and
+      # thus this implementation-only preflight) only recognize
+      # feature|fix|refactor|hotfix branches. Once the probe tells us the
+      # branch is some other kind (spec/*, implementation-plan/*, etc.),
+      # skip the implementation preflight entirely -- it requires no product
+      # repository selection and is classified correctly by the branch-kind
+      # switch further below. When the probe fails (a genuine product-repo
+      # PR, branch_name still unknown), keep requiring implementation
+      # routing as before, since that is the common case this preflight
+      # exists for.
+      if [ -n "$branch_name" ]; then
+        case "$(branch_prefix "$branch_name")" in
+          feature|refactor|fix|hotfix) pr_probe_needs_implementation_routing=true ;;
+          *) pr_probe_needs_implementation_routing=false ;;
+        esac
+      fi
+    fi
+  fi
+  if [ "$workflow_mode" = "workflow_hub" ] && [ -z "$target_repo" ] && [ "$pr_probe_needs_implementation_routing" = "true" ]; then
+    set +e
+    pr_action_context="$(repository_context_for_action implementation 2>&1)"
+    pr_action_status=$?
+    set -e
+    if [ "$pr_action_status" -ne 0 ]; then
+      if [ "$pr_action_status" -ne 2 ]; then
+        echo "ERROR: $pr_action_context" >&2
+        exit "$pr_action_status"
+      fi
       print_kv WORKFLOW_MODE "$workflow_mode"
       print_kv ACTION_REPOSITORY_KIND "repository_selection_required"
       print_kv ACTION_REPOSITORY ""
@@ -162,14 +365,18 @@ if [ -n "$pr_number" ]; then
       exit 0
     fi
   fi
-  require_gh
   pr_view_args=()
   if [ "$workflow_mode" = "workflow_hub" ]; then
     while IFS= read -r arg; do
       [ -n "$arg" ] && pr_view_args+=("$arg")
     done < <(github_repo_args_for_action implementation)
   fi
-  if [ "${#pr_view_args[@]}" -gt 0 ]; then
+  if [ "${#pr_view_args[@]}" -eq 0 ] && [ -n "$pr_hub_probe_json" ]; then
+    # Routing resolved to the current (hub) checkout -- the probe above
+    # already read the right repository's PR, so reuse it instead of making
+    # a second, identical gh pr view call.
+    pr_json="$pr_hub_probe_json"
+  elif [ "${#pr_view_args[@]}" -gt 0 ]; then
     if ! pr_json="$(gh pr view "$pr_number" "${pr_view_args[@]}" --json headRefName,labels,isDraft,comments)"; then
       echo "ERROR: could not read PR #$pr_number from the selected GitHub repository." >&2
       exit 1
@@ -180,12 +387,33 @@ if [ -n "$pr_number" ]; then
       exit 1
     fi
   fi
-  branch_name="$(printf '%s\n' "$pr_json" | jq -r '.headRefName')"
+  if ! branch_name="$(printf '%s\n' "$pr_json" | jq -er '.headRefName | strings | select(length > 0)')"; then
+    echo "ERROR: PR #${pr_number} has no non-empty headRefName." >&2
+    exit 1
+  fi
   labels="$(printf '%s\n' "$pr_json" | jq -r '[.labels[].name] | join(",")')"
   case "$(branch_prefix "$branch_name")" in
-    feature|refactor|fix|hotfix) repository_context_for_action implementation ;;
-    *) repository_context_for_action hub ;;
+    feature|refactor|fix|hotfix) pr_action_kind="implementation" ;;
+    *) pr_action_kind="hub" ;;
   esac
+  set +e
+  pr_action_context="$(repository_context_for_action "$pr_action_kind" 2>&1)"
+  pr_action_status=$?
+  set -e
+  if [ "$pr_action_status" -ne 0 ]; then
+    if [ "$pr_action_status" -ne 2 ]; then
+      echo "ERROR: $pr_action_context" >&2
+      exit "$pr_action_status"
+    fi
+    printf '%s\n' "$pr_action_context"
+    print_kv TARGET "pr:$pr_number"
+    print_kv PR_NUMBER "$pr_number"
+    print_kv BRANCH "$branch_name"
+    print_kv REVIEW_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv NEXT_ACTION "resolve-repository-selection"
+    exit 0
+  fi
+  printf '%s\n' "$pr_action_context"
 
   print_kv TARGET "pr:$pr_number"
   print_kv PR_NUMBER "$pr_number"
@@ -226,7 +454,15 @@ if [ -n "$branch_name" ]; then
     feature|refactor|fix|hotfix) action_kind="implementation" ;;
     *) action_kind="hub" ;;
   esac
-  if ! action_context_output="$(repository_context_for_action "$action_kind" 2>&1)"; then
+  set +e
+  action_context_output="$(repository_context_for_action "$action_kind" 2>&1)"
+  action_context_status=$?
+  set -e
+  if [ "$action_context_status" -ne 0 ]; then
+    if [ "$action_context_status" -ne 2 ]; then
+      echo "ERROR: $action_context_output" >&2
+      exit "$action_context_status"
+    fi
     print_kv WORKFLOW_MODE "$workflow_mode"
     print_kv ACTION_REPOSITORY_KIND "repository_resolution_failed"
     print_kv ACTION_REPOSITORY ""
@@ -463,9 +699,21 @@ fi
 # "$development_path"/2_*_implementation-plan.md directly.
 case "$next_action" in
   implement|resolve-development-pr)
-    if ! action_context_output="$(repository_context_for_action implementation 2>&1)"; then
-      echo "ERROR: $action_context_output" >&2
-      exit 1
+    set +e
+    action_context_output="$(repository_context_for_action implementation 2>&1)"
+    action_context_status=$?
+    set -e
+    if [ "$action_context_status" -ne 0 ]; then
+      if [ "$action_context_status" -ne 2 ]; then
+        echo "ERROR: $action_context_output" >&2
+        exit "$action_context_status"
+      fi
+      printf '%s\n' "$action_context_output"
+      print_kv TARGET "development:$development_path"
+      [ -n "$spec_file" ] && print_kv SPEC_FILE "$spec_file"
+      print_kv STATUS "$status_line"
+      print_kv NEXT_ACTION "resolve-repository-selection"
+      exit 0
     fi
     ;;
   *)

@@ -146,7 +146,15 @@ exchange_token() {
   local secret_ref="$4"
   local jwt response token
 
-  TOKEN_TMP_DIR="$(mktemp -d)"
+  # TOKEN_TMP_DIR is created by the caller, not here. exchange_token runs
+  # inside a command substitution, so an assignment made in this function is
+  # confined to that subshell: the parent's TOKEN_TMP_DIR stayed empty and the
+  # EXIT trap had no path to remove, leaking a directory holding the signed
+  # JWT — and, on the secret_ref path, the private key itself — on every
+  # successful mint. Surfaced once this suite began running in CI (#1537);
+  # BSD mktemp ignores TMPDIR, so the assertion was vacuous on macOS.
+  [ -n "$TOKEN_TMP_DIR" ] \
+    || die "internal: TOKEN_TMP_DIR must be created before exchange_token"
 
   local key_file
   if ! key_file="$(load_private_key_file "$private_key_path" "$secret_ref" "$TOKEN_TMP_DIR")"; then
@@ -248,6 +256,8 @@ case "${AUTH_STATUS:-}" in
   *) die "auth is not configured for selected product repository: ${AUTH_STATUS:-unknown}" ;;
 esac
 
+# Created here, in the parent shell, so the EXIT trap above can remove it.
+TOKEN_TMP_DIR="$(mktemp -d)"
 TOKEN="$(exchange_token "$AUTH_APP_ID" "$AUTH_INSTALLATION_ID" "${AUTH_PRIVATE_KEY_PATH:-}" "${AUTH_SECRET_REF:-}")"
 [ -n "$TOKEN" ] || die "missing_installation: token exchange produced an empty token"
 printf '%s\n' "$TOKEN"

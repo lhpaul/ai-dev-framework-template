@@ -211,7 +211,7 @@ Read before reviewing:
 Check:
 
 - Implementation matches the approved spec and plan (or the plan and work item brief for Refactor items), or any deviations are documented. All acceptance criteria addressed, no out-of-scope behaviour, no missing or extra behaviours.
-- CHANGELOG and workflow-specific artifacts are updated when required (spec/plan-only PRs are exempt; fixes to unreleased work update existing entries rather than adding new ones; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved by batch-merge auto-resolution per protocol 94 Step 4.3)
+- CHANGELOG fragments and workflow-specific artifacts are updated when required (spec/plan-only PRs are exempt; normal feature/fix/refactor PRs add or update `changelog.d/` fragments; hotfix PRs update `CHANGELOG.md` directly with a versioned section; fixes to unreleased work update existing fragments rather than adding duplicates)
 - For implementation PRs, flag stale debug comments, newly introduced `TODO`/`FIXME` markers, review-marker comments, sibling/caller inconsistencies, or uncovered spec/plan/issue-body requirements that should have been caught by the Protocol 03 Pre-Submission Self-Review Pass.
 - For Full Pipeline and Refactor implementation PRs, verify the
   Pre-Submission Self-Review Pass records implementation-start re-verification
@@ -226,7 +226,7 @@ Typical `blocking` issues:
 - Stale markers, caller inconsistencies, or uncovered spec/plan/issue-body requirements remain in the PR after the pre-submission pass
 - Missing implementation-start operational-assumption re-verification for a
   plan-backed implementation whose plan recorded applicable assumptions
-- CHANGELOG entry absent when required, or present when exempt (spec/plan PRs)
+- Changelog fragment or hotfix CHANGELOG entry absent when required, or present when exempt (spec/plan PRs)
 
 ### Pass 2: Code Quality
 

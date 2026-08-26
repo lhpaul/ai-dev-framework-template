@@ -179,6 +179,17 @@ candidate PR, resolver policy, reviewer, CI, risk, scope, and audit evidence:
 ./scripts/development-workflow/run-epic-delegated-gate.sh --input <file> [--policy <file>] [--repo-root <path>] [--product-repo <name>]
 ```
 
+Bind each verdict to the head it was produced at: set `reviewer.headSha` to
+the `POST_CLEAN_HEAD_SHA` the reviewer loop reported clean for and
+`risk.headSha` to the `head_sha` field of the classifier's own output (it
+reads `headRefOid` in the same call as the rest of the PR state, so the
+binding is the head the verdict was computed from — never a later live read),
+and assemble `pr.headSha` from a live `gh pr view` immediately before running
+the gate. A sibling merge that forces a conflict
+resolution moves the head; the gate then refuses with
+`stale_verdict_head` / `fix_required` instead of deciding on verdicts about a
+commit that no longer exists (issue #1558 AC-2).
+
 The gate is read-only. It explains whether the runner may proceed to merge,
 must fix and rerun, must stop for human authority/setup, or is blocked by
 missing state. It does not replace `/run-item-work`, reviewer-loop, CI-loop,
@@ -432,7 +443,18 @@ Before an autonomous merge decision:
    safe, then rerun validation, reviewer loop, CI loop, and risk
    classification.
 6. If the classifier reports a risk above `--max-risk`, stop or escalate rather
-   than widening authority silently.
+   than widening authority silently — and record the hold on the PR itself
+   first, so the reason is where the person deciding will read it (issue
+   #1558 AC-4):
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   ./scripts/development-workflow/batch-merge.sh annotate-hold --pr <pr-number> --reason risk_guardrail_hold --held-by "run-epic risk classifier (<risk> > --max-risk <max>)"
+   ```
+
+   A held PR stays in every subsequent `recheck-remaining --prs` list and
+   gets the same conflict maintenance as an active one (Protocol 90 Step 5.5
+   item 7).
 
 Risk levels:
 
@@ -717,7 +739,14 @@ When all gates permit merge:
    approval evidence described in the delegated gate checklist is present.
 2. Verify GitHub reports the PR state as `MERGED`.
 3. Delete or prune the merged branch as appropriate.
-4. Run post-merge cleanup for the correct base branch. For direct single-PR
+4. Run post-merge cleanup for the correct base branch. A PR may resolve
+   more than one item (#1391): verify tracker state for every issue the PR
+   references, not only the branch-derived one. An unprocessed-title-reference
+   warning from the cleanup helper is **non-terminal** — cleanup is not
+   complete until every named issue has an explicit recorded disposition:
+   processed (closed and status-updated), or confirmed non-closing (the PR
+   mentions it but does not resolve it). Record that disposition in the run
+   summary before closeout; acknowledging the warning is not a disposition. For direct single-PR
    merges, use the cleanup helper after merge verification. In `workflow_hub`
    mode, pass `--repo <product-repo>` for product-owned implementation branches:
 

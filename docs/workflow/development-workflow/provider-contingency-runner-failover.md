@@ -88,6 +88,12 @@ If the initiating local policy cannot be resolved, the loop stops with an
 actionable error rather than silently choosing a different shared reviewer. When
 there is no local reviewer override, the shared-policy path remains unchanged.
 
+Worktrees created outside the loop — `git worktree add` from Protocol 90's
+isolation manifest or Protocol 91's worktree step — never contain the
+gitignored override either. The workflow scripts resolve it from the main clone
+(#1560); the precedence rules and the no-copy requirement are defined once, in
+Protocol 91, ["Worktree isolation for batch dispatch"](protocols/91-orchestrate-work-protocol.md#worktree-isolation-for-batch-dispatch).
+
 ---
 
 ## Resume checklist

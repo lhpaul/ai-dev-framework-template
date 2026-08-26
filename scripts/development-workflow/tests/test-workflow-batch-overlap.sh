@@ -199,6 +199,104 @@ write_items "$reordered" \
   "$(item_json route-a "Users endpoint" "Update GET /api/users/:id validation.")"
 run_test "input_order_is_stable" "$(pair_value "$same_route" '.pairs[0].pairId')" "$(pair_value "$reordered" '.pairs[0].pairId')"
 
+# --- Issue #1540: verb-capture module signals + one-sided-evidence false serialization ---
+
+# AC-1: minimal reproduction from the issue must classify as fully independent.
+minimal_repro="$TMP_ROOT/minimal-repro-1540.json"
+write_items "$minimal_repro" \
+  "$(item_json A "Alpha" "the helper emits false rows" "scripts/alpha.sh")" \
+  "$(item_json B "Beta" "completely unrelated change" "scripts/beta.sh")"
+run_test "minimal_repro_is_no_actionable_overlap" "no_actionable_overlap" "$(class_for "$minimal_repro")"
+run_test "minimal_repro_dispatch_is_parallel" "parallel_eligible" "$(dispatch_for "$minimal_repro")"
+run_test "minimal_repro_drops_bogus_module_signal" "0" "$(pair_value "$minimal_repro" '[.pairs[0].signals.leftSignals[] | select(.type=="module")] | length')"
+
+# AC-2: an English verb following a module cue must not become a "module" signal,
+# for each of the three fixtures named in the issue's acceptance criteria.
+verb_emits="$TMP_ROOT/verb-emits.json"
+write_items "$verb_emits" \
+  "$(item_json ve-a "A" "the helper emits false discrepancy rows" "scripts/x/emits-a.sh")" \
+  "$(item_json ve-b "B" "an unrelated brief with no cues" "scripts/x/emits-b.sh")"
+run_test "verb_emits_not_captured" "no_actionable_overlap" "$(class_for "$verb_emits")"
+run_test "verb_emits_drops_bogus_module_signal" "0" "$(pair_value "$verb_emits" '[.pairs[0].signals.leftSignals[] | select(.type=="module")] | length')"
+
+verb_hardcodes="$TMP_ROOT/verb-hardcodes.json"
+write_items "$verb_hardcodes" \
+  "$(item_json vh-a "A" "the script hardcodes a type field path" "scripts/x/hardcodes-a.sh")" \
+  "$(item_json vh-b "B" "an unrelated brief with no cues" "scripts/x/hardcodes-b.sh")"
+run_test "verb_hardcodes_not_captured" "no_actionable_overlap" "$(class_for "$verb_hardcodes")"
+run_test "verb_hardcodes_drops_bogus_module_signal" "0" "$(pair_value "$verb_hardcodes" '[.pairs[0].signals.leftSignals[] | select(.type=="module")] | length')"
+
+verb_returns="$TMP_ROOT/verb-returns.json"
+write_items "$verb_returns" \
+  "$(item_json vr-a "A" "the component returns unrelated data" "scripts/x/returns-a.sh")" \
+  "$(item_json vr-b "B" "an unrelated brief with no cues" "scripts/x/returns-b.sh")"
+run_test "verb_returns_not_captured" "no_actionable_overlap" "$(class_for "$verb_returns")"
+run_test "verb_returns_drops_bogus_module_signal" "0" "$(pair_value "$verb_returns" '[.pairs[0].signals.leftSignals[] | select(.type=="module")] | length')"
+
+# AC-3 control: genuinely overlapping pairs must still classify concrete, including
+# via an unquoted-but-identifier-shaped module name (proves the validator does not
+# reject real module names, only bare English words).
+overlapping_module="$TMP_ROOT/overlapping-module.json"
+write_items "$overlapping_module" \
+  "$(item_json om-a "A" "Change helper token-resolver for consistency.")" \
+  "$(item_json om-b "B" "Update script token-resolver to match.")"
+run_test "overlapping_unquoted_module_stays_concrete" "concrete" "$(class_for "$overlapping_module")"
+run_test "overlapping_unquoted_module_source" "brief" "$(source_for "$overlapping_module")"
+
+# AC-4: the wave-1 and wave-2 sets from the issue's observed-impact section must
+# be fully parallel-eligible (no serial groups) after the fix.
+wave1="$TMP_ROOT/wave1.json"
+write_items "$wave1" \
+  "$(item_json i1503 "Fix token resolution bug" "resolve_token() returns a stale token under load." "scripts/development-workflow/resolve-token.sh")" \
+  "$(item_json i1504 "Improve report formatting" "Report rows misalign in the summary table." "scripts/development-workflow/report-format.sh")" \
+  "$(item_json i1511 "Add edge case fixture" "Add coverage for an edge case scenario." "scripts/development-workflow/tests/test-edge-case.sh")" \
+  "$(item_json i1516 "Tidy up dead code" "Remove an unused variable in the reporting flow." "scripts/development-workflow/cleanup.sh")"
+run_test "wave1_has_no_serial_groups" "0" "$(pair_value "$wave1" '.serialGroups | length')"
+run_test "wave1_all_pairs_parallel_eligible" "6" "$(pair_value "$wave1" '[.pairs[] | select(.defaultDispatch=="parallel_eligible")] | length')"
+
+wave2="$TMP_ROOT/wave2.json"
+write_items "$wave2" \
+  "$(item_json i1333 "Alpha work" "the helper emits false rows in the report." "scripts/x/alpha.sh")" \
+  "$(item_json i1400 "Beta work" "the script hardcodes a path that should be configurable." "scripts/x/beta.sh")" \
+  "$(item_json i1503b "Gamma work" "Improve token handling reliability." "scripts/x/gamma.sh")" \
+  "$(item_json i1509 "Delta work" "Add coverage for token edge cases." "scripts/x/delta.sh")"
+run_test "wave2_has_no_serial_groups" "0" "$(pair_value "$wave2" '.serialGroups | length')"
+run_test "wave2_all_pairs_parallel_eligible" "6" "$(pair_value "$wave2" '[.pairs[] | select(.defaultDispatch=="parallel_eligible")] | length')"
+
+# AC-5: "suspected" explanations must name the specific triggering signal, not a
+# generic identical string for every pair.
+related_explanation="$(pair_value "$parent_route" '.pairs[0].explanation')"
+run_test "related_explanation_names_routes" "yes" "$(printf '%s' "$related_explanation" | grep -q "/api/users" && echo yes || echo no)"
+
+two_sided_mismatch="$TMP_ROOT/two-sided-mismatch.json"
+write_items "$two_sided_mismatch" \
+  "$(item_json tsm-a "A" "resolveAlpha() has a bug." "a.ts")" \
+  "$(item_json tsm-b "B" "resolveBeta() has a bug." "b.ts")"
+run_test "two_sided_mismatch_is_suspected" "suspected" "$(class_for "$two_sided_mismatch")"
+mismatch_explanation="$(pair_value "$two_sided_mismatch" '.pairs[0].explanation')"
+run_test "mismatch_explanation_names_signals" "yes" "$(printf '%s' "$mismatch_explanation" | grep -q "resolvealpha" && printf '%s' "$mismatch_explanation" | grep -q "resolvebeta" && echo yes || echo no)"
+
+# Defect 2 regression: one side having signals while the other has none (with
+# shared_files already ruled out) must fall through to no_actionable_overlap
+# instead of defaulting to suspected/serial.
+one_sided="$TMP_ROOT/one-sided.json"
+write_items "$one_sided" \
+  "$(item_json os-a "A" "resolveGamma() has a bug." "gamma.ts")" \
+  "$(item_json os-b "B" "an unrelated brief with no signals." "delta.ts")"
+run_test "one_sided_evidence_is_no_actionable_overlap" "no_actionable_overlap" "$(class_for "$one_sided")"
+run_test "one_sided_evidence_dispatch_is_parallel" "parallel_eligible" "$(dispatch_for "$one_sided")"
+
+# Defect 1 residual: an English verb immediately followed by terminal
+# punctuation (no words after it) must not become a module signal either.
+# The unquoted-cue capture group includes "." in its character class, so a
+# trailing sentence period was previously mistaken for a dot-extension.
+verb_terminal_period="$TMP_ROOT/verb-terminal-period.json"
+write_items "$verb_terminal_period" \
+  "$(item_json vtp-a "A" "the script fails." "scripts/x/period-a.sh")" \
+  "$(item_json vtp-b "B" "resolveBeta() has a bug." "scripts/x/period-b.sh")"
+run_test "verb_terminal_period_not_captured" "no_actionable_overlap" "$(class_for "$verb_terminal_period")"
+run_test "verb_terminal_period_drops_bogus_module_signal" "0" "$(pair_value "$verb_terminal_period" '[.pairs[0].signals.leftSignals[] | select(.type=="module")] | length')"
+
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 [ "$FAIL_COUNT" -eq 0 ]

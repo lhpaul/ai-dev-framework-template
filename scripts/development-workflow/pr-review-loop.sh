@@ -18,7 +18,209 @@ if [ "${HARNESS_MODE:-0}" -eq 1 ] && [ "${BASH_SOURCE[0]}" != "$0" ]; then
   _HARNESS_MODE_EFFECTIVE=1
 fi
 
+# ---------------------------------------------------------------------------
+# Truncated-run detection (issue #1562)
+#
+# A run killed part-way through — by an outer `timeout` shorter than a
+# legitimate rate-limit wait, or by an operator, or by a session ending —
+# used to produce output with no terminal RESULT= line at all. A caller
+# grepping for RESULT= finds nothing, and "no blocking findings were reported"
+# reads uncomfortably like "no blocking findings exist". The exit code is
+# non-zero in that case (124 from timeout, 143 from SIGTERM), but the exit code
+# is precisely what an orchestrator loses when it captures stdout through a
+# pipeline or a log file.
+#
+# So every exit is made to carry a terminal RESULT=. print_kv is wrapped here
+# to record that a RESULT line was emitted, and the EXIT trap below emits
+# RESULT=escalate / REASON=truncated_run when none ever was.
+_RESULT_EMITTED=0
+
+# Overrides the definition sourced from workflow-lib.sh, deliberately: wrapping
+# the single choke point every RESULT line already passes through is what makes
+# this cover all ~100 emission sites without annotating each one.
+print_kv() {
+  if [ "$1" = "RESULT" ]; then
+    _RESULT_EMITTED=1
+  fi
+  printf '%s=%s\n' "$1" "$2"
+}
+
+# _emit_truncation_guard <exit-status>
+#
+# Emits a terminal RESULT for a run that produced none. The status the caller
+# should exit with is the function's RETURN CODE, not stdout: stdout is where
+# the RESULT lines go, so returning the status there would have made
+# `status="$(_emit_truncation_guard "$status")"` capture the RESULT lines into
+# the status and hand `exit` a multi-line string.
+_emit_truncation_guard() {
+  local status="$1"
+  if [ "$_RESULT_EMITTED" -eq 1 ]; then
+    return "$status"
+  fi
+  print_kv RESULT escalate
+  print_kv REASON truncated_run
+  print_kv TRUNCATED 1
+  print_kv TRUNCATED_EXIT_STATUS "$status"
+  echo "ERROR: pr-review-loop.sh exited without reaching a verdict (status ${status})." >&2
+  echo "  This run was truncated — treat it as NOT reviewed, not as clean." >&2
+  echo "  Common cause: an outer 'timeout' shorter than a single rate-limit wait." >&2
+  echo "  See PR_REVIEW_LOOP_EXECUTION_BUDGET in this script's header for the" >&2
+  echo "  wall clock a caller must allow." >&2
+  # A truncated run must never look successful, whatever killed it.
+  if [ "$status" -eq 0 ]; then
+    status=2
+  fi
+  return "$status"
+}
+
 BUGBOT_HANDLED_SKIP_RC=3
+
+# ---------------------------------------------------------------------------
+# Execution budget vs. rate-limit ceiling (issue #1562)
+#
+# These two numbers were in direct tension and nothing reconciled them:
+#
+#   - The worst-case legitimate CodeRabbit rate-limit wait is
+#     CODERABBIT_RATE_LIMIT_MAX_RETRIES x CODERABBIT_RATE_LIMIT_WAIT, which at
+#     the defaults (4 x 900s) is 3600s — a full hour in which the loop is
+#     working correctly and has nothing to report.
+#   - A run was killed at roughly 65 minutes of foreground polling during the
+#     #1503 work. So the maximum legitimate wait sat within a few minutes of
+#     the observed kill threshold.
+#
+# Two runners then made it worse by wrapping the loop in an outer `timeout`
+# SHORTER than a single 900s rate-limit wait, guaranteeing truncation on any
+# rate-limited PR.
+#
+# PR_REVIEW_LOOP_EXECUTION_BUDGET is the wall clock a caller must allow for
+# this script. The invariant is checked at startup: the worst-case rate-limit
+# wait must be strictly less than the budget, so a correctly-configured run can
+# always finish waiting before the budget it declares. Raising the retry count
+# or the per-retry wait without also raising the budget is a configuration
+# error, and is reported as one rather than discovered as a truncated run an
+# hour later.
+#
+# Callers: allow at least this many seconds. Do NOT wrap this script in a
+# `timeout` shorter than it. If you must bound it more tightly, lower
+# CODERABBIT_RATE_LIMIT_MAX_RETRIES or CODERABBIT_RATE_LIMIT_WAIT and lower the
+# budget to match, so the invariant still holds.
+# The shipped CodeRabbit rate-limit defaults, declared once. Both the review
+# path and the budget invariant below read them from here: the two must agree,
+# and they previously restated 4 and 900 independently, which is precisely the
+# drift that lets a budget check pass while the real wait is something else.
+# Raised to span an hourly vendor quota reset by issue #1509.
+CODERABBIT_RATE_LIMIT_MAX_RETRIES_DEFAULT=4
+CODERABBIT_RATE_LIMIT_WAIT_DEFAULT=900
+
+PR_REVIEW_LOOP_EXECUTION_BUDGET_DEFAULT=5400
+PR_REVIEW_LOOP_EXECUTION_BUDGET="${PR_REVIEW_LOOP_EXECUTION_BUDGET:-$PR_REVIEW_LOOP_EXECUTION_BUDGET_DEFAULT}"
+
+# _check_execution_budget — verify worst-case rate-limit wait < execution budget.
+# Emits BUDGET_* key/value lines so a caller can record what it must allow.
+_check_execution_budget() {
+  local retries="${CODERABBIT_RATE_LIMIT_MAX_RETRIES:-$CODERABBIT_RATE_LIMIT_MAX_RETRIES_DEFAULT}"
+  local wait_s="${CODERABBIT_RATE_LIMIT_WAIT:-$CODERABBIT_RATE_LIMIT_WAIT_DEFAULT}"
+  local budget="$PR_REVIEW_LOOP_EXECUTION_BUDGET"
+
+  case "$retries" in ''|*[!0-9]*) retries="$CODERABBIT_RATE_LIMIT_MAX_RETRIES_DEFAULT" ;; esac
+  case "$wait_s" in ''|*[!0-9]*) wait_s="$CODERABBIT_RATE_LIMIT_WAIT_DEFAULT" ;; esac
+  case "$budget" in ''|*[!0-9]*) budget="$PR_REVIEW_LOOP_EXECUTION_BUDGET_DEFAULT" ;; esac
+
+  # Upper bounds, checked BEFORE any arithmetic. Bash integers are 64-bit and
+  # wrap silently: retries=99999999999999999 multiplied out to a NEGATIVE worst
+  # case, which then compared as comfortably under budget and reported the
+  # invariant satisfied — the check accepting exactly the unsafe configuration
+  # it exists to reject. Bounding the inputs is what makes the comparison
+  # below meaningful; a digit string beyond these is a misconfiguration, not a
+  # value to clamp silently.
+  #
+  # The limits are deliberately generous — far past anything operationally
+  # sensible — because their job is to keep the arithmetic honest, not to
+  # express policy.
+  local max_retries=1000        # 1000 retries at any sane wait is already days
+  local max_wait=86400          # one day per retry
+  local max_budget=604800       # one week of wall clock
+  local bound_error=""
+  if [ "${#retries}" -gt 10 ] || [ "$(( 10#$retries ))" -gt "$max_retries" ]; then
+    bound_error="CODERABBIT_RATE_LIMIT_MAX_RETRIES=$retries exceeds the maximum of $max_retries"
+  elif [ "${#wait_s}" -gt 10 ] || [ "$(( 10#$wait_s ))" -gt "$max_wait" ]; then
+    bound_error="CODERABBIT_RATE_LIMIT_WAIT=$wait_s exceeds the maximum of $max_wait"
+  elif [ "${#budget}" -gt 10 ] || [ "$(( 10#$budget ))" -gt "$max_budget" ]; then
+    bound_error="PR_REVIEW_LOOP_EXECUTION_BUDGET=$budget exceeds the maximum of $max_budget"
+  fi
+  if [ -n "$bound_error" ]; then
+    print_kv BUDGET_INVARIANT violated
+    echo "ERROR: $bound_error." >&2
+    echo "  Values beyond these bounds overflow 64-bit arithmetic and would make" >&2
+    echo "  the budget comparison meaningless." >&2
+    print_kv RESULT escalate
+    print_kv REASON execution_budget_misconfigured
+    return 1
+  fi
+
+  # 10# forces base 10. The guards above accept any all-digit string, including
+  # a zero-padded one, and bash reads a leading-zero operand inside $(( )) as
+  # octal — so CODERABBIT_RATE_LIMIT_MAX_RETRIES=08 passed the guard and then
+  # died with "value too great for base", crashing the very check that exists
+  # to turn a misconfiguration into a clean escalation.
+  local worst
+  worst=$(( 10#$retries * 10#$wait_s ))
+  budget=$(( 10#$budget ))
+  print_kv BUDGET_EXECUTION_SECONDS "$budget"
+  print_kv BUDGET_WORST_CASE_RATE_LIMIT_WAIT_SECONDS "$worst"
+
+  if [ "$worst" -ge "$budget" ]; then
+    print_kv BUDGET_INVARIANT violated
+    echo "ERROR: worst-case rate-limit wait (${retries} x ${wait_s}s = ${worst}s) is not less than" >&2
+    echo "  the execution budget (${budget}s). A rate-limited PR could not finish waiting" >&2
+    echo "  inside the budget this run declares, so it would be truncated rather than" >&2
+    echo "  reviewed. Raise PR_REVIEW_LOOP_EXECUTION_BUDGET, or lower" >&2
+    echo "  CODERABBIT_RATE_LIMIT_MAX_RETRIES / CODERABBIT_RATE_LIMIT_WAIT." >&2
+    print_kv RESULT escalate
+    print_kv REASON execution_budget_misconfigured
+    return 1
+  fi
+  print_kv BUDGET_INVARIANT ok
+  return 0
+}
+
+# CODERABBIT_SKIP_BANNER_RE — matches the CodeRabbit "Review skipped" banner.
+#
+# CodeRabbit posts this banner instead of a review whenever it declines to review a
+# PR by configuration rather than by capacity: `reviews.auto_review.enabled: false`
+# ("Auto reviews are disabled on this repository"), `auto_review.drafts: false` on a
+# draft PR, or an `auto_review.base_branches` list that does not match the PR base
+# (e.g. only `develop` listed while the PR targets a `develop-<slug>` integration
+# branch).
+#
+# It must never be counted as review activity. Before this constant existed, the
+# activity probe in run_coderabbit_review excluded only the pause, rate-limit, and
+# resume markers, so the skip banner satisfied "CodeRabbit posted something" and
+# broke the poll loop into Phase 3 — which then collected zero inline comments and
+# zero CHANGES_REQUESTED reviews and returned RESULT=clean for a PR CodeRabbit had
+# never looked at. Same false-clean class as #1437 (rate-limited SUCCESS status) and
+# the PR #650 pause-banner incident, both already fixed for their own banner shapes.
+#
+# Deliberately NOT a bare "review skipped" substring match. A genuine walkthrough
+# is free to contain that phrase in prose ("this review skipped the generated
+# files"), and misclassifying a real review as a banner is the mirror-image
+# failure: the loop would ignore an actual review, poll to timeout, and escalate.
+# The three alternatives are ordered most to least machine-specific:
+#   1. the HTML marker CodeRabbit stamps on skip comments and on no other kind;
+#   2. the banner's markdown heading, REQUIRED to carry the blockquote prefix
+#      CodeRabbit always renders it with (the banner lives inside a
+#      "> [!IMPORTANT]" callout, so the body contains "> ## Review skipped").
+#      A bare "## Review skipped" heading is deliberately NOT matched: a genuine
+#      comment is free to use that heading, and misclassifying a real review as a
+#      banner is the mirror-image failure — the review would be dropped from the
+#      activity probe, polled to timeout, and escalated. If the vendor ever drops
+#      the callout wrapper, alternative 1 still covers the banner;
+#   3. the auto-review-disabled sentence, as a belt-and-braces fallback.
+#
+# Passed into jq as --arg skip_re with test($skip_re; "i") and to grep -qiE, so it
+# must stay an alternation valid in both Oniguruma and POSIX ERE, with no anchors
+# and no backslash escapes that differ between the two.
+CODERABBIT_SKIP_BANNER_RE='skip review by coderabbit|> *#{1,6} *review skipped|auto reviews are disabled'
 
 # --- unlock subcommand ---
 # Must run before the single-instance lock guard so stale-lock recovery always
@@ -83,7 +285,7 @@ _skip_next=0
 for _arg in "$@"; do
   if [ "$_skip_next" -eq 1 ]; then _skip_next=0; continue; fi
   case "$_arg" in
-    --branch|--platform|--poll-interval|--max-wait|--repo|--product-repo|--repo-root) _skip_next=1 ;;
+    --branch|--platform|--poll-interval|--max-wait|--pre-trigger-wait|--repo|--product-repo|--repo-root) _skip_next=1 ;;
     [0-9]*) _PR_ARG="$_arg"; break ;;
   esac
 done
@@ -143,7 +345,17 @@ else
     exit 75
   fi
 fi
-trap '[ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"; [ -n "$_PR_CONFIG_TMPFILE" ] && rm -f "$_PR_CONFIG_TMPFILE"' EXIT
+_on_exit() {
+  local status=$?
+  [ "$_OWN_LOCK" -eq 1 ] && rm -rf "$_LOCK_DIR"
+  [ -n "$_PR_CONFIG_TMPFILE" ] && rm -f "$_PR_CONFIG_TMPFILE"
+  # Runs on death-by-signal too: the TERM/INT handlers below re-raise, and bash
+  # still runs the EXIT trap on the way out (verified for both `timeout` and a
+  # direct SIGTERM), which is what lets a killed run report itself.
+  _emit_truncation_guard "$status" || status=$?
+  exit "$status"
+}
+trap _on_exit EXIT
 # SIGTERM/SIGINT handlers: kill the current background child (if any) so the
 # handler fires promptly even while a foreground sleep or gh api call is
 # running, then clean up the lock dir and re-raise the signal so the parent
@@ -174,7 +386,7 @@ _interruptible_sleep() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,coderabbit-cli,codex-github,claude-code-action,copilot,haystack,bugbot] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--post-final-summary] [--compare]
+Usage: ./scripts/development-workflow/pr-review-loop.sh <pr-number> [--branch name] [--repo owner/repo|product-name] [--product-repo name] [--repo-root path] [--platform greptile] [--platform greptile,devin,pr-agent,coderabbit,coderabbit-cli,local-ai-reviewer,codex-github,claude-code-action,copilot,haystack,bugbot] [--ready-phase haystack] [--phase-after-clean haystack] [--draft-github-only] [--pre-after-clean-only] [--poll-interval seconds] [--max-wait seconds] [--pre-trigger-wait seconds] [--post-final-summary] [--compare]
        ./scripts/development-workflow/pr-review-loop.sh unlock <pr-number>
 
 Runs the automated PR review loop for one or more platforms in sequence. Before
@@ -266,7 +478,7 @@ Large-diff poll-window extension:
   key=value output includes CHANGED_FILES_COUNT so callers can inspect the value.
 
 Outputs stable key=value lines including:
-  RESULT=clean|needs_fixes|needs_rerun|escalate|skipped
+  RESULT=clean|needs_fixes|needs_rerun|waiting_on_reviewer|escalate|skipped
   PLATFORM_<n>_NAME / PLATFORM_<n>_RESULT
   REASON=lock_contention (when exit code is 75)
   CHANGED_FILES_COUNT=<n> (PR's changed-files count, or -1 when the fetch failed)
@@ -289,17 +501,123 @@ Outputs stable key=value lines including:
   PHASE_AFTER_CLEAN_GATE_RESULT=<result> (emitted only after the phase starts)
   PHASE_AFTER_CLEAN_SKIP_REASON=<result> (emitted when the phase never starts)
   PHASE_AFTER_CLEAN_NET_NEW_BLOCKER=0|1 (compatibility alias for READY_PHASE_NET_NEW_BLOCKER)
-  POST_CLEAN_RECHECK=0|1 (1 when the post-clean wait-and-recheck ran)
+  POST_CLEAN_RECHECK=0|1 (1 when the post-clean settle-and-recheck ran)
+  POST_CLEAN_RECHECK_SKIP_REASON=<reason> (present only when POST_CLEAN_RECHECK=0: not_clean,
+    compare_mode, skip_env, no_thread_posting_platforms, or no_pr_number — so a caller can tell
+    "nothing to settle" from "settling was suppressed" (issue #1574))
+  POST_CLEAN_SETTLED=0|1 (1 when the platform went quiet for the full required period; 0 when the
+    window was exhausted while it was still active — the verdict is still clean, but weaker)
+  POST_CLEAN_SETTLE_TIMEOUT=1 (present only when the window was exhausted before silence)
+  POST_CLEAN_SETTLE_WINDOW_SECONDS / POST_CLEAN_SETTLE_QUIET_SECONDS (the values in force)
+  POST_CLEAN_ACTIVITY_SEEN=1 (present when the platform acted during the settle window)
+  POST_CLEAN_ACTIVITY_PROBE_FAILED=1 (present when an activity query failed; a failed probe is
+    never counted as silence)
+  POST_CLEAN_SETTLED_AT=<iso8601> (when the verdict was established — a caller that inserts a long
+    poll between this and the readiness label is acting on a stale check)
+  POST_CLEAN_HEAD_SHA=<sha> (the PR head this run reviewed, read BEFORE any reviewer was dispatched and
+    emitted on every clean path; Protocol 91 Check 0.6 refuses the verdict when the live head differs —
+    a push after Step 7 voids it — issue #1574)
+  RESULT=needs_fixes REASON=head_moved_during_run (the PR head changed while the reviewers ran, so
+    the clean verdict describes a commit the PR has left; nothing to fix — re-run the loop for the
+    current HEAD)
   LATE_THREADS_FOUND=<N> (count of newly-found unresolved threads; -1 on audit failure; 0 when POST_CLEAN_RECHECK=0)
+  RUN_ID=<id> (this invocation's resolved orchestration-run identifier — either PR_REVIEW_LOOP_RUN_ID
+                  verbatim, or a freshly generated "auto-<epoch>-<pid>-<random>" id when unset. See
+                  PR_REVIEW_LOOP_RUN_ID below for why callers should set this explicitly to make the
+                  per-run cap meaningful across multiple invocations.)
+  CYCLE_COUNT=<n> (PER-RUN cap count — Protocol 91's `cycle` value at the start of this invocation:
+                  the number of fixer dispatches already issued for RUN_ID, read from the persisted
+                  reviewer_loop_history.v1 ledger; -1 when the ledger could not be read reliably.
+                  Resets to 0 at each orchestration-run boundary (i.e. whenever RUN_ID changes).
+                  Never reset by a HEAD SHA change alone — see max_cycles below.)
+  MAX_CYCLES=<n> (the configured PER-RUN cycle cap; default 10, see PR_REVIEW_LOOP_MAX_CYCLES below)
+  TOTAL_CYCLE_COUNT=<n> (LIFETIME ceiling count — the same distinct-HEAD-SHA fixer-dispatch count as
+                  CYCLE_COUNT, but across the PR's ENTIRE review-loop lifetime regardless of RUN_ID;
+                  never resets. -1 when the ledger could not be read reliably (always -1 exactly when
+                  CYCLE_COUNT is also -1 — both come from the same ledger read).)
+  MAX_TOTAL_CYCLES=<n> (the configured LIFETIME cycle ceiling; default 25, see
+                  PR_REVIEW_LOOP_MAX_TOTAL_CYCLES below)
+  REASON=max_cycles_exceeded (RESULT=escalate; emitted when CYCLE_COUNT reaches MAX_CYCLES (the
+                  PER-RUN cap) while the loop would otherwise still report needs_fixes or needs_rerun
+                  — Protocol 91:1719's cap, conforming verbatim: "Initialize cycle = 0 once per
+                  orchestration run ... escalate when the run reaches max_cycles". A "clean" result is
+                  never overridden by this check. The cap applies uniformly to every re-invocation of
+                  this script within the same RUN_ID regardless of whether the fix that triggered it
+                  was applied inline or by a dispatched fixer subagent — there is only one per-run
+                  counter.)
+  REASON=max_total_cycles_exceeded (RESULT=escalate; emitted when TOTAL_CYCLE_COUNT reaches
+                  MAX_TOTAL_CYCLES (the LIFETIME ceiling, which never resets) while the loop would
+                  otherwise still report needs_fixes or needs_rerun. Checked only after the per-run
+                  cap does not fire, so this REASON specifically signals "many separate orchestration
+                  runs, each individually under the per-run cap, cumulatively exceeded the lifetime
+                  budget" — distinct from max_cycles_exceeded so an operator can tell the two apart.)
+  REASON=cycle_count_unavailable (RESULT=escalate; emitted when CYCLE_COUNT/TOTAL_CYCLE_COUNT are -1
+                  — the persisted cycle ledger could not be read after retries — while the loop would
+                  otherwise still report needs_fixes or needs_rerun. Fails closed rather than silently
+                  disabling both cap backstops indefinitely for this PR.)
+  REASON=ledger_persist_failed (RESULT=escalate, exit 2; emitted when this cycle's own
+                  reviewer_loop_history.v1 ledger entry could not be reliably written — either
+                  because both the PATCH to the existing summary comment and the create-fallback
+                  failed, OR because the pre-write READ of the existing comment failed (which makes
+                  the write fall back to an "unavailable" stub that silently drops this cycle's entry
+                  even when the stub itself is posted successfully) — while this cycle's own result
+                  was needs_fixes or needs_rerun. Without this check, the caller would dispatch a
+                  fixer for a cycle that a future invocation's cycle count would never see, letting
+                  repeated persistence or read failures (e.g. a token that can read but not write
+                  comments, or a transient read blip on an otherwise-successful write) slip past both
+                  caps indefinitely. Persistence is attempted, and this correction applied, BEFORE
+                  RESULT=/REASON= are printed — exactly ONE RESULT= / REASON= pair is ever emitted per
+                  invocation, so this REASON is safe to read with either a "first match" or "last
+                  match" key=value parser.)
 
 Environment variables:
-  POST_CLEAN_WAIT=<seconds>          Override the post-clean recheck wait (default: 30). Set to 0 to run immediately.
+  POST_CLEAN_SETTLE_QUIET=<sec>      Consecutive seconds of platform silence required before a clean verdict is
+                                     called settled (issue #1556). Defaults per platform: 120 for coderabbit /
+                                     coderabbit-cli, 60 otherwise. Any platform activity — including an in-place
+                                     EDIT of an existing bot comment — resets this timer.
+  POST_CLEAN_SETTLE_WINDOW=<sec>     Maximum total time to spend settling (default: 900 for coderabbit /
+                                     coderabbit-cli, 180 otherwise — sized from the measured ~12 min
+                                     walkthrough-to-review gap on PR #1573). If the window is exhausted while the platform
+                                     is still active, the verdict stays clean but is reported UNSETTLED via
+                                     POST_CLEAN_SETTLED=0 and POST_CLEAN_SETTLE_TIMEOUT=1.
+  POST_CLEAN_POLL=<seconds>          Interval between settle re-checks (default: 60 for coderabbit /
+                                     coderabbit-cli, 30 otherwise).
+  POST_CLEAN_REQUIRE_REVIEW=0|1      Whether silence alone may satisfy the settle, or whether a SUBMITTED review
+                                     for the current HEAD is required first (default: 1 for coderabbit /
+                                     coderabbit-cli, 0 otherwise). CodeRabbit posts a walkthrough issue comment
+                                     within a minute of the push and then submits the actual review much later —
+                                     twelve minutes, measured on PR #1573 — so silence in between means it is
+                                     still working, not that it finished. When no review arrives inside the
+                                     window the verdict stays clean but reports POST_CLEAN_NO_SUBMITTED_REVIEW=1
+                                     alongside POST_CLEAN_SETTLED=0.
+  <PLATFORM>_POST_CLEAN_SETTLE_QUIET / _SETTLE_WINDOW / _POLL
+                                     Per-platform overrides, taking precedence over the generic forms above.
+                                     The platform name is upper-cased with '-' replaced by '_', except that
+                                     coderabbit-cli shares the CODERABBIT_ prefix. Example:
+                                     CODERABBIT_POST_CLEAN_SETTLE_QUIET=240
+                                     When several platforms are configured, the LONGEST window and quiet period
+                                     across them are used — any of them can be the one that posts late.
+  POST_CLEAN_WAIT=<seconds>          Legacy alias, still honoured: sets the quiet period when no more specific
+                                     POST_CLEAN_SETTLE_QUIET (generic or per-platform) is set.
   SKIP_POST_CLEAN_RECHECK=1          Suppress the post-clean recheck. Set by callers re-dispatching after a prior
                                      late-thread fix cycle, so the corrective invocation does not recheck again.
   FALLBACK_THREAD_SETTLE_WAIT=<sec>  Seconds to wait before running the thread audit when using
                                      coderabbit_status_success_fallback (default: 60). CodeRabbit can set a
                                      SUCCESS commit status before finishing its async inline-thread posting; this
                                      wait lets those threads arrive so the audit does not produce a false-clean.
+  PR_REVIEW_LOOP_MAX_CYCLES=<n>      Override the PER-RUN reviewer-loop cycle cap (default: 10, matching
+                                     Protocol 91:1719's documented value). Also configurable via review.max_cycles
+                                     in .ai-dev-workflow.yaml; this env var takes precedence over the config file.
+  PR_REVIEW_LOOP_MAX_TOTAL_CYCLES=<n> Override the LIFETIME reviewer-loop cycle ceiling (default: 25). Also
+                                     configurable via review.max_total_cycles in .ai-dev-workflow.yaml; this env
+                                     var takes precedence over the config file.
+  PR_REVIEW_LOOP_RUN_ID=<id>         Set by an orchestrator to group multiple pr-review-loop.sh invocations
+                                     under one Protocol-91-style "orchestration run", so the per-run cap
+                                     (CYCLE_COUNT/MAX_CYCLES) accumulates correctly across those invocations and
+                                     resets when the orchestrator starts a genuinely new run with a new id. When
+                                     unset, each invocation is treated as its own isolated run for per-run-cap
+                                     purposes (CYCLE_COUNT effectively stays 0) — the LIFETIME ceiling
+                                     (TOTAL_CYCLE_COUNT/MAX_TOTAL_CYCLES) still enforces regardless.
 EOF
 }
 
@@ -734,6 +1052,7 @@ run_codex_github_review() {
   local branch_name="$2"
   local poll_interval="$3"
   local max_wait="$4"
+  local pre_trigger_wait="${5:-${CODEX_GITHUB_PRE_TRIGGER_WAIT:-}}"
   local platform="codex-github"
   local bot_login="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
   # REST API endpoints (e.g. /pulls/{n}/reviews, /issues/{n}/comments) return
@@ -754,9 +1073,13 @@ run_codex_github_review() {
   cd_workflow_repo_root
   repo="$(repo_slug)"
 
-  # Phase 1: Check for existing unresolved review threads from the codex bot
+  # Phase 1: Check for existing unresolved review threads from the codex bot.
+  # mode=provisional (#1508): a thread whose last comment is a non-bot reply
+  # posted after the current head commit does not block re-triggering the
+  # review here — see check_unresolved_threads for why this cannot cause a
+  # false RESULT=clean.
   set +e
-  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" provisional "$graphql_bot_login")"
   thread_check_status=$?
   set -e
   if [ "$thread_check_status" -eq 0 ]; then
@@ -805,12 +1128,18 @@ run_codex_github_review() {
   if [ "$effective_poll_interval" -gt "$max_wait" ]; then
     effective_poll_interval="$max_wait"
   fi
+  local reviewer_args=(
+    "$pr_number" "$owner" "$repo_name"
+    --bot-login "$bot_login"
+    --poll-interval "$effective_poll_interval"
+    --max-wait "$max_wait"
+    --max-retriggers "$max_retriggers"
+  )
+  if [ -n "$pre_trigger_wait" ]; then
+    reviewer_args+=(--pre-trigger-wait "$pre_trigger_wait")
+  fi
   set +e
-  script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" \
-    --bot-login "$bot_login" \
-    --poll-interval "$effective_poll_interval" \
-    --max-wait "$max_wait" \
-    --max-retriggers "$max_retriggers" 2>&1)"
+  script_output="$("$reviewer_script" "${reviewer_args[@]}" 2>&1)"
   script_exit=$?
   set -e
 
@@ -828,8 +1157,11 @@ run_codex_github_review() {
       ;;
     1)
       unresolved_count=0
+      # mode=strict: this recount feeds the caller's needs_fixes/COMMENT_COUNT
+      # reporting and must reflect true resolution state, not the provisional
+      # reply relaxation used to decide whether to trigger the review above.
       set +e
-      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" strict "$graphql_bot_login")"
       thread_check_status=$?
       set -e
       if [ "$thread_check_status" -eq 0 ]; then
@@ -859,6 +1191,22 @@ run_codex_github_review() {
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT 0
       return 2
+      ;;
+    4)
+      print_kv RESULT waiting_on_reviewer
+      print_kv REASON "$(kv_value_default REASON "$script_output" codex-github-review-pending)"
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT 0
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT 0
+      print_kv PENDING_REVIEWER "$(kv_value_default PENDING_REVIEWER "$script_output" "$platform")"
+      print_kv PENDING_REVIEW_HEAD_SHA "$(kv_value_default PENDING_REVIEW_HEAD_SHA "$script_output" "")"
+      print_kv PENDING_REVIEW_TRIGGER_COMMENT_ID "$(kv_value_default PENDING_REVIEW_TRIGGER_COMMENT_ID "$script_output" "")"
+      print_kv PENDING_REVIEW_TRIGGER_TIME "$(kv_value_default PENDING_REVIEW_TRIGGER_TIME "$script_output" "")"
+      return 4
       ;;
     *)
       local codex_reason
@@ -898,9 +1246,10 @@ run_claude_code_action_review() {
   cd_workflow_repo_root
   repo="$(repo_slug)"
 
-  # Phase 1: Check for existing unresolved review threads from the Claude Code Action bot
+  # Phase 1: Check for existing unresolved review threads from the Claude Code Action bot.
+  # mode=provisional (#1508): see run_codex_github_review's phase 1 for rationale.
   set +e
-  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+  thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" provisional "$graphql_bot_login")"
   thread_check_status=$?
   set -e
   if [ "$thread_check_status" -eq 0 ]; then
@@ -956,8 +1305,11 @@ run_claude_code_action_review() {
       ;;
     1)
       unresolved_count=0
+      # mode=strict: this recount feeds the caller's needs_fixes/COMMENT_COUNT
+      # reporting and must reflect true resolution state, not the provisional
+      # reply relaxation used to decide whether to trigger the review above.
       set +e
-      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+      thread_check_output="$(check_unresolved_threads "$pr_number" "$repo" strict "$graphql_bot_login")"
       thread_check_status=$?
       set -e
       if [ "$thread_check_status" -eq 0 ]; then
@@ -2420,9 +2772,16 @@ run_coderabbit_cli_review() {
       return 0
       ;;
     1)
-      [ "$blocking_count" -eq 0 ] && blocking_count=1
-      [ "$comment_count" -eq 0 ] && comment_count=1
-      print_kv RESULT needs_fixes
+      local coderabbit_cli_script_result
+      coderabbit_cli_script_result="$(kv_value_default RESULT "$script_output" needs_fixes)"
+      if [ "$coderabbit_cli_script_result" != "needs_rerun" ]; then
+        [ "$blocking_count" -eq 0 ] && blocking_count=1
+        [ "$comment_count" -eq 0 ] && comment_count=1
+      fi
+      case "$coderabbit_cli_script_result" in
+        needs_rerun) print_kv RESULT needs_rerun ;;
+        *) print_kv RESULT needs_fixes ;;
+      esac
       print_kv PLATFORM "$platform"
       print_kv PR_NUMBER "$pr_number"
       print_kv BRANCH "$branch_name"
@@ -2470,6 +2829,139 @@ run_coderabbit_cli_review() {
       print_kv COMMENT_COUNT "$comment_count"
       print_kv BLOCKING_COUNT "$blocking_count"
       print_kv SUGGESTION_COUNT "$suggestion_count"
+      return 0
+      ;;
+  esac
+}
+
+run_local_ai_reviewer_review() {
+  # Runs local-ai-reviewer.sh and maps its exit codes to the standard
+  # pr-review-loop key=value output contract.
+  local pr_number="$1"
+  local branch_name="$2"
+  local poll_interval="$3"
+  local max_wait="$4"
+  local platform="local-ai-reviewer"
+  local reviewer_script
+  local script_exit=0
+  local script_output=""
+  local blocking_count=0
+  local suggestion_count=0
+  local comment_count=0
+
+  : "$poll_interval"
+  require_gh
+  reviewer_script="$(workflow_repo_root)/scripts/development-workflow/local-ai-reviewer.sh"
+  review_repo_root="${repo_root:-$(workflow_repo_root)}"
+  cd "$review_repo_root"
+
+  local owner repo_name repo
+  repo="$(repo_slug)"
+  owner="$(printf '%s\n' "$repo" | cut -d/ -f1)"
+  repo_name="$(printf '%s\n' "$repo" | cut -d/ -f2)"
+
+  local local_ai_stderr_file
+  local local_ai_config_file="${AI_DEV_WORKFLOW_CONFIG_FILE:-${config_file:-}}"
+  local_ai_stderr_file="$(mktemp)"
+  trap 'rm -f "${local_ai_stderr_file:-}"' RETURN
+
+  set +e
+  if [ -n "$local_ai_config_file" ] && [ -f "$local_ai_config_file" ]; then
+    script_output="$(AI_DEV_WORKFLOW_CONFIG_FILE="$local_ai_config_file" "$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" --repo-root "$review_repo_root" 2>"$local_ai_stderr_file")"
+  else
+    script_output="$("$reviewer_script" "$pr_number" "$owner" "$repo_name" --timeout "$max_wait" --repo-root "$review_repo_root" 2>"$local_ai_stderr_file")"
+  fi
+  script_exit=$?
+  set -e
+
+  if [ -s "$local_ai_stderr_file" ]; then
+    echo "INFO: local-ai-reviewer.sh stderr:" >&2
+    cat "$local_ai_stderr_file" >&2
+  fi
+  rm -f "$local_ai_stderr_file"
+
+  blocking_count="$(kv_value_default BLOCKING_COUNT "$script_output" 0)"
+  suggestion_count="$(kv_value_default SUGGESTION_COUNT "$script_output" 0)"
+  comment_count="$(kv_value_default COMMENT_COUNT "$script_output" 0)"
+
+  case "$script_exit" in
+    0)
+      print_kv RESULT clean
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT 0
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+      print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
+      return 0
+      ;;
+    1)
+      local local_ai_script_result
+      local_ai_script_result="$(kv_value_default RESULT "$script_output" needs_fixes)"
+      if [ "$local_ai_script_result" != "needs_rerun" ]; then
+        [ "$blocking_count" -eq 0 ] && blocking_count=1
+        [ "$comment_count" -eq 0 ] && comment_count=1
+      fi
+      case "$local_ai_script_result" in
+        needs_rerun) print_kv RESULT needs_rerun ;;
+        *) print_kv RESULT needs_fixes ;;
+      esac
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv REASON "$(kv_value_default REASON "$script_output" local_ai_review_findings)"
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT "$blocking_count"
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      for index in $(seq 1 "$blocking_count"); do
+        print_kv "BLOCKING_${index}_PATH" "$(kv_value_default "BLOCKING_${index}_PATH" "$script_output" "")"
+        print_kv "BLOCKING_${index}_LINE" "$(kv_value_default "BLOCKING_${index}_LINE" "$script_output" "")"
+        print_kv "BLOCKING_${index}_BODY" "$(kv_value_default "BLOCKING_${index}_BODY" "$script_output" "")"
+      done
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+      print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
+      return 1
+      ;;
+    2)
+      local local_ai_reason
+      local local_ai_display_result
+      local_ai_reason="$(kv_value_default REASON "$script_output" malformed_output)"
+      local_ai_display_result="$(kv_value_default DISPLAY_RESULT "$script_output" "")"
+      print_kv RESULT escalate
+      print_kv REASON "$local_ai_reason"
+      [ -n "$local_ai_display_result" ] && print_kv DISPLAY_RESULT "$local_ai_display_result"
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT "$blocking_count"
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+      print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
+      return 2
+      ;;
+    *)
+      local local_ai_reason
+      local local_ai_display_result
+      local_ai_reason="$(kv_value_default REASON "$script_output" disabled_by_config)"
+      local_ai_display_result="$(kv_value_default DISPLAY_RESULT "$script_output" "")"
+      print_kv RESULT skipped
+      print_kv REASON "$local_ai_reason"
+      [ -n "$local_ai_display_result" ] && print_kv DISPLAY_RESULT "$local_ai_display_result"
+      print_kv PLATFORM "$platform"
+      print_kv PR_NUMBER "$pr_number"
+      print_kv BRANCH "$branch_name"
+      print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv COMMENT_COUNT "$comment_count"
+      print_kv BLOCKING_COUNT "$blocking_count"
+      print_kv SUGGESTION_COUNT "$suggestion_count"
+      print_kv REVIEWED_HEAD "$(kv_value_default REVIEWED_HEAD "$script_output" "")"
+      print_kv GRAPH_CONTEXT "$(kv_value_default GRAPH_CONTEXT "$script_output" "")"
       return 0
       ;;
   esac
@@ -3739,7 +4231,9 @@ coderabbit_thread_gate_clean() {
   while true; do
     thread_audit_attempt=$((thread_audit_attempt + 1))
     set +e
-    out="$(check_unresolved_threads "$pr_number" "$repo" "$graphql_bot_login")"
+    # mode=strict: this gate decides RESULT=clean for CodeRabbit and must
+    # never be relaxed by a reply-without-resolve (see check_unresolved_threads).
+    out="$(check_unresolved_threads "$pr_number" "$repo" strict "$graphql_bot_login")"
     st=$?
     eval "$prev_errexit"
 
@@ -3987,9 +4481,13 @@ coderabbit_success_status_count() {
 # loop, so the silent-non-trigger safety net never had a chance to fire at
 # all on those branches.
 #
-# Fix: default to 180 s — the same already-vetted "give CodeRabbit time,
-# then nudge" cadence CODERABBIT_RATE_LIMIT_WAIT already uses elsewhere in
-# this script for the analogous rate-limit retry path.
+# Fix: default to 180 s — the "give CodeRabbit time, then nudge" cadence
+# CODERABBIT_RATE_LIMIT_WAIT originally shared. The two knobs have since
+# diverged deliberately and must not be re-coupled: this one waits out a
+# *silent* CodeRabbit (nothing posted at all), where 3 minutes is ample and a
+# longer wait is pure idle latency, while CODERABBIT_RATE_LIMIT_WAIT waits out
+# an *acknowledged* vendor quota block whose reset is hourly, so it is now
+# sized in quarter-hours (see its declaration in run_coderabbit_review).
 #
 # Effective-timeout rule (piecewise, by max_wait):
 #   - max_wait >= 360 s: effective = 180 s (the hardcoded default; the half-
@@ -4069,6 +4567,415 @@ coderabbit_resolve_no_trigger_timeout() {
   printf '%s\n' "$override"
 }
 
+# ---------------------------------------------------------------------------
+# coderabbit_rate_limit_wait_seconds
+#
+# CodeRabbit states how long the caller must wait inside its rate-limit
+# comment, e.g.
+#
+#     **Next included review available in 27 minutes.**
+#
+# Sizing the retry wait from that sentence rather than from a fixed constant is
+# what lets a retry land when the vendor can actually answer. See issue #1579:
+# measured on 2026-08-24 the org allowance was 1 review per hour, against which
+# a fixed 4 x 900 s budget spends every retry inside a window that grants at
+# most one review, then escalates at roughly the moment the review becomes
+# available (PR #1589: four retries, four "Reviews resumed" acknowledgements,
+# zero reviews, then RESULT=escalate REASON=rate_limit_max_retries).
+#
+# Args:
+#   $1 - body of the newest CodeRabbit rate-limit comment (may be empty)
+#   $2 - fallback wait in seconds, used when the sentence is absent or
+#        unparseable. Vendor wording changes, so absence is never fatal.
+#
+# Prints the wait in seconds on stdout, always a positive integer.
+#
+# CODERABBIT_RATE_LIMIT_WAIT_BUFFER (default 30) is added to the stated window
+# so the retry lands just after the vendor boundary rather than exactly on it.
+# CODERABBIT_RATE_LIMIT_WAIT_MAX (default 3600) clamps the result so that a
+# malformed or hostile "available in 100000 minutes" cannot park an unattended
+# run for a day. Both are validated here: a non-numeric or non-positive
+# override degrades to the documented default instead of yielding a zero wait
+# (a zero wait would busy-spin the retry against the vendor).
+coderabbit_rate_limit_wait_seconds() {
+  local body="${1:-}" fallback="${2:-}"
+  local buffer="${CODERABBIT_RATE_LIMIT_WAIT_BUFFER:-30}"
+  local max_seconds="${CODERABBIT_RATE_LIMIT_WAIT_MAX:-3600}"
+
+  case "$buffer" in
+    '' | *[!0-9]*) buffer=30 ;;
+  esac
+  case "$max_seconds" in
+    '' | *[!0-9]*) max_seconds=3600 ;;
+  esac
+  case "$fallback" in
+    '' | *[!0-9]*) fallback="$CODERABBIT_RATE_LIMIT_WAIT_DEFAULT" ;;
+  esac
+  # Strip leading zeros from every digit-only override before it can reach an
+  # arithmetic context: a digit-only string like "008" passes the checks above
+  # unchanged, but $((...)) below reads a leading-zero literal as octal, and
+  # "008" is not a valid octal literal (8 is not an octal digit) — an operator
+  # override of CODERABBIT_RATE_LIMIT_WAIT_BUFFER=008 aborts the whole script
+  # under `set -e` without this. Same idiom used below for the vendor-parsed
+  # value, applied here to the three operator-supplied numbers instead.
+  buffer="${buffer#"${buffer%%[!0]*}"}"
+  [ -z "$buffer" ] && buffer=0
+  max_seconds="${max_seconds#"${max_seconds%%[!0]*}"}"
+  [ -z "$max_seconds" ] && max_seconds=0
+  fallback="${fallback#"${fallback%%[!0]*}"}"
+  [ -z "$fallback" ] && fallback=0
+  if [ "$max_seconds" -le 0 ]; then
+    max_seconds=3600
+  fi
+  if [ "$fallback" -le 0 ]; then
+    fallback="$CODERABBIT_RATE_LIMIT_WAIT_DEFAULT"
+  fi
+
+  # Lowercase, then treat every run of non-alphanumeric bytes between the
+  # fixed words as a separator. That absorbs markdown emphasis, line wraps and
+  # the non-breaking spaces CodeRabbit sometimes emits, none of which the
+  # vendor guarantees to keep stable, without having to enumerate them.
+  local flat
+  flat="$(printf '%s' "$body" | tr '[:upper:]' '[:lower:]' | tr '\n' ' ')"
+
+  local parsed=""
+  # CodeRabbit uses at least two wordings for the same fact, both observed on
+  # 2026-08-24 within one hour:
+  #
+  #   "**Next included review available in 27 minutes.**"          (PR #1590)
+  #   "Your next included review will be available in 7 minutes."  (PR #1588)
+  #
+  # So the gap between "included" and "available" cannot be assumed to be just
+  # " review ". Allow a bounded run of non-digits there — bounded, not `*`, so
+  # the match cannot reach across unrelated prose to a number elsewhere in the
+  # comment. Requiring the word "included" keeps this off any other "available
+  # in N minutes" sentence the vendor might add.
+  if [[ "$flat" =~ included[^0-9]{0,40}available[^a-z0-9]*in[^a-z0-9]*([0-9]+)[^a-z0-9]*(second|minute|hour) ]]; then
+    local value="${BASH_REMATCH[1]}" unit="${BASH_REMATCH[2]}"
+    # Strip leading zeros before any arithmetic: bash reads "08" as an invalid
+    # octal literal and aborts the whole script under `set -e`.
+    value="${value#"${value%%[!0]*}"}"
+    if [ -z "$value" ]; then
+      value=0
+    fi
+    # More than six digits is not a real vendor window. Refuse to multiply it
+    # rather than letting the product wrap a signed 64-bit integer negative.
+    if [ "${#value}" -le 6 ]; then
+      local multiplier=1
+      case "$unit" in
+        second) multiplier=1 ;;
+        minute) multiplier=60 ;;
+        hour) multiplier=3600 ;;
+      esac
+      parsed=$((value * multiplier + buffer))
+    fi
+  fi
+
+  if [ -n "$parsed" ]; then
+    if [ "$parsed" -gt "$max_seconds" ]; then
+      parsed="$max_seconds"
+    fi
+    if [ "$parsed" -le 0 ]; then
+      parsed=30
+    fi
+    printf '%s\n' "$parsed"
+    return 0
+  fi
+
+  printf '%s\n' "$fallback"
+}
+
+# ---------------------------------------------------------------------------
+# _iso8601_to_epoch
+#
+# Convert an ISO-8601 UTC timestamp ("2026-08-24T03:12:02Z", the form every
+# GitHub REST timestamp uses) to seconds since the epoch. BSD date (macOS,
+# where this is developed) needs `-j -f`; GNU date (Linux, where CI runs)
+# needs `-d` and rejects `-j`. Try BSD first, fall back to GNU, and return
+# non-zero rather than printing garbage if neither parses the input.
+_iso8601_to_epoch() {
+  local iso="${1:-}"
+  [ -n "$iso" ] || return 1
+  date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null && return 0
+  date -u -d "$iso" +%s 2>/dev/null && return 0
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# coderabbit_rate_limit_comment_is_current
+#
+# Decide whether a CodeRabbit rate-limit comment still describes a live limit.
+#
+# This is the core of issue #1579. Detection previously asked only "does a
+# rate-limit comment exist after the HEAD commit time", so a single stale reply
+# suppressed every later trigger on that HEAD forever. Measured on PR #1575: a
+# rate-limit comment at 16:06 was still being treated as live 21 hours later,
+# with no CodeRabbit activity of any kind in between, and the loop waited out
+# its whole retry budget without ever posting a fresh review request.
+#
+# A rate-limit comment announces its own expiry ("Next included review
+# available in N minutes"), so the honest test is whether that window has
+# passed — not how the comment's timestamp compares to the HEAD commit.
+#
+# Args:
+#   $1 - comment body
+#   $2 - comment created_at (ISO-8601 UTC)
+#
+# Returns 0 when the announced window has not yet elapsed (the limit is live
+# and the caller should wait), 1 when it has (the comment is spent and must not
+# suppress a fresh trigger).
+#
+# When the body states no window, CODERABBIT_RATE_LIMIT_STALE_AFTER (default
+# 3600s, one vendor quota hour) bounds how long the comment stays believable.
+# When the timestamp cannot be parsed at all the comment is reported as
+# current: that preserves the previous behaviour exactly, so a date-parsing
+# failure degrades to today's conservative wait rather than to spending a
+# review attempt the caller may not have.
+coderabbit_rate_limit_comment_is_current() {
+  local body="${1:-}" created_at="${2:-}" last_trigger_iso="${3:-}"
+  local stale_after="${CODERABBIT_RATE_LIMIT_STALE_AFTER:-3600}"
+
+  case "$stale_after" in
+    '' | *[!0-9]*) stale_after=3600 ;;
+  esac
+  # Strip leading zeros before any arithmetic context: a digit-only string like
+  # "008" passes the check above, but bash reads it as an invalid octal literal
+  # and aborts the script under `set -e`. Same guard as the other overrides —
+  # this was the one that still lacked it.
+  stale_after="${stale_after#"${stale_after%%[!0]*}"}"
+  if [ -z "$stale_after" ]; then
+    stale_after=3600
+  fi
+  if [ "$stale_after" -le 0 ]; then
+    stale_after=3600
+  fi
+
+  local created_epoch now_epoch
+  created_epoch="$(_iso8601_to_epoch "$created_at")" || return 0
+  now_epoch="$(date -u +%s 2>/dev/null)" || return 0
+  case "$created_epoch" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+  case "$now_epoch" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+
+  # A comment stamped in the future (clock skew) is not stale.
+  if [ "$created_epoch" -ge "$now_epoch" ]; then
+    return 0
+  fi
+
+  # A reply older than this run's most recent trigger describes a limit the
+  # loop has already waited on. It must not stand in for an answer to the
+  # trigger just posted, or the loop reports "rate limited" without ever
+  # letting CodeRabbit respond (issue #1579, AC-1). Only applied when the
+  # caller has actually posted a trigger this run: on a fresh run the anchor
+  # is empty and the announced-window rule below decides alone, which is what
+  # keeps a genuinely live limit from being ignored at startup.
+  if [ -n "$last_trigger_iso" ]; then
+    local trigger_epoch
+    if trigger_epoch="$(_iso8601_to_epoch "$last_trigger_iso")"; then
+      case "$trigger_epoch" in
+        '' | *[!0-9]*) : ;;
+        *)
+          # Tolerance, because the two sides come from different clocks: the
+          # anchor is stamped locally with `date`, the comment timestamp comes
+          # from GitHub. Without slack, a few seconds of skew would discard
+          # CodeRabbit's genuine answer to the trigger just posted, and the
+          # loop would re-trigger and spend quota it may not have.
+          local anchor_skew="${CODERABBIT_TRIGGER_ANCHOR_SKEW:-60}"
+          case "$anchor_skew" in
+            '' | *[!0-9]*) anchor_skew=60 ;;
+          esac
+          # Strip leading zeros before the arithmetic below: a digit-only
+          # string like "008" passes the check above unchanged, but bash reads
+          # it as an invalid octal literal in `$((...))` and aborts the whole
+          # script under `set -e` (same class of bug guarded against for the
+          # vendor-parsed value in coderabbit_rate_limit_wait_seconds).
+          anchor_skew="${anchor_skew#"${anchor_skew%%[!0]*}"}"
+          [ -z "$anchor_skew" ] && anchor_skew=0
+          if [ "$created_epoch" -lt "$((trigger_epoch - anchor_skew))" ]; then
+            return 1
+          fi
+          ;;
+      esac
+    fi
+  fi
+
+  # Reuse the same parser the wait uses, so the window that governs staleness
+  # and the window the loop actually sleeps for can never drift apart.
+  local window
+  window="$(coderabbit_rate_limit_wait_seconds "$body" "$stale_after")"
+  case "$window" in
+    '' | *[!0-9]*) window="$stale_after" ;;
+  esac
+
+  if [ "$((now_epoch - created_epoch))" -lt "$window" ]; then
+    return 0
+  fi
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# coderabbit_rate_limit_remaining_seconds
+#
+# How long is left of the window a rate-limit comment announced, given when
+# that comment was posted.
+#
+# coderabbit_rate_limit_wait_seconds returns the FULL announced window, which
+# is only the right thing to sleep at the instant the comment appears. A loop
+# that starts (or re-enters this branch) part-way through the window would
+# otherwise sleep the whole thing again: a 27-minute window on a comment
+# already 26 minutes old would wait a further 27m30s instead of ~90s, pushing
+# the retry a full extra quota cycle past the moment a review became
+# available. Against a one-review-per-hour allowance that is the difference
+# between finishing a PR this hour and finishing it next hour.
+#
+# Args: $1 body, $2 created_at (ISO-8601 UTC), $3 fallback seconds
+# Prints a positive integer. Falls back to the full window whenever the age
+# cannot be computed, which is the pre-existing behaviour.
+coderabbit_rate_limit_remaining_seconds() {
+  local body="${1:-}" created_at="${2:-}" fallback="${3:-}"
+  local full
+  full="$(coderabbit_rate_limit_wait_seconds "$body" "$fallback")"
+
+  # A floor, so a window that has just expired still leaves a beat for the
+  # vendor to settle rather than re-triggering instantly in a tight loop.
+  local floor="${CODERABBIT_RATE_LIMIT_MIN_WAIT:-30}"
+  case "$floor" in
+    '' | *[!0-9]*) floor=30 ;;
+  esac
+  floor="${floor#"${floor%%[!0]*}"}"
+  [ -z "$floor" ] && floor=0
+
+  local created_epoch now_epoch
+  created_epoch="$(_iso8601_to_epoch "$created_at")" || { printf '%s\n' "$full"; return 0; }
+  now_epoch="$(date -u +%s 2>/dev/null)" || { printf '%s\n' "$full"; return 0; }
+  case "$created_epoch" in '' | *[!0-9]*) printf '%s\n' "$full"; return 0 ;; esac
+  case "$now_epoch" in '' | *[!0-9]*) printf '%s\n' "$full"; return 0 ;; esac
+  # Clock skew: a comment stamped in the future has no elapsed age.
+  if [ "$created_epoch" -ge "$now_epoch" ]; then
+    printf '%s\n' "$full"
+    return 0
+  fi
+
+  local age remaining
+  age=$((now_epoch - created_epoch))
+  remaining=$((full - age))
+  if [ "$remaining" -lt "$floor" ]; then
+    remaining="$floor"
+  fi
+  if [ "$remaining" -le 0 ]; then
+    remaining=30
+  fi
+  printf '%s\n' "$remaining"
+}
+
+# ---------------------------------------------------------------------------
+# coderabbit_newest_rate_limit_comment
+#
+# Print the newest CodeRabbit rate-limit comment for this HEAD window as a
+# compact JSON object, or print nothing when there is none.
+#
+# Shared by the rate-limit retry block and the silent-non-trigger guard so both
+# decide "is CodeRabbit rate limited right now" from the same evidence. They
+# previously each ran their own count query, which is how a spent rate-limit
+# comment could suppress the retrigger in one place while the other waited on
+# it (#1579).
+# Exit status is the caller's signal, and the three cases are NOT equivalent:
+#   0 with output  - a rate-limit comment was found (printed as compact JSON)
+#   0 with nothing - the lookup succeeded and there is no rate-limit comment
+#   2              - the lookup could not be performed
+#
+# The previous form piped straight into jq without `pipefail` and ended in
+# `|| printf ''`, so a failed `gh api` (network, auth, secondary rate limit)
+# was indistinguishable from "no rate-limit comment". Both call sites then
+# concluded CodeRabbit was not rate limited and posted a fresh
+# `@coderabbitai review`, spending a review from an allowance measured at 1
+# per hour — on evidence that was never actually read, and with nothing in the
+# log to say so.
+coderabbit_newest_rate_limit_comment() {
+  # Validate before reading positional parameters. A missing argument would
+  # otherwise build a malformed endpoint or an empty `--arg`, and `gh` would
+  # fail in a way that now reports "lookup failure" — technically correct but
+  # indistinguishable from a real API outage, which is the very confusion this
+  # function was just changed to remove. Fail with the same status 2 contract,
+  # but say plainly that the caller, not the API, is at fault.
+  if [ "$#" -ne 4 ]; then
+    echo "ERROR: coderabbit_newest_rate_limit_comment requires 4 arguments (repo pr_number bot_login since_iso), got $#" >&2
+    return 2
+  fi
+  if [ -z "${1:-}" ] || [ -z "${2:-}" ] || [ -z "${3:-}" ] || [ -z "${4:-}" ]; then
+    echo "ERROR: coderabbit_newest_rate_limit_comment requires non-empty repo, pr_number, bot_login and since_iso (got repo='${1:-}' pr_number='${2:-}' bot_login='${3:-}' since_iso='${4:-}')" >&2
+    return 2
+  fi
+  local repo="$1" pr_number="$2" bot_login="$3" since_iso="$4"
+  local raw="" status=0
+  raw="$(gh api "repos/$repo/issues/$pr_number/comments" --paginate 2>/dev/null)" || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "WARN: coderabbit_newest_rate_limit_comment: could not read comments for PR #$pr_number (gh exited $status) — reporting a lookup failure, not an absence of rate limiting" >&2
+    return 2
+  fi
+  local selected="" jq_status=0
+  selected="$(printf '%s' "$raw" | jq -cs --arg bot "$bot_login" --arg since "$since_iso" '
+        [.[].[] | select(
+            .user.login == $bot and
+            # CodeRabbit revises its walkthrough comment IN PLACE rather than
+            # posting a new one, so a rate-limit banner can arrive on a comment
+            # created before this HEAD (#1556 documents the same behaviour for
+            # the activity probe). Select on the later of the two timestamps.
+            (.created_at > $since or (.updated_at // .created_at) > $since) and
+            # Three banner shapes have been observed and no single marker
+            # covers them all: the standalone comment matches only the HTML
+            # marker "rate limited by coderabbit.ai" while its visible text
+            # reads "Review limit reached", and the command refusal carries no
+            # marker at all and matches only the visible "Review rate limited."
+            # Matching one of them means a live limit reads as absent, which
+            # spends a review from a one-per-hour allowance.
+            ((.body // "") | test("rate.?limit|review limit reached|next included review"; "i"))
+        )]
+        | sort_by((.updated_at // .created_at))
+        | (last // empty)
+        # The filter accepts on, and sorts by, the LATER of created_at and
+        # updated_at, because CodeRabbit revises a comment in place. Emitting
+        # that value as `effective_at` keeps consumers from re-deriving it and
+        # disagreeing: reading `.created_at` for a comment selected on its
+        # updated_at would age it from the wrong instant, and the age is what
+        # the staleness and remaining-window arithmetic depend on.
+        | . + { effective_at: (.updated_at // .created_at) }
+      ' 2>/dev/null)" || jq_status=$?
+  if [ "$jq_status" -ne 0 ]; then
+    echo "WARN: coderabbit_newest_rate_limit_comment: could not parse comments for PR #$pr_number (jq exited $jq_status) — reporting a lookup failure" >&2
+    return 2
+  fi
+  printf '%s' "$selected"
+}
+
+# ---------------------------------------------------------------------------
+# coderabbit_rate_limit_is_live
+#
+# Given the JSON object from coderabbit_newest_rate_limit_comment, return 0
+# when CodeRabbit is rate limited right now and 1 when it is not (no comment,
+# or a comment whose announced window has already elapsed).
+coderabbit_rate_limit_is_live() {
+  local comment_json="${1:-}" last_trigger_iso="${2:-}"
+  [ -n "$comment_json" ] || return 1
+  # Reject anything that is not a JSON object before reading fields. Without
+  # this, a malformed blob yields two empty strings, and an empty timestamp is
+  # deliberately treated as "still current" by
+  # coderabbit_rate_limit_comment_is_current — so garbage would read as a live
+  # rate limit and stall the loop for the full retry budget. An unparseable
+  # blob is no evidence of a limit at all, which is a different question from
+  # a real comment whose timestamp could not be read.
+  printf '%s' "$comment_json" | jq -e 'type == "object"' >/dev/null 2>&1 || return 1
+  local body created
+  body="$(printf '%s' "$comment_json" | jq -r '.body // ""' 2>/dev/null)" || body=""
+  # effective_at is what the selector matched and sorted on; fall back to
+  # created_at only for an object that did not come from that selector.
+  created="$(printf '%s' "$comment_json" | jq -r '.effective_at // .created_at // ""' 2>/dev/null)" || created=""
+  coderabbit_rate_limit_comment_is_current "$body" "$created" "$last_trigger_iso"
+}
+
 run_coderabbit_review() {
   local pr_number="$1"
   local branch_name="$2"
@@ -4097,6 +5004,7 @@ run_coderabbit_review() {
   local index=1
   local blocking_json=""
   local stale_file=""
+  local coderabbit_trigger_attempts=0
 
   trap 'rm -f "${existing_blocking_file:-}" "${blocking_lines_file:-}" "${stale_file:-}"' RETURN
 
@@ -4113,6 +5021,8 @@ run_coderabbit_review() {
     print_kv BRANCH "$branch_name"
     print_kv REVIEW_COMMENT_ID ""
     print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+    print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+    print_kv CODERABBIT_REVIEWS_RECEIVED 0
     return 2
   fi
   since_iso="$(gh api "repos/$repo/commits/$head_sha" --jq '.commit.committer.date // empty')"
@@ -4181,6 +5091,8 @@ run_coderabbit_review() {
     print_kv COMMENT_COUNT "$((existing_blocking_count + existing_suggestion_count))"
     print_kv BLOCKING_COUNT "$existing_blocking_count"
     print_kv SUGGESTION_COUNT "$existing_suggestion_count"
+    print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+    print_kv CODERABBIT_REVIEWS_RECEIVED 0
     while IFS= read -r blocking_json; do
       [ -z "${blocking_json:-}" ] && continue
       print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
@@ -4233,6 +5145,7 @@ run_coderabbit_review() {
     phase0_resume_since_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
       coderabbit_phase0_retrigger=1
+      coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
       since_iso="$phase0_resume_since_iso"
       echo "INFO: @coderabbitai resume posted; since_iso reset to $since_iso" >&2
     else
@@ -4251,6 +5164,8 @@ run_coderabbit_review() {
       print_kv COMMENT_COUNT 0
       print_kv BLOCKING_COUNT 0
       print_kv SUGGESTION_COUNT 0
+      print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+      print_kv CODERABBIT_REVIEWS_RECEIVED 0
       return 2
     fi
   fi
@@ -4264,8 +5179,20 @@ run_coderabbit_review() {
   # Initialize retrigger flag from Phase 0 so Phase 2 does not double-post a resume.
   local coderabbit_retrigger_attempted=$coderabbit_phase0_retrigger
   local coderabbit_rate_limit_retries=0
-  local coderabbit_rate_limit_max_retries="${CODERABBIT_RATE_LIMIT_MAX_RETRIES:-2}"
-  local coderabbit_rate_limit_wait="${CODERABBIT_RATE_LIMIT_WAIT:-180}"
+  # When this run last asked CodeRabbit for a review. Anchors rate-limit
+  # staleness so a reply the loop has already waited on cannot answer a newer
+  # trigger (#1579, AC-1). Empty until this run posts its first trigger.
+  local coderabbit_last_trigger_iso=""
+  local coderabbit_last_quota_refusal_trigger_iso=""
+  local coderabbit_rate_limit_hold_seen=0
+  # Defaults are sized against CodeRabbit's *hourly* quota reset: 4 retries x 900 s
+  # covers 60 minutes of waiting, so a loop that hits the cap early in an hour can
+  # still succeed once the vendor window rolls over. The previous 2 x 180 s (~6 min)
+  # exhausted its retries roughly 54 minutes before the vendor could possibly answer
+  # and escalated PRs that had nothing wrong with them — the dominant failure mode
+  # for unattended overnight runs. Both env vars still override.
+  local coderabbit_rate_limit_max_retries="${CODERABBIT_RATE_LIMIT_MAX_RETRIES:-$CODERABBIT_RATE_LIMIT_MAX_RETRIES_DEFAULT}"
+  local coderabbit_rate_limit_wait="${CODERABBIT_RATE_LIMIT_WAIT:-$CODERABBIT_RATE_LIMIT_WAIT_DEFAULT}"
   # See coderabbit_resolve_no_trigger_timeout / coderabbit_no_trigger_timeout_default
   # (issue #1433) for why the default is computed from max_wait rather than a
   # fixed constant, and for env var override / validation-fallback handling
@@ -4274,12 +5201,12 @@ run_coderabbit_review() {
   coderabbit_no_trigger_timeout="$(coderabbit_resolve_no_trigger_timeout "$max_wait")"
   local coderabbit_no_trigger_retriggers=0
   if ! [[ "$coderabbit_rate_limit_max_retries" =~ ^[0-9]+$ ]]; then
-    echo "WARN: CODERABBIT_RATE_LIMIT_MAX_RETRIES must be a non-negative integer; defaulting to 2" >&2
-    coderabbit_rate_limit_max_retries=2
+    echo "WARN: CODERABBIT_RATE_LIMIT_MAX_RETRIES must be a non-negative integer; defaulting to 4" >&2
+    coderabbit_rate_limit_max_retries=4
   fi
   if ! [[ "$coderabbit_rate_limit_wait" =~ ^[0-9]+$ ]] || [ "$coderabbit_rate_limit_wait" -le 0 ]; then
-    echo "WARN: CODERABBIT_RATE_LIMIT_WAIT must be a positive integer; defaulting to 180" >&2
-    coderabbit_rate_limit_wait=180
+    echo "WARN: CODERABBIT_RATE_LIMIT_WAIT must be a positive integer; defaulting to 900" >&2
+    coderabbit_rate_limit_wait=900
   fi
 
   while :; do
@@ -4305,20 +5232,31 @@ run_coderabbit_review() {
     # Also check for CodeRabbit issue comments (summary comment) as activity signal.
     # Filter by since_iso so historical comments from prior pushes do not incorrectly
     # mark this HEAD cycle as having activity (which would suppress stale-findings recovery).
+    #
+    # Both created_at AND updated_at are accepted (issue #1556). CodeRabbit revises
+    # its walkthrough comment IN PLACE rather than posting a new one, so the comment
+    # keeps its original created_at. Observed on PR #1532: created 23:23 — before the
+    # 23:34 HEAD commit — and edited 23:52 to carry the new review. A created_at-only
+    # filter cannot see that at all; the run only survived because CodeRabbit also
+    # submitted a formal review, which is matched separately on submitted_at. The
+    # timeout guard already accepted updated_at; this probe did not.
     # Exclude "Reviews paused" comments (pause marker), "rate limit" comments (rate-limit
-    # marker), and "Reviews resumed" acknowledgement comments — none of these represent a
+    # marker), "Reviews resumed" acknowledgement comments, and "Review skipped" banners
+    # (skip marker — see CODERABBIT_SKIP_BANNER_RE) — none of these represent a
     # completed review and must not trigger an early break from the poll loop.
     if [ "$coderabbit_any_activity" -eq 0 ]; then
       local activity_count
       activity_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-          | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
+          | jq -s --arg bot "$bot_login" --arg since "$since_iso" \
+               --arg skip_re "$CODERABBIT_SKIP_BANNER_RE" '
               [.[].[] | select(
                   .user.login == $bot and
-                  .created_at > $since and
+                  (.created_at > $since or (.updated_at // .created_at) > $since) and
                   ((.body // "") | test("Reviews paused|review paused"; "i") | not) and
                   ((.body // "") | test("rate.?limit"; "i") | not) and
-                  ((.body // "") | test("reviews resumed"; "i") | not)
+                  ((.body // "") | test("reviews resumed"; "i") | not) and
+                  ((.body // "") | test($skip_re; "i") | not)
               )] | length
             '
       )"
@@ -4354,6 +5292,7 @@ run_coderabbit_review() {
         echo "INFO: CodeRabbit reviews are paused — posting @coderabbitai resume to trigger a fresh review" >&2
         if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
           coderabbit_retrigger_attempted=1
+          coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
           # Reset the elapsed timer to give the retrigger time to complete.
           elapsed=0
         else
@@ -4378,28 +5317,56 @@ run_coderabbit_review() {
     # both mechanisms.
     if [ "$coderabbit_any_activity" -eq 0 ] \
         && [ "$coderabbit_retrigger_attempted" -eq 0 ] \
+        && [ "$coderabbit_rate_limit_hold_seen" -eq 0 ] \
         && [ "$coderabbit_no_trigger_retriggers" -lt "$coderabbit_rate_limit_max_retries" ] \
         && [ "$elapsed" -ge "$coderabbit_no_trigger_timeout" ]; then
-      # Confirm neither the "paused" nor the "rate limit" comment is present —
+      # Confirm neither a "paused" comment nor a *live* rate limit is present —
       # those are handled by their own dedicated blocks above/below.
-      local silent_no_paused_count
-      silent_no_paused_count="$(
+      #
+      # The rate-limit half is deliberately not a presence check. A rate-limit
+      # comment whose announced window has already elapsed is spent, and must
+      # not suppress this retrigger: a spent comment doing exactly that is what
+      # left PR #1575 with no CodeRabbit activity for 21 hours while the loop
+      # declined to post a trigger (#1579).
+      local silent_paused_count
+      silent_paused_count="$(
         gh api "repos/$repo/issues/$pr_number/comments" --paginate \
           | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
               [.[].[] | select(
                   .user.login == $bot and
                   .created_at > $since and
-                  (
-                    ((.body // "") | test("Reviews paused|review paused"; "i")) or
-                    ((.body // "") | test("rate.?limit"; "i"))
-                  )
+                  ((.body // "") | test("Reviews paused|review paused"; "i"))
               )] | length
             '
       )"
-      if [ "${silent_no_paused_count:-0}" -eq 0 ]; then
+      local silent_blocked=0
+      if [ "${silent_paused_count:-0}" -gt 0 ]; then
+        silent_blocked=1
+      else
+        local silent_rate_limit_json="" silent_lookup_status=0
+        silent_rate_limit_json="$(coderabbit_newest_rate_limit_comment "$repo" "$pr_number" "$bot_login" "$since_iso")" || silent_lookup_status=$?
+        if [ "$silent_lookup_status" -ne 0 ]; then
+          # The lookup failed, so whether CodeRabbit is rate limited is unknown.
+          # Hold the retrigger rather than spend a review on a guess: the
+          # allowance was measured at 1 per hour, so a wasted trigger costs the
+          # PR an hour, while holding costs one poll interval.
+          echo "WARN: could not determine CodeRabbit rate-limit state for PR #$pr_number — holding the silent non-trigger retrigger rather than spending a review on an unread signal" >&2
+          silent_blocked=1
+        elif [ -n "$silent_rate_limit_json" ]; then
+          if coderabbit_rate_limit_is_live "$silent_rate_limit_json" "$coderabbit_last_trigger_iso"; then
+            silent_blocked=1
+          else
+            echo "INFO: a spent CodeRabbit rate-limit comment is present but its window has elapsed — not letting it suppress the silent non-trigger retrigger (#1579)" >&2
+          fi
+        fi
+      fi
+      if [ "$silent_blocked" -eq 0 ]; then
         coderabbit_no_trigger_retriggers=$((coderabbit_no_trigger_retriggers + 1))
         echo "INFO: CodeRabbit has not auto-triggered after ${elapsed}s (silent non-trigger, attempt ${coderabbit_no_trigger_retriggers}/${coderabbit_rate_limit_max_retries}) — posting @coderabbitai review" >&2
         if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+          coderabbit_rate_limit_hold_seen=0
+          coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
+          coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           echo "INFO: @coderabbitai review trigger posted" >&2
         else
           echo "WARN: failed to post @coderabbitai review trigger for silent non-trigger" >&2
@@ -4419,20 +5386,61 @@ run_coderabbit_review() {
     # When retries are exhausted, the timeout block below escalates instead of returning
     # a false-clean no_review result (see the incomplete-review guard before no_review exit).
     if [ "$coderabbit_any_activity" -eq 0 ] && [ "$coderabbit_rate_limit_retries" -lt "$coderabbit_rate_limit_max_retries" ]; then
-      local rate_limit_comment_count
-      rate_limit_comment_count="$(
-        gh api "repos/$repo/issues/$pr_number/comments" --paginate \
-          | jq -s --arg bot "$bot_login" --arg since "$since_iso" '
-              [.[].[] | select(
-                  .user.login == $bot and
-                  .created_at > $since and
-                  ((.body // "") | test("rate.?limit"; "i"))
-              )] | length
-            '
-      )"
+      # Select the NEWEST matching rate-limit comment as a whole object, not a
+      # count. Its body carries the vendor's own remaining window ("Next
+      # included review available in N minutes") and its created_at says when
+      # that window started — the two inputs needed to size the wait and to
+      # tell a live limit from a spent one (#1579).
+      local rate_limit_comment_json="" rate_limit_comment_body="" rate_limit_comment_created=""
+      local rate_limit_lookup_status=0
+      rate_limit_comment_json="$(coderabbit_newest_rate_limit_comment "$repo" "$pr_number" "$bot_login" "$since_iso")" || rate_limit_lookup_status=$?
+      if [ "$rate_limit_lookup_status" -ne 0 ]; then
+        # Say so. Clearing the value silently is how a lookup that never
+        # happened becomes "there is no rate limit" — the exact conflation the
+        # status-2 contract was introduced to remove. The retry branch below
+        # is skipped either way, but a silent skip leaves nothing in the log to
+        # explain why the loop went on to spend a review.
+        echo "WARN: could not read the rate-limit comment for PR #$pr_number (lookup exit $rate_limit_lookup_status) — proceeding without rate-limit evidence for this pass, NOT concluding that no limit exists" >&2
+        rate_limit_comment_json=""
+      fi
+
+      local rate_limit_comment_count=0
+      if [ -n "$rate_limit_comment_json" ]; then
+        # `-r` on the body is deliberate: it is consumed as text by the regex
+        # parser, and a JSON-quoted string would not match.
+        rate_limit_comment_body="$(printf '%s' "$rate_limit_comment_json" | jq -r '.body // ""' 2>/dev/null)" || rate_limit_comment_body=""
+        rate_limit_comment_created="$(printf '%s' "$rate_limit_comment_json" | jq -r '.effective_at // .created_at // ""' 2>/dev/null)" || rate_limit_comment_created=""
+        if coderabbit_rate_limit_is_live "$rate_limit_comment_json" "$coderabbit_last_trigger_iso"; then
+          if [ -n "$coderabbit_last_trigger_iso" ] && [ "$coderabbit_last_quota_refusal_trigger_iso" != "$coderabbit_last_trigger_iso" ]; then
+            coderabbit_last_quota_refusal_trigger_iso="$coderabbit_last_trigger_iso"
+            if [ "$coderabbit_rate_limit_retries" -gt 0 ]; then
+              coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries - 1))
+            fi
+            echo "INFO: CodeRabbit quota refusal observed for last trigger — not counting it toward CODERABBIT_RATE_LIMIT_MAX_RETRIES" >&2
+          fi
+          rate_limit_comment_count=1
+        else
+          echo "INFO: newest CodeRabbit rate-limit comment (${rate_limit_comment_created:-unknown time}) is past the window it announced — treating it as spent rather than waiting on it again (#1579)" >&2
+          if [ "$coderabbit_rate_limit_hold_seen" -eq 1 ] && [ "$coderabbit_rate_limit_retries" -lt "$coderabbit_rate_limit_max_retries" ]; then
+            echo "INFO: CodeRabbit rate-limit window elapsed after a held wait — posting @coderabbitai review" >&2
+            if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+              coderabbit_rate_limit_hold_seen=0
+              coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
+              coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
+              coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+              echo "INFO: posted @coderabbitai review after rate-limit window elapsed" >&2
+            else
+              echo "WARN: failed to post @coderabbitai review after rate-limit window elapsed" >&2
+            fi
+            elapsed=0
+            _interruptible_sleep "$poll_interval"
+            elapsed=$((elapsed + poll_interval))
+            continue
+          fi
+        fi
+      fi
       if [ "${rate_limit_comment_count:-0}" -gt 0 ]; then
-        coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
-        echo "INFO: CodeRabbit rate limit detected (retry $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — checking for SUCCESS commit status before waiting" >&2
+        echo "INFO: CodeRabbit rate limit detected (retry attempts spent $coderabbit_rate_limit_retries/$coderabbit_rate_limit_max_retries) — checking for SUCCESS commit status before waiting" >&2
         # --- Early SUCCESS check before retry wait ---
         # Check whether CodeRabbit already posted a genuine SUCCESS commit status for
         # the current HEAD SHA (state == "success" AND description is not a rate-limit
@@ -4469,25 +5477,72 @@ run_coderabbit_review() {
             print_kv COMMENT_COUNT 0
             print_kv BLOCKING_COUNT 0
             print_kv SUGGESTION_COUNT 0
+            print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+            print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
             return 0
           fi
           if [ "$cr_early_gate_rc" -eq 1 ] || [ "$cr_early_gate_rc" -eq 2 ]; then
             return "$cr_early_gate_rc"
           fi
         fi
-        echo "INFO: no SUCCESS commit status found — waiting ${coderabbit_rate_limit_wait}s before re-triggering" >&2
-        _interruptible_sleep "$coderabbit_rate_limit_wait"
-        # Do NOT reset since_iso — keep the original HEAD-commit timestamp so any review
-        # posted by CodeRabbit during or after the wait is still within the detection window.
-        elapsed=0
-        if gh pr comment "$pr_number" --body "@coderabbitai resume" >/dev/null 2>&1; then
-          echo "INFO: posted @coderabbitai resume after rate-limit wait" >&2
+        # Size this wait from the vendor's own stated window when it gives one,
+        # falling back to the configured constant otherwise. A fixed constant
+        # cannot track an allowance the vendor changes (measured at 1 review
+        # per hour on 2026-08-24), so it either retries far too early — burning
+        # the retry budget without a review — or far too late.
+        local coderabbit_this_wait
+        coderabbit_this_wait="$(coderabbit_rate_limit_remaining_seconds "$rate_limit_comment_body" "$rate_limit_comment_created" "$coderabbit_rate_limit_wait")"
+        if [ "$coderabbit_this_wait" != "$coderabbit_rate_limit_wait" ]; then
+          echo "INFO: no SUCCESS commit status found — CodeRabbit states its next review window; waiting ${coderabbit_this_wait}s (configured fallback ${coderabbit_rate_limit_wait}s) before re-triggering" >&2
         else
-          echo "WARN: failed to post @coderabbitai resume after rate-limit wait" >&2
+          echo "INFO: no SUCCESS commit status found — waiting ${coderabbit_this_wait}s before re-triggering" >&2
         fi
-        _interruptible_sleep "$poll_interval"
-        elapsed=$((elapsed + poll_interval))
-        continue
+        _interruptible_sleep "$coderabbit_this_wait"
+        local coderabbit_post_wait_rate_limit_json="" coderabbit_post_wait_lookup_status=0
+        local coderabbit_skip_rate_limit_retrigger=0
+        coderabbit_post_wait_rate_limit_json="$(coderabbit_newest_rate_limit_comment "$repo" "$pr_number" "$bot_login" "$since_iso")" || coderabbit_post_wait_lookup_status=$?
+        if [ "$coderabbit_post_wait_lookup_status" -ne 0 ]; then
+          echo "WARN: could not re-check CodeRabbit rate-limit state after waiting for PR #$pr_number — holding retrigger rather than spending a review attempt on unread quota state" >&2
+          _interruptible_sleep "$poll_interval"
+          elapsed=$((elapsed + coderabbit_this_wait + poll_interval))
+          if [ "$elapsed" -lt "$max_wait" ]; then
+            coderabbit_rate_limit_hold_seen=1
+            continue
+          fi
+          coderabbit_skip_rate_limit_retrigger=1
+        fi
+        if coderabbit_rate_limit_is_live "$coderabbit_post_wait_rate_limit_json" "$coderabbit_last_trigger_iso"; then
+          echo "INFO: CodeRabbit rate limit is still live after waiting — not posting a trigger while quota refusal remains outstanding" >&2
+          _interruptible_sleep "$poll_interval"
+          elapsed=$((elapsed + coderabbit_this_wait + poll_interval))
+          if [ "$elapsed" -lt "$max_wait" ]; then
+            coderabbit_rate_limit_hold_seen=1
+            continue
+          fi
+          coderabbit_skip_rate_limit_retrigger=1
+        fi
+        if [ "$coderabbit_skip_rate_limit_retrigger" -eq 0 ]; then
+          # Do NOT reset since_iso — keep the original HEAD-commit timestamp so any review
+          # posted by CodeRabbit during or after the wait is still within the detection window.
+          elapsed=0
+          # Re-trigger with "review", not "resume". "resume" only lifts a paused
+          # state; against a rate limit CodeRabbit answers "Reviews resumed" and
+          # reviews nothing, so the loop spends its whole budget on
+          # acknowledgements (PR #1589: four resumes, zero reviews). A pause and a
+          # rate limit need different verbs, and this branch is the rate-limit one.
+          if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+            coderabbit_rate_limit_hold_seen=0
+            coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
+            coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
+            coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            echo "INFO: posted @coderabbitai review after rate-limit wait" >&2
+          else
+            echo "WARN: failed to post @coderabbitai review after rate-limit wait" >&2
+          fi
+          _interruptible_sleep "$poll_interval"
+          elapsed=$((elapsed + poll_interval))
+          continue
+        fi
       fi
     fi
 
@@ -4529,6 +5584,8 @@ run_coderabbit_review() {
             print_kv COMMENT_COUNT 0
             print_kv BLOCKING_COUNT 0
             print_kv SUGGESTION_COUNT 0
+            print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+            print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
             return 0
           fi
           if [ "$cr_success_gate_rc" -eq 1 ] || [ "$cr_success_gate_rc" -eq 2 ]; then
@@ -4591,6 +5648,8 @@ run_coderabbit_review() {
           print_kv COMMENT_COUNT "$stale_count"
           print_kv BLOCKING_COUNT "$stale_blocking_count"
           print_kv SUGGESTION_COUNT "$((stale_count - stale_blocking_count))"
+          print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+          print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
           while IFS= read -r blocking_json; do
             [ -z "${blocking_json:-}" ] && continue
             print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
@@ -4628,6 +5687,77 @@ run_coderabbit_review() {
                 )] | length
               '
         )"
+        # A "Review skipped" banner is a distinct terminal non-review outcome from a
+        # rate limit or a pause: CodeRabbit consciously declined to review this PR
+        # (auto_review disabled, drafts excluded, or base_branches not matching) rather
+        # than being unable to. It is detected separately so the escalation REASON tells
+        # the operator which knob to turn — review_skipped_banner points at
+        # .coderabbit.yaml, rate_limit_max_retries points at vendor quota.
+        #
+        # Matched on the LATEST CodeRabbit comment WITHIN the current HEAD window.
+        # Both halves of that are load-bearing, and each one alone misattributes in the
+        # opposite direction:
+        #
+        #   - "Any banner in the window" (no latest constraint) blames a stale banner
+        #     for a later outcome. A repository that sets auto_review.drafts to false —
+        #     the recommended setting when coderabbit runs in on_ready.github — collects
+        #     a "Review skipped / Draft detected" banner on every PR while it is still a
+        #     draft, timestamped after the HEAD commit. Without the latest constraint,
+        #     every subsequent ready-phase timeout would report review_skipped_banner
+        #     even when CodeRabbit had since posted a pause or rate-limit notice.
+        #
+        #   - "Latest comment overall" (no window constraint) blames a banner from a
+        #     PREVIOUS HEAD. Push a new commit after a draft-phase banner and that
+        #     banner is still the newest comment on the PR, so a silent or rate-limited
+        #     review of the *current* HEAD would be reported as a configuration problem.
+        #
+        # Taking the latest in-window comment also yields correctly to the pause and
+        # rate-limit handlers below whenever CodeRabbit has since said something more
+        # specific. updated_at is accepted alongside created_at because CodeRabbit
+        # revises its existing comment in place rather than always posting a new one.
+        #
+        # For the same reason the sort key is the EFFECTIVE event time,
+        # updated_at // created_at, not created_at. Admitting a comment on updated_at
+        # and then ordering on created_at contradicts itself: an older comment that
+        # CodeRabbit edited a moment ago is genuinely the most recent thing it said,
+        # but a created_at sort would rank a banner posted in between above it. That is
+        # not hypothetical — on PR #1532 the walkthrough comment was created at 23:23
+        # and revised at 23:52, straddling later comments.
+        local timeout_latest_cr_body
+        timeout_latest_cr_body="$(
+          gh api "repos/$repo/issues/$pr_number/comments" --paginate \
+            | jq -rs --arg bot "$bot_login" --arg since "$since_iso" '
+                add // []
+                | map(select(
+                    .user.login == $bot and
+                    (.created_at > $since or .updated_at > $since)
+                  ))
+                | sort_by(.updated_at // .created_at)
+                | last
+                | .body // ""
+              '
+        )"
+        local timeout_skip_banner_count=0
+        if printf '%s\n' "$timeout_latest_cr_body" \
+             | grep -qiE "$CODERABBIT_SKIP_BANNER_RE"; then
+          timeout_skip_banner_count=1
+        fi
+        if [ "${timeout_skip_banner_count:-0}" -gt 0 ]; then
+          echo "ERROR: CodeRabbit posted a 'Review skipped' banner and never reviewed HEAD $head_sha — escalating instead of returning clean. Check reviews.auto_review.enabled / .drafts / .base_branches in .coderabbit.yaml against this PR's draft state and base branch." >&2
+          print_kv RESULT escalate
+          print_kv REASON review_skipped_banner
+          print_kv PLATFORM "$platform"
+          print_kv PR_NUMBER "$pr_number"
+          print_kv BRANCH "$branch_name"
+          print_kv REVIEW_COMMENT_ID ""
+          print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+          print_kv COMMENT_COUNT 0
+          print_kv BLOCKING_COUNT 0
+          print_kv SUGGESTION_COUNT 0
+          print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+          print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
+          return 2
+        fi
         if [ "${timeout_incomplete_count:-0}" -gt 0 ] || [ "$coderabbit_phase0_retrigger" -eq 1 ]; then
           echo "INFO: CodeRabbit rate-limit or pause still unresolved at timeout (incomplete_count=${timeout_incomplete_count:-0}, phase0_retrigger=$coderabbit_phase0_retrigger) — escalating instead of returning clean" >&2
           print_kv RESULT escalate
@@ -4640,6 +5770,8 @@ run_coderabbit_review() {
           print_kv COMMENT_COUNT 0
           print_kv BLOCKING_COUNT 0
           print_kv SUGGESTION_COUNT 0
+          print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+          print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
           return 2
         fi
 
@@ -4653,6 +5785,8 @@ run_coderabbit_review() {
         print_kv COMMENT_COUNT 0
         print_kv BLOCKING_COUNT 0
         print_kv SUGGESTION_COUNT 0
+        print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+        print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
         return 0
       fi
       print_kv RESULT escalate
@@ -4662,6 +5796,8 @@ run_coderabbit_review() {
       print_kv BRANCH "$branch_name"
       print_kv REVIEW_COMMENT_ID ""
       print_kv FIX_AGENT "$(reviewer_for_branch "$branch_name")"
+      print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+      print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
       return 2
     fi
 
@@ -4736,6 +5872,8 @@ run_coderabbit_review() {
     print_kv COMMENT_COUNT "$comment_count"
     print_kv BLOCKING_COUNT "$blocking_count"
     print_kv SUGGESTION_COUNT "$suggestion_count"
+    print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+    print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
     while IFS= read -r blocking_json; do
       [ -z "${blocking_json:-}" ] && continue
       print_kv "BLOCKING_${index}_PATH" "$(printf '%s\n' "$blocking_json" | jq -r '.path')"
@@ -4762,6 +5900,8 @@ run_coderabbit_review() {
   print_kv COMMENT_COUNT "$comment_count"
   print_kv BLOCKING_COUNT 0
   print_kv SUGGESTION_COUNT "$suggestion_count"
+  print_kv CODERABBIT_TRIGGER_ATTEMPTS "$coderabbit_trigger_attempts"
+  print_kv CODERABBIT_REVIEWS_RECEIVED "$coderabbit_review_count"
   return 0
 }
 
@@ -4774,6 +5914,7 @@ bot_login_for_platform() {
   case "$1" in
     coderabbit)   printf 'coderabbitai\n' ;;
     coderabbit-cli) printf '\n' ;;
+    local-ai-reviewer) printf '\n' ;;
     devin)        printf 'devin-ai-integration\n' ;;
     greptile)     printf 'greptile-apps\n' ;;
     pr-agent)     printf '\n' ;;
@@ -4802,10 +5943,25 @@ check_unresolved_threads() {
   # Arguments:
   #   $1    pr_number  - PR number (integer)
   #   $2    repo       - "owner/repo" slug
-  #   $3... bot_logins - one or more bot login strings (e.g. "coderabbitai", "devin-ai-integration")
+  #   $3    mode       - "strict" or "provisional" (see below); unrecognized values
+  #                       fail safe to "strict"
+  #   $4... bot_logins - one or more bot login strings (e.g. "coderabbitai", "devin-ai-integration")
   #
   # Bot logins are passed as individual positional arguments (not space-separated)
   # to ensure safe iteration in the comparison loop without word splitting.
+  #
+  # mode=provisional (issue #1508): in addition to the strict resolution checks
+  # above, a thread is also treated as NOT unresolved when its LAST comment was
+  # authored by someone other than a configured bot login (i.e. a maintainer or
+  # fixer-agent reply) AND that comment's createdAt is after the PR's current
+  # head-commit committedDate. This models "fixed and replied to, but the human/
+  # agent has not yet called resolveReviewThread" — the common state immediately
+  # after a fixer pushes (see #1508). It exists ONLY to unblock phase-1 gates that
+  # decide whether to re-trigger a review; it must never be used by a gate that
+  # decides RESULT=clean. Callers making that "declare clean" decision (the
+  # aggregate thread gate, coderabbit_thread_gate_clean, and any post-review
+  # findings recount) must keep using mode=strict, so a reply alone can never
+  # cause a false RESULT=clean — only true GraphQL resolution can.
   #
   # Re-enable errexit within this function. When called from a command substitution
   # with set +e active in the parent (as in the thread gate), the subshell inherits
@@ -4815,7 +5971,12 @@ check_unresolved_threads() {
   set -e
   local pr_number="$1"
   local repo="$2"
-  shift 2
+  local mode="$3"
+  shift 3
+  case "$mode" in
+    provisional) ;;
+    *) mode="strict" ;;
+  esac
   # Remaining positional args are bot login strings; store in an array for safe iteration.
   local -a bot_logins=("$@")
 
@@ -4828,11 +5989,21 @@ check_unresolved_threads() {
   local has_next_page="true"
   local page=0
   local max_pages=10
+  local head_committed_date=""
 
-  # GraphQL query: paginate reviewThreads 100 at a time, fetch first comment per thread.
+  # GraphQL query: paginate reviewThreads 100 at a time, fetch the first comment
+  # (aliased firstComment) per thread. In provisional mode, also fetch each
+  # thread's last comment (aliased lastComment) and the PR head commit's
+  # committedDate, needed for the post-push-reply check above.
+  local nodes_fields='id isResolved isOutdated firstComment:comments(first:1){nodes{author{login}body}}'
+  local pr_fields=''
+  if [ "$mode" = "provisional" ]; then
+    nodes_fields="$nodes_fields"'lastComment:comments(last:1){nodes{author{login}body createdAt}}'
+    pr_fields='commits(last:1){nodes{commit{committedDate}}}'
+  fi
   # Using inline query string to avoid heredoc quoting issues in subshells.
   local graphql_query
-  graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{id isResolved isOutdated comments(first:1){nodes{author{login}body}}}}}}}'
+  graphql_query='query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){'"$pr_fields"'reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{'"$nodes_fields"'}}}}}'
 
   while [ "$has_next_page" = "true" ]; do
     page=$((page + 1))
@@ -4852,22 +6023,26 @@ check_unresolved_threads() {
       result="$(gh api graphql \
         -f query="$graphql_query" \
         -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" -f cursor="$cursor" \
-        --jq '.data.repository.pullRequest.reviewThreads')" \
+        --jq '.data.repository.pullRequest')" \
         || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 3; }
     else
       result="$(gh api graphql \
         -f query="$graphql_query" \
         -f owner="$owner" -f repo="$repo_name" -F pr="$pr_number" \
-        --jq '.data.repository.pullRequest.reviewThreads')" \
+        --jq '.data.repository.pullRequest')" \
         || { echo "WARN: check_unresolved_threads: GraphQL query failed for PR #$pr_number" >&2; return 3; }
+    fi
+
+    if [ "$mode" = "provisional" ]; then
+      head_committed_date="$(printf '%s\n' "$result" | jq -r '.commits.nodes[0].commit.committedDate // ""')"
     fi
 
     # Use jq -r (not -re) for boolean/nullable fields: jq -e exits non-zero when the
     # output value is false or null, which would misinterpret valid values like
     # hasNextPage=false or isResolved=false as errors. Rely on gh api's own exit code
     # (caught above) for real API failures; use jq -r only for data extraction.
-    has_next_page="$(printf '%s\n' "$result" | jq -r '.pageInfo.hasNextPage')"
-    cursor="$(printf '%s\n' "$result" | jq -r '.pageInfo.endCursor // empty')"
+    has_next_page="$(printf '%s\n' "$result" | jq -r '.reviewThreads.pageInfo.hasNextPage')"
+    cursor="$(printf '%s\n' "$result" | jq -r '.reviewThreads.pageInfo.endCursor // empty')"
 
     local thread_json
     while IFS= read -r thread_json; do
@@ -4876,8 +6051,8 @@ check_unresolved_threads() {
       local is_resolved is_outdated author body
       is_resolved="$(printf '%s\n' "$thread_json" | jq -r '.isResolved')"
       is_outdated="$(printf '%s\n' "$thread_json" | jq -r '.isOutdated // false')"
-      author="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].author.login // ""')"
-      body="$(printf '%s\n' "$thread_json" | jq -r '.comments.nodes[0].body // ""')"
+      author="$(printf '%s\n' "$thread_json" | jq -r '.firstComment.nodes[0].author.login // ""')"
+      body="$(printf '%s\n' "$thread_json" | jq -r '.firstComment.nodes[0].body // ""')"
 
       # Only count threads authored by configured bot logins.
       # Bot logins from the GraphQL API do not include the [bot] suffix.
@@ -4893,8 +6068,27 @@ check_unresolved_threads() {
       if [ "$is_outdated" = "true" ]; then continue; fi
       if printf '%s\n' "$body" | grep -q "✅ Addressed"; then continue; fi
 
+      if [ "$mode" = "provisional" ] && [ -n "$head_committed_date" ]; then
+        local last_author last_created_at last_is_bot
+        last_author="$(printf '%s\n' "$thread_json" | jq -r '.lastComment.nodes[0].author.login // ""')"
+        last_created_at="$(printf '%s\n' "$thread_json" | jq -r '.lastComment.nodes[0].createdAt // ""')"
+        last_is_bot=0
+        if [ -n "$last_author" ]; then
+          for bot_login in "${bot_logins[@]}"; do
+            if [ "$last_author" = "$bot_login" ]; then last_is_bot=1; break; fi
+          done
+        fi
+        if [ "$last_is_bot" -eq 0 ] && [ -n "$last_author" ] && [ -n "$last_created_at" ] \
+            && [ "$last_created_at" \> "$head_committed_date" ]; then
+          local thread_id
+          thread_id="$(printf '%s\n' "$thread_json" | jq -r '.id // "unknown"')"
+          echo "INFO: check_unresolved_threads: thread $thread_id provisionally addressed (reply by $last_author after head commit $head_committed_date) — not blocking re-review; still requires resolveReviewThread before RESULT=clean" >&2
+          continue
+        fi
+      fi
+
       unresolved_count=$((unresolved_count + 1))
-    done < <(printf '%s\n' "$result" | jq -c '.nodes[]')
+    done < <(printf '%s\n' "$result" | jq -c '.reviewThreads.nodes[]')
 
     if [ "$has_next_page" = "true" ] && [ -z "$cursor" ]; then
       echo "WARN: check_unresolved_threads: hasNextPage=true but endCursor is empty for PR #$pr_number; cannot confirm all threads checked" >&2
@@ -4925,11 +6119,14 @@ run_platform_review() {
     coderabbit-cli)
       run_coderabbit_cli_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
+    local-ai-reviewer)
+      run_local_ai_reviewer_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      ;;
     pr-agent)
       run_pr_agent_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
       ;;
     codex-github)
-      run_codex_github_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
+      run_codex_github_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait" "$codex_github_pre_trigger_wait"
       ;;
     claude-code-action)
       run_claude_code_action_review "$pr_number" "$branch_name" "$poll_interval" "$max_wait"
@@ -4958,6 +6155,59 @@ run_platform_review() {
   esac
 }
 
+# gh_rate_limit_exhausted_reset
+#
+# Probes `gh api rate_limit` (a check that GitHub explicitly exempts from
+# consuming the very quota it reports, so it remains reliable to call even
+# when a run has just exhausted its core or graphql budget) and prints the
+# epoch reset timestamp of whichever of those two resources currently has
+# zero remaining calls. Prints nothing and returns 1 when neither resource
+# is exhausted, the probe call itself fails, or the response cannot be
+# parsed — a probe failure carries no information either way, so callers
+# must treat it the same as "not (confirmably) rate limited", not as proof
+# the original failure had some other cause.
+#
+# Used by ensure_pr_ready_for_ready_phase (issue #1509) to distinguish a
+# transient GitHub API/rate-limit outage from a genuine review-gate failure,
+# the same way CODERABBIT_SKIP_BANNER_RE (issue #1531) gives a distinct,
+# actionable REASON to a distinct failure cause instead of overloading a
+# single generic escalation.
+gh_rate_limit_exhausted_reset() {
+  local rl_json
+  if ! rl_json="$(gh api rate_limit 2>/dev/null)"; then
+    return 1
+  fi
+
+  # The `|| reset=""` guard is load-bearing under `set -e`: this is a plain
+  # (unguarded-by-if) assignment, so if jq exits non-zero (e.g. malformed
+  # JSON from the probe), the assignment statement's own exit status would
+  # otherwise propagate and abort the whole script instead of letting this
+  # function fail closed and return 1 like every other parse-failure path
+  # here.
+  local reset
+  reset="$(printf '%s\n' "$rl_json" | jq -r '
+      [.resources.core, .resources.graphql]
+      | map(select(. != null and .remaining == 0))
+      | sort_by(.reset)
+      | .[0].reset // empty
+    ' 2>/dev/null)" || reset=""
+
+  if [ -z "$reset" ]; then
+    return 1
+  fi
+
+  printf '%s\n' "$reset"
+  return 0
+}
+
+# READY_PHASE_GATE_RATE_LIMIT_RESET is set by ensure_pr_ready_for_ready_phase
+# (as a plain global, since the function's only current callers use its exit
+# code directly rather than command-substituting its stdout) whenever it
+# returns 3, carrying the GitHub API rate-limit reset epoch so the caller can
+# report it. Cleared at the start of every call so a stale value from a prior
+# cycle is never mistaken for this cycle's cause.
+READY_PHASE_GATE_RATE_LIMIT_RESET=""
+
 ensure_pr_ready_for_ready_phase() {
   # Ready-phase platforms are intended to run only once draft-compatible GitHub
   # reviewers have cleared. Some external reviewers, including Haystack triage,
@@ -4966,7 +6216,23 @@ ensure_pr_ready_for_ready_phase() {
   local pr_number="$1"
   local is_draft
 
+  READY_PHASE_GATE_RATE_LIMIT_RESET=""
+
   if ! is_draft="$(gh pr view "$pr_number" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+    # Distinguish "GitHub's API was temporarily unavailable/rate-limited" from
+    # "this PR genuinely could not be prepared for the ready phase" (issue
+    # #1509): probe the rate-limit endpoint before concluding this is an
+    # unexplained failure. A confirmed exhaustion returns exit 3 so the caller
+    # can report REASON=rate_limited instead of the generic
+    # ready_for_review_failed, and skip the reviewer-failed label — the same
+    # distinction CODERABBIT_RATE_LIMIT_WAIT/CODERABBIT_SKIP_BANNER_RE draw
+    # between an acknowledged vendor quota block and a silent reviewer.
+    local rl_reset
+    if rl_reset="$(gh_rate_limit_exhausted_reset)"; then
+      READY_PHASE_GATE_RATE_LIMIT_RESET="$rl_reset"
+      echo "WARN: could not determine draft state for PR #$pr_number before ready phase — GitHub API rate limit exhausted (resets $rl_reset)" >&2
+      return 3
+    fi
     echo "WARN: could not determine draft state for PR #$pr_number before ready phase" >&2
     return 2
   fi
@@ -4974,6 +6240,12 @@ ensure_pr_ready_for_ready_phase() {
   if [ "$is_draft" = "true" ]; then
     echo "INFO: converting PR #$pr_number to ready before ready-phase reviewers" >&2
     if ! gh pr ready "$pr_number" >/dev/null 2>&1; then
+      local rl_reset_ready
+      if rl_reset_ready="$(gh_rate_limit_exhausted_reset)"; then
+        READY_PHASE_GATE_RATE_LIMIT_RESET="$rl_reset_ready"
+        echo "WARN: failed to mark PR #$pr_number ready before ready phase — GitHub API rate limit exhausted (resets $rl_reset_ready)" >&2
+        return 3
+      fi
       echo "WARN: failed to mark PR #$pr_number ready before ready phase" >&2
       return 2
     fi
@@ -5011,8 +6283,8 @@ run_project_advisory_checks() {
 # the test harness can load them via HARNESS_MODE=1 sourcing without executing
 # the argument-parsing and main-loop sections below.
 
-# normalize_platform_verdict: map a raw platform result token to one of the five
-# canonical compare-mode verdict values: clean, blocking, advisory, timed out, unavailable.
+# normalize_platform_verdict: map a raw platform result token to one of the six
+# canonical compare-mode verdict values: clean, blocking, advisory, waiting, timed out, unavailable.
 # $1 = platform_result token (e.g. clean, needs_fixes, skipped, escalate, needs_rerun)
 # $2 = full platform output (key=value block; used to inspect REASON for timeout detection)
 normalize_platform_verdict() {
@@ -5030,6 +6302,7 @@ normalize_platform_verdict() {
     advisory)    printf 'advisory' ;;
     skipped)     printf 'unavailable' ;;
     needs_rerun) printf 'blocking' ;;
+    waiting_on_reviewer) printf 'waiting' ;;
     escalate)
       # Distinguish timeout from service-unavailable via REASON.
       case "$reason" in
@@ -5053,6 +6326,15 @@ reviewer_failed_label_required_for_result() {
 
   case "$result" in
     escalate)
+      case "$reason" in
+        # rate_limited (issue #1509) means the ready-phase gate confirmed a
+        # GitHub API rate-limit exhaustion, not a genuine review verdict on
+        # the PR — applying reviewer-failed here would blame the PR (and its
+        # author) for transient vendor/infrastructure unavailability.
+        rate_limited)
+          return 1
+          ;;
+      esac
       return 0
       ;;
     skipped)
@@ -5283,22 +6565,15 @@ METRICS_HEADER
 #   - Runs only for feature/*, fix/*, refactor/*, hotfix/* branches.
 #   - Checks current label state via `gh pr view --json labels`.
 #     On gh failure the check is skipped (fail-open; WARN emitted to stderr).
-#   - When the label is absent, gates the restore on prior-loop evidence:
-#     checks whether an "Automated Reviewer Loop Summary" comment already exists
-#     on the PR via `gh api repos/.../issues/.../comments --paginate`.
-#       • summary comment PRESENT + label missing  → RESTORE.
-#         Within the reviewer-loop operating model, ready-for-regression is
-#         owned by the loop and should be present whenever the loop runs after
-#         the first summary comment. A label drop after the summary comment exists
-#         means the PR policy workflow removed a stale label after a new push
-#         (the #805 scenario), so restoring here is correct.
-#       • summary comment ABSENT + label missing   → do NOT restore.
-#         This is the normal initial state (loop has never run), and the only
-#         window in which a human intentional removal is unambiguous. A deliberate
-#         removal AFTER the loop has run while still re-invoking the loop is
-#         treated as out-of-model (the loop will re-apply on the next invocation).
-#     The summary-comment gate prevents overriding an intentional removal that
-#     occurs before the loop has ever applied the label.
+#   - When the label is absent, gates the restore on current-head clean-loop
+#     evidence from the newest "Automated Reviewer Loop Summary" comment:
+#       • latest summary result clean/skipped + head_sha matches current PR head
+#         → RESTORE.
+#       • no summary, stale-head summary, non-clean summary, or unreadable
+#         summary history → do NOT restore.
+#     This keeps the helper aligned with the PR policy workflow: a historical
+#     clean summary must not resurrect ready-for-regression after later pushes
+#     introduce reviewer findings.
 #   - If the comment-presence query fails (gh/API error): fail-open — the restore
 #     IS attempted and a WARN is emitted. This mirrors the higher-frequency
 #     real-world failure (#805) being more harmful than a spurious re-apply.
@@ -5325,10 +6600,9 @@ restore_regression_label_if_missing() {
         return 0
       fi
       if [ "${_rfr_has_label:-}" = "false" ]; then
-        # Gate the restore on prior-loop evidence: only restore when an
-        # "Automated Reviewer Loop Summary" comment already exists on the PR.
-        # This prevents overriding a human intentional label removal that occurs
-        # before the loop has ever applied the label.
+        # Gate the restore on current-head clean-loop evidence. A historical
+        # clean summary on an older head must not resurrect a stale label after
+        # a push that introduced reviewer findings.
         local _rfr_repo=""
         # repo_slug failure is handled explicitly below: an empty slug falls
         # into the else branch (fail-open WARN + restore). Do not use || true
@@ -5337,28 +6611,59 @@ restore_regression_label_if_missing() {
         if ! _rfr_repo="$(repo_slug 2>/dev/null)"; then
           _rfr_repo=""
         fi
-        local _rfr_loop_comment=0
+        local _rfr_current_head_sha=""
+        if ! _rfr_current_head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid // ""' 2>/dev/null)" \
+            || [ -z "${_rfr_current_head_sha:-}" ]; then
+          echo "WARN: could not resolve current head for ready-for-regression restore on PR #${pr_number}; skipping restore." >&2
+          return 0
+        fi
+        local _rfr_latest_summary_record=""
+        local _rfr_latest_summary_body=""
+        local _rfr_latest_summary_json=""
+        local _rfr_latest_summary_result=""
+        local _rfr_latest_summary_head=""
+        local _rfr_restore_allowed=0
+        local _rfr_restore_reason="current-head clean reviewer-loop summary found"
         local _rfr_comments_raw=""
         if [ -n "${_rfr_repo:-}" ] && _rfr_comments_raw="$(gh api \
             "repos/${_rfr_repo}/issues/${pr_number}/comments" \
             --paginate 2>/dev/null)"; then
-          _rfr_loop_comment="$(printf '%s\n' "$_rfr_comments_raw" \
-            | jq -rs 'add // [] | [.[] | select(
-                (.body // "" | contains("### Automated Reviewer Loop Summary"))
-              )] | length' 2>/dev/null)" || _rfr_loop_comment=0
+          _rfr_latest_summary_record="$(printf '%s\n' "$_rfr_comments_raw" \
+            | reviewer_loop_history_select_latest_summary_record 2>/dev/null)" || _rfr_latest_summary_record=""
+          if [ -n "${_rfr_latest_summary_record:-}" ]; then
+            _rfr_latest_summary_body="$(printf '%s\n' "$_rfr_latest_summary_record" \
+              | jq -r '.body // ""' 2>/dev/null)" || _rfr_latest_summary_body=""
+          fi
+          if [ -n "${_rfr_latest_summary_body:-}" ]; then
+            _rfr_latest_summary_json="$(printf '%s\n' "$_rfr_latest_summary_body" \
+              | reviewer_loop_history_extract_latest_json 2>/dev/null)" || _rfr_latest_summary_json=""
+          fi
+          if [ -n "${_rfr_latest_summary_json:-}" ]; then
+            _rfr_latest_summary_result="$(printf '%s\n' "$_rfr_latest_summary_json" \
+              | jq -r '(.entries // []) | last | .result // ""' 2>/dev/null)" || _rfr_latest_summary_result=""
+            _rfr_latest_summary_head="$(printf '%s\n' "$_rfr_latest_summary_json" \
+              | jq -r '(.entries // []) | last | .head_sha // ""' 2>/dev/null)" || _rfr_latest_summary_head=""
+          fi
+          if { [ "${_rfr_latest_summary_result:-}" = "clean" ] \
+              || [ "${_rfr_latest_summary_result:-}" = "skipped" ]; } \
+              && [ -n "${_rfr_latest_summary_head:-}" ] \
+              && [ "${_rfr_latest_summary_head:-}" = "${_rfr_current_head_sha:-}" ]; then
+            _rfr_restore_allowed=1
+          fi
         else
           echo "WARN: gh api failed for summary-comment gate on PR ${pr_number}; failing open — restoring label." >&2
-          _rfr_loop_comment=1
+          _rfr_restore_allowed=1
+          _rfr_restore_reason="summary-comment lookup failed; fail-open restore"
         fi
-        if [ "${_rfr_loop_comment:-0}" -gt 0 ]; then
-          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); reviewer loop summary comment found — restoring before loop runs." >&2
+        if [ "${_rfr_restore_allowed:-0}" -eq 1 ]; then
+          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); ${_rfr_restore_reason} — restoring before loop runs." >&2
           # Do NOT redirect stderr here: surface gh errors so failures are observable
           # rather than silently swallowed. The || branch handles the non-zero exit.
           if ! gh pr edit "$pr_number" --add-label "ready-for-regression"; then
             echo "WARN: failed to restore ready-for-regression label on PR #${pr_number}; proceeding without it" >&2
           fi
         else
-          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); no reviewer loop summary comment found — skipping restore (label not yet applied by loop)." >&2
+          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); no current-head clean reviewer-loop summary found — skipping restore." >&2
         fi
       fi
       ;;
@@ -5383,6 +6688,33 @@ doc_branch_default_poll_interval() {
     [ "$interval" -lt 1 ] && interval=1
   fi
   printf '%s\n' "$interval"
+}
+
+codex_github_default_max_wait() {
+  local configured="${CODEX_GITHUB_MAX_WAIT:-1800}"
+  if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
+    echo "WARN: CODEX_GITHUB_MAX_WAIT must be a positive integer; defaulting to 1800" >&2
+    configured=1800
+  fi
+  printf '%s\n' "$configured"
+}
+
+codex_github_default_poll_interval() {
+  local configured="${CODEX_GITHUB_POLL_INTERVAL:-60}"
+  local max_wait="$1"
+  if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]]; then
+    echo "WARN: CODEX_GITHUB_POLL_INTERVAL must be a positive integer; defaulting to 60" >&2
+    configured=60
+  fi
+  if [ "$configured" -ge "$max_wait" ]; then
+    configured=$((max_wait / 2))
+    [ "$configured" -lt 1 ] && configured=1
+  fi
+  printf '%s\n' "$configured"
+}
+
+codex_github_defaults_should_apply() {
+  array_contains_value "codex-github" "${platforms[@]:-}"
 }
 
 REVIEWER_LOOP_HISTORY_SCHEMA="reviewer_loop_history.v1"
@@ -5423,11 +6755,111 @@ reviewer_loop_history_platforms_json() {
     jq -R -s -c 'split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) | map(select(length > 0 and . != "none"))'
 }
 
+reviewer_loop_path_is_non_shipped_artifact() {
+  local path="${1:-}"
+
+  case "$path" in
+    ""|docs/*|test/*|tests/*|fixtures/*|fixture/*|__fixtures__/*|__tests__/*|*.md|*.mdx|test-*|*.snap)
+      return 0
+      ;;
+  esac
+
+  case "$path" in
+    */docs/*|*/test/*|*/tests/*|*/fixtures/*|*/fixture/*|*/__fixtures__/*|*/__tests__/*|*/test-*|*/snapshots/*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+reviewer_loop_small_findings_required_rounds() {
+  local configured="${PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS:-2}"
+
+  if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]] || [ "$configured" -gt 999 ]; then
+    echo "WARN: PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS must be an integer from 1-999; defaulting to 2" >&2
+    configured=2
+  fi
+
+  printf '%s\n' "$configured"
+}
+
+reviewer_loop_blocking_paths_from_output() {
+  local output="${1:-}"
+  local blocking_count="${2:-0}"
+  local index
+  local path
+
+  [[ "$blocking_count" =~ ^[0-9]+$ ]] || blocking_count=0
+  [ "$blocking_count" -gt 0 ] || return 0
+
+  for index in $(seq 1 "$blocking_count"); do
+    path="$(kv_value_default "BLOCKING_${index}_PATH" "$output" "")"
+    [ -n "$path" ] && printf '%s\n' "$path"
+  done
+}
+
+reviewer_loop_all_paths_non_shipped() {
+  local path
+  local saw_path=0
+
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    saw_path=1
+    if ! reviewer_loop_path_is_non_shipped_artifact "$path"; then
+      return 1
+    fi
+  done
+
+  [ "$saw_path" -eq 1 ]
+}
+
+reviewer_loop_small_findings_prior_consecutive_count() {
+  local body="${1:-}"
+  local json
+
+  json="$(printf '%s\n' "$body" | reviewer_loop_history_extract_latest_json)"
+  [ -n "$json" ] || { printf '0\n'; return 0; }
+
+  printf '%s\n' "$json" | jq -r '
+    if .schema != "reviewer_loop_history.v1"
+      or ((.history_status // "available") != "available")
+      or ((.entries | type) != "array")
+    then
+      0
+    else
+      reduce ((.entries // []) | reverse[]) as $entry (
+        {count: 0, active: true};
+        if .active and (($entry.small_findings_only // false) == true) then
+          .count += 1
+        else
+          .active = false
+        end
+      ) | .count
+    end
+  ' 2>/dev/null || printf '0\n'
+}
+
 reviewer_loop_history_current_head_sha() {
   local head_sha=""
   [ -n "${pr_number:-}" ] || return 0
   if ! head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid // ""' 2>/dev/null)"; then
     head_sha=""
+  fi
+  if [ -z "$head_sha" ]; then
+    # Fallback identifier (#1502 dual-cap follow-up): a failed or empty HEAD
+    # SHA lookup must not silently make this ledger entry uncountable.
+    # reviewer_loop_history_entries_count excludes entries with an empty
+    # head_sha from both cap counts (a defensive guard against distinct-
+    # but-unresolved SHAs accidentally collapsing into one bucket) — but
+    # that same guard would let a REPEATED lookup failure (e.g. a
+    # persistent GH API issue affecting only this endpoint) grant an
+    # unlimited number of uncounted dispatches, defeating both caps (found
+    # in review of PR #1507). Generate a guaranteed-unique, non-empty
+    # placeholder so this entry is always countable as its own distinct
+    # event instead of silently vanishing from both counters.
+    head_sha="unknown-$(date +%s 2>/dev/null || printf '0')-$$-${RANDOM:-0}"
+    echo "WARN: could not resolve current HEAD SHA for PR #${pr_number} while building a reviewer-loop history entry; using synthetic placeholder '$head_sha' so this cycle remains countable" >&2
   fi
   printf '%s\n' "$head_sha"
 }
@@ -5461,10 +6893,19 @@ reviewer_loop_history_build_entry() {
   head_sha="$(reviewer_loop_history_current_head_sha)"
   recorded_at="$(reviewer_loop_history_recorded_at)"
 
+  # run_id (#1502 dual-cap follow-up): read from the current_run_id global,
+  # following the same convention already used in this function for
+  # unresolved_thread_count/late_thread_count (set by the caller before
+  # invoking, not passed as a positional argument, to avoid growing an
+  # already-long parameter list). Resolved once per invocation by
+  # reviewer_loop_resolve_run_id in the main flow; tests set it directly.
+  # Empty when unset, which jq below distinguishes from a present run_id
+  # via the back-compat "(.run_id // "")" pattern used at read time.
   jq -n \
     --argjson iteration "$iteration" \
     --arg recordedAt "$recorded_at" \
     --arg headSha "$head_sha" \
+    --arg runId "${current_run_id:-}" \
     --arg result "$result" \
     --arg reason "$reason" \
     --argjson platforms "$platforms_json" \
@@ -5477,10 +6918,16 @@ reviewer_loop_history_build_entry() {
     --argjson phaseStarted "${phase_started:-0}" \
     --argjson phaseNetNewBlocker "${phase_net_new_blocker:-0}" \
     --arg phaseBlockingPlatform "$phase_blocking_platform" \
+    --argjson smallFindingsOnly "${small_findings_only:-0}" \
+    --argjson smallFindingsStop "${small_findings_stop:-0}" \
+    --argjson smallFindingsRounds "${small_findings_rounds:-0}" \
+    --argjson smallFindingsRequiredRounds "${small_findings_required_rounds:-0}" \
+    --arg smallFindingsPaths "${small_findings_paths:-}" \
     '{
       iteration: $iteration,
       recorded_at: $recordedAt,
       head_sha: $headSha,
+      run_id: $runId,
       result: $result,
       reason: $reason,
       platforms: $platforms,
@@ -5494,7 +6941,12 @@ reviewer_loop_history_build_entry() {
         started: ($phaseStarted == 1),
         net_new_blocker: ($phaseNetNewBlocker == 1),
         blocking_platform: $phaseBlockingPlatform
-      }
+      },
+      small_findings_only: ($smallFindingsOnly == 1),
+      small_findings_stop: ($smallFindingsStop == 1),
+      small_findings_rounds: $smallFindingsRounds,
+      small_findings_required_rounds: $smallFindingsRequiredRounds,
+      small_findings_paths: ($smallFindingsPaths | split("\n") | map(select(length > 0)))
     }'
 }
 
@@ -5654,6 +7106,45 @@ reviewer_loop_history_select_summary_record() {
   '
 }
 
+# reviewer_loop_history_select_latest_summary_record
+#
+# Like reviewer_loop_history_select_summary_record, but WITHOUT the
+# render-continuity fallback to an older "available" history body when the
+# newest summary comment's own history is unavailable. Selects strictly the
+# newest "Automated Reviewer Loop Summary" comment by created_at and returns
+# ITS OWN body verbatim, regardless of whether its embedded history block
+# says available or unavailable.
+#
+# Use this selector for CYCLE-COUNTING purposes (reviewer_loop_resolve_
+# cycle_counts) — reviewer_loop_history_select_summary_record's older-
+# history fallback exists to keep the VISIBLE summary comment's rendered
+# history table from regressing when a transient write failure marks the
+# newest entry unavailable, but that same fallback would silently return a
+# STALE (and possibly under-counted) cycle count to the cap-enforcement
+# logic while masking the fact that the newest ledger state is actually
+# unreadable — defeating the fail-closed guarantee in reviewer_loop_
+# cycle_count_unavailable_should_escalate (found in review of PR #1507).
+# Counting must always see the newest ledger's true status, even when that
+# status is "unavailable".
+reviewer_loop_history_select_latest_summary_record() {
+  jq -rs '
+    (add // []) as $all
+    | [
+        $all[]
+        | select(
+            (.body // "" | contains("### Automated Reviewer Loop Summary")) and
+            (.body // "" | contains("*Posted automatically by `pr-review-loop.sh`.*"))
+          )
+      ]
+    | sort_by(.created_at)
+    | last
+    | {
+        id: (.id // ""),
+        body: (.body // "")
+      }
+  '
+}
+
 reviewer_loop_history_append_to_summary() {
   local comment_body="$1"
   local existing_body="${2:-}"
@@ -5678,6 +7169,510 @@ reviewer_loop_history_append_to_summary() {
   section="$(reviewer_loop_history_render_section "$payload")"
   printf '%s%s\n' "$comment_body" "$section"
 }
+
+# ---------------------------------------------------------------------------
+# reviewer-loop max_cycles enforcement (#1502, dual-cap follow-up)
+#
+# Protocol 93 documents a hard cycle cap ("a hard limit independent of
+# finding counts") but nothing enforced it — the loop relied entirely on the
+# calling orchestrator/agent to count cycles and escalate manually. Evidence:
+# PR #1492 in this repository reached 18 reviewer-loop iterations against a
+# documented cap of 10 (see reviewer_loop_history.v1 on that PR) with no
+# max_cycles escalation. This block makes the script itself the source of
+# truth for the cycle count and the enforcement point, independent of
+# whatever the caller does or fails to do.
+#
+# TWO independent caps, per operator decision on PR #1507's review:
+#
+#   1. Per-run cap (CYCLE_COUNT / MAX_CYCLES, review.max_cycles, default 10):
+#      resets to 0 at each orchestration-run boundary. This conforms to
+#      Protocol 91:1719 verbatim: "Initialize cycle = 0 once per
+#      orchestration run for the PR. Increment cycle each time a fixer
+#      agent is dispatched. Do not reset cycle after a fixer push; escalate
+#      when the run reaches max_cycles." Escalates with
+#      REASON=max_cycles_exceeded.
+#   2. Lifetime ceiling (TOTAL_CYCLE_COUNT / MAX_TOTAL_CYCLES,
+#      review.max_total_cycles, default 25): never resets, counts across
+#      the PR's entire review-loop lifetime regardless of run boundaries.
+#      Escalates with the distinct REASON=max_total_cycles_exceeded.
+#
+# Why both, not either/or: a per-run-only cap leaves total effort unbounded
+# — a PR resumed across many separate orchestration runs gets a fresh
+# budget every time, which is exactly the "runs until someone notices"
+# failure #1502 exists to end (the ~50-cycle / 18-hour downstream incident
+# cited in #1502 plausibly spanned multiple runs). A lifetime-only cap
+# contradicts Protocol 91:1719's explicit "initialize cycle = 0 once per
+# orchestration run" instruction. Both together satisfy each: the per-run
+# cap matches the protocol exactly, and the lifetime ceiling is the
+# structural backstop that does not depend on every caller correctly
+# threading a stable run identifier through every invocation.
+#
+# What is counted (both caps): fixer-dispatch-triggering cycles. Only prior
+# ledger entries whose `result` is `needs_fixes` or `needs_rerun` are
+# candidates — each such result is exactly the trigger condition for a
+# fixer dispatch (or, for needs_rerun, PR-Agent's equivalent auto-push
+# retry). The initial review and any `clean`/`skipped` entries are excluded.
+# Among candidates, only DISTINCT (HEAD SHA, result) PAIRS are counted (not
+# raw entry count, and not distinct HEAD SHA alone): a completed fixer
+# cycle is required to push a new commit before the next review runs
+# (Protocol 93's mandatory push-once-per-cycle discipline), so two
+# candidates sharing one HEAD SHA AND the SAME result mean no fix was
+# actually applied between them (a restarted runner, a duplicate/retried
+# invocation, or a review re-run before the orchestrator dispatched a
+# fixer) and must not be double-counted. Deduping by HEAD SHA alone would
+# be too aggressive: a needs_rerun entry (PR-Agent's auto-push evaluation
+# completing a fix cycle) immediately followed by a needs_fixes entry on
+# THAT SAME resulting HEAD SHA (a different reviewer finding a NEW,
+# unrelated issue on the post-auto-fix state) are two genuinely distinct
+# dispatch events, not a duplicate of one — collapsing them into one would
+# let more than the configured number of real fixes happen before either
+# cap fires (found in review of PR #1507). Keying on (head_sha, result)
+# instead of head_sha alone dedupes true duplicates (same head_sha AND
+# same result — no progress since the last check) while still counting a
+# needs_rerun→needs_fixes sequence on the same head_sha as two events.
+#
+# Run-boundary tracking (schema, chosen deliberately as an ADDITIVE field,
+# not a schema version bump): each ledger entry now carries an optional
+# `run_id` string, resolved once per invocation by
+# reviewer_loop_resolve_run_id and threaded into
+# reviewer_loop_history_build_entry via the `current_run_id` global (the
+# same pattern already used for `unresolved_thread_count`/`late_thread_count`
+# in that function — no signature change needed). An additive optional
+# field (not a `reviewer_loop_history.v2` schema bump) was chosen because:
+#   - It is fully backward- and forward-compatible: every existing
+#     `.schema == "reviewer_loop_history.v1"` check across this script
+#     continues to validate unchanged, and no in-flight PR's already-
+#     recorded history needs migrating mid-flight.
+#   - The field is genuinely optional at read time (see back-compat policy
+#     below), so there is no ambiguity a version bump would need to resolve.
+#
+# Back-compat policy for entries with no `run_id` (written by the
+# pre-dual-cap version of this script — this literally happened on PR #1507
+# itself, cycles 1-5, before this field existed): such entries ARE counted
+# toward the LIFETIME ceiling (they represent real historical fixer
+# dispatches — the lifetime cap must not blind itself to real prior
+# effort), but they can NEVER satisfy any specific per-run count, because
+# an entry with no `run_id` cannot match any current invocation's
+# (non-empty) resolved run_id. This means an old PR does not get an
+# artificially reset per-run budget just because its early history predates
+# run-id tracking — the lifetime ceiling still sees that history — while
+# the per-run counter correctly starts fresh for the first run-id-aware
+# invocation (since no prior entry could possibly match a brand-new run id).
+#
+# Reset semantic per axis (deliberately NOT reset-on-new-head-SHA on
+# EITHER axis): a genuinely new HEAD SHA always adds to both counts; this
+# is the opposite of the "reset on new push" option the originating issue
+# offered as an alternative, and the choice is deliberate on this axis
+# specifically: the motivating failure (PR #1492, 18 cycles) involved a new
+# HEAD SHA on nearly every cycle, because each cycle's fix is a new commit.
+# A reset-on-head-change design would set both counters back to 0 on almost
+# every invocation and would never have caught that exact case.
+#
+# The inline-fix retry lane (Protocol 93's "fast lane" for mechanical fixes)
+# is bounded by the same two counters without any extra logic: every
+# re-invocation of this script — whether triggered by an inline fix or a
+# dispatched fixer subagent — reads the same persisted ledger and is
+# subject to the same caps.
+# ---------------------------------------------------------------------------
+
+# reviewer_loop_resolve_run_id
+#
+# Resolves the run identifier for this invocation. Precedence:
+#   1. PR_REVIEW_LOOP_RUN_ID env var — set by an orchestrator that wants to
+#      group multiple pr-review-loop.sh invocations under one
+#      Protocol-91-style "orchestration run" (so the per-run cap
+#      accumulates correctly across those invocations, and resets when the
+#      orchestrator starts a genuinely new run with a new id).
+#   2. A freshly generated id (`auto-<epoch seconds>-<pid>-<$RANDOM>`) when
+#      the env var is not set. Each such auto-generated invocation is, by
+#      construction, its own isolated "run" for per-run cap purposes — no
+#      prior ledger entry can share a freshly generated id — so the per-run
+#      cap effectively becomes a no-op unless the caller opts in by setting
+#      PR_REVIEW_LOOP_RUN_ID consistently across a session. The LIFETIME
+#      ceiling is unaffected by this and still enforces regardless of
+#      caller participation, which is exactly why both caps exist together.
+reviewer_loop_resolve_run_id() {
+  local configured="${PR_REVIEW_LOOP_RUN_ID:-}"
+
+  if [ -n "$configured" ]; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+
+  printf 'auto-%s-%s-%s\n' "$(date +%s)" "$$" "$RANDOM"
+}
+
+# reviewer_loop_history_entries_count <comment_body> <run_id>
+#
+# Prints "<lifetime_count> <run_count> <status>" (space-separated) where:
+#   lifetime_count — number of DISTINCT (head_sha, result) PAIRS among ALL
+#            prior fixer-dispatch-triggering entries (result ==
+#            "needs_fixes" or "needs_rerun", with a non-empty head_sha),
+#            regardless of run_id — i.e. the lifetime-ceiling count — or -1
+#            when that count cannot be determined reliably. Keying on the
+#            pair rather than head_sha alone counts a needs_rerun entry
+#            immediately followed by a needs_fixes entry on the SAME
+#            resulting head_sha as two distinct dispatches (a completed
+#            auto-fix, then a different NEW issue found on that state) —
+#            see the block comment above for why deduping by head_sha
+#            alone would be too aggressive.
+#   run_count — the same DISTINCT-(head_sha,result)-PAIR count, but
+#            restricted to entries whose `run_id` field exactly equals
+#            <run_id> — i.e. the per-run-cap count (Protocol 91's `cycle`
+#            value at the start of this invocation) — or -1 alongside
+#            lifetime_count on failure.
+#            Entries with no `run_id` (back-compat, pre-dual-cap entries)
+#            never match and are excluded from this count, but ARE still
+#            included in lifetime_count (see the back-compat policy in the
+#            comment block above). An empty <run_id> never matches anything
+#            — including another entry whose own run_id is also empty/
+#            absent — so querying with an empty run_id always yields
+#            run_count 0 rather than accidentally matching every back-
+#            compat entry via "empty == empty".
+#   status — "available" when both counts can be trusted, "unavailable"
+#            otherwise (missing/malformed JSON, wrong schema, or a
+#            persisted history block that itself already recorded
+#            history_status=unavailable).
+#
+# An empty <comment_body>, or a body with no history marker at all, is the
+# normal "no prior reviewer-loop run" state and returns "0 0 available"
+# (cycle 0 on both axes, matching Protocol 91's initial value) — it is not
+# an error condition.
+reviewer_loop_history_entries_count() {
+  local body="${1:-}"
+  local run_id="${2:-}"
+  local json counts lifetime_count run_count
+
+  if [ -z "$body" ]; then
+    printf '%s %s %s\n' 0 0 available
+    return 0
+  fi
+
+  json="$(printf '%s\n' "$body" | reviewer_loop_history_extract_latest_json)"
+  if [ -z "$json" ]; then
+    if printf '%s\n' "$body" | grep -Fq "$REVIEWER_LOOP_HISTORY_MARKER"; then
+      # Marker present but no parseable ```json block — history is present
+      # but unreadable; do not silently treat it as zero cycles.
+      printf '%s %s %s\n' -1 -1 unavailable
+    else
+      printf '%s %s %s\n' 0 0 available
+    fi
+    return 0
+  fi
+
+  if ! printf '%s\n' "$json" | jq -e --arg schema "$REVIEWER_LOOP_HISTORY_SCHEMA" '
+        .schema == $schema
+        and (.entries | type) == "array"
+        and ((.history_status // "available") == "available")
+      ' >/dev/null 2>&1; then
+    printf '%s %s %s\n' -1 -1 unavailable
+    return 0
+  fi
+
+  counts="$(printf '%s\n' "$json" | jq -r --arg runId "$run_id" '
+        [
+          .entries[]?
+          | select((.result // "") == "needs_fixes" or (.result // "") == "needs_rerun")
+          # A head that moved during an otherwise clean run dispatches no
+          # fixer; it is a re-run, not a cycle (issue #1574).
+          | select((.reason // "") != "head_moved_during_run")
+        ] as $qualifying
+        | ($qualifying
+            | [.[] | select((.head_sha // "") | length > 0) | ((.head_sha // "") + "|" + (.result // ""))]
+            | unique
+            | length) as $lifetime
+        | ($qualifying
+            | [.[] | select(($runId | length) > 0 and (.run_id // "") == $runId and ((.head_sha // "") | length > 0)) | ((.head_sha // "") + "|" + (.result // ""))]
+            | unique
+            | length) as $run
+        | "\($lifetime) \($run)"
+      ' 2>/dev/null)" || counts=""
+  read -r lifetime_count run_count <<<"$counts"
+
+  if ! [[ "${lifetime_count:-}" =~ ^[0-9]+$ ]] || ! [[ "${run_count:-}" =~ ^[0-9]+$ ]]; then
+    printf '%s %s %s\n' -1 -1 unavailable
+    return 0
+  fi
+
+  printf '%s %s %s\n' "$lifetime_count" "$run_count" available
+}
+
+# reviewer_loop_resolve_max_cycles <config_value>
+#
+# Resolves the effective PER-RUN cap (Protocol 91:1719's `max_cycles`).
+# Precedence:
+#   1. PR_REVIEW_LOOP_MAX_CYCLES env var
+#   2. <config_value> (caller passes the raw review.max_cycles string read
+#      from .ai-dev-workflow.yaml via workflow_config_review_max_cycles)
+#   3. Default: 10 (Protocol 93's documented value)
+#
+# Any value that is not a positive integer, or is outside the supported
+# range (1-999999), falls back to the default with a WARN on stderr. The
+# range is capped at 6 digits — comfortably below any risk of exceeding
+# Bash's signed integer range in the later `[ "$cycle_count" -ge
+# "$max_cycles" ]` comparison in reviewer_loop_cap_exceeded (which would
+# otherwise emit "integer expression expected" and silently evaluate to
+# false, defeating the cap for an absurdly large misconfigured value) — and
+# no sane max_cycles value is anywhere near that large regardless.
+reviewer_loop_resolve_max_cycles() {
+  local config_value="${1:-}"
+  local configured="${PR_REVIEW_LOOP_MAX_CYCLES:-}"
+  local source="env"
+
+  if [ -z "$configured" ]; then
+    configured="$config_value"
+    source="config (review.max_cycles)"
+  fi
+  if [ -z "$configured" ]; then
+    configured=10
+    source="default"
+  fi
+  if ! [[ "$configured" =~ ^[1-9][0-9]{0,5}$ ]]; then
+    echo "WARN: max_cycles value '$configured' (source: $source) is not a positive integer within the supported range (1-999999); defaulting to 10" >&2
+    configured=10
+  fi
+  printf '%s\n' "$configured"
+}
+
+# reviewer_loop_resolve_max_total_cycles <config_value>
+#
+# Resolves the effective LIFETIME ceiling. Precedence:
+#   1. PR_REVIEW_LOOP_MAX_TOTAL_CYCLES env var
+#   2. <config_value> (caller passes the raw review.max_total_cycles string
+#      read from .ai-dev-workflow.yaml via
+#      workflow_config_review_max_total_cycles)
+#   3. Default: 25
+#
+# Same validation rule as reviewer_loop_resolve_max_cycles (positive
+# integer, 1-999999) for the same reasons.
+reviewer_loop_resolve_max_total_cycles() {
+  local config_value="${1:-}"
+  local configured="${PR_REVIEW_LOOP_MAX_TOTAL_CYCLES:-}"
+  local source="env"
+
+  if [ -z "$configured" ]; then
+    configured="$config_value"
+    source="config (review.max_total_cycles)"
+  fi
+  if [ -z "$configured" ]; then
+    configured=25
+    source="default"
+  fi
+  if ! [[ "$configured" =~ ^[1-9][0-9]{0,5}$ ]]; then
+    echo "WARN: max_total_cycles value '$configured' (source: $source) is not a positive integer within the supported range (1-999999); defaulting to 25" >&2
+    configured=25
+  fi
+  printf '%s\n' "$configured"
+}
+
+# reviewer_loop_cap_exceeded <cycle_count> <max_cycles> <result>
+#
+# Generic cap check reused for BOTH axes (call once with the per-run count
+# and per-run limit, and again with the lifetime count and lifetime limit).
+# Returns 0 (true — cap exceeded, caller should escalate) only when the loop
+# would otherwise keep going (result is needs_fixes or needs_rerun) and
+# cycle_count is known (>= 0) and has reached or passed max_cycles. A result
+# of "clean" is never overridden — a genuinely resolved PR is not escalated
+# just because it took many cycles to get there. An unknown cycle_count (-1,
+# from unreadable history) is handled separately by
+# reviewer_loop_cycle_count_unavailable_should_escalate below — this
+# function's job is strictly "is the known count at or past the cap".
+reviewer_loop_cap_exceeded() {
+  local cycle_count="$1"
+  local max_cycles="$2"
+  local result="$3"
+
+  case "$result" in
+    needs_fixes|needs_rerun) : ;;
+    *) return 1 ;;
+  esac
+
+  [ "$cycle_count" -ge 0 ] && [ "$cycle_count" -ge "$max_cycles" ]
+}
+
+# reviewer_loop_cycle_count_unavailable_should_escalate <cycle_count> <result>
+#
+# Returns 0 (true — escalate) when the cycle ledger could not be read
+# reliably (cycle_count == -1) and the loop would otherwise keep going
+# (result is needs_fixes or needs_rerun). Fails CLOSED, matching this
+# script's existing convention for other safety-critical audits (see
+# check_unresolved_threads: "we cannot confirm threads are resolved, so
+# RESULT=clean must not be emitted ... never degrade gracefully — a silent
+# bypass ... can allow PRs with unresolved review threads to be labeled
+# ready-for-human-review"). A hard cycle-count backstop that silently goes
+# dark whenever its own state cannot be read would defeat the purpose it
+# exists for exactly as much as if it had never been implemented (found in
+# review of PR #1507) — reviewer_loop_resolve_cycle_counts already retries
+# transient failures before returning -1, so a -1 here reflects a
+# genuinely unreadable ledger, not a single flaky API call. Both the
+# per-run and lifetime counts always fail together (they come from the same
+# ledger read), so this is checked once against either count.
+reviewer_loop_cycle_count_unavailable_should_escalate() {
+  local cycle_count="$1"
+  local result="$2"
+
+  case "$result" in
+    needs_fixes|needs_rerun) : ;;
+    *) return 1 ;;
+  esac
+
+  [ "$cycle_count" -eq -1 ]
+}
+
+# reviewer_loop_persist_failure_should_escalate <post_summary_exit_code> <result>
+#
+# Returns 0 (true — escalate) when this cycle's reviewer_loop_history.v1
+# ledger entry could not be persisted (<post_summary_exit_code> is non-zero
+# — both _post_review_summary's PATCH and create-fallback failed) AND this
+# cycle's own result was needs_fixes or needs_rerun (dispatch-triggering).
+# A "clean" or already-"escalate" result is never affected — no fixer
+# dispatch is at risk of going uncounted in those cases. Fails CLOSED,
+# matching the same rationale as reviewer_loop_cycle_count_unavailable_
+# should_escalate: a persistence failure that silently lets the caller
+# dispatch an uncounted fixer defeats both caps exactly as much as an
+# unreadable ledger does (found in review of PR #1507).
+#
+# Kept as its own pure, directly-testable function (defined before the
+# HARNESS_MODE return point) because _post_review_summary itself is defined
+# after that point (it does real gh API side effects) and is not directly
+# unit-testable from the harness — this function isolates the decision
+# logic so it can be verified without a full main-loop subprocess run.
+reviewer_loop_persist_failure_should_escalate() {
+  local post_summary_exit_code="$1"
+  local result="$2"
+  local reason="${3:-}"
+
+  case "$result" in
+    needs_fixes|needs_rerun) : ;;
+    *) return 1 ;;
+  esac
+  # A head that moved during a clean run dispatches no fixer and is not
+  # counted as a cycle, so an unpersisted ledger cannot let an unbounded
+  # dispatch through; a transient comment failure there is not a reason to
+  # pull a human in (issue #1574).
+  [ "$reason" != "head_moved_during_run" ] || return 1
+
+  [ "$post_summary_exit_code" -ne 0 ]
+}
+
+# reviewer_loop_resolve_cycle_counts <pr_number> <run_id>
+#
+# Resolves BOTH this invocation's per-run cycle count (Protocol 91's `cycle`
+# value, scoped to <run_id>) and the PR's lifetime cycle count, by reading
+# the persisted reviewer_loop_history.v1 ledger from the PR's "Automated
+# Reviewer Loop Summary" comment (the same ledger written by
+# reviewer_loop_history_append_to_summary / _post_review_summary) via
+# reviewer_loop_history_entries_count. Prints "<lifetime_count> <run_count>"
+# (space-separated), or "-1 -1" when the prior counts could not be
+# determined reliably (repo slug unresolved, GitHub API failure after
+# retries, or an unreadable/malformed history block) — never guesses.
+#
+# The GitHub comments fetch is retried (default: 1 retry, i.e. 2 total
+# attempts) before giving up, so a single transient API blip does not
+# immediately surface as "unavailable" (which reviewer_loop_cycle_count_
+# unavailable_should_escalate treats as a hard escalation). Configurable via
+# CYCLE_LEDGER_MAX_RETRIES (attempts beyond the first) and
+# CYCLE_LEDGER_RETRY_WAIT (seconds between attempts; tests set this to 0).
+#
+# Uses reviewer_loop_history_select_latest_summary_record (NOT
+# reviewer_loop_history_select_summary_record) — the newest summary
+# comment's own history status must govern counting, even when it is
+# "unavailable". reviewer_loop_history_select_summary_record's older-
+# history fallback exists for the render path only (so the visible summary
+# comment's history table does not regress on a transient write failure);
+# using it here would let a genuinely unreadable newest ledger state
+# silently resolve to a stale (and possibly under-counted) prior count
+# instead of -1, masking a real dispatch from both caps and defeating the
+# fail-closed guarantee (found in review of PR #1507).
+#
+# Kept as its own function (defined before the HARNESS_MODE return point, like
+# restore_regression_label_if_missing) so it is directly unit-testable via the
+# MOCK_GH_COMMENTS_OUTPUT / MOCK_GH_COMMENTS_EXIT harness conventions, without
+# requiring a full main-loop subprocess run.
+reviewer_loop_resolve_cycle_counts() {
+  local pr_number_arg="$1"
+  local run_id_arg="${2:-}"
+  local repo="" record="" body="" lifetime_count run_count status
+  local max_retries retry_wait attempt
+
+  if [ -z "$pr_number_arg" ]; then
+    printf '%s %s\n' -1 -1
+    return 0
+  fi
+
+  if ! repo="$(repo_slug 2>/dev/null)" || [ -z "$repo" ]; then
+    echo "WARN: could not resolve repo slug while resolving reviewer cycle counts for PR #${pr_number_arg}; treating prior cycle counts as unavailable" >&2
+    printf '%s %s\n' -1 -1
+    return 0
+  fi
+
+  # Bounded the same way as reviewer_loop_resolve_max_cycles/
+  # reviewer_loop_resolve_max_total_cycles (1-999999, up to 6 digits): an
+  # unbounded ^[0-9]+$ regex would accept a digit-only value outside Bash's
+  # signed integer range, and the later `[ "$attempt" -gt "$max_retries" ]`
+  # comparison would then emit "integer expression expected" and evaluate
+  # as false every time (a `[ ]` failure inside an `if` condition does not
+  # trigger `set -e`) — so the retry loop would never reach its "give up"
+  # branch and retry indefinitely instead of failing closed (found in
+  # review of PR #1507).
+  max_retries="${CYCLE_LEDGER_MAX_RETRIES:-1}"
+  if ! [[ "$max_retries" =~ ^[0-9]{1,6}$ ]]; then
+    max_retries=1
+  fi
+  retry_wait="${CYCLE_LEDGER_RETRY_WAIT:-2}"
+  if ! [[ "$retry_wait" =~ ^[0-9]{1,6}$ ]]; then
+    retry_wait=2
+  fi
+
+  attempt=0
+  record=""
+  while true; do
+    attempt=$((attempt + 1))
+    if record="$(
+        set -o pipefail
+        gh api "repos/$repo/issues/$pr_number_arg/comments" --paginate 2>/dev/null \
+          | reviewer_loop_history_select_latest_summary_record
+      )"; then
+      break
+    fi
+    if [ "$attempt" -gt "$max_retries" ]; then
+      echo "WARN: failed to fetch existing summary comments for PR ${pr_number_arg} while resolving reviewer cycle counts (attempt $attempt/$((max_retries + 1))); treating prior cycle counts as unavailable" >&2
+      printf '%s %s\n' -1 -1
+      return 0
+    fi
+    echo "WARN: failed to fetch existing summary comments for PR ${pr_number_arg} while resolving reviewer cycle counts (attempt $attempt/$((max_retries + 1))) — retrying" >&2
+    [ "$retry_wait" -gt 0 ] && sleep "$retry_wait"
+  done
+
+  body="$(printf '%s\n' "$record" | jq -r '.body // ""' 2>/dev/null)" || body=""
+  read -r lifetime_count run_count status < <(reviewer_loop_history_entries_count "$body" "$run_id_arg")
+
+  if [ "$status" = "available" ]; then
+    printf '%s %s\n' "$lifetime_count" "$run_count"
+  else
+    printf '%s %s\n' -1 -1
+  fi
+}
+
+reviewer_loop_fetch_latest_summary_body() {
+  local pr_number_arg="$1"
+  local repo="" record="" body=""
+
+  if [ -z "$pr_number_arg" ]; then
+    return 0
+  fi
+  if ! repo="$(repo_slug 2>/dev/null)" || [ -z "$repo" ]; then
+    return 0
+  fi
+  record="$(
+    set -o pipefail
+    gh api "repos/$repo/issues/$pr_number_arg/comments" --paginate 2>/dev/null \
+      | reviewer_loop_history_select_latest_summary_record
+  )" || return 0
+  body="$(printf '%s\n' "$record" | jq -r '.body // ""' 2>/dev/null)" || body=""
+  printf '%s\n' "$body"
+}
+
 
 # ---------------------------------------------------------------------------
 # _check_release_pr_guard <pr_number> [<branch_name>]
@@ -5749,11 +7744,21 @@ _check_release_pr_guard() {
   return 1
 }
 
+# resolve_local_review_override_root <initiating_root>
+#
+# Prints the directory whose .ai-dev-workflow.local.yaml carries the review
+# policy for this run, or nothing when the policy is the shared config. The
+# resolver reports LOCAL_OVERRIDE_FILE, which is the initiating root's own file
+# or — when the initiating root is a linked worktree without one — the main
+# clone's (#1560). Printing the file's directory rather than the initiating
+# root keeps the exported WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT pointing at a
+# directory that actually holds the file.
 resolve_local_review_override_root() {
   local initiating_root="$1"
   local caller_override_root="${WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT:-}"
   local override_context=""
   local override_source=""
+  local override_file=""
 
   if [ -n "$caller_override_root" ]; then
     if [ ! -d "$caller_override_root" ]; then
@@ -5767,8 +7772,13 @@ resolve_local_review_override_root() {
     return 1
   fi
   override_source="$(workflow_context_value "LOCAL_OVERRIDE_SOURCE" "$override_context")"
+  override_file="$(workflow_context_value "LOCAL_OVERRIDE_FILE" "$override_context")"
   if [ -n "$override_source" ]; then
-    printf '%s\n' "$initiating_root"
+    if [ -n "$override_file" ]; then
+      printf '%s\n' "$(dirname -- "$override_file")"
+    else
+      printf '%s\n' "$initiating_root"
+    fi
   fi
 }
 
@@ -5776,6 +7786,226 @@ resolve_local_review_override_root() {
 # All function definitions above (including normalize_platform_verdict,
 # append_compare_metrics_row, and restore_regression_label_if_missing) are
 # loaded; only the argument-parsing and execution sections below are skipped.
+# ---------------------------------------------------------------------------
+# Post-clean settle window (issue #1556)
+#
+# The old behaviour was a single 30-second wait followed by one thread re-query.
+# That is far too short for CodeRabbit, which posts findings minutes after it
+# first goes quiet. Measured: PR #1532 two late findings, #1541 three across
+# three rounds, #1555 five across two rounds, and again during #1537/#1562 —
+# eight on one PR across two post-clean rounds, two of them Major. Every late
+# finding was real. Nothing escaped only because runners were told to hold a
+# 2-3 minute quiet window and re-query by hand, which is operator discipline
+# standing in for a tooling guarantee.
+#
+# The verdict now means "clean, and still clean after the vendor went quiet":
+# poll until the platform has produced NO activity for a full quiet period, or
+# until the overall window is exhausted. Any activity resets the quiet timer,
+# because a vendor that just spoke is likely to speak again.
+#
+# _settle_config_for_platform <platform> — echoes "window quiet poll" seconds.
+#
+# Per-platform (AC-4), because vendors differ by an order of magnitude and a
+# window sized for the slowest would tax every other platform. Resolution
+# order, most specific first:
+#   1. <PLATFORM>_POST_CLEAN_SETTLE_WINDOW / _QUIET / _POLL   (e.g. CODERABBIT_)
+#   2. POST_CLEAN_SETTLE_WINDOW / POST_CLEAN_SETTLE_QUIET / POST_CLEAN_POLL
+#   3. the per-platform defaults below
+#
+# POST_CLEAN_WAIT is still honoured as the quiet period when nothing more
+# specific is set, so existing callers keep working.
+_settle_config_for_platform() {
+  local platform="$1"
+  local window quiet poll
+  local prefix
+  # coderabbit-cli shares CodeRabbit's posting behaviour.
+  case "$platform" in
+    coderabbit|coderabbit-cli) prefix="CODERABBIT" ;;
+    *) prefix="$(printf '%s' "$platform" | tr '[:lower:]-' '[:upper:]_')" ;;
+  esac
+  # The prefix is interpolated into a variable NAME below. Reject anything that
+  # is not a valid shell identifier rather than trusting the tr transform to
+  # have neutralised it: platform reaches here from --platform and from the
+  # workflow config, neither of which is validated upstream. An unusable prefix
+  # simply means no per-platform overrides — the generic knobs and the defaults
+  # still apply, so a strange platform name degrades instead of failing.
+  case "$prefix" in
+    ''|*[!A-Za-z0-9_]*) prefix="" ;;
+    [0-9]*) prefix="" ;;
+  esac
+
+  # require_review: whether silence alone may satisfy the settle, or whether a
+  # formal review submission for the current HEAD is required first.
+  #
+  # This is the distinction the first implementation of #1556 missed, and the
+  # measurement that forced it: on PR #1573, HEAD landed at 00:17:29, CodeRabbit
+  # posted its WALKTHROUGH comment 48s later at 00:18:17, and the loop treated
+  # that as "reviewed, no findings" and returned clean. The actual review was
+  # submitted at 00:30:32 — twelve minutes after the walkthrough — carrying
+  # three findings. A quiet period cannot help here: CodeRabbit was completely
+  # silent for the whole 180s window because it was still thinking.
+  #
+  # Silence is an absence signal and cannot distinguish "done" from "working".
+  # For CodeRabbit the settle therefore waits for a positive one.
+  local require_review
+  case "$platform" in
+    coderabbit|coderabbit-cli)
+      # Window sized from the observed walkthrough-to-review gap (~12 min),
+      # not guessed.
+      window=900; quiet=120; poll=60; require_review=1
+      ;;
+    *)
+      window=180; quiet=60; poll=30; require_review=0
+      ;;
+  esac
+
+  local v _n
+  v=""
+  if [ -n "$prefix" ]; then _n="${prefix}_POST_CLEAN_SETTLE_WINDOW"; v="${!_n:-}"; fi
+  [ -n "$v" ] || v="${POST_CLEAN_SETTLE_WINDOW:-}"
+  case "$v" in ''|*[!0-9]*) ;; *) window="$v" ;; esac
+
+  v=""
+  if [ -n "$prefix" ]; then _n="${prefix}_POST_CLEAN_SETTLE_QUIET"; v="${!_n:-}"; fi
+  [ -n "$v" ] || v="${POST_CLEAN_SETTLE_QUIET:-${POST_CLEAN_WAIT:-}}"
+  case "$v" in ''|*[!0-9]*) ;; *) quiet="$v" ;; esac
+
+  v=""
+  if [ -n "$prefix" ]; then _n="${prefix}_POST_CLEAN_POLL"; v="${!_n:-}"; fi
+  [ -n "$v" ] || v="${POST_CLEAN_POLL:-}"
+  case "$v" in ''|*[!0-9]*) ;; *) poll="$v" ;; esac
+
+  # A quiet period longer than the window can never be satisfied, which would
+  # burn the whole window and then report settled without ever having been.
+  [ "$quiet" -gt "$window" ] && quiet="$window"
+  [ "$poll" -lt 1 ] && poll=1
+  [ "$poll" -gt "$quiet" ] && [ "$quiet" -gt 0 ] && poll="$quiet"
+
+  v=""
+  if [ -n "$prefix" ]; then _n="${prefix}_POST_CLEAN_REQUIRE_REVIEW"; v="${!_n:-}"; fi
+  [ -n "$v" ] || v="${POST_CLEAN_REQUIRE_REVIEW:-}"
+  case "$v" in 0|1) require_review="$v" ;; esac
+
+  printf '%s %s %s %s' "$window" "$quiet" "$poll" "$require_review"
+}
+
+# _review_body_is_substantive <body>
+#
+# The GitHub reviews endpoint includes zero-body "review" containers when a bot
+# replies inside existing review threads. Those containers are not a review of
+# the current code and must not satisfy POST_CLEAN_REQUIRE_REVIEW.
+_review_body_is_substantive() {
+  local body="${1:-}"
+  local normalized normalized_key
+  normalized="$(printf '%s' "$body" | tr '\r\n\t' '   ' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  [ -n "$normalized" ] || return 1
+  normalized_key="$(printf '%s' "$normalized" | tr '[:upper:]' '[:lower:]' | sed 's/[[:space:][:punct:]]*$//')"
+
+  case "$normalized_key" in
+    "thanks"|"thank you"|"acknowledged"|"got it"|"the change is correct")
+      return 1
+      ;;
+  esac
+
+  return 0
+}
+
+# _bot_review_submitted_since <repo> <pr> <since-iso> [head-sha] <bot-login>...
+#
+# Echoes 1 when any listed bot has SUBMITTED a formal review at or after
+# <since-iso>, 0 when none has, and -1 when the query failed. This is the
+# positive completion signal: CodeRabbit's walkthrough issue comment appears
+# within a minute of the push and means only that it has noticed the PR, while
+# the submitted review is what carries the findings.
+_bot_review_submitted_since() {
+  local repo="$1" pr="$2" since="$3"
+  shift 3
+  local head_sha=""
+  if [ "$#" -gt 0 ]; then
+    case "$1" in
+      [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]*)
+        head_sha="$1"
+        shift
+        ;;
+    esac
+  fi
+  local logins_json reviews matched=0 reviews_status=0
+  logins_json="$(printf '%s\n' "$@" | jq -R . | jq -sc .)"
+  reviews="$(gh api "repos/$repo/pulls/$pr/reviews" --paginate 2>/dev/null \
+    | jq -sr --argjson bots "$logins_json" --arg since "$since" --arg head "$head_sha" '
+        .[][]? | select(
+            ((.user.login // "")) as $raw
+            | ($raw | rtrimstr("[bot]")) as $l
+            | ((($bots | index($l)) != null) or (($bots | index($raw)) != null))
+          )
+        | select((.submitted_at // "") > $since)
+        | select(($head == "") or ((.commit_id // $head) == $head))
+        | (.body // "")
+      ' 2>/dev/null)" || reviews_status=$?
+  if [ "$reviews_status" -ne 0 ]; then
+    printf '%s' "-1"
+    return 0
+  fi
+  if [ -z "$reviews" ]; then
+    printf '0'
+    return 0
+  fi
+
+  while IFS= read -r body; do
+    if _review_body_is_substantive "$body"; then
+      matched=1
+      break
+    fi
+  done <<< "$reviews"
+
+  [ "$matched" -eq 1 ] && printf '1' || printf '0'
+}
+
+# _bot_activity_since <repo> <pr> <since-iso> <bot-login>...
+#
+# Counts bot activity at or after <since-iso> across issue comments, review
+# comments, and submitted reviews. Accepts updated_at as well as created_at,
+# so an in-place edit counts — the same blind spot fixed in the CodeRabbit
+# activity probe. Echoes an integer, or "-1" if the query failed (which the
+# caller must not read as "quiet").
+_bot_activity_since() {
+  local repo="$1" pr="$2" since="$3"
+  shift 3
+  local logins_json
+  logins_json="$(printf '%s\n' "$@" | jq -R . | jq -sc .)"
+
+  local issue_n review_n comment_n
+  issue_n="$(gh api "repos/$repo/issues/$pr/comments" --paginate 2>/dev/null \
+    | jq -s --argjson bots "$logins_json" --arg since "$since" '
+        [ .[][]? | select(
+            ((.user.login // "")) as $raw
+            | ($raw | rtrimstr("[bot]")) as $l
+            | ((($bots | index($l)) != null) or (($bots | index($raw)) != null)) 
+          ) | select((.created_at > $since) or ((.updated_at // .created_at) > $since))
+        ] | length' 2>/dev/null)" || issue_n=""
+  comment_n="$(gh api "repos/$repo/pulls/$pr/comments" --paginate 2>/dev/null \
+    | jq -s --argjson bots "$logins_json" --arg since "$since" '
+        [ .[][]? | select(
+            ((.user.login // "")) as $raw
+            | ($raw | rtrimstr("[bot]")) as $l
+            | ((($bots | index($l)) != null) or (($bots | index($raw)) != null))
+          ) | select((.created_at > $since) or ((.updated_at // .created_at) > $since))
+        ] | length' 2>/dev/null)" || comment_n=""
+  review_n="$(gh api "repos/$repo/pulls/$pr/reviews" --paginate 2>/dev/null \
+    | jq -s --argjson bots "$logins_json" --arg since "$since" '
+        [ .[][]? | select(
+            ((.user.login // "")) as $raw
+            | ($raw | rtrimstr("[bot]")) as $l
+            | ((($bots | index($l)) != null) or (($bots | index($raw)) != null))
+          ) | select((.submitted_at // "") > $since)
+        ] | length' 2>/dev/null)" || review_n=""
+
+  case "${issue_n}${comment_n}${review_n}" in
+    ''|*[!0-9]*) printf '%s' "-1"; return 0 ;;
+  esac
+  printf '%s' "$(( issue_n + comment_n + review_n ))"
+}
+
 [ "$_HARNESS_MODE_EFFECTIVE" -eq 1 ] && return 0 2>/dev/null || true
 
 if [ "$#" -lt 1 ]; then
@@ -5793,6 +8023,7 @@ poll_interval=120
 poll_interval_explicit=0
 max_wait=1200
 max_wait_explicit=0
+codex_github_pre_trigger_wait=""
 post_final_summary=0
 compare_mode=0
 pre_after_clean_only=0
@@ -5867,6 +8098,11 @@ while [ "$#" -gt 0 ]; do
       max_wait_explicit=1
       shift 2
       ;;
+    --pre-trigger-wait)
+      require_option_value "$@"
+      codex_github_pre_trigger_wait="$2"
+      shift 2
+      ;;
     --post-final-summary)
       post_final_summary=1
       shift
@@ -5924,6 +8160,24 @@ if [ -n "$repo_selector" ]; then
   export WORKFLOW_TARGET_GITHUB_REPO="$target_github_repo"
   export GH_REPO="$target_github_repo"
   print_kv REPO "$target_github_repo"
+fi
+
+# --- Reviewer-loop run identifier (#1502 follow-up: dual cap) ---
+# Resolved as early as possible (pr_number is now stable) so every code path
+# that can append a reviewer_loop_history.v1 ledger entry for this PR --
+# including the release-guard and not-configured skip paths below -- writes
+# a consistent run_id. See reviewer_loop_resolve_run_id for the resolution
+# rule (explicit PR_REVIEW_LOOP_RUN_ID env var, else a freshly generated
+# per-invocation id).
+current_run_id="$(reviewer_loop_resolve_run_id)"
+print_kv RUN_ID "$current_run_id"
+
+# Reconcile the rate-limit ceiling against the declared execution budget before
+# any waiting starts (issue #1562). Failing here costs a second; discovering the
+# same misconfiguration by being killed mid-wait costs an hour and reports
+# nothing.
+if ! _check_execution_budget; then
+  exit 2
 fi
 
 # --- Release PR early-exit guard ---
@@ -6142,6 +8396,15 @@ if [ "$max_wait_explicit" -eq 0 ]; then
   esac
 fi
 
+if codex_github_defaults_should_apply; then
+  if [ "$max_wait_explicit" -eq 0 ]; then
+    max_wait="$(codex_github_default_max_wait)"
+  fi
+  if [ "$poll_interval_explicit" -eq 0 ]; then
+    poll_interval="$(codex_github_default_poll_interval "$max_wait")"
+  fi
+fi
+
 # Large-diff poll-window extension.
 # CodeRabbit takes significantly longer to post its review on large-diff PRs
 # (e.g. release PRs with hundreds of changed files). The default max_wait=1200 s
@@ -6200,6 +8463,31 @@ if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
   restore_regression_label_if_missing "$pr_number" "${branch_name:-}"
 fi
 
+# --- Reviewer cycle cap (max_cycles / max_total_cycles) resolution (#1502) ---
+# Read the persisted reviewer_loop_history.v1 ledger (the same one written by
+# _post_review_summary/reviewer_loop_history_append_to_summary below) to
+# determine, for THIS invocation's run_id (current_run_id, resolved above),
+# how many fixer dispatches have already occurred this run (Protocol 91's
+# `cycle` counter) AND across the PR's whole lifetime, then resolve both
+# configured caps. See the "reviewer-loop max_cycles enforcement" comment
+# block above reviewer_loop_history_entries_count for what is counted (only
+# needs_fixes/needs_rerun entries, deduped by distinct HEAD SHA) and the
+# dual-cap rationale (per-run resets at the orchestration-run boundary;
+# lifetime never resets).
+#
+# Both counts are -1 together when the prior ledger could not be read
+# reliably; the cap checks fail open in that case (see
+# reviewer_loop_cap_exceeded) — reviewer_loop_cycle_count_unavailable_
+# should_escalate below handles failing CLOSED instead when the loop would
+# otherwise keep going.
+max_cycles="$(reviewer_loop_resolve_max_cycles "$(workflow_config_review_max_cycles "${config_file:-$(workflow_config_file)}" 2>/dev/null || true)")"
+max_total_cycles="$(reviewer_loop_resolve_max_total_cycles "$(workflow_config_review_max_total_cycles "${config_file:-$(workflow_config_file)}" 2>/dev/null || true)")"
+lifetime_cycle_count=-1
+cycle_count=-1
+if [ -n "$pr_number" ] && [ "${#platforms[@]}" -gt 0 ]; then
+  read -r lifetime_cycle_count cycle_count < <(reviewer_loop_resolve_cycle_counts "$pr_number" "$current_run_id")
+fi
+
 aggregate_result="skipped"
 aggregate_reason=""
 last_platform=""
@@ -6210,7 +8498,27 @@ total_blocking_count=0
 total_suggestion_count=0
 aggregate_advisory_labels=""
 reviewer_failed_required=0
+small_findings_required_rounds="$(reviewer_loop_small_findings_required_rounds)"
+small_findings_only=0
+small_findings_stop=0
+small_findings_rounds=0
+small_findings_paths=""
+small_findings_paths_inline=""
 declare -a compare_verdicts=()
+declare -a aggregate_blocking_paths=()
+# The head this run reviews, captured BEFORE any reviewer is dispatched
+# (issue #1574). Every verdict below describes this commit; the settle emits it
+# as POST_CLEAN_HEAD_SHA, and the head-move guard after the settle turns a
+# clean verdict into needs_fixes/head_moved_during_run if the PR moved away
+# from it while the loop ran. Reading it later would bind the verdict to
+# whatever was pushed in the meantime.
+loop_head_sha=""
+if [ -n "$pr_number" ]; then
+  if ! loop_head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null)"; then
+    loop_head_sha=""
+    echo "WARN: could not read the PR head before dispatching reviewers; POST_CLEAN_HEAD_SHA will be empty and Protocol 91 Check 0.6 will refuse this verdict" >&2
+  fi
+fi
 # Per-platform result tokens for the PR summary comment.
 # Each entry is "platform_name:display_token" (e.g. "haystack:unavailable").
 declare -a platform_result_tokens=()
@@ -6253,6 +8561,17 @@ print_kv PHASE_AFTER_CLEAN_ENABLED "$phase_after_clean_enabled"
   print_kv PHASE_AFTER_CLEAN_PLATFORM_LIST "$(IFS=,; printf '%s' "${phase_after_clean_platforms[*]}")"
 print_kv CHANGED_FILES_COUNT "${changed_files_count:--1}"
 [ "$large_diff_extended" -eq 1 ] && print_kv LARGE_DIFF_EXTENDED 1
+# Reviewer cycle cap telemetry (#1502, dual-cap): CYCLE_COUNT is the number
+# of fixer dispatches already issued THIS ORCHESTRATION RUN (resets to 0 at
+# each run boundary — see RUN_ID above); TOTAL_CYCLE_COUNT is the same
+# distinct-HEAD-SHA count across the PR's ENTIRE lifetime and never resets.
+# Both are -1 when the prior ledger could not be read. Emitted so a
+# supervising runner can see how close the loop is to either cap before it
+# trips, independent of whether this cycle ends up escalating.
+print_kv CYCLE_COUNT "$cycle_count"
+print_kv MAX_CYCLES "$max_cycles"
+print_kv TOTAL_CYCLE_COUNT "$lifetime_cycle_count"
+print_kv MAX_TOTAL_CYCLES "$max_total_cycles"
 
 for index in "${!platforms[@]}"; do
   platform_index=$((index + 1))
@@ -6272,8 +8591,22 @@ for index in "${!platforms[@]}"; do
         phase_after_clean_net_new_blocker=1
         phase_after_clean_blocking_platform="ready_for_review"
         aggregate_result="escalate"
-        aggregate_reason="ready_for_review_failed"
-        aggregate_output="$(printf 'RESULT=escalate\nREASON=ready_for_review_failed\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+        # Exit 3 means ensure_pr_ready_for_ready_phase confirmed (via
+        # gh_rate_limit_exhausted_reset) that the underlying `gh` failure was a
+        # GitHub API rate-limit exhaustion rather than a genuine review-gate
+        # failure (issue #1509). Give it a distinct, actionable REASON instead
+        # of the generic ready_for_review_failed, and carry the reset
+        # timestamp so a human/supervisor knows when it is safe to retry.
+        # reviewer_failed_label_required_for_result() excludes this REASON
+        # from the reviewer-failed label — vendor/infrastructure unavailability
+        # is not a review verdict on the PR.
+        if [ "$ready_status" -eq 3 ]; then
+          aggregate_reason="rate_limited"
+          aggregate_output="$(printf 'RESULT=escalate\nREASON=rate_limited\nRATE_LIMIT_RESET=%s\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n' "$READY_PHASE_GATE_RATE_LIMIT_RESET")"
+        else
+          aggregate_reason="ready_for_review_failed"
+          aggregate_output="$(printf 'RESULT=escalate\nREASON=ready_for_review_failed\nCOMMENT_COUNT=0\nBLOCKING_COUNT=0\nSUGGESTION_COUNT=0\n')"
+        fi
         aggregate_status=2
         break
       fi
@@ -6301,6 +8634,10 @@ for index in "${!platforms[@]}"; do
   total_comment_count=$((total_comment_count + platform_comment_count))
   total_blocking_count=$((total_blocking_count + platform_blocking_count))
   total_suggestion_count=$((total_suggestion_count + platform_suggestion_count))
+  while IFS= read -r _blocking_path; do
+    [ -n "$_blocking_path" ] && aggregate_blocking_paths+=("$_blocking_path")
+  done < <(reviewer_loop_blocking_paths_from_output "$platform_output" "$platform_blocking_count")
+  unset _blocking_path
   if [ -n "$platform_advisory_labels" ]; then
     if [ -n "$aggregate_advisory_labels" ]; then
       aggregate_advisory_labels="${aggregate_advisory_labels}|||${platform_advisory_labels}"
@@ -6380,6 +8717,21 @@ for index in "${!platforms[@]}"; do
         aggregate_status=$platform_status
       fi
       aggregate_result="clean"
+      ;;
+    waiting_on_reviewer)
+      aggregate_result="$platform_result"
+      aggregate_reason="$(kv_value_default REASON "$platform_output" "")"
+      aggregate_output="$platform_output"
+      aggregate_status=$platform_status
+      if [ "$compare_mode" -eq 0 ]; then
+        break
+      fi
+      if [ -z "$compare_first_blocking_result" ]; then
+        compare_first_blocking_result="$platform_result"
+        compare_first_blocking_reason="$aggregate_reason"
+        compare_first_blocking_output="$platform_output"
+        compare_first_blocking_status=$platform_status
+      fi
       ;;
     needs_fixes|escalate)
       if [ "$phase_after_clean_enabled" -eq 1 ] \
@@ -6474,17 +8826,33 @@ _post_review_summary() {
   local result_line
   case "$result" in
     clean)
-      if [ "$blocking" -eq 0 ] && [ "$suggestions" -eq 0 ]; then
+      if [ "${small_findings_stop:-0}" -eq 1 ]; then
+        result_line="clean (small-findings stop) — non-shipped tail recorded for human merge audit"
+      elif [ "$blocking" -eq 0 ] && [ "$suggestions" -eq 0 ]; then
         result_line="clean — no blocking findings"
       else
         result_line="clean"
       fi
       ;;
     needs_fixes)
-      result_line="${blocking} blocking finding(s) require fixes"
+      case "$reason" in
+        head_moved_during_run)
+          # This is the only needs_fixes reason with a zero blocking count
+          # (issue #1574): every reviewer was clean, but the PR head moved
+          # while they ran, so "N blocking finding(s)" would misreport why
+          # this cycle is not clean. Name the reason explicitly instead.
+          result_line="needs_fixes (head_moved_during_run) — the clean verdict was for a HEAD the PR has since moved past; nothing to fix, re-run Step 7 for the current HEAD"
+          ;;
+        *)
+          result_line="${blocking} blocking finding(s) require fixes"
+          ;;
+      esac
       ;;
     escalate)
       result_line="escalated (${reason:-unknown})"
+      ;;
+    waiting_on_reviewer)
+      result_line="waiting_on_reviewer (${reason:-codex-github-review-pending}) — current-head review trigger posted; reviewer has not returned terminal evidence yet"
       ;;
     skipped)
       result_line="skipped — no GitHub reviewers configured in review.on_draft.github or review.on_ready.github"
@@ -6635,13 +9003,21 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
     done
   fi
 
+  local small_findings_section=""
+  if [ "${small_findings_stop:-0}" -eq 1 ]; then
+    small_findings_section="
+**Small-findings stop:** ${small_findings_rounds:-0}/${small_findings_required_rounds:-0} consecutive review rounds contained only non-shipped-artifact findings, and the strict review-thread audit reported zero unresolved threads. Exact-head tests and CI still gate readiness after this review result.
+**Unreviewed tail:** ${small_findings_paths_inline:-none}"
+  fi
+
   local comment_body
   comment_body="$(cat <<EOF
 ### Automated Reviewer Loop Summary
 
 **Result:** ${result_line}
 **Platforms:** ${platform_list:-none}${policy_status_section}
-**Findings:** ${blocking} blocking, ${suggestions} suggestions${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${regression_label_section}
+**Findings:** ${blocking} blocking, ${suggestions} suggestions
+${small_findings_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF
@@ -6663,8 +9039,21 @@ EOF
   local _existing_comment_body=""
   local _repo
   local _existing_comment_record=""
+  # Tracked separately from the write outcome below (#1502 dual-cap
+  # follow-up): when this READ fails, the code falls back to an
+  # "unavailable" stub as the existing body, which reviewer_loop_history_
+  # payload_from_existing then refuses to append this cycle's entry onto
+  # (append_safe=0 for a persisted "unavailable" history_status) — so the
+  # WRITE below can succeed (posting the stub) while this cycle's entry is
+  # still never actually recorded. A later "clean" cycle's OWN posting-time
+  # read can then recover an OLDER available snapshot via reviewer_loop_
+  # history_select_summary_record's deliberate render-continuity fallback
+  # and patch over the stub, permanently losing this cycle's dispatch from
+  # both cap counters (found in review of PR #1507). Treat a failed READ
+  # here the same as a failed WRITE for fail-closed purposes.
+  local _existing_read_failed=0
   _repo="$(repo_slug 2>/dev/null)" \
-    || { echo "WARN: repo_slug failed in _post_review_summary; will post new comment without update-in-place check" >&2; _repo=""; }
+    || { echo "WARN: repo_slug failed in _post_review_summary; will post new comment without update-in-place check" >&2; _repo=""; _existing_read_failed=1; }
   if [ -n "$_repo" ]; then
     _existing_comment_record="$(
       set -o pipefail
@@ -6675,6 +9064,7 @@ EOF
         echo "WARN: failed to fetch existing summary comments for PR ${pr_number}; will create a new comment with unavailable history" >&2
         _existing_comment_record=""
         _existing_comment_body="$(reviewer_loop_history_unavailable_stub_body comment_read_failed)"
+        _existing_read_failed=1
       }
     if [ -n "$_existing_comment_record" ]; then
       _existing_comment_id="$(printf '%s\n' "$_existing_comment_record" | jq -r '.id // empty' 2>/dev/null)" || _existing_comment_id=""
@@ -6705,13 +9095,45 @@ EOF
     local _body_tmpfile
     _body_tmpfile="$(mktemp)"
     printf '%s' "$comment_body" > "$_body_tmpfile"
-    if ! gh pr comment "$pr_number" --body-file "$_body_tmpfile" >/dev/null 2>&1; then
+    if gh pr comment "$pr_number" --body-file "$_body_tmpfile" >/dev/null 2>&1; then
+      _comment_posted=1
+    else
       echo "WARN: failed to post reviewer loop summary comment for PR ${pr_number}" >&2
     fi
     rm -f "$_body_tmpfile"
   fi
 
   set -e
+
+  # Persistence failure signal (#1502 dual-cap follow-up): when BOTH the
+  # PATCH and the create-fallback fail, this cycle's reviewer_loop_history.v1
+  # entry (built by reviewer_loop_history_append_to_summary above and folded
+  # into $comment_body) was never actually written to the PR. If the caller
+  # does not react to this, the next invocation's reviewer_loop_resolve_
+  # cycle_counts call re-reads the unchanged, stale ledger — the fixer still
+  # gets dispatched, but that dispatch is never counted, and repeated
+  # persistence failures (e.g. a token that can read but not write
+  # comments) would let unbounded cycles slip past both caps (found in
+  # review of PR #1507). Return non-zero so the caller (which invokes this
+  # function BEFORE printing RESULT=/REASON=, specifically so a correction
+  # here happens before anything is emitted — see the call site) can
+  # correct aggregate_result to escalate/ledger_persist_failed and still
+  # emit exactly ONE RESULT=/REASON= pair. An earlier design printed RESULT=
+  # twice and relied on a "last line wins" parsing convention; that was
+  # itself a bug (this script's own kv_value helper reads the FIRST match),
+  # fixed by moving this call before the print instead.
+  #
+  # ALSO fail closed on a read failure even when the write itself succeeds
+  # (see the _existing_read_failed comment above): a read failure means
+  # this cycle's entry may have been silently dropped (folded into an
+  # "unavailable" stub that reviewer_loop_history_payload_from_existing
+  # refuses to append onto) even though the comment POST succeeded — the
+  # write succeeding is not sufficient evidence that this cycle is
+  # actually countable.
+  if [ "$_comment_posted" -eq 0 ] || [ "$_existing_read_failed" -eq 1 ]; then
+    return 1
+  fi
+  return 0
 }
 
 if [ -z "$last_platform" ]; then
@@ -6767,19 +9189,28 @@ fi
 # unresolved_bot_logins is declared here (outside the if-block) so the
 # post-clean recheck below can safely reference it regardless of code path.
 declare -a unresolved_bot_logins=()
-if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; then
-  # Build the array of bot logins from the configured platforms.
-  # Using an array (not a space-separated string) prevents Bash glob expansion of
-  # bracket characters in "[bot]" strings during iteration.
-  for _platform in "${platforms[@]}"; do
-    _login="$(bot_login_for_platform "$_platform")"
-    # REST API returns bot logins WITH the "[bot]" suffix; GraphQL API returns
-    # them WITHOUT it. Strip it here so check_unresolved_threads, which queries
-    # GraphQL, compares against the correct login form.
-    # (e.g. "chatgpt-codex-connector[bot]" → "chatgpt-codex-connector")
-    _login="${_login%\[bot\]}"
-    [ -n "$_login" ] && unresolved_bot_logins+=("$_login")
-  done
+for _platform in "${platforms[@]}"; do
+  _login="$(bot_login_for_platform "$_platform")"
+  # REST API returns bot logins WITH the "[bot]" suffix; GraphQL API returns
+  # them WITHOUT it. Strip it here so check_unresolved_threads, which queries
+  # GraphQL, compares against the correct login form.
+  # (e.g. "chatgpt-codex-connector[bot]" → "chatgpt-codex-connector")
+  _login="${_login%\[bot\]}"
+  [ -n "$_login" ] && unresolved_bot_logins+=("$_login")
+done
+
+if [ "$aggregate_result" = "needs_fixes" ] \
+    && [ "$total_blocking_count" -gt 0 ] \
+    && [ "${#aggregate_blocking_paths[@]}" -gt 0 ]; then
+  small_findings_paths="$(printf '%s\n' "${aggregate_blocking_paths[@]}" | sort -u)"
+  if printf '%s\n' "$small_findings_paths" | reviewer_loop_all_paths_non_shipped; then
+    small_findings_only=1
+    small_findings_paths_inline="$(printf '%s\n' "$small_findings_paths" | awk 'BEGIN { sep = "" } { printf "%s%s", sep, $0; sep = ", " } END { printf "\n" }')"
+  fi
+fi
+
+if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ] \
+    || [ "$small_findings_only" -eq 1 ]; then
 
   unresolved_thread_count=0
   if [ "${#unresolved_bot_logins[@]}" -gt 0 ]; then
@@ -6795,7 +9226,9 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
     while true; do
       thread_audit_attempt=$((thread_audit_attempt + 1))
       set +e
-      thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" "${unresolved_bot_logins[@]}")"
+      # mode=strict: this is the aggregate RESULT=clean gate and must never be
+      # relaxed by a reply-without-resolve (see check_unresolved_threads).
+      thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" strict "${unresolved_bot_logins[@]}")"
       thread_check_status=$?
       set -e
       if [ "$thread_check_status" -eq 3 ] && [ "$thread_audit_attempt" -le "$thread_audit_max_retries" ]; then
@@ -6831,6 +9264,7 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
   if [ "$unresolved_thread_count" -gt 0 ]; then
     aggregate_result="needs_fixes"
     aggregate_reason="unresolved_review_threads"
+    small_findings_stop=0
     if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 1 ]; then
       phase_after_clean_net_new_blocker=1
       phase_after_clean_blocking_platform="${phase_after_clean_blocking_platform:-review_threads}"
@@ -6839,6 +9273,21 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
     # No BLOCKING_N_* entries are emitted for thread findings — callers must use
     # REASON=unresolved_review_threads and UNRESOLVED_THREAD_COUNT to handle this case.
     total_blocking_count=$((total_blocking_count + unresolved_thread_count))
+  elif [ "$aggregate_result" = "needs_fixes" ] \
+      && [ "$unresolved_thread_count" -eq 0 ] \
+      && [ "$small_findings_only" -eq 1 ]; then
+    reviewer_loop_latest_summary_body="$(reviewer_loop_fetch_latest_summary_body "$pr_number")"
+    small_findings_prior_count="$(reviewer_loop_small_findings_prior_consecutive_count "$reviewer_loop_latest_summary_body")"
+    [[ "${small_findings_prior_count:-}" =~ ^[0-9]+$ ]] || small_findings_prior_count=0
+    small_findings_rounds=$((small_findings_prior_count + 1))
+    if [ "$small_findings_rounds" -ge "$small_findings_required_rounds" ]; then
+      aggregate_result="clean"
+      aggregate_reason="small_findings_terminal"
+      aggregate_status=0
+      small_findings_stop=1
+      echo "INFO: small-findings stop — ${small_findings_rounds}/${small_findings_required_rounds} consecutive rounds only touched non-shipped artifacts; strict thread audit found zero unresolved threads" >&2
+    fi
+    unset reviewer_loop_latest_summary_body small_findings_prior_count
   fi
 else
   print_kv UNRESOLVED_THREAD_COUNT 0
@@ -6863,40 +9312,108 @@ fi
 # Configurable via POST_CLEAN_WAIT env var (default: 30 seconds).
 # Emits POST_CLEAN_RECHECK=1 when the wait-and-recheck runs, and
 # LATE_THREADS_FOUND=<N> with the count of newly-discovered unresolved threads.
-post_clean_wait="${POST_CLEAN_WAIT:-30}"
+# Take the longest settle configuration across every configured platform: any
+# of them can be the one that posts late, so the window must accommodate the
+# slowest rather than whichever happened to run last.
+settle_window=0
+settle_quiet=0
+settle_poll=0
+settle_require_review=0
+for _sp in "${platforms[@]}"; do
+  read -r _sw _sq _spoll _srr <<<"$(_settle_config_for_platform "$_sp")"
+  [ "${_sw:-0}" -gt "$settle_window" ] && settle_window="$_sw"
+  [ "${_sq:-0}" -gt "$settle_quiet" ] && settle_quiet="$_sq"
+  [ "${_srr:-0}" -eq 1 ] && settle_require_review=1
+  if [ "$settle_poll" -eq 0 ] || { [ "${_spoll:-0}" -gt 0 ] && [ "${_spoll:-0}" -lt "$settle_poll" ]; }; then
+    settle_poll="${_spoll:-30}"
+  fi
+done
+[ "$settle_window" -gt 0 ] || settle_window=180
+[ "$settle_quiet" -gt 0 ] || settle_quiet=60
+[ "$settle_poll" -gt 0 ] || settle_poll=30
+unset _sp _sw _sq _spoll _srr
+
 if [ "$aggregate_result" = "clean" ] \
     && [ "$compare_mode" -eq 0 ] \
     && [ "${SKIP_POST_CLEAN_RECHECK:-0}" != "1" ] \
     && [ "${#unresolved_bot_logins[@]}" -gt 0 ] \
     && [ -n "$pr_number" ]; then
   print_kv POST_CLEAN_RECHECK 1
-  echo "INFO: post-clean recheck — waiting ${post_clean_wait}s for any late-arriving review threads" >&2
-  _interruptible_sleep "$post_clean_wait"
+  print_kv POST_CLEAN_SETTLE_WINDOW_SECONDS "$settle_window"
+  print_kv POST_CLEAN_SETTLE_QUIET_SECONDS "$settle_quiet"
+  print_kv POST_CLEAN_REQUIRE_REVIEW "$settle_require_review"
+  if [ "$settle_require_review" -eq 1 ]; then
+    echo "INFO: post-clean settle — awaiting a submitted review for this HEAD, then ${settle_quiet}s of silence (max ${settle_window}s), polling every ${settle_poll}s" >&2
+  else
+    echo "INFO: post-clean settle — requiring ${settle_quiet}s of platform silence (max ${settle_window}s), polling every ${settle_poll}s" >&2
+  fi
+  # since_iso for the settle probes is the HEAD commit time, not "now": a review
+  # submitted between the loop starting and the settle beginning still counts as
+  # this HEAD's review, and anchoring to "now" would wait for a second one.
+  # Anchor to the head this run reviewed, captured before dispatch. The
+  # previous form read head_sha with a HEAD fallback, and head_sha is only
+  # ever function-local, so at this scope it asked the API for commits/HEAD —
+  # which GitHub resolves to the DEFAULT BRANCH head. Measured on PR #1575:
+  # that anchor was nine days old, so any review CodeRabbit had ever
+  # submitted satisfied "a submitted review for this HEAD" and the
+  # require-review settle waited for nothing. When the head is unknown, the
+  # anchor is now: a review must land after this point (conservative —
+  # Check 0.6 refuses the unbound verdict anyway).
+  settle_head_iso=""
+  if [ -n "$loop_head_sha" ]; then
+    settle_head_iso="$(gh api "repos/$(repo_slug)/commits/${loop_head_sha}" --jq '.commit.committer.date // empty' 2>/dev/null)" || settle_head_iso=""
+  fi
+  if [ -z "$settle_head_iso" ]; then
+    settle_head_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    echo "WARN: post-clean settle — head commit time unavailable; a submitted review must land after ${settle_head_iso} to count" >&2
+  fi
+  settle_review_seen=0
+  # The head this settle is about. Emitted as POST_CLEAN_HEAD_SHA so Protocol
+  # 91 Check 0.6 can refuse telemetry that describes a commit the PR has since
+  # moved past (a fix pushed between Step 7 and Step 8a) — issue #1574.
+  settle_head_sha="$loop_head_sha"
 
   late_thread_count=0
-  late_thread_check_output=""
-  late_thread_check_status=0
-  set +e
-  late_thread_check_output="$(check_unresolved_threads "$pr_number" "$(repo_slug)" "${unresolved_bot_logins[@]}")"
-  late_thread_check_status=$?
-  set -e
+  settle_elapsed=0
+  settle_quiet_elapsed=0
+  settle_activity_seen=0
+  settle_probe_failed=0
+  settle_since="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  settle_repo="$(repo_slug)"
 
-  if [ "$late_thread_check_status" -eq 2 ]; then
-    # Page-cap exceeded — cannot confirm all threads are resolved. Escalate.
-    echo "WARN: post-clean recheck: check_unresolved_threads exceeded page cap — escalating" >&2
-    aggregate_result="escalate"
-    aggregate_reason="post_clean_recheck_thread_check_incomplete"
-    late_thread_count=-1
-  elif [ "$late_thread_check_status" -ne 0 ]; then
-    # GraphQL failure — escalate rather than silently treating the recheck as clean.
-    echo "WARN: post-clean recheck: check_unresolved_threads failed (exit $late_thread_check_status) — escalating" >&2
-    aggregate_result="escalate"
-    aggregate_reason="post_clean_recheck_thread_audit_failed"
-    late_thread_count=-1
-  else
+  while [ "$settle_elapsed" -lt "$settle_window" ] \
+     && [ "$settle_quiet_elapsed" -lt "$settle_quiet" ]; do
+    _interruptible_sleep "$settle_poll"
+    settle_elapsed=$((settle_elapsed + settle_poll))
+
+    # Threads first: a late unresolved thread is the outcome we are hunting,
+    # and finding one ends the wait immediately.
+    late_thread_check_output=""
+    late_thread_check_status=0
+    set +e
+    # mode=strict: this decides RESULT=clean and must never be relaxed by a
+    # reply-without-resolve (see check_unresolved_threads).
+    late_thread_check_output="$(check_unresolved_threads "$pr_number" "$settle_repo" strict "${unresolved_bot_logins[@]}")"
+    late_thread_check_status=$?
+    set -e
+
+    if [ "$late_thread_check_status" -eq 2 ]; then
+      echo "WARN: post-clean settle: check_unresolved_threads exceeded page cap — escalating" >&2
+      aggregate_result="escalate"
+      aggregate_reason="post_clean_recheck_thread_check_incomplete"
+      late_thread_count=-1
+      break
+    elif [ "$late_thread_check_status" -ne 0 ]; then
+      echo "WARN: post-clean settle: check_unresolved_threads failed (exit $late_thread_check_status) — escalating" >&2
+      aggregate_result="escalate"
+      aggregate_reason="post_clean_recheck_thread_audit_failed"
+      late_thread_count=-1
+      break
+    fi
+
     late_thread_count="$late_thread_check_output"
     if [ "$late_thread_count" -gt 0 ]; then
-      echo "INFO: post-clean recheck — found $late_thread_count late unresolved thread(s); switching to needs_fixes" >&2
+      echo "INFO: post-clean settle — found $late_thread_count late unresolved thread(s) after ${settle_elapsed}s; switching to needs_fixes" >&2
       aggregate_result="needs_fixes"
       aggregate_reason="late_review_threads"
       if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 1 ]; then
@@ -6904,21 +9421,120 @@ if [ "$aggregate_result" = "clean" ] \
         phase_after_clean_blocking_platform="${phase_after_clean_blocking_platform:-late_review_threads}"
       fi
       total_blocking_count=$((total_blocking_count + late_thread_count))
-    else
-      echo "INFO: post-clean recheck — no late threads found; result remains clean" >&2
+      break
     fi
+
+    # No unresolved thread yet — but the platform may still be mid-write, and a
+    # comment posted without a review thread (or a walkthrough edited in place)
+    # is exactly the signal that more is coming. Any activity resets the quiet
+    # timer rather than merely being noted.
+    settle_activity="$(_bot_activity_since "$settle_repo" "$pr_number" "$settle_since" "${unresolved_bot_logins[@]}")"
+    if [ "$settle_activity" = "-1" ]; then
+      # A failed probe is not silence. Do not let it satisfy the quiet period.
+      settle_probe_failed=1
+      echo "WARN: post-clean settle: activity probe failed; not counting this interval as quiet" >&2
+    elif [ "${settle_activity:-0}" -gt 0 ]; then
+      settle_activity_seen=1
+      settle_quiet_elapsed=0
+      settle_since="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+      echo "INFO: post-clean settle — $settle_activity new platform action(s) at ${settle_elapsed}s; quiet timer reset" >&2
+    elif [ "$settle_require_review" -eq 1 ] && [ "$settle_review_seen" -eq 0 ]; then
+      # Silence before the review lands is the platform thinking, not finishing.
+      # Do not let it accumulate toward the quiet period.
+      settle_review_probe="$(_bot_review_submitted_since "$settle_repo" "$pr_number" "$settle_head_iso" "$settle_head_sha" "${unresolved_bot_logins[@]}")"
+      if [ "$settle_review_probe" = "1" ]; then
+        settle_review_seen=1
+        echo "INFO: post-clean settle — submitted review detected at ${settle_elapsed}s; quiet period starts now" >&2
+      elif [ "$settle_review_probe" = "-1" ]; then
+        settle_probe_failed=1
+        echo "WARN: post-clean settle: review probe failed; not counting this interval as quiet" >&2
+      else
+        echo "INFO: post-clean settle — no submitted review yet at ${settle_elapsed}s of ${settle_window}s; still waiting" >&2
+      fi
+    else
+      settle_quiet_elapsed=$((settle_quiet_elapsed + settle_poll))
+    fi
+  done
+
+  if [ "$aggregate_result" = "clean" ]; then
+    if [ "$settle_quiet_elapsed" -ge "$settle_quiet" ]; then
+      print_kv POST_CLEAN_SETTLED 1
+      echo "INFO: post-clean settle — platform quiet for ${settle_quiet_elapsed}s; result remains clean" >&2
+    else
+      # The window ran out before the quiet period was satisfied. The verdict is
+      # still clean (no unresolved thread was ever found) but it is weaker than
+      # a settled one, and saying so is the difference between a caller that
+      # knows to look and one that does not.
+      print_kv POST_CLEAN_SETTLED 0
+      print_kv POST_CLEAN_SETTLE_TIMEOUT 1
+      if [ "$settle_require_review" -eq 1 ] && [ "$settle_review_seen" -eq 0 ]; then
+        print_kv POST_CLEAN_NO_SUBMITTED_REVIEW 1
+        echo "WARN: post-clean settle — window (${settle_window}s) exhausted and the platform never submitted a review for this HEAD." >&2
+        echo "  Its walkthrough comment alone does not mean it finished. Verdict is clean but UNSETTLED — re-query threads before labelling." >&2
+      else
+        echo "WARN: post-clean settle — window (${settle_window}s) exhausted before ${settle_quiet}s of silence; the platform was still active. Verdict is clean but UNSETTLED." >&2
+      fi
+    fi
+    [ "$settle_probe_failed" -eq 1 ] && print_kv POST_CLEAN_ACTIVITY_PROBE_FAILED 1
+    [ "$settle_activity_seen" -eq 1 ] && print_kv POST_CLEAN_ACTIVITY_SEEN 1
   fi
+
+  # The instant the verdict was established. A caller that inserts a long poll
+  # between this timestamp and the readiness label is acting on a stale check —
+  # see the "adjacent to the readiness decision" note in the reviewer-loop docs.
+  print_kv POST_CLEAN_SETTLED_AT "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  print_kv POST_CLEAN_HEAD_SHA "$settle_head_sha"
   print_kv LATE_THREADS_FOUND "$late_thread_count"
 else
   print_kv POST_CLEAN_RECHECK 0
+  # Say WHY the recheck did not run (issue #1574). Protocol 91's readiness
+  # checklist treats no_thread_posting_platforms as "nothing could arrive late"
+  # and every other reason as "the verdict was never settled — re-run Step 7".
+  if [ "$aggregate_result" != "clean" ]; then
+    print_kv POST_CLEAN_RECHECK_SKIP_REASON not_clean
+  elif [ "$compare_mode" -ne 0 ]; then
+    print_kv POST_CLEAN_RECHECK_SKIP_REASON compare_mode
+  elif [ "${SKIP_POST_CLEAN_RECHECK:-0}" = "1" ]; then
+    print_kv POST_CLEAN_RECHECK_SKIP_REASON skip_env
+  elif [ "${#unresolved_bot_logins[@]}" -eq 0 ]; then
+    print_kv POST_CLEAN_RECHECK_SKIP_REASON no_thread_posting_platforms
+  else
+    print_kv POST_CLEAN_RECHECK_SKIP_REASON no_pr_number
+  fi
   # Emit LATE_THREADS_FOUND=0 on skipped paths so consumers can always rely on
   # the field being present, regardless of whether the recheck ran.
   print_kv LATE_THREADS_FOUND 0
+  # The head binding applies to every clean verdict, not only settled ones:
+  # a no-thread-platform run is just as stale once the PR moves.
+  print_kv POST_CLEAN_HEAD_SHA "$loop_head_sha"
+fi
+
+# Head-move guard (#1574): a push that lands while the reviewers run leaves
+# the clean verdict describing a commit the PR no longer sits on. Refuse it
+# here, before the summary records it, rather than letting Check 0.6 compare
+# a head that was read after the fact.
+if [ "$aggregate_result" = "clean" ] && [ -n "$pr_number" ] && [ -n "$loop_head_sha" ]; then
+  live_head_sha=""
+  if live_head_sha="$(gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null)" \
+    && [ -n "$live_head_sha" ] && [ "$live_head_sha" != "$loop_head_sha" ]; then
+    echo "WARN: PR head moved from ${loop_head_sha} to ${live_head_sha} while this loop ran; the clean verdict describes the old head — re-run the loop for the current HEAD" >&2
+    aggregate_result="needs_fixes"
+    aggregate_reason="head_moved_during_run"
+  fi
+fi
+
+if [ "$aggregate_result" != "clean" ]; then
+  small_findings_stop=0
 fi
 
 if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 0 ]; then
   phase_after_clean_skip_reason="$aggregate_result"
 fi
+print_kv SMALL_FINDINGS_ONLY "$small_findings_only"
+print_kv SMALL_FINDINGS_STOP "$small_findings_stop"
+print_kv SMALL_FINDINGS_ROUNDS "$small_findings_rounds"
+print_kv SMALL_FINDINGS_REQUIRED_ROUNDS "$small_findings_required_rounds"
+[ -n "$small_findings_paths_inline" ] && print_kv SMALL_FINDINGS_PATHS "$small_findings_paths_inline"
 print_kv PHASE_AFTER_CLEAN_STARTED "$phase_after_clean_started"
 print_kv READY_PHASE_STARTED "$phase_after_clean_started"
 if [ "$phase_after_clean_enabled" -eq 1 ]; then
@@ -6937,43 +9553,45 @@ if [ "$phase_after_clean_enabled" -eq 1 ]; then
     print_kv PHASE_AFTER_CLEAN_BLOCKING_PLATFORM "$phase_after_clean_blocking_platform"
 fi
 
-# Append compare-mode metrics row after the thread gate so the recorded
-# aggregate_result reflects the final settled value (thread audit may flip
-# a platform-clean run to needs_fixes or escalate).
-_compare_metrics_appended=0
-if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
-  set +e
-  _metrics_args=("$pr_number" "$branch_name" "$aggregate_result")
-  _idx=0
-  while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
-    _metrics_args+=("${compare_verdicts[$_idx]}" "${compare_verdicts[$((_idx + 1))]}")
-    _idx=$((_idx + 2))
-  done
-  append_compare_metrics_row "${_metrics_args[@]}" 2>/dev/null && \
-    _compare_metrics_appended=1 || \
-    echo "WARN: append_compare_metrics_row failed — metrics row not written" >&2
-  set -e
+# Reviewer cycle cap enforcement (#1502, dual-cap): the just-pushed fix (if
+# any) has already been given its chance to be verified above — this run
+# completed a full review pass like any other. Only now, with the settled
+# aggregate result in hand, do we check whether either cap has been
+# reached. A "clean" result is never overridden. An already-"escalate"
+# result keeps its own (more specific) reason rather than being relabeled.
+# This MUST run before the persistence step, compare-mode metrics-row
+# append, and the single RESULT= print below: --compare mode's own
+# contract is "the overall exit code and RESULT are identical to what
+# normal mode would produce" (see the script's usage doc), and these
+# overrides are unconditional (they also apply in --compare mode) — so the
+# metrics row and the printed RESULT must reflect the post-override
+# result, not a stale pre-cap value.
+#
+# Order: unavailable (fail-closed) first, then the per-run cap
+# (max_cycles_exceeded — the Protocol-91-aligned, more specific signal),
+# then the lifetime ceiling (max_total_cycles_exceeded — the structural
+# backstop). Both counts fail together (-1/-1) when the ledger could not be
+# read, so the unavailable check only needs to inspect one of them.
+if [ "$aggregate_reason" = "head_moved_during_run" ]; then
+  # Not a fixer cycle: the reviewers were clean, the PR simply moved. The
+  # caller re-runs the loop; neither cap applies and the ledger does not
+  # count it (reviewer_loop_history_entries_count excludes this reason).
+  :
+elif reviewer_loop_cycle_count_unavailable_should_escalate "$lifetime_cycle_count" "$aggregate_result"; then
+  echo "WARN: reviewer cycle counts could not be read (ledger unavailable after retries) with aggregate_result=$aggregate_result — escalating (cycle_count_unavailable) rather than allowing an unbounded number of unverifiable retries" >&2
+  aggregate_result="escalate"
+  aggregate_reason="cycle_count_unavailable"
+elif reviewer_loop_cap_exceeded "$cycle_count" "$max_cycles" "$aggregate_result"; then
+  echo "WARN: reviewer per-run cycle count ($cycle_count) reached max_cycles ($max_cycles) for run_id=$current_run_id with aggregate_result=$aggregate_result — escalating (max_cycles_exceeded)" >&2
+  aggregate_result="escalate"
+  aggregate_reason="max_cycles_exceeded"
+elif reviewer_loop_cap_exceeded "$lifetime_cycle_count" "$max_total_cycles" "$aggregate_result"; then
+  echo "WARN: reviewer lifetime cycle count ($lifetime_cycle_count) reached max_total_cycles ($max_total_cycles) with aggregate_result=$aggregate_result — escalating (max_total_cycles_exceeded)" >&2
+  aggregate_result="escalate"
+  aggregate_reason="max_total_cycles_exceeded"
 fi
-
-if reviewer_failed_label_required_for_result "$aggregate_result" "$aggregate_reason"; then
-  reviewer_failed_required=1
-fi
-sync_reviewer_failed_label "$pr_number" "$reviewer_failed_required"
 
 advisory_checks_section="$(run_project_advisory_checks "$pr_number")"
-
-print_kv RESULT "$aggregate_result"
-print_kv PLATFORM "$last_platform"
-[ -n "$aggregate_reason" ] && print_kv REASON "$aggregate_reason"
-print_kv COMMENT_COUNT "$total_comment_count"
-print_kv BLOCKING_COUNT "$total_blocking_count"
-print_kv SUGGESTION_COUNT "$total_suggestion_count"
-
-if [ -n "$aggregate_output" ]; then
-  review_comment_id="$(kv_value REVIEW_COMMENT_ID "$aggregate_output")"
-  [ -n "$review_comment_id" ] && print_kv REVIEW_COMMENT_ID "$review_comment_id"
-fi
-
 
 aggregate_possible_issue_eval_outcome="$(kv_value_default POSSIBLE_ISSUE_EVAL_OUTCOME "$aggregate_output" "")"
 if [ "${#phase_after_clean_platforms[@]}" -gt 0 ]; then
@@ -6999,60 +9617,109 @@ fi
 # every needs_fixes exit regardless of this value.
 : "$post_final_summary"
 
+# Persist this cycle's reviewer_loop_history.v1 ledger entry BEFORE
+# printing RESULT/REASON or appending the compare-mode metrics row (#1502
+# dual-cap follow-up, single-RESULT-line fix). Previously this call and its
+# ledger_persist_failed correction happened INSIDE the case statement
+# below, AFTER RESULT/REASON had already been printed once for the
+# pre-correction value — producing a SECOND, contradictory RESULT= line.
+# This script's own kv_value helper returns the FIRST matching key (`{...
+# exit }` on first match), not the last, so a caller using that same
+# convention would read the stale, pre-correction RESULT and could dispatch
+# another fixer despite the script exiting escalated (found in review of
+# PR #1507). Persisting first and correcting aggregate_result BEFORE any
+# print_kv call guarantees exactly one RESULT= / REASON= line is ever
+# emitted, valid under either "first wins" or "last wins" parsing.
+#
+# Skipped for "skipped" (no ledger entry is ever written for that result —
+# see the not-configured early-exit path above, which never reaches here).
+if [ "$aggregate_result" != "skipped" ]; then
+  _post_summary_exit=0
+  _post_review_summary "$aggregate_result" "$aggregate_reason" \
+    "$_summary_platform_list" \
+    "$total_blocking_count" "$total_suggestion_count" \
+    "$aggregate_advisory_labels" \
+    "$aggregate_possible_issue_eval_outcome" \
+    "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
+    "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
+    "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
+    "$advisory_checks_section" || _post_summary_exit=$?
+  if reviewer_loop_persist_failure_should_escalate "$_post_summary_exit" "$aggregate_result" "$aggregate_reason"; then
+    echo "WARN: reviewer-loop summary comment could not be persisted for a dispatch-triggering result ($aggregate_result) — escalating (ledger_persist_failed) rather than letting an uncounted fixer/retry dispatch happen" >&2
+    aggregate_result="escalate"
+    aggregate_reason="ledger_persist_failed"
+  fi
+fi
+
+# Append compare-mode metrics row after the thread gate, the cap checks,
+# AND the persistence step above, so the recorded aggregate_result always
+# matches the single RESULT= line printed below — including the
+# ledger_persist_failed correction, which (unlike the earlier cap-override
+# checks) can only be known once _post_review_summary's persistence
+# attempt has actually been made. This makes the previous "supplementary
+# corrected row" workaround for that specific case unnecessary; a reader
+# of docs/workflow/retro-metrics-platforms.md now always sees the single,
+# final, correct outcome for this cycle.
+_compare_metrics_appended=0
+if [ "$compare_mode" -eq 1 ] && [ "${#compare_verdicts[@]}" -gt 0 ]; then
+  set +e
+  _metrics_args=("$pr_number" "$branch_name" "$aggregate_result")
+  _idx=0
+  while [ "$_idx" -lt "${#compare_verdicts[@]}" ]; do
+    _metrics_args+=("${compare_verdicts[$_idx]}" "${compare_verdicts[$((_idx + 1))]}")
+    _idx=$((_idx + 2))
+  done
+  append_compare_metrics_row "${_metrics_args[@]}" 2>/dev/null && \
+    _compare_metrics_appended=1 || \
+    echo "WARN: append_compare_metrics_row failed — metrics row not written" >&2
+  set -e
+fi
+
+if reviewer_failed_label_required_for_result "$aggregate_result" "$aggregate_reason"; then
+  reviewer_failed_required=1
+fi
+sync_reviewer_failed_label "$pr_number" "$reviewer_failed_required"
+
+print_kv RESULT "$aggregate_result"
+print_kv PLATFORM "$last_platform"
+[ -n "$aggregate_reason" ] && print_kv REASON "$aggregate_reason"
+print_kv COMMENT_COUNT "$total_comment_count"
+print_kv BLOCKING_COUNT "$total_blocking_count"
+print_kv SUGGESTION_COUNT "$total_suggestion_count"
+
+if [ -n "$aggregate_output" ]; then
+  review_comment_id="$(kv_value REVIEW_COMMENT_ID "$aggregate_output")"
+  [ -n "$review_comment_id" ] && print_kv REVIEW_COMMENT_ID "$review_comment_id"
+fi
+
+# _post_review_summary has already run above (using the pre-correction
+# aggregate_result as its own "result"/"reason" arguments intentionally —
+# the persisted ledger entry and the rendered comment reflect what this
+# cycle's review actually found; only the SCRIPT'S OWN reported RESULT/
+# REASON are corrected to escalate/ledger_persist_failed on a persistence
+# failure). This case statement now only selects the exit code for the
+# final (possibly corrected) aggregate_result.
 case "$aggregate_result" in
   clean)
-    _post_review_summary "$aggregate_result" "$aggregate_reason" \
-      "$_summary_platform_list" \
-      "$total_blocking_count" "$total_suggestion_count" \
-      "$aggregate_advisory_labels" \
-      "$aggregate_possible_issue_eval_outcome" \
-      "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
-      "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-      "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
-      "$advisory_checks_section"
     exit 0
     ;;
   skipped)
     exit 0
     ;;
   needs_fixes)
-    _post_review_summary "$aggregate_result" "$aggregate_reason" \
-      "$_summary_platform_list" \
-      "$total_blocking_count" "$total_suggestion_count" \
-      "$aggregate_advisory_labels" \
-      "$aggregate_possible_issue_eval_outcome" \
-      "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
-      "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-      "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
-      "$advisory_checks_section"
     exit 1
     ;;
   needs_rerun)
     # PR-Agent "Possible Issue" evaluation pushed a fix; orchestrator must
-    # re-invoke the loop on the new HEAD. Preserve this completed iteration
-    # before exit so retrospective retry metrics do not lose the fix-pushed run.
-    # RESULT=needs_rerun is already emitted by the general print_kv block above.
-    _post_review_summary "$aggregate_result" "$aggregate_reason" \
-      "$_summary_platform_list" \
-      "$total_blocking_count" "$total_suggestion_count" \
-      "$aggregate_advisory_labels" \
-      "$aggregate_possible_issue_eval_outcome" \
-      "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
-      "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-      "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
-      "$advisory_checks_section"
+    # re-invoke the loop on the new HEAD. This completed iteration was
+    # already persisted above so retrospective retry metrics do not lose
+    # the fix-pushed run.
     exit 3
     ;;
+  waiting_on_reviewer)
+    exit 4
+    ;;
   escalate)
-    _post_review_summary "$aggregate_result" "$aggregate_reason" \
-      "$_summary_platform_list" \
-      "$total_blocking_count" "$total_suggestion_count" \
-      "$aggregate_advisory_labels" \
-      "$aggregate_possible_issue_eval_outcome" \
-      "$phase_after_clean_enabled" "$phase_after_clean_platform_list" \
-      "$phase_after_clean_started" "$phase_after_clean_net_new_blocker" \
-      "$phase_after_clean_blocking_platform" "$pre_after_clean_only" \
-      "$advisory_checks_section"
     exit 2
     ;;
   *)

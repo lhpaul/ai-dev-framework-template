@@ -33,6 +33,99 @@ choose a different mode and install later workflow-hub automation.
 | CI checks | Current repository | Hub for hub-doc/tool PRs; product repo for product code PRs | Product repo |
 | Reviewer-loop checks | Current repository | Hub for hub-doc/tool PRs; product repo for product code PRs | Product repo |
 
+## Release Artifact Ownership
+
+Release work follows the same repository-mode split, with one owner for every
+release artifact before mutation:
+
+| Release artifact | `single_repo` owner | `workflow_hub` owner | `product_repo` owner |
+| --- | --- | --- | --- |
+| Tracker work | Current repository tracker | Hub tracker | Hub tracker |
+| Specs and plans | Current repository | Hub repository | Hub repository |
+| Product code | Current repository | Selected product repository for product work; hub only for hub-owned workflow code | Product repository |
+| Changelog entries | Current repository | Product repository for product releases; hub for hub-only releases | Product repository |
+| Release branches | Current repository | Product repository for product releases; hub for hub-only releases | Product repository |
+| Tags | Current repository | Product repository for product releases; hub for hub-only releases | Product repository |
+| GitHub Releases | Current repository | Product repository for product releases; hub for hub-only releases | Product repository |
+| Deployment evidence | Current repository | Product repository records source evidence; hub may reference it | Product repository |
+| Delivery manifests | Current repository when a single-repo delivery manifest exists | Hub repository | Hub repository |
+| Product branch and PR cleanup evidence | Current repository | Product repository | Product repository |
+| Tracker reconciliation evidence | Current repository | Hub repository | Hub repository |
+
+The versioned product release contract records only portable, non-secret
+metadata. Local checkout paths, credentials, token values, secret names, secret
+values, and environment-specific account details stay in local-only config.
+Release branch patterns may use `{version}` and `{product_repo}` placeholders
+and must resolve to one valid portable branch name before a release artifact is
+created.
+
+`scripts/development-workflow/component-release-target.sh` is the canonical
+adapter for release routing. It
+emits `schema_version=component_release_target.v1`, one routing outcome, a
+`mutation_allowed` decision, artifact owners, `release_correlation_key`, and
+`contract_revision`. `single_repo_release` and `component_release_routed` are
+the continue outcomes. `missing_product_selection`, `multiple_product_targets`,
+`unknown_product_repository`, `ambiguous_product_selection`,
+`invalid_release_contract`, `unavailable_product_repository_checkout`, and
+`unsupported_repository_mode` are fail-closed stop outcomes. Stop outcomes never
+report product-owned mutable artifacts.
+
+`scripts/development-workflow/component-release-evidence.sh` renders
+deterministic `component_release_evidence.v1` records from an independent target
+binding.
+Release cleanup reruns must compare the current target binding to the persisted
+evidence before deleting product release branches, tags, cleanup evidence, or
+updating hub tracker state. Duplicate cleanup attempts use a per-release lease
+keyed by `release_correlation_key`; a completed evidence record is the
+idempotent rerun signal. The lease directory lives under the hub checkout's
+own git directory, so it excludes concurrent cleanup runs that share one hub
+checkout even when they resolve the product repository to different local
+checkouts. It does not exclude a concurrent run from a *different* hub clone
+or linked worktree of the same hub repository -- that would require a
+remotely shared lease, which is out of scope today. A concurrent run from a
+different hub checkout fails closed with a clear "lock is already held"
+error from whichever process loses the race, rather than silently
+proceeding; it does not detect or block the other process's checkout.
+
+`scripts/development-workflow/delivery-bundle-manifest.sh` manages hub-owned
+`delivery_bundle_manifest.v1` records for coordinated customer-facing
+deliveries. Every command targets both a hub evidence file (`--manifest`) and an
+immutable logical delivery identity (`--bundle-key`). The helper reads
+`component_release_evidence.v1` records from selected product repositories,
+records component tags and release outcomes in the hub manifest, preserves
+source evidence files unchanged, and finalizes only when every declared current
+component has complete, consistent evidence. It does not create a shared suite
+version, shared release branch, product tag, GitHub Release, or product
+deployment artifact.
+
+`scripts/development-workflow/component-milestone-reconciliation.sh` reconciles
+the hub tracker release view after component evidence and delivery bundle
+evidence exist. In `workflow_hub` mode, component milestones are namespaced as
+`<product-repo>@<component-tag>` and may be assigned only to the component child
+whose `component_release_evidence.v1` matches the selected product repository,
+stable repository identity, release correlation key, contract revision, cleanup
+outcome, hub tracker reference, and child release state. Parent epics and
+delivery bundle issues remain milestone-free in workflow-hub mode; the hub-owned
+delivery manifest records customer-facing shipped composition instead.
+
+Parent release state is separate from GitHub Project workflow Status. The
+component milestone reconciliation helper reports `not_released`,
+`partially_released`, `blocked`, or `released` from
+`delivery_bundle_manifest.v1`; apply mode writes a manifest `release_status`
+object and audit event only after finalized bundle evidence proves every
+declared current component is released. A workflow-hub delivery with exactly one
+selected product repository still uses the namespaced component milestone and
+delivery bundle finalization path. Plain `vX.Y.Z` milestone stamping remains the
+non-hub `single_repo` compatibility path.
+
+Multi-repository release adoption is prospective. Follow
+[Multi-repository release adoption](multi-repo-release-adoption.md) before a
+workflow hub treats routed product release evidence as adopted. The adoption
+assurance must preserve historical no-rewrite baselines for hub-owned delivery
+records and product-owned release records; it must not change prior tags,
+changelog entries, milestones, delivery records, or tracker release state.
+Release mutation stops until assurance returns `adoption_status=validated`.
+
 In `single_repo` mode, all artifact ownership stays exactly as it works today:
 the tracker item, spec, plan, implementation branch, PR, CI, reviewer loop, smoke
 runbook, and release evidence are all handled in the same repository.
@@ -80,15 +173,32 @@ artifact:
 Workflow orchestration scripts keep planning and tracker state in the hub while
 allowing implementation actions to target a selected product repository.
 
+### Implementation Routing Classifier
+
 - `discover-workflow-state.sh`, `workflow-next-action.sh`, and
   `workflow-batch-plan.sh` accept `--repo <name>` and report
   `WORKFLOW_MODE`, `ACTION_REPOSITORY_KIND`, and the selected repository
   identity for each implementation action.
+- `workflow-next-action.sh` runs the one-target repository classifier before
+  implementation mutation and emits `ROUTING_OUTCOME_CODE`,
+  `ROUTING_DISPLAY_LABEL`, `ROUTING_CONTINUE_ALLOWED`,
+  `ROUTING_ARTIFACT_OWNER`, `ROUTING_SELECTED_PRODUCT_REPO_KEY`,
+  `ROUTING_STOP_REASON`, `ROUTING_REQUIRED_HUMAN_ACTION`, and
+  `ROUTING_FINGERPRINT`. `ROUTING_DISPLAY_LABEL` maps from the classifier's
+  `display_label` field. Consumers must continue only when the script succeeds
+  and `ROUTING_CONTINUE_ALLOWED=true`. `missing_target`, `ambiguous_target`,
+  and `multiple_targets` are stop outcomes even though they are reported as
+  structured routing results. `hub_only` may continue with
+  `ROUTING_ARTIFACT_OWNER=hub_repository` and no selected product repository.
 - `pr-review-loop.sh` and `pr-ci-loop.sh` can target implementation PRs outside
   the hub by accepting `--repo <owner/repo>` or `--product-repo <name>`.
 - `post-merge-cleanup.sh --repo <name> <branch>` cleans implementation branches
   in the selected product checkout in `workflow_hub` mode, then returns tracker
   updates to the hub repository.
+- `prepare-release-post-merge-cleanup.sh "$RELEASE_BRANCH" --repo <name>
+  --evidence-file <path>` cleans component release branches in the selected
+  product checkout after validating `component_release_evidence.v1`, then
+  returns tracker release stamping and status transitions to the hub repository.
 - Spec, plan, and tracker operations remain hub-owned. Product repository
   selection must not redirect GitHub Projects reads or status updates unless a
   later workflow contract explicitly changes tracker ownership.
@@ -179,6 +289,12 @@ The sync-template workflow enforces this boundary through `sync-manifest.yaml`
   `product_repo_injection` entries as skipped.
 - `product_repo` selects `shared` and `product_repo_injection` entries, then
   reports `hub_only` entries as skipped.
+
+Product repository injection includes only the minimum release runtime helpers
+needed to validate product workflow config, run product PR reviewer/CI loops,
+and record product branch or PR cleanup evidence. It does not inject hub-owned
+workflow protocols, historical specs, implementation plans, or hub-only
+runbooks.
 
 Unknown repository roles, missing entry `mode_scope` values, and unknown
 `mode_scope` values fail closed before file changes are applied. Dry-run and

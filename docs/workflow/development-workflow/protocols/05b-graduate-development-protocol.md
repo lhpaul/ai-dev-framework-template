@@ -5,6 +5,37 @@
 
 ---
 
+## CI coverage for integration branches
+
+A project's own CI workflows must include `develop-**` in their
+`pull_request` branch filters, alongside `develop`. Sub-item PRs in an epic
+target `develop-<slug>`; a workflow that gates only on `develop` runs **zero
+checks** on them, and the epic's entire implementation reaches this
+graduation PR having never been tested, linted, or typechecked (#1525 —
+measured downstream at 4 checks on a sub-item PR versus 13 on the graduation
+PR, which then surfaced four real defects in already-merged code).
+
+Use the `develop-**` glob, never a hardcoded slug: a stale
+`develop-<old-slug>` entry reads as coverage while the current integration
+branch is absent. [`scripts/development-workflow/tests/test-workflow-branch-filters.sh`](../../../../scripts/development-workflow/tests/test-workflow-branch-filters.sh)
+enforces both rules for the workflows this template ships.
+
+## Release Evidence Ownership
+
+For workflow-hub product releases, graduation evidence must preserve the
+release ownership contract: delivery manifests and tracker reconciliation
+evidence remain hub-owned, while product changelog, release branch, tag,
+GitHub Release, deployment evidence, and product cleanup evidence remain owned
+by the selected product repository.
+
+When graduation hands off to component release preparation, carry forward the
+`component_release_target.v1` binding and `component_release_evidence.v1`
+record produced by `scripts/development-workflow/component-release-target.sh`
+and `scripts/development-workflow/component-release-evidence.sh`; do not infer
+the product repository from the hub checkout or integration branch name.
+
+---
+
 ## Prerequisites
 
 - All planned sub-items for the epic are discoverable through native GitHub sub-issues when available, or through the legacy `integration-branch:<slug>` label fallback.
@@ -154,26 +185,33 @@ Accept `<slug>` as input. Derive the integration branch name: `develop-<slug>`.
 
 ---
 
-## Step 2.5: CHANGELOG Handling
+## Step 2.5: Changelog Fragment Handling
 
-Before opening the graduation PR, verify that all `[Unreleased]` CHANGELOG entries accumulated on `develop-<slug>` will be present in the graduation PR diff.
+Before opening the graduation PR, verify that all `changelog.d/` fragments
+accumulated on `develop-<slug>` will be present in the graduation PR diff.
 
-The sub-item PRs each added CHANGELOG entries to `develop-<slug>`. The graduation PR must carry those entries intact — they will land on `develop` together with the code when the graduation PR is merged.
+The sub-item PRs each added changelog fragments to `develop-<slug>`. The
+graduation PR must carry those fragments intact — they will land on `develop`
+together with the code when the graduation PR is merged and be assembled during
+Prepare Release.
 
-**Important (BR-5)**: Do not pre-absorb CHANGELOG entries separately from the graduation PR. The absorb commit must be part of the graduation branch itself (or already present via the sub-item PRs), not a separate prior merge into `develop`. This was a lesson learned during PR #737.
+**Important (BR-5)**: Do not pre-absorb changelog fragments separately from the graduation PR. The absorb commit must be part of the graduation branch itself (or already present via the sub-item PRs), not a separate prior merge into `develop`. This was a lesson learned during PR #737.
 
 **Verification**:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-# Check whether CHANGELOG.md differs between develop and develop-<slug>
-git diff origin/develop..origin/develop-<slug> -- CHANGELOG.md | head -n 40
+# Check whether changelog fragments differ between develop and develop-<slug>
+git diff --name-only origin/develop..origin/develop-<slug> -- changelog.d/
 ```
 
-If the diff shows `[Unreleased]` entries on `develop-<slug>` that are absent from `develop`, these will be carried over by the graduation PR as expected — no additional action is needed.
+If the diff shows changelog fragments on `develop-<slug>` that are absent from
+`develop`, these will be carried over by the graduation PR as expected — no
+additional action is needed.
 
-If the diff is empty (no CHANGELOG difference), warn the human:
+If the diff is empty (no changelog fragment difference), warn the human:
 
-> Warning: CHANGELOG.md appears identical between `develop` and `develop-<slug>`. If no CHANGELOG entries were added by the sub-item PRs, this may be expected. If entries were expected, check whether they were accidentally merged to `develop` separately before the graduation PR.
+> Warning: no changelog fragments differ between `develop` and `develop-<slug>`. If no fragments were added by the sub-item PRs, this may be expected. If fragments were expected, check whether they were accidentally merged to `develop` separately before the graduation PR.
 
 ---
 
@@ -245,6 +283,12 @@ When an integration branch is created, it branches off `develop` at a point in t
      --body "<generated-body>"
    ```
 
+   **Nested graduation**: for a nested integration lineage (e.g. a wave
+   branch `develop-ventas-e3b` graduating into a module branch
+   `develop-sales-module` rather than directly into `develop`), pass the
+   parent integration branch to `--base` instead of `develop`, and use that
+   same branch name for `--base` in `graduation-closeout.sh` at Step 5.
+
 ---
 
 ## Step 4: Run the Standard Review Loop
@@ -259,11 +303,15 @@ Run the automated reviewer loop (`pr-review-loop.sh`) and CI loop on the graduat
 
 After the human merges the graduation PR (must use a **merge commit**):
 
-1. Switch to `develop` and sync the merge commit:
+1. Switch to the graduation PR's base branch and sync the merge commit —
+   this is `develop`, unless the graduation PR was a nested graduation
+   (Step 3) whose base was a parent integration branch such as
+   `develop-sales-module`, in which case use that branch instead:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
-   git checkout develop
-   git pull origin develop
+   git checkout <graduation-pr-base>   # develop, or the parent integration branch
+   git pull origin <graduation-pr-base>
    ```
 
 2. Delete the integration branch on the remote (BR-7):
@@ -287,6 +335,7 @@ After the human merges the graduation PR (must use a **merge commit**):
    signals and calls the **same** reconciler below. Agent and automation
    double-runs are safe/idempotent (`already_terminal` / no regressive moves).
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    ./scripts/development-workflow/graduation-closeout.sh \
      --slug <slug> \
@@ -294,7 +343,11 @@ After the human merges the graduation PR (must use a **merge commit**):
      --epic <epic-issue-number>
    ```
 
-   Add `--exclude-issue <issue-number>` for optional, deferred, cancelled, or explicitly excluded sub-items that must remain open for human disposition. Add `--defer-epic-close` only when the human explicitly requests that the parent epic remain open after the core deliverable graduates.
+   Add `--base <branch>` when this is a nested graduation whose PR base is a
+   parent integration branch rather than `develop` (e.g. `--base
+   develop-sales-module`) — it must match the graduation PR's actual base,
+   and it must be `develop` or a `develop-*` integration branch. Add
+   `--exclude-issue <issue-number>` for optional, deferred, cancelled, or explicitly excluded sub-items that must remain open for human disposition. Add `--defer-epic-close` only when the human explicitly requests that the parent epic remain open after the core deliverable graduates.
 
    **Operator deferral durability:** `--defer-epic-close` also ensures the epic
    carries the durable label `defer-epic-close` before closeout reports success.
@@ -304,7 +357,7 @@ After the human merges the graduation PR (must use a **merge commit**):
    deferred epic or excluded sub-item.
 
    The helper:
-   - validates that the graduation PR is already merged from `develop-<slug>` to `develop`;
+   - validates that the graduation PR is already merged from `develop-<slug>` to its expected base (`develop` by default, or the branch passed via `--base` for a nested graduation);
    - identifies planned sub-items from native GitHub sub-issues or the `integration-branch:<slug>` label fallback;
    - includes issue references from closing keywords in merged PRs targeting `develop-<slug>`;
    - closes open delivered sub-items and reasserts the configured terminal Project status;

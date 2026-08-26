@@ -35,8 +35,52 @@ workflow_effective_config_file() {
   return 1
 }
 
+# workflow_linked_worktree_main_root [repo_root]
+#
+# Prints the main clone root when repo_root is a linked git worktree. Prints
+# nothing and returns 1 for the main clone itself, a plain checkout, a bare
+# repository, a submodule, or a directory outside any git repository.
+# Git-free on purpose: callers such as run-epic-policy-recommender.sh must
+# never invoke git or gh, and a linked worktree is recognisable from the
+# filesystem alone — its .git is a FILE whose first line is
+# `gitdir: <main>/.git/worktrees/<name>`. Mirrors linked_worktree_main_root()
+# in workflow-config-resolver.py (#1560).
+workflow_linked_worktree_main_root() {
+  local repo_root="${1:-$(workflow_repo_root)}"
+  local dot_git="" first="" gitdir="" main_root="" resolved_root=""
+
+  dot_git="$repo_root/.git"
+  [ -f "$dot_git" ] || return 1
+  IFS= read -r first < "$dot_git" || [ -n "$first" ] || return 1
+  case "$first" in gitdir:*) ;; *) return 1 ;; esac
+  gitdir="${first#gitdir:}"
+  gitdir="${gitdir#"${gitdir%%[![:space:]]*}"}"
+  # Trim trailing whitespace too, including a stray CR that `read` (unlike
+  # Python's splitlines()) does not strip from a CRLF-terminated line — the
+  # trimmed value must resolve with `cd` below, same as workflow-config-
+  # resolver.py's linked_worktree_main_root().
+  gitdir="${gitdir%"${gitdir##*[![:space:]]}"}"
+  case "$gitdir" in /*) ;; *) gitdir="$repo_root/$gitdir" ;; esac
+  gitdir="$(CDPATH='' cd -- "$gitdir" 2>/dev/null && pwd -P)" || return 1
+  case "$gitdir" in */.git/worktrees/*) ;; *) return 1 ;; esac
+  main_root="${gitdir%/.git/worktrees/*}"
+  resolved_root="$(CDPATH='' cd -- "$repo_root" 2>/dev/null && pwd -P)" || return 1
+  [ "$main_root" != "$resolved_root" ] || return 1
+  [ -d "$main_root/.git" ] || return 1
+  printf '%s\n' "$main_root"
+}
+
+# workflow_local_review_override_root
+#
+# Prints the directory whose .ai-dev-workflow.local.yaml applies to this
+# checkout. Precedence: WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT (the initiating
+# checkout of a reviewer-loop handoff, #1033), then the checkout's own file,
+# then — when the checkout is a linked worktree with no file of its own — the
+# main clone (#1560: `git worktree add` never carries gitignored files, so
+# without this every externally created worktree silently lost the override).
 workflow_local_review_override_root() {
   local override_root="${WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT:-}"
+  local repo_root="" main_root=""
 
   if [ -n "$override_root" ]; then
     if [ ! -d "$override_root" ]; then
@@ -47,7 +91,47 @@ workflow_local_review_override_root() {
     return 0
   fi
 
-  workflow_repo_root
+  repo_root="$(workflow_repo_root)"
+  # A checkout-local file without a `review:` section (set-local-path writes
+  # one holding only product_repos into a worktree) must not mask the main
+  # clone's reviewer override — that is the #1560 failure all over again.
+  # An UNREADABLE file is neither present nor absent: falling through to the
+  # main clone would apply a different policy than the resolver, which fails
+  # on the same file. Probe status 2 is a structured error; stop.
+  local checkout_status=0 main_status=0
+  _workflow_local_file_has_review_section "$repo_root/.ai-dev-workflow.local.yaml" || checkout_status=$?
+  [ "$checkout_status" -ne 2 ] || return 1
+  if [ "$checkout_status" -eq 1 ] && main_root="$(workflow_linked_worktree_main_root "$repo_root")"; then
+    _workflow_local_file_has_review_section "$main_root/.ai-dev-workflow.local.yaml" || main_status=$?
+    [ "$main_status" -ne 2 ] || return 1
+    if [ "$main_status" -eq 0 ]; then
+      printf '%s\n' "$main_root"
+      return 0
+    fi
+  fi
+  printf '%s\n' "$repo_root"
+}
+
+# _workflow_local_file_has_review_section <file>
+# True when the file exists and declares a top-level `review:` key, whatever
+# its value — empty, `{}`, `null`, `~`, or a nested mapping. Matches on the
+# key alone (mirrors workflow-config-resolver.py's `"review" not in local`
+# key-presence check) so an explicit-but-empty `review: {}` is still treated
+# as present and does not fall through to the main clone's file.
+_workflow_local_file_has_review_section() {
+  local file="$1"
+  [ -f "$file" ] || return 1
+  # Key presence only, matching parse_yaml_subset(), which strips whitespace
+  # around keys: `review : {}` is a review section there and must be one here.
+  # Status 2 (with an error on stderr) means the file exists but cannot be
+  # read — callers must not treat that as "no review section".
+  local status=0
+  grep -Eq '^review[[:blank:]]*:' "$file" || status=$?
+  if [ "$status" -gt 1 ]; then
+    echo "ERROR: local reviewer override exists but could not be read (grep status $status): $file" >&2
+    return 2
+  fi
+  return "$status"
 }
 
 workflow_local_config_file() {
@@ -824,6 +908,81 @@ workflow_config_review_platforms() {
 
   workflow_config_review_on_draft_github "$config_file"
   workflow_config_review_on_ready_github "$config_file"
+}
+
+# _workflow_config_review_scalar <config_file> <key>
+#
+# Internal helper shared by workflow_config_review_max_cycles and
+# workflow_config_review_max_total_cycles (and any future direct scalar
+# under the top-level `review:` section): reads review.<key> and prints the
+# raw string value found, or empty when the file, section, or key is
+# absent. Not intended to be called directly by other scripts — use one of
+# the named wrappers below so call sites stay self-documenting.
+_workflow_config_review_scalar() {
+  local config_file="$1"
+  local key="$2"
+
+  [ -f "$config_file" ] || return 0
+
+  awk -v key="$key" '
+    function trim(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^["'"'"']|["'"'"']$/, "", value)
+      return value
+    }
+
+    /^review:[[:space:]]*(#.*)?$/ {
+      in_review = 1
+      next
+    }
+
+    in_review && /^[^[:space:]#]/ {
+      in_review = 0
+    }
+
+    in_review && $0 ~ ("^[[:space:]][[:space:]]" key ":[[:space:]]*") {
+      line = $0
+      sub(/^[[:space:]]*[^[:space:]]*:[[:space:]]*/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      print trim(line)
+      exit
+    }
+  ' "$config_file"
+}
+
+# workflow_config_review_max_cycles [config_file]
+#
+# Reads review.max_cycles — a direct scalar key under the top-level `review:`
+# section in .ai-dev-workflow.yaml, sibling to on_draft/on_ready — and prints
+# the raw string value found, or empty when the file, section, or key is
+# absent. Callers must validate the value is a positive integer and apply
+# their own default; this reader does not know callers' defaults.
+#
+# Consumed by scripts/development-workflow/pr-review-loop.sh
+# (reviewer_loop_resolve_max_cycles) to configure Protocol 93's documented
+# PER-RUN reviewer-loop cycle cap (default: 10; see issue #1502).
+workflow_config_review_max_cycles() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  _workflow_config_review_scalar "$config_file" max_cycles
+}
+
+# workflow_config_review_max_total_cycles [config_file]
+#
+# Reads review.max_total_cycles — a direct scalar key under the top-level
+# `review:` section, sibling to max_cycles — and prints the raw string value
+# found, or empty when the file, section, or key is absent. Callers must
+# validate the value is a positive integer and apply their own default.
+#
+# Consumed by scripts/development-workflow/pr-review-loop.sh
+# (reviewer_loop_resolve_max_total_cycles) to configure the reviewer-loop
+# LIFETIME cycle ceiling (default: 25) — a separate, never-reset cap on top
+# of max_cycles' per-orchestration-run cap; see issue #1502 (dual-cap
+# follow-up per operator decision on PR #1507's review).
+workflow_config_review_max_total_cycles() {
+  local config_file="${1:-$(workflow_config_file)}"
+
+  _workflow_config_review_scalar "$config_file" max_total_cycles
 }
 
 workflow_config_review_phase_after_clean_platforms() {
@@ -2633,15 +2792,157 @@ EOF
   printf '%s' "$field_json"
 }
 
-# update_tracker_named_field_best_effort <issue_number> <field_name> <option_value>
+# _workflow_tracker_priority_field_json
 #
-# Best-effort update for any single-select GitHub Projects field by name.
-# Supports github_projects provider only; emits warnings for all other providers.
-# Returns 0 in all warning/failure cases to avoid blocking caller flows.
+# Internal helper shared by workflow_tracker_priority_resolvable and
+# workflow_tracker_default_priority_value. Resolves and prints the
+# project's Priority field JSON (id + options map, see
+# workflow_github_project_named_field_json) when the tracker provider is
+# github_projects, a project is configured, and the field was successfully
+# read. Performs no issue-specific lookups and triggers no mutation, so it
+# is safe to call before an issue exists. Prints nothing and returns 1 in
+# every other case — provider mismatch, no project configured, or the
+# lookup itself failed — which both callers treat uniformly as "nothing to
+# validate/adapt against" (the same "genuinely does not apply" / "uncertain"
+# carve-out update_tracker_named_field_best_effort always treats
+# permissively).
+_workflow_tracker_priority_field_json() {
+  local _wtpfj_provider project_owner project_number project_id field_json
+
+  _wtpfj_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
+  if [ "$_wtpfj_provider" != "github_projects" ]; then
+    return 1
+  fi
+
+  project_number="${GITHUB_PROJECT_NUMBER:-$(workflow_issue_tracker_project_number)}"
+  if [ -z "$project_number" ]; then
+    return 1
+  fi
+
+  project_owner="$(workflow_resolve_github_project_owner)"
+  if [ -z "$project_owner" ]; then
+    project_owner="$(workflow_resolve_github_repo_owner)"
+  fi
+  if [ -z "$project_owner" ]; then
+    return 1
+  fi
+
+  project_id="$(workflow_github_project_id "$project_owner" "$project_number" 2>/dev/null)"
+  if [ -z "$project_id" ]; then
+    return 1
+  fi
+
+  if ! field_json="$(workflow_github_project_named_field_json "$project_id" "Priority" 2>/dev/null)"; then
+    return 1
+  fi
+
+  printf '%s' "$field_json"
+}
+
+# workflow_tracker_priority_resolvable <priority_value>
+#
+# Pre-flight check: does <priority_value> resolve against the project's
+# actual Priority field options? Unlike update_tracker_priority_best_effort,
+# this triggers no mutation, so it is safe to call before an issue exists —
+# e.g. before `gh issue create` — to avoid the partial-success window where
+# an issue is created but a required follow-up Priority write then fails
+# (see issue #1501 code review: a caller that retries on non-zero exit
+# without inspecting stdout could otherwise create a duplicate issue).
+#
+# Returns 0 (resolvable / not blocking) whenever
+# _workflow_tracker_priority_field_json cannot produce a confirmed field
+# reading (provider mismatch, no project configured, or an inconclusive
+# lookup) — this pre-check must not block issue creation on an
+# environmental failure the authoritative post-creation required check will
+# re-attempt anyway. Returns 1 only when the Priority field was
+# successfully read from a configured project and <priority_value> does not
+# match any of its options — a confirmed, actionable bad value.
+workflow_tracker_priority_resolvable() {
+  local priority_value="$1"
+  local field_json option_id
+
+  if ! field_json="$(_workflow_tracker_priority_field_json)"; then
+    return 0
+  fi
+
+  option_id="$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
+" "$priority_value" 2>/dev/null)"
+
+  [ -n "$option_id" ]
+}
+
+# workflow_tracker_default_priority_value
+#
+# Resolves the runtime default Priority value used when --priority is
+# omitted, adapting to what the configured board actually supports instead
+# of assuming a single universal literal (issue #1501 code review, P1
+# finding "Preserve compatibility with Normal-priority boards"): prefers
+# "Medium" (this repo's own board), falls back to "Normal" for boards still
+# configured per the framework's pre-#1501 setup docs.
+#
+# When _workflow_tracker_priority_field_json cannot produce a confirmed
+# field reading (provider mismatch, no project configured, or an
+# inconclusive lookup), prints "Medium" unchanged — matching the
+# pre-existing best-effort behavior for those cases; there is nothing more
+# specific to fall back to, and the post-creation update remains a
+# best-effort no-op for a provider that does not support it.
+#
+# Only prints nothing (empty) when the Priority field was successfully read
+# from a configured project and CONFIRMED to contain neither "Medium" nor
+# "Normal". At that point, forcing a hard default would make every routine
+# backlog-item creation on that board fail until manually migrated, so the
+# caller should leave Priority unset instead — the same way an omitted
+# --size or --type is left unset.
+workflow_tracker_default_priority_value() {
+  local field_json resolved
+
+  if ! field_json="$(_workflow_tracker_priority_field_json)"; then
+    printf 'Medium'
+    return 0
+  fi
+
+  resolved="$(printf '%s' "$field_json" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read(), strict=False)
+options = data.get('options') or {}
+for candidate in ('Medium', 'Normal'):
+    if options.get(candidate):
+        print(candidate, end='')
+        break
+" 2>/dev/null)"
+
+  printf '%s' "$resolved"
+}
+
+# update_tracker_named_field_best_effort <issue_number> <field_name> <option_value> [required]
+#
+# Update for any single-select GitHub Projects field by name. Resolves
+# <option_value> against the project's actual field options (see
+# workflow_github_project_named_field_json) rather than a hardcoded list.
+# Supports github_projects provider only; emits warnings for all other
+# providers.
+#
+# When the tracker provider is not github_projects, or no GitHub Project is
+# configured, the field genuinely does not apply — there is nothing to
+# resolve <option_value> against — so those two cases always return 0
+# regardless of the [required] argument.
+#
+# For every other failure (item not found on the board, field/option not
+# found, GraphQL read or write failure, etc.): when [required] is the
+# literal string "required", the failure is a hard error (non-zero return,
+# message prefixed "Error:") so an explicitly-requested value that cannot be
+# applied to a configured board does not fail silently. When [required] is
+# omitted (the default), those failures remain best-effort (return 0,
+# message prefixed "Warning:") to avoid blocking caller flows for fields the
+# caller does not depend on.
 update_tracker_named_field_best_effort() {
   local issue_number="$1"
   local field_name="$2"
   local option_value="$3"
+  local required="${4:-}"
   local project_number project_id field_json field_id option_id item_json item_id
 
   local _utnfbe_provider
@@ -2663,6 +2964,10 @@ import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
 print(item.get('item_id') or '', end='')
 "); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse project item ID for issue #${issue_number}; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse project item ID for issue #${issue_number}; skipping tracker '${field_name}' update."
     return 0
   fi
@@ -2671,19 +2976,35 @@ import json, sys
 item = json.loads(sys.stdin.read(), strict=False)
 print(item.get('project_id') or '', end='')
 "); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse project ID for issue #${issue_number}; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse project ID for issue #${issue_number}; skipping tracker '${field_name}' update."
     return 0
   fi
   if [ -z "$item_id" ]; then
+    if [ "$required" = "required" ]; then
+      echo "Error: issue #${issue_number} not found in project #${project_number}; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: issue #${issue_number} not found in project #${project_number}; skipping tracker '${field_name}' update."
     return 0
   fi
   if [ -z "$project_id" ]; then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not resolve project ID for issue #${issue_number}; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not resolve project ID for issue #${issue_number}; skipping tracker '${field_name}' update."
     return 0
   fi
 
   if ! field_json="$(workflow_github_project_named_field_json "$project_id" "$field_name")"; then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not read project '${field_name}' field metadata; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not read project '${field_name}' field metadata; skipping tracker '${field_name}' update."
     return 0
   fi
@@ -2692,6 +3013,10 @@ import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
 print(data.get('field_id') or '', end='')
 "); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse '${field_name}' field metadata; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse '${field_name}' field metadata; skipping tracker '${field_name}' update."
     return 0
   fi
@@ -2700,10 +3025,18 @@ import json, sys
 data = json.loads(sys.stdin.read(), strict=False)
 print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
 " "$option_value"); then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not parse '${field_name}' option '${option_value}'; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not parse '${field_name}' option '${option_value}'; skipping tracker '${field_name}' update."
     return 0
   fi
   if [ -z "$field_id" ] || [ -z "$option_id" ]; then
+    if [ "$required" = "required" ]; then
+      echo "Error: could not resolve '${field_name}' field or option '${option_value}'; tracker '${field_name}' not updated." >&2
+      return 1
+    fi
     echo "Warning: could not resolve '${field_name}' field or option '${option_value}'; skipping tracker '${field_name}' update."
     return 0
   fi
@@ -2729,6 +3062,11 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
     '; then
     printf '%s' "$__workflow_last_gh_stdout"
   else
+    if [ "$required" = "required" ]; then
+      echo "Error: GraphQL mutation failed for issue #${issue_number}; tracker '${field_name}' not updated." >&2
+      workflow_print_captured_gh_stderr
+      return 1
+    fi
     echo "Warning: GraphQL mutation failed for issue #${issue_number}; tracker '${field_name}' not updated."
     workflow_print_captured_gh_stderr
   fi
@@ -2736,16 +3074,19 @@ print((data.get('options') or {}).get(sys.argv[1]) or '', end='')
 
 # update_tracker_priority_best_effort <issue_number> <priority_value>
 #
-# Best-effort update for the GitHub Projects Priority field.
-# Valid values: Urgent, High, Normal, Low. Medium aliases to Normal.
-# Returns 0 in all failure cases (fail-open).
+# Update for the GitHub Projects Priority field. Resolves <priority_value>
+# against the project's actual Priority field options (see
+# workflow_github_project_named_field_json) — there is no hardcoded alias
+# table. Priority is always explicitly set by add-backlog-item.sh (either
+# user-supplied via --priority, or defaulted), so an unresolvable value is a
+# hard error (non-zero return) whenever the tracker provider and project are
+# configured — see update_tracker_named_field_best_effort's "required" mode.
+# When the provider/project genuinely does not apply, this remains
+# best-effort (returns 0), matching update_tracker_named_field_best_effort.
 update_tracker_priority_best_effort() {
   local issue_number="$1"
   local priority_value="$2"
-  if [ "$priority_value" = "Medium" ]; then
-    priority_value="Normal"
-  fi
-  update_tracker_named_field_best_effort "$issue_number" "Priority" "$priority_value"
+  update_tracker_named_field_best_effort "$issue_number" "Priority" "$priority_value" "required"
 }
 
 # update_tracker_size_best_effort <issue_number> <size_value>
@@ -2764,8 +3105,26 @@ update_tracker_size_best_effort() {
 # Prints a JSON array of open GitHub issues whose project Type is Workflow.
 # Discovery is intentionally open-issues-first, then one project item-list
 # cross-reference, so callers avoid per-item full-board scans.
+#
+# `gh project item-list --format json` derives each item's field keys from
+# the field's display name, lowercasing only the first character (for
+# example "Custom Type" -> "custom Type", "Type" -> "type"). Because "Type"
+# is a reserved GitHub Projects field name, no conforming board can actually
+# name its classification field "Type" — so this resolves the same lookup
+# order as workflow_github_project_type_field_json:
+# issue_tracker.custom_fields.type_field, then "Custom Type", "CustomType",
+# then "Type", each converted to its gh item-list key.
+#
+# When none of those keys appear anywhere in the item-list payload, an
+# empty result is indistinguishable from "nothing open" versus "the Type
+# field could not be read" — this prints a distinct stderr warning for that
+# case so callers (and humans reading release-gate output) are not silently
+# fooled by a false-green `[]`.
 list_open_workflow_type_issues() {
   local project_number owner open_issues project_items repo_owner repo_name repo_slug
+  local _lowti_preferred_field _lowti_candidate_keys_json _lowti_result_json
+  local _lowti_matched_keys _lowti_results _lowti_item_keys_display _lowti_candidate_display
+  local _lowti_item_count
 
   local _lowti_provider
   _lowti_provider="$(workflow_normalize_issue_tracker_provider "$(workflow_issue_tracker_provider_raw)")"
@@ -2823,28 +3182,90 @@ list_open_workflow_type_issues() {
     return 0
   fi
 
-  if ! printf '%s' "$project_items" | jq --argjson open "$open_issues" '
+  _lowti_preferred_field="$(workflow_issue_tracker_custom_field type_field "$(workflow_effective_config_file || true)")"
+  _lowti_candidate_keys_json="$(_workflow_lowti_candidate_keys_json "$_lowti_preferred_field")"
+
+  if ! _lowti_result_json="$(printf '%s' "$project_items" | jq --argjson open "$open_issues" --argjson candidate_keys "$_lowti_candidate_keys_json" '
     def terminal($status):
       ($status // "") as $s
       | ($s == "Done" or $s == "Merged" or $s == "Released" or $s == "Cancelled");
 
-    [ .items[]
-      | select((.type // "") == "Workflow")
-      | . as $item
-      | ($open[] | select(.number == $item.content.number)) as $issue
-      | select(terminal($item.status) | not)
-      | {
-          number: $issue.number,
-          title: $issue.title,
-          url: $issue.url,
-          createdAt: $issue.createdAt,
-          status: ($item.status // ""),
-          priority: ($item.priority // ""),
-          type: ($item.type // "")
-        }
-    ]
-  ' 2>/dev/null; then
+    def item_type($item):
+      ( [ $candidate_keys[] as $k | ($item[$k] // "") ] | map(select(. != "")) | first ) // "";
+
+    ( [ .items[] | keys[] ] | unique ) as $item_keys
+    | ( [ $candidate_keys[] | select(. as $k | $item_keys | index($k) != null) ] ) as $matched_keys
+    | {
+        matched_keys: $matched_keys,
+        item_keys: $item_keys,
+        item_count: (.items | length),
+        results: [ .items[]
+          | select(item_type(.) == "Workflow")
+          | . as $item
+          | ($open[] | select(.number == $item.content.number)) as $issue
+          | select(terminal($item.status) | not)
+          | {
+              number: $issue.number,
+              title: $issue.title,
+              url: $issue.url,
+              createdAt: $issue.createdAt,
+              status: ($item.status // ""),
+              priority: ($item.priority // ""),
+              type: (item_type($item))
+            }
+        ]
+      }
+  ' 2>/dev/null)"; then
     echo "Warning: failed to parse GitHub Project items while discovering Workflow Type issues." >&2
     printf '[]\n'
+    return 0
   fi
+
+  _lowti_matched_keys="$(printf '%s' "$_lowti_result_json" | jq -c '.matched_keys' 2>/dev/null)"
+  _lowti_results="$(printf '%s' "$_lowti_result_json" | jq -c '.results' 2>/dev/null)"
+  _lowti_item_count="$(printf '%s' "$_lowti_result_json" | jq -r '.item_count' 2>/dev/null)"
+
+  if [ "$_lowti_matched_keys" = "[]" ] && [ "${_lowti_item_count:-0}" -gt 0 ] 2>/dev/null; then
+    _lowti_item_keys_display="$(printf '%s' "$_lowti_result_json" | jq -r '.item_keys | join(", ")' 2>/dev/null)"
+    _lowti_candidate_display="$(printf '%s' "$_lowti_candidate_keys_json" | jq -r 'join(", ")' 2>/dev/null)"
+    echo "Warning: none of the expected Type field keys (${_lowti_candidate_display}) were found on gh project item-list items (keys present: ${_lowti_item_keys_display}). Cannot distinguish 'no open Workflow items' from 'Type field unreadable' — verify issue_tracker.custom_fields.type_field or the project's Custom Type / Type field name." >&2
+  fi
+
+  printf '%s\n' "${_lowti_results:-[]}"
+}
+
+# _workflow_lowti_candidate_keys_json <preferred_field_name>
+#
+# Builds the ordered, de-duplicated JSON array of gh project item-list keys
+# to check for the Type field value, honoring the same lookup order as
+# workflow_github_project_type_field_json: preferred field name (from
+# issue_tracker.custom_fields.type_field), then "Custom Type", "CustomType",
+# then "Type". Each field display name is converted to its gh item-list key
+# by lowercasing only the first character.
+_workflow_lowti_candidate_keys_json() {
+  local preferred_field="$1"
+  local -a names=("$preferred_field" "Custom Type" "CustomType" "Type")
+  local -a keys=()
+  local name key first rest existing dup
+
+  for name in "${names[@]}"; do
+    [ -z "$name" ] && continue
+    first="$(printf '%s' "${name:0:1}" | tr '[:upper:]' '[:lower:]')"
+    rest="${name:1}"
+    key="${first}${rest}"
+    dup=0
+    for existing in "${keys[@]:-}"; do
+      if [ "$existing" = "$key" ]; then
+        dup=1
+        break
+      fi
+    done
+    [ "$dup" -eq 0 ] && keys+=("$key")
+  done
+
+  if [ "${#keys[@]}" -eq 0 ]; then
+    printf '[]'
+    return 0
+  fi
+  printf '%s\n' "${keys[@]}" | jq -R . | jq -sc .
 }

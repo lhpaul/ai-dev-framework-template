@@ -21,6 +21,17 @@ trap cleanup EXIT
 cat > "$MOCK_BIN/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$MOCK_GH_CALL_LOG"
+# Real 'gh api --input -' consumes stdin. This mock did not, so the callers'
+# `jq -n ... | gh api --input -` pipelines raced: when gh exited before jq's
+# write landed, jq died with EPIPE and pipefail failed the whole script. That
+# produced an intermittent "jq: error: writing output failed: Broken pipe"
+# — green on one CI run and red on the next (issue #1537). Drain stdin so the
+# mock matches the tool it stands in for.
+case "$*" in
+  *--input\ -*)
+    cat >/dev/null
+    ;;
+esac
 case "$*" in
   auth\ status)
     exit 0

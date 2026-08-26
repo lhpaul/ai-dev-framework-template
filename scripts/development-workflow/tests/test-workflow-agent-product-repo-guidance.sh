@@ -2,6 +2,10 @@
 # test-workflow-agent-product-repo-guidance.sh - prompt guidance coverage for workflow_hub ownership.
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-agent-product-repo-guidance.sh
+# covers: .claude/agents/*.md .claude/commands/*.md .cursor/agents/*.md
+# covers: .cursor/commands/*.md .codex/skills/** .agents/skills/**
+# covers: docs/workflow/development-workflow/repository-modes.md
+# covers: docs/workflow/development-workflow/protocols/*.md
 
 set -euo pipefail
 
@@ -121,6 +125,12 @@ run_contains "codex_reviewer_loop_context" \
 run_contains "agents_run_work_context" \
   ".agents/skills/run-work/SKILL.md" \
   "preserve selected product repository"
+run_contains "agents_prepare_release_component_target" \
+  ".agents/skills/prepare-release/SKILL.md" \
+  "component-release-target.sh"
+run_contains "agents_prepare_release_evidence_file" \
+  ".agents/skills/prepare-release/SKILL.md" \
+  "--evidence-file"
 run_contains "agents_openai_default_prompt_context" \
   ".agents/skills/run-work/agents/openai.yaml" \
   "selected product repository context"

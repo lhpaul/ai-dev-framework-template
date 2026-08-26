@@ -49,6 +49,7 @@ case "$*" in
   "title": "Live low risk",
   "baseRefName": "develop-delegated-epic-orchestration",
   "headRefName": "docs/live-low",
+  "headRefOid": "42424242424242424242424242424242424242",
   "headRepository": {"name": "ai-dev-framework-template", "owner": {"login": "lhpaul"}},
   "mergeStateStatus": "CLEAN",
   "isDraft": false,
@@ -66,6 +67,27 @@ JSON
       exit 1
     fi
     printf '%s\n' 'docs/workflow/development-workflow/protocols/95-run-epic-protocol.md'
+    ;;
+  pr\ view\ 43\ --json*)
+    cat <<'JSON'
+{
+  "number": 43,
+  "title": "Live medium risk",
+  "baseRefName": "develop",
+  "headRefName": "fix/43-live-medium",
+  "headRepository": {"name": "ai-dev-framework-template", "owner": {"login": "lhpaul"}},
+  "mergeStateStatus": "CLEAN",
+  "isDraft": false,
+  "reviewDecision": "APPROVED",
+  "labels": [{"name": "ready-for-human-review"}],
+  "statusCheckRollup": [
+    {"__typename": "CheckRun", "name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}
+  ]
+}
+JSON
+    ;;
+  pr\ diff\ 43\ --name-only)
+    printf '%s\n' 'scripts/development-workflow/run-epic-risk-classifier.sh'
     ;;
   issue\ edit*|pr\ create*|pr\ merge*|project\ item-edit*|project\ item-add*|pr\ comment*|pr\ close*|pr\ edit*)
     printf 'mutating gh command was called: gh %s\n' "$*" >&2
@@ -164,6 +186,35 @@ low_fixture="$(write_fixture low '{
 low_output="$(classify_fixture "$low_fixture" low)"
 run_test "classifies_low_docs_and_tests" "low" "$(printf '%s\n' "$low_output" | jq -r '.risk')"
 run_test "low_merge_permitted" "true" "$(printf '%s\n' "$low_output" | jq -r '.merge_permitted')"
+
+# --input carrying headRefOid directly (the same shape --pr builds internally)
+# must still surface it as head_sha, not just the normalized head_sha field.
+headrefoid_fixture="$(write_fixture headrefoid-input '{
+  "pr_number": 1,
+  "merge_state": "CLEAN",
+  "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+  "changed_files": ["docs/testing/workflow/919-pr-risk-classification.smoke-test.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+headrefoid_output="$(classify_fixture "$headrefoid_fixture" low)"
+run_test "input_head_sha_falls_back_to_headrefoid" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "$(printf '%s\n' "$headrefoid_output" | jq -r '.head_sha')"
+
+# When both head_sha and headRefOid are present, the already-normalized
+# head_sha field takes precedence over a raw headRefOid.
+both_head_fields_fixture="$(write_fixture both-head-fields '{
+  "pr_number": 1,
+  "merge_state": "CLEAN",
+  "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "headRefOid": "cccccccccccccccccccccccccccccccccccccccc",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+  "changed_files": ["docs/testing/workflow/919-pr-risk-classification.smoke-test.md"],
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0}
+}')"
+both_head_fields_output="$(classify_fixture "$both_head_fields_fixture" low)"
+run_test "input_head_sha_takes_precedence_over_headrefoid" "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "$(printf '%s\n' "$both_head_fields_output" | jq -r '.head_sha')"
 
 no_ci_fixture="$(write_fixture no-ci '{
   "pr_number": 1,
@@ -334,6 +385,107 @@ medium_missing_fixture="$(write_fixture medium-missing '{
 medium_missing_output="$(classify_fixture "$medium_missing_fixture" medium)"
 run_test "blocks_medium_without_evidence" "blocked" "$(printf '%s\n' "$medium_missing_output" | jq -r '.risk')"
 run_test "missing_evidence_blocks_merge" "false" "$(printf '%s\n' "$medium_missing_output" | jq -r '.merge_permitted')"
+
+# ---------------------------------------------------------------------------
+# CI workflow granularity (issue #1565)
+#
+# Every .github/workflows change used to score `high`, so a PR that wires a
+# test suite into CI exceeded a medium ceiling and could not merge under
+# delegated policy — the risk model penalised closing a test-coverage gap.
+# Adding a test or lint job now scores medium; deployment, release, and
+# permission behavior still score high.
+# ---------------------------------------------------------------------------
+
+# ci_workflow_fixture <name> <changed-files-json> — a clean PR differing only
+# in which files it touches, with why_safe_to_merge evidence supplied so the
+# result reflects file risk rather than the separate evidence blocker.
+ci_workflow_fixture() {
+  if [ "$#" -ne 2 ] || [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
+    printf 'ERROR: ci_workflow_fixture requires <name> <changed-files-json>\n' >&2
+    exit 2
+  fi
+  write_fixture "$1" '{
+  "pr_number": 30,
+  "merge_state": "CLEAN",
+  "labels": ["ready-for-human-review"],
+  "status_checks": [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+  "changed_files": '"$2"',
+  "reviewer": {"status": "clean", "blocking_count": 0, "unresolved_blocking_threads": 0},
+  "why_safe_to_merge": {
+    "scope": "ci workflow classification fixture",
+    "tests": "fixture tests cover risk classes",
+    "reviewer_outcome": "reviewer loop clean",
+    "ci_outcome": "CI green",
+    "rollback_or_cleanup_risk": "revert the workflow file"
+  }
+}'
+}
+
+ci_workflow_risk() {
+  [ "$#" -eq 2 ] || { printf 'ERROR: ci_workflow_risk requires <name> <changed-files-json>\n' >&2; exit 2; }
+  classify_fixture "$(ci_workflow_fixture "$1" "$2")" medium | jq -r '.risk'
+}
+
+ci_workflow_merge() {
+  [ "$#" -eq 2 ] || { printf 'ERROR: ci_workflow_merge requires <name> <changed-files-json>\n' >&2; exit 2; }
+  classify_fixture "$(ci_workflow_fixture "$1" "$2")" medium | jq -r '.merge_permitted'
+}
+
+# AC-1 / AC-2: the diff shape from PR #1536 — a test workflow plus the workflow
+# script it covers — must fit inside a medium ceiling.
+run_test "ci_test_workflow_is_medium" "medium" \
+  "$(ci_workflow_risk wf-test '[".github/workflows/workflow-tests.yml","scripts/development-workflow/batch-merge.sh"]')"
+
+run_test "ci_test_workflow_alone_is_medium" "medium" \
+  "$(ci_workflow_risk wf-test-alone '[".github/workflows/test-pr-review-loop.yml"]')"
+run_test "ci_test_workflow_merge_permitted" "true" \
+  "$(ci_workflow_merge wf-test-merge '[".github/workflows/test-pr-review-loop.yml"]')"
+run_test "ci_lint_workflow_is_medium" "medium" \
+  "$(ci_workflow_risk wf-lint '[".github/workflows/markdown-lint.yml"]')"
+run_test "ci_shellcheck_workflow_is_medium" "medium" \
+  "$(ci_workflow_risk wf-shellcheck '[".github/workflows/shellcheck.yml"]')"
+
+# AC-3: deployment, release, and permission behavior stay high.
+run_test "ci_deploy_workflow_is_high" "high" \
+  "$(ci_workflow_risk wf-deploy '[".github/workflows/deploy.yml"]')"
+run_test "ci_deploy_workflow_blocked_at_medium" "false" \
+  "$(ci_workflow_merge wf-deploy-merge '[".github/workflows/deploy.yml"]')"
+run_test "ci_release_workflow_is_high" "high" \
+  "$(ci_workflow_risk wf-release '[".github/workflows/auto-tag-release.yml"]')"
+run_test "ci_policy_workflow_is_high" "high" \
+  "$(ci_workflow_risk wf-policy '[".github/workflows/pr-policy.yml"]')"
+run_test "ci_permissions_workflow_is_high" "high" \
+  "$(ci_workflow_risk wf-permissions '[".github/workflows/permissions.yml"]')"
+run_test "ci_permission_workflow_is_high" "high" \
+  "$(ci_workflow_risk wf-permission '[".github/workflows/permission-sync.yml"]')"
+run_test "ci_token_workflow_is_high" "high" \
+  "$(ci_workflow_risk wf-token '[".github/workflows/token-refresh.yml"]')"
+
+# .yaml variants of the allowlist are accepted too.
+run_test "ci_test_workflow_yaml_ext_is_medium" "medium" \
+  "$(ci_workflow_risk wf-yaml '[".github/workflows/test-thing.yaml"]')"
+run_test "ci_singular_test_suffix_is_medium" "medium" \
+  "$(ci_workflow_risk wf-singular '[".github/workflows/smoke-test.yml"]')"
+
+# An unrecognised workflow name is not assumed safe.
+run_test "ci_unknown_workflow_is_high" "high" \
+  "$(ci_workflow_risk wf-unknown '[".github/workflows/e2e-regression.yml"]')"
+
+# The deny-list beats the allowlist: a name claiming both is not a test job.
+run_test "ci_test_named_release_workflow_is_high" "high" \
+  "$(ci_workflow_risk wf-test-release '[".github/workflows/test-release.yml"]')"
+
+# A test workflow alongside a genuinely sensitive path stays high.
+run_test "ci_test_workflow_with_auth_path_is_high" "high" \
+  "$(ci_workflow_risk wf-test-auth '[".github/workflows/workflow-tests.yml","auth/token.sh"]')"
+
+# The reason string distinguishes the two categories rather than reusing one.
+run_test "ci_test_workflow_reason_is_specific" "yes" \
+  "$(classify_fixture "$(ci_workflow_fixture wf-reason '[".github/workflows/test-pr-review-loop.yml"]')" medium \
+     | jq -e '.reasons | any(startswith("test or lint CI workflow change:"))' >/dev/null && echo yes || echo no)"
+run_test "ci_deploy_workflow_reason_is_sensitive" "yes" \
+  "$(classify_fixture "$(ci_workflow_fixture wf-reason-deploy '[".github/workflows/deploy.yml"]')" medium \
+     | jq -e '.reasons | any(startswith("sensitive or broad file category:"))' >/dev/null && echo yes || echo no)"
 
 high_fixture="$(write_fixture high '{
   "pr_number": 4,
@@ -589,10 +741,49 @@ run_test "max_risk_gate_reason" "yes" "$(printf '%s\n' "$threshold_output" | jq 
 live_output="$("$CLASSIFIER" --pr 42 --max-risk low --json)"
 run_test "live_pr_path_read_only_classifies" "low" "$(printf '%s\n' "$live_output" | jq -r '.risk')"
 run_test "live_pr_path_merge_permitted" "true" "$(printf '%s\n' "$live_output" | jq -r '.merge_permitted')"
+run_test "live_pr_path_head_sha_from_headrefoid" "42424242424242424242424242424242424242" "$(printf '%s\n' "$live_output" | jq -r '.head_sha')"
 run_test "json_read_only_guarantee" "yes" "$(printf '%s\n' "$live_output" | jq -e '.read_only_guarantee | test("No tracker status")' >/dev/null && echo yes || echo no)"
 run_fails_contains "live_pr_view_failure_errors" "failed to read PR #42" env MOCK_GH_MODE=view-fail "$CLASSIFIER" --pr 42 --json
 run_fails_contains "live_pr_empty_response_errors" "empty PR response for #42" env MOCK_GH_MODE=view-empty "$CLASSIFIER" --pr 42 --json
 run_fails_contains "live_pr_diff_failure_errors" "failed to read changed files for PR #42" env MOCK_GH_MODE=diff-fail "$CLASSIFIER" --pr 42 --json
+
+# --- issue #1497: --pr cannot attach why_safe_to_merge, so a medium-risk PR
+# --- classified via --pr always ends up "blocked" without --why-safe-file ---
+live_medium_no_evidence_output="$("$CLASSIFIER" --pr 43 --max-risk medium --json)"
+run_test "live_pr_medium_risk_without_why_safe_file_is_blocked" "blocked" "$(printf '%s\n' "$live_medium_no_evidence_output" | jq -r '.risk')"
+run_test "live_pr_medium_risk_without_why_safe_file_reason" "yes" "$(printf '%s\n' "$live_medium_no_evidence_output" | jq -e '.blockers[] | select(test("why_safe_to_merge"))' >/dev/null && echo yes || echo no)"
+
+why_safe_fixture="$(write_fixture why-safe '{
+  "scope": "single read-only classifier helper",
+  "tests": "fixture tests cover risk classes",
+  "reviewer_outcome": "reviewer loop clean",
+  "ci_outcome": "CI green",
+  "rollback_or_cleanup_risk": "remove helper and docs if needed"
+}')"
+live_medium_with_evidence_output="$("$CLASSIFIER" --pr 43 --why-safe-file "$why_safe_fixture" --max-risk medium --json)"
+run_test "live_pr_medium_risk_with_why_safe_file_reaches_medium" "medium" "$(printf '%s\n' "$live_medium_with_evidence_output" | jq -r '.risk')"
+run_test "live_pr_medium_risk_with_why_safe_file_merge_permitted" "true" "$(printf '%s\n' "$live_medium_with_evidence_output" | jq -r '.merge_permitted')"
+run_test "live_pr_why_safe_file_carried_through" "single read-only classifier helper" "$(printf '%s\n' "$live_medium_with_evidence_output" | jq -r '.why_safe_to_merge.scope')"
+
+# --why-safe-file also works with --input mode, and overrides any
+# why_safe_to_merge already embedded in the --input file's contents.
+why_safe_override_fixture="$(write_fixture why-safe-override '{
+  "scope": "overridden via --why-safe-file",
+  "tests": "overridden",
+  "reviewer_outcome": "overridden",
+  "ci_outcome": "overridden",
+  "rollback_or_cleanup_risk": "overridden"
+}')"
+input_with_why_safe_override_output="$("$CLASSIFIER" --input "$medium_fixture" --why-safe-file "$why_safe_override_fixture" --max-risk medium --json)"
+run_test "why_safe_file_overrides_input_why_safe" "overridden via --why-safe-file" "$(printf '%s\n' "$input_with_why_safe_override_output" | jq -r '.why_safe_to_merge.scope')"
+
+non_object_why_safe_fixture="$(write_fixture why-safe-non-object '["not", "an", "object"]')"
+run_fails_contains "rejects_non_object_why_safe_file" "--why-safe-file must contain a JSON object" \
+  "$CLASSIFIER" --pr 43 --why-safe-file "$non_object_why_safe_fixture" --max-risk medium --json
+run_fails_contains "rejects_missing_why_safe_file" "input file not found" \
+  "$CLASSIFIER" --pr 43 --why-safe-file "$TMP_ROOT/missing-why-safe.json" --max-risk medium --json
+run_fails_contains "rejects_flag_as_why_safe_file_value" "--why-safe-file requires a value" \
+  "$CLASSIFIER" --pr 43 --why-safe-file --max-risk medium --json
 
 run_test "no_mutating_gh_commands" "no" "$(
   grep -Eq '(^issue edit|^pr create|^pr merge|^project item-edit|^project item-add|^pr comment|^pr close|^pr edit|mutation)' "$CALL_LOG" && echo yes || echo no

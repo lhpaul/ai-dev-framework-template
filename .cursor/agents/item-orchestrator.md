@@ -32,15 +32,22 @@ Follow the **`/run-item`** bounded command contract:
 ## Repository Mode Context
 
 Before implementation mutation in `workflow_hub`, state the selected product
-repository, local path or remote identity, artifact owner, and mutation target.
-Stop before file edits, branch creation, commits, or implementation PR creation
-when product repository context is missing or ambiguous. Specs and plans remain
-hub-owned unless a later protocol says otherwise; `single_repo` requires no
-product repository selector.
+repository, local path or remote identity, artifact owner, mutation target,
+routing outcome, and routing fingerprint. Continue only when
+`ROUTING_CONTINUE_ALLOWED=true`. Stop before file edits, branch creation, commits, or implementation PR creation when product repository context is
+missing, ambiguous, or selects multiple product repositories. Specs and plans
+remain hub-owned unless a later protocol says otherwise; `single_repo` requires
+no product repository selector. `hub_only` with
+`ROUTING_ARTIFACT_OWNER=hub_repository` routes to the hub with no selected
+product repository.
 
 Before dispatching any stage agent that may create a branch or open a PR, pass
 the expected branch, expected worktree when known, approved base, and
-artifact-owning repo root. The stage path must run
+artifact-owning repo root. For `workflow_hub` implementation handoffs, also
+pass `ROUTING_CONTINUE_ALLOWED`, `ROUTING_OUTCOME_CODE`,
+`ROUTING_ARTIFACT_OWNER`, `ROUTING_SELECTED_PRODUCT_REPO_KEY`, and
+`ROUTING_FINGERPRINT`, or explicitly require the implementer to run a fresh
+classifier before mutation. The stage path must run
 `run-nested-artifact-guard.sh --mode <pre-create|pre-pr> --issue <number> --expected-branch <branch> --approved-base <branch> --repo-root "$ARTIFACT_REPO_ROOT"` before mutation
 and stop on `missing_base`, `blocked_duplicate`, `wrong_base`, or `scan_failed`.
 For substantial or multi-part mutating stage work, also instruct the stage agent
@@ -130,7 +137,11 @@ That document is the single source of truth for this supporting role. Key respon
   `unavailable_required` result is non-terminal and must return to the relevant
   Protocol 91 gate.
 
+**A paused turn does not resume.** Ending a turn ends this agent; nothing external wakes it back up. If you background a long step and end your turn to "wait for the notification," the item parks permanently — indistinguishable from a dead runner, and recoverable only if a supervising parent happens to notice the report named no terminal state. This has happened in production: three runners in one overnight wave each backgrounded a step and ended their turn expecting to resume automatically; none did. For every long step, not only `pr-review-loop.sh` and `pr-ci-loop.sh`: run it in the foreground, or if backgrounded, poll it yourself in the same turn until it returns (`while pgrep -f "<cmd>" >/dev/null; do sleep 20; done`, with `<cmd>` specific enough — e.g. including the PR number — that it cannot match an unrelated process; see Protocol 91's "Execution Discipline" section for why PID-capture-and-`wait` does not substitute here). After the loop exits, check `$?`: pgrep exit status 1 means the step genuinely finished; any other nonzero status (2, 3, 127) is a polling failure, not completion — do not treat it as done. Never end a turn while something you started is still in flight.
+
 **Foreground loop execution — never background-and-yield**: Protocol 91 Step 7 and Step 8 define the mandatory foreground-execution rule for `pr-review-loop.sh` and `pr-ci-loop.sh` (run each to completion in-turn; never background one and end your turn to wait for it). That rule applies to every dispatch this agent makes exactly as written there.
+
+**Never re-invoke `pr-review-loop.sh` for a PR whose loop is already running.** It takes a per-PR single-instance lock; a second concurrent invocation exits 75 with `REASON=lock_contention` and tells you nothing about the PR's actual state. If you re-enter this item after a backgrounded or interrupted run, do not start a new one — poll for the earlier process to finish (or confirm it is genuinely gone), then read the outcome from PR state directly (`gh pr view`, the reviewer-loop summary comment, GraphQL review threads) instead of launching a duplicate run. Use `pr-review-loop.sh unlock <pr-number>` only once you have confirmed the recorded lock PID is no longer alive.
 
 **Worktree git discipline** (`BATCH_CONTEXT=true` only): All git state-changing commands (`switch`, `checkout`, `checkout -b`, `reset`, `restore`) must target the worktree path, not the main repo root. Never `cd` out of the worktree into the main repo root and then run branch-switching commands. Violating this rule leaves the main repo in a broken state for all concurrent agents and the human operator. Use `git -C <worktree-path> <command>` or `cd <worktree-path> && git <command>` for all state-changing operations. Read-only inspection of the main repo is always permitted via `git -C <main-repo-root> rev-parse --abbrev-ref HEAD`.
 

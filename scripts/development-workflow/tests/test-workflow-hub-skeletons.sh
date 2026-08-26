@@ -2,6 +2,9 @@
 # test-workflow-hub-skeletons.sh - workflow hub skeleton validation tests.
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-hub-skeletons.sh
+# covers: scripts/development-workflow/validate-workflow-hub-skeletons.py
+# covers: scripts/development-workflow/workflow-config-resolver.py
+# covers: sync-manifest.yaml
 
 set -euo pipefail
 
@@ -151,6 +154,33 @@ run_passes \
   --repo-root "$REPO_ROOT" \
   --sync-manifest "$REPO_ROOT/sync-manifest.yaml"
 
+runtime_drift_sync_manifest="$TMP_ROOT/runtime-drift-sync-manifest.yaml"
+cat > "$runtime_drift_sync_manifest" <<'YAML'
+schema_version: 1
+mode_scopes:
+  shared:
+  hub_only:
+  product_repo_injection:
+categories:
+  always_sync:
+    - path: template/workflow-hub/
+      mode_scope: hub_only
+    - path: template/product-repo-injection/
+      mode_scope: product_repo_injection
+    - path: scripts/development-workflow/workflow-config-resolver.py
+      mode_scope: product_repo_injection
+  special_handling:
+  project_specific:
+YAML
+run_fails_contains \
+  "sync_manifest_product_runtime_drift_fails" \
+  "product_repo_injection runtime paths do not match required release runtime set" \
+  python3 "$REPO_ROOT/scripts/development-workflow/validate-workflow-hub-skeletons.py" \
+  --repo-root "$REPO_ROOT" \
+  --sync-manifest "$runtime_drift_sync_manifest" \
+  --skeleton-manifest "$REPO_ROOT/template/workflow-hub/skeleton-manifest.yaml" \
+  --skeleton-manifest "$REPO_ROOT/template/product-repo-injection/skeleton-manifest.yaml"
+
 echo ""
 echo "=== Area 3: fixture validation edge cases ==="
 
@@ -168,6 +198,18 @@ entries:
     mode_scope: product_repo_injection
 YAML
 run_passes "single_entry_manifest_with_spaced_repo_path" validate_skeleton_manifest "$single_entry_manifest" "$fixture_root"
+
+missing_release_runtime_manifest="$TMP_ROOT/missing-release-runtime.yaml"
+cat > "$missing_release_runtime_manifest" <<'YAML'
+schema_version: 1
+skeleton_role: product_repo
+mode_scope: product_repo_injection
+enforce_release_runtime: true
+entries:
+  - path: AGENTS.md
+    mode_scope: product_repo_injection
+YAML
+run_fails_contains "product_repo_missing_release_runtime_fails" "missing required product release runtime entries" validate_skeleton_manifest "$missing_release_runtime_manifest" "$fixture_root"
 
 empty_manifest="$TMP_ROOT/empty.yaml"
 : > "$empty_manifest"

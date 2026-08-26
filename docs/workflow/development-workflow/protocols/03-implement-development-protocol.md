@@ -618,6 +618,20 @@ and product mutation target before changing files. If the selected product
 repository is missing or ambiguous for product-owned implementation work, stop
 before mutation.
 
+For workflow-hub implementation actions, prefer `workflow-next-action.sh` and
+consume its structured routing result. If using
+`work-item-repository-routing.py` directly, map `outcome_code`,
+`display_label`, `continue_allowed`, `artifact_owner`,
+`selected_product_repo_key`, `stop_reason`, `required_human_action`, and
+`fingerprint` to the corresponding `ROUTING_*` evidence names before handoff.
+Continue only when the command exits successfully and
+`ROUTING_CONTINUE_ALLOWED=true`. Record `ROUTING_OUTCOME_CODE`,
+`ROUTING_DISPLAY_LABEL`, `ROUTING_ARTIFACT_OWNER`,
+`ROUTING_SELECTED_PRODUCT_REPO_KEY`, and `ROUTING_FINGERPRINT` in the
+implementation-start notes. If `ROUTING_STOP_REASON` or
+`ROUTING_REQUIRED_HUMAN_ACTION` is non-empty, stop before mutation and report
+that evidence instead of inferring a product repository.
+
 1. **Enumerate all files** that need changes. List every file path explicitly.
 2. **For each file**, describe the specific changes needed (e.g., "add section X", "update step Y to handle case Z").
 3. **Verify scope**: confirm all listed changes are within the issue's stated scope. Remove anything that is not.
@@ -781,46 +795,42 @@ Fix all ShellCheck warnings before committing. Do not commit `.sh` files with Sh
 
 Fix any failures before committing. Do not push a broken build.
 
-### Step 6: Update CHANGELOG
+### Step 6: Add CHANGELOG Fragment
 
-Add an entry under `[Unreleased]` in `CHANGELOG.md`:
+For normal feature work, add a per-item release note fragment instead of
+editing `CHANGELOG.md` directly:
 
-- Use the appropriate category: `Added`, `Changed`, `Fixed`, `Security`, `Deprecated`, `Removed`
-- Write from the user's perspective: what can they now do / what is now fixed?
-- If this PR fixes or adjusts an unreleased development that already has an `[Unreleased]` entry, update the existing entry instead of adding a new one; if the entry already describes the corrected behavior, no change is needed
-
-**Duplicate-section prevention (check before writing)**: Before writing the CHANGELOG entry, read the existing `[Unreleased]` block and check whether a section header matching your target category already exists (e.g., `### Changed`, `### Added`, `### Fixed`). Apply the following rule:
-
-- **Category section already exists** under `[Unreleased]`: append your bullet(s) to the existing section — do **not** create a new `### Category` header.
-- **Category section does not exist** under `[Unreleased]`: create a new `### Category` header followed by your bullet(s).
-
-After writing, run a quick sanity check to confirm there is exactly one instance of each used category header within the `[Unreleased]` block:
-
-```bash
-# Replace "Changed" with your actual category (Added, Fixed, etc.)
-awk '/^## \[Unreleased\]/{found=1} /^## \[/{if(found && !/Unreleased/) exit} found' CHANGELOG.md | grep -c "^### Changed"
-# Expected output: 1
+```text
+changelog.d/<item>.<kind>.<slug>.md
 ```
 
-If the count is greater than 1, merge the duplicate sections before staging.
+- `<item>` is the bare tracker identifier (for example `1554`, never `#1554`).
+- `<kind>` is one of `added`, `changed`, `fixed`, `security`, `deprecated`, or `removed`.
+- `<slug>` is a short kebab-case description.
+- The file body is the finished changelog bullet, written from the user's perspective.
 
-**CHANGELOG format verification (before staging)**: After writing the CHANGELOG entry, verify the entry for the following defects and fix them in-place before staging:
+Example:
 
-1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
-2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
-3. **Link reference definitions**: If you renamed `[Unreleased]` to a versioned section (e.g., `## [1.2.3] - 2026-01-01`), verify that a corresponding link reference definition exists at the bottom of the file (e.g., `[1.2.3]: https://github.com/owner/repo/compare/v1.2.2...v1.2.3`). Run the check to catch any missing definitions:
-
-   ```bash
-   bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md
-   ```
-
-A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
-
-```bash
-git diff CHANGELOG.md | grep '^+' | grep -E '[[:space:]]+$'
+```markdown
+- **Changelog fragments** (#1554): Development PRs now write per-item release note fragments, reducing shared changelog conflicts in parallel batches.
 ```
 
-If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.
+If this PR fixes or adjusts unreleased work that already has a fragment, update
+that existing fragment instead of adding a duplicate. If the fragment already
+describes the corrected behavior, leave it unchanged.
+
+If the repository has no issue tracker configured, open the PR as a draft
+before creating the fragment, then use the PR number as `<item>` and omit the
+`(#N)` issue reference from the bullet body. In that no-tracker case, validate
+and push the fragment in a follow-up commit before marking the PR ready for
+review.
+
+Validate fragments before staging:
+
+<!-- workflow-shell-contract: bash -->
+```bash
+bash scripts/development-workflow/changelog-fragments.sh validate
+```
 
 **MD047 trailing-newline check (before staging)**: After editing any markdown file, verify that every modified `.md` file ends with a newline (MD047). Run this check on each markdown file you are about to stage:
 
@@ -864,7 +874,7 @@ or `develop-<slug>` for integration-branch items) with:
   - Link to spec and plan
   - Test plan (how to validate)
   - Any deviations from the plan (with justification)
-  - CHANGELOG entry preview
+  - CHANGELOG fragment preview
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
 
@@ -941,25 +951,31 @@ Skip this check only when no review platforms are configured and the reviewer lo
 
 Step 1.2 — Confirm all automated-reviewer threads are resolved:
 
+<!-- workflow-shell-contract: bash-zsh -->
+
 ```bash
 # Must return empty output. Any line of output means unresolved bot threads exist — do not apply ready-for-regression.
+CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
+CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
+
 gh api graphql -f query='
   query($owner:String!, $repo:String!, $number:Int!) {
     repository(owner:$owner, name:$repo) {
       pullRequest(number:$number) {
         reviewThreads(first: 100) {
-          nodes { isResolved comments(first: 1) { nodes { author { login } body } } }
+          nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
         }
       }
     }
   }' -f owner=<owner> -f repo=<repo> -F number=<pr_number> \
-  | jq '.data.repository.pullRequest.reviewThreads.nodes[]
+  | jq --arg codex_bot "$CODEX_BOT_LOGIN" '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
-        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps"] | index($a) != null)
+        | select((.isOutdated // false) == false)
+        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps",$codex_bot] | index($a) != null)
         | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)'
 ```
 
-Pass condition: empty output. If non-empty: resolve or address each reported thread before proceeding.
+Pass condition: empty output. If non-empty: resolve or address each reported thread before proceeding. Outdated threads are non-blocking because GitHub marked the finding's original diff location stale after a fix.
 
 Step 1.3 — Apply `ready-for-regression`:
 
@@ -1152,26 +1168,18 @@ fi
 
 Fix all ShellCheck warnings before committing. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`. Run the workflow shell guard as well; it catches added-line problems that ShellCheck misses.
 
-6. Update CHANGELOG under `[Unreleased]` with a `Changed` entry (skip if this refactor adjusts unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior).
+6. Add or update a `changed` fragment under `changelog.d/` (skip if this refactor adjusts unreleased work whose existing fragment already describes the correct behavior):
 
-   **Duplicate-section prevention (check before writing)**: Before writing the CHANGELOG entry, read the existing `[Unreleased]` block and check whether a `### Changed` section header already exists. If it does, append your bullet(s) to the existing section — do **not** create a new `### Changed` header. If `### Changed` does not yet exist under `[Unreleased]`, create it. After writing, verify that the header appears exactly once within the `[Unreleased]` block: `awk '/^## \[Unreleased\]/{found=1} /^## \[/{if(found && !/Unreleased/) exit} found' CHANGELOG.md | grep -c "^### Changed"` — expected output: 1; if greater than 1, merge the duplicate sections before staging.
-
-   **CHANGELOG format verification (before staging)**: After writing the CHANGELOG entry, verify the entry for the following defects and fix them in-place before staging:
-   1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
-   2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
-   3. **Link reference definitions**: If you renamed `[Unreleased]` to a versioned section (e.g., `## [1.2.3] - 2026-01-01`), verify that a corresponding link reference definition exists at the bottom of the file (e.g., `[1.2.3]: https://github.com/owner/repo/compare/v1.2.2...v1.2.3`). Run the check to catch any missing definitions:
-
-      ```bash
-      bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md
-      ```
-
-   A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
-
-   ```bash
-   git diff CHANGELOG.md | grep '^+' | grep -E '[[:space:]]+$'
+   ```text
+   changelog.d/<item>.changed.<slug>.md
    ```
 
-   If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.
+   The body must be the finished changelog bullet, written from the user's perspective. Use the bare tracker identifier as `<item>`; in repositories with no issue tracker configured, open the PR as a draft before creating the fragment, then use the PR number as `<item>` and omit the `(#N)` issue reference from the bullet body. In that no-tracker case, validate and push the fragment in a follow-up commit before marking the PR ready for review. Validate before staging the fragment commit:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   bash scripts/development-workflow/changelog-fragments.sh validate
+   ```
 
    **MD047 trailing-newline check (before staging)**: After editing any markdown file, verify that every modified `.md` file ends with a newline (MD047). Run this check on each markdown file you are about to stage:
 
@@ -1200,7 +1208,7 @@ Fix all ShellCheck warnings before committing. Workflow scripts must also be bas
       - Link to the **implementation plan** only (no spec)
       - Test plan (how to validate)
       - Any deviations from the plan (with justification)
-      - CHANGELOG entry preview
+      - CHANGELOG fragment preview
 
 **Pre-PR-create base-branch guard (mandatory — run before every `gh pr create`)**:
 
@@ -1410,29 +1418,28 @@ fi
 
 Fix all ShellCheck warnings before committing. Do not commit `.sh` files with ShellCheck violations — they will fail the CI `shellcheck.yml` check and trigger unnecessary review-loop churn. Workflow scripts must also be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`. Run the workflow shell guard as well; it catches added-line problems that ShellCheck misses.
 
-### Step 6: Update CHANGELOG
+### Step 6: Add CHANGELOG Fragment
 
-Update CHANGELOG under `[Unreleased]` with a `Fixed` entry (skip if this fixes unreleased work that already has an entry — update the existing entry instead, or leave it unchanged if it already describes the correct behavior).
+Add or update a `fixed` fragment under `changelog.d/` (skip if this fixes
+unreleased work whose existing fragment already describes the correct
+behavior):
 
-**Duplicate-section prevention (check before writing)**: Before writing the CHANGELOG entry, read the existing `[Unreleased]` block and check whether a `### Fixed` section header already exists. If it does, append your bullet(s) to the existing section — do **not** create a new `### Fixed` header. If `### Fixed` does not yet exist under `[Unreleased]`, create it. After writing, verify that the header appears exactly once within the `[Unreleased]` block: `awk '/^## \[Unreleased\]/{found=1} /^## \[/{if(found && !/Unreleased/) exit} found' CHANGELOG.md | grep -c "^### Fixed"` — expected output: 1; if greater than 1, merge the duplicate sections before staging.
-
-**CHANGELOG format verification (before staging)**: After writing the CHANGELOG entry, verify the entry for the following defects and fix them in-place before staging:
-
-1. **Trailing whitespace**: No line in the written entry should end with one or more whitespace characters. Note: intentional two-space Markdown hard line breaks (`<text>  ` with exactly two trailing spaces followed by a newline) are not trailing whitespace and must not be removed.
-2. **Trailing blank lines**: The entry must not end with two or more consecutive blank lines.
-3. **Link reference definitions**: If you renamed `[Unreleased]` to a versioned section (e.g., `## [1.2.3] - 2026-01-01`), verify that a corresponding link reference definition exists at the bottom of the file (e.g., `[1.2.3]: https://github.com/owner/repo/compare/v1.2.2...v1.2.3`). Run the check to catch any missing definitions:
-
-   ```bash
-   bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md
-   ```
-
-A quick shell check for trailing whitespace on pending CHANGELOG changes (run **before** `git add`, per the "before staging" timing requirement):
-
-```bash
-git diff CHANGELOG.md | grep '^+' | grep -E '[[:space:]]+$'
+```text
+changelog.d/<item>.fixed.<slug>.md
 ```
 
-If this returns output, inspect each flagged line: leave intentional two-space Markdown hard line breaks (exactly two trailing spaces followed by a newline) intact, and fix any other trailing whitespace (e.g., a single trailing space, a tab, or three or more trailing spaces) before committing.
+The body must be the finished changelog bullet, written from the user's
+perspective. Use the bare tracker identifier as `<item>`; in repositories with
+no issue tracker configured, open the PR as a draft before creating the
+fragment, then use the PR number as `<item>` and omit the `(#N)` issue reference
+from the bullet body. In that no-tracker case, validate and push the fragment in
+a follow-up commit before marking the PR ready for review. Validate before
+staging the fragment commit:
+
+<!-- workflow-shell-contract: bash -->
+```bash
+bash scripts/development-workflow/changelog-fragments.sh validate
+```
 
 **MD047 trailing-newline check (before staging)**: After editing any markdown file, verify that every modified `.md` file ends with a newline (MD047). Run this check on each markdown file you are about to stage:
 
@@ -1540,25 +1547,31 @@ Skip this check only when no review platforms are configured and the reviewer lo
 
 Step 1.2 — Confirm all automated-reviewer threads are resolved:
 
+<!-- workflow-shell-contract: bash-zsh -->
+
 ```bash
 # Must return empty output. Any line of output means unresolved bot threads exist — do not apply ready-for-regression.
+CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
+CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
+
 gh api graphql -f query='
   query($owner:String!, $repo:String!, $number:Int!) {
     repository(owner:$owner, name:$repo) {
       pullRequest(number:$number) {
         reviewThreads(first: 100) {
-          nodes { isResolved comments(first: 1) { nodes { author { login } body } } }
+          nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
         }
       }
     }
   }' -f owner=<owner> -f repo=<repo> -F number=<pr_number> \
-  | jq '.data.repository.pullRequest.reviewThreads.nodes[]
+  | jq --arg codex_bot "$CODEX_BOT_LOGIN" '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
-        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps"] | index($a) != null)
+        | select((.isOutdated // false) == false)
+        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps",$codex_bot] | index($a) != null)
         | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)'
 ```
 
-Pass condition: empty output. If non-empty: resolve or address each reported thread before proceeding.
+Pass condition: empty output. If non-empty: resolve or address each reported thread before proceeding. Outdated threads are non-blocking because GitHub marked the finding's original diff location stale after a fix.
 
 Step 1.3 — Apply `ready-for-regression`:
 

@@ -174,14 +174,36 @@ At the Step 8/8a readiness handoff, when merge authority is granted for the
 stage (`stages.<stage>.may_merge_pr` is `true`), assemble the evidence object
 and run the existing helpers:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-# 1. Classify PR risk against the stage max_merge_risk
+# 1. Classify PR risk against the stage max_merge_risk. A medium-risk PR only
+#    ever reaches a mergeable verdict if why_safe_to_merge evidence is
+#    attached; --why-safe-file lets --pr carry that evidence directly instead
+#    of switching to --input:
 ./scripts/development-workflow/run-epic-risk-classifier.sh \
-  --pr <pr-number> --max-risk <stages.<stage>.max_merge_risk>
+  --pr <pr-number> --why-safe-file <why-safe-file> \
+  --max-risk <stages.<stage>.max_merge_risk>
 
 # 2. Run the delegated gate with the assembled evidence
 ./scripts/development-workflow/run-epic-delegated-gate.sh --input <evidence-file>
 ```
+
+**These two helpers use different, independently documented evidence
+schemas** — see `--help` on each script for the exact shape and a worked
+example. Do not feed one script's output directly into the other's `--input`;
+nest `run-epic-risk-classifier.sh`'s result under a top-level `"risk"` key when
+assembling the delegated gate's `<evidence-file>` instead. Feeding the wrong
+shape in does not always fail loudly: the delegated gate reports an
+`evidence_schema_mismatch: ...` reason (rather than a generic
+`delegated review/merge authority is missing` or `required CI state is
+missing` reason) whenever `.policy` is missing or not an object, or
+`.statusChecks` is missing, `null`, or not an array — precisely because that
+absence/malformation is otherwise indistinguishable from a real denial or a
+real "no CI has run" state. The `.statusChecks` check is skipped when
+`ciPolicy`/`ci_policy` resolves to `none` (no CI configured for this
+repository/product), since CI-disabled evidence is never expected to carry
+`.statusChecks` at all. Treat that reason as an instruction to fix the
+evidence file's shape, not as a policy or CI verdict.
 
 The evidence file's `pr.inScope` field is meaningful only when the runner has
 a resolved `/run-epic` scope to check the candidate PR against. Protocol 90 and
@@ -191,6 +213,13 @@ scope check when the field is absent rather than defaulting to out-of-scope.
 Only set `pr.inScope: false` when scope resolution genuinely excluded the
 candidate PR; the gate then short-circuits with `decision: "not_applicable"`
 instead of piling the mismatch in among unrelated reasons.
+
+Similarly, `pr.mergeable` should be **omitted entirely** when that data is not
+available — never defaulted to `""`. The gate treats a blank/whitespace-only
+value exactly like an absent field (not blocked), but a caller-side default of
+`""` for a field that was simply never requested from `gh pr view --json` used
+to read as a real "PR is not mergeable" verdict for a PR GitHub reports as
+`MERGEABLE`.
 
 Merge through the repository-approved merge path **only when all of the
 following are satisfied**:
@@ -301,6 +330,7 @@ table is required for consistent stop reporting.
 | `missing_required_secret_or_permission` | A required credential, GitHub permission, or access token is absent. |
 | `guardrails_config_unreadable` | The `guardrails` block in `.ai-dev-workflow.yaml` is missing required fields, uses invalid values, or is internally contradictory. |
 | `missing_audit_evidence` | A delegated decision required an audit record but the record could not be produced or verified. |
+| `evidence_schema_mismatch` | `run-epic-delegated-gate.sh` evidence is missing a required object (`.policy`), or `.statusChecks` is missing, `null`, or not an array — which cannot be distinguished from a genuine authority denial or a genuine "no CI has run" state (unless `ciPolicy`/`ci_policy` is `none`, where `.statusChecks` is not required at all); fix the evidence file's shape before treating the result as a real denial or CI verdict. |
 
 **Additive rule**: These stop conditions may **add** to but may **never remove**
 the framework's baseline human-stop conditions. The baseline stops
@@ -399,3 +429,60 @@ only — they do not by themselves grant merge authority.
 
 **When a parent/epic does not exist**: the work-item ledger record is not
 applicable. Record "not applicable — no parent/epic exists" for that field.
+
+---
+
+## 7. Known Heuristic Limits
+
+Two of the signals used above are keyword- or path-driven. Both have a failure
+mode worth recognising rather than rediscovering.
+
+### CI workflow risk is judged by filename
+
+`run-epic-risk-classifier.sh` is handed a list of changed paths and never the
+file contents, so it cannot inspect what a workflow actually does. It therefore
+scores `.github/workflows/**` by filename.
+
+This table is the authoritative rule; it is matched against the **basename**,
+and the deny-list is checked first.
+
+| Order | Rule | Patterns | Risk |
+| ----- | ---- | -------- | ---- |
+| 1 | Deny-list (checked first, wins over any allowlist match) | basename containing `deploy`, `release`, `publish`, `tag`, `secret`, `credential`, `permission`, `policy`, or `token` | `high` |
+| 2 | Test workflows | `test-*.yml`, `test-*.yaml`, `*-test.yml`, `*-test.yaml`, `*-tests.yml`, `*-tests.yaml` | `medium` |
+| 3 | Lint workflows | `*lint*.yml`, `*lint*.yaml`, `shellcheck.yml`, `shellcheck.yaml` | `medium` |
+| 4 | Anything else under `.github/workflows/**` | — | `high` |
+
+So `workflow-tests.yml` and `markdown-lint.yml` are `medium`, while
+`deploy.yml`, `auto-tag-release.yml`, `pr-policy.yml`, and `e2e-regression.yml`
+are `high`. A name matching both lists (`test-release.yml`) is `high`: rule 1
+wins.
+
+This is deliberately an allowlist that yields to that deny-list: an
+unrecognised workflow stays `high`. Before issue #1565 every workflow change
+scored `high`, which meant a PR that wired a test suite into CI exceeded a
+`medium` ceiling and could not merge under delegated policy — the risk model
+penalised closing a test-coverage gap.
+
+**Consequence for authors**: name a new test or lint workflow conventionally,
+or expect it to be classified `high` and to need explicit human merge
+authorization. That is the intended trade — misjudging a deployment workflow as
+a test job is far worse than making someone rename a file.
+
+### A bug report about a heuristic will trip that heuristic
+
+A bug report has to name its trigger in order to explain it, so any
+keyword-driven gate in this framework mishandles its own bug reports. Observed
+twice on one run:
+
+- The policy recommender flagged the issue reporting that its keyword test
+  over-matches, because the body quotes the keyword list.
+- The overlap classifier serialized the issue reporting that it over-serializes,
+  because the brief necessarily contains the triggering vocabulary.
+
+This is a property of keyword matching, not a defect in those specific lists,
+and it bites exactly when correct handling matters most. **Operators should
+expect it** and treat a heuristic's verdict on an item filed *against* that
+heuristic as uninformative — re-read the item and decide directly rather than
+deferring to the signal. Do not "fix" it by broadening the keyword list, which
+makes over-matching worse everywhere else.

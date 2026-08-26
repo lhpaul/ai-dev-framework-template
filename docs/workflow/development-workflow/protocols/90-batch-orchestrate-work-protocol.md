@@ -192,7 +192,7 @@ Step 2.5), apply the backlog-start gate:
 - PR opening, labeling, or editing
 - Tracker status updates
 - Subagent dispatch (Work Item Runner or stage agent)
-- CHANGELOG edits
+- changelog fragment edits
 
 **Detection**: An explicit item list is present when the human invocation or handoff metadata includes a bounded set of issue numbers, tracker IDs, branch names, or PR numbers. An unrestricted invocation ("run everything that can advance") does **not** set the scope guard.
 
@@ -462,7 +462,9 @@ When no dispatch-eligible work exists, the orchestrator must still evaluate prop
 When multiple items are eligible or proposal-eligible, prioritize as follows:
 
 1. Due date within 2 weeks, earliest first
-2. Priority: Urgent → High → Normal → Low
+2. Priority: Urgent → High → Normal/Medium → Low (`Normal` and `Medium` rank equally
+   — different GitHub Projects boards use one or the other for the same "routine"
+   tier; see `workflow-batch-overlap.sh`'s `PRIORITY_RANK`)
 3. Creation date, earlier first
 
 If a due date conflicts with the abstract priority order, flag it to the human rather than silently choosing.
@@ -851,7 +853,8 @@ held consumer items and their reason (e.g., `held — pending tool-fix merge for
 **Multiple tool-fix items**: When two or more tool-fix items appear in the same candidate batch,
 each is serialized into its own serial sub-batch dispatched one at a time before any consumer
 item is dispatched. The ordering among multiple tool-fix items follows the standard priority
-order — due date within 2 weeks (earliest first), then priority (Urgent → High → Normal → Low),
+order — due date within 2 weeks (earliest first), then priority (Urgent → High →
+Normal/Medium → Low; `Normal` and `Medium` rank equally),
 then creation date (earliest first) — mirroring the Step 2 priority rules.
 
 #### Foundational reviewer-tool merge ordering
@@ -919,7 +922,8 @@ sets share at least one common path. Paths are compared as normalized, repo-root
 moved to the next serial sub-batch. The higher-priority item remains in the current batch.
 Priority is determined by the orchestrator using the following ordered tiebreakers:
 
-1. Item priority level: Urgent > High > Normal > Low (orchestrator applies from tracker data)
+1. Item priority level: Urgent > High > Normal/Medium > Low (`Normal` and `Medium`
+   rank equally; orchestrator applies from tracker data)
 2. Creation date: the older item (earlier creation date) stays in the current batch
    (orchestrator applies from tracker data or development folder timestamp prefix)
 3. Branch name lexicographic order: the lexicographically earlier branch name stays
@@ -1025,7 +1029,7 @@ For each item in the batch, prepare a short handoff:
   to satisfy this requirement. Keep checkpoint commits scoped to the assigned
   item, branch, and worktree; this does not change review, CI, readiness-label,
   tracker, or merge gates.
-- Each item adds its own CHANGELOG entry as normal (see Step 3.6 for conflict resolution strategy)
+- Each item adds its own `changelog.d/` fragment as normal (see Step 3.6)
 
 ### Worktree isolation requirement
 
@@ -1066,6 +1070,12 @@ Pre-dispatch validation is mandatory:
 - A non-isolated runner is allowed only when it is explicitly classified
   `read_only` and will not edit files, switch branches, create commits, push,
   open or update PRs, modify labels, or update tracker state.
+
+The worktree creator does not seed `.ai-dev-workflow.local.yaml` into the
+worktree, and runners must not copy it by hand: the workflow scripts resolve a
+linked worktree's local override from the main clone (#1560). The contract and
+the post-entry verification live in one place — Protocol 91, ["Worktree isolation for batch dispatch"](91-orchestrate-work-protocol.md#worktree-isolation-for-batch-dispatch),
+under "Local reviewer override continuity".
 
 This requirement is separate from the unsanctioned nested-agent PR guard in
 #1200. The #1200 guard prevents child agents from creating duplicate or
@@ -1431,27 +1441,36 @@ Proceed with batch dispatch only when all pre-flight checks pass.
 
 ---
 
-## Step 3.6: CHANGELOG Conflict Mitigation for Parallel Batches
+## Step 3.6: CHANGELOG Fragment Strategy for Parallel Batches
 
-When multiple PRs in a parallel batch touch `CHANGELOG.md`, merge conflicts are expected because they all add entries to the same `[Unreleased]` section.
+Parallel implementation PRs must not write normal release notes directly into
+`CHANGELOG.md`. Each item writes its own fragment under `changelog.d/`, named
+with the item's tracker identifier, so different items use different paths and
+do not contend for the shared `[Unreleased]` section.
 
-### Strategy: Per-PR Entries with Batch-Merge Auto-Resolution
+### Strategy: Per-Item Fragments
 
-Each PR in a parallel batch adds its own CHANGELOG entry as normal during implementation. CHANGELOG merge conflicts are resolved at merge time by the batch-merge auto-resolution (protocol 94 Step 4.3), which combines entries from both sides without dropping any.
+Each PR in a parallel batch adds or updates only its own fragment during
+implementation. The Prepare Release workflow assembles pending fragments into
+`CHANGELOG.md` when a release branch is created.
 
-**Why not consolidate into a single PR?** External reviewers (e.g., Devin, CodeRabbit) enforce per-PR diff scope and will flag CHANGELOG entries for work not present in the PR's diff as phantom/incorrect entries. Additionally, agents do not reliably parse `SKIP_CHANGELOG` metadata. The batch-merge auto-resolution handles CHANGELOG conflicts cleanly, making consolidation unnecessary.
+**Why not consolidate into a single PR?** External reviewers enforce per-PR
+diff scope and will flag release notes for work not present in the PR's diff as
+phantom/incorrect entries. Fragments keep each release note with the PR that
+implemented the change without creating shared-file conflicts.
 
 **Implementation**:
 
-1. **Do not pass `SKIP_CHANGELOG`** in handoff metadata. Each item adds its own CHANGELOG entry per the standard protocol 03 rules.
-2. **At merge time** (Step 5.5 or `/batch-merge`): the batch-merge protocol auto-resolves CHANGELOG conflicts by combining entries from both `HEAD` and the incoming branch. No entries are dropped.
-3. **If batch-merge is not used** (e.g., human merges manually): CHANGELOG conflicts are trivial to resolve — accept both sides' entries under the appropriate section.
+1. **Do not pass `SKIP_CHANGELOG`** in handoff metadata. Each item adds its own fragment per the standard protocol 03 rules.
+2. Validate pending fragments with `bash scripts/development-workflow/changelog-fragments.sh validate` before accepting implementation readiness.
+3. Leave final `CHANGELOG.md` assembly to Protocol 05.
 
 ### Special Cases
 
-**Spec-only or plan-only PRs**: These are exempt from CHANGELOG updates per the project's changelog policy (`docs/best-practices/2-version-control.md`). Spec and plan PRs do not trigger the conflict problem because they do not modify CHANGELOG at all.
+**Spec-only or plan-only PRs**: These are exempt from changelog updates per the project's changelog policy (`docs/best-practices/2-version-control.md`).
 
-**Single item in batch**: If a batch has only one implementation item, it updates CHANGELOG normally (no conflict possible).
+**Single item in batch**: If a batch has only one implementation item, it still
+adds or updates a changelog fragment normally.
 
 ---
 
@@ -1555,12 +1574,15 @@ The Portfolio Orchestrator remains responsible for the batch after dispatch.
 
 After a Work Item Runner returns:
 
-1. **Re-check tracker status first** when an issue tracker is configured — query the tracker for the item's current status before consulting VCS state. Do not rely solely on `workflow-next-action.sh` to determine whether an item should advance, as VCS-derived status cannot reliably distinguish certain states (e.g., a spec PR awaiting review vs. one already merged). Use `workflow-next-action.sh` only for VCS-level enrichment (branch existence, PR labels) after the tracker status is known.
-2. If the tracker is unavailable, fall back to `workflow-next-action.sh` but flag to the human that status may be stale.
-3. If the next action is still deterministic because the Work Item Runner returned early or was interrupted, redispatch / resume that same item. **Worktree isolation is mandatory on redispatch**: when the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), every redispatch — including fixer-agent passes triggered by review findings — must carry the full Protocol 90 isolation assignment in the handoff: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, checkpoint state, and `isolation: "worktree"`. Checkpoint-resume redispatch must use a fresh runner that invokes `checkpoint-resume-gate.sh` before mutation; do not resume a paused runner while sibling runners remain active. Redispatching without the full assignment causes fixer agents to use main-repo file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context, leaving uncommitted files in the main working tree instead of the isolated branch.
-4. Stop supervising that item only when it is waiting on a human, blocked, or escalated.
-5. **Collect deferred tracker transitions**: scan the Work Item Runner's summary for any `TRACKER_UPDATE_REQUIRED:` lines. These are transitions that the subagent could not perform (e.g., because the provider requires MCP and MCP is not available in the subagent context). Apply each deferred transition now via MCP before moving on to the next item. For GitHub Projects, subagents use `gh` CLI directly and do not emit `TRACKER_UPDATE_REQUIRED:` — this step only applies to providers without CLI support (e.g., Linear).
-6. **When a human confirms PRs have been merged**: run post-merge status transitions per the table in Step 10 of `91-orchestrate-work-protocol.md` — set tracker status to `Spec Ready`, `Plan Ready`, or `Merged` depending on the branch type of the merged PR — and clean up local branches and worktrees associated with the merged PRs.
+1. **Classify the report before anything else: a report naming no terminal state is `stalled`, not complete.** Read the returned report for a named terminal state — a PR number paired with `ready-for-human-review`, `blocked`, or `escalated`; or, for an item with no PR yet, an explicit, concretely-named blocking reason (e.g., "blocked on issue #N," "no eligible action — awaiting a human prioritization decision," "held pending dependency X's merge"). This is a cheap, mechanical check, and it comes first because it does not depend on tracker or VCS state being reachable: no terminal state named means the report is not terminal, no matter how calm, detailed, or otherwise plausible it reads. **A report that only says it is "waiting"** — for a notification, a background process, an external event, or anything else the runner itself is not naming as a concrete blocker — **never satisfies the no-PR-yet exception, no matter how the wait is phrased.** A report that describes a step as "still running," says it will "resume automatically when notified," or reports it is "waiting for the background task notification" is a `stalled` report — the runner ended its turn while something it started was still in flight, most often a backgrounded `pr-review-loop.sh`, `pr-ci-loop.sh`, or other long step whose completion notification was delivered here, to the Portfolio Orchestrator, and never back to the runner (see "Execution Discipline: A Paused Turn Does Not Resume" near the top of `91-orchestrate-work-protocol.md`). This extends the existing rule that in-flight CI/watch states are non-terminal (Step 5.1 below) from governing what the runner does before returning to governing how the parent reads what it returned.
+
+   `stalled` is not a stop condition and must not be treated as `blocked` or `escalated` — it is an interrupted run, not a decision point. Resume or re-dispatch that item now, in this same supervision pass, carrying the same worktree/branch/checkpoint assignment as any other redispatch (item 4 below). If the same item returns a `stalled` report again immediately on resume with no forward progress since the prior attempt, do not keep silently re-dispatching — surface the recurrence to the human rather than looping on a run that is not converging.
+2. **Re-check tracker status first** when an issue tracker is configured — query the tracker for the item's current status before consulting VCS state. Do not rely solely on `workflow-next-action.sh` to determine whether an item should advance, as VCS-derived status cannot reliably distinguish certain states (e.g., a spec PR awaiting review vs. one already merged). Use `workflow-next-action.sh` only for VCS-level enrichment (branch existence, PR labels) after the tracker status is known.
+3. If the tracker is unavailable, fall back to `workflow-next-action.sh` but flag to the human that status may be stale.
+4. If the next action is still deterministic because the Work Item Runner returned early or was interrupted, redispatch / resume that same item. **Worktree isolation is mandatory on redispatch**: when the original batch used explicit-list dispatch (`BATCH_CONTEXT=true`), every redispatch — including fixer-agent passes triggered by review findings — must carry the full Protocol 90 isolation assignment in the handoff: `BATCH_CONTEXT=true`, resolved absolute worktree path, expected branch, artifact repo root, approved base branch, mutation classification, checkpoint state, and `isolation: "worktree"`. Checkpoint-resume redispatch must use a fresh runner that invokes `checkpoint-resume-gate.sh` before mutation; do not resume a paused runner while sibling runners remain active. Redispatching without the full assignment causes fixer agents to use main-repo file paths in `Read`/`Edit`/`Write` calls while committing via the worktree git context, leaving uncommitted files in the main working tree instead of the isolated branch.
+5. Stop supervising that item only when it is waiting on a human, blocked, or escalated.
+6. **Collect deferred tracker transitions**: scan the Work Item Runner's summary for any `TRACKER_UPDATE_REQUIRED:` lines. These are transitions that the subagent could not perform (e.g., because the provider requires MCP and MCP is not available in the subagent context). Apply each deferred transition now via MCP before moving on to the next item. For GitHub Projects, subagents use `gh` CLI directly and do not emit `TRACKER_UPDATE_REQUIRED:` — this step only applies to providers without CLI support (e.g., Linear).
+7. **When a human confirms PRs have been merged**: run post-merge status transitions per the table in Step 10 of `91-orchestrate-work-protocol.md` — set tracker status to `Spec Ready`, `Plan Ready`, or `Merged` depending on the branch type of the merged PR — and clean up local branches and worktrees associated with the merged PRs.
 
 ### Step 5.1: Post-Dispatch PR Verification
 
@@ -1606,13 +1628,20 @@ through an allowed delegated path, or handed off because the effective guardrail
 forbid merge. Do not hand control back to the human merely because a local
 watch command exited early while GitHub still shows work in progress.
 
+This rule governs what the orchestrator does with confirmed in-flight PR/CI
+state. Step 5 item 1 above governs the companion case: a runner report that
+never confirms *any* state because the runner ended its turn while a step was
+still running. Classify that as `stalled`, not as a transient in-flight state
+to wait out — it requires resume/re-dispatch, not re-polling a check that no
+one is running.
+
 Before reporting any PR as ready for human review, independently query the actual PR state via `gh pr view`. Run this check for every PR that a Work Item Runner reports as ready:
 
 ```bash
 gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comments,files
 ```
 
-The `files` field is required to verify CHANGELOG presence independently (see table below). Do not skip it.
+The `files` field is required to verify changelog artifact presence independently (see table below). Do not skip it.
 
 For sweep, batch, helper-extraction, or pattern-completeness items, also require
 residual-gate evidence from `scripts/development-workflow/scope-residual-gate.sh`
@@ -1644,7 +1673,7 @@ Verify all of the following by querying artifact state directly. If any check fa
 | `ready-for-human-review` label                  | Present in the `labels` array returned by `gh pr view`                                                                                                                                                                                                                                                                                                                                                                    | Apply directly: `gh pr edit <pr_number> --add-label "ready-for-human-review"` (after all other checks pass)                                                                                                                                                                                       |
 | `ready-for-regression` label                    | Present in the `labels` array on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, and `backport/hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*`, or graduation PRs (head branch `develop-<slug>`, base branch `develop`)                                                                                                                                                                                 | **Apply directly** (primary enforcement point): `gh pr edit <pr_number> --add-label "ready-for-regression"`. Log as protocol deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`. **Do not redispatch the agent for this gap alone.** Do not apply this remediation to graduation PRs (`develop-<slug>` → `develop`) — they are explicitly exempt (BR-6 of the graduation spec). |
 | No `needs-fixes` label                          | Absent from the `labels` array                                                                                                                                                                                                                                                                                                                                                                                            | Remove: `gh pr edit <pr_number> --remove-label "needs-fixes"` (only after CI and reviews are confirmed clean)                                                                                                                                                                                     |
-| CHANGELOG presence                              | `CHANGELOG.md` appears in the `files` array for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs (i.e., `gh pr view <pr_number> --json files --jq '[.files[].path] \| any(. == "CHANGELOG.md")'` returns `true`); not required for `spec/*`, `implementation-plan/*`, or `backport/hotfix/*` (the versioned CHANGELOG entry already exists in `main` and flows to `develop` via the merge)                              | Redispatch agent to add a CHANGELOG entry and push. Do not accept the PR as ready until `CHANGELOG.md` appears in the PR's file set.                                                                                                                                                              |
+| Changelog artifact presence                     | A top-level path matching `changelog.d/<item>.<kind>.<slug>.md` appears in the `files` array for `feature/*`, `fix/*`, and `refactor/*` PRs, where `<kind>` is `added`, `changed`, `deprecated`, `removed`, `fixed`, or `security`; `changelog.d/README.md`, nested paths, and malformed names do not satisfy the gate. Exception: if the PR fixes or adjusts unreleased work and intentionally leaves an existing fragment unchanged because that fragment already describes the corrected behavior, the PR body or reviewer-loop summary must name that existing top-level fragment and the fragment must exist on the base branch. `bash scripts/development-workflow/changelog-fragments.sh validate` must also pass. `CHANGELOG.md` appears for `hotfix/*` PRs; neither is required for `spec/*`, `implementation-plan/*`, or `backport/hotfix/*` (the versioned CHANGELOG entry already exists in `main` and flows to `develop` via the merge)                              | Redispatch agent to add the required changelog fragment or hotfix CHANGELOG entry and push, or to document the unchanged-existing-fragment exception with the fragment path and evidence that it exists on the base branch. Do not accept the PR as ready until the appropriate changelog artifact appears in the PR's file set, or the exception evidence is present, and fragment validation is clean.                                                                                                                                                              |
 | All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in body) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured)                                                                                                                                                                                               | Redispatch agent to address unresolved threads                                                                                                                                                                                                                                                    |
 | Automated reviewer loop summary comment         | At least one latest PR comment containing "Automated Reviewer Loop Summary", "Reviewer Loop Summary", or "No blocking PR feedback" whose result is `clean` or `skipped` (skip this check only when Step 7 was `skipped` because no review platforms are configured). **`pr-review-loop.sh` posts this comment automatically on clean, needs-fixes, and escalate exits** — a missing comment, stale comment, or comment whose latest result is `needs_fixes`, `escalate`, `timeout`, `pending_timeout`, or any other non-clean terminal state means Step 7 is not complete | Redispatch agent to run Step 7 to completion or escalate the non-clean reviewer-loop result                                                                                                                                                                                                        |
 | CI checks                                       | All required status checks are green (`state: SUCCESS` or `conclusion: success`)                                                                                                                                                                                                                                                                                                                                          | Redispatch agent to fix failing checks                                                                                                                                                                                                                                                            |
@@ -1959,14 +1988,32 @@ If any PR is still in progress or labeled `needs-fixes`, continue supervising (S
    the integration branch.
 
 2. **Revalidate readiness from discovery output**:
-   - If any PR returned `PR_READY_LABEL=false`, warn the human and require an explicit include-or-skip decision before proceeding. Remove any skipped PRs from the merge list and carry them forward as `skipped_not_ready` for the final summary. Do not proceed silently with any unready PR.
+   - If any PR returned `PR_READY_LABEL=false`, warn the human and require an explicit include-or-skip decision before proceeding. Remove any skipped PRs from the merge list and carry them forward as `skipped_not_ready` for the final summary. Record every explicitly included unready PR in `APPROVED_UNREADY_PRS` for the Protocol 94 recheck handoff. Do not proceed silently with any unready PR.
    - If any PR's `PR_LABELS` still contains `needs-fixes`, stop the handoff and return to Step 5 supervision for that PR. A `needs-fixes` PR must not be merged even if human supervision approved the batch earlier.
 
 3. **Present the validated merge plan to the human** and require explicit approval before any merge starts. The human must confirm before the orchestrator invokes `94-batch-merge-protocol.md`.
 
-4. **Once the human approves**, follow `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` starting from **Step 3.5** (the pre-merge clean-state check and sequential merge loop). The merge plan confirmation (Protocol 94 Step 3) has already been satisfied by Step 5.5.3 above, but Step 3.5 has **not** been satisfied and must still run. Pass only the approved ordered PR list after Step 5.5.2 filtering, keep that list frozen for every `recheck-remaining --prs <list>` call after sibling merges, require the Protocol 94 post-recheck admission gate before each next merge or readiness claim, and include skipped entries in the final summary.
+4. **Once the human approves**, follow `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md` starting from **Step 3.5** (the pre-merge clean-state check and sequential merge loop). The merge plan confirmation (Protocol 94 Step 3) has already been satisfied by Step 5.5.3 above, but Step 3.5 has **not** been satisfied and must still run. The handoff to Protocol 94 carries these requirements:
+   - Pass only the approved ordered PR list after Step 5.5.2 filtering.
+   - Keep that list frozen for every `recheck-remaining --prs <list>` call after sibling merges.
+   - Pass the recorded `APPROVED_UNREADY_PRS` value to every `recheck-remaining --approved-unready-prs` call.
+   - Pass `--reviewed-head-shas` built from the `PR_HEAD_SHA` values captured at discovery, and `--annotate`, so every sibling-caused hold lands on the PR itself.
+   - Require the Protocol 94 post-recheck admission gate before each next merge or readiness claim.
+   - Include skipped entries in the final summary.
+   - **The frozen list includes held PRs** — a PR held by a risk guardrail, a human, or an earlier recheck stays in `--prs` and is rechecked and annotated like an active one; it is only never merged (issue #1558 AC-3).
 
-5. **Include the batch-merge summary** (Step 5 of Protocol 94) in the orchestrator's Step 6 summary output. For any remaining PR held by a post-sibling-merge recheck, report terminal outcome `merge_blocked` with the invalidating sibling PR, refreshed merge state, refreshed checks state, and reason from the helper JSONL record. For any read-only out-of-scope observation, report `out_of_scope` without mutating that PR.
+5. **Include the batch-merge summary** (Step 5 of Protocol 94) in the orchestrator's Step 6 summary output. For any remaining PR held by a post-sibling-merge recheck, report terminal outcome `merge_blocked` with the invalidating sibling PR, refreshed merge state, refreshed checks state, head SHA, voided verdicts, required action, and reason from the helper JSONL record. For any read-only out-of-scope observation, report `out_of_scope` without mutating that PR.
+
+6. **A sibling merge voids verdicts, and the runner is told** (issue #1558). After every in-scope merge, run the Protocol 94 Step 4.5 recheck and then Step 4.5a: route each `merge_blocked` record to the Work Item Runner that owns the PR — a live runner gets the record and the re-verification instruction as a message; an exited runner is redispatched with it (Step 5 item 4), because a runner that declared terminal on a PR that is now `DIRTY` or at a new head was never terminal. The reviewer-loop verdict, CI result, risk classification and delegated-gate decision all bind to a head SHA; a new head has none of them until they are re-run. Merging against a stale head is refused mechanically — `batch-merge.sh merge --expected-head-sha` and the delegated gate's `stale_verdict_head` — so the notice is what turns a refusal into progress.
+
+7. **A held PR is not a parked PR.** When a PR is held outside a recheck — the risk classifier scored it above `--max-risk`, a human asked for a hold — record the hold on the PR itself at the moment it is decided:
+
+   <!-- workflow-shell-contract: bash-zsh -->
+   ```bash
+   ./scripts/development-workflow/batch-merge.sh annotate-hold --pr <number> --reason risk_guardrail_hold --held-by "<who decided>"
+   ```
+
+   Then keep it in the frozen recheck list. A held PR that goes `DIRTY` gets the same conflict-resolution redispatch as an active one; its verdicts are re-run at whatever head it has when the hold lifts. A hold whose reason lives only in a chat transcript rots until someone does archaeology on it (PR #1536 on the 2026-08-20/21 run).
 
 ### Batch-merge routing rule (mandatory)
 
@@ -2025,8 +2072,8 @@ After all currently eligible items have reached a terminal condition, provide a 
 
 ### Proposed Start Batch
 
-- [Issue #N] — [title] — priority: [Urgent/High/Normal/Low] — next stage: [Spec/Plan] — [parallelization note]
-- [Issue #M] — [title] — priority: [Urgent/High/Normal/Low] — next stage: [Spec/Plan] — [parallelization note]
+- [Issue #N] — [title] — priority: [Urgent/High/Normal/Medium/Low] — next stage: [Spec/Plan] — [parallelization note]
+- [Issue #M] — [title] — priority: [Urgent/High/Normal/Medium/Low] — next stage: [Spec/Plan] — [parallelization note]
 
 Approval required before tracker status changes or branch/PR work starts for these Backlog items.
 

@@ -8,6 +8,7 @@ Related references:
 - [Workflow hub setup](workflow-hub-setup.md)
 - [Product repository injection](product-repo-injection.md)
 - [Repository modes](repository-modes.md)
+- [Multi-repository release adoption](multi-repo-release-adoption.md)
 - [Workflow Hub GitHub App Authentication](integrations/workflow-hub-github-app.md)
 - [Batch Orchestration Protocol](protocols/90-batch-orchestrate-work-protocol.md)
 - [Work Item Orchestration Protocol](protocols/91-orchestrate-work-protocol.md)
@@ -27,8 +28,77 @@ Related references:
 | Product reviewer loop | Selected product repository |
 | Merge cleanup tracker update | Workflow hub |
 
+## Release Artifact Owners
+
+Before a hub-managed release creates or mutates product release artifacts,
+validate the selected product repository contract and record the artifact owner.
+Use [Repository modes](repository-modes.md#release-artifact-ownership) as the
+canonical ownership table for release branches, product cleanup evidence, and
+Tracker reconciliation evidence; this flow only adds the hub checkout execution
+step.
+
+Run from the hub checkout:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+TARGET_REPO_KEY="faind-mobile-app"
+TARGET_BINDING_SAFE_KEY="$(printf '%s' "$TARGET_REPO_KEY" | tr -c 'A-Za-z0-9._-' '_')"
+TARGET_BINDING_FILE="$(mktemp "${TMPDIR:-/tmp}/component-release-target.${TARGET_BINDING_SAFE_KEY}.XXXXXX")"
+TARGET_BINDING_TMP="${TARGET_BINDING_FILE}.$$"
+scripts/development-workflow/component-release-target.sh \
+  --repo "$TARGET_REPO_KEY" \
+  --json > "$TARGET_BINDING_TMP"
+mv "$TARGET_BINDING_TMP" "$TARGET_BINDING_FILE"
+```
+
+Continue only when the helper reports `component_release_routed` and
+`mutation_allowed=true`. Then persist the target binding and create a release
+evidence handoff:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+scripts/development-workflow/component-release-evidence.sh \
+  --target-file "$TARGET_BINDING_FILE" \
+  --binding-file "$TARGET_BINDING_FILE" \
+  --release-branch "$RELEASE_BRANCH" \
+  --release-outcome pending \
+  --ci-outcome pending \
+  --deployment-outcome pending \
+  --cleanup-outcome not_started \
+  --hub-tracker-ref "#123" \
+  --output /path/to/component-release-evidence.json
+```
+
+Stop before release mutation when product selection is missing, multiple,
+unknown, or ambiguous; a release branch value is invalid; the product checkout
+is unavailable; or versioned release config contains local paths, credentials,
+token values, secret names, secret values, or environment-specific account
+details.
+
+After both release PRs merge, run component release cleanup from the hub with
+the same product key and evidence file. Follow
+[Prepare Release](protocols/05-prepare-release-protocol.md) and the canonical
+[repository-mode release contract](repository-modes.md#release-artifact-ownership)
+for cleanup validation rules.
+
+After cleanup and tracker reconciliation complete, keep milestone and parent
+release status updates in the hub. Use
+`component-milestone-reconciliation.sh apply-component` to assign only the
+matching component child issue a `<product-repo>@<component-tag>` milestone.
+Use `inspect-parent` or `apply-parent` with the hub delivery manifest to report
+partial, blocked, or finalized parent release state. Do not create a shared
+suite version, stamp the parent epic, or stamp the delivery bundle issue.
+
 Hub-only workflow improvements, such as updates to orchestration scripts or
 workflow docs, still open implementation PRs in the hub repository.
+
+For adopted multi-repository releases, attach release assurance evidence from
+[Multi-repository release adoption](multi-repo-release-adoption.md) to the
+release runbook or PR self-review. The evidence must show
+`adoption_status=validated` and unchanged hub-owned and product-owned
+historical baseline results before release mutation proceeds. Use the
+[Runbook Evidence](multi-repo-release-adoption.md#runbook-evidence) section for
+the canonical evidence field list. The existing `single_repo` path is exempt.
 
 ## Route The Work Item
 
@@ -36,6 +106,7 @@ Run location: hub checkout.
 
 Confirm the next action and selected product repository:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 scripts/development-workflow/workflow-next-action.sh \
   --repo faind-mobile-app \
@@ -43,8 +114,9 @@ scripts/development-workflow/workflow-next-action.sh \
 ```
 
 The output should name the workflow mode, action repository kind, action
-repository, and GitHub repository. Stop if product repository selection is
-missing or ambiguous.
+repository, and GitHub repository. Follow the canonical
+[implementation routing classifier](repository-modes.md#implementation-routing-classifier)
+contract for routing outcome, artifact owner, fingerprint, and stop evidence.
 
 ## Prepare The Product Checkout
 

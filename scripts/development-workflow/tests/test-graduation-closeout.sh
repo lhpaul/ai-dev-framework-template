@@ -122,6 +122,11 @@ JSON
 {"number":77,"state":"MERGED","mergedAt":"2026-07-15T12:00:00Z","baseRefName":"main","headRefName":"develop-test"}
 JSON
         ;;
+      nested_base)
+        cat <<'JSON'
+{"number":77,"state":"MERGED","mergedAt":"2026-07-15T12:00:00Z","baseRefName":"develop-sales-module","headRefName":"develop-test"}
+JSON
+        ;;
       *)
         cat <<'JSON'
 {"number":77,"state":"MERGED","mergedAt":"2026-07-15T12:00:00Z","baseRefName":"develop","headRefName":"develop-test"}
@@ -215,7 +220,7 @@ data = json.load(open(path))
 data["state"] = "CLOSED"
 json.dump(data, open(path, "w"))
 PY
-    printf '%s\n' "$issue" >> "$MOCK_CLOSE_LOG"
+    printf '%s\t%s\n' "$issue" "$*" >> "$MOCK_CLOSE_LOG"
     ;;
   *)
     printf 'unexpected gh invocation: gh %s\n' "$*" >&2
@@ -292,7 +297,7 @@ reset_fixture() {
   rm -f "$MOCK_STATE_DIR"/*.json "$MOCK_STATUS_DIR"/* "$MOCK_CLOSE_LOG" "$MOCK_LABEL_LOG"
   : > "$MOCK_CLOSE_LOG"
   : > "$MOCK_LABEL_LOG"
-  unset MOCK_NATIVE_MODE MOCK_LABEL_MODE MOCK_LABEL_ISSUES MOCK_PR_MODE MOCK_GRADUATION_PR_MODE MOCK_CLOSE_FAIL_ISSUE MOCK_STATUS_FAIL_ISSUE MOCK_LABEL_ADD_FAIL MOCK_LABEL_CREATE_FAIL GITHUB_PROJECT_STATUS_GRADUATED GITHUB_PROJECT_STATUS_MERGED
+  unset MOCK_NATIVE_MODE MOCK_LABEL_MODE MOCK_LABEL_ISSUES MOCK_PR_MODE MOCK_GRADUATION_PR_MODE MOCK_CLOSE_FAIL_ISSUE MOCK_STATUS_FAIL_ISSUE MOCK_LABEL_ADD_FAIL MOCK_LABEL_CREATE_FAIL GITHUB_PROJECT_STATUS_GRADUATED GITHUB_PROJECT_STATUS_MERGED GRADUATION_BASE
 }
 
 run_closeout() {
@@ -385,6 +390,74 @@ run_test "validation_exit_one" "1" "$(last_output_status "$validation_result")"
 run_contains "validation_reports_unmerged_pr" "has not merged yet" "$validation_body"
 run_test "validation_does_not_close_child" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/701.json"))["state"])')"
 run_test "validation_no_close_calls" "" "$(cat "$MOCK_CLOSE_LOG")"
+
+echo ""
+echo "=== graduation closeout: --base graduation base override (issue #1513) ==="
+
+# Regression: default base (no --base flag) must still require the graduation
+# PR to target 'develop', and must still be rejected with a clear error when
+# it does not — this must not regress when --base support is added.
+reset_fixture
+export MOCK_GRADUATION_PR_MODE=wrong_base
+export MOCK_NATIVE_MODE=empty
+export MOCK_LABEL_ISSUES="801"
+export MOCK_PR_MODE=none
+write_issue 801 "Default base child" OPEN
+write_issue 900 "Parent epic" OPEN
+set_status 801 "In Development"
+set_status 900 "In Development"
+default_base_reject_result="$(run_closeout)"
+default_base_reject_body="$(last_output_body "$default_base_reject_result")"
+run_test "default_base_reject_exit_one" "1" "$(last_output_status "$default_base_reject_result")"
+run_contains "default_base_reject_error" "expected 'develop'" "$default_base_reject_body"
+run_test "default_base_reject_no_close" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/801.json"))["state"])')"
+
+# Non-default base: a nested graduation PR (develop-test -> develop-sales-module)
+# whose --base matches the PR's actual base passes validation and completes
+# closeout normally.
+reset_fixture
+export MOCK_GRADUATION_PR_MODE=nested_base
+export MOCK_NATIVE_MODE=empty
+export MOCK_LABEL_ISSUES="802"
+export MOCK_PR_MODE=none
+write_issue 802 "Nested base child" OPEN
+write_issue 900 "Parent epic" OPEN
+set_status 802 "In Development"
+set_status 900 "In Development"
+nested_base_result="$(run_closeout --base develop-sales-module)"
+nested_base_body="$(last_output_body "$nested_base_result")"
+run_test "nested_base_exit_zero" "0" "$(last_output_status "$nested_base_result")"
+run_contains "nested_base_result_pass" "GRADUATION_CLOSEOUT_RESULT=pass" "$nested_base_body"
+run_contains "nested_base_reported" "GRADUATION_BASE=develop-sales-module" "$nested_base_body"
+run_test "nested_base_child_closed" "CLOSED" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/802.json"))["state"])')"
+run_contains "nested_base_comment_target" "to \`develop-sales-module\`" "$(cat "$MOCK_CLOSE_LOG")"
+
+# Non-default base with a mismatched actual PR base is still rejected with a
+# clear error (the "real check" required by issue #1513 AC-2) — the expected
+# branch named in the error is the custom --base, not a hardcoded 'develop'.
+reset_fixture
+export MOCK_GRADUATION_PR_MODE=merged
+export MOCK_NATIVE_MODE=empty
+export MOCK_LABEL_ISSUES="803"
+export MOCK_PR_MODE=none
+write_issue 803 "Mismatched base child" OPEN
+write_issue 900 "Parent epic" OPEN
+set_status 803 "In Development"
+set_status 900 "In Development"
+nested_base_mismatch_result="$(run_closeout --base develop-sales-module)"
+nested_base_mismatch_body="$(last_output_body "$nested_base_mismatch_result")"
+run_test "nested_base_mismatch_exit_one" "1" "$(last_output_status "$nested_base_mismatch_result")"
+run_contains "nested_base_mismatch_error" "expected 'develop-sales-module'" "$nested_base_mismatch_body"
+run_test "nested_base_mismatch_no_close" "OPEN" "$(python3 -c 'import json; print(json.load(open("'"$MOCK_STATE_DIR"'/803.json"))["state"])')"
+
+# An arbitrary feature/fix branch as --base is rejected up front (usage-level
+# validation) before any gh call — the "real check" is not bypassable by
+# simply passing a matching but non-integration-branch value.
+reset_fixture
+invalid_base_result="$(run_closeout --base feature/not-an-integration-branch)"
+invalid_base_body="$(last_output_body "$invalid_base_result")"
+run_test "invalid_base_exit_64" "64" "$(last_output_status "$invalid_base_result")"
+run_contains "invalid_base_error" "must be 'develop' or a 'develop-*' integration branch" "$invalid_base_body"
 
 echo ""
 echo "=== graduation closeout: native sub-issues and PR refs ==="

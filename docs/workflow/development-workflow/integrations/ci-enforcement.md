@@ -192,6 +192,7 @@ repository.
 | `issues: write` | Read PR issue comments and create the `ready-for-regression` repository label when it is absent. |
 | `pull-requests: write` | Read PR metadata and apply or remove PR labels. |
 | `statuses: write` | Post the reviewer-loop guard commit status. |
+| `actions: write` | Dispatch the configured e2e/regression workflow before applying `ready-for-regression`. |
 
 No other permissions are requested. The workflow uses the default
 `GITHUB_TOKEN` injected by GitHub Actions and does not require additional

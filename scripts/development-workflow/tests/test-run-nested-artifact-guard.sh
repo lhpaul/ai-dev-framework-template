@@ -306,11 +306,28 @@ run_test "gh_invalid_json_exit_one" "1" "$(status_code "$out")"
 run_contains "gh_invalid_json_scan_failed" "SCAN=open_prs_json" "$(body "$out")"
 
 repo="$(make_repo missing-gh)"
-git_bin_dir="$(dirname "$(command -v git)")"
+# Build a PATH that contains everything the guard needs EXCEPT gh, by
+# symlinking the tools explicitly rather than by naming directories.
+# This previously used "$git_bin_dir:/usr/bin:/bin", which hides gh only when
+# gh lives outside those directories — true on macOS (Homebrew), false on
+# GitHub's ubuntu-latest runners, where gh is /usr/bin/gh. The suite never ran
+# in CI to reveal that (issue #1537), so the assertion silently tested nothing
+# there.
+NO_GH_BIN="$(mktemp -d)"
+for _cmd in awk cat dirname git head mktemp printf python3 rm tr wc sh bash env sed grep; do
+  _cmd_path="$(command -v "$_cmd" 2>/dev/null)" || continue
+  ln -sf "$_cmd_path" "$NO_GH_BIN/$_cmd"
+done
+unset _cmd _cmd_path
+if command -v "$NO_GH_BIN/gh" >/dev/null 2>&1; then
+  echo "FAIL: missing_gh setup — gh unexpectedly present in the sanitized PATH" >&2
+  exit 1
+fi
 set +e
-out="$(PATH="$git_bin_dir:/usr/bin:/bin" "$GUARD" --repo-root "$repo" --mode pre-pr --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop 2>&1)"
+out="$(PATH="$NO_GH_BIN" "$GUARD" --repo-root "$repo" --mode pre-pr --issue 1200 --expected-branch feature/1200-canonical-path --approved-base develop 2>&1)"
 status=$?
 set -e
+rm -rf "$NO_GH_BIN"
 run_test "missing_gh_exit_one" "1" "$status"
 run_contains "missing_gh_scan_failed" "SCAN=open_prs_missing_gh" "$out"
 

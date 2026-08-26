@@ -2,6 +2,11 @@
 # test-workflow-orchestration-product-repo-aware.sh - workflow hub routing tests.
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-orchestration-product-repo-aware.sh
+# covers: scripts/development-workflow/discover-workflow-state.sh
+# covers: scripts/development-workflow/workflow-batch-plan.sh
+# covers: scripts/development-workflow/workflow-next-action.sh
+# covers: scripts/development-workflow/pr-ci-loop.sh
+# covers: scripts/development-workflow/post-merge-cleanup.sh
 
 set -euo pipefail
 
@@ -23,6 +28,19 @@ trap _harness_exit EXIT
 
 PASS_COUNT=0
 FAIL_COUNT=0
+
+run_equals() {
+  local name="$1"
+  local expected="$2"
+  local actual="$3"
+  if [ "$actual" = "$expected" ]; then
+    echo "PASS: $name"
+    PASS_COUNT=$((PASS_COUNT + 1))
+  else
+    echo "FAIL: $name - expected '${expected}', got '${actual}'"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
+}
 
 run_contains() {
   local name="$1"
@@ -77,6 +95,28 @@ MD
 ## Summary
 
 Route implementation work to a product repository.
+MD
+  printf '%s\n' "$path"
+}
+
+make_development_for_issue() {
+  local root="$1"
+  local issue="$2"
+  local path="$root/docs/specs/developments/20260611120000_${issue}-routing"
+  mkdir -p "$path"
+  cat > "$path/1_${issue}-routing_specs.md" <<'MD'
+# Routing Spec
+
+## Acceptance Criteria
+
+- [ ] Implementation work resolves repository ownership before mutation.
+MD
+  cat > "$path/2_${issue}-routing_implementation-plan.md" <<'MD'
+# Routing Implementation Plan
+
+## Summary
+
+Resolve repository ownership before implementation work.
 MD
   printf '%s\n' "$path"
 }
@@ -164,16 +204,25 @@ selected_output="$(
     --development "$hub_dev"
 )"
 run_contains "workflow_hub_next_action_context" "WORKFLOW_MODE=workflow_hub" "$selected_output"
+run_contains "workflow_hub_routing_product_owned" "ROUTING_OUTCOME_CODE=product_owned" "$selected_output"
+run_contains "workflow_hub_routing_continue" "ROUTING_CONTINUE_ALLOWED=true" "$selected_output"
+run_contains "workflow_hub_routing_selected_key" "ROUTING_SELECTED_PRODUCT_REPO_KEY=mobile-app" "$selected_output"
 run_contains "workflow_hub_product_owner" "ACTION_REPOSITORY_KIND=product_repo_owned" "$selected_output"
 run_contains "workflow_hub_product_repo_name" "ACTION_REPOSITORY=mobile-app" "$selected_output"
 run_contains "workflow_hub_product_github_repo" "ACTION_GITHUB_REPO=example/mobile-app" "$selected_output"
 
-run_fails_contains \
-  "workflow_hub_implementation_requires_repo_selection" \
-  "product repository selection is ambiguous" \
+missing_selection_output="$(
   env WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
     --repo-root "$hub_dir" \
     --development "$hub_dev"
+)"
+run_contains \
+  "workflow_hub_implementation_requires_repo_selection" \
+  "NEXT_ACTION=resolve-repository-selection" \
+  "$missing_selection_output"
+run_contains "workflow_hub_missing_target_outcome" "ROUTING_OUTCOME_CODE=missing_target" "$missing_selection_output"
+run_contains "workflow_hub_missing_target_stops" "ROUTING_CONTINUE_ALLOWED=false" "$missing_selection_output"
+run_contains "workflow_hub_missing_target_evidence" "ROUTING_STOP_REASON=product-owned work has no selected product repository key" "$missing_selection_output"
 
 branch_resolution_output="$(
   WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
@@ -184,51 +233,12 @@ branch_resolution_output="$(
 run_contains "workflow_branch_unresolved_repo_action" "NEXT_ACTION=resolve-repository-selection" "$branch_resolution_output"
 run_contains "workflow_branch_unresolved_repo_context" "ACTION_REPOSITORY_KIND=repository_resolution_failed" "$branch_resolution_output"
 
-pr_selection_output="$(
-  WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
-    --repo-root "$hub_dir" \
-    --pr 123
-)"
-run_contains "workflow_pr_requires_repo_selection" "NEXT_ACTION=resolve-repository-selection" "$pr_selection_output"
-run_contains "workflow_pr_selection_required_context" "ACTION_REPOSITORY_KIND=repository_selection_required" "$pr_selection_output"
-
-run_fails_contains \
-  "workflow_next_action_repo_requires_value" \
-  "--repo requires a value." \
-  "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
-    --repo
-
-run_fails_contains \
-  "workflow_next_action_repo_root_requires_value" \
-  "--repo-root requires a value." \
-  "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
-    --repo-root
-
-batch_output="$(
-  WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" \
-    --repo-root "$hub_dir" \
-    --repo admin-portal \
-    "$hub_dev"
-)"
-run_contains "batch_plan_preserves_action_kind" "ACTION_REPOSITORY_KIND=product_repo_owned" "$batch_output"
-run_contains "batch_plan_derives_github_repo_from_git_url" "ACTION_GITHUB_REPO=example/admin-portal" "$batch_output"
-
-run_fails_contains \
-  "batch_plan_repo_rejects_next_flag_as_value" \
-  "--repo requires a value." \
-  env WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" \
-    --repo \
-    --repo-root "$hub_dir" \
-    "$hub_dev"
-
-run_fails_contains \
-  "batch_plan_repo_root_rejects_next_flag_as_value" \
-  "--repo-root requires a value." \
-  env WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" \
-    --repo-root \
-    --repo admin-portal \
-    "$hub_dev"
-
+# The gh stub is defined here rather than further down because the --pr
+# invocation below reaches require_gh in workflow-lib.sh, which shells out to
+# 'gh auth status'. Without the stub that call depends on the ambient gh login:
+# it passed on developer machines and exited 2 on CI runners, where gh is
+# installed but unauthenticated. The suite never ran in CI to reveal that
+# (issue #1537). Every later invocation already used this same stub.
 stub_bin="$TMP_ROOT/bin"
 mkdir -p "$stub_bin"
 cat > "$stub_bin/gh" <<'SH'
@@ -282,6 +292,24 @@ case "$1" in
       exit 0
     fi
     ;;
+  api)
+    if [ "$2" = "graphql" ]; then
+      case "$*" in
+        *'projectV2(number:'*)
+          printf '{"data":{"user":{"projectV2":{"id":"PVT_test"}},"organization":null}}\n'
+          exit 0
+          ;;
+        *'issueNumber=901'*)
+          printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_901","project":{"id":"PVT_test","number":1},"status":{"name":"Plan Ready"},"configuredType":null,"customType":null,"compactCustomType":null,"type":{"name":"Workflow"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n'
+          exit 0
+          ;;
+        *'issueNumber=902'*)
+          printf '{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"id":"PVTI_902","project":{"id":"PVT_test","number":1},"status":{"name":"Plan Ready"},"configuredType":null,"customType":null,"compactCustomType":null,"type":{"name":"Feature"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n'
+          exit 0
+          ;;
+      esac
+    fi
+    ;;
   repo)
     if [ "$2" = "view" ]; then
       printf '{"nameWithOwner":"example/hub"}\n'
@@ -295,6 +323,164 @@ exit 1
 SH
 chmod +x "$stub_bin/gh"
 
+pr_selection_output="$(
+  PATH="$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$hub_dir" \
+    --pr 123
+)"
+run_contains "workflow_pr_requires_repo_selection" "NEXT_ACTION=resolve-repository-selection" "$pr_selection_output"
+run_contains "workflow_pr_selection_required_context" "ACTION_REPOSITORY_KIND=repository_selection_required" "$pr_selection_output"
+
+run_fails_contains \
+  "workflow_next_action_repo_requires_value" \
+  "--repo requires a value." \
+  "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo
+
+run_fails_contains \
+  "workflow_next_action_repo_root_requires_value" \
+  "--repo-root requires a value." \
+  "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root
+
+batch_output="$(
+  WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" \
+    --repo-root "$hub_dir" \
+    --repo admin-portal \
+    "$hub_dev"
+)"
+run_contains "batch_plan_preserves_action_kind" "ACTION_REPOSITORY_KIND=product_repo_owned" "$batch_output"
+run_contains "batch_plan_derives_github_repo_from_git_url" "ACTION_GITHUB_REPO=example/admin-portal" "$batch_output"
+
+run_fails_contains \
+  "batch_plan_repo_rejects_next_flag_as_value" \
+  "--repo requires a value." \
+  env WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" \
+    --repo \
+    --repo-root "$hub_dir" \
+    "$hub_dev"
+
+run_fails_contains \
+  "batch_plan_repo_root_rejects_next_flag_as_value" \
+  "--repo-root requires a value." \
+  env WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-batch-plan.sh" \
+    --repo-root \
+    --repo admin-portal \
+    "$hub_dev"
+
+
+typed_hub_dir="$TMP_ROOT/typed-hub"
+mkdir -p "$typed_hub_dir"
+git -C "$typed_hub_dir" init -q -b main
+cat > "$typed_hub_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+issue_tracker:
+  provider: github_projects
+  project_number: 1
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      default_branch: main
+YAML
+workflow_dev="$(make_development_for_issue "$typed_hub_dir" 901)"
+feature_dev="$(make_development_for_issue "$typed_hub_dir" 902)"
+
+workflow_output="$(
+  PATH="$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$typed_hub_dir" \
+    --development "$workflow_dev"
+)"
+run_contains "workflow_type_routes_hub_only" "ROUTING_OUTCOME_CODE=hub_only" "$workflow_output"
+run_contains "workflow_type_routes_hub_owner" "ACTION_REPOSITORY_KIND=hub_owned" "$workflow_output"
+run_contains "workflow_type_allows_without_repo" "ROUTING_CONTINUE_ALLOWED=true" "$workflow_output"
+
+feature_output="$(
+  PATH="$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$typed_hub_dir" \
+    --development "$feature_dev"
+)"
+run_contains "feature_type_requires_repo_selection" "NEXT_ACTION=resolve-repository-selection" "$feature_output"
+run_contains "feature_type_missing_target" "ROUTING_OUTCOME_CODE=missing_target" "$feature_output"
+
+workflow_pr_output="$(
+  GH_PR_VIEW_JSON='{"headRefName":"feature/901-routing","labels":[],"isDraft":false,"comments":[],"statusCheckRollup":[]}' \
+  PATH="$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$typed_hub_dir" \
+    --pr 901
+)"
+# --pr without --repo used to force resolve-repository-selection even for a
+# hub-only PR, because routing ran before branch_name was known (branch_name
+# only came from the gh pr view call below the old preflight). PR 901's
+# headRefName (mocked above) resolves issue #901, which the mocked tracker
+# types as Workflow (hub-only), so this must now resolve without requiring a
+# product repository selection.
+run_contains "workflow_pr_without_repo_hub_only_outcome" "ROUTING_OUTCOME_CODE=hub_only" "$workflow_pr_output"
+run_contains "workflow_pr_without_repo_hub_only_continues" "ROUTING_CONTINUE_ALLOWED=true" "$workflow_pr_output"
+run_contains "workflow_pr_without_repo_hub_owned" "ACTION_REPOSITORY_KIND=hub_owned" "$workflow_pr_output"
+run_contains "workflow_pr_without_repo_no_selection_required" "NEXT_ACTION=resolve-pr-readiness" "$workflow_pr_output"
+
+# A spec or plan PR (or any hub-owned implementation branch) without --repo
+# must resolve directly too: the implementation-only preflight used to run
+# unconditionally for every --pr invocation, and implementation_issue_number()
+# only recognizes feature|fix|refactor|hotfix branches, so a spec/*
+# headRefName always fell through to missing_target/resolve-repository-selection
+# even after branch_name was known. No product-repo routing is exercised at
+# all here (no tracker/gh call beyond the single gh pr view read), since a
+# non-implementation branch is classified as hub-owned without calling the
+# routing classifier.
+workflow_pr_spec_output="$(
+  GH_PR_VIEW_JSON='{"headRefName":"spec/950-example","labels":[],"isDraft":false,"comments":[],"statusCheckRollup":[]}' \
+  PATH="$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$typed_hub_dir" \
+    --pr 950
+)"
+run_contains "workflow_pr_spec_without_repo_hub_owned" "ACTION_REPOSITORY_KIND=hub_owned" "$workflow_pr_spec_output"
+run_contains "workflow_pr_spec_without_repo_no_selection_required" "NEXT_ACTION=resolve-pr-readiness" "$workflow_pr_spec_output"
+run_equals "workflow_pr_spec_without_repo_no_routing_outcome" "0" "$(grep -c '^ROUTING_OUTCOME_CODE=' <<< "$workflow_pr_spec_output" || true)"
+
+workflow_pr_plan_output="$(
+  GH_PR_VIEW_JSON='{"headRefName":"implementation-plan/950-example","labels":[],"isDraft":false,"comments":[],"statusCheckRollup":[]}' \
+  PATH="$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$typed_hub_dir" \
+    --pr 951
+)"
+run_contains "workflow_pr_plan_without_repo_hub_owned" "ACTION_REPOSITORY_KIND=hub_owned" "$workflow_pr_plan_output"
+run_contains "workflow_pr_plan_without_repo_no_selection_required" "NEXT_ACTION=resolve-pr-readiness" "$workflow_pr_plan_output"
+
+workflow_pr_selected_repo_output="$(
+  GH_PR_VIEW_JSON='{"headRefName":"feature/901-routing","labels":[],"isDraft":false,"comments":[],"statusCheckRollup":[]}' \
+  PATH="$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$typed_hub_dir" \
+    --repo mobile-app \
+    --pr 901
+)"
+run_contains "workflow_pr_selected_repo_rechecks_branch_identity" "NEXT_ACTION=resolve-repository-selection" "$workflow_pr_selected_repo_output"
+run_contains "workflow_pr_selected_repo_hub_only_conflict" "ROUTING_OUTCOME_CODE=ambiguous_target" "$workflow_pr_selected_repo_output"
+
+provider_fail_bin="$TMP_ROOT/provider-fail-bin"
+real_awk="$(command -v awk)"
+mkdir -p "$provider_fail_bin"
+cat > "$provider_fail_bin/awk" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = "-v" ] && [ "\${2:-}" = "section=issue_tracker" ]; then
+  echo "simulated provider resolver failure" >&2
+  exit 2
+fi
+exec "$real_awk" "\$@"
+SH
+chmod +x "$provider_fail_bin/awk"
+run_fails_contains \
+  "workflow_provider_resolution_failure_fails_closed" \
+  "ERROR: could not resolve issue tracker provider" \
+  env PATH="$provider_fail_bin:$stub_bin:$PATH" WORKFLOW_SKIP_FETCH=1 "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+    --repo-root "$typed_hub_dir" \
+    --repo mobile-app \
+    --development "$workflow_dev"
+
 discover_output="$(
   PATH="$stub_bin:$PATH" "$REPO_ROOT/scripts/development-workflow/discover-workflow-state.sh" \
     --repo-root "$hub_dir" \
@@ -302,15 +488,16 @@ discover_output="$(
 )"
 run_contains "discover_state_emits_action_github_repo" "ACTION_GITHUB_REPO=example/mobile-app" "$discover_output"
 
-pr_inferred_repo_log="$TMP_ROOT/pr-inferred-repo-gh-args.log"
-touch "$pr_inferred_repo_log"
-pr_inferred_output="$(
-  env GH_ARGS_LOG="$pr_inferred_repo_log" PATH="$stub_bin:$PATH" "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
+pr_missing_repo_log="$TMP_ROOT/pr-missing-repo-gh-args.log"
+touch "$pr_missing_repo_log"
+pr_missing_output="$(
+  env GH_ARGS_LOG="$pr_missing_repo_log" PATH="$stub_bin:$PATH" "$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh" \
     --repo-root "$solo_hub_dir" \
     --pr 42
 )"
-run_contains "workflow_pr_infers_single_product_repo" "ACTION_GITHUB_REPO=example/mobile-app" "$pr_inferred_output"
-run_contains "workflow_pr_passes_inferred_repo_to_gh" "--repo example/mobile-app" "$(tr '\n' ' ' < "$pr_inferred_repo_log")"
+run_contains "workflow_pr_requires_explicit_product_repo" "NEXT_ACTION=resolve-repository-selection" "$pr_missing_output"
+run_contains "workflow_pr_missing_repo_outcome" "ROUTING_OUTCOME_CODE=missing_target" "$pr_missing_output"
+run_equals "workflow_pr_does_not_query_implicit_product_repo" "0" "$(grep -c -- '--repo example/mobile-app' "$pr_missing_repo_log" || true)"
 
 ci_output="$(
   PATH="$stub_bin:$PATH" "$REPO_ROOT/scripts/development-workflow/pr-ci-loop.sh" \

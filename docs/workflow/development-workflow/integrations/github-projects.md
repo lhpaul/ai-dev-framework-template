@@ -91,7 +91,7 @@ Add these custom fields to the project (via project settings UI or GraphQL):
 
 | Field    | Type                                                         | Purpose                                                                                 |
 | -------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| Priority | Single select: `Urgent`, `High`, `Normal`, `Low`             | Drives orchestrator prioritization                                                      |
+| Priority | Single select: `Urgent`, `High`, `Medium`, `Low`             | Drives orchestrator prioritization                                                      |
 | Size     | Single select: `XS`, `S`, `M`, `L`, `XL`                    | Drives work sizing and sprint planning                                                  |
 | Due date | Date                                                         | Items due within 2 weeks get priority boost                                             |
 | Type     | Single select: `Feature`, `Bug`, `Refactor`, `Workflow`      | Source of truth for work-item classification and workflow path routing                  |
@@ -151,6 +151,11 @@ When `gh` is available, the script detects merged PRs via `gh pr list --state me
 ## CLI Update Patterns for Agents and Subagents
 
 GitHub Projects status updates can be performed entirely via `gh` CLI and Bash — no MCP server is required. This means subagent Work Item Runners dispatched from parallel batch runs can update tracker status directly at Step 8b without deferring to the orchestrator.
+
+For workflow-hub product releases, tracker reconciliation evidence is
+hub-owned. Product repositories may own product branch, PR, deployment, tag, and
+GitHub Release evidence, but the project Status transition and durable tracker
+reconciliation note stay with the hub tracker item.
 
 ### Board membership check (ensure_on_project_board)
 

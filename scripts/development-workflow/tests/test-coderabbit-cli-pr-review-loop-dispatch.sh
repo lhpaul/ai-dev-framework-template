@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Dispatch tests for the CodeRabbit CLI pr-review-loop platform.
+# covers: scripts/development-workflow/pr-review-loop.sh
+# covers: scripts/development-workflow/coderabbit-cli-reviewer.sh
 
 set -euo pipefail
 

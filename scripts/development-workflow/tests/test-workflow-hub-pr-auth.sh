@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # test-workflow-hub-pr-auth.sh - workflow-hub product PR auth helper tests.
+# covers: scripts/development-workflow/github-app-token.sh
+# covers: scripts/development-workflow/open-product-pr.sh
+# covers: scripts/development-workflow/workflow-config-resolver.py
 
 set -euo pipefail
 

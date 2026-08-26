@@ -2,6 +2,13 @@
 # test-reviewer-loop-guard-workflow.sh - Static checks for consolidated PR policy workflow.
 #
 # Usage: bash scripts/development-workflow/tests/test-reviewer-loop-guard-workflow.sh
+# covers: .github/workflows/pr-policy.yml
+# The three workflows below no longer exist — they were consolidated into
+# pr-policy.yml, and this suite asserts they stay gone. Declaring them is
+# deliberate, not a stale path: re-adding any of them must run this suite.
+# covers: .github/workflows/reviewer-loop-guard.yml
+# covers: .github/workflows/apply-regression-label.yml
+# covers: .github/workflows/remove-regression-label-on-push.yml
 
 set -euo pipefail
 
@@ -49,7 +56,7 @@ run_test "pr_event_types_preserved" "yes" "$(contains "types: [opened, reopened,
 run_test "summary_comments_get_separate_concurrency" "yes" "$(contains "'summary-comment' ||")"
 run_test "non_summary_comments_get_separate_concurrency" "yes" "$(contains "'non-summary' ||")"
 run_test "synchronize_events_get_separate_concurrency" "yes" "$(contains "'pr-synchronize' ||")"
-run_test "label_apply_events_get_separate_concurrency" "yes" "$(contains "'pr-label-and-guard' ||")"
+run_test "pr_lifecycle_events_get_separate_concurrency" "yes" "$(contains "'pr-label-and-guard' ||")"
 run_test "pr_events_get_separate_concurrency" "yes" "$(contains "'pr-event'")"
 run_test "guard_path_cancels_stale_runs" "yes" "$(contains "cancel-in-progress: true")"
 
@@ -69,6 +76,7 @@ run_test "comment_path_fetches_current_comments" "yes" "$(contains 'gh api "repo
 run_test "metadata_fetch_failure_posts_status" "yes" "$(contains "Could not fetch PR metadata. Re-run the workflow to retry.")"
 run_test "missing_head_sha_failure_posts_status" "yes" "$(contains "Could not resolve PR head SHA. Re-run the workflow to retry.")"
 run_test "missing_head_branch_failure_posts_status" "yes" "$(contains "Could not resolve PR head branch. Re-run the workflow to retry.")"
+run_test "missing_base_branch_failure_posts_status" "yes" "$(contains "Could not resolve PR base branch. Re-run the workflow to retry.")"
 run_test "missing_head_repo_failure_posts_status" "yes" "$(contains "Could not resolve PR head repository. Re-run the workflow to retry.")"
 run_test "metadata_failure_uses_event_sha" "yes" "$(contains '${EVENT_HEAD_SHA:-}')"
 run_test "failure_status_helper_present" "yes" "$(contains "post_failure_status_if_possible()")"
@@ -78,23 +86,50 @@ run_test "fork_head_skip_no_mutation" "yes" "$(contains "skipping privileged PR 
 run_test "out_of_scope_success_preserved" "yes" "$(contains "Not an implementation branch; guard skipped.")"
 run_test "status_context_preserved" "yes" "$(contains 'Reviewer-loop completion guard (#${PR_NUMBER})')"
 run_test "in_scope_prefixes_preserved" "yes" "$(contains "IN_SCOPE_PREFIXES: \"feature/ fix/ refactor/ hotfix/\"")"
+run_test "branch_scope_helper_present" "yes" "$(contains "branch_is_in_scope()")"
 
 run_test "regression_label_constant_preserved" "yes" "$(contains "LABEL_NAME=\"ready-for-regression\"")"
 run_test "regression_label_create_preserved" "yes" "$(contains 'gh label create "$LABEL_NAME"')"
 run_test "regression_label_create_race_handled" "yes" "$(contains "Concurrent creator race")"
-run_test "label_applies_on_open_reopen_ready" "yes" "$(contains "opened|reopened|ready_for_review)")"
+run_test "label_waits_on_open_reopen_ready" "yes" "$(contains "regression waits for current-head reviewer-loop clean evidence")"
 run_test "label_add_preserved" "yes" "$(contains '--add-label "$LABEL_NAME"')"
 run_test "label_add_failure_continues_to_guard" "yes" "$(contains "Continuing to reviewer-loop guard status.")"
+run_test "regression_workflow_default_present" "yes" "$(contains "vars.PR_POLICY_REGRESSION_WORKFLOW || 'e2e-regression.yml'")"
+run_test "regression_dispatch_disable_var_present" "yes" "$(contains "vars.PR_POLICY_REGRESSION_DISPATCH_ENABLED || 'true'")"
+run_test "regression_dispatch_disable_guard_present" "yes" "$(contains "Regression workflow dispatch disabled by PR_POLICY_REGRESSION_DISPATCH_ENABLED")"
+run_test "regression_workflow_dispatch_present" "yes" "$(contains 'gh workflow run "$REGRESSION_WORKFLOW"')"
+run_test "summary_result_parser_present" "yes" "$(contains "summarize_reviewer_loop_result()")"
+run_test "clean_summary_allows_regression" "yes" "$(contains 'LATEST_SUMMARY_RESULT="clean"')"
+run_test "skipped_summary_allows_regression" "yes" "$(contains 'LATEST_SUMMARY_RESULT="skipped"')"
+run_test "non_clean_summary_blocks_regression" "yes" "$(contains 'LATEST_SUMMARY_RESULT="non_clean"')"
+run_test "summary_head_reads_latest_history_entry" "yes" "$(contains ".entries[-1].head_sha // \"\"")"
+run_test "summary_head_match_required" "yes" "$(contains 'LATEST_SUMMARY_HEAD_MATCHES" = "true"')"
+run_test "summary_dispatch_owner_present" "yes" "$(contains "apply_regression_policy_after_clean_summary()")"
+run_test "non_clean_summary_skips_regression" "yes" "$(contains "Reviewer-loop summary is not clean/skipped for the live head; skipping \${LABEL_NAME} and regression dispatch.")"
+run_test "regression_dispatch_uses_head_ref" "yes" "$(contains '--ref "$BRANCH"')"
+run_test "regression_dispatch_uses_pr_number" "yes" "$(contains '-f pr_number="$PR_NUMBER"')"
+run_test "regression_dispatch_uses_head_sha" "yes" "$(contains '-f head_sha="$HEAD_SHA"')"
+run_test "regression_dispatch_uses_base_ref" "yes" "$(contains '-f base_ref="$BASE_BRANCH"')"
+run_test "regression_dispatch_gates_base_branch" "yes" "$(contains "develop|develop-*|main)")"
+run_test "dispatch_disabled_skips_label" "yes" "$(contains "skipping \${LABEL_NAME}")"
+run_test "dispatch_failure_skips_label" "yes" "$(contains "Skipping \${LABEL_NAME} and continuing to reviewer-loop guard status.")"
+run_test "dispatch_revalidates_head_before_label" "yes" "$(contains "refresh_pr_metadata()")"
+run_test "dispatch_revalidates_immediately_before_label" "yes" "$(contains "changed immediately before applying \${LABEL_NAME}")"
+run_test "dispatch_revalidates_metadata_after_dispatch" "yes" "$(contains "Could not verify PR head after dispatch")"
+run_test "dispatch_skips_on_head_move_after_dispatch" "yes" "$(contains "until reviewer-loop clean evidence exists for the new head")"
+run_test "dispatch_does_not_redispatch_unreviewed_head" "yes" "$(not_contains "Redispatching regression for the current head.")"
 run_test "synchronize_removes_stale_label" "yes" "$(contains 'EVENT_ACTION" = "synchronize"')"
 run_test "label_remove_preserved" "yes" "$(contains '--remove-label "$LABEL_NAME"')"
 run_test "label_removal_skips_on_comment_failure" "yes" "$(contains "Skipping label removal to avoid dropping a loop-applied label on API failure.")"
-run_test "label_removal_skips_after_summary" "yes" "$(contains 'Reviewer loop has already run on PR #${PR_NUMBER}')"
+run_test "label_removal_skips_after_current_head_clean_summary" "yes" "$(contains 'Reviewer loop has already run clean for current head on PR #${PR_NUMBER}')"
+run_test "label_removal_requires_current_head_clean_summary" "yes" "$(contains "without current-head reviewer-loop clean evidence")"
 run_test "label_policy_failure_flag_present" "yes" "$(contains "LABEL_POLICY_FAILED=true")"
 run_test "label_policy_failure_after_guard_status" "yes" "$(contains "PR policy label mutation failed after reviewer-loop guard status was posted.")"
 
 run_test "permissions_include_issues_write" "yes" "$(contains "issues: write")"
 run_test "permissions_include_pull_requests_write" "yes" "$(contains "pull-requests: write")"
 run_test "permissions_include_statuses_write" "yes" "$(contains "statuses: write")"
+run_test "permissions_include_actions_write" "yes" "$(contains "actions: write")"
 
 echo ""
 echo "Results: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"

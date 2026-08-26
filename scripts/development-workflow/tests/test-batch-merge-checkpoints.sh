@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # test-batch-merge-checkpoints.sh - Unit tests for batch merge checkpoint guards.
+# covers: scripts/development-workflow/batch-merge.sh
 
 set -euo pipefail
 

@@ -298,7 +298,7 @@ Step 7a gate maps to outcomes:
 ## See Also
 
 - [`pr-review-platform.md`](pr-review-platform.md) — Step 7 multi-platform review loop
-- [`coderabbit.md`](coderabbit.md) — CodeRabbit integration (common default reviewer)
+- [`coderabbit.md`](coderabbit.md) — CodeRabbit integration (opt-in reviewer)
 - Protocol 93 — [`../protocols/93-automated-reviewer-loop-protocol.md`](../protocols/93-automated-reviewer-loop-protocol.md)
 - Protocol 03 — [`../protocols/03-implement-development-protocol.md`](../protocols/03-implement-development-protocol.md)
 - `scripts/development-workflow/claude-code-action-reviewer.sh` — companion script

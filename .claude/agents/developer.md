@@ -18,6 +18,18 @@ In `workflow_hub`, product implementation work must mutate the selected product
 repository, not the hub. Stop before mutation if product repository context is
 missing or ambiguous. Missing mode or `single_repo` keeps the current repository
 as the mutation target and does not require `--repo`.
+For `workflow_hub` implementation runs, prefer `workflow-next-action.sh` and
+consume its structured routing result before using mapped
+`work-item-repository-routing.py` JSON directly; continue only when
+`ROUTING_CONTINUE_ALLOWED=true`. `hub_only` with
+`ROUTING_ARTIFACT_OWNER=hub_repository` mutates the hub and does not require a
+selected product repository; product repository selection is required only for
+`product_owned`. Carry the canonical routing evidence:
+`ROUTING_CONTINUE_ALLOWED`, `ROUTING_OUTCOME_CODE`, `ROUTING_DISPLAY_LABEL`,
+`ROUTING_ARTIFACT_OWNER`, `ROUTING_SELECTED_PRODUCT_REPO_KEY`, and
+`ROUTING_FINGERPRINT`. Stop before mutation and report evidence when
+`ROUTING_STOP_REASON` or
+`ROUTING_REQUIRED_HUMAN_ACTION` is non-empty.
 
 Before creating an implementation branch or opening an implementation PR for a
 tracker-backed item, run `run-nested-artifact-guard.sh` with required `--mode`, `--issue`, `--expected-branch`, `--approved-base`, and the expected
@@ -83,9 +95,9 @@ Key rules:
   `scripts/development-workflow/workflow-branch-push-guard.sh`. In
   `workflow_hub`, resolve the helper from `WORKFLOW_TOOL_ROOT` and pass the
   pushed checkout as `--repo-root "$ARTIFACT_REPO_ROOT"`.
-- Always update CHANGELOG before opening the PR (except spec/plan-only PRs; for fixes to unreleased work, update the existing entry instead of adding a new one; in parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved at merge time); **hotfix exception**: `hotfix/*` PRs write a new versioned section (e.g., `[1.0.1] - YYYY-MM-DD`) as the **first `##` section** in `CHANGELOG.md` (above all existing headers, including prior hotfix versions and `[Unreleased]`) — hotfixes patch released code and are released immediately on merge; the backport PR carries the versioned entry to `develop` automatically
-- Before writing a CHANGELOG entry, check whether the target category section (e.g. `### Changed`, `### Fixed`) already exists under `[Unreleased]`; if so, append to it — never create a duplicate section header; after writing, verify the header appears exactly once **within the `[Unreleased]` block** using the awk-scoped check from the protocol's "Duplicate-section prevention" step (not a bare file-scoped `grep -c`, which counts across all versioned sections)
-- CHANGELOG entries must have no trailing whitespace and no trailing blank lines before commit; verify in-place after writing the entry and before staging (intentional two-space Markdown hard line breaks are exempt)
+- Always add or update a `changelog.d/` fragment before opening the PR (except spec/plan-only PRs; for fixes to unreleased work, update the existing fragment instead of adding a duplicate; in parallel batches, each PR keeps its own fragment); **hotfix exception**: `hotfix/*` PRs write a new versioned section (e.g., `[1.0.1] - YYYY-MM-DD`) directly below `## [Unreleased]` in `CHANGELOG.md` (above all prior versioned sections) — hotfixes patch released code and are released immediately on merge; the backport PR carries the versioned entry to `develop` automatically
+- Before staging a changelog fragment, run `bash scripts/development-workflow/changelog-fragments.sh validate`; for hotfix `CHANGELOG.md` edits, use the protocol's duplicate-section and link-reference checks.
+- Changelog fragments and hotfix CHANGELOG entries must have no trailing whitespace and no trailing blank lines before commit; verify in-place after writing the release note and before staging (intentional two-space Markdown hard line breaks are exempt)
 - Every modified `.md` file must end with a trailing newline (MD047) before staging; run the pre-staging check from the protocol's MD047 section on all modified markdown files before `git add`
 - Before committing, if any `.sh` files are modified or newly created, run `shellcheck --severity=warning <files>` and `python3 scripts/lint/workflow-shell-guard-lint.py --base-ref origin/develop`, then fix all warnings before committing — ShellCheck violations will fail the CI `shellcheck.yml` check and cause unnecessary review-loop churn, and the workflow shell guard catches added-line patterns ShellCheck misses
 - Workflow scripts must be bash 3.2 compatible (macOS ships bash 3.2 by default); do not use `local -A`, `declare -A`, or other bash 4+-only syntax — use parallel indexed arrays instead (e.g., `local -a keys; local -a vals`). ShellCheck does not warn on this by default when the shebang is `#!/usr/bin/env bash`

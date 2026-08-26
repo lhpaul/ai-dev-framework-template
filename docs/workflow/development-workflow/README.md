@@ -371,7 +371,9 @@ Typical tracker fields worth keeping current:
 When multiple items could advance, use this order:
 
 1. Due date within the next two weeks, earliest first.
-2. Priority: Urgent -> High -> Normal -> Low.
+2. Priority: Urgent -> High -> Normal/Medium -> Low. (`Normal` and `Medium` rank
+   equally — different GitHub Projects boards use one or the other for the
+   same "routine" tier; see `workflow-batch-overlap.sh`'s `PRIORITY_RANK`.)
 3. Earlier-created items before newer items.
 
 Dependencies override priority. If a work item depends on another item that is not yet `Merged` or `Released`, it should wait.
@@ -463,7 +465,8 @@ product-repo local paths, secret references, or local tool overrides.
 The file is versioned and intentionally declarative. It is the right place to record which workflow providers this repository uses for:
 
 - Repository mode and stable product-repository identity
-- Automated PR review
+- Automated PR review (`codex-github` is the default ready-phase reviewer;
+  CodeRabbit remains available as an explicit opt-in reviewer)
 - Issue tracking
 - Git hosting / pull-request workflow
 - Browser automation for smoke tests or similar validation
@@ -484,7 +487,7 @@ review:
       - pr-agent
   on_ready:
     github:
-      - haystack
+      - codex-github
 
 issue_tracker:
   provider: linear
@@ -553,7 +556,7 @@ Important implementation notes:
   [`product-repo-injection.md`](product-repo-injection.md), and
   [`cross-repo-pr-flow.md`](cross-repo-pr-flow.md).
 - `review.on_draft.runner` is consumed by the Step 7a internal review gate protocol (`91-orchestrate-work-protocol.md`). If omitted, the gate falls back to running the stage-appropriate `claude` reviewer once. Developers can override the list locally via `.ai-dev-workflow.local.yaml` (gitignored).
-- `review.on_draft.github` and `review.on_ready.github` are consumed by `scripts/development-workflow/pr-review-loop.sh` for external automated PR review (Step 7). If the config file is absent, or both lists are omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`.
+- `review.on_draft.github` and `review.on_ready.github` are consumed by `scripts/development-workflow/pr-review-loop.sh` for external automated PR review (Step 7). If the config file is absent, or both lists are omitted or empty, automated PR review is treated as not configured and the review loop reports `skipped`. See the Workflow Configuration section for the default ready-phase reviewer and CodeRabbit opt-in policy.
 - Legacy `review.internal_reviewers`, `review.platforms`, and `review.phase_after_clean` keys remain accepted for one transition release and map to the new lifecycle buckets.
 - `template.is_template` when set to `true` marks this repository as a framework template. Protocol 02 Step 0 (Template-Fit Check) becomes mandatory: before writing any implementation plan, the tech lead must verify that the spec is sufficiently generic for all downstream consumers. Set to `true` in the template repository itself; omit or leave `false` in downstream consumer repositories.
 - `template.repository` is an optional `owner/repo` reference to the upstream template repository. When set, the retrospective protocol (Step 3b) cross-references each finding against that repository's issue tracker to classify findings as already tracked, already fixed, or a new upstream contribution candidate. Leave empty or omit to skip this step entirely. Note: this field is set by downstream consumer repos pointing back to their template origin; the template repo itself leaves this empty.
@@ -588,7 +591,7 @@ Release is triggered by a human when `develop` is ready to ship.
 Summary:
 
 1. Create `release/v[X.Y.Z]` from `develop`.
-2. Curate `CHANGELOG.md`, move `[Unreleased]` into the versioned release section, and bump any versioned manifests.
+2. Assemble pending `changelog.d/` fragments into `CHANGELOG.md`, curate the versioned release section, and bump any versioned manifests.
 3. Open two PRs from the release branch: one to `main`, one back to `develop`.
 4. Merge the `main` PR first so the release tag is created, then merge the backport PR.
 

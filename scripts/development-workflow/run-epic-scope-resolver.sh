@@ -316,6 +316,13 @@ completed_status() {
   esac
 }
 
+recognized_tracker_status() {
+  case "$1" in
+    Backlog|Writing\ Spec|Spec\ in\ Review|Spec\ Ready|Writing\ Plan|Plan\ in\ Review|Plan\ Ready|In\ Development|Development\ in\ Review|Merged|Released|Cancelled) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 labels_csv() {
   jq -r '[.labels[].name] | join(",")'
 }
@@ -720,6 +727,9 @@ enrich_item() {
   elif [ "$status" = "Cancelled" ] || { [ "$state" = "CLOSED" ] && [ "$state_reason" != "COMPLETED" ]; }; then
     group="ambiguous"
     ambiguity_reason="issue closed or cancelled without completed state"
+  elif ! recognized_tracker_status "$status"; then
+    group="ambiguous"
+    ambiguity_reason="tracker status missing or unrecognized"
   elif [ "$open_review_count" -gt 0 ] \
     || [ "$status" = "Spec in Review" ] \
     || [ "$status" = "Plan in Review" ] \
@@ -805,10 +815,10 @@ elif [ "$integration_count" -eq 1 ]; then
     base_reason="partial integration branch label coverage for ${label}; falling back to develop"
     base_validation_result="skipped_partial_label_coverage"
     base_warnings_json="$(jq -nc \
-      --arg label "$label" \
+      --arg labelText "$label" \
       --argjson labeled "$labeled_item_count" \
       --argjson total "$item_count" \
-      '[("partial integration branch label " + $label + " applies to " + ($labeled|tostring) + " of " + ($total|tostring) + " items; using develop")]')"
+      '[("partial integration branch label " + $labelText + " applies to " + ($labeled|tostring) + " of " + ($total|tostring) + " items; using develop")]')"
   elif [ "$base_branch_applies_to" != "current_repository_prs" ]; then
     base_branch="$candidate_branch"
     base_reason="shared integration branch label ${label}; branch validation deferred for ${base_branch_applies_to}"
@@ -822,16 +832,16 @@ elif [ "$integration_count" -eq 1 ]; then
       base_branch="develop"
       base_reason="shared integration branch label ${label} points to missing branch ${candidate_branch}; falling back to develop"
       base_warnings_json="$(jq -nc \
-        --arg label "$label" \
+        --arg labelText "$label" \
         --arg branch "$candidate_branch" \
-        '[("integration branch " + $branch + " from label " + $label + " was not found on origin; using develop")]')"
+        '[("integration branch " + $branch + " from label " + $labelText + " was not found on origin; using develop")]')"
     else
       base_branch="develop"
       base_reason="could not verify integration branch ${candidate_branch}; falling back to develop"
       base_warnings_json="$(jq -nc \
-        --arg label "$label" \
+        --arg labelText "$label" \
         --arg branch "$candidate_branch" \
-        '[("could not verify integration branch " + $branch + " from label " + $label + "; using develop")]')"
+        '[("could not verify integration branch " + $branch + " from label " + $labelText + "; using develop")]')"
     fi
   fi
 elif [ "$integration_count" -gt 1 ]; then
@@ -917,8 +927,8 @@ summary_json="$(jq -n \
           or (
             .group == "eligible"
             and (
-              (.status // "") != "Backlog"
-              or $summary.policy.mayStartBacklog
+              ((.status // "") | IN("Writing Spec", "Spec Ready", "Writing Plan", "Plan Ready", "In Development"))
+              or ((.status // "") == "Backlog" and $summary.policy.mayStartBacklog)
             )
           )
         ))

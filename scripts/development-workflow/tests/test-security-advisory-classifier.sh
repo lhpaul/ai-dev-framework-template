@@ -97,6 +97,18 @@ run_test "ac3_force_without_lease_sensitive" "true" \
   "$(classify_sensitive "raw git push --force is used here without a safety lease" "scripts/development-workflow/workflow-branch-push-guard.sh")"
 run_test "ac3_force_without_lease_category" "c" \
   "$(classify_category "raw git push --force is used here without a safety lease" "scripts/development-workflow/workflow-branch-push-guard.sh")"
+run_test "ac3_force_with_lease_recommendation_still_sensitive" "true" \
+  "$(classify_sensitive "this uses git push --force; replace it with git push --force-with-lease" "scripts/development-workflow/workflow-branch-push-guard.sh")"
+run_test "ac3_force_with_lease_recommendation_category" "c" \
+  "$(classify_category "this uses git push --force; replace it with git push --force-with-lease" "scripts/development-workflow/workflow-branch-push-guard.sh")"
+run_test "ac3_push_f_without_lease_sensitive" "true" \
+  "$(classify_sensitive "raw git push -f is used here without a safety lease" "scripts/development-workflow/workflow-branch-push-guard.sh")"
+run_test "ac3_push_f_without_lease_category" "c" \
+  "$(classify_category "raw git push -f is used here without a safety lease" "scripts/development-workflow/workflow-branch-push-guard.sh")"
+run_test "ac3_reset_hard_sensitive" "true" \
+  "$(classify_sensitive "the workflow shells out to git reset --hard before validating the branch" "scripts/development-workflow/workflow-branch-push-guard.sh")"
+run_test "ac3_reset_hard_category" "c" \
+  "$(classify_category "the workflow shells out to git reset --hard before validating the branch" "scripts/development-workflow/workflow-branch-push-guard.sh")"
 run_test "ac3_permissive_remote_url_sensitive" "true" \
   "$(classify_sensitive "the remote URL parsing here is too permissive and could let a spoofed remote bypass the push guard's validation check" "scripts/development-workflow/workflow-branch-push-guard.sh")"
 run_test "ac3_permissive_remote_url_category" "e" \
@@ -127,6 +139,14 @@ run_test "without_safety_lease_still_matches" "true" \
 # Negative lookalike: bare "secret" word, no exposure verb
 run_test "bare_secret_word_not_sensitive" "false" \
   "$(classify_sensitive "the retry count is a secret constant we tune later" "scripts/development-workflow/workflow-branch-push-guard.sh")"
+run_test "credential_exposure_reversed_order_sensitive" "true" \
+  "$(classify_sensitive "logging exposes the API token" "scripts/development-workflow/workflow-branch-push-guard.sh")"
+run_test "credential_exposure_reversed_order_category" "b" \
+  "$(classify_category "logging exposes the API token" "scripts/development-workflow/workflow-branch-push-guard.sh")"
+run_test "plaintext_password_reversed_order_sensitive" "true" \
+  "$(classify_sensitive "a plaintext log contains the password" "scripts/development-workflow/workflow-branch-push-guard.sh")"
+run_test "plaintext_password_reversed_order_category" "b" \
+  "$(classify_category "a plaintext log contains the password" "scripts/development-workflow/workflow-branch-push-guard.sh")"
 
 # Multiple category keywords on one line: fixed category-priority (b before c)
 run_test "category_priority_b_over_c" "b" \
@@ -137,6 +157,14 @@ run_test "overlap_bypass_before_auth" "a" \
   "$(classify_category "this change bypasses the auth check" "scripts/development-workflow/workflow-branch-push-guard.sh")"
 run_test "overlap_auth_before_bypass" "a" \
   "$(classify_category "this change has an auth check that can be bypassed" "scripts/development-workflow/workflow-branch-push-guard.sh")"
+run_test "guard_before_bypass_sensitive" "true" \
+  "$(classify_sensitive "the push guard is bypassed by this path" "scripts/development-workflow/workflow-branch-push-guard.sh")"
+run_test "guard_before_bypass_category" "e" \
+  "$(classify_category "the push guard is bypassed by this path" "scripts/development-workflow/workflow-branch-push-guard.sh")"
+run_test "policy_before_disabled_sensitive" "true" \
+  "$(classify_sensitive "this policy can be disabled by setting the flag" "scripts/development-workflow/workflow-branch-push-guard.sh")"
+run_test "policy_before_disabled_category" "e" \
+  "$(classify_category "this policy can be disabled by setting the flag" "scripts/development-workflow/workflow-branch-push-guard.sh")"
 
 # File-location exact-match boundary: lookalike file is not on the allowlist
 run_test "exact_path_boundary_lookalike_not_sensitive" "false" \

@@ -2,6 +2,139 @@
 
 Scripts used by the staged AI development workflow. Referenced by `docs/workflow/development-workflow/` and by the Codex skills in `.agents/skills/` and `.codex/skills/`. Run from the repository root.
 
+## Running the test suite
+
+Each script's tests live alongside it in `scripts/development-workflow/tests/` as
+`test-<script-name>.sh`. To run the full harness (every `test-*.sh` file in that
+directory), expect it to take **more than 2 minutes** as of this writing — invoke
+it with a longer explicit timeout, or in the background, rather than relying on
+a tool's default foreground command timeout:
+
+<!-- workflow-shell-contract: bash-zsh -->
+
+```bash
+( harness_status=0
+  for f in scripts/development-workflow/tests/test-*.sh; do
+    bash "$f" || { echo "FAILED: $f"; harness_status=1; }
+  done
+  exit "$harness_status"
+)
+```
+
+The subshell's exit status reflects the harness as a whole (0 only if every
+`test-*.sh` passed) — checking `$?` after the loop, or running it in CI, is
+enough to detect a failure even though each script's own PASS/FAIL lines keep
+scrolling past. Individual `test-*.sh` files typically run in a few seconds
+each and are safe to invoke with a default foreground timeout.
+
+Note that the full harness is heavily lopsided: `test-pr-review-loop.sh` alone
+is roughly half the total wall clock (~13 minutes of ~27), while the median
+suite finishes in a few seconds.
+
+### Iterating on `test-pr-review-loop.sh`
+
+That suite is ~13.6k lines and ~900 assertions, and its runtime is extremely
+lopsided (issue #1562): **Area 13 is ~94% of it** — 156 `codex-github-reviewer.sh`
+invocations that each really sleep — while the other 27 areas together take
+about 13 seconds. Use `--area` when you are not working on Area 13:
+
+<!-- workflow-shell-contract: bash-zsh -->
+
+```bash
+# What areas are there?
+bash scripts/development-workflow/tests/test-pr-review-loop.sh --list-areas
+
+# Run one area (matches an area number exactly, or any substring of its title)
+bash scripts/development-workflow/tests/test-pr-review-loop.sh --area 1
+bash scripts/development-workflow/tests/test-pr-review-loop.sh --area haystack
+bash scripts/development-workflow/tests/test-pr-review-loop.sh --area 0a --area 12b
+```
+
+A filtered run still prints the summary and still exits non-zero if anything in
+the selected areas failed.
+
+The suite re-executes itself from a temp-file snapshot. Bash reads a script
+incrementally, so editing this file mid-run used to make the running shell pick
+up part of the new text — during the #1531 work that produced a run whose
+pass/fail counts matched neither version of the file, with nothing to indicate
+it. You can now edit it freely while a run is in flight.
+
+### How CI decides which suites to run
+
+`.github/workflows/workflow-tests.yml` does not contain a list of suites. It
+asks `select-test-suites.sh` which suites a pull request's changed files
+require, and runs those; a nightly scheduled job runs all of them. Adding a new
+`test-*.sh` therefore needs no workflow edit — see the section on
+[`select-test-suites.sh`](#select-test-suitessh) below for the mapping rules and
+for the `# covers:` header a suite uses when its name does not match a script.
+
+## `select-test-suites.sh`
+
+Resolves which test suites a change set requires, and reports coverage gaps.
+Consumed by `.github/workflows/workflow-tests.yml`; also useful locally to run
+just the suites your working changes affect.
+
+<!-- workflow-shell-contract: bash-zsh -->
+
+```bash
+# Which suites does my branch need?
+git diff --name-only origin/develop... \
+  | bash scripts/development-workflow/select-test-suites.sh --changed-files -
+
+# Run exactly those suites (exits non-zero if any suite fails)
+( set -o pipefail
+  git diff --name-only origin/develop... \
+    | bash scripts/development-workflow/select-test-suites.sh --changed-files - \
+    | { suite_status=0
+        while IFS= read -r suite; do
+          bash "$suite" || { printf 'FAILED: %s\n' "$suite" >&2; suite_status=1; }
+        done
+        exit "$suite_status"
+      }
+)
+
+# Which workflow scripts have no suite at all?
+bash scripts/development-workflow/select-test-suites.sh --report-gaps
+
+# Every suite, and the full resolved suite-to-path map
+bash scripts/development-workflow/select-test-suites.sh --all
+bash scripts/development-workflow/select-test-suites.sh --print-map
+```
+
+A suite's coverage is resolved in one of two ways:
+
+1. **`# covers:` header** (authoritative). Declare the paths a suite exercises
+   in its first 60 lines. Several lines accumulate, and one line may list
+   several space-separated patterns:
+
+   <!-- workflow-shell-contract: bash -->
+
+   ```bash
+   #!/usr/bin/env bash
+   # test-workflow-hub-pr-auth.sh - workflow-hub product PR auth helper tests.
+   # covers: scripts/development-workflow/github-app-token.sh
+   # covers: scripts/development-workflow/open-product-pr.sh
+   ```
+
+   Use this whenever a suite's name does not match the script it tests, or when
+   it tests protocols, docs, git hooks, or other workflow files. The
+   declaration sits next to the test, so it cannot drift out of sync the way a
+   central mapping file does.
+
+2. **Naming convention** (default when no header is present). `test-<name>.sh`
+   covers `scripts/development-workflow/<name>.sh` and `<name>.py`.
+
+In both cases a suite also covers itself and its own fixture directory, so
+editing a test always runs it.
+
+Patterns are repository-root-relative: `**` matches across `/`, `*` and `?` do
+not. A change to `workflow-lib.sh`, to the selector itself, to the shared
+fixtures, or to the workflow file runs every suite rather than a subset.
+
+`--report-gaps` prints two lists and always exits 0 — it is visibility, not a
+gate: workflow scripts that no suite covers, and suites that no change set can
+select. The second list should stay empty; a suite in it runs only nightly.
+
 ## `install-codex-skills.sh`
 
 Installs the repository's bundled Codex skills into the local Codex skill directories by creating symlinks.
@@ -103,7 +236,8 @@ Usage:
 bash ./scripts/development-workflow/batch-merge.sh recheck-remaining \
   --prs 101,102,103 \
   --after-merged-pr 101 \
-  --base develop
+  --base develop \
+  --approved-unready-prs "$APPROVED_UNREADY_PRS"
 ```
 
 Protocol 94 is the source of truth for frozen scope, record schema, retry
@@ -126,6 +260,236 @@ Use this when:
 
 - You want a quick view of what work is already in progress
 - The orchestrator needs a deterministic summary before choosing the next stage
+
+### `component-release-target.sh`
+
+Resolves the canonical release target before a single-repo or workflow-hub
+component release mutates changelog entries, branches, tags, release evidence,
+or tracker state.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/component-release-target.sh --json
+./scripts/development-workflow/component-release-target.sh --repo mobile-app --json
+```
+
+What it does:
+
+- Emits `component_release_target.v1` in shell or JSON form.
+- Reports one routing outcome, `mutation_allowed`, artifact owners,
+  `release_correlation_key`, and `contract_revision`.
+- Fails closed for missing, multiple, unknown, ambiguous, invalid, unavailable,
+  or unsupported component release targets before mutation.
+- Uses the canonical component release contract documented in
+  `docs/workflow/development-workflow/repository-modes.md`.
+
+### `component-release-evidence.sh`
+
+Renders deterministic component release evidence from an independent target
+binding and rejects mismatched repository identity, artifact owners,
+`release_correlation_key`, or `contract_revision`.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/component-release-evidence.sh \
+  --target-file /tmp/component-release-target.json \
+  --binding-file /tmp/component-release-target.json \
+  --release-branch mobile-app/release/v1.2.3 \
+  --release-outcome pending \
+  --ci-outcome pending \
+  --deployment-outcome pending \
+  --cleanup-outcome not_started \
+  --hub-tracker-ref "#123" \
+  --output /tmp/component-release-evidence.json
+```
+
+### `multi-repo-release-assurance.sh`
+
+Validates deterministic workflow-hub adoption fixtures before a
+multi-repository release is treated as adopted.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/tests/setup-multi-repo-release-assurance-fixture.sh \
+  --output-dir /tmp/multi-repo-release-assurance \
+  --json > /tmp/multi-repo-release-assurance-fixtures.json &&
+
+./scripts/development-workflow/multi-repo-release-assurance.sh \
+  --fixture-dir /tmp/multi-repo-release-assurance/valid \
+  --json
+```
+
+What it does:
+
+- Emits `multi_repo_release_assurance.v1`.
+- Reads explicit fixture directories containing scenario inputs and historical
+  before/after baselines.
+- Writes JSON to stdout; redirect it to the release runbook or self-review
+  evidence path chosen by the operator.
+- Aggregates scenario outcomes into `adoption_status` using the canonical
+  contract in
+  `docs/workflow/development-workflow/multi-repo-release-adoption.md`.
+- Compares hub-owned and product-owned historical no-rewrite baselines.
+- Emits `owner_actions[]` and `required_next_action` for release runbook
+  evidence.
+
+Run focused coverage with:
+
+<!-- workflow-shell-contract: bash -->
+```bash
+bash scripts/development-workflow/tests/test-multi-repo-release-assurance.sh
+```
+
+### `delivery-bundle-manifest.sh`
+
+Creates and updates hub-owned delivery bundle manifests that compose
+independently released product components into one customer-facing delivery.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/delivery-bundle-manifest.sh create \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --title "Mobile and Web July delivery" \
+  --purpose "Coordinated customer-facing delivery" \
+  --parent-ref "#1352" \
+  --component mobile-app \
+  --component web-app \
+  --child-item "#1356" \
+  --finalization-owner "@workflow-operator" \
+  --json
+
+./scripts/development-workflow/delivery-bundle-manifest.sh update-component \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --expected-revision 1 \
+  --component-key mobile-app \
+  --evidence-file /tmp/component-release-evidence.json \
+  --component-tag mobile-v1.4.0 \
+  --component-version 1.4.0 \
+  --source-pr 1411 \
+  --release-pr 1501 \
+  --hub-tracker-reconciliation-outcome complete \
+  --child-item "#1356" \
+  --child-release-state merged \
+  --json
+
+./scripts/development-workflow/delivery-bundle-manifest.sh add-component \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --expected-revision 2 \
+  --component-key web-app \
+  --json
+
+./scripts/development-workflow/delivery-bundle-manifest.sh remove-component \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --expected-revision 3 \
+  --component-key web-app \
+  --reason "Moved to a later delivery" \
+  --json
+
+./scripts/development-workflow/delivery-bundle-manifest.sh inspect \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --json
+
+./scripts/development-workflow/delivery-bundle-manifest.sh finalize \
+  --manifest /tmp/delivery-bundle.json \
+  --bundle-key mobile-web-july-delivery \
+  --expected-revision 4 \
+  --json
+```
+
+| Subcommand | Required flags beyond `--manifest` and `--bundle-key` |
+| --- | --- |
+| `create` | `--title`, `--purpose`, `--parent-ref`, `--component`, `--finalization-owner` |
+| `add-component` | `--expected-revision`, `--component-key` |
+| `update-component` | `--expected-revision`, `--component-key`, `--evidence-file`, `--component-tag`, `--source-pr`, `--release-pr`, `--child-item`, `--child-release-state` |
+| `remove-component` | `--expected-revision`, `--component-key`, `--reason` |
+| `inspect` | none |
+| `finalize` | `--expected-revision` |
+
+What it does:
+
+- Emits and validates `delivery_bundle_manifest.v1`.
+- Requires both `--manifest` and immutable `--bundle-key` so a temporary file
+  path is never the only delivery identity.
+- Preserves component release evidence and records stable identity fields,
+  component tags, PR references, release outcomes, cleanup outcomes, hub
+  tracker reconciliation, child release state, readiness, and audit events in
+  the hub manifest.
+- Uses a manifest lock, expected-revision checks, staged JSON validation, and
+  atomic replacement for accepted mutations.
+- Records lock owner metadata in `<manifest>.lock/owner.json`; if a process is
+  killed mid-mutation, inspect that file and remove the lock directory only
+  after confirming the owner process is no longer active.
+- Fails closed with stable `ERROR_CODE=<code>` stderr for stale revisions,
+  conflicting evidence, malformed JSON, missing component tags, incomplete
+  evidence, and blocked finalization outcomes.
+- Finalizes only when every declared current component is complete and never
+  creates a shared suite version or shared release branch.
+
+### `component-milestone-reconciliation.sh`
+
+Reconciles hub-owned component release status after component evidence and,
+when present, delivery bundle evidence are available.
+
+Usage:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/component-milestone-reconciliation.sh inspect-component \
+  --issue 1358 \
+  --target-kind component_child \
+  --product-repo mobile-app \
+  --component-tag mobile-v1.4.0 \
+  --evidence-file /tmp/component-release-evidence.json \
+  --json
+
+./scripts/development-workflow/component-milestone-reconciliation.sh apply-component \
+  --issue 1358 \
+  --target-kind component_child \
+  --product-repo mobile-app \
+  --component-tag mobile-v1.4.0 \
+  --evidence-file /tmp/component-release-evidence.json \
+  --json
+
+./scripts/development-workflow/component-milestone-reconciliation.sh inspect-parent \
+  --parent-issue 1352 \
+  --delivery-manifest /tmp/delivery-bundle.json \
+  --require-finalized \
+  --json
+
+./scripts/development-workflow/component-milestone-reconciliation.sh apply-parent \
+  --parent-issue 1352 \
+  --delivery-manifest /tmp/delivery-bundle.json \
+  --require-finalized \
+  --json
+```
+
+What it does:
+
+- Emits `component_milestone_reconciliation.v1`.
+- In `workflow_hub` mode, creates or reuses a namespaced component milestone
+  titled `<product-repo>@<component-tag>` and assigns it only to the matching
+  component child issue after complete matching `component_release_evidence.v1`.
+- Rejects `parent_epic` and `delivery_bundle` milestone writes before any
+  GitHub mutation.
+- Reports parent release states from `delivery_bundle_manifest.v1` as
+  `not_released`, `partially_released`, `blocked`, or `released`.
+- Persists parent `release_status` and an audit event in the delivery bundle
+  manifest only when finalized bundle evidence allows `parent_released`.
+- Preserves non-hub compatibility with the existing plain `vX.Y.Z` milestone
+  path via `--mode single_repo --version <version>`.
 
 ### `check-workflow-branch.sh`
 
@@ -660,7 +1024,7 @@ Use this when:
 
 ### `batch-merge.sh`
 
-Deterministic merge pipeline for parallel batch PRs. Handles PR discovery (auto or explicit), metadata collection, merge ordering (non-CHANGELOG PRs first by ascending PR number, then CHANGELOG PRs by ascending PR number), and single-PR merge execution with structured key-value output.
+Deterministic merge pipeline for parallel batch PRs. Handles PR discovery (auto or explicit), metadata collection, PR-number ordering for normal fragment-based implementation PRs, legacy direct-`CHANGELOG.md` ordering when needed, and single-PR merge execution with structured key-value output.
 
 Usage:
 

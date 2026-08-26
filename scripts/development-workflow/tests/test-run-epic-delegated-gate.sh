@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 GATE="$REPO_ROOT/scripts/development-workflow/run-epic-delegated-gate.sh"
+REAL_GIT_PATH="$(command -v git)"
 
 TMP_ROOT="$(mktemp -d)"
 MOCK_BIN="$TMP_ROOT/bin"
@@ -114,6 +115,28 @@ case "$*" in
 esac
 MOCK_GH
 chmod +x "$MOCK_BIN/gh"
+cat > "$MOCK_BIN/git" <<'MOCK_GIT'
+#!/usr/bin/env bash
+case "$*" in
+  *rev-parse\ --verify\ deadbeef*commit*)
+    printf 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n'
+    ;;
+  *rev-parse\ --verify\ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa*commit*)
+    printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
+    ;;
+  *merge-base\ --is-ancestor\ deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+    exit 0
+    ;;
+  *merge-base\ --is-ancestor\ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+    exit 0
+    ;;
+  *)
+    exec "$REAL_GIT_PATH" "$@"
+    ;;
+esac
+MOCK_GIT
+chmod +x "$MOCK_BIN/git"
+export REAL_GIT_PATH
 export PATH="$MOCK_BIN:$PATH"
 export MOCK_GH_CALL_LOG="$CALL_LOG"
 
@@ -387,12 +410,110 @@ run_test "missing_delegate_review_reason" "true" "$(reason_match_for "$no_review
 
 null_policy_fixture="$(write_fixture null-policy '.policy = null')"
 run_test "null_policy_requires_human" "human_required" "$(decision_for "$null_policy_fixture")"
+run_test "null_policy_reports_schema_mismatch_not_authority_denial" "true" "$(reason_match_for "$null_policy_fixture" "^evidence_schema_mismatch: \.policy object is missing")"
 
 string_policy_fixture="$(write_fixture string-policy '.policy = "delegate"')"
 run_test "non_object_policy_requires_human" "human_required" "$(decision_for "$string_policy_fixture")"
+run_test "non_object_policy_reports_schema_mismatch_not_authority_denial" "true" "$(reason_match_for "$string_policy_fixture" "^evidence_schema_mismatch: \.policy object is missing")"
 
 no_merge_fixture="$(write_fixture no-merge '.policy.mayMerge = false')"
 run_test "missing_merge_authority_requires_human" "human_required" "$(decision_for "$no_merge_fixture")"
+
+# --- issue #1497: feeding a hand-assembled hybrid evidence file that has a
+# --- well-formed .pr identity (so it clears pr_identity_gaps) but omits
+# --- .policy and .statusChecks entirely -- exactly what happens when an
+# --- operator wraps run-epic-risk-classifier.sh's flat output instead of
+# --- building the delegated-gate's own documented shape -- must report a
+# --- distinct evidence_schema_mismatch reason, never the generic
+# --- "delegated review/merge authority is missing" or "required CI state is
+# --- missing" wording that reads as a policy/CI verdict rather than a
+# --- malformed-input problem. ---
+schema_mismatch_hybrid_fixture="$(write_fixture schema-mismatch-hybrid 'del(.policy) | del(.statusChecks) | del(.risk)')"
+run_test "schema_mismatch_hybrid_requires_human" "human_required" "$(decision_for "$schema_mismatch_hybrid_fixture")"
+run_test "schema_mismatch_hybrid_reports_policy_schema_mismatch" "true" "$(reason_match_for "$schema_mismatch_hybrid_fixture" "^evidence_schema_mismatch: \.policy object is missing")"
+run_test "schema_mismatch_hybrid_reports_statuschecks_schema_mismatch" "true" "$(reason_match_for "$schema_mismatch_hybrid_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+run_test "schema_mismatch_hybrid_does_not_report_generic_authority_denial" "false" "$(reason_match_for "$schema_mismatch_hybrid_fixture" "^delegated review authority is missing\$")"
+run_test "schema_mismatch_hybrid_does_not_report_generic_merge_denial" "false" "$(reason_match_for "$schema_mismatch_hybrid_fixture" "^delegated merge authority is missing\$")"
+run_test "schema_mismatch_hybrid_does_not_report_generic_ci_missing" "false" "$(reason_match_for "$schema_mismatch_hybrid_fixture" "^required CI state is missing\$")"
+run_test "schema_mismatch_hybrid_next_action_names_schema_not_policy" "true" "$(
+  "$GATE" --input "$schema_mismatch_hybrid_fixture" --json |
+    jq -r '.nextAction | test("schema") and test("denied authority or a real missing-CI-state verdict")'
+)"
+
+missing_statuschecks_only_fixture="$(write_fixture missing-statuschecks-only 'del(.statusChecks)')"
+run_test "missing_statuschecks_key_requires_human" "human_required" "$(decision_for "$missing_statuschecks_only_fixture")"
+run_test "missing_statuschecks_key_reports_schema_mismatch" "true" "$(reason_match_for "$missing_statuschecks_only_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+run_test "missing_statuschecks_key_does_not_report_generic_ci_missing" "false" "$(reason_match_for "$missing_statuschecks_only_fixture" "^required CI state is missing\$")"
+
+# --- CodeRabbit finding on PR #1553: has("statusChecks") alone accepted null,
+# --- object, and scalar values for .statusChecks (all of which are not the
+# --- array ci_status_checks expects). A null silently defaulted to [] and
+# --- read as the generic "required CI state is missing" instead of a schema
+# --- mismatch; an object had its *values* iterated as if they were
+# --- individual check entries (jq map/.[] accept objects), so a
+# --- well-formed-looking single check value one level too deep could read
+# --- as CI having passed -- a real false "merge_allowed" for malformed
+# --- input, not just an unclear message; a scalar aborted the whole jq
+# --- program. All three must now report evidence_schema_mismatch, never
+# --- crash, and never silently permit merge. ---
+null_statuschecks_fixture="$(write_fixture null-statuschecks '.statusChecks = null')"
+run_test "null_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$null_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+run_test "null_statuschecks_does_not_report_generic_ci_missing" "false" "$(reason_match_for "$null_statuschecks_fixture" "^required CI state is missing\$")"
+run_test "null_statuschecks_fails_closed" "human_required" "$(decision_for "$null_statuschecks_fixture")"
+
+object_statuschecks_fixture="$(write_fixture object-statuschecks '.statusChecks = {"ci": {"status": "COMPLETED", "conclusion": "SUCCESS"}}')"
+run_test "object_statuschecks_does_not_silently_merge_allow" "human_required" "$(decision_for "$object_statuschecks_fixture")"
+run_test "object_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$object_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+
+scalar_statuschecks_fixture="$(write_fixture scalar-statuschecks '.statusChecks = "SUCCESS"')"
+run_test "scalar_statuschecks_does_not_crash" "true" "$(
+  "$GATE" --input "$scalar_statuschecks_fixture" --json >/dev/null 2>&1 && echo true || echo false
+)"
+run_test "scalar_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$scalar_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+run_test "scalar_statuschecks_fails_closed" "human_required" "$(decision_for "$scalar_statuschecks_fixture")"
+
+boolean_statuschecks_fixture="$(write_fixture boolean-statuschecks '.statusChecks = true')"
+run_test "boolean_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$boolean_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+run_test "boolean_statuschecks_fails_closed" "human_required" "$(decision_for "$boolean_statuschecks_fixture")"
+
+# --- CodeRabbit follow-up finding on the same PR: the array-type check above
+# --- does not validate individual array *members*. A string or number member
+# --- reaches reviewer_check_key's field accessors and aborts the whole jq
+# --- program the same way a non-array top-level value did; a null member does
+# --- not crash but silently reads as an unnamed, all-fields-absent check
+# --- (a generic CI failure) rather than the more legible schema-mismatch
+# --- reason. Every array member must now itself be an object. ---
+string_member_statuschecks_fixture="$(write_fixture string-member-statuschecks '.statusChecks = ["SUCCESS"]')"
+run_test "string_member_statuschecks_does_not_crash" "true" "$(
+  "$GATE" --input "$string_member_statuschecks_fixture" --json >/dev/null 2>&1 && echo true || echo false
+)"
+run_test "string_member_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$string_member_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+run_test "string_member_statuschecks_fails_closed" "human_required" "$(decision_for "$string_member_statuschecks_fixture")"
+
+number_member_statuschecks_fixture="$(write_fixture number-member-statuschecks '.statusChecks = [42]')"
+run_test "number_member_statuschecks_does_not_crash" "true" "$(
+  "$GATE" --input "$number_member_statuschecks_fixture" --json >/dev/null 2>&1 && echo true || echo false
+)"
+run_test "number_member_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$number_member_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+
+null_member_statuschecks_fixture="$(write_fixture null-member-statuschecks '.statusChecks = [null]')"
+run_test "null_member_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$null_member_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+run_test "null_member_statuschecks_fails_closed" "human_required" "$(decision_for "$null_member_statuschecks_fixture")"
+
+mixed_member_statuschecks_fixture="$(write_fixture mixed-member-statuschecks '.statusChecks = [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}, "SUCCESS"]')"
+run_test "mixed_member_statuschecks_reports_schema_mismatch" "true" "$(reason_match_for "$mixed_member_statuschecks_fixture" "^evidence_schema_mismatch: \.statusChecks is missing")"
+run_test "mixed_member_statuschecks_does_not_silently_merge_allow" "human_required" "$(decision_for "$mixed_member_statuschecks_fixture")"
+
+well_formed_statuschecks_fixture="$(write_fixture well-formed-statuschecks '.statusChecks = [{"name": "guard", "status": "COMPLETED", "conclusion": "SUCCESS"}]')"
+run_test "well_formed_statuschecks_still_merge_allowed" "merge_allowed" "$(decision_for "$well_formed_statuschecks_fixture")"
+
+# present-but-empty .statusChecks (genuinely no CI has run / no CI configured
+# without an explicit ciPolicy: none) must keep the existing wording and
+# "blocked" decision unchanged -- only the entirely-absent key case above is
+# new/distinct.
+present_empty_statuschecks_fixture="$(write_fixture present-empty-statuschecks '.statusChecks = []')"
+run_test "present_empty_statuschecks_still_blocked" "blocked" "$(decision_for "$present_empty_statuschecks_fixture")"
+run_test "present_empty_statuschecks_keeps_original_wording" "true" "$(reason_match_for "$present_empty_statuschecks_fixture" "^required CI state is missing\$")"
 
 policy_override_file="$TMP_ROOT/policy-override.json"
 jq '.policy' "$base_fixture" > "$policy_override_file"
@@ -496,6 +617,22 @@ run_test "missing_ci_blocks" "blocked" "$(decision_for "$missing_ci_fixture")"
 
 dirty_merge_fixture="$(write_fixture dirty-merge '.pr.mergeStateStatus = "DIRTY"')"
 run_test "dirty_merge_blocks" "blocked" "$(decision_for "$dirty_merge_fixture")"
+
+# --- issue #1497: a caller-side gh pr view --json field list that omitted
+# --- `mergeable` (or that defaulted it to "" instead of leaving it null) must
+# --- not be reported as a substantive "PR is not mergeable" verdict for a PR
+# --- GitHub actually reports as MERGEABLE. A real non-mergeable state (e.g.
+# --- CONFLICTING) must still block. ---
+not_mergeable_fixture="$(write_fixture not-mergeable '.pr.mergeable = "CONFLICTING"')"
+run_test "real_conflicting_mergeable_blocks" "blocked" "$(decision_for "$not_mergeable_fixture")"
+run_test "real_conflicting_mergeable_reason" "true" "$(reason_match_for "$not_mergeable_fixture" "^PR is not mergeable\$")"
+
+blank_mergeable_fixture="$(write_fixture blank-mergeable '.pr.mergeable = ""')"
+run_test "blank_mergeable_string_allows_merge" "merge_allowed" "$(decision_for "$blank_mergeable_fixture")"
+run_test "blank_mergeable_string_no_false_verdict" "false" "$(reason_match_for "$blank_mergeable_fixture" "^PR is not mergeable\$")"
+
+whitespace_mergeable_fixture="$(write_fixture whitespace-mergeable '.pr.mergeable = "   "')"
+run_test "whitespace_only_mergeable_string_allows_merge" "merge_allowed" "$(decision_for "$whitespace_mergeable_fixture")"
 
 thread_fixture="$(write_fixture unresolved-thread '.pr.unresolvedBlockingThreads = 1')"
 run_test "unresolved_thread_requires_fix" "fix_required" "$(decision_for "$thread_fixture")"
@@ -1201,10 +1338,25 @@ security_advisory_fixed_fixture="$(write_fixture security-advisory-fixed "
       status: \"fixed\",
       headSha: \"$SEC_HEAD_SHA\",
       firstTrackedAt: \"2026-08-01T00:00:00Z\",
-      fixCommit: \"deadbeef\"
+      fixCommit: \"$SEC_HEAD_SHA\"
     }]
 ")"
 run_test "security_advisory_fixed_allows_merge" "merge_allowed" "$(decision_for "$security_advisory_fixed_fixture")"
+
+fixed_stale_head_fixture="$TMP_ROOT/security-advisory-fixed-stale-head.json"
+jq '.pr.headSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
+  "$security_advisory_fixed_fixture" > "$fixed_stale_head_fixture"
+run_test "fixed_status_stale_head_still_blocks" "human_required" "$(decision_for "$fixed_stale_head_fixture")"
+
+fixed_invalid_fix_commit_fixture="$TMP_ROOT/security-advisory-fixed-invalid-fix-commit.json"
+jq '.securityAdvisories[0].fixCommit = "not-a-sha"' \
+  "$security_advisory_fixed_fixture" > "$fixed_invalid_fix_commit_fixture"
+run_test "fixed_status_invalid_fix_commit_still_blocks" "human_required" "$(decision_for "$fixed_invalid_fix_commit_fixture")"
+
+fixed_unverified_fix_commit_fixture="$TMP_ROOT/security-advisory-fixed-unverified-fix-commit.json"
+jq '.securityAdvisories[0].fixCommit = "cafebabe"' \
+  "$security_advisory_fixed_fixture" > "$fixed_unverified_fix_commit_fixture"
+run_test "fixed_status_unverified_fix_commit_still_blocks" "human_required" "$(decision_for "$fixed_unverified_fix_commit_fixture")"
 
 # AC4/AC5/BR6: a verified human decision (via .securityAdvisoryDecisionEvents[]
 # resolved by github_verified_security_advisory_decisions) also unblocks
@@ -1374,6 +1526,28 @@ run_test "security_advisory_scope_absent_still_blocks" "human_required" "$(decis
 security_advisory_scope_false_fixture="$TMP_ROOT/security-advisory-scope-false.json"
 jq '.pr.inScope = false' "$security_advisory_pending_fixture" > "$security_advisory_scope_false_fixture"
 run_test "security_advisory_scope_false_not_applicable" "not_applicable" "$(decision_for "$security_advisory_scope_false_fixture")"
+
+echo ""
+echo "=== Per-revision verdict binding (#1558) ==="
+base_decision="$(decision_for "$base_fixture")"
+reviewer_same_fixture="$(write_fixture reviewer-head-same '.reviewer.headSha = .pr.headSha | .risk.headSha = .pr.headSha')"
+run_test "verdict_heads_matching_pr_head_do_not_change_decision" "$base_decision" "$(decision_for "$reviewer_same_fixture")"
+reviewer_stale_fixture="$(write_fixture reviewer-head-stale '.reviewer.headSha = "1111111111111111111111111111111111111111"')"
+run_test "stale_reviewer_head_is_fix_required" "fix_required" "$(decision_for "$reviewer_stale_fixture")"
+run_test "stale_reviewer_head_reason" "yes" \
+  "$("$GATE" --input "$reviewer_stale_fixture" --json | jq -r '.reasons[]' | grep -q '^stale_verdict_head: reviewer-loop verdict' && echo yes || echo no)"
+run_test "stale_reviewer_head_denies_merge" "false" "$("$GATE" --input "$reviewer_stale_fixture" --json | jq -r '.mergePermitted')"
+run_test "stale_reviewer_head_next_action_reverifies" "yes" \
+  "$("$GATE" --input "$reviewer_stale_fixture" --json | jq -r '.nextAction' | grep -q 'at the current head' && echo yes || echo no)"
+risk_stale_fixture="$(write_fixture risk-head-stale '.risk.headSha = "2222222222222222222222222222222222222222"')"
+run_test "stale_risk_head_is_fix_required" "fix_required" "$(decision_for "$risk_stale_fixture")"
+run_test "stale_risk_head_reason" "yes" \
+  "$("$GATE" --input "$risk_stale_fixture" --json | jq -r '.reasons[]' | grep -q '^stale_verdict_head: risk classification' && echo yes || echo no)"
+risk_stale_snake_fixture="$(write_fixture risk-head-stale-snake '.risk.head_sha = "2222222222222222222222222222222222222222"')"
+run_test "stale_risk_head_snake_case_accepted" "fix_required" "$(decision_for "$risk_stale_snake_fixture")"
+# Absent binding fields keep pre-#1558 evidence files working unchanged.
+no_binding_fixture="$(write_fixture no-binding 'del(.reviewer.headSha) | del(.risk.headSha)')"
+run_test "absent_binding_is_compatible" "$base_decision" "$(decision_for "$no_binding_fixture")"
 
 echo ""
 echo "=== Summary ==="

@@ -10,6 +10,24 @@
 # docs/workflow/development-workflow/repository-modes.md. Omit `mode` to keep
 # the default `single_repo` behavior.
 #
+# Product release contracts are optional non-secret metadata under either
+# `workflow_hub.product_repos[].release` or `product_repo.release`. Supported
+# fields are:
+#
+#   release:
+#     base: main                         # optional; defaults to default_branch
+#     branch_pattern: release/v{version} # optional; may use {version} and {product_repo}
+#     changelog_owner: product_repo      # product_repo|hub|current_repo|hub_reference|not_applicable
+#     tag_owner: product_repo
+#     github_release_owner: product_repo
+#     deployment_evidence_owner: product_repo
+#     cleanup_evidence_owner: product_repo
+#     tracker_reconciliation_owner: hub
+#
+# Never store local checkout paths, credentials, token values, secret names,
+# secret values, or environment-specific account details in the versioned
+# release contract. Use `.ai-dev-workflow.local.yaml` for machine-local values.
+#
 # See docs/workflow/development-workflow/README.md and
 # docs/workflow/development-workflow/integrations/ for integration-specific setup.
 #
@@ -43,30 +61,87 @@ review:
     # Ordered list of GitHub/App/CLI reviewers that can safely evaluate draft
     # PRs. These run before the PR is converted to ready.
     # Supported today by pr-review-loop.sh: greptile, devin, coderabbit,
-    # coderabbit-cli, pr-agent, codex-github, claude-code-action, haystack,
-    # copilot, bugbot.
+    # coderabbit-cli, local-ai-reviewer, pr-agent, codex-github,
+    # claude-code-action, haystack, copilot, bugbot.
     github:
+      - local-ai-reviewer
       - pr-agent
 
   on_ready:
     # Ordered list of GitHub/App/CLI reviewers that run only after draft gates
     # are clean and the PR has been converted with `gh pr ready`.
     github:
-      - coderabbit
+      - bugbot
+
+  # Optional: TWO independent reviewer-loop cycle caps enforced by
+  # pr-review-loop.sh (issue #1502; dual-cap decision recorded on PR #1507's
+  # review). Neither cap resets on a HEAD SHA change alone (see the comment
+  # above reviewer_loop_history_entries_count in pr-review-loop.sh for why:
+  # a reset-on-push design would make both caps dead code for the exact
+  # motivating failure, PR #1492's 18-cycle loop, where nearly every cycle
+  # produced a new commit).
+  #
+  # max_cycles (PER-RUN cap, default 10): resets to 0 at each orchestration-
+  # run boundary. Conforms to Protocol 91:1719 verbatim ("Initialize cycle
+  # = 0 once per orchestration run ... escalate when the run reaches
+  # max_cycles"). The "run boundary" is whatever the caller's
+  # PR_REVIEW_LOOP_RUN_ID env var identifies — see pr-review-loop.sh's usage
+  # doc for RUN_ID / PR_REVIEW_LOOP_RUN_ID. When the caller does not set a
+  # stable run id, every invocation is its own isolated run, and this cap
+  # effectively never trips on its own (the lifetime ceiling below still
+  # protects in that case). Escalates with REASON=max_cycles_exceeded.
+  # PR_REVIEW_LOOP_MAX_CYCLES env var overrides this value.
+  #
+  # max_total_cycles (LIFETIME ceiling, default 25): never resets, counts
+  # across the PR's entire review-loop lifetime regardless of run
+  # boundaries. This is the structural backstop that does not depend on
+  # every caller correctly threading a stable run id through every
+  # invocation — a per-run-only cap would leave total effort unbounded for
+  # a PR resumed across many separate orchestration runs, which is exactly
+  # the "runs until someone notices" failure #1502 exists to end. Escalates
+  # with the distinct REASON=max_total_cycles_exceeded, checked only after
+  # the per-run cap does not fire, so an operator can tell "one run ran
+  # away" (max_cycles_exceeded) apart from "many runs cumulatively ran
+  # away" (max_total_cycles_exceeded). PR_REVIEW_LOOP_MAX_TOTAL_CYCLES env
+  # var overrides this value.
+  #
+  # Uncomment to override the defaults:
+  # max_cycles: 10
+  # max_total_cycles: 25
+  #
+  # Bugbot is the default ready-phase GitHub reviewer for this repository.
+  # CodeRabbit remains supported as an opt-in reviewer (`coderabbit` for the
+  # GitHub App, `coderabbit-cli` for the local CLI), but it is not a default
+  # gate because vendor rate limits/spending caps can block otherwise-clean PRs.
   #
   # CodeRabbit CLI platform options (local CLI reviewer; place "coderabbit-cli"
   # in on_draft.github or on_ready.github to opt in; independent from the
   # "coderabbit" GitHub App platform):
   #   rate_limit_policy: warn      # warn|strict; default warn
   #
-  # Configurable codex-github options (set via env vars or script flags to codex-github-reviewer.sh):
+  # Local AI reviewer platform options (local-only CLI reviewer; enabled first
+  # in on_draft.github by default before PR-Agent and ready-phase reviewers):
+  #   LOCAL_AI_REVIEWER_COMMAND        — command run under sh -c with
+  #                                      CONTEXT_BUNDLE_PATH and PR metadata env
+  #   LOCAL_AI_REVIEWER_TIMEOUT        — default local command timeout
+  #   LOCAL_AI_REVIEWER_GRAPH_STRATEGY — none|auto|code-review-graph|graphify
+  #   LOCAL_AI_REVIEWER_DISABLED=1     — intentionally skip with
+  #                                      REASON=disabled_by_config
+  #                                      (or override on_draft.github locally)
+  #
+  # Configurable codex-github options (set via env vars or script flags to pr-review-loop.sh / codex-github-reviewer.sh):
+  #   Setup/verification guide: docs/workflow/development-workflow/integrations/codex-github.md
   #   CODEX_GITHUB_TRIGGER_PHRASE  — trigger phrase sent to the bot (default: "@codex review")
   #   CODEX_GITHUB_BOT_LOGIN       — GitHub login of the Codex bot account
   #                                  (default: "chatgpt-codex-connector[bot]"; verify from GitHub App settings)
+  #   CODEX_GITHUB_POLL_INTERVAL   — default polling interval for codex-github via pr-review-loop.sh (default: 60)
+  #   CODEX_GITHUB_MAX_WAIT        — default maximum wait for codex-github via pr-review-loop.sh (default: 1800)
+  #   CODEX_GITHUB_PRE_TRIGGER_WAIT — wait for existing current-head Codex evidence before posting a trigger; 0 disables (default: 60)
   #
   # Additional options available as script flags to codex-github-reviewer.sh (passed via pr-review-loop.sh):
-  #   --poll-interval <seconds>    — polling interval while waiting for bot response (default: 30)
-  #   --max-wait      <seconds>    — maximum total wait time for bot response (default: 300)
+  #   --poll-interval <seconds>    — polling interval while waiting for bot response
+  #   --max-wait      <seconds>    — maximum total wait time for bot response
+  #   --pre-trigger-wait <seconds> — wait for existing current-head evidence before posting a trigger; 0 disables
   #
   # Copilot platform options:
   #   Prerequisites: an active GitHub Copilot seat or the Copilot for Pull Requests feature

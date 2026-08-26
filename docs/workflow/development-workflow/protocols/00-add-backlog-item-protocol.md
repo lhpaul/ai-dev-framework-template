@@ -94,16 +94,30 @@ assets or a fidelity baseline.
 
 ### Priority and Size inference heuristics (GitHub Projects)
 
-**Priority** — default `Normal` unless there is explicit urgency signal.
-`Medium` remains accepted by helper scripts as a backward-compatible alias for
-`Normal`:
+**Priority** — infer from the request. When no explicit urgency/low signal
+applies (the routine case), **omit `--priority` entirely** and let the
+helper script's adaptive default resolve it against the board's actual
+Priority field options (`Medium` if present, else `Normal` for a board not
+yet migrated off the framework's pre-#1501 setup docs — see
+[`github-projects.md`](../integrations/github-projects.md) and
+`workflow_tracker_default_priority_value` in `workflow-lib.sh`). Do
+**not** hardcode an explicit `--priority Medium` (or `Normal`) for the
+routine case: an explicit value is validated against the board's real
+options and is a hard error if it does not resolve, so hardcoding either
+literal can break on a board configured with the other one.
+
+`Urgent`, `High`, and `Low` are common to both the current and legacy
+Priority vocabularies, so it is safe to pass those explicitly whenever a
+genuine signal applies — a value that does not resolve against the board's
+Priority options is a hard error from the helper script (see below), not a
+silent no-op:
 
 | Signal | Priority |
 | ------ | -------- |
-| Human uses words like "urgent", "blocking", "ASAP", "critical", or "production issue" | `Urgent` or `High` |
-| Item blocks another in-progress item or a pending release | `High` |
-| Standard new feature, improvement, or process fix | `Normal` (default) |
-| Nice-to-have, polish, or exploratory work | `Low` |
+| Human uses words like "urgent", "blocking", "ASAP", "critical", or "production issue" | `--priority Urgent` or `--priority High` |
+| Item blocks another in-progress item or a pending release | `--priority High` |
+| Standard new feature, improvement, or process fix | Omit `--priority` (adaptive default) |
+| Nice-to-have, polish, or exploratory work | `--priority Low` |
 
 **Size** — infer from the scope of the change implied by the request:
 
@@ -121,11 +135,12 @@ Pass inferred values directly to the helper:
 ./scripts/development-workflow/add-backlog-item.sh create \
   --title "..." \
   --body-file - \
-  --priority Normal \
   --size S
 ```
 
-When the scope is genuinely unclear after reading the request, omit `--size` (leave it unset) rather than guessing. Do not omit `--priority` — the script defaults to `Normal` when the flag is absent.
+This example omits `--priority` for the routine case shown in the table above, so the helper script's adaptive default applies. Pass `--priority Urgent`, `--priority High`, or `--priority Low` explicitly only when the corresponding signal from the table applies.
+
+When the scope is genuinely unclear after reading the request, omit `--size` (leave it unset) rather than guessing.
 
 ---
 

@@ -42,6 +42,23 @@ run_test() {
   fi
 }
 
+run_not_equal() {
+  if [ "$#" -ne 3 ]; then
+    printf 'ERROR: run_not_equal requires exactly 3 arguments; got %s\n' "$#" >&2
+    return 2
+  fi
+  local name="$1"
+  local left="$2"
+  local right="$3"
+  if [ "$left" != "$right" ]; then
+    echo "PASS: $name"
+    PASS_COUNT=$((PASS_COUNT + 1))
+  else
+    echo "FAIL: $name - expected values to differ, both were '${left}'"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
+}
+
 run_contains() {
   local name="$1"
   local expected="$2"
@@ -109,6 +126,26 @@ run_contains "single_repo_context_mode" "WORKFLOW_MODE=single_repo" "$single_rep
 run_contains "single_repo_context_github_repo" "TARGET_GITHUB_REPO=example/mobile-app.extra" "$single_repo_output"
 run_contains "single_repo_context_local_path" "TARGET_LOCAL_PATH=$single_repo_dir" "$single_repo_output"
 run_contains "single_repo_context_default_branch" "TARGET_DEFAULT_BRANCH=main" "$single_repo_output"
+run_contains "single_repo_release_default_tag_owner" "TARGET_RELEASE_TAG_OWNER=current_repo" "$single_repo_output"
+run_contains "single_repo_release_default_changelog_owner" "TARGET_RELEASE_CHANGELOG_OWNER=current_repo" "$single_repo_output"
+run_contains "single_repo_release_default_tracker_owner" "TARGET_RELEASE_TRACKER_RECONCILIATION_OWNER=current_repo" "$single_repo_output"
+run_contains "single_repo_release_contract_revision" "TARGET_RELEASE_CONTRACT_REVISION=sha256:" "$single_repo_output"
+single_repo_repeat_output="$(workflow_repository_context "" "$single_repo_dir")"
+single_repo_revision="$(printf '%s\n' "$single_repo_output" | sed -n "s/^TARGET_RELEASE_CONTRACT_REVISION='\\{0,1\\}\\([^']*\\)'\\{0,1\\}$/\\1/p")"
+single_repo_repeat_revision="$(printf '%s\n' "$single_repo_repeat_output" | sed -n "s/^TARGET_RELEASE_CONTRACT_REVISION='\\{0,1\\}\\([^']*\\)'\\{0,1\\}$/\\1/p")"
+run_test "single_repo_release_revision_stable" "$single_repo_revision" "$single_repo_repeat_revision"
+single_repo_changed_dir="$(fixture_dir single-repo-changed-release)"
+mkdir -p "$single_repo_changed_dir/.git"
+cat > "$single_repo_changed_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: single_repo
+default_branch: develop
+release:
+  branch_pattern: "release/component/v{version}"
+YAML
+changed_single_output="$(workflow_repository_context "" "$single_repo_changed_dir")"
+changed_single_revision="$(printf '%s\n' "$changed_single_output" | sed -n "s/^TARGET_RELEASE_CONTRACT_REVISION='\\{0,1\\}\\([^']*\\)'\\{0,1\\}$/\\1/p")"
+run_not_equal "single_repo_release_revision_changes_with_pattern" "$single_repo_revision" "$changed_single_revision"
 validator_output="$(bash "$VALIDATOR" --repo-root "$single_repo_dir")"
 run_contains "validate_workflow_config_sh_repo_root_arg" "TARGET_REPO_NAME=single-repo" "$validator_output"
 
@@ -229,6 +266,80 @@ YAML
 none_ci_output="$(workflow_repository_context mobile-app "$ci_policy_dir")"
 run_contains "workflow_hub_ci_policy_none" "TARGET_CI_POLICY=none" "$none_ci_output"
 
+release_contract_dir="$(fixture_dir release-contract)"
+cat > "$release_contract_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      default_branch: develop
+      release:
+        base: release-base
+        branch_pattern: "{product_repo}/release/v{version}"
+        changelog_owner: product_repo
+        tag_owner: product_repo
+        github_release_owner: product_repo
+        deployment_evidence_owner: product_repo
+        cleanup_evidence_owner: product_repo
+        tracker_reconciliation_owner: hub
+YAML
+release_contract_output="$(workflow_repository_context mobile-app "$release_contract_dir")"
+run_contains "workflow_hub_release_base" "TARGET_RELEASE_BASE=release-base" "$release_contract_output"
+run_contains "workflow_hub_release_base_source" "TARGET_RELEASE_BASE_SOURCE=explicit" "$release_contract_output"
+run_contains "workflow_hub_release_pattern" "TARGET_RELEASE_BRANCH_PATTERN='{product_repo}/release/v{version}'" "$release_contract_output"
+run_contains "workflow_hub_release_pattern_source" "TARGET_RELEASE_BRANCH_PATTERN_SOURCE=explicit" "$release_contract_output"
+run_contains "workflow_hub_release_changelog_owner" "TARGET_RELEASE_CHANGELOG_OWNER=product_repo" "$release_contract_output"
+run_contains "workflow_hub_release_tracker_owner" "TARGET_RELEASE_TRACKER_RECONCILIATION_OWNER=hub" "$release_contract_output"
+run_contains "workflow_hub_release_contract_revision" "TARGET_RELEASE_CONTRACT_REVISION=sha256:" "$release_contract_output"
+release_contract_repeat_output="$(workflow_repository_context mobile-app "$release_contract_dir")"
+release_contract_revision="$(printf '%s\n' "$release_contract_output" | sed -n "s/^TARGET_RELEASE_CONTRACT_REVISION='\\{0,1\\}\\([^']*\\)'\\{0,1\\}$/\\1/p")"
+release_contract_repeat_revision="$(printf '%s\n' "$release_contract_repeat_output" | sed -n "s/^TARGET_RELEASE_CONTRACT_REVISION='\\{0,1\\}\\([^']*\\)'\\{0,1\\}$/\\1/p")"
+run_test "workflow_hub_release_revision_stable" "$release_contract_revision" "$release_contract_repeat_revision"
+release_owner_changed_dir="$(fixture_dir release-owner-changed)"
+cat > "$release_owner_changed_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      default_branch: develop
+      release:
+        base: release-base
+        branch_pattern: "{product_repo}/release/v{version}"
+        changelog_owner: current_repo
+        tag_owner: product_repo
+        github_release_owner: product_repo
+        deployment_evidence_owner: product_repo
+        cleanup_evidence_owner: product_repo
+        tracker_reconciliation_owner: hub
+YAML
+release_owner_changed_output="$(workflow_repository_context mobile-app "$release_owner_changed_dir")"
+release_owner_changed_revision="$(printf '%s\n' "$release_owner_changed_output" | sed -n "s/^TARGET_RELEASE_CONTRACT_REVISION='\\{0,1\\}\\([^']*\\)'\\{0,1\\}$/\\1/p")"
+run_not_equal "workflow_hub_release_revision_changes_with_owner" "$release_contract_revision" "$release_owner_changed_revision"
+
+release_defaults_dir="$(fixture_dir release-defaults)"
+cat > "$release_defaults_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      default_branch: main
+YAML
+release_defaults_output="$(workflow_repository_context mobile-app "$release_defaults_dir")"
+run_contains "workflow_hub_release_default_base" "TARGET_RELEASE_BASE=main" "$release_defaults_output"
+run_contains "workflow_hub_release_default_base_source" "TARGET_RELEASE_BASE_SOURCE=default" "$release_defaults_output"
+run_contains "workflow_hub_release_default_pattern" "TARGET_RELEASE_BRANCH_PATTERN='release/v{version}'" "$release_defaults_output"
+run_contains "workflow_hub_release_default_owner" "TARGET_RELEASE_TAG_OWNER=product_repo" "$release_defaults_output"
+run_contains "workflow_hub_release_default_tracker_owner" "TARGET_RELEASE_TRACKER_RECONCILIATION_OWNER=hub" "$release_defaults_output"
+
 bad_ci_dir="$(fixture_dir bad-ci-policy)"
 cat > "$bad_ci_dir/.ai-dev-workflow.yaml" <<'YAML'
 schema_version: 2
@@ -244,6 +355,213 @@ run_fails_contains \
   "workflow_hub_invalid_ci_policy" \
   "workflow_hub.product_repos[1].ci_policy must be one of" \
   python3 "$RESOLVER" resolve --repo-root "$bad_ci_dir" --repo mobile-app
+
+bad_release_branch_dir="$(fixture_dir bad-release-branch)"
+cat > "$bad_release_branch_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        base: "bad branch"
+YAML
+run_fails_contains \
+  "workflow_hub_release_rejects_bad_base" \
+  "workflow_hub.product_repos[1].release.base is not a portable branch name" \
+  python3 "$RESOLVER" resolve --repo-root "$bad_release_branch_dir" --repo mobile-app
+
+# git-check-ref-format(1) rejects these even though they pass a plain
+# [A-Za-z0-9._-]+ character allowlist per segment: a segment ending in
+# ".lock", a segment ending in a bare ".", and a segment starting with ".".
+dot_lock_branch_dir="$(fixture_dir dot-lock-branch)"
+cat > "$dot_lock_branch_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        base: "release/v1.2.3.lock"
+YAML
+run_fails_contains \
+  "workflow_hub_release_rejects_dot_lock_suffix" \
+  "workflow_hub.product_repos[1].release.base is not a portable branch name" \
+  python3 "$RESOLVER" resolve --repo-root "$dot_lock_branch_dir" --repo mobile-app
+
+trailing_dot_branch_dir="$(fixture_dir trailing-dot-branch)"
+cat > "$trailing_dot_branch_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        base: "release/v1.2.3."
+YAML
+run_fails_contains \
+  "workflow_hub_release_rejects_trailing_dot" \
+  "workflow_hub.product_repos[1].release.base is not a portable branch name" \
+  python3 "$RESOLVER" resolve --repo-root "$trailing_dot_branch_dir" --repo mobile-app
+
+leading_dot_branch_dir="$(fixture_dir leading-dot-branch)"
+cat > "$leading_dot_branch_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        base: ".hidden/release"
+YAML
+run_fails_contains \
+  "workflow_hub_release_rejects_leading_dot_segment" \
+  "workflow_hub.product_repos[1].release.base is not a portable branch name" \
+  python3 "$RESOLVER" resolve --repo-root "$leading_dot_branch_dir" --repo mobile-app
+
+valid_dotted_branch_dir="$(fixture_dir valid-dotted-branch)"
+cat > "$valid_dotted_branch_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        base: "release/v1.2.3"
+YAML
+valid_dotted_branch_output="$(python3 "$RESOLVER" resolve --repo-root "$valid_dotted_branch_dir" --repo mobile-app)"
+run_contains "workflow_hub_release_accepts_valid_dotted_base" "TARGET_RELEASE_BASE=release/v1.2.3" "$valid_dotted_branch_output"
+
+bad_release_pattern_dir="$(fixture_dir bad-release-pattern)"
+cat > "$bad_release_pattern_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        branch_pattern: "release/{channel}/v{version}"
+YAML
+run_fails_contains \
+  "workflow_hub_release_rejects_unknown_pattern_placeholder" \
+  "contains unknown placeholder(s): {channel}" \
+  python3 "$RESOLVER" resolve --repo-root "$bad_release_pattern_dir" --repo mobile-app
+
+static_release_pattern_dir="$(fixture_dir static-release-pattern)"
+cat > "$static_release_pattern_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        branch_pattern: release/current
+YAML
+run_fails_contains \
+  "workflow_hub_release_rejects_static_pattern" \
+  "must include the {version} placeholder" \
+  python3 "$RESOLVER" resolve --repo-root "$static_release_pattern_dir" --repo mobile-app
+
+bad_release_owner_dir="$(fixture_dir bad-release-owner)"
+cat > "$bad_release_owner_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        tag_owner: hub
+        changelog_owner: somewhere-else
+YAML
+run_fails_contains \
+  "workflow_hub_release_rejects_unknown_owner" \
+  "release.changelog_owner must be one of" \
+  python3 "$RESOLVER" resolve --repo-root "$bad_release_owner_dir" --repo mobile-app
+
+secret_release_dir="$(fixture_dir secret-release)"
+cat > "$secret_release_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        secret_name: production-token
+YAML
+run_fails_contains \
+  "workflow_hub_release_rejects_secret_key" \
+  "contains local-only field(s): release.secret_name" \
+  python3 "$RESOLVER" resolve --repo-root "$secret_release_dir" --repo mobile-app
+
+password_release_dir="$(fixture_dir password-release)"
+cat > "$password_release_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        password: hunter2
+YAML
+run_fails_contains \
+  "workflow_hub_release_rejects_password_key" \
+  "contains local-only field(s): release.password" \
+  python3 "$RESOLVER" resolve --repo-root "$password_release_dir" --repo mobile-app
+
+api_key_release_dir="$(fixture_dir api-key-release)"
+cat > "$api_key_release_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        external:
+          apiKey: placeholder
+YAML
+run_fails_contains \
+  "workflow_hub_release_rejects_api_key" \
+  "contains forbidden local or secret value(s): external.apiKey" \
+  python3 "$RESOLVER" resolve --repo-root "$api_key_release_dir" --repo mobile-app
+
+token_release_dir="$(fixture_dir token-release)"
+cat > "$token_release_dir/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: mobile-app
+      github_repo: example/mobile-app
+      release:
+        evidence_note: ghp_FAKEPLACEHOLDER
+YAML
+run_fails_contains \
+  "workflow_hub_release_rejects_token_value" \
+  "contains forbidden local or secret value(s): evidence_note" \
+  python3 "$RESOLVER" resolve --repo-root "$token_release_dir" --repo mobile-app
 
 no_local_dir="$(fixture_dir no-local)"
 cat > "$no_local_dir/.ai-dev-workflow.yaml" <<'YAML'
@@ -367,6 +685,8 @@ product_repo_output="$(workflow_repository_context "" "$product_repo_dir")"
 run_contains "product_repo_context_mode" "WORKFLOW_MODE=product_repo" "$product_repo_output"
 run_contains "product_repo_context_hub" "WORKFLOW_HUB_GITHUB_REPO=example/workflow-hub" "$product_repo_output"
 run_contains "product_repo_context_branch" "TARGET_DEFAULT_BRANCH=release" "$product_repo_output"
+run_contains "product_repo_release_default_pattern" "TARGET_RELEASE_BRANCH_PATTERN='release/v{version}'" "$product_repo_output"
+run_contains "product_repo_release_default_tracker_owner" "TARGET_RELEASE_TRACKER_RECONCILIATION_OWNER=hub" "$product_repo_output"
 
 product_ci_none_dir="$(fixture_dir product-ci-none)"
 cat > "$product_ci_none_dir/.ai-dev-workflow.yaml" <<'YAML'
@@ -493,6 +813,167 @@ run_fails_contains \
 
 wrapper_output="$(workflow_validate_repository_context mobile-app "$hub_dir" require-local)"
 run_contains "workflow_lib_validate_wrapper" "TARGET_REPO_NAME=mobile-app" "$wrapper_output"
+
+# --- #1560: a linked worktree resolves the main clone's local override --------
+# `git worktree add` carries no gitignored files, so a linked worktree never has
+# its own .ai-dev-workflow.local.yaml. The worktree here is created with plain
+# git, not a workflow helper — that is the path Protocol 90's isolation manifest
+# takes and the one #1033's fix did not cover (AC-2).
+worktree_main="$(fixture_dir worktree-main)"
+git -C "$worktree_main" init -q
+cat > "$worktree_main/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+
+review:
+  on_draft:
+    runner: [codex]
+YAML
+git -C "$worktree_main" add .ai-dev-workflow.yaml
+git -C "$worktree_main" -c user.name=fixture -c user.email=fixture@example.com commit -q -m init
+cat > "$worktree_main/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    runner: [claude]
+  on_ready:
+    github: [coderabbit]
+YAML
+worktree_linked="$TMP_ROOT/worktree-linked"
+git -C "$worktree_main" worktree add -q "$worktree_linked" -b fixture/linked HEAD
+run_test "linked_worktree_has_no_local_file_of_its_own" "absent" "$([ -e "$worktree_linked/.ai-dev-workflow.local.yaml" ] && echo present || echo absent)"
+worktree_output="$(workflow_review_override_context "$worktree_linked")"
+run_contains "linked_worktree_resolves_main_clone_runner" "REVIEW_ON_DRAFT_RUNNER=claude" "$worktree_output"
+run_contains "linked_worktree_resolves_main_clone_ready_github" "REVIEW_ON_READY_GITHUB=coderabbit" "$worktree_output"
+run_contains "linked_worktree_override_origin" "LOCAL_OVERRIDE_ORIGIN=main_clone" "$worktree_output"
+run_contains "linked_worktree_override_file" "LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$worktree_output"
+run_contains "linked_worktree_main_clone_file_reported" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$worktree_output"
+run_contains "linked_worktree_source_still_local" "LOCAL_OVERRIDE_SOURCE=runner:.ai-dev-workflow.local.yaml,ready-github:.ai-dev-workflow.local.yaml" "$worktree_output"
+
+main_clone_output="$(workflow_review_override_context "$worktree_main")"
+run_contains "main_clone_override_origin_is_checkout" "LOCAL_OVERRIDE_ORIGIN=checkout" "$main_clone_output"
+run_contains "main_clone_override_file" "LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$main_clone_output"
+run_contains "main_clone_reports_no_main_clone_file" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=" "$main_clone_output"
+
+# A worktree's own file wins over the main clone's, and the main clone's is
+# still reported so a mismatch is visible.
+cat > "$worktree_linked/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    runner: [cursor]
+YAML
+own_file_output="$(workflow_review_override_context "$worktree_linked")"
+run_contains "linked_worktree_own_file_wins" "REVIEW_ON_DRAFT_RUNNER=cursor" "$own_file_output"
+run_contains "linked_worktree_own_file_origin" "LOCAL_OVERRIDE_ORIGIN=checkout" "$own_file_output"
+run_contains "linked_worktree_own_file_still_reports_main" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$own_file_output"
+rm -f "$worktree_linked/.ai-dev-workflow.local.yaml"
+
+# A checkout-local file that carries no `review` section — the shape
+# set-local-path writes into a worktree (product_repos only) — must not mask
+# the main clone's reviewer override.
+cat > "$worktree_linked/.ai-dev-workflow.local.yaml" <<'YAML'
+product_repos:
+  - name: mobile-app
+    local_path: ../checkouts/mobile-app
+YAML
+masked_output="$(workflow_review_override_context "$worktree_linked")"
+run_contains "product_only_local_file_keeps_main_clone_runner" "REVIEW_ON_DRAFT_RUNNER=claude" "$masked_output"
+run_contains "product_only_local_file_origin_is_main_clone" "LOCAL_OVERRIDE_ORIGIN=main_clone" "$masked_output"
+run_contains "product_only_local_file_reports_main_clone_file" "LOCAL_OVERRIDE_FILE=$worktree_main/.ai-dev-workflow.local.yaml" "$masked_output"
+rm -f "$worktree_linked/.ai-dev-workflow.local.yaml"
+
+# An explicit, empty `review:` key in the checkout-local file IS a review
+# section: it wins (and yields no override), matching the shell parsers.
+printf 'review: {}\n' > "$worktree_linked/.ai-dev-workflow.local.yaml"
+empty_review_output="$(workflow_review_override_context "$worktree_linked")"
+run_contains "empty_review_key_in_worktree_file_wins" "LOCAL_OVERRIDE_ORIGIN=checkout" "$empty_review_output"
+run_contains "empty_review_key_in_worktree_file_runner_empty" "REVIEW_ON_DRAFT_RUNNER=" "$empty_review_output"
+rm -f "$worktree_linked/.ai-dev-workflow.local.yaml"
+# The parser strips whitespace around keys, so `review : {}` is a review
+# section too — and the shell-side check must agree (CodeRabbit, PR #1575).
+printf 'review : {}\n' > "$worktree_linked/.ai-dev-workflow.local.yaml"
+spaced_review_output="$(workflow_review_override_context "$worktree_linked")"
+run_contains "spaced_review_key_in_worktree_file_wins" "LOCAL_OVERRIDE_ORIGIN=checkout" "$spaced_review_output"
+spaced_review_shell="$(
+  workflow_repo_root() { printf '%s\n' "$worktree_linked"; }
+  workflow_local_config_file
+)"
+run_test "spaced_review_key_shell_agrees_with_resolver" "$worktree_linked/.ai-dev-workflow.local.yaml" "$spaced_review_shell"
+rm -f "$worktree_linked/.ai-dev-workflow.local.yaml"
+
+# WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT (the #1033 handoff path) beats both.
+override_root_dir="$(fixture_dir worktree-override-root)"
+cat > "$override_root_dir/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    runner: [codex]
+YAML
+env_root_output="$(WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$override_root_dir" workflow_review_override_context "$worktree_linked")"
+run_contains "override_root_env_beats_main_clone" "REVIEW_ON_DRAFT_RUNNER=codex" "$env_root_output"
+run_contains "override_root_env_origin" "LOCAL_OVERRIDE_ORIGIN=override_root" "$env_root_output"
+run_fails_contains \
+  "override_root_env_missing_dir_fails" \
+  "configured local reviewer override source is unavailable" \
+  env WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT="$override_root_dir/missing" python3 "$RESOLVER" review-overrides --repo-root "$worktree_linked"
+
+# No fallback when the main clone has no file either: report nothing rather
+# than invent a source.
+rm -f "$worktree_main/.ai-dev-workflow.local.yaml"
+bare_worktree_output="$(workflow_review_override_context "$worktree_linked")"
+run_contains "linked_worktree_without_main_file_runner_empty" "REVIEW_ON_DRAFT_RUNNER=" "$bare_worktree_output"
+run_contains "linked_worktree_without_main_file_origin_empty" "LOCAL_OVERRIDE_ORIGIN=" "$bare_worktree_output"
+run_contains "linked_worktree_without_main_file_main_empty" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=" "$bare_worktree_output"
+
+# A plain directory outside any repository is unaffected.
+plain_output="$(workflow_review_override_context "$(fixture_dir plain-no-git)")"
+run_contains "plain_dir_override_origin_empty" "LOCAL_OVERRIDE_ORIGIN=" "$plain_output"
+# A submodule-style `.git` file (gitdir: .../.git/modules/<name>) is not a
+# linked worktree; and detection must not invoke git at all (the policy
+# recommender is forbidden from doing so and reads config through this path).
+submodule_dir="$(fixture_dir fake-submodule)"
+mkdir -p "$worktree_main/.git/modules/fake-submodule"
+printf 'gitdir: %s/.git/modules/fake-submodule\n' "$worktree_main" > "$submodule_dir/.git"
+submodule_output="$(workflow_review_override_context "$submodule_dir")"
+run_contains "submodule_gitdir_is_not_a_linked_worktree" "MAIN_CLONE_LOCAL_OVERRIDE_FILE=" "$submodule_output"
+no_git_bin="$TMP_ROOT/no-git-bin"; mkdir -p "$no_git_bin"
+printf '#!/usr/bin/env bash\ntouch "%s/git-was-called"\nexit 64\n' "$TMP_ROOT" > "$no_git_bin/git"; chmod +x "$no_git_bin/git"
+PATH="$no_git_bin:$PATH" python3 "$RESOLVER" review-overrides --repo-root "$worktree_linked" >/dev/null
+run_test "resolver_detects_worktree_without_invoking_git" "absent" "$([ -e "$TMP_ROOT/git-was-called" ] && echo present || echo absent)"
+git -C "$worktree_main" worktree remove --force "$worktree_linked"
+
+# set-local-path (workflow_hub product_repos local paths) must stay scoped to
+# the checkout's own local file even when run from a linked worktree whose
+# main clone already has a local override — writing into the fallback-resolved
+# path would (a) silently mutate a different checkout's file and (b) store a
+# local_path/checkout_root value relative to repo_root inside a file that
+# lives in a different directory, breaking resolution later.
+hub_worktree_main="$(fixture_dir hub-worktree-main)"
+git -C "$hub_worktree_main" init -q
+cat > "$hub_worktree_main/.ai-dev-workflow.yaml" <<'YAML'
+schema_version: 2
+mode: workflow_hub
+
+workflow_hub:
+  product_repos:
+    - name: demo
+      github_repo: example/demo
+YAML
+git -C "$hub_worktree_main" add .ai-dev-workflow.yaml
+git -C "$hub_worktree_main" -c user.name=fixture -c user.email=fixture@example.com commit -q -m init
+cat > "$hub_worktree_main/.ai-dev-workflow.local.yaml" <<'YAML'
+review:
+  on_draft:
+    runner: [claude]
+YAML
+hub_worktree_linked="$TMP_ROOT/hub-worktree-linked"
+git -C "$hub_worktree_main" worktree add -q "$hub_worktree_linked" -b fixture/hub-worktree-linked HEAD
+python3 "$RESOLVER" set-local-path --repo-root "$hub_worktree_linked" --repo demo --local-path "$TMP_ROOT/demo-checkout" >/dev/null
+run_test "set_local_path_from_worktree_writes_own_file" "present" "$([ -f "$hub_worktree_linked/.ai-dev-workflow.local.yaml" ] && echo present || echo absent)"
+run_test "set_local_path_from_worktree_leaves_main_clone_untouched" "review:
+  on_draft:
+    runner: [claude]" "$(cat "$hub_worktree_main/.ai-dev-workflow.local.yaml")"
+worktree_resolve_output="$(python3 "$RESOLVER" resolve --repo-root "$hub_worktree_linked" --repo demo --require-local)"
+run_contains "set_local_path_from_worktree_resolves_correctly" "TARGET_LOCAL_PATH=$TMP_ROOT/demo-checkout" "$worktree_resolve_output"
+git -C "$hub_worktree_main" worktree remove --force "$hub_worktree_linked"
+unset hub_worktree_main hub_worktree_linked worktree_resolve_output
 
 echo ""
 echo "Passed: $PASS_COUNT"

@@ -93,7 +93,7 @@ That document is the single source of truth for this supporting role. Key respon
   merged.
 - For Protocol 94 batch merges, keep the explicit in-scope PR list frozen and
   run `batch-merge.sh recheck-remaining --prs <list> --after-merged-pr <pr>
-  --base <base>` after each successful sibling merge before selecting the next
+  --base <base> --approved-unready-prs <human-included-unready-list>` after each successful sibling merge before selecting the next
   PR. Apply Protocol 94 Step 4.2 as the source of truth for post-recheck
   admission semantics.
 - A delegated gate result of `exceptional_bypass_authorized` is not normal batch

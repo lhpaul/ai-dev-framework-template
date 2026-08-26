@@ -7,10 +7,1655 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-08-26
+
+### Added
+
+- **Local Codex reviewer preset and dogfood evidence** (#1609): adds a short
+  `local-codex-reviewer.sh` wrapper for the `local-ai-reviewer` platform,
+  enriches the local reviewer context bundle with compact diff metadata, and
+  can persist a JSON evidence artifact for comparing local-review outcomes
+  against ready-phase reviewers.
+- **Repo-native local AI reviewer platform** (#1604): adds an opt-in
+  `local-ai-reviewer` Step 7 platform with a local companion script,
+  conservative result parsing, current-head binding, optional graph-context
+  status, finding comparison fixtures, and integration docs so repositories can
+  run a local review pass before ready-phase reviewers such as Bugbot.
+- **Change-scoped CI test selection with a coverage-gap report** (#1537): adds
+  `scripts/development-workflow/select-test-suites.sh`, which resolves the
+  suites a change set requires from the repository itself — a `test-<name>.sh`
+  covers `<name>.sh` by convention, and a suite whose name does not match its
+  subject declares what it exercises with `# covers:` header lines next to the
+  test rather than in a central map that drifts. `--report-gaps` lists workflow
+  scripts with no suite (4 of 64 once the `# covers:` headers land, down from
+  the 15 reported on the issue) and suites no change set can select (0 of 66),
+  so the gap stays visible rather than silent.
+- **Artifact ownership and product release contract** (#1353): documents and
+  validates multi-repository release artifact ownership and product release
+  configuration for workflow hubs.
+- **One product repository per implementation item** (#1354): enforce
+  one-target workflow-hub routing before product implementation mutation.
+- **Route component releases to selected product repositories** (#1356): add
+  canonical component release target and evidence helpers, plus product-aware
+  release cleanup validation for workflow hubs.
+- **Add delivery bundle manifest workflow** (#1357): add hub-owned delivery
+  bundle issue and manifest tooling for coordinated component delivery evidence.
+- **Add component milestone release statuses** (#1358): add workflow-hub
+  component milestone and parent release-state reconciliation for
+  multi-repository releases.
+- **Add multi-repository release adoption assurance** (#1359): add
+  workflow-hub adoption guidance and deterministic assurance coverage for
+  multi-repository releases.
+
+### Changed
+
+- **Local AI reviewer default promotion** (#1617): runs
+  `local-ai-reviewer` before PR-Agent in the default draft reviewer path, while
+  keeping Bugbot as the ready-phase reviewer and documenting setup/opt-out
+  controls for local runner environments.
+- **Conservative Codex verdict classifier** (#1491): `codex-github-reviewer.sh` now requires the response —
+  whitespace-normalized, with no truncation step of any kind — to be an exact match, from its first
+  character to its last, against one of a small set of clean-response templates captured verbatim from real
+  Codex responses (each template including the complete vendor `<details>` footer text), and safe-fails to
+  `NEEDS_REVISION` for anything else, including responses that are plausibly clean but use different
+  wording anywhere in the body. This replaces both the open-ended negated-approval vocabulary enumeration
+  this plan originally targeted and the allow-list/closed-grammar/truncate-then-match designs this plan
+  shipped and then found further false-`APPROVED` gaps in across subsequent review rounds — no vocabulary,
+  grammar, or partial-body match converged, so this revision applies exact literal comparison to the entire
+  response, leaving no discarded byte range for a novel construction to hide in. GitHub's structured
+  `CHANGES_REQUESTED` review-state short-circuit and the blocking classifier are unchanged. The template's one
+  "flavor" slot (the word or phrase directly after "Didn't find any major issues.") is a single bounded
+  placeholder (up to 40 characters, excluding `*`, backtick, and control characters), not a fixed literal —
+  the vendor rotates this slot, confirmed after the shipped single-literal version safe-failed on this
+  feature's own first real-traffic PR. A first fix enumerated every observed token as a literal alternation,
+  but a 14-token discovery rate from under 50 samples showed that vocabulary would not converge by
+  enumeration either, so the bounded placeholder replaced it before merge — the accepted residual is a
+  disclosed, narrow false-`APPROVED` surface (self-contradictory vendor output only), not an enumeration that
+  needs ongoing maintenance.
+
+- **Changelog fragments** (#1554): Development PRs now write per-item release note fragments, reducing shared changelog conflicts in parallel batches.
+
+### Fixed
+
+- **Prevent stale reviewer summaries from restoring regression label** (#1621):
+  `pr-review-loop.sh` now restores `ready-for-regression` only from clean or
+  skipped reviewer-loop summary evidence for the current PR head.
+- **Trigger regression after reviewer clean** (#1615): Moved the normal
+  regression dispatch path behind current-head reviewer-loop clean evidence so
+  implementation PRs no longer run regression from open/reopen/ready events.
+- **Stop local reviewer loop while Codex is pending** (#1603):
+  Codex GitHub review timeouts after a current-head trigger now surface
+  `RESULT=waiting_on_reviewer` with trigger/head telemetry instead of
+  escalating as reviewer unavailable or posting duplicate triggers.
+- **Reviewer settle ignores empty review containers** (#1596):
+  `pr-review-loop.sh` now requires a substantive review body before
+  `POST_CLEAN_REQUIRE_REVIEW` can settle, and binds that evidence to the
+  current head when GitHub reports a review `commit_id`, so reply-container
+  review objects cannot make an unreviewed head look clean.
+- **CodeRabbit retry attempts respect live quota windows** (#1597):
+  `pr-review-loop.sh` no longer spends a trigger while a current CodeRabbit
+  rate-limit comment remains live, reports `CODERABBIT_TRIGGER_ATTEMPTS` and
+  `CODERABBIT_REVIEWS_RECEIVED` in CodeRabbit results, and treats quota
+  refusals as waiting state rather than retry-budget consumption.
+- **Reviewer loop can terminate repeated non-shipped finding tails** (#1599):
+  `pr-review-loop.sh` now detects consecutive review rounds where every
+  machine-readable blocking path targets docs, tests, fixtures, snapshots, or
+  markdown, requires zero unresolved review threads, emits explicit
+  `SMALL_FINDINGS_*` telemetry, and records the unreviewed non-shipped tail in
+  the reviewer-loop summary before later exact-head test and CI gates run.
+- **Quoted closing keywords are ignored during post-merge cleanup** (#1585):
+  `post-merge-cleanup.sh` now excludes inline code spans and blockquote lines
+  before scanning PR bodies for closing keywords, preventing quoted examples
+  such as `` `Closes #123` `` from closing unrelated issues while preserving
+  ordinary live `Closes #N` references.
+- **Codex GitHub reviewer avoids duplicate trigger cycles** (#1601):
+  `codex-github-reviewer.sh` now checks for existing current-head Codex review
+  evidence before posting `@codex review`, reusing submitted reviews,
+  SHA-pinned root comments, or unresolved Codex review threads when GitHub
+  already started Codex automatically. Stale evidence for older heads and
+  resolved threads are ignored, and `CODEX_GITHUB_PRE_TRIGGER_WAIT` /
+  `--pre-trigger-wait` controls the short pre-trigger wait window from either
+  `codex-github-reviewer.sh` or `pr-review-loop.sh`. The repository default
+  ready-phase reviewer is now Bugbot, and CodeRabbit auto-review is disabled so
+  it remains an explicit opt-in reviewer.
+- **Regression label dispatch now creates a regression run** (#1600):
+  `pr-policy.yml`
+  no longer relies on a `labeled` event produced by the default GitHub Actions
+  token to wake `e2e-regression.yml`. After applying `ready-for-regression`, it
+  dispatches the regression workflow explicitly on the PR head ref with the PR
+  head SHA as an input before applying the label, and skips automatic labeling
+  if that dispatch fails or if the PR head changes before labeling.
+  The placeholder regression workflow now accepts `workflow_dispatch` inputs for
+  the PR number, head SHA, and base branch while preserving the regression base
+  branch gate. Downstreams can set `PR_POLICY_REGRESSION_WORKFLOW` for a renamed
+  dispatchable workflow, or `PR_POLICY_REGRESSION_DISPATCH_ENABLED=false` for
+  intentionally manual regression.
+- **CI "green" now requires evidence that CI ran** (#1514, #1580): a head with
+  no checks, or missing a workflow that ran on the PR's previous head, read as
+  green because nothing was failing or pending. GitHub builds no merge ref for
+  a `CONFLICTING` PR, so its `pull_request` workflows never start — measured on
+  PR #1577, where two pushes after it went `DIRTY` ran 4 checks instead of 16
+  and the loop still reported green. `pr-ci-loop.sh` now compares the current
+  head's *workflow* names (not job/check names — a matrix workflow's selected
+  suite set legitimately narrows or grows between heads by design) against
+  the previous head's and reports
+  `RESULT=red REASON=expected_checks_missing MISSING_CHECKS=…`, emits
+  `HEAD_SHA` and `CI_EVIDENCE=present|none|unknown`, and Protocol 91's readiness
+  Check 0 refuses a head with an empty check set — now counting commit
+  statuses (CodeRabbit, Devin Review) alongside check-runs, since a
+  status-only signal was previously invisible to this gate — and prints
+  `READINESS_HEAD_SHA` / `READINESS_CI_*`. `test-pr-ci-loop.sh` is new, closing
+  one of the four coverage gaps the selector reports.
+- **Release stamping no longer treats "has a merged PR" as "shipped"**
+  (#1512): `detect_omitted_merged_items()` auto-added any Merged board item
+  with a merged PR closed inside the release window — but a PR merged into an
+  in-flight `develop-<slug>` integration branch satisfies all of that while
+  none of its code is in the tag. Downstream this stamped 16 issues onto a
+  release whose changelog named two, across at least five releases. Auto-add
+  is now gated on `git merge-base --is-ancestor <merge-commit> <tag>`;
+  candidates that fail it (or whose merge commit, tag, or git state cannot be
+  read) are reported and left out of the stamped scope, surfacing as
+  `TRACKER_INCOMPLETE`. The operational guidance lives in
+  [Protocol 05 §9.1](docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md).
+- **Integration-branch PRs now run CI** (#1525): `e2e-regression.yml`,
+  `markdown-lint.yml`, and `shellcheck.yml` gated on `develop` and `main`
+  only, so an epic's sub-item PRs into `develop-<slug>` ran zero checks —
+  measured downstream at 4 checks on a sub-item PR versus 13 on the
+  graduation PR, which then surfaced four real defects in already-merged
+  code. All three now include `develop-**`, as `workflow-tests.yml` already
+  did, and `test-workflow-branch-filters.sh` enforces it per trigger. The
+  requirement for projects that add their own workflows is stated in
+  [Protocol 05b](docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md).
+- **CodeRabbit rate-limit waits are read from the vendor, not guessed** (#1579):
+  the loop decided "CodeRabbit is rate limited" from the mere presence of a
+  rate-limit comment newer than the HEAD commit, so one stale reply suppressed
+  every later trigger on that HEAD — measured on PR #1575, a comment from 16:06
+  still read as live 21 hours later with no CodeRabbit activity in between. It
+  also sized every retry from a fixed constant: against the 1-review-per-hour
+  allowance measured on 2026-08-24, a 4 x 900 s budget spends all four retries
+  inside a window that grants at most one review, then escalates
+  `rate_limit_max_retries` at roughly the moment the review becomes available
+  (PR #1589: four retries, four "Reviews resumed" acknowledgements, zero
+  reviews). CodeRabbit states its own window — "Next included review available
+  in N minutes" — so the loop now parses that sentence to size the wait, treats
+  a comment past its announced window as spent rather than live, and re-triggers
+  with `@coderabbitai review` instead of `@coderabbitai resume`, which only
+  lifts a paused state and reviews nothing against a rate limit. A reply older
+  than this run's own most recent trigger no longer answers that trigger, with
+  a clock-skew tolerance because the anchor is stamped locally while the
+  comment timestamp comes from GitHub. CodeRabbit states the window in at least
+  two wordings — "Next included review available in 27 minutes" and "Your next
+  included review will be available in 7 minutes", both observed within one
+  hour — so the parser tolerates the gap between them rather than matching one.
+  Absent or reworded vendor text falls back to the previous constant, and the
+  wait is clamped by `CODERABBIT_RATE_LIMIT_WAIT_MAX` (default 3600 s) so a
+  malformed window cannot park an unattended run. The same leading-zero-safe
+  arithmetic that protects the vendor-parsed number now also applies to the
+  `CODERABBIT_RATE_LIMIT_WAIT_BUFFER`, `CODERABBIT_RATE_LIMIT_WAIT_MAX`,
+  `CODERABBIT_TRIGGER_ANCHOR_SKEW`, `CODERABBIT_RATE_LIMIT_STALE_AFTER`
+  (default 3600 s — how long a comment stating no window stays believable) and
+  `CODERABBIT_RATE_LIMIT_MIN_WAIT` (default 30 s — the floor applied once the
+  comment's age is subtracted from its stated window) operator overrides — a zero-padded value
+  like `008` previously reached `$((...))` unstripped and aborted the whole
+  script under `set -e` ("008: value too great for base") instead of
+  degrading like every other malformed override.
+- **Codex reviewer unavailability is classified and recoverable** (#1522,
+  #1526): the Codex GitHub App's "create a Codex account and connect to
+  github" refusal — which it returns per triggering identity, so an org-wide
+  install can work for one developer and refuse for another — was not matched
+  at all and fell through to the safe-fail blocking verdict. It now returns
+  `VERDICT: UNAVAILABLE` / `REASON=codex-github-account-not-connected`
+  (exit 3), quote-stripped and fence-guarded like the usage-limit check. The
+  trigger-comment idempotency guard, which keys only on the head SHA, made
+  any unavailability terminal: once Codex answered a trigger with a refusal,
+  every later run for that commit skipped the post and re-read the stale
+  reply. When the newest bot reply to an existing trigger is any refusal —
+  usage limit, account not connected, or missing environment — the trigger is
+  now treated as spent and a fresh one is posted.
+- **`post-merge-cleanup.sh` now processes every issue a PR resolves**
+  (#1391): closing references in the PR title, body, and commit messages are
+  processed in addition to the branch-derived issue, and bare `#N` title
+  references without a closing keyword produce a warning naming what was not
+  processed. Post-merge verification is per referenced item and an
+  unprocessed-reference warning is non-terminal — see Protocol 91 Step 10 and
+  Protocol 95 Step 11.
+- **`/run-epic` helpers no longer bind the jq-reserved identifier `label`**
+  (#1523): on jq 1.6 (Ubuntu 22.04 LTS and peers) `label` is a reserved
+  keyword, so `run-epic-policy-recommender.sh`, `run-bounded-prelude.sh`, and
+  `run-epic-scope-resolver.sh` failed to compile their jq programs
+  (`syntax error, unexpected label`) and `/run-epic` preflight could not start
+  on Linux hosts, while jq 1.7+ on macOS accepted the same programs and hid
+  the defect. All `$label` bindings and `--arg label` uses are renamed to
+  `$labelText`; a regression check in `test-run-bounded-prelude.sh` covers
+  the three affected helper scripts.
+
+- **A linked git worktree now resolves the main clone's local reviewer
+  override** (#1560): `git worktree add` carries no gitignored files, so every
+  worktree created through the Protocol 90 isolation path lost
+  `.ai-dev-workflow.local.yaml` and Step 7a hard-failed with zero reachable
+  internal reviewers — on all three worktrees of the 2026-08-20/21 first wave.
+  #1033 only covered worktrees that `pr-review-loop.sh` creates itself.
+  `workflow-config-resolver.py` and `workflow-lib.sh` now fall back to the main
+  clone's file (read from the worktree's `.git` file, `gitdir:
+  <main>/.git/worktrees/<name>` — no git invocation, so git-forbidden callers
+  such as the policy recommender stay compliant) when a linked
+  worktree has none; a worktree's own file and
+  `WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT` still take precedence.
+  `review-overrides` reports `LOCAL_OVERRIDE_FILE`, `LOCAL_OVERRIDE_ORIGIN`
+  (`checkout` / `main_clone` / `override_root`) and
+  `MAIN_CLONE_LOCAL_OVERRIDE_FILE`; Protocol 91's zero-reachable-reviewer
+  hard-fail states whether an override was present but unpropagated, and the
+  worktree-entry step verifies continuity before Step 7a. Regression tests
+  create the worktree with plain `git worktree add`, not a helper.
+  `set-local-path` (`workflow_hub` product-repo local checkout paths, a
+  separate mechanism that shares the same local file) stays scoped to writing
+  and reading the checkout's own file, never the main-clone fallback — writing
+  there from a worktree would silently mutate a different checkout's file and
+  store a `local_path`/`checkout_root` value relative to the wrong directory.
+- **A sibling merge no longer voids a PR's verdicts silently** (#1558):
+  merging one PR in a wave dirties its siblings on `[Unreleased]`, and the
+  conflict resolution produces a new head SHA that invalidates the reviewer
+  verdict, CI, the risk classification and the delegated-gate decision —
+  nothing flagged it, and two runners on the 2026-08-20/21 run would have
+  declared terminal on unmergeable PRs. `batch-merge.sh recheck-remaining`
+  now accepts `--reviewed-head-shas` (from `discover`'s `PR_HEAD_SHA`) and
+  reports `head_sha_changed` with `verdicts_voided` and `required_action`
+  even when the merge state is `CLEAN`; `--annotate` writes every hold onto
+  the PR as an in-place `<!-- batch-merge-hold:v1 -->` comment, and a new
+  `annotate-hold` subcommand records risk-guardrail and human holds the same
+  way so a held PR carries its reason. `run-epic-delegated-gate.sh` refuses
+  `reviewer.headSha` / `risk.headSha` that differ from `pr.headSha`
+  (`stale_verdict_head`, `fix_required`). Protocol 94 routes each hold to the
+  owning runner (Step 4.5a), Protocol 90 keeps held PRs in the frozen recheck
+  list with the same conflict maintenance, and Protocol 95 records the hold
+  when the classifier scores above `--max-risk`.
+- **Protocol 91's late-thread re-check no longer waits a fixed 10 seconds**
+  (#1574): the readiness checklist now consumes `pr-review-loop.sh`'s
+  `POST_CLEAN_*` settle fields instead of carrying a wait of its own. A new
+  Check 0.6 (exit 12) refuses a clean verdict that was never settled — recheck
+  suppressed, no submitted review for the HEAD, settle window exhausted, or
+  `POST_CLEAN_HEAD_SHA` not the live head — and Check 4 re-validates the head
+  immediately before applying `ready-for-human-review`; Step 8a.1 is only the
+  adjacency re-query. The loop reads the PR head before dispatching reviewers,
+  emits `POST_CLEAN_HEAD_SHA` and `POST_CLEAN_RECHECK_SKIP_REASON`, anchors
+  the require-review settle to that head (it previously resolved to the
+  default-branch head, so any past review satisfied it), and reports a head
+  that moved during a clean run as `needs_fixes` / `head_moved_during_run`
+  without counting a fixer cycle. Protocol 92 names the same contract; the
+  loop's `--help` defaults now match its code. The Check 0.5 jq filter's
+  unterminated quote (since `559c5402`) is fixed. Details and measurements:
+  Protocol 91 Step 7 / Check 0.6 / Step 8a.1 and `test-pr-review-loop.sh`
+  Area 20.
+- **A CodeRabbit `RESULT=clean` now means "clean, and still clean after the
+  platform went quiet"** (#1556): the loop's post-clean recheck was a single
+  30-second wait, far too short for a vendor that posts findings minutes after
+  it first falls silent. Measured across the 2026-08-20/21 unattended run and
+  since — PR #1532 two late findings, #1541 three across three rounds, #1555
+  five across two, and eight on one PR during #1562 work, two of them Major.
+  **Every late finding was real**; none escaped only because runners were told
+  to hold a 2-3 minute quiet window and re-query by hand, which is operator
+  discipline standing in for a tooling guarantee. The recheck is now a settle
+  loop that polls until the platform has produced no activity for a full quiet
+  period (120s for CodeRabbit, 60s otherwise) or the window is exhausted (900s
+  / 180s). For CodeRabbit the quiet period does not even begin until a review
+  has been **submitted** for the current HEAD: measured on PR #1573, it posted
+  its walkthrough comment 48 seconds after the push and submitted the actual
+  review — carrying three findings — twelve minutes later, so silence in
+  between meant it was still working rather than finished. A quiet period alone
+  cannot tell those apart, which is why the settle waits for a positive signal
+  and not merely an absent one. Any activity resets the quiet timer, and a failed activity query is
+  never counted as silence. An exhausted window still reports `clean` but flags
+  it `POST_CLEAN_SETTLED=0` with `POST_CLEAN_SETTLE_TIMEOUT=1`, so a weaker
+  verdict is visible rather than indistinguishable. All windows are
+  configurable generically and per platform; `POST_CLEAN_WAIT` still works.
+- **An in-place edit of a bot comment now registers as review activity**
+  (#1556): CodeRabbit revises its walkthrough comment rather than posting a new
+  one, so the comment keeps its original `created_at`. Observed on PR #1532 —
+  created 23:23, before the 23:34 HEAD commit, and edited 23:52 to carry the
+  new review. The activity probe in `run_coderabbit_review` selected on
+  `created_at` alone and could not see it; that run only survived because
+  CodeRabbit also submitted a formal review, matched separately on
+  `submitted_at`. The probe now accepts `updated_at` as well, as the timeout
+  guard already did.
+- **Readiness now requires the clean verdict to be adjacent to the label**
+  (#1556): protocol 92 previously required only that the reviewer-loop summary
+  be clean, not that it be *recent*. On PR #1555 the label was applied off a
+  thread check that had gone stale during a ~10 minute status poll, with four
+  findings landing in the gap. The loop emits `POST_CLEAN_SETTLED_AT` so the
+  gap is measurable; see
+  [protocol 92](docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md)
+  for the operating contract.
+- **`test-pr-review-loop.sh` gains an `--area` filter, runs from an immutable
+  snapshot, and can no longer be edited mid-run without notice** (#1562): the
+  suite is ~13.6k lines and ~900 assertions with no way to run part of it, so
+  every reviewer fix cycle paid the whole thing. Measured on a clean tree, the
+  runtime is extremely lopsided — **Area 13 is ~94% of it** (156
+  `codex-github-reviewer.sh` invocations that each really sleep), while the
+  other 27 areas together take about 13 seconds. `--area <name>` matches an
+  area number exactly or any substring of its title, `--list-areas` prints
+  them, and a filtered run still prints the summary and still exits non-zero on
+  failure. Separately, bash reads a script incrementally, so editing the suite
+  while a run was in flight made the running shell pick up part of the new
+  text; during the #1531 work that produced a run whose pass/fail counts
+  matched neither version of the file. The harness now re-executes from a temp
+  snapshot, which also makes an out-of-tree copy work via
+  `TEST_PR_REVIEW_LOOP_ORIGIN` rather than failing with "fatal: not a git
+  repository".
+- **A truncated `pr-review-loop.sh` run can no longer be mistaken for a clean
+  one** (#1562): a run killed part-way — by an outer `timeout` shorter than a
+  legitimate rate-limit wait, or by an operator — produced no terminal
+  `RESULT=` line at all, so a caller grepping for one found nothing, and "no
+  blocking findings were reported" reads uncomfortably like "no blocking
+  findings exist". Every exit now carries a verdict: `print_kv` records that a
+  `RESULT` was emitted, and the `EXIT` trap emits `RESULT=escalate` /
+  `REASON=truncated_run` / `TRUNCATED=1` when none ever was, forcing a non-zero
+  status. Verified end to end by killing a live run: exit 143 with the
+  truncated verdict present.
+- **The CodeRabbit rate-limit ceiling is reconciled with an execution budget**
+  (#1562): the worst-case legitimate wait (4 x 900s = 3600s) sat within minutes
+  of the ~65-minute point at which a run was observed being killed, and two
+  runners had wrapped the loop in an outer `timeout` shorter than a single
+  900s wait. `PR_REVIEW_LOOP_EXECUTION_BUDGET` (default 5400s) now declares the
+  wall clock a caller must allow, and startup fails with
+  `REASON=execution_budget_misconfigured` when the worst-case wait is not
+  strictly less than it — a second of setup instead of an hour of waiting
+  followed by nothing. The two rate-limit defaults were restated in two places
+  once the budget check needed them; they are now declared once.
+- **Adding a test job to a CI workflow no longer scores the same risk as
+  changing deployment behavior** (#1565): `run-epic-risk-classifier.sh` treated
+  every `.github/workflows/**` change as a sensitive category and escalated the
+  PR to `high`, so a PR that wires a test suite into CI exceeded a `medium`
+  ceiling and could not merge under delegated policy — the risk model penalised
+  closing a test-coverage gap, which is what #1537 asked for. Recognised test
+  and lint workflows now score `medium` with a distinct
+  `test or lint CI workflow change:` reason; deployment, release, and permission
+  behavior still score `high`, as does any unrecognised workflow. The classifier
+  only ever receives changed paths, never file contents, so this is judged by
+  filename — see the authoritative pattern table under "Known Heuristic Limits"
+  in
+  [guardrails-enforcement.md](docs/workflow/development-workflow/guardrails-enforcement.md).
+- **Every test suite is now reachable from CI, so a green check rollup means
+  the changed script's own tests ran** (#1537): CI ran a hard-coded list of six
+  suites behind a path filter, leaving 59 of 65 suites never executed by any
+  workflow. Because "all checks green" is the signal the reviewer loop, the
+  readiness labels, the delegated merge gate, and `item-completion-self-check.sh`
+  all lean on, that signal was vacuous for most scripts in this repository — it
+  reported that six unrelated suites passed. `.github/workflows/test-pr-review-loop.yml`
+  is replaced by `.github/workflows/workflow-tests.yml`, which asks the new
+  `select-test-suites.sh` which suites a pull request's changed files require
+  and runs those as a matrix, with a nightly scheduled full run as the backstop.
+  The workflow contains no list of suites, so adding a `test-*.sh` no longer
+  requires a workflow edit — the drift that let the count reach 59.
+- **`github-app-token.sh` no longer leaves the signed JWT (and, on the
+  `secret_ref` path, the private key) behind in a temp directory** (#1537):
+  `exchange_token` is called as `TOKEN="$(exchange_token ...)"`, so its
+  `TOKEN_TMP_DIR` assignment was confined to that command-substitution
+  subshell. The parent's `EXIT` trap therefore had an empty path and cleaned
+  nothing, leaking `header.json`, `payload.json`, `signature.bin`, and any
+  resolved `private-key.pem` on every successful token mint. The scratch
+  directory is now created in the parent shell so the trap can remove it. The
+  suite asserted this all along, but BSD `mktemp -d` ignores `TMPDIR` while GNU
+  `mktemp -d` honours it, so the assertion was vacuous on macOS and the suite
+  never ran on Linux to catch it.
+- **Five test suites that could never have passed in CI now do** (#1537):
+  wiring the suites into CI surfaced latent environment assumptions in suites
+  that had only ever been run on developer machines.
+  `test-component-milestone-reconciliation.sh` required `ripgrep`, which is not
+  installed on `ubuntu-latest` (now `grep -c -E`, whose semantics match).
+  `test-run-nested-artifact-guard.sh` and `test-prepare-release-tracker-cleanup.sh`
+  built a `PATH` from real system directories to hide or shadow `gh`, which
+  works only where `git` and `gh` live in different directories — true under
+  Homebrew, false on runners where both are `/usr/bin`, so one silently tested
+  nothing and the other ran the real `gh` instead of its mock.
+  `test-workflow-orchestration-product-repo-aware.sh` reached `require_gh`
+  before its `gh` stub was defined, making it depend on an ambient GitHub
+  login. `test-workflow-hub-pr-auth.sh` is covered by the entry above.
+- **`test-haystack-reviewer.sh` no longer fails intermittently when run
+  alongside other work** (#1537): the suite failed roughly 2 runs in 17 on a
+  clean tree at the same commit (205 passed / 5 failed versus 210 / 0), always
+  during or just after a full sweep. All five failures came from one test,
+  which gave the reviewer a 3-second budget; `haystack-reviewer.sh` derives the
+  per-call triage timeout as half the remaining budget, so its first call had a
+  1-second allowance polled at 1-second granularity. Under CPU contention,
+  forking the mock CLI exceeded that, the call was killed, and the budget
+  expired before any call completed. Reproduced deterministically at load
+  average ~42 on an 11-core machine and fixed by widening the budget to 12
+  seconds against a 30-second hang, preserving the ratio the test depends on.
+  This mattered before batching the suites, not after: a suite that passes
+  alone and fails in a batch is exactly the failure mode running them together
+  would have introduced, and intermittent red teaches everyone to re-run until
+  green.
+- **`run-epic-risk-classifier.sh --pr` can now attach `why_safe_to_merge`
+  evidence, and Gate 5 evidence-schema mismatches no longer read as a denied
+  merge authority** (#1497): a medium-risk PR classified via `--pr` always
+  reached `blocked` ("medium-risk PR is missing complete why_safe_to_merge
+  evidence") because `--pr` had no way to attach that evidence — only
+  `--input`'s undocumented, hand-normalized shape could carry it. A new
+  `--why-safe-file <file>` flag merges a `why_safe_to_merge` object into the
+  classified state for either `--pr` or `--input` mode, and `--help` on both
+  `run-epic-risk-classifier.sh` and `run-epic-delegated-gate.sh` now
+  documents each script's evidence schema with a worked example, including
+  that the two schemas are different and must not be fed into one another
+  directly (nest the classifier's result under a top-level `risk` key
+  instead). Separately, `run-epic-delegated-gate.sh` used to report a
+  malformed or incompatible evidence file (e.g. one built from the risk
+  classifier's own flat output) as `delegated review authority is missing`,
+  `delegated merge authority is missing`, or `required CI state is missing`
+  — three reasons that read as a policy or CI verdict when the real problem
+  was a missing `.policy` object or an entirely absent `.statusChecks[]` key,
+  risking an operator concluding they lack merge permission when they
+  actually have a JSON shape bug. Both cases now report a distinct
+  `evidence_schema_mismatch: ...` reason (still routed to `human_required`,
+  since the gate cannot safely default an authority/CI verdict either way)
+  naming exactly which required shape is missing, with `nextAction` text that
+  explicitly says this is not a policy or CI-state blocker. A present-but-
+  empty `.statusChecks: []` (a genuine "no CI has run" state) keeps its
+  original wording and `blocked` decision unchanged — only the schema-shaped
+  absence is new. When `ciPolicy`/`ci_policy` is `none`, no CI reason is
+  added at all (as before this PR); the overall decision then depends only
+  on other evidence and is not necessarily `blocked`. A
+  CodeRabbit review on the PR caught a sharper variant of the same bug: a
+  key-existence check alone (`has("statusChecks")`) accepted `null`, an
+  object, or a scalar for `.statusChecks`, none of which are the array the
+  gate actually expects — a `null` silently defaulted to `[]` and reported
+  the old generic message instead of a schema mismatch; an **object** had its
+  *values* iterated as individual check entries (jq's `map`/`.[]` accept
+  objects), so a single well-formed-looking check value one level too deep
+  could read as CI having passed, silently producing a false
+  `merge_allowed` verdict for malformed input rather than merely an unclear
+  message; a scalar aborted the whole jq program. `.statusChecks` is now
+  required to literally be an array before any CI evaluation runs against
+  it, and (per a CodeRabbit follow-up finding) every array member must
+  itself be an object — a string or number member reached the same field
+  accessors and crashed the same way a non-array top-level value did, and a
+  `null` member silently read as a generic CI failure instead of the more
+  legible schema-mismatch reason. Also fixed: a `.pr.mergeable` value
+  defaulted to `""` by a
+  caller that omitted `mergeable` from its `gh pr view --json` field list
+  used to be read as a real "PR is not mergeable" verdict for a PR GitHub
+  reports as `MERGEABLE`; a blank/whitespace-only `mergeable` string is now
+  treated exactly like an absent field (not blocked), while a genuine
+  non-mergeable state (e.g. `CONFLICTING`) still blocks. `guardrails-
+  enforcement.md`'s Gate 5 section documents the evidence schemas, the
+  `--why-safe-file` flag, and both pitfalls. New regression coverage in
+  `scripts/development-workflow/tests/test-run-epic-risk-classifier.sh` and
+  `scripts/development-workflow/tests/test-run-epic-delegated-gate.sh`
+  reproduces all three failure modes against the unfixed scripts before
+  confirming the fix.
+- **`workflow-batch-overlap.sh` no longer treats ordinary prose as a module
+  collision or serializes provably independent pairs** (#1540): brief text
+  like "the helper **emits** false rows" no longer produces a fake `module`
+  signal, and a pair with a signal on only one side (nothing shared or
+  related) no longer defaults to `suspected`/serial — it now requires
+  independence-defeating evidence on **both** sides. Genuinely overlapping
+  pairs still classify `concrete`. `suspected` explanations now name the
+  specific triggering signal(s). Regression tests cover the issue's
+  reproduction, verb-capture fixtures, a concrete-overlap control, and the
+  two real overnight-batch wave sets from the issue (previously one serial
+  group of 4 each, now fully parallel-eligible).
+- **Item runners no longer park permanently after backgrounding a long step
+  and ending the turn to wait for it** (#1548): three of four Work Item
+  Runners in one overnight wave backgrounded a step (`test-pr-review-loop.sh`,
+  `pr-review-loop.sh`) and ended their turn expecting an external notification
+  to resume them — ending a turn ends the agent, so nothing ever resumed
+  them, and each item was recovered only because a supervising parent noticed
+  the returned report named no terminal state. `91-orchestrate-work-protocol.md`
+  now states plainly, in a new "Execution Discipline: A Paused Turn Does Not
+  Resume" section read before Step 0, that a paused turn does not resume, and
+  prescribes foreground-or-poll for every long step, not only
+  `pr-review-loop.sh`/`pr-ci-loop.sh`; Step 7 and the agent/skill instruction
+  files (`.claude/agents/item-orchestrator.md`,
+  `.cursor/agents/item-orchestrator.md`,
+  `.codex/skills/workflow-item-orchestrator/SKILL.md`) carry the same rule
+  directly, plus a companion warning against re-invoking `pr-review-loop.sh`
+  on a PR whose loop is already running (it exits `75` with
+  `REASON=lock_contention` and reports nothing useful) — read the outcome
+  from PR state instead. On the parent side, `90-batch-orchestrate-work-
+  protocol.md` Step 5's supervision loop now classifies any returned report
+  that names no terminal state (no PR number paired with
+  `ready-for-human-review`, `blocked`, or `escalated` — or, for an item with
+  no PR yet, a concretely-named blocking reason; a bare "waiting" report never
+  satisfies that exception regardless of phrasing) as `stalled` and requires
+  resume/re-dispatch rather than acceptance, extending the existing "in-flight
+  CI/watch states are non-terminal" rule from governing runner behavior to
+  governing how the parent reads runner reports. Added the
+  [runner-stall supervision smoke-test runbook](docs/testing/workflow/1548-runner-stall-supervision.smoke-test.md),
+  since there is no automated test harness for protocol prose in this repo.
+- **`list_open_workflow_type_issues` no longer hardcodes a `.type` field key**
+  (#1400): `gh project item-list --format json` derives each item's field key
+  from the field's display name, lowercasing only its first character (for
+  example `Custom Type` -> `custom Type`). Because `Type` is a reserved
+  GitHub Projects field name, no conforming board can actually name its
+  classification field `Type`, so the hardcoded `select((.type // "") ==
+  "Workflow")` never matched anything on a real board — release protocol
+  §7.2's "downstream script-bug review" gate silently returned `[]` on every
+  release regardless of how many open Workflow items existed. The lookup now
+  resolves the same field-name order as
+  `workflow_github_project_type_field_json`:
+  `issue_tracker.custom_fields.type_field`, then `Custom Type`, `CustomType`,
+  then `Type`, each converted to its gh item-list key. When the item-list
+  payload has at least one item and none of those keys are present on any of
+  them, the function now emits a distinct stderr warning so a genuinely
+  unreadable Type field is no longer indistinguishable from a clean "no open
+  Workflow items" result — an empty board (zero items on the project, e.g.
+  open issues not yet triaged onto it) is left alone and does not trigger the
+  warning, since there is nothing to judge the candidate keys against. The
+  shipped regression test's fixture previously mocked a `"type":"Workflow"`
+  key that real `gh` cannot produce; it now uses `"custom Type"`, matching a
+  real board, plus new cases for a configured `type_field` override, the
+  unreadable-field warning, and the empty-board non-warning case.
+- **A replied-to but unresolved review thread no longer blocks the very
+  re-review it was replied about** (#1508): `check_unresolved_threads` in
+  `scripts/development-workflow/pr-review-loop.sh` gated the phase-1
+  "should we trigger a new review" check in `run_codex_github_review` and
+  `run_claude_code_action_review` purely on GraphQL `isResolved` state. When a
+  fixer pushed a fix and replied to a thread without also calling
+  `resolveReviewThread` — the normal state immediately after a push — the
+  loop returned `RESULT=needs_fixes REASON=existing_findings` and never
+  re-triggered the platform review, so the reviewer never saw the fix commit
+  until a human resolved the thread manually out of band. `check_unresolved_
+  threads` now takes a required `mode` argument. `mode=provisional`, used only
+  by those two phase-1 pre-trigger gates, additionally treats a thread as not
+  blocking re-review when its last comment is from a non-bot author posted
+  after the PR's current head-commit `committedDate` — modeling "fixed and
+  replied to, awaiting explicit resolution". Every gate that decides
+  `RESULT=clean` (the aggregate thread gate, `coderabbit_thread_gate_clean`,
+  the post-trigger findings recount, and the post-clean recheck) keeps using
+  `mode=strict`, which is byte-for-byte the prior behavior — a reply alone
+  still can never mark a thread resolved there, so this cannot reintroduce the
+  false-clean class fixed by #1531 and #1437. Unrecognized mode values fail
+  safe to `strict`. New regression tests in
+  `scripts/development-workflow/tests/test-pr-review-loop.sh` cover both
+  directions: the reply-after-head-commit case that must not block
+  re-triggering (confirmed to fail against the pre-fix code), and reply-
+  before-head-commit / bot-authored-reply / no-reply / true-resolution cases
+  that must still block under both modes.
+- **`post-merge-cleanup.sh` no longer closes the wrong issue for team-prefixed
+  branch slugs** (#1511): the team-prefixed identifier pattern
+  (`^(fix|feature|hotfix|refactor)/([a-zA-Z]{2,6}-([0-9]+))($|-)`) matches any
+  slug beginning with 2-6 letters followed by `-<digits>` — including ordinary
+  descriptive fragments with no relation to an issue number
+  (`fix/retro-517-doc-gaps`, `fix/http-500-retry`, `feature/sha-256-hashing`).
+  A downstream consumer observed the script silently update and close an
+  unrelated issue derived from such a slug. The merged PR body/title is now
+  checked first for GitHub closing keywords (`Closes #N`, `Fixes #N`,
+  `Resolves #N`, etc.) whenever the branch slug's identifier is
+  team-prefixed, and that reference is treated as authoritative when present
+  — including when the PR closes more than one issue. The slug-derived
+  identifier is only used as a fallback when the PR body carries no closing
+  reference at all, preserving existing behavior for legitimate team-prefixed
+  slugs (`fix/lh-97-real-issue`) merged without an explicit closing keyword.
+  Plain numeric identifiers (`fix/42-slug`) are unambiguous and are unaffected.
+  The closing-keyword matcher also now requires only a non-word boundary
+  (rather than specifically whitespace) before the keyword, so
+  punctuation-delimited references like `(Fixes #601)` are recognized, and it
+  strips fenced code blocks before matching so an example `Closes #999` in a
+  code sample within the PR body is not mistaken for a live reference —
+  mirroring `graduation-closeout-from-merged-pr.sh`'s existing
+  `extract_closing_issue_numbers` / `strip_fenced_blocks` behavior.
+- **Security-checkpoint keyword test no longer matches substrings** (#1504):
+  `recommend_checkpoints_for_item` in
+  `scripts/development-workflow/run-epic-policy-recommender.sh` matched the
+  security/auth checkpoint keywords with a bare, unanchored alternation, so
+  ordinary vocabulary ("authoring", "author", "authority", "insensitive")
+  tripped a pending human checkpoint and halted an otherwise fully delegated
+  `/run-epic`/`/run-items` run on issues with no actual security content (live
+  reproduction on `/run-items 1502 1501`). The keyword regex is now
+  `\b`-anchored so real security/auth terms — including negated forms like
+  `unauthorized`/`unauthenticated` — still match while incidental substrings no
+  longer do. The checkpoint `reason` now names the matched term and quotes the
+  source line instead of a generic static message. The sibling unresolved-
+  product and trade-off/architecture classifiers shared the same
+  bare-alternation defect and are now `\b`-anchored too. 13 new regression
+  tests cover the false-positive corpus (confirmed to fail against the pre-fix
+  regex) and the true-positive corpus.
+- **CodeRabbit "Review skipped" banner no longer reports an unreviewed PR as
+  clean** (#1531): `run_coderabbit_review` in
+  `scripts/development-workflow/pr-review-loop.sh` counted any CodeRabbit issue
+  comment as evidence of a completed review, excluding only the pause,
+  rate-limit, and resume markers. CodeRabbit's fourth non-review banner —
+  `Review skipped`, posted whenever it declines by configuration rather than by
+  capacity (`auto_review.enabled: false`, `drafts: false` on a draft PR, or an
+  `auto_review.base_branches` list that omits the PR's base) — satisfied that
+  check, broke the poll loop into Phase 3, and returned `RESULT=clean` after
+  collecting zero inline comments. The banner is now matched by
+  `CODERABBIT_SKIP_BANNER_RE`, excluded from the activity probe so the existing
+  silent-non-trigger path nudges CodeRabbit with an explicit
+  `@coderabbitai review` (which works even when auto review is disabled), and
+  escalated as `REASON=review_skipped_banner` if it is still standing when the
+  poll window closes — a distinct reason from `rate_limit_max_retries`, since
+  the operator fix is a `.coderabbit.yaml` change rather than waiting out vendor
+  quota. Same false-clean class as #1437 and the PR #650 pause-banner incident.
+- **CodeRabbit rate-limit tolerance now spans an hourly quota reset** (#1531):
+  `CODERABBIT_RATE_LIMIT_MAX_RETRIES` and `CODERABBIT_RATE_LIMIT_WAIT` defaulted
+  to `2` and `180`, giving roughly six minutes of tolerance against a vendor
+  whose quota resets hourly — so a loop that hit the cap exhausted its retries
+  about 54 minutes before CodeRabbit could possibly answer, then escalated a PR
+  with nothing wrong with it. Defaults are now `4` and `900`, covering a full
+  60-minute reset window; both env vars still override.
+- **ShellCheck CI no longer hangs indefinitely installing zsh** (#1517):
+  the `Install zsh for cross-shell snippet tests` step in
+  `.github/workflows/shellcheck.yml` was observed hanging on three PRs, and
+  reproducibly on two consecutive runs of the same commit — 24 minutes before
+  manual cancellation, with `Run ShellCheck` itself already passed. The step
+  declared no timeout, so the job inherited the 6-hour Actions default and held
+  the PR's merge state `UNSTABLE` for that entire window. The step now bounds
+  itself with `timeout-minutes: 5`, skips entirely when `zsh` is already present,
+  waits explicitly (bounded) for any `dpkg`/`apt` lock holder such as the runner
+  image's `unattended-upgrades` job instead of blocking inside `apt-get`, sets
+  `DEBIAN_FRONTEND=noninteractive`, and retries up to three times before failing
+  with a clear error. A stall now surfaces as a fast, legible failure rather than
+  a silent multi-hour block.
+- **Retrospective follow-ups to batch-merge output and CHANGELOG guidance** (#1520):
+  `batch-merge.sh`'s `WARNING: gh pr merge failed` message now explains what
+  `MERGE_RESULT=clean` does and does not cover, instead of leaving the two
+  looking contradictory: the local merge and push succeeded, but GitHub has not
+  recorded the PR as merged, and per Protocol 94 Step 4.2 the PR is `failed`
+  unless the MERGED-state poll converges within 30s. The `WARNING:` prefix is
+  deliberately retained — Protocol 94 Step 4.2 references that exact string —
+  and the protocol wording is updated to match. `usage()` also documents that `recheck-remaining --after-merged-pr`
+  must name a PR that appears in the `--prs` frozen list, which previously was
+  discoverable only by triggering `reason=after_merged_pr_not_in_frozen_list`.
+  `docs/best-practices/2-version-control.md` now states that CHANGELOG entries
+  describe shipped behavior rather than the review history of the PR that produced
+  them — a content rule, not a length rule. No behavior change.
+- **`pr-review-loop.sh` ready-phase gate no longer reports a GitHub API
+  rate-limit outage as a review verdict** (#1509): a `gh pr view`/`gh pr ready`
+  failure in `ensure_pr_ready_for_ready_phase` previously always produced
+  `RESULT=escalate REASON=ready_for_review_failed` plus the `reviewer-failed`
+  label, with no distinction from a genuine review-gate failure. The gate now
+  probes `gh api rate_limit` on that failure; a confirmed core/graphql
+  exhaustion reports `REASON=rate_limited` with the reset timestamp instead,
+  and `reviewer_failed_label_required_for_result` no longer applies
+  `reviewer-failed` for that reason. An unexplained `gh` failure keeps the
+  original `REASON=ready_for_review_failed` behavior.
+
+- **Codex GitHub terminal evidence**: `codex-github-reviewer.sh` no longer
+  treats a thumbs-up reaction on the trigger comment as a clean review result,
+  ignores submitted Codex reviews that are not pinned to the current PR head,
+  accepts only root PR comments that include a current-head `Reviewed commit`
+  marker as terminal evidence, and reports missing Codex cloud environments as
+  unavailable instead of clean. Timestamp ties between a SHA-pinned root
+  comment and a submitted review now resolve away from a clean approval
+  regardless of which side supplied it — covering both explicitly blocking
+  evidence and an unrecognized-format response that the verdict classifier
+  would otherwise safe-fail to `NEEDS_REVISION`; the terminal root comment is
+  selected independently of the latest (possibly non-terminal) root comment
+  so a later acknowledgement can no longer discard an earlier blocking one; a
+  failed root-comments fetch during the async grace period, the
+  post-acknowledgement re-poll, and the post-reaction re-poll now fails
+  closed (`TIMED_OUT`) instead of silently falling through to a clean
+  submitted review; the final acknowledgement re-poll now preserves a
+  recorded environment-setup error over a thumbs-up reaction, matching the
+  post-reaction re-poll's existing behavior; all four `APPROVED` exit sites
+  (main poll loop, async-arrival grace, async-final, async-reaction-final)
+  now check a previously recorded environment-setup error before exiting
+  clean, instead of only some of them, and now also allow a genuinely fresh
+  (strictly newer) current-head review to supersede a now-stale recorded
+  environment error rather than blocking recovery indefinitely within the
+  same invocation; the timestamp tie-break helper now treats a response
+  containing both a blocking marker and an approval phrase as blocking
+  first, matching the verdict classifier's own blocking-first priority,
+  instead of misclassifying it as a clean approval; a submitted review body
+  large enough to exceed a pipe buffer no longer crashes the script with
+  `SIGPIPE`/exit 141 under `pipefail` — truncation now happens inside `jq`
+  (codepoint slice) instead of via a piped `head`; a clean review and a
+  strictly newer environment-setup-error comment observed in the same poll
+  no longer resolve to a silent `APPROVED` — the setup error is retained
+  unless the review is itself strictly newer; and an environment-setup-error
+  comment is no longer silently discarded by a later plain acknowledgement
+  observed in the same comments fetch; a clean SHA-pinned terminal root
+  comment and a strictly newer environment-setup-error comment in the same
+  fetch no longer resolve to a silent `APPROVED` — environment-error
+  checking is now a final, independent step applied to whichever of
+  (terminal comment, review) won, instead of only being reachable from the
+  review-vs-ancillary-comment branch; and root-comment-sourced bodies (not
+  truncated at scan time, unlike review bodies) are now also truncated via
+  `jq -Rrs` instead of a piped `head`, closing the same `SIGPIPE` crash path
+  for a root comment body large enough to exceed a pipe buffer; a blocking
+  SHA-pinned terminal or review finding is no longer discarded by a
+  same-or-newer environment-setup-error comment — blocking evidence now
+  always wins outright, regardless of timing; and a SHA-pinned terminal
+  comment is no longer misclassified as an environment-setup error when its
+  finding text happens to quote the setup sentence verbatim (e.g. flagging
+  stale documentation) — terminal evidence is never routed through the
+  environment-error classifier; multiple current-head reviews tied at the
+  same second-resolution `submitted_at` timestamp no longer collapse to an
+  arbitrary array-order pick via `sort_by | last` — every tied review is
+  now considered and the one requiring attention (if any) wins, so a
+  blocking review can no longer be silently discarded by a clean one
+  submitted in the same second; and usage-limit comments are now retained
+  and compared independently the same way environment-error comments
+  already were, so an older clean review no longer silently wins over a
+  newer usage-limit notice; two current-head terminal root comments tied at
+  the same second no longer collapse to whichever was scanned last —
+  terminal-comment selection now applies the same not-a-clean-approval-
+  first tie-break as reviews; and blocking is now checked before
+  usage-limit in every verdict path, so a blocking finding whose text
+  happens to mention "usage limit" is no longer misrouted to an
+  unavailable verdict; and a bodyless submitted review tied with a clean
+  SHA-pinned terminal comment is no longer treated as absent — presence is
+  now checked via the review's timestamp (always set for a genuine review)
+  instead of its body, so an empty body still participates in the
+  not-a-clean-approval-first tie-break instead of silently losing to a
+  clean terminal comment; and the main-loop and async verdict paths' entry
+  into verdict parsing is now gated on the winning evidence's timestamp
+  instead of its body content, so a bodyless-but-selected review reaches
+  the documented unrecognized-response safe-fail (`NEEDS_REVISION`)
+  instead of falling through to `TIMED_OUT`; and among tied current-head
+  reviews, a blocking one now always wins outright over any other
+  non-clean type (e.g. a usage-limit response) instead of the scan
+  stopping at whichever "requires attention" response was returned first,
+  so a usage-limit review returned before a tied blocking review no longer
+  silently discards the blocker; and the shared terminal-evidence tie-break
+  (used for terminal-comment-vs-review and terminal-comment-vs-terminal-
+  comment ties) now checks blocking before the binary requires-attention
+  distinction, so two tied responses that are both "requires attention"
+  (e.g. a usage-limit root comment and a blocking submitted review, or two
+  tied root comments) no longer keep whichever was evaluated first when
+  one side is strictly more severe; a usage-limit response that ALSO
+  contains an approval phrase (e.g. "No blocking issues could be evaluated
+  because you have reached your Codex usage limits") is no longer
+  misclassified as a clean approval by the tie-break; and the previously
+  binary "requires attention" tie-break is replaced by a four-tier numeric
+  priority (`codex_response_priority`: blocking > unrecognized format >
+  usage-limit > clean approval), so two tied responses that were both
+  merely "requires attention" (e.g. a usage-limit notice and a genuinely
+  unrecognized-format response) are now ranked correctly against each
+  other instead of the scan keeping whichever was evaluated first; and
+  verdict classification now runs against the full, untruncated response
+  instead of the 10000-char truncated copy — a SHA-pinned root review
+  longer than the cutoff with an approval phrase before it and a blocking
+  marker after it no longer has its blocker silently discarded (the
+  truncated copy is still used for the script's own displayed output).
+  The classification helpers (`codex_response_is_blocking` and friends)
+  now match via a here-string instead of a piped `printf`, since
+  classifying the untruncated response means `grep -q`'s early-exit
+  behavior on a long input could otherwise SIGPIPE the writer; and the
+  four reviews-endpoint jq queries (main poll, async-arrival, async-final,
+  async-reaction-final) no longer slice a submitted review's body to
+  5000 characters inside the query itself — that upstream truncation
+  fed directly into the "full, untruncated response" classification path
+  described above, so a submitted review with an approval phrase before
+  the 5000-char query cutoff and a blocking marker after it was still
+  misclassified as APPROVED even with the shell-level fix in place (the
+  slice is dropped entirely; GitHub review bodies are capped well below
+  any size that would make this unsafe, and the query already writes to
+  a temp file rather than a piped consumer, so there is no SIGPIPE risk);
+  `codex_response_is_approved` now rejects negated approval phrases (e.g.
+  "This change is **not** approved") instead of matching the unbounded
+  `approved`/`lgtm`/`looks good` alternatives unconditionally, which used
+  to report a rejecting terminal response as APPROVED instead of the
+  documented unrecognized-format safe-fail; and `codex_response_priority`
+  now ranks an ancillary environment-setup-error comment at the same
+  lower availability tier as a usage-limit notice instead of at the
+  unrecognized-format tier, so a setup-error comment tied at the same
+  timestamp as a genuine but unrecognized-format review can no longer win
+  the tie-break and replace the review's safe-fail NEEDS_REVISION with an
+  UNAVAILABLE-style `codex-github-environment-missing` verdict;
+  `CODEX_APPROVAL_PATTERN`'s positive alternatives now require `\b` word
+  boundaries, since the negated-approval fix above only catches
+  SPACE-separated negations ("not approved") — a CONCATENATED negation
+  prefix like "unapproved" or "disapproved" still matched the bare
+  "approved" substring and was reported as APPROVED; and
+  `CODEX_NEGATED_APPROVAL_PATTERN` now tolerates optional Markdown
+  emphasis markers between the negation and approval words, since GitHub's
+  rendered bold (e.g. "This change is **not** approved") has `**` wedged
+  directly between "not" and the following space in the raw comment body,
+  which broke the pattern's original unbroken-whitespace adjacency
+  requirement and let the negation go undetected; and
+  `CODEX_NEGATED_APPROVAL_PATTERN` now tolerates up to 3 intervening
+  qualifier words between the negation and approval words (e.g. "This
+  change is not **yet** approved"), generalizing past the specific
+  adjacency assumptions of the three prior negation fixes above instead
+  of special-casing yet another interrupting-word pattern; and
+  `codex_response_is_usage_limit`'s broad "codex ... usage limit/quota/
+  capacity" alternative now requires an accompanying exhaustion/
+  unavailability word directly after the noun, since it previously matched
+  ANY mention of those words — a clean submitted review merely discussing
+  this PR's own usage-limit-detection code (e.g. "No blocking issues
+  found. The Codex usage limit handling looks correct.") was itself
+  misclassified as a usage-limit notice, winning a same-timestamp tie
+  against a genuinely clean terminal comment and returning UNAVAILABLE
+  instead of APPROVED for an actually-clean PR. Also corrected
+  `docs/workflow/development-workflow/integrations/codex-github.md`,
+  which claimed a usage-limit notice follows the same *retention* rule as
+  an environment-setup error — it does not: unlike an environment-setup
+  error, a usage-limit notice terminates the invocation immediately upon
+  detection rather than being retained through the rest of the poll
+  window for a later, strictly newer review to potentially supersede;
+  `CODEX_NEGATED_APPROVAL_PATTERN`'s target alternation now also covers
+  "no blocking issues"/"didn't find any major issues", not just
+  "approved"/"lgtm"/"looks good" — those are approval signals in
+  `CODEX_APPROVAL_PATTERN` too, but were left unguarded, so a
+  hedged/uncertain response like "I cannot confirm there are no blocking
+  issues" still matched "no blocking issues" and was classified APPROVED;
+  and `codex_response_is_usage_limit`'s second alternative ("codex usage
+  limits for code reviews") had the exact same unguarded-mention gap as
+  the third alternative fixed in the same round — missed in that first
+  pass since only the third alternative was narrowed then — so a clean
+  review discussing the phrase in a docs context was itself misclassified
+  as a usage-limit notice; it now requires an exhaustion word after "code
+  reviews" too; and `CODEX_NEGATED_APPROVAL_PATTERN`'s bounded `{0,3}`
+  filler-word window (added to handle "not YET approved") was itself
+  proven insufficient — a response with 5 intervening words between the
+  negation and approval word exceeded the bound and was still classified
+  APPROVED. Replaced with an unbounded same-sentence scope (`[^.!?]*`
+  between the negation and approval words): this closes the whole class
+  of "negation not immediately adjacent to approval word" gap at once
+  (this was the fourth round of narrowly-scoped fixes to this same
+  pattern — space-separated, concatenated-prefix, Markdown-wrapped,
+  bounded-window — each of which Codex found the next edge of), while a
+  sentence terminator between them still correctly prevents an unrelated
+  later sentence's approval phrase from being treated as negated by an
+  earlier sentence's negation word. Also corrected the same *retention*
+  vs *priority* rule ambiguity as the integrations-doc fix above in
+  `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`,
+  which had not yet been updated when the integrations doc was fixed. Two
+  more negation gaps surfaced once the pattern was unbounded: the target
+  alternation had "approved" but not the bare verb "approve", and the
+  pattern only checked negation-THEN-approval order, so an approval
+  phrase appearing BEFORE the negation in the same sentence (e.g. "This
+  looks good at first glance, but I cannot approve this change") wasn't
+  caught. Both alternation orders are now checked, and the target list
+  includes the bare verb. Separately, `codex_scan_comment_evidence` now
+  tracks `COMMENT_LATEST_IS_TERMINAL` (whether the "latest ancillary
+  comment" is actually the SHA-pinned terminal comment itself, not a
+  genuinely separate one): when a clean terminal review's own finding
+  text happened to quote the environment-setup message or usage-limit
+  wording, `codex_combine_terminal_evidence`'s ancillary-override check
+  re-classified that SAME terminal comment as a genuinely separate
+  ancillary setup failure, downgrading APPROVED to
+  `codex-github-environment-missing` — a case the existing "terminal
+  comment never routed through the environment-error classifier"
+  guarantee did not cover, since it only applied to the terminal-vs-review
+  combine path, not this separate ancillary-override check. The reverse
+  alternation order added above ("looks good ... cannot approve") turned
+  out to be over-broad in practice: it matched ANY later negation word in
+  the same sentence regardless of what it actually negated, so a
+  genuinely clean response like "Looks good overall; tests were not run."
+  was incorrectly flagged as negated. It has been removed — the
+  forward-only match plus the bare-verb addition already covers the
+  original "cannot approve" case without this false-positive class.
+  Separately, `codex_combine_terminal_evidence` previously applied the
+  same newest-wins comparison to a usage-limit ancillary comment as it
+  does to an environment-setup error, so a clean current-head review
+  returned in the SAME poll fetch as (and strictly newer than) a
+  usage-limit notice let the review win, and the quota body never reached
+  `codex_return_usage_limit` — contradicting the documented immediate-
+  termination contract for usage-limit. Usage-limit and environment-error
+  are now handled as two separate checks with their own retention
+  semantics: a usage-limit notice wins unconditionally over non-blocking
+  terminal/review evidence (no newest-wins comparison at all, since
+  detecting it terminates the invocation immediately by design), while an
+  environment-setup error keeps the existing newest-wins comparison. That
+  fix only protected usage-limit precedence INSIDE
+  `codex_combine_terminal_evidence`, but `codex_scan_comment_evidence`'s
+  upstream tracking could already discard a usage-limit comment in favor
+  of a LATER environment-error comment within the SAME fetch, before
+  `codex_combine_terminal_evidence` was ever reached — both set
+  `is_actionable=1`, so the unconditional overwrite let the later
+  setup-error body silently replace the quota body. `codex_scan_comment_
+  evidence` now tracks whether the currently-held ancillary comment is
+  specifically a usage-limit notice, and once one is tracked, only
+  another usage-limit notice may replace it. `codex_response_is_approved`
+  now strips quoted spans (text between a pair of straight double-quotes)
+  before matching `CODEX_APPROVAL_PATTERN`, since a SHA-pinned review can
+  quote a clean phrase while rejecting it (e.g. `The documented bot
+  response "No blocking issues found" is inaccurate`) and the pattern's
+  substring match couldn't distinguish quotation/discussion of a phrase
+  from an assertion of it. Separately, `CODEX_NEGATED_APPROVAL_PATTERN`'s
+  `[^.!?]*` span only excluded sentence terminators, not clause
+  separators, so an unrelated negation in an earlier semicolon-joined
+  clause of the same sentence (e.g. "Tests are not required for this
+  documentation-only change; looks good") still spanned into a later,
+  unrelated clean clause; the character class now also excludes `;` and
+  `,` (a followup finding showed a comma-joined clause crossed the
+  semicolon-only exclusion the same way). A new shared
+  `codex_strip_quoted_spans` helper now strips both straight-double-quoted
+  spans AND backtick-quoted (Markdown inline code) spans — the earlier
+  quote-stripping fix only handled straight quotes, so a review quoting a
+  clean phrase with backticks instead still matched — and this stripping
+  now runs ONCE, before BOTH the negation check and the positive approval
+  check, since the earlier fix only quote-stripped the positive check: an
+  otherwise-clean response quoting a REJECTION phrase from elsewhere
+  (e.g. test/documentation text) still tripped the negation check on the
+  unstripped body and incorrectly safe-failed. The helper is scoped to
+  `codex_response_is_approved` only and never applied before
+  `codex_response_reviews_current_head`'s SHA extraction, which itself
+  relies on backtick-delimited `Reviewed commit:` markers. Separately,
+  the top-level verdict-parsing elif chains' usage-limit check (all 4
+  call sites) had no source gate and was not quote-stripped, so a clean
+  terminal review that merely quotes an actual quota message (e.g. "No
+  blocking issues found. The docs accurately quote: You have reached
+  your Codex usage limits.") was reclassified as UNAVAILABLE instead of
+  APPROVED — a case `COMMENT_LATEST_IS_TERMINAL` does not cover, since
+  that guard only protects the ancillary-evidence combination stage, not
+  this separate final verdict check. The check now quote-strips its
+  input before classifying (a source gate isn't used here, unlike the
+  already-safe environment-error check, since a genuine usage-limit
+  notice can legitimately arrive via the reviews endpoint too).
+  `codex_response_is_approved` now also strips the "not only X" idiom
+  before running the negation check: "Not only X, (but) Y" is an
+  affirmative intensifier construction (both X and Y are being asserted,
+  not negated), not a negation of X, so `CODEX_NEGATION_WORDS`' bare
+  "not" alternative — which has no way to distinguish this idiom from a
+  genuine negation — misclassified "Not only does this look good, it is
+  approved" as negated even though both phrases are affirmative. That
+  strip only covered Title-Case and lowercase forms; a fully uppercase
+  emphasis form ("NOT ONLY does this look good, it is approved") slipped
+  through. Every letter is now bracket-expanded for both cases (rather
+  than relying on sed's `I` substitution flag, whose support varies
+  across sed implementations). `CODEX_NEGATION_WORDS` also now includes
+  "unable to", which was absent entirely, so "I am unable to approve
+  this change" wasn't recognized as a rejection while an earlier "looks
+  good" in the same sentence still matched. `codex_strip_quoted_spans`
+  now also deletes GitHub-flavored Markdown blockquote lines (a line
+  starting with `>`), since a review discussing a quoted clean phrase via
+  blockquote syntax rather than straight/backtick quotes was likewise
+  unprotected. And `codex_response_is_blocking` — never quote-stripped at
+  all, unlike the approval/negation checks — now shares the same
+  `codex_strip_quoted_spans` normalization, since a quoted blocker token
+  in an otherwise clean review (e.g. "No blocking issues found. The
+  tests correctly cover the `must fix` marker.") still matched
+  `CODEX_BLOCKING_PATTERN` and returned `NEEDS_REVISION` for an
+  actually-clean review. `codex_strip_quoted_spans` now also strips
+  single-quoted spans (`'...'`) — the fourth quoting style found
+  unprotected after straight-quote, backtick, and blockquote. Single
+  quotes needed a stricter boundary than the other three styles: a bare
+  `'[^']*'` would also match the span between two unrelated apostrophes
+  in contractions (e.g. "isn't approved, but it's fine" would have its
+  "approved" deleted by a naive strip treating those two apostrophes as
+  an opening/closing pair), so the opening quote must be preceded by
+  whitespace-or-start-of-line and the closing quote by whitespace or
+  punctuation, which a contraction's word-internal apostrophe never
+  satisfies. `codex_strip_quoted_spans` now also strips fenced Markdown
+  code blocks (```` ```...``` ````) via a separate `awk` pre-pass, since
+  they're a multi-line construct the existing single-line `sed`
+  substitutions can't handle (a fence marker line has no paired backtick
+  on the same line to match, and the quoted content between the opening
+  and closing fence spans arbitrarily many separate lines) — the fifth
+  quoting style found unprotected, after straight-quote, backtick,
+  blockquote, and single-quote. That pass's initial implementation
+  toggled its "inside fence" state on ANY line with 3+ backticks, with no
+  regard for the LENGTH of the opening delimiter; GitHub-flavored
+  Markdown's actual fence semantics require a delimiter of at least the
+  opening fence's length to close it, so a longer outer fence (e.g. four
+  backticks) safely quoting content that itself contains a shorter
+  (three-backtick) fence incorrectly closed on the inner delimiter,
+  re-exposing everything after it — including a quoted clean phrase — to
+  classification. The awk pass now tracks the opening delimiter's length
+  (via the POSIX two-argument `match()`, not the gawk-only three-argument
+  array-capture form, since this environment's `awk` is the POSIX "one
+  true awk") and only closes on a delimiter of at least that length. That
+  fix checked length but not GitHub-flavored Markdown's other closing-
+  fence requirement: a closing delimiter must be followed by nothing but
+  optional whitespace. A line like `` ```not-a-close `` is, per GFM, a
+  new *opening* fence with an info string, not a close, but the
+  length-only check treated it as closing regardless, incorrectly
+  re-exposing a quoted clean phrase positioned after it (and hiding
+  genuine rejection text positioned after THAT, since the length-only
+  check then misread the real closing delimiter as opening yet another
+  fence). This completes GFM's fenced-code-block spec — open, length,
+  close-only-whitespace — as the deliberately final fence-specific
+  refinement here, rather than another reactive edge-case patch: an
+  unclosed fence at end-of-input is already handled safely by
+  construction (everything after an opening delimiter that never finds a
+  valid close stays stripped), so the state machine now correctly
+  implements the finite GFM fence-closing rule end to end.
+- **Codex GitHub fenced-code-block detection replaced with a conservative
+  heuristic**: a fifth consecutive fence-parsing gap surfaced — GitHub-
+  flavored Markdown's entirely separate TILDE-delimited fence syntax
+  (`~~~...~~~`), which the backtick-only precise parser never recognized
+  at all, so a quoted clean phrase inside a tilde fence stayed fully
+  exposed to classification. Rather than continue precisely
+  re-implementing GFM's fence grammar one construct at a time (detect,
+  length, close-only-whitespace, and now tilde variants — each round
+  surfaced the next undiscovered edge case), `codex_strip_quoted_spans`
+  no longer attempts to parse fence boundaries at all: the entire awk
+  state machine was removed. `codex_response_is_approved` instead treats
+  the mere presence of a fence-opener marker (3+ consecutive backticks or
+  tildes) anywhere in the response as disqualifying for a clean verdict,
+  without attempting to determine where it opens or closes. This is a
+  deliberate tradeoff — a small amount of false-`NEEDS_REVISION` risk (a
+  genuinely clean response that happens to include an example code fence)
+  in exchange for closing the entire class of quoted/fenced-phrase-
+  misread-as-assertion bugs in one step, since four rounds of chasing
+  precision produced four more false-`APPROVED` gaps instead of
+  converging. Single/inline backtick pairs on one line (not a 3+-backtick
+  run) are unaffected and still get precise, stable stripping, since
+  inline code references are common in genuinely clean review comments
+  and have not shown this same repeated-edge-case pattern. That fence-
+  marker guard was added to `codex_response_is_approved` only, so a
+  clean SHA-pinned review that quotes a REAL quota notice inside a fenced
+  example (e.g. "No blocking issues found" followed by a fenced block
+  containing "You have reached your Codex usage limits") still matched
+  the usage-limit pattern on the unstripped fence content and returned
+  `UNAVAILABLE` instead of the safe-fail `NEEDS_REVISION` a fenced
+  response should produce. The guard now lives in a new shared
+  `codex_response_has_fence_marker` helper used INSIDE every
+  positive/actionable classifier (usage-limit, environment-error,
+  approved) rather than scattered at call sites, so every current and
+  future caller benefits automatically — the same lesson
+  `codex_response_is_blocking` already taught for quote-stripping.
+  `codex_response_is_blocking` briefly gained the same fence-marker guard
+  "for consistency" and was found to be the wrong call for that one
+  classifier: unlike a usage-limit/environment-error/approval false
+  negative (always safe — it only defaults toward `NEEDS_REVISION`), a
+  blocking false negative is unsafe, since Protocol 93 requires a
+  detected blocking finding to always win outright over other evidence
+  (e.g. a same-fetch usage-limit notice); bailing out on fence presence
+  let a real blocker outside a fence go undetected just because the same
+  review also contained an unrelated fenced example elsewhere, silently
+  breaking that "blocking always wins" invariant. `codex_response_is_blocking`
+  no longer bails out on fence markers — it keeps only its existing
+  `codex_strip_quoted_spans` normalization, since a blocking false
+  positive on quoted/fenced text is safe on its own.
+- **Codex GitHub reviewer now consults GitHub's structured review `state`
+  field**: `codex-github-reviewer.sh` relied entirely on free-text body
+  parsing (`codex_response_is_blocking`/`codex_response_is_approved`) to
+  classify a submitted review, even though the reviews-endpoint response
+  carries GitHub's own authoritative `state`
+  (`APPROVED`/`CHANGES_REQUESTED`/`COMMENTED`/`PENDING`/`DISMISSED`)
+  directly. A review with state `CHANGES_REQUESTED` but a clean-sounding
+  or ambiguous body (e.g. "Looks good overall, but see the note below.")
+  fell through to the unrecognized-format safe-fail — or, worse, could
+  match `CODEX_APPROVAL_PATTERN` outright and return `APPROVED` — instead
+  of being recognized as blocking on GitHub's own signal. All four
+  reviews-endpoint `jq` queries (main poll, async-arrival, async-final,
+  async-reaction-final) now also extract `state`; `codex_select_review_
+  evidence` tracks it as `SELECTED_REVIEW_STATE` alongside the tied
+  review's body/timestamp; `codex_combine_terminal_evidence` threads it
+  through as a new `review_state` parameter and exposes
+  `COMBINED_REVIEW_STATE`, set only when an actual submitted review (not
+  a SHA-pinned terminal comment, which has no review state) is the
+  winning evidence. Every verdict-parsing call site now short-circuits to
+  blocking when the winning review's state is `CHANGES_REQUESTED`, ahead
+  of free-text classification; the two "blocking terminal/review evidence
+  always wins outright" checks inside `codex_combine_terminal_evidence`
+  (guarding against a same-fetch usage-limit notice or environment-setup
+  error silently overriding a real blocker) now also treat a
+  `CHANGES_REQUESTED` state as blocking, not just a free-text match. Two
+  followup gaps in that same `state`-field integration were also fixed:
+  (1) `codex_select_review_evidence`'s tie-break for reviews sharing the
+  same second-resolution timestamp ranked purely on `codex_response_
+  priority(body)`, which had no notion of `state` — two tied reviews, one
+  clean and one `CHANGES_REQUESTED` whose body also happened to contain
+  an approval phrase, both scored the same priority from body text alone,
+  so whichever the API returned first silently kept the selection and the
+  `CHANGES_REQUESTED` review's state was discarded before the caller's
+  short-circuit ever saw it; `codex_response_priority` now also ranks a
+  `CHANGES_REQUESTED` state at the blocking tier regardless of body text.
+  (2) A review with state `DISMISSED` still matched the SHA/commit/
+  timestamp filters (dismissal doesn't change `commit_id` or
+  `submitted_at`), so its now-stale body text could still be selected as
+  fresh terminal evidence on an idempotent rerun even though GitHub no
+  longer treats a dismissed review as active; all four reviews-endpoint
+  `jq` queries now exclude `state == DISMISSED` entirely at the source.
+  (3) A third, separate tie-break — `codex_select_terminal_evidence`,
+  used when a SHA-pinned terminal root comment and a current-head review
+  share the same second-resolution timestamp — had the same class of gap
+  as (1) but was missed by that fix, since it's a different function with
+  its own `codex_response_priority` calls: a clean-looking root comment
+  and a same-timestamp `CHANGES_REQUESTED` review whose body also read
+  clean both scored priority 0 from body text, and since the comment is
+  always the "current" side of this comparison, the review could never
+  outrank it, discarding its `CHANGES_REQUESTED` state. `codex_select_
+  terminal_evidence` now accepts optional current/candidate state
+  parameters (empty for a root comment, which has no review state) and
+  passes them into `codex_response_priority`, so a same-timestamp
+  `CHANGES_REQUESTED` review wins this tie-break too, regardless of which
+  side is "current".
+- **Codex GitHub reviewer strips multi-line quoted spans**:
+  `codex_strip_quoted_spans`' double-quote stripping ran inside a single
+  `sed` invocation, which operates per-line by default (each line is its
+  own pattern space) — a straight-double-quote pair spanning a newline
+  (e.g. a bot quoting multi-line text as `The documented response "` /
+  `No blocking issues found` / `" is inaccurate` across three lines) was
+  never stripped at all, since the opening and closing quote sit in
+  different sed pattern spaces. The quoted clean phrase reached
+  classification unstripped and matched `CODEX_APPROVAL_PATTERN`,
+  returning `APPROVED` instead of the documented unrecognized-format
+  safe-fail. Newlines are now swapped for a control-character placeholder
+  before the double-/single-quote stripping passes (restoring them
+  immediately after, before the line-oriented backtick pass), so a quote
+  pair is stripped regardless of how many original lines it spans.
+  Blockquote-line deletion remains line-oriented, which is correct by
+  design (a GFM blockquote marker only means anything at the start of a
+  line); backtick-pair stripping was ALSO kept line-oriented at the time,
+  reasoning that GFM inline code spans never cross a line — see the
+  followup fix below, which found that reasoning incorrect.
+- **Codex GitHub reviewer fixes two followup gaps in the multi-line quote
+  fix above**: (1) the single-quote pattern's boundary alternatives
+  (`(^|[[:space:]])` and `([[:space:].,;:!?]|$)`) didn't include the
+  newline-flattening placeholder character, so a single-quoted span
+  occupying an ENTIRE original line by itself (e.g. a bot's `The
+  documented response is:` / `'No blocking issues found'` / `That claim
+  is inaccurate` across three lines) has the placeholder — not real
+  whitespace, not true start/end-of-string — immediately before/after the
+  quote once flattened, so neither boundary matched and the quoted clean
+  phrase survived, returning `APPROVED`. The placeholder is now included
+  as an additional valid boundary character. (2) Backtick-pair stripping
+  was deliberately kept line-oriented in the multi-line quote fix,
+  reasoning that "GFM defines an inline code span as never crossing a
+  line" — that reasoning was wrong: CommonMark/GFM inline code spans CAN
+  legitimately span multiple lines (embedded line endings are normalized
+  to spaces in the rendered output); only FENCED, triple-backtick code
+  blocks have line-anchored open/close semantics, a different construct.
+  A single-backtick code span split across lines was never stripped,
+  letting the coded clean phrase reach classification unstripped and
+  return `APPROVED`. Backtick-pair stripping now runs on the same
+  newline-flattened body as the double-/single-quote passes, alongside
+  them, instead of as a separate line-oriented pass afterward.
+- **Codex GitHub reviewer recognizes "don't approve" and multi-backtick
+  code spans**: `CODEX_NEGATION_WORDS` was missing "don't"/"do not"
+  entirely — only the third-person singular form ("does not"/"doesn't")
+  was covered — so a response like "This looks good at first glance, but
+  I don't approve this change." had the earlier positive phrase win and
+  returned `APPROVED` instead of falling through to the negated-approval
+  check; "don't"/"do not" is now included alongside every other verb's
+  contracted and space-separated forms. Separately,
+  `codex_strip_quoted_spans`' backtick-pair regex (`` `[^`]*` ``)
+  mishandled CommonMark's actual code-span delimiter-run matching: a code
+  span can be delimited by a run of 2+ backticks, not just a single pair,
+  and the naive regex treated an adjacent 2-backtick run as two separate
+  EMPTY single-backtick pairs (each backtick immediately "closing"
+  against its neighbor with zero content between), stripping only the
+  empty delimiter markers and leaving the actual enclosed content fully
+  exposed. Rather than write CommonMark-compliant delimiter-run matching
+  in regex, `codex_response_has_fence_marker`'s backtick threshold is
+  lowered from 3+ to 2+, so a 2+-backtick run disqualifies the same way a
+  3+ run always has; single backtick pairs are unaffected and still get
+  precise stripping. The tilde threshold stays at 3+, since GFM only uses
+  tildes for fenced code blocks, never inline code spans.
+- **Codex GitHub reviewer recognizes explicit merge-refusal verdicts**:
+  the negated-approval mechanism (`CODEX_NEGATED_APPROVAL_PATTERN`) only
+  fires when a negation word is followed by one of a fixed list of
+  approval-vocabulary target words (`approve[ds]?`, `lgtm`, `looks good`,
+  etc.) within the same sentence. A response like "This looks good at
+  first glance, but this should not be merged until tests pass." negates
+  "merged" — a word outside that target list entirely — so the
+  negated-approval check never matched, and the earlier "looks good"
+  phrase alone won, returning `APPROVED`. `CODEX_BLOCKING_PATTERN` (checked
+  first in the verdict-parsing chain, before approval) now recognizes an
+  explicit should/must-not-be-merged verdict outright, regardless of what
+  an earlier hedge phrase in the same response says. That fix only
+  covered the PASSIVE form; the IMPERATIVE form ("do not merge"/"don't
+  merge") is a separate, common phrasing the same gap applies to for the
+  identical reason — "merge" isn't in the negated-approval mechanism's
+  target-word list either, and unlike the passive form's "not be merged",
+  the imperative form's negation word isn't even adjacent to an
+  approval-vocabulary word at all. `do not merge`/`don't merge` are now
+  recognized alongside the passive form. That fix immediately surfaced a
+  third sibling — `cannot be merged` — the same underlying gap: enumerating
+  one merge-refusal phrasing at a time in `CODEX_BLOCKING_PATTERN` kept
+  producing the next unenumerated synonym. Rather than add a fourth
+  one-off alternative, a new `CODEX_MERGE_REFUSAL_PATTERN` is built from
+  the existing `CODEX_NEGATION_WORDS` list against a `merge(d)` target —
+  the same construction `CODEX_NEGATED_APPROVAL_PATTERN` already uses —
+  so any negation word already known to this file, including future
+  additions, automatically covers merge refusals too, without needing
+  its own enumeration round-trip. `CODEX_BLOCKING_PATTERN`'s three
+  manually-enumerated merge-refusal alternatives are replaced by this
+  single generalized pattern. Two more gaps surfaced immediately from
+  that generalization: `CODEX_NEGATION_WORDS` was still missing
+  "shouldn't"/"should not" and "mustn't"/"must not", so those contracted
+  refusals bypassed both the merge-refusal and negated-approval checks —
+  now added, automatically fixing both checks at once (the point of
+  generalizing on a shared word list). Separately, `codex_response_is_
+  blocking`'s new merge-refusal pattern reuses `CODEX_NEGATION_WORDS`'
+  bare "not" alternative the same way the negated-approval pattern does,
+  so it inherited the same "not only X" affirmative-idiom
+  misclassification that `codex_strip_not_only_idiom` was originally
+  written to fix for approval only — a clean response like "This is not
+  only safe to merge but looks good" was misread as a merge refusal.
+  `codex_response_is_blocking` now applies that same idiom-stripping
+  normalization before matching. A fourth consecutive missing-negation-word
+  finding (`wouldn't`) prompted a proactive sweep of the remaining common
+  English negation forms in one pass — `was/wasn't`, `were/weren't`,
+  `would/wouldn't`, `has/hasn't`, `have/haven't`, `had/hadn't` (contracted
+  and space-separated) are now all included in `CODEX_NEGATION_WORDS`,
+  rather than continuing to fix them one synonym at a time. `did not`/
+  `didn't` is deliberately excluded from this sweep despite being an
+  equally common form: it already appears baked into
+  `CODEX_NEGATED_APPROVAL_TARGET_WORDS` as part of the atomic phrase
+  "didn't find any major issues" (itself a clean signal). Adding bare
+  `didn't` as a general negation word was verified during development to
+  introduce a genuine false positive — a doubly-reinforced clean response
+  ("Codex didn't find any major issues and looks good.") would misclassify
+  as `NEEDS_REVISION` because "didn't" matches as a bare negation and
+  reaches the separate "looks good" target later in the same unpunctuated
+  sentence — caught and reverted before being committed. A regression test
+  guards against this specific gap being silently reintroduced later.
+- **Workflow sync hardening backports**: delegated epic resolution now fails
+  closed on unknown tracker statuses, security-advisory fix evidence is verified
+  against the current PR head, CodeRabbit CLI review evidence fails closed when
+  PR metadata cannot be resolved, and batch merge rechecks preserve explicit
+  approvals for unready PRs.
+- **`post-merge-cleanup.sh` fails fast on missing `--pr`**: the `--pr <merged-pr-number>`
+  requirement for cleaning up an implementation branch's remote copy is now
+  checked immediately after the branch's ownership kind is resolved (and after
+  the existing `workflow_hub` product-repo-selection check, preserving that
+  check's original priority), before any fetch/checkout/pull/delete work runs,
+  instead of surfacing only after the rest of cleanup had already mutated
+  local state. The structured `REMOTE_DELETE_RESULT`/`REMOTE_DELETE_REASON`/
+  `ERROR_MESSAGE` output is emitted from a single shared helper used by both
+  the new early guard and the pre-existing (now defensive, unreachable via
+  the main flow) check inside `cleanup_remote_implementation_branch()`, so the
+  message text can't drift between the two call sites. The early guard exits
+  with status 64, this script's usage-error convention shared by every other
+  argument-validation check, rather than the incidental status 1 that used to
+  result from `set -e` propagating the deep check's generic `return 1`. A
+  planted-violation proof (both directions, including before/after
+  `git rev-parse HEAD` / `git branch --show-current` / `git for-each-ref` /
+  `git ls-remote` evidence that nothing mutates before the guard fires) and a
+  regression test proving a reverted guard placement turns the suite red are
+  recorded in [PR #1500](https://github.com/lhpaul/ai-dev-framework-template/pull/1500#issuecomment-5335650280).
+- **Reviewer-loop cycle caps now enforced (dual cap)** (#1502):
+  `pr-review-loop.sh` previously had no code path that could ever trip
+  Protocol 93's documented hard cycle cap ("a hard limit independent of
+  finding counts") — PR #1492 in this repository reached 18 reviewer-loop
+  cycles against a documented cap of 10 with no escalation. The script now
+  enforces **two independent caps**, per operator decision recorded on PR
+  #1507's review: a **per-run cap** (`CYCLE_COUNT`/`MAX_CYCLES`, default 10)
+  that resets to 0 at each orchestration-run boundary — conforming verbatim
+  to `91-orchestrate-work-protocol.md:1719` ("Initialize `cycle = 0` once
+  per orchestration run ... escalate when the run reaches `max_cycles`") —
+  and a **lifetime ceiling** (`TOTAL_CYCLE_COUNT`/`MAX_TOTAL_CYCLES`, default
+  25) that never resets and counts across the PR's entire review-loop
+  lifetime, as the structural backstop for a PR resumed across many
+  separate orchestration runs (a per-run-only cap would give such a PR a
+  fresh budget every run, which is exactly the "runs until someone
+  notices" failure this issue exists to end). Both caps read the persisted
+  `reviewer_loop_history.v1` ledger, counting only the DISTINCT (HEAD SHA,
+  result) pairs among prior entries whose result is `needs_fixes` or
+  `needs_rerun` — the entries that actually trigger a fixer dispatch,
+  deduped so a restarted runner or a duplicate review invocation with no
+  progress (same HEAD SHA, same result) cannot exhaust either budget
+  without a real fix ever being applied, while still counting a
+  `needs_rerun` entry immediately followed by a `needs_fixes` entry on the
+  *same* resulting HEAD SHA as two distinct dispatches rather than
+  incorrectly merging them (a completed auto-fix cycle and a different,
+  newly-found issue on that state are not the same event).
+  Each ledger entry now also carries an optional `run_id` field (an
+  additive, non-breaking change — no schema version bump), resolved once
+  per invocation from the new `PR_REVIEW_LOOP_RUN_ID` env var (or a freshly
+  generated per-invocation id when unset) and threaded through to scope the
+  per-run count; entries written before this field existed are counted
+  toward the lifetime cap but can never satisfy a per-run query, so an
+  older PR's history does not get artificially reset. Neither cap resets on
+  a HEAD SHA change alone — the counters are cumulative within their
+  respective scope, matching the exact failure pattern that motivated this
+  fix, where nearly every cycle produces a new commit. A "clean" result is
+  never overridden, and the inline-fix retry lane is bounded by the same
+  counters as sub-agent-dispatched retries, with no separate logic needed.
+  Exits `RESULT=escalate` / `REASON=max_cycles_exceeded` when the per-run
+  cap is reached, or the distinct `REASON=max_total_cycles_exceeded` when
+  only the lifetime ceiling is reached, so an operator can tell "one run ran
+  away" apart from "many runs cumulatively ran away". Both limits are
+  configurable via `PR_REVIEW_LOOP_MAX_CYCLES`/`review.max_cycles` and
+  `PR_REVIEW_LOOP_MAX_TOTAL_CYCLES`/`review.max_total_cycles` in
+  `.ai-dev-workflow.yaml`. The current counts and configured limits are
+  emitted as `RUN_ID`/`CYCLE_COUNT`/`MAX_CYCLES`/`TOTAL_CYCLE_COUNT`/
+  `MAX_TOTAL_CYCLES` in the script's key=value output on every invocation.
+  The ledger fetch retries once on a transient GitHub API failure before
+  giving up; if the ledger still cannot be read reliably, the script fails
+  closed and exits `RESULT=escalate` / `REASON=cycle_count_unavailable`
+  (rather than silently disabling both backstops for that PR indefinitely)
+  whenever the loop would otherwise still report `needs_fixes` or
+  `needs_rerun`, matching this script's existing fail-closed convention for
+  other safety-critical audits (e.g. the unresolved-review-thread check).
+  Two further gaps in that fail-closed guarantee, found in later review of
+  the same PR, are also closed: (1) cycle counting now uses a dedicated
+  selector that reads the newest summary comment's own history status
+  (rather than a render-only selector that intentionally falls back to an
+  older "available" snapshot), so a genuinely unreadable newest ledger
+  state can no longer resolve to a stale, silently under-counted prior
+  count; and (2) if this cycle's own ledger entry cannot be persisted at
+  all (both the comment update and the create-fallback fail) for a
+  dispatch-triggering result, the script now escalates with the distinct
+  `REASON=ledger_persist_failed` instead of letting an uncounted fixer
+  dispatch happen, and a failed/empty HEAD SHA lookup while building a
+  ledger entry now falls back to a guaranteed-unique synthetic identifier
+  instead of an empty one (an empty HEAD SHA was excluded from both cap
+  counts by design, which a persistent lookup failure could otherwise
+  exploit to grant unlimited uncounted dispatches). Three smaller gaps
+  found in the same review round are also closed: the ledger-fetch retry
+  count (`CYCLE_LEDGER_MAX_RETRIES`) and retry wait
+  (`CYCLE_LEDGER_RETRY_WAIT`) are now bounded the same way as the two
+  cycle-cap variables, since an unbounded value could exceed Bash's signed
+  integer range and make the retry loop's own give-up comparison silently
+  evaluate as false forever instead of failing closed; `REASON=ledger_
+  persist_failed` now also fires when only the pre-write READ of the
+  existing summary comment fails (even if the subsequent write itself
+  succeeds): a read failure previously made the write fall back to posting
+  an "unavailable" stub that silently drops this cycle's own entry (an
+  unavailable-history existing body is never appended onto), so a dispatch
+  could complete, get reported to the caller, and then vanish from both
+  cap counters on the very next successful invocation; and the script's
+  tail was restructured so `_post_review_summary` (and any `ledger_
+  persist_failed` correction it triggers) now runs BEFORE `RESULT=`/
+  `REASON=` and the `--compare`-mode metrics row are ever emitted, instead
+  of after — the previous design printed a second, corrected `RESULT=`
+  line following the original one and relied on an assumed "last line
+  wins" parsing convention that the script's own `kv_value` helper does not
+  actually follow (it returns the *first* matching key), so a caller using
+  that same convention would have read the stale, pre-correction `RESULT=`
+  and could still dispatch another fixer despite the script exiting
+  escalated. Exactly one `RESULT=`/`REASON=` pair, and one compare-mode
+  metrics row, are now emitted per invocation, valid under either parsing
+  convention.
+- **Backlog item Priority was silently never set**: `update_tracker_priority_best_effort`
+  in `workflow-lib.sh` rewrote `Medium` — the board's actual Priority field
+  option — into `Normal`, a value that does not exist on the board, so the
+  mutation could never resolve; the inverted alias is removed, and
+  `add-backlog-item.sh`'s implicit default (used whenever `--priority` is
+  omitted) changes from the nonexistent `Normal` to `Medium`. Priority
+  resolution already read the project's actual field options dynamically
+  (no hardcoded value list to fix there). A requested priority that still
+  cannot be resolved against the board's real options is now a hard error
+  (non-zero exit, `Error:`-prefixed message) instead of a fail-open
+  `Warning:` that let the item get created with no priority at all; this
+  applies narrowly to the Priority field via a new opt-in `required` mode
+  on `update_tracker_named_field_best_effort` — the Type and Size helpers,
+  and cases where the tracker provider or project genuinely does not apply,
+  remain best-effort as before. `add-backlog-item.sh` now validates an
+  explicit `--priority` against the board's real Priority field options via
+  the new no-mutation `workflow_tracker_priority_resolvable` check
+  **before** calling `gh issue create`, so an unresolvable explicit value is
+  rejected without ever creating the issue (exit 1) — closing a
+  partial-success window where the post-creation required update could
+  otherwise fail after the issue already existed, which a caller retrying
+  on non-zero exit without inspecting stdout could turn into duplicate
+  issues. The rarer failure modes the
+  pre-check cannot see (issue unexpectedly missing from the board, a
+  transient GraphQL write failure) still surface after issue creation but
+  now exit with a distinct code (`5`) and an explicit "issue was already
+  created, do not retry" message instead of a generic failure. The
+  implicit **default** (used when `--priority` is omitted) is no longer a
+  single hardcoded literal either: the new `workflow_tracker_default_priority_value`
+  adapts to whatever the configured board actually supports — preferring
+  `Medium` (this repo's board), falling back to `Normal` for downstream
+  repos whose board is still set up per the framework's pre-#1501 docs
+  (`github-projects.md` previously told every template consumer to create
+  a `Normal` option), and
+  leaving Priority unset (no error) only when a board's Priority field
+  confirms neither candidate exists — the same way an omitted `--size` or
+  `--type` is left unset. A Priority update failure no longer skips the
+  independent Type/Size updates that follow it in `create_cmd` — every
+  requested field is attempted before
+  the exit-5 partial-success signal is raised. `--priority` help text
+  updated to match, including the new documented exit codes. Protocol 00's
+  Priority inference heuristics now tell agents to **omit** `--priority`
+  for the routine/default case instead of hardcoding `--priority Medium`:
+  an explicit value is validated
+  against the board's real options and hard-fails if absent, so the
+  authoritative example was itself bypassing the adaptive default it
+  documented, breaking on any board still using `Normal`. `Urgent`,
+  `High`, and `Low` are unaffected — those literals are common to both the
+  current and legacy board vocabularies. `README.md` and Protocol 90's
+  abstract Priority ordering rules and summary templates now list
+  `Normal/Medium` as an equal-rank pair
+  instead of only `Normal`, matching `workflow-batch-overlap.sh`'s existing
+  `PRIORITY_RANK` table (which already ranked both names equally) — a real
+  board can now literally carry a `Medium` Priority value after this fix,
+  and the framework's own prioritization docs previously had no rule for it.
+  Live reproduction on the real board (see issue #1501) showed `High`
+  already worked correctly and the alias/default were the whole defect —
+  no separate `High` resolution bug exists.
+- **Multi-repository release tooling hardening**: the prepare-release
+  protocol now documents a one-PR flow for product repositories whose
+  resolved release base is `main` — the previous two-PR instructions could
+  not be followed for that configuration, since the production and backport
+  PRs would need identical head and base branches.
+  `delivery-bundle-manifest.sh` now rejects `add-component`/`update-component`
+  calls whose `--component-key` does not match the evidence file's
+  `selected_product_repo_key`, instead of silently binding mismatched
+  evidence into the wrong component slot.
+  `component-milestone-reconciliation.sh`'s `inspect-parent`/`apply-parent`
+  now validate that `--parent-issue` matches the delivery manifest's
+  `parent_ref` before evaluating component readiness, instead of allowing an
+  unrelated issue to be recorded as released.
+  `component-release-target.sh` now verifies the resolved product repository
+  checkout directory actually exists on disk before reporting
+  `mutation_allowed=true`, instead of trusting an unreachable configured
+  `local_path`.
+  `workflow-config-resolver.py`'s branch-name validation now applies git's
+  ref-format component rules (no leading dot, no trailing dot, no `.lock`
+  suffix) in addition to the existing character allowlist, so names such as
+  `release/v1.2.3.lock` or `release/v1.2.3.` are rejected instead of accepted
+  as portable branch names.
+  `component-milestone-reconciliation.sh apply-component`/`inspect-component`
+  now accept `--hub-tracker-reconciliation-outcome` and `--child-release-state`
+  as explicit flags (mirroring `delivery-bundle-manifest.sh`'s existing
+  flags) and treat a schema-correct evidence file with no `evidence_state` as
+  verified, instead of requiring three fields the evidence producer,
+  `component-release-evidence.sh`, never emits — the documented
+  producer-to-consumer handoff between those two scripts could not
+  previously complete.
+  `delivery-bundle-manifest.sh update-component` now rejects a
+  `component_tag`/`component_version` change for an already-accepted
+  component when the `release_pr` is unchanged, instead of silently
+  overwriting the accepted release composition; a different `release_pr`
+  still accepts a new tag/version as the documented re-tag/re-release flow.
+  `workflow-next-action.sh --pr` in `workflow_hub` mode now reads the PR's
+  branch name before classifying it, instead of after, so hub-only spec,
+  plan, and hub-owned implementation PRs resolve directly instead of always
+  requiring a product-repository selection.
+  `prepare-release-post-merge-cleanup.sh` now validates a resolved product
+  checkout and locates its cleanup lock directory with
+  `git rev-parse --is-inside-work-tree`/`--git-dir` instead of a bare
+  `.git`-is-a-directory test, so a linked git worktree checkout (whose
+  `.git` is a file, not a directory) is recognized instead of rejected.
+  `component-release-target.sh` now accepts an optional `--release-branch`
+  flag and folds it into `release_correlation_key`, so two release attempts
+  for the same product and unchanged contract (for example `v1.2.3` and a
+  later `v1.2.4`) get distinct correlation keys instead of colliding on the
+  same key and conflating separate releases in cleanup locking, conflict
+  detection, and audit records; `prepare-release-post-merge-cleanup.sh` and
+  the prepare-release protocol now pass it once the release branch is known,
+  so re-resolution at cleanup time reproduces the same key.
+  `component-release-evidence.sh` now rejects a `--release-branch` that does
+  not match the target binding's `release_branch_pattern` (for example an
+  unrelated branch such as `totally/wrong`) instead of accepting any
+  syntactically valid branch name, and now accepts an optional
+  `--component-tag` flag so rendered evidence can bind a component tag.
+  `component-milestone-reconciliation.sh` now requires evidence to bind a
+  matching `component_tag` before treating a component as released, instead
+  of treating a missing evidence tag as a match for any caller-supplied
+  `--component-tag` — closing a gap where `apply-component` could stamp an
+  arbitrary, unverified release milestone.
+  `workflow-next-action.sh --pr` in `workflow_hub` mode now gates the
+  implementation-only repository-routing preflight on the branch actually
+  being an implementation branch, instead of running it unconditionally, so
+  spec and plan PRs (and other hub-owned, non-implementation branches)
+  resolve directly instead of always requiring a product-repository
+  selection.
+  `multi-repo-release-assurance.sh` now validates that required evidence
+  values match the established format for the artifact they claim to
+  represent (a component/delivery-bundle schema string, a `sha256:`-prefixed
+  contract revision, a product repository key, a GitHub `owner/repo` slug,
+  or a `<product-repo>@<component-tag>` milestone title) instead of only
+  checking that the value is non-empty, so fabricated evidence such as
+  `release_contract:"garbage"` is rejected instead of producing
+  `adoption_status:"validated"`.
+  `delivery-bundle-manifest.sh update-component` now requires evidence to
+  bind a matching `component_tag` before accepting it, the same fix applied
+  to `component-milestone-reconciliation.sh` in the prior fix, closing the
+  same gap in this second consumer; `create` now rejects a repeated
+  `--component` instead of silently writing duplicate component entries
+  that `update-component` could only ever update the first of.
+  `prepare-release-post-merge-cleanup.sh` now emits its documented
+  structured `--json` summary on every component-release cleanup run
+  (previously only the already-complete shortcut path did), routing
+  progress output to stderr so it cannot corrupt the JSON on stdout; and
+  its per-release cleanup lock is now keyed under the hub checkout's git
+  directory instead of the product checkout's, so two cleanup runs that
+  resolve the product repository to different local checkouts of the same
+  hub no longer both proceed for the same release.
+- **`run-work-router.sh` no longer treats a `gh` probe failure as "target not
+  found"** (#1503): `resolve_token()` probed `gh pr view`/`gh issue view` with
+  `2>/dev/null || true` and treated any empty result as unresolved, so a rate
+  limit, auth failure, network error, or GitHub outage was indistinguishable
+  from the target genuinely not existing — both produced `MODE=ambiguous`,
+  which every bounded command (`/run-item`, `/run-items`, `/run-epic`) treats
+  as a hard stop with a misdirecting reason. Live reproduction: `/run-items
+  1502 1501` stopped reporting both issues unresolvable immediately after a
+  `/run-work` scan exhausted the hourly GraphQL quota, even though both were
+  open and had resolved successfully minutes earlier. `resolve_token()` now
+  captures each probe's stdout, stderr, and exit code separately (`gh_probe`)
+  and classifies a non-zero exit's stderr (`classify_gh_probe_error`) into
+  `rate_limited`, `auth_failed`, `network_error`, or `github_unavailable`
+  before falling back to `not_found` for gh's own "could not resolve to a
+  PullRequest/Issue" message, or for an empty stderr **only** when the exit
+  code is gh's normal API-error code (`1`) — preserving current behavior for
+  a genuine not-found while an empty stderr at any other exit code (a
+  signal death, an OOM kill) still falls back to `github_unavailable`
+  instead of being silently treated as not-found. gh's own "no default
+  remote repository has been set" message (a local repo-configuration
+  error, not evidence the target doesn't exist) is likewise never
+  classified as `not_found`, and gets its own `local_config_error`
+  classification distinct from `github_unavailable` since the operator fix
+  is running `gh repo set-default` locally, not waiting out an outage.
+  `gh_probe()` also now guards its own
+  temp-file setup and stderr capture: a failing `mktemp` or `cat` reports a
+  diagnostic `PROBE_ERR` at a dedicated internal exit code instead of
+  silently producing an empty stderr that could otherwise be misread as a
+  not-found. A probe failure now stops with the distinct
+  `MODE=tracker_unavailable` (not `ambiguous`) and a `STOP_REASON` naming the
+  cause; a rate-limited probe additionally reports the GraphQL quota reset
+  time from `gh api rate_limit` when available.
+  `docs/workflow/development-workflow/protocols/96-run-work-routing-protocol.md`
+  (the canonical routing specification) is updated to document the new
+  `tracker_unavailable` mode, its decision-table row, edge cases, and handoff
+  mapping (routing layer version 1.0 → 1.1).
+- **`item-completion-self-check.sh` no longer reports an indistinguishable
+  false discrepancy when the caller's `--worktree-path` is the main clone
+  (or the wrong sibling worktree)** (#1333): when `--worktree-path` resolves
+  to a path other than the item's actual worktree, `repository.branch`
+  reported a generic `discrepancy` (`HEAD` was the trunk branch checked out
+  in the main clone rather than the item branch) that looked identical to
+  genuine branch contamination — a downstream 5-sub-item epic run hit this
+  in every runner completion report and had to be manually triaged. The
+  script now also inspects `git worktree list --porcelain` (which enumerates
+  every linked worktree regardless of which one it is invoked from) for the
+  path where the expected branch is actually checked out. When that path
+  differs from the supplied `--worktree-path`, a new, distinct
+  `caller.worktree_path` diagnostic row is added alongside the existing
+  `repository.branch` row, naming the actual worktree path and the correct
+  `--worktree-path` to re-run with. This is strictly additive: the
+  pre-existing `repository.branch`/`workspace.worktrees` rows and their
+  `discrepancy` outcome are unchanged, so a genuine contamination case
+  (the expected branch not checked out anywhere) still reports a plain,
+  unexplained discrepancy with no caller-error row and no change to the
+  non-zero exit code.
+- **`graduation-closeout.sh` no longer refuses nested graduation PRs** (#1513):
+  the graduation PR base-branch validation hard-coded `develop` as the only
+  acceptable base, so a nested integration lineage (e.g. a wave branch
+  `develop-ventas-e3b` graduating into a module branch
+  `develop-sales-module` rather than directly into `develop`) failed
+  closeout even though that base is correct for that layer — reproduced
+  downstream on `mome-cl/mome-platform` PR #2138. A new `--base <branch>`
+  flag (default `develop`, matching `batch-merge.sh`'s existing `--base`
+  convention) lets the operator declare the expected graduation base; the
+  script still fails closed with a clear error when the PR's actual base
+  does not match, and rejects an arbitrary non-integration-branch `--base`
+  value (anything other than `develop` or `develop-*`) up front regardless
+  of what the graduation PR happens to target. The sub-item closing comment
+  no longer hard-codes "to `develop`" either, and the summary output now
+  reports `GRADUATION_BASE`. `graduation-closeout-from-merged-pr.sh` (the
+  merge-time automation fallback invoked by
+  `.github/workflows/update-tracker-on-merge.yml`) intentionally keeps its
+  own `develop`-only check: that workflow only triggers on PRs targeting
+  `develop`, so a nested-base graduation can never reach it regardless, and
+  Step 5 of `docs/workflow/development-workflow/protocols/05b-graduate-development-protocol.md`
+  is the primary closeout path for nested graduations — invoked manually
+  with `--base`. This issue is distinct from #1329 (documentation of
+  `/run-epic --base`, the per-sub-item-PR integration base) and does not
+  attempt to resolve it; #1329 remains open. 8 new regression tests cover
+  the default `develop` base (confirmed unaffected), a matching non-default
+  base, a mismatched non-default base, and an invalid `--base` value
+  (confirmed to fail against the pre-fix script).
+- **`test-item-completion-self-check.sh` no longer reads this repository's
+  live reviewer configuration** (#1549): the suite's mock review threads and
+  CI checks are authored as `cursor` / `Cursor Bugbot` — bugbot's bot login
+  and check name — but `bugbot` was not present in
+  `review.on_draft.github` / `review.on_ready.github`, so eight
+  thread-detection assertions (unresolved-thread, REST-unreplied-thread,
+  graph/REST same-thread dedup, and paginated-thread detection — two
+  assertions each) and four CI-check-exclusion assertions silently went
+  inert: the script correctly ignored threads/checks from an unconfigured
+  platform, exited 0, and every test expecting exit 1 failed — 12 of 81
+  assertions, entirely a function of which platforms this repository happens
+  to commit. Each affected test now pins a `review:` config with `bugbot`
+  configured for the duration of its call via `AI_DEV_WORKFLOW_CONFIG_FILE`
+  — a shared fixture file, since the content is identical across tests —
+  rather than re-pinning the coupling to a different platform: the seam
+  `configured_review_platforms()` already honors, and the same pattern
+  already used by `non_thread_platform_logins`/`no_thread_bot_logins`. The
+  suite now passes 99/99 (the fix also added regression coverage) and was
+  re-verified clean under three independent reviewer configurations: this
+  checkout's local override (`pr-agent`/`coderabbit`), an unrelated platform
+  set (`coderabbit`/`codex-github`), and an explicitly empty one. Two new
+  regression tests guard the coupling from returning: the same
+  unresolved-thread fixture still detects under an unrelated platform set
+  that also configures `bugbot`, and no longer detects (unavailable_required)
+  under an explicitly empty config — proving detection tracks `bugbot`'s
+  presence rather than being hardcoded. The eight thread-detection
+  assertions were confirmed to genuinely exercise detection by temporarily
+  forcing the graph and REST thread-counting `jq` filters to always report
+  zero and re-running the suite: all eight (plus the new alt-config
+  regression test) failed loudly as expected, then the change was reverted.
+- **`PR_HAS_CHANGELOG` and sibling label checks in `batch-merge.sh` were
+  flaky under `pipefail`** (#1516): `discover`'s `PR_HAS_CHANGELOG`,
+  `PR_READY_LABEL`, `PR_HAS_NEEDS_FIXES`, and `PR_HAS_HUMAN_CHECKPOINT`
+  checks used a `producer | grep -q needle` shape. `grep -q` exits as soon
+  as it finds its first match, closing the pipe while the producer (`gh pr
+  diff` or `jq`) may still be writing — killing the producer with `SIGPIPE`
+  and, under `set -o pipefail`, making the pipeline report failure even
+  though `grep` itself found a match. The result was a false negative that
+  only reproduced when the producer still had output queued at the moment
+  `grep -q` exited, which is why it surfaced as an intermittent
+  `PR_HAS_CHANGELOG=false` on a PR that unambiguously touched
+  `CHANGELOG.md` (observed live on PR #1507). All four call sites now
+  capture the producer's full output into a variable first — a `$(...)`
+  command substitution always drains its command to completion, so nothing
+  downstream can close its pipe early — then match with pure bash (`case`
+  pattern matching), which uses no subprocess and no pipe on the matching
+  side, so it cannot reintroduce the race regardless of payload size. A
+  genuine `gh pr diff` failure is now also distinguished from "CHANGELOG.md
+  legitimately not in the diff" (a `WARNING:` diagnostic is emitted) instead of
+  both collapsing to `PR_HAS_CHANGELOG=false` indistinguishably. That
+  diagnostic is written to a dedicated fd 3 (a duplicate of the script's real
+  stderr, opened before `cmd_discover`'s local `meta="$(fetch_pr_meta "$pr_num"
+  2>&1)"` capture exists) instead of fd 2, so it can no longer be swept into
+  that capture and re-emitted on real stdout inside a discovery candidate
+  block — a `KEY=VALUE`-only contract violation caught in review on PR #1536.
+  `cmd_delete_branch`'s case-insensitive `push_err` classification
+  (`printf | grep -qi`) was audited under the same shape and switched to
+  `tr` + a pure-bash substring match; `tr` always drains its input to EOF
+  rather than exiting early, so it was not actually racy, but the change
+  keeps every producer-into-consumer match in this script off the
+  `| grep -q` pattern. New regression coverage in
+  `scripts/development-workflow/tests/test-batch-merge-changelog-race.sh`
+  reproduces the underlying SIGPIPE race in isolation (an `awk`-generated
+  producer with no pipe of its own — so its only possible failure is the
+  actual race under test, not an unrelated `yes | head` pipefail quirk —
+  forced to still have ~1 MB queued when `grep -q` exits: 10/10 reproducible
+  in local and CI runs) and exercises the real `batch-merge.sh
+  discover`/`delete-branch` commands against the same kind of adversarial,
+  oversized `gh` mock payload across repeated runs, including a stdout/stderr
+  separation check for the fd 3 fix, to confirm the fix holds.
+
 ## [0.42.0] - 2026-08-13
 
 ### Added
 
+- **Codex GitHub as the default ready-phase reviewer**: `review.on_ready.github`
+  now defaults to `codex-github` instead of the CodeRabbit GitHub App. CodeRabbit
+  remains supported as an explicit opt-in reviewer, but is no longer a default
+  readiness gate because vendor rate limits/spending caps can block otherwise
+  clean PRs.
 - **Security-sensitive advisory findings require human decisions** (#1432):
   delegated merge now blocks on workflow-surface advisory findings involving
   auth bypasses, secret exposure, unsafe git operations, injection risk, or
@@ -1404,7 +3049,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.39.0...v0.40.0

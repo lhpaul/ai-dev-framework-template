@@ -543,7 +543,7 @@ if ! jq -c \
     | .title // empty
   ] | first) as $resolvedTitle |
   def bool_text($value): if $value then "true" else "false" end;
-  def source_line($label; $value): "- " + $label + ": " + ($value | tostring);
+  def source_line($labelText; $value): "- " + $labelText + ": " + ($value | tostring);
   def checkpoint_line:
     "- #" + (.item_number | tostring) + " "
     + ((.stage // "stage") | tostring) + "/" + ((.domain // "domain") | tostring)

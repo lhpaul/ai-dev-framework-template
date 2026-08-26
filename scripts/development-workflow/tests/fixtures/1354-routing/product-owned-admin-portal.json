@@ -1,0 +1,7 @@
+{
+  "repository_mode": "workflow_hub",
+  "stage": "implementation",
+  "item_identifier": "1354-admin-child",
+  "hub_only": false,
+  "selected_product_repo_keys": ["admin-portal"]
+}

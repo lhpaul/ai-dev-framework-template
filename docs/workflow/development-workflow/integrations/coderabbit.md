@@ -93,16 +93,24 @@ found no issues."
 
 To enable CodeRabbit as a Step 7 automated PR reviewer platform:
 
-1. Set `reviews.auto_review.enabled: true` in `.coderabbit.yaml`
-2. Add `coderabbit` to `review.on_draft.github` or `review.on_ready.github` in `.ai-dev-workflow.yaml`
-3. Install the CodeRabbit GitHub App on the repository
+1. Install the CodeRabbit GitHub App on the repository.
+2. Set `reviews.auto_review.enabled: true` in `.coderabbit.yaml`.
+3. Add `coderabbit` to `review.on_draft.github` or `review.on_ready.github` in `.ai-dev-workflow.yaml`.
 
 The `coderabbit` App platform remains separate from `coderabbit-cli`. It uses
 the `coderabbitai[bot]` review/comment evidence path described below.
 
-This template repository uses this mode for ready-phase PR review: CodeRabbit
-auto-review is enabled for non-draft PRs targeting `develop`, and
-`.ai-dev-workflow.yaml` lists `coderabbit` under `review.on_ready.github`.
+CodeRabbit is an opt-in reviewer in this template repository. Auto-review is
+disabled in the template default so the App does not review every PR or consume
+review quota unless the repository explicitly opts in with both configuration
+changes above.
+
+When several PRs are queued, trigger CodeRabbit one PR at a time. CodeRabbit's
+included allowance is based on trigger attempts, and parallel `@coderabbitai`
+requests can spend the same hourly quota without producing additional reviews.
+The reviewer loop reports `CODERABBIT_TRIGGER_ATTEMPTS` and
+`CODERABBIT_REVIEWS_RECEIVED` so the attempt-to-review ratio is visible in the
+run summary.
 
 ---
 
@@ -173,7 +181,7 @@ If either check fails, `coderabbit` is classified as `unreachable`. The configur
 
 ### 1. Install the CodeRabbit GitHub App
 
-Go to [coderabbit.ai](https://www.coderabbit.ai) and install the GitHub App on your repository. Enable auto-review so CodeRabbit automatically reviews PRs when code is pushed.
+Go to [coderabbit.ai](https://www.coderabbit.ai) and install the GitHub App on your repository.
 
 ### 2. Enable auto-review in `.coderabbit.yaml`
 
@@ -181,7 +189,27 @@ Go to [coderabbit.ai](https://www.coderabbit.ai) and install the GitHub App on y
 reviews:
   auto_review:
     enabled: true
+    # true only if you list coderabbit in review.on_draft.github
+    drafts: false
+    # must include every base branch your PRs target, including develop-<slug>
+    base_branches:
+      - develop
+      - develop-.*
+    # 1 makes CodeRabbit pause after each reviewer-loop fix commit
+    auto_pause_after_reviewed_commits: 10
 ```
+
+`.coderabbit.yaml` must agree with the lifecycle bucket you pick in step 3. CodeRabbit declines to review — and posts a **"Review skipped" banner** instead — in three configurations that are easy to create unintentionally:
+
+| Configuration                                                       | When it bites                                                    |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `auto_review.enabled: false`                                        | Every PR. This is the template's shipped default.                |
+| `auto_review.drafts: false` with `coderabbit` in `on_draft.github`  | Every draft PR, i.e. the entire draft gate.                      |
+| `auto_review.base_branches` missing the PR's base                   | Sub-item PRs into a `develop-<slug>` integration branch.         |
+
+`pr-review-loop.sh` treats that banner as **no review**, not as a completed review: it keeps polling, posts an explicit `@coderabbitai review` nudge (which works even when auto review is off), and if the banner is still standing when the poll window closes it exits `RESULT=escalate` with `REASON=review_skipped_banner`. That reason string is deliberately distinct from `rate_limit_max_retries` — it means "fix `.coderabbit.yaml`", not "wait for vendor quota".
+
+`auto_pause_after_reviewed_commits` deserves its own attention. It pauses auto review once that many reviewed commits arrive without human interaction. At `1`, every reviewer-loop fix commit trips the pause banner and costs a full poll cycle while the loop posts `@coderabbitai resume`. Convergence routinely takes several fix rounds, so set the cap above a normal round count.
 
 ### 3. Add to `.ai-dev-workflow.yaml`
 
@@ -192,9 +220,17 @@ review:
       - coderabbit
 ```
 
-### 4. Verify Auto-Review Is Active
+Use `on_ready.github` instead when CodeRabbit should review the finished PR rather than the draft. That is the cheaper placement against an hourly quota: draft revisions are still moving, so reviewing them spends quota on code that is about to change.
 
-Push a commit to an open PR and confirm that CodeRabbit posts review comments. The bot posts as `coderabbitai[bot]`.
+### 4. Verify Auto-Review Is Active and Configured in the Workflow
+
+Push a commit to an open PR and confirm that CodeRabbit posts review comments. The bot posts as `coderabbitai[bot]`. CodeRabbit should also be listed in `.ai-dev-workflow.yaml`; otherwise the App may post findings that the workflow loop does not wait for.
+
+If the first comment CodeRabbit posts is a "Review skipped" banner rather than a walkthrough, the App is installed correctly but the configuration in step 2 does not cover this PR — re-check it against the table above before assuming the integration is broken.
+
+### 5. Size the rate-limit tolerance for your plan
+
+CodeRabbit's quota resets on an **hourly** boundary. The loop waits `CODERABBIT_RATE_LIMIT_WAIT` seconds (default `900`) and retries up to `CODERABBIT_RATE_LIMIT_MAX_RETRIES` times (default `4`), so the shipped defaults cover a full 60-minute reset window before escalating. Lower them only if you would rather escalate quickly than wait; raising them past an hour buys nothing, since a quota that has not reset in an hour indicates a spending cap rather than a rate limit.
 
 ---
 
@@ -218,7 +254,9 @@ CodeRabbit posts as `coderabbitai[bot]`. Use this login to filter its comments a
 
 ### Step 7.1 — Trigger a re-review
 
-**No trigger needed.** CodeRabbit auto-reviews on every push when `auto_review.enabled` is `true` in `.coderabbit.yaml`. There is no trigger comment and therefore no `REVIEW_COMMENT_ID`.
+**No routine trigger needed.** CodeRabbit auto-reviews on every push when `auto_review.enabled` is `true` in `.coderabbit.yaml`, so the normal path posts nothing and there is no `REVIEW_COMMENT_ID`.
+
+The helper does post one **conditional** trigger. When no CodeRabbit activity has appeared after `CODERABBIT_NO_TRIGGER_TIMEOUT` seconds — because CodeRabbit stayed silent after a push, or because it declined with a `Review skipped` banner — the loop posts `@coderabbitai review`, which works even when auto review is disabled. This is bounded by `CODERABBIT_RATE_LIMIT_MAX_RETRIES`, shared with the rate-limit retry path so there is a single knob for total nudge attempts. A separate `@coderabbitai resume` is posted for the pause banner.
 
 ### Step 7.2 — Detect review completion
 
@@ -228,10 +266,14 @@ The helper script checks for a CodeRabbit review on each poll iteration. If a re
 
 As a secondary signal, the script also checks for CodeRabbit issue comments (e.g., the PR summary comment) as an **activity indicator** — this is used only to distinguish "CodeRabbit is active but hasn't finished" from "CodeRabbit didn't review this HEAD at all" when the timeout is reached.
 
+Four kinds of CodeRabbit comment are explicitly **excluded** from that activity signal, because each one is CodeRabbit announcing that it did *not* review: the `Reviews paused` banner, a `rate limit` notice, a `Reviews resumed` acknowledgement, and the `Review skipped` banner (`CODERABBIT_SKIP_BANNER_RE`, which keys on the `skip review by coderabbit.ai` HTML marker and the banner's markdown heading rather than a bare "review skipped" substring, so a walkthrough using that phrase in prose is not mistaken for a banner). Counting any of them as activity would break the poll loop into Phase 3, which would then collect zero inline comments and report the PR clean.
+
 | Result                                                     | Action                                                          |
 | ---------------------------------------------------------- | --------------------------------------------------------------- |
 | CodeRabbit review found after HEAD commit                  | Review complete — proceed to Step 7.3                           |
 | No review yet and `elapsed < max_wait`                     | Not finished yet — wait another `poll_interval` and poll again  |
+| `elapsed >= max_wait` and only a `Review skipped` banner   | Escalate — `REASON=review_skipped_banner` (fix `.coderabbit.yaml`) |
+| `elapsed >= max_wait` and a pause or rate-limit banner     | Escalate — `REASON=rate_limit_max_retries`                      |
 | `elapsed >= max_wait` and no CodeRabbit activity detected  | Stale findings recovery, then skip as `no_review` if none found |
 | `elapsed >= max_wait` and CodeRabbit activity was detected | Timeout — escalate to human                                     |
 

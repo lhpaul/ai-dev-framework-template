@@ -2,6 +2,14 @@
 # test-workflow-hub-smoke-fixtures.sh - non-secret workflow-hub smoke coverage.
 #
 # Usage: bash scripts/development-workflow/tests/test-workflow-hub-smoke-fixtures.sh [--live-github-app]
+# covers: scripts/development-workflow/hub-*.sh
+# covers: scripts/development-workflow/open-product-pr.sh
+# covers: scripts/development-workflow/select-sync-manifest-entries.py
+# covers: scripts/development-workflow/validate-workflow-hub-skeletons.py
+# covers: scripts/development-workflow/work-item-repository-routing.py
+# covers: scripts/development-workflow/workflow-config-resolver.py
+# covers: scripts/development-workflow/workflow-next-action.sh
+# covers: sync-manifest.yaml
 
 set -euo pipefail
 
@@ -13,6 +21,8 @@ STATUS_CMD="$REPO_ROOT/scripts/development-workflow/hub-status.sh"
 SYNC_CMD="$REPO_ROOT/scripts/development-workflow/hub-sync-product-repos.sh"
 PR_CMD="$REPO_ROOT/scripts/development-workflow/open-product-pr.sh"
 NEXT_ACTION_CMD="$REPO_ROOT/scripts/development-workflow/workflow-next-action.sh"
+ROUTING_CMD="$REPO_ROOT/scripts/development-workflow/work-item-repository-routing.py"
+ROUTING_FIXTURE_ROOT="$SCRIPT_DIR/fixtures/1354-routing"
 VALIDATOR="$REPO_ROOT/scripts/development-workflow/validate-workflow-hub-skeletons.py"
 SYNC_SELECTOR="$REPO_ROOT/scripts/development-workflow/select-sync-manifest-entries.py"
 
@@ -257,6 +267,39 @@ run_fails_contains \
   "fixture_unknown_repo_fails" \
   "no workflow_hub.product_repos entry named 'unknown-app'" \
   python3 "$RESOLVER" resolve --repo-root "$hub_dir" --repo unknown-app
+
+echo ""
+echo "=== routing_fixture: one-target classifier contract ==="
+
+routing_config="$ROUTING_FIXTURE_ROOT/config-workflow-hub.json"
+product_routing="$(
+  python3 "$ROUTING_CMD" \
+    --config "$routing_config" \
+    --fixture "$ROUTING_FIXTURE_ROOT/product-owned.json" \
+    --json
+)"
+run_equals "routing_fixture_product_owned" "product_owned" "$(jq -r '.outcome_code' <<< "$product_routing")"
+run_equals "routing_fixture_product_continue" "true" "$(jq -r '.continue_allowed' <<< "$product_routing")"
+run_equals "routing_fixture_selected_key" "mobile-app" "$(jq -r '.selected_product_repo_key' <<< "$product_routing")"
+run_equals "routing_fixture_configured_keys" "admin-portal,mobile-app" "$(jq -r '.configured_product_repo_keys | join(",")' <<< "$product_routing")"
+
+missing_routing="$(
+  python3 "$ROUTING_CMD" \
+    --config "$routing_config" \
+    --fixture "$ROUTING_FIXTURE_ROOT/missing-target.json" \
+    --json
+)"
+run_equals "routing_fixture_missing_target" "missing_target" "$(jq -r '.outcome_code' <<< "$missing_routing")"
+run_equals "routing_fixture_missing_stops" "false" "$(jq -r '.continue_allowed' <<< "$missing_routing")"
+
+multiple_routing="$(
+  python3 "$ROUTING_CMD" \
+    --config "$routing_config" \
+    --fixture "$ROUTING_FIXTURE_ROOT/multiple-targets.json" \
+    --json
+)"
+run_equals "routing_fixture_multiple_targets" "multiple_targets" "$(jq -r '.outcome_code' <<< "$multiple_routing")"
+run_equals "routing_fixture_multiple_stops" "false" "$(jq -r '.continue_allowed' <<< "$multiple_routing")"
 
 tmp_config_hub="$(fixture_dir tmp-config-hub)"
 cp -R "$FIXTURE_ROOT/hub/." "$tmp_config_hub/"

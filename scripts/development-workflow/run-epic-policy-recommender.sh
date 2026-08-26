@@ -217,8 +217,8 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
   def data_model_label_signals($item):
     [
       ($item.labels // [])[]?
-      | tostring as $label
-      | ($label | normalize_signal_label) as $normalized
+      | tostring as $labelText
+      | ($labelText | normalize_signal_label) as $normalized
       | select($normalized | IN(
           "migration",
           "database-migration",
@@ -227,7 +227,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
           "schema-change",
           "data-model-change"
         ))
-      | "label '\''\($label)'\''"
+      | "label '\''\($labelText)'\''"
     ];
   def regex_matches($text; $regex):
     [$text | match($regex; "ig").string];
@@ -329,12 +329,36 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
         error("waived checkpoints require waiver_rationale")
       else .
       end;
+  def security_keyword_regex:
+    "\\b(unauthenticat\\w*|unauthoriz\\w*|authenticat\\w*|authoriz\\w*|security|secrets?|permissions?|credentials?|sensitive|auth)\\b";
+  def matched_regex_terms($text; $regex):
+    [$text | match($regex; "g").string] | stable_unique;
+  def security_signal_details($item):
+    (
+      ($item.title // "") + "\n" +
+      ($item.body // "") + "\n" +
+      (($item.labels // []) | join(" ")) + "\n" +
+      ($item.type // "") + "\n" +
+      ($item.integrationBranchLabel // "")
+    ) as $combined
+    | ($combined | gsub("\r\n"; "\n") | split("\n")) as $lines
+    | [
+        $lines[]
+        | select(length > 0)
+        | . as $line
+        | ($line | ascii_downcase) as $lower
+        | select($lower | test(security_keyword_regex))
+        | matched_regex_terms($lower; security_keyword_regex)[] as $term
+        | ("keyword '\''" + $term + "'\'' in line: \"" + $line + "\"")
+      ]
+    | stable_unique;
   def recommend_checkpoints_for_item($item):
     item_signal_text($item) as $text |
     data_model_signals($item) as $data_model_signals |
+    security_signal_details($item) as $security_signals |
     infer_workflow_stage($item) as $stage |
     acceptance_criteria_problem($item) as $criteria_problem |
-    ($text | test("ambiguous|unclear|\\btbd\\b|open question|unresolved product")) as $unresolved_product_signal |
+    ($text | test("\\bambiguous\\b|\\bunclear\\b|\\btbd\\b|\\bopen question\\b|\\bunresolved product\\b")) as $unresolved_product_signal |
     ($item.number) as $num |
     (
       []
@@ -359,7 +383,7 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
             satisfaction_state: "pending"
           }]
         else . end
-      | if $text | test("trade[- ]?off|architecture.{0,30}product|product.{0,30}technical|ambiguous.{0,40}(architecture|product|technical)") then
+      | if $text | test("\\btrade[- ]?offs?\\b|\\barchitecture\\b.{0,30}\\bproduct\\b|\\bproduct\\b.{0,30}\\btechnical\\b|\\bambiguous\\b.{0,40}\\b(architecture|product|technical)\\b") then
           . + [{
             item_number: $num,
             stage: (if $stage == "spec" then "plan" else $stage end),
@@ -369,12 +393,12 @@ recommendation_json="$(printf '%s\n' "$scope_json" | jq -c \
             satisfaction_state: "pending"
           }]
         else . end
-      | if $text | test("auth|security|secret|permission|credential|sensitive") then
+      | if ($security_signals | length) > 0 then
           . + [{
             item_number: $num,
             stage: "implementation",
             domain: "technical",
-            reason: "issue signals security, auth, or other sensitive implementation changes",
+            reason: ("issue signals security, auth, or other sensitive implementation changes: " + ($security_signals | join("; "))),
             required_human_action: "review security-sensitive implementation approach before delegated merge",
             satisfaction_state: "pending"
           }]

@@ -6,8 +6,10 @@ Platform-specific setup lives in each platform's own integration doc. See:
 
 - [`integrations/bugbot.md`](bugbot.md)
 - [`integrations/claude-code-action.md`](claude-code-action.md)
+- [`integrations/codex-github.md`](codex-github.md)
 - [`integrations/coderabbit.md`](coderabbit.md) for both `coderabbit` and
   `coderabbit-cli`
+- [`integrations/local-ai-reviewer.md`](local-ai-reviewer.md)
 - [`integrations/greptile.md`](greptile.md)
 - [`integrations/devin.md`](devin.md)
 - [`integrations/haystack-triage.md`](haystack-triage.md)
@@ -79,6 +81,11 @@ schema_version: 2
 review:
   on_draft:
     github:
+      # local-ai-reviewer: local-only CLI reviewer. Requires
+      # LOCAL_AI_REVIEWER_COMMAND in the runner environment. Missing command,
+      # credentials, model access, timeout, or malformed output escalates.
+      # Set LOCAL_AI_REVIEWER_DISABLED=1 or override this list locally to skip.
+      - local-ai-reviewer
       - pr-agent
     # claude-code-action: own-key, own-CI reviewer with no per-hour vendor cap.
     # Requires ANTHROPIC_API_KEY secret and .github/workflows/claude-code-review.yml.
@@ -86,10 +93,11 @@ review:
     # - claude-code-action
   on_ready:
     github:
-    # haystack: Haystack triage CLI reviewer. Requires `haystack` CLI installed
-    # and authenticated via `haystack setup`. No GitHub App required.
-    # See integrations/haystack-triage.md for setup instructions.
-      - haystack
+      - bugbot
+    # CodeRabbit remains supported as an opt-in reviewer, but is intentionally
+    # not a default ready-phase gate because vendor rate limits/spending caps
+    # can block otherwise-clean PRs.
+    # - coderabbit
     # coderabbit-cli: CodeRabbit CLI reviewer. Requires `cr` or `coderabbit`
     # installed and authenticated locally. No GitHub App required. Missing CLI
     # or auth emits RESULT=skipped, not clean review evidence.

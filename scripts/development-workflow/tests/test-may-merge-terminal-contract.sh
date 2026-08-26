@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # test-may-merge-terminal-contract.sh - Verify merge terminal wording stays aligned.
+# covers: .claude/agents/*.md .claude/commands/*.md .cursor/agents/*.md
+# covers: .cursor/commands/*.md .codex/skills/** .agents/skills/**
+# covers: docs/workflow/development-workflow/README.md
+# covers: docs/workflow/development-workflow/guardrails-enforcement.md
+# covers: docs/workflow/development-workflow/protocols/*.md
 
 set -euo pipefail
 

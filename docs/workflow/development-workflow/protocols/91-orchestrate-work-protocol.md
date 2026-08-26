@@ -31,6 +31,71 @@ for the full routing specification.
 
 ---
 
+## Execution Discipline: A Paused Turn Does Not Resume
+
+Read this before running any long step.
+
+**Ending a turn ends this agent. Nothing external wakes it back up.** If the
+Work Item Runner starts a long-running step in the background and then ends
+its turn to "wait for the completion notification," it parks permanently —
+not blocked, not escalated, not dead, just structurally unable to ever observe
+its own process finishing. This has happened in production runs: a runner
+backgrounded a step, wrote a calm and accurate progress note ("I'll pause here
+and wait for the background task notification before continuing"), and ended
+its turn. No notification ever reached it, because backgrounded-process
+notifications go to whatever *dispatched* the runner (a parent orchestrator or
+a human), never back to the runner itself. The item was recovered only because
+a supervising parent happened to notice the report named no terminal state.
+
+This is the single most dangerous failure mode for unattended runs, because it
+does not look like a failure — the report is plausible, well-written, and (at
+the moment it was written) accurate. Nothing distinguishes it from a runner
+that is about to continue.
+
+**The rule, for every long-running step this protocol asks the runner to
+execute — not only `pr-review-loop.sh` and `pr-ci-loop.sh` (Step 7 / Step 8
+restate this rule for those two specifically):**
+
+- Run the step in the foreground and wait for it to finish, in the same turn, or
+- If the step must be backgrounded, poll it yourself in the same turn until it
+  returns, e.g. `while pgrep -f "<cmd>" >/dev/null; do sleep 20; done`. Make
+  `<cmd>` specific enough that it cannot match an unrelated process — include
+  the PR number or another identifying argument (e.g.
+  `pgrep -f "pr-review-loop.sh 1550"`, not a bare script name). A captured
+  `$!` PID plus `wait "$pid"` is not available here the way it would be inside
+  a single continuous shell script: this runner's tool calls are separate
+  shell invocations with no persisted variable state between them, so a PID
+  captured when the step is launched is gone by the time a later call checks
+  on it. Pattern-matching the running process is the correct mechanism for
+  this multi-invocation model, not a workaround for it — keep the pattern
+  specific instead of switching to PID capture. After the loop exits, check
+  `$?` (bash sets it to the polling command's own exit status when the loop
+  condition becomes false) before concluding the step is done: `pgrep` exit
+  status `1` means no process matched — the step has genuinely ended, proceed
+  to read the actual outcome from PR state. Any other status (`2` invalid
+  pattern syntax, `3` fatal error, `127` command not found) is a polling
+  failure, not evidence of completion — do not treat it as done; report it and
+  check PR state directly instead.
+- **Never end a turn while something this runner started is still in flight.**
+  A step that takes several minutes (or, for `pr-review-loop.sh`, up to the
+  configured `--max-wait`) is expected to take that long — stay with it. Ending
+  the turn is not a way to make the wait "free"; it is a way to lose the run.
+
+**Never re-invoke `pr-review-loop.sh` for a PR whose loop is already running.**
+The script takes a per-PR single-instance lock; a second concurrent invocation
+exits `75` with `REASON=lock_contention` and gives no review information at
+all — it will not tell the runner anything about the PR's actual state. If
+re-entering this item after a backgrounded or interrupted `pr-review-loop.sh`
+run, do not start a new one. Instead, poll for the prior process to finish (or
+confirm it is genuinely gone), then read the outcome directly from PR state —
+`gh pr view`, the "Automated Reviewer Loop Summary" comment, and the GraphQL
+review-thread query — rather than launching a duplicate run. Use
+`pr-review-loop.sh unlock <pr-number>` only after confirming the recorded lock
+PID is no longer alive; it is a stale-lock recovery command, not a way to force
+a second run alongside a live one.
+
+---
+
 ## Step 0: Load Effective Guardrails
 
 Before any artifact-mutating action (before creating branches, opening PRs,
@@ -228,7 +293,10 @@ field to the Portfolio Orchestrator. This isolation check complements, but does
 not replace, the #1200 nested artifact guard for duplicate or wrong-base PR
 artifacts.
 
-**CHANGELOG in parallel batches**: Each item in a parallel batch adds its own CHANGELOG entry as normal. CHANGELOG merge conflicts are resolved at merge time by the batch-merge auto-resolution (protocol 94 Step 4.3). Do not skip or consolidate CHANGELOG entries — see protocol 90 Step 3.6 for rationale.
+**CHANGELOG in parallel batches**: Each item in a parallel batch adds its own
+`changelog.d/` fragment as normal. Do not skip or consolidate release notes;
+the release workflow assembles pending fragments into `CHANGELOG.md` — see
+protocol 90 Step 3.6 for rationale.
 
 ### Explicit Item List Scope Guard
 
@@ -238,7 +306,7 @@ artifacts.
 - PR opening, labeling, or editing
 - Tracker status updates
 - Stage-agent dispatch
-- CHANGELOG edits
+- changelog fragment edits
 
 **Detection**: An explicit item list is present when the handoff metadata or human invocation includes a bounded set of issue numbers, tracker IDs, branch names, or PR numbers. A single-item invocation targeting one specific item is self-scoping and does not require a list check beyond confirming that any encountered open PR or branch belongs to the same item.
 
@@ -899,6 +967,28 @@ fi
 echo "Branch context verified: $CURRENT"
 ```
 
+**Local reviewer override continuity — verify once after entering the worktree**
+
+`git worktree add` carries no gitignored files, so the worktree has no
+`.ai-dev-workflow.local.yaml` of its own. The workflow scripts resolve a linked
+worktree's override from the main clone automatically (#1560); confirm that
+from inside the worktree now, rather than discovering it in Step 7a as a
+zero-reachable-reviewer hard-fail:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+python3 ./scripts/development-workflow/workflow-config-resolver.py review-overrides --repo-root "$(pwd -P)" \
+  | grep -E '^(LOCAL_OVERRIDE_FILE|LOCAL_OVERRIDE_ORIGIN|MAIN_CLONE_LOCAL_OVERRIDE_FILE)='
+```
+
+Expected for a worktree of a clone that has a local override:
+`LOCAL_OVERRIDE_ORIGIN=main_clone` with `LOCAL_OVERRIDE_FILE` equal to
+`MAIN_CLONE_LOCAL_OVERRIDE_FILE`. `MAIN_CLONE_LOCAL_OVERRIDE_FILE` set while
+`LOCAL_OVERRIDE_FILE` is empty means the override exists and is not being
+applied — stop and report it to the Portfolio Orchestrator; do not copy the
+file by hand. All three empty means the clone has no local override and the
+shared `.ai-dev-workflow.yaml` applies.
+
 Apply the same verification pattern any time a `git switch` or `git checkout <branch>` is issued outside the worktree-creation path (e.g., when a stage protocol's recovery step asks to switch branches):
 
 ```bash
@@ -1179,7 +1269,9 @@ This protocol stays scoped to one item. It may call different stage agents over 
 
 ### CHANGELOG in parallel batches
 
-See Protocol 90 Step 3.6 for the canonical CHANGELOG strategy in parallel batches. CHANGELOG merge conflicts are resolved at merge time by the batch-merge auto-resolution (Protocol 94 Step 4.3).
+See Protocol 90 Step 3.6 for the canonical CHANGELOG strategy in parallel
+batches. Normal implementation PRs write per-item fragments under
+`changelog.d/`; final `CHANGELOG.md` assembly happens during Prepare Release.
 
 ### Scope Boundary Rule for Dispatched Agents
 
@@ -1460,6 +1552,29 @@ The local YAML file takes precedence over `.ai-dev-workflow.yaml`. This allows
 developers without access to all configured review tools to run a subset, such
 as only `cursor`, without changing the shared config.
 
+Resolve the effective lists with the config resolver rather than by reading
+the files by hand. It applies the precedence above and locates the override
+file for the checkout you are actually in:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+python3 ./scripts/development-workflow/workflow-config-resolver.py review-overrides --repo-root "$(pwd -P)"
+```
+
+`REVIEW_ON_DRAFT_RUNNER` is the override list (empty when the local file sets
+none — then `review.on_draft.runner` from `.ai-dev-workflow.yaml` applies).
+`LOCAL_OVERRIDE_FILE` names the file the values came from and
+`LOCAL_OVERRIDE_ORIGIN` where it lives: `checkout` (this directory),
+`main_clone` (this directory is a linked git worktree with no file of its own,
+so the main clone's applies — `git worktree add` never carries gitignored
+files, #1560), or `override_root` (`WORKFLOW_LOCAL_REVIEW_OVERRIDE_ROOT`, the
+reviewer-loop handoff path from #1033). `MAIN_CLONE_LOCAL_OVERRIDE_FILE` is set
+whenever a linked worktree's main clone holds a local override, whichever file
+was applied. A worktree created through the Protocol 90 isolation manifest
+therefore resolves the same reviewer configuration as the main clone without
+anyone copying the file into it; do not copy it by hand — a copy shadows the
+main clone's file and drifts from it.
+
 Supported runner reviewer values: `claude`, `cursor`, `codex`, `coderabbit`.
 
 If neither config file defines `review.on_draft.runner`, fall back to running
@@ -1535,7 +1650,21 @@ Post via `gh pr comment`. This comment doubles as the BR-7 mandatory Step 7a sum
 
 **Case A — Zero reviewers reachable (any policy):**
 
-> `Step 7a BLOCKED: no internal reviewer is reachable from the current runner. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. To unblock: run Step 7a from a runner that supports all configured reviewers, or temporarily override 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
+> `Step 7a BLOCKED: no internal reviewer is reachable from the current runner. Effective reviewer set: none. Reachable: []. Unreachable: [<reviewer> (unreachable), ...]. Verdict: hard-fail. Local override: <local-override-state>. To unblock: run Step 7a from a runner that supports all configured reviewers, or temporarily override 'review.on_draft.runner' via .ai-dev-workflow.local.yaml.`
+
+`<local-override-state>` comes from the resolver output, never from a guess
+(#1560 AC-3):
+
+- `none` — `LOCAL_OVERRIDE_FILE` and `MAIN_CLONE_LOCAL_OVERRIDE_FILE` are both
+  empty. This is a genuine configuration-policy block.
+- `<LOCAL_OVERRIDE_FILE> (<LOCAL_OVERRIDE_ORIGIN>), applied` — an override was
+  resolved and still left zero reachable reviewers; the override itself names
+  reviewers this runner cannot reach.
+- `present but unpropagated: <MAIN_CLONE_LOCAL_OVERRIDE_FILE>` —
+  `LOCAL_OVERRIDE_FILE` is empty while the main clone has a file. This is
+  almost always a worktree resolving the wrong file rather than a policy
+  decision: re-run the resolver from the worktree path (`pwd -P`) and report
+  the discrepancy instead of treating the block as final.
 
 **Case B — `fail-if-any-unavailable` policy triggered (one or more reviewers unreachable, but at least one was reachable):**
 
@@ -1711,12 +1840,15 @@ If one or more automated code review platforms are configured (see [`integration
 
 1. **Do not race ahead.** Do not run Step 7 in the background while proceeding to Step 8 without its result.
 2. **Do not background-and-yield.** Do not start `pr-review-loop.sh` in the background and then **end your turn** to wait for it. A backgrounded process's completion notification is delivered to whatever dispatched *you* (the parent orchestrator, or a human) — never back to you. If you end your turn while the loop is still running in the background, you park permanently: not blocked, not escalated, not dead, just structurally unable to ever observe your own process finishing. A parked runner is indistinguishable from a terminated one from the outside, which means it will not be recovered automatically. Run Step 7 in the foreground, or if you must background it, keep polling it yourself **in the same turn** until it returns. The review loop can take several minutes (poll interval × wait for bot); that is expected — stay with it. Only when the script exits with `clean` or `skipped`, observed by you in-turn, may you continue to Step 8.
+3. **Never launch a second `pr-review-loop.sh` for the same PR while one is already running.** The script holds a per-PR single-instance lock; a concurrent invocation exits `75` with `REASON=lock_contention` and reports nothing about the PR's actual review state. If you are re-entering this step after a backgrounded or interrupted run (including after a compaction or a fresh session resuming this item), do not start a new invocation to "check." Poll for the earlier process to finish, or confirm via the lock file / process table that it is genuinely gone, and read the outcome from PR state directly (`gh pr view`, the reviewer-loop summary comment, the GraphQL review-thread query). Reserve `pr-review-loop.sh unlock <pr-number>` for a confirmed-stale lock (recorded PID no longer alive) — never as a way to run two instances at once. See the "Execution Discipline" section above the Step 0 heading for the general foreground/poll rule this specializes.
 
 The helper script evaluates configured platforms sequentially. For each platform it checks for **existing** blocking findings from the bot (e.g. from a review that already ran on PR open) before posting a new trigger. If it finds any, it exits with `needs_fixes` without moving on to later platforms — so the fixer addresses them first; after a push, the next run starts again from the first configured platform. Supported platforms include `greptile`, `devin`, `coderabbit`, and `codex-github` (Codex GitHub App — async bot reviewer handled deterministically by `pr-review-loop.sh`).
 
 > **CodeRabbit silence patterns**: CodeRabbit occasionally does not respond after a push — either because reviews are auto-paused after many commits ("Reviews paused" comment) or because it silently fails to auto-trigger. `pr-review-loop.sh` handles both cases automatically by posting `@coderabbitai review`. If the loop appears stalled with no CodeRabbit activity, see the [CodeRabbit silence patterns section in Protocol 93](93-automated-reviewer-loop-protocol.md#coderabbit-silence-patterns) for diagnostic steps and escalation criteria before intervening manually.
 
 Initialize `cycle = 0` once per orchestration run for the PR. Increment `cycle` each time a fixer agent is dispatched. Do not reset `cycle` after a fixer push; escalate when the run reaches `max_cycles`.
+
+**`pr-review-loop.sh` now enforces this per-run cap itself (issue #1502), independent of whether the orchestrator's own `cycle` variable is tracked correctly — but only when the script can tell which invocations belong to the same run.** Before the first `pr-review-loop.sh` invocation for this PR in this orchestration run, generate a stable run identifier (any sufficiently unique string, e.g. `"run-$(date +%s)-$$"`) and `export PR_REVIEW_LOOP_RUN_ID=<that value>` for the remainder of this run. Reuse the exact same value across every re-invocation of `pr-review-loop.sh` for this PR within this run — including inline-fix retries (Step 7's fast lane) and subagent-dispatched fixer retries. Generate a **new** value only when a genuinely new orchestration run begins (a fresh session resuming this PR after a prior escalation, after human intervention, or after any gap in continuous execution). If `PR_REVIEW_LOOP_RUN_ID` is left unset, every invocation is treated by the script as its own isolated run and the per-run cap (`CYCLE_COUNT`/`MAX_CYCLES`) will not accumulate across cycles — the separate lifetime ceiling (`TOTAL_CYCLE_COUNT`/`MAX_TOTAL_CYCLES`, see `93-automated-reviewer-loop-protocol.md`) still enforces in that case, but the per-run cap's intended fast, specific signal is lost.
 
 ### PR feedback tracking and comments
 
@@ -1832,7 +1964,11 @@ the PR. The only valid path to `ready-for-human-review` is:
    allowed `skipped` result. When Step 7 is not skipped, it leaves the automated
    reviewer loop summary comment on the PR. When Step 7 is skipped because no
    review platforms are configured, carry `REVIEWER_LOOP_SKIPPED_NO_PLATFORMS=true`
-   into Step 8a so the summary check can verify the explicit skip reason.
+   into Step 8a so the summary check can verify the explicit skip reason. When
+   Step 7 ran, carry its `POST_CLEAN_*` settle fields into Step 8a as well (see
+   "Carry the settle verdict forward" in Step 7): Check 0.6 refuses a clean
+   verdict that was never settled, and Step 8a.1 sizes its re-check from those
+   fields instead of from a number of its own (issue #1574).
 3. When Step 7 followed a fixer push or review-feedback cycle, the runner
    re-issues the GraphQL `reviewThreads` query before Step 7b, as described in
    "Re-query reviewThreads after each push" below.
@@ -1873,15 +2009,55 @@ After running the helper script (it reads `.ai-dev-workflow.yaml` for the platfo
 ./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name>
 ```
 
+**Carry the settle verdict forward.** The loop does not merely report `clean`;
+since issue #1556 it settles first — for CodeRabbit it waits for a *submitted*
+review for the current HEAD and then for a quiet period — and reports how that
+went in `POST_CLEAN_*` key=value lines. Step 8a consumes them (Check 0.6 and
+Step 8a.1), so keep the loop output and export those lines into the
+environment the checklist runs in. The values are plain tokens (digits, an
+ISO-8601 timestamp, or a reason word); the pattern below admits nothing else:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+set -euo pipefail
+# Drop settle telemetry from any earlier invocation first. A loop that exits
+# before emitting POST_CLEAN_* (outer timeout, interruption, API failure)
+# must leave Check 0.6 with nothing — not with the previous HEAD's verdict.
+for settle_var in $(env | grep -o '^POST_CLEAN_[A-Z_]*' || true); do
+  unset "$settle_var"
+done
+loop_out="$(mktemp)"
+loop_status=0
+./scripts/development-workflow/pr-review-loop.sh <pr_number> --branch <branch_name> > "$loop_out" 2>&1 || loop_status=$?
+cat "$loop_out"
+if [ "$loop_status" -ne 0 ]; then
+  echo "Reviewer loop exited ${loop_status}: act on its RESULT=/REASON= lines (needs_fixes, escalate, ...). Do not enter Step 8a on this run."
+else
+  settle_kv="$(mktemp)"
+  grep -E '^POST_CLEAN_[A-Z_]+=[A-Za-z0-9:_-]*$' "$loop_out" > "$settle_kv" || true
+  while IFS='=' read -r key value; do
+    export "$key=$value"
+  done < "$settle_kv"
+fi
+```
+
+Re-export after every invocation: a fixer cycle re-runs the loop, and the
+settle fields belong to the latest HEAD only — which is why the block clears
+them before running and exports nothing on a non-zero exit. A new session that
+cannot produce them re-runs Step 7 rather than guessing (Check 0.6 fails
+closed).
+
 Interpret the result as follows:
 
 | Result                                  | Action                                                                                                                                                                                                                                                                                                                                                                                     |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `clean`                                 | Summary comment posted automatically by the script. If `ADVISORY_LABELS` is non-empty, document a disposition for each advisory finding and update the summary comment before proceeding — see "Advisory finding dispositions" in `93-automated-reviewer-loop-protocol.md`. Then continue to Step 7b (implementation PRs) → Step 8 → **Step 8a** (which contains the mandatory GraphQL `reviewThreads` pre-Check-4 gate). **Do NOT apply `ready-for-human-review` directly from this step** — `clean` from the script only means no blocking inline comments or `CHANGES_REQUESTED` reviews were found; it does NOT mean all review threads are resolved. The GraphQL check in Step 8a is the authoritative gate. |
 | `skipped`                               | Continue to Step 7b (implementation PRs) then Step 8 (no summary comment posted — Step 8c skips the check)                                                                                                                                                                                                                                                                                 |
+| `needs_fixes` with `REASON=head_moved_during_run` | The PR head changed while the reviewers ran, so the clean verdict describes a commit the PR has left. Nothing to fix and no fixer to dispatch: run Step 7 again for the current HEAD. Does not count toward `cycle`.                                                                                                                                                                           |
 | `needs_fixes` and `cycle < max_cycles`  | Summary comment posted or updated automatically by the script. Increment `cycle`, dispatch the matching fixer agent, wait for a push, then run Step 7 again                                                                                                                                                                                                                                |
 | `needs_fixes` and `cycle >= max_cycles` | Summary comment posted or updated automatically by the script. Escalate to human                                                                                                                                                                                                                                                                                                          |
 | `needs_rerun` (exit code 3)             | (Reserved — not currently emitted.) Treat as `escalate` if encountered unexpectedly.                                                                                                                                                                                                                                                                                                      |
+| `waiting_on_reviewer` (exit code 4)     | Summary comment posted automatically by the script. Stop this local runner as waiting on the named reviewer; do not dispatch fixes, post duplicate triggers, apply readiness labels, enter CI readiness gates, or merge. Re-run Step 7 after the reviewer posts current-head terminal evidence or the human explicitly asks to poll again.                                                                                                                 |
 | `escalate`                              | Summary comment posted automatically by the script. Escalate to human                                                                                                                                                                                                                                                                                                                      |
 
 ### PR-Agent "Possible Issue" advisory labels
@@ -2217,12 +2393,13 @@ Interpret the result as follows:
 | 3         | `ready-for-regression` label missing at pre-Check-4 gate                                         | Apply label, re-run Step 8                          |
 | 4         | Unresolved review threads at pre-Check-4 gate                                                    | Resolve threads, push fixes, re-run checklist       |
 | 5         | CI not green at readiness gate                                                                    | Run Step 8 (pr-ci-loop.sh) and fix failing checks   |
-| 6         | Late-arriving async bot threads detected after label application                                  | Remove `ready-for-human-review`, add `needs-fixes`, return to Step 7a |
+| 6         | Late-arriving review threads detected after label application                                     | Remove `ready-for-human-review`, add `needs-fixes`, return to Step 7a |
 | 7         | Latest reviewer-loop summary is missing or has a non-clean terminal result                       | Do not label ready; escalate or return to reviewer loop |
 | 8         | Documentation-stage alignment mismatch on `spec/*` or `implementation-plan/*` PR                 | Remove stale readiness, add/update warning, add `needs-fixes`, correct or escalate |
 | 9         | Residual gate missing, blocked, or escalated for broad-scope work                                | Keep out of readiness; fix residuals, add `needs-fixes`, or escalate |
 | 10        | Documentation-stage alignment checker infrastructure failure                                     | Retry checker or resolve GitHub/diff read failure |
 | 11        | Complex workflow decision-gate matrix evidence missing or contradictory when applicable          | Keep out of readiness; add `needs-fixes`, complete matrix evidence, and re-run review |
+| 12        | Reviewer-loop clean verdict not settled (Check 0.6): `POST_CLEAN_*` fields absent, recheck suppressed, platform never submitted a review, settle window exhausted while the platform was active, or `POST_CLEAN_HEAD_SHA` differs from the live PR head | Do not label ready; re-run Step 7, export its `POST_CLEAN_*` fields, and re-enter Step 8a; a second consecutive `POST_CLEAN_SETTLE_TIMEOUT=1` escalates (`settle_never_quiet`) |
 
 When adding a new gate to this checklist, allocate the next unused exit code and update this table. Exit codes must not collide.
 
@@ -2376,6 +2553,7 @@ application) in the readiness checklist. This sync step never applies
 
 Run this checklist for **every PR**:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 PR_NUMBER=<pr_number>
 BRANCH=<branch_name>  # e.g., feature/foo, spec/bar, fix/baz
@@ -2402,26 +2580,79 @@ esac
 # failing or still pending. Run Step 8 (pr-ci-loop.sh) first if CI is not green.
 HEAD_SHA=$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
-CI_FAILING=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" \
-  --jq '[.check_runs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
-CI_PENDING=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" \
-  --jq '[.check_runs[] | select(.status != "completed")] | length')
+# Read every page. The REST default page size is 30 and this repository
+# routinely exceeds it: the test matrix is diff-driven and adds one job per
+# selected suite, so PR #1568 carried 75 check-runs. A single-page read of
+# that head sees 30 of them, and a failure among the other 45 is invisible to
+# the very gate that decides "CI is green".
+#
+# `--slurp` cannot be combined with `--jq`, so each call returns an array of
+# whole pages and the aggregation is done by an external jq.
+#
+# Both reads fail closed. If either endpoint cannot be read, the gate does not
+# know the CI state, and "unknown" must never be labelled as green — the same
+# rule the CI_TOTAL check below applies to an empty check set.
+if ! CHECKS_PAGES=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100" --paginate --slurp); then
+  echo "ERROR: could not read check-runs for $HEAD_SHA — refusing to label on an incomplete CI read."
+  exit 5
+fi
+# check-runs is GitHub Actions/App checks only — it does not include plain
+# commit statuses (CodeRabbit, Devin Review, and this repo's own
+# "Reviewer-loop completion guard" all post as statuses, not check-runs). A
+# PR whose CI signal is entirely statuses would otherwise read CI_TOTAL=0
+# below and be refused even when green, and a failing status would not count
+# toward CI_FAILING at all. Fold the combined-status endpoint in too.
+if ! STATUS_PAGES=$(gh api "repos/$REPO/commits/$HEAD_SHA/status?per_page=100" --paginate --slurp); then
+  echo "ERROR: could not read commit statuses for $HEAD_SHA — refusing to label on an incomplete CI read."
+  exit 5
+fi
+CI_FAILING=$(printf '%s' "$CHECKS_PAGES" | jq '[.[].check_runs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')
+CI_PENDING=$(printf '%s' "$CHECKS_PAGES" | jq '[.[].check_runs[] | select(.status != "completed")] | length')
+CI_TOTAL=$(printf '%s' "$CHECKS_PAGES" | jq '[.[].check_runs[]] | length')
+CI_FAILING=$((CI_FAILING + $(printf '%s' "$STATUS_PAGES" | jq '[.[].statuses[]? | select(.state == "failure" or .state == "error")] | length')))
+CI_PENDING=$((CI_PENDING + $(printf '%s' "$STATUS_PAGES" | jq '[.[].statuses[]? | select(.state == "pending")] | length')))
+CI_TOTAL=$((CI_TOTAL + $(printf '%s' "$STATUS_PAGES" | jq '[.[].statuses[]?] | length')))
 if [ "$CI_FAILING" -gt 0 ] || [ "$CI_PENDING" -gt 0 ]; then
   echo "ERROR: CI is not green — ${CI_FAILING} failing and ${CI_PENDING} pending check(s) on $HEAD_SHA."
   echo "Run Step 8 (pr-ci-loop.sh) and resolve all failures before applying ready-for-human-review."
   exit 5  # Exit code 5 = "CI not green at readiness gate"
 fi
-echo "✅ CI is green on $HEAD_SHA."
+# "Nothing failed" is not "CI passed" (#1514, #1580). A head can carry zero
+# checks — GitHub builds no merge ref for a CONFLICTING PR, so its
+# `pull_request` workflows never start — and the counts above are then both
+# zero. Refuse that instead of labelling on absence. Step 8's
+# CI_EVIDENCE=none / REASON=expected_checks_missing report the same condition.
+# Step 8 reports CI_EVIDENCE=unknown when it could not resolve the head or
+# read its workflow runs. That is not a green signal — refuse it here rather
+# than labelling on a verdict whose subject is unidentified.
+if [ "${CI_EVIDENCE:-}" = "unknown" ]; then
+  echo "ERROR: Step 8 reported CI_EVIDENCE=unknown — the head or its workflow runs could not be read."
+  echo "Re-run Step 8 (pr-ci-loop.sh) and export its output before re-entering Step 8a."
+  exit 5  # Exit code 5 = "CI not green at readiness gate"
+fi
+if [ "$CI_TOTAL" -eq 0 ]; then
+  echo "ERROR: no checks ran on $HEAD_SHA — 'green' here would mean 'nothing failed', not 'CI passed'."
+  echo "If the PR is CONFLICTING, resolve the conflict so pull_request workflows can run; then re-run Step 8."
+  echo "For a repository with no CI configured, record that explicitly (issue_tracker/ci policy) rather than labelling on an empty check set."
+  exit 5  # Exit code 5 = "CI not green at readiness gate"
+fi
+echo "✅ CI is green on $HEAD_SHA (${CI_TOTAL} check(s))."
+# Machine-readable readiness evidence — the runner's terminal report must carry
+# the head the CI verdict belongs to, not just the verdict (#1514 AC-4).
+echo "READINESS_HEAD_SHA=$HEAD_SHA"
+echo "READINESS_CI_TOTAL=$CI_TOTAL"
+echo "READINESS_CI_CONCLUSION=success"
 
 # Check 0.5: latest automated reviewer-loop summary must be clean or skipped.
-# A non-clean terminal result such as RESULT=escalate, needs_fixes, timeout, or
-# pending_timeout must never advance to ready-for-human-review, even if CI is green.
+# A non-clean terminal result such as RESULT=escalate, needs_fixes,
+# waiting_on_reviewer, timeout, or pending_timeout must never advance to
+# ready-for-human-review, even if CI is green.
 if ! LOOP_SUMMARY_BODY=$(gh pr view "$PR_NUMBER" --json comments --jq '
   [.comments[]
    | select(.body | test("Automated Reviewer Loop Summary|Reviewer Loop Summary|No blocking PR feedback"))]
   | sort_by(.createdAt)
   | last
-  | .body // ""); then
+  | .body // ""'); then
   echo "ERROR: Cannot verify automated reviewer-loop result — gh pr view failed."
   echo "Retry the GitHub query or resolve the CLI/API failure before applying ready-for-human-review."
   exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
@@ -2435,13 +2666,72 @@ if [ -z "$LOOP_SUMMARY_BODY" ]; then
     exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
   fi
 fi
-if [ -n "$LOOP_SUMMARY_BODY" ] && echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[*[:space:]])Result:([*[:space:]])*(clean|skipped)([[:space:]—.,;:)]|$)|No blocking PR feedback'; then
+if [ -n "$LOOP_SUMMARY_BODY" ] && echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*(clean|skipped)([ [:space:]—.,;:)]|$)|No blocking PR feedback'; then
   echo "✅ Automated reviewer-loop summary result is clean/skipped."
 elif [ -n "$LOOP_SUMMARY_BODY" ]; then
   echo "ERROR: Latest automated reviewer-loop summary is not clean/skipped."
   echo "RESULT=escalate or any non-clean terminal reviewer-loop result MUST NOT apply ready-for-human-review."
   echo "Escalate to the human or return to the reviewer loop according to Step 7."
   exit 7  # Exit code 7 = "reviewer-loop summary missing or non-clean"
+fi
+
+# Check 0.6: a clean verdict must be a SETTLED one (issues #1556 / #1574).
+# Every clean verdict is about one head — the one the loop read before it
+# dispatched any reviewer and emitted as POST_CLEAN_HEAD_SHA. Anything pushed
+# after Step 7 — a fixer, another automation, a sibling-merge conflict
+# resolution — leaves the fields describing a commit the PR has moved past.
+settle_head_ok() {
+  LIVE_HEAD_SHA=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json headRefOid --jq '.headRefOid')
+  if [ -z "${POST_CLEAN_HEAD_SHA:-}" ]; then
+    echo "ERROR: Reviewer-loop telemetry is not bound to a head (POST_CLEAN_HEAD_SHA is not set)."
+    echo "Re-run Step 7 with the current pr-review-loop.sh and export its POST_CLEAN_* fields before re-entering Step 8a."
+    return 1
+  fi
+  if [ "$POST_CLEAN_HEAD_SHA" != "$LIVE_HEAD_SHA" ]; then
+    echo "ERROR: The reviewer-loop verdict is for head ${POST_CLEAN_HEAD_SHA}, but the PR head is now ${LIVE_HEAD_SHA:-unknown}."
+    echo "Something was pushed after Step 7. Re-run Step 7 for the current HEAD, export its POST_CLEAN_* fields, and re-enter Step 8a."
+    return 1
+  fi
+  return 0
+}
+# The loop's POST_CLEAN_* fields are exported from the latest Step 7 output
+# ("Carry the settle verdict forward"). CodeRabbit posts findings minutes after
+# it first goes quiet — 2, 3, 5, 1, 3 and 8 late findings on PRs #1532, #1541,
+# #1555, #1568, #1569 and #1570, every one real — so a clean verdict that was
+# never settled, or whose platform never submitted a review for this HEAD, is
+# refused here rather than re-checked with a wait of this script's own.
+SETTLE_APPLIES=1
+if [ "${REVIEWER_LOOP_SKIPPED_NO_PLATFORMS:-false}" = "true" ]   || { [ -n "$LOOP_SUMMARY_BODY" ] && echo "$LOOP_SUMMARY_BODY" | grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*skipped([ [:space:]—.,;:)]|$)'; }; then
+  SETTLE_APPLIES=0
+  echo "✅ Settle-state check not applicable: Step 7 was skipped."
+elif [ -z "${POST_CLEAN_RECHECK:-}" ]; then
+  echo "ERROR: Settle state unknown — POST_CLEAN_RECHECK is not set in this environment."
+  echo "Re-run Step 7 (pr-review-loop.sh) for the current HEAD and export its POST_CLEAN_* fields before re-entering Step 8a."
+  exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
+elif [ "$POST_CLEAN_RECHECK" = "0" ]; then
+  if [ "${POST_CLEAN_RECHECK_SKIP_REASON:-}" = "no_thread_posting_platforms" ]; then
+    settle_head_ok || exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
+    echo "✅ Settle-state check: no configured platform posts review threads; nothing can arrive late (verdict for head ${POST_CLEAN_HEAD_SHA})."
+  else
+    echo "ERROR: The reviewer loop did not settle its clean verdict (POST_CLEAN_RECHECK_SKIP_REASON=${POST_CLEAN_RECHECK_SKIP_REASON:-unknown})."
+    echo "Re-run Step 7 without SKIP_POST_CLEAN_RECHECK / --compare so the loop settles, then re-enter Step 8a."
+    exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
+  fi
+elif [ "${POST_CLEAN_SETTLED:-0}" = "1" ]; then
+  settle_head_ok || exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
+  echo "✅ Settle-state check: verdict settled at ${POST_CLEAN_SETTLED_AT:-<unknown>} for head ${POST_CLEAN_HEAD_SHA}."
+elif [ "${POST_CLEAN_NO_SUBMITTED_REVIEW:-0}" = "1" ]; then
+  echo "ERROR: The reviewer loop reported clean, but the platform never submitted a review for this HEAD (POST_CLEAN_NO_SUBMITTED_REVIEW=1)."
+  echo "Its walkthrough comment is not its review. Re-run Step 7 so the loop waits for the submitted review; do not apply ready-for-human-review on this state."
+  exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
+else
+  # POST_CLEAN_SETTLE_TIMEOUT=1: the platform was still active when the window
+  # ran out. Elapsed time is not quiet time — only the loop's activity-aware
+  # settle can tell the two apart — so this is refused like the other unsettled
+  # states, not re-checked after a sleep of this script's own.
+  echo "ERROR: The reviewer loop reported clean but UNSETTLED: the settle window ran out while the platform was still active (POST_CLEAN_SETTLE_TIMEOUT=1)."
+  echo "Re-run Step 7 so the loop settles again for this HEAD. If that run also reports POST_CLEAN_SETTLE_TIMEOUT=1, escalate to the human with reason settle_never_quiet instead of re-running a third time."
+  exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
 fi
 
 # Check 1: PR is non-draft
@@ -2547,7 +2837,7 @@ if [ "${COMPLEX_GATE_MATRIX_REQUIRED:-false}" = "true" ]; then
     gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
     exit 11
   fi
-  if printf '%s\n' "$PR_BODY" | grep -Eiq 'complex workflow decision-gate matrix:[[:space:]]*not applicable|complex gate matrix[[:space:]-]+not applicable'; then
+  if printf '%s\n' "$PR_BODY" | grep -Eiq 'complex workflow decision-gate matrix:[ [:space:]]*not applicable|complex gate matrix[ [:space:]-]+not applicable'; then
     echo "ERROR: Complex workflow decision-gate matrix was required, but the PR body says not applicable."
     gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
     exit 11
@@ -2651,6 +2941,18 @@ fi
 
 # Check 4: ready-for-human-review label NOT yet applied (we are about to apply it)
 HAS_HUMAN_REVIEW_LABEL=$(gh pr view "$PR_NUMBER" --repo "$TARGET_REPO" --json labels --jq '.labels[].name' | grep -c "^ready-for-human-review$" || true)
+# Last look before the label (issue #1574): several API-backed gates ran since
+# Check 0.6, and a push during any of them leaves the settled verdict
+# describing a head the PR has left. The label stays on — or goes on — the
+# commit that was reviewed, or not at all; a label already present for a head
+# that has since moved is pulled back.
+if [ "${SETTLE_APPLIES:-1}" -eq 1 ] && ! settle_head_ok; then
+  if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
+    echo "Removing 'ready-for-human-review': it covers a head that is no longer the PR head."
+    gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "ready-for-human-review"
+  fi
+  exit 12  # Exit code 12 = "reviewer-loop verdict not settled"
+fi
 if [ "$HAS_HUMAN_REVIEW_LABEL" -gt 0 ]; then
   echo "INFO: PR already has 'ready-for-human-review' label. Skipping re-application."
 else
@@ -2661,37 +2963,64 @@ fi
 echo "✅ Label readiness checklist passed. PR is ready for human review."
 ```
 
-### 8a.1: Async Bot Thread Re-check (Mandatory for async review platforms)
+### 8a.1: Late-Arriving Review Thread Re-check (Mandatory whenever a GitHub review platform is configured)
 
 **When to run this substep:**
 
 - After the label readiness checklist passes (all checks = exit 0)
 - Before proceeding to Step 8b
-- Only when `review.on_draft.github` or `review.on_ready.github` in `.ai-dev-workflow.yaml` includes `codex-github` or any other known async-posting review bot
+- Whenever the effective `review.on_draft.github` or `review.on_ready.github`
+  list (after any `.ai-dev-workflow.local.yaml` override) is non-empty. Skip
+  it only when Step 7 was `skipped` because no platform is configured, or
+  when Check 0.6 reported `no_thread_posting_platforms`.
 
 **Why this substep exists:**
-Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asynchronously. A thread can arrive **after** the Step 8a pre-Check-4 GraphQL verification described in the label readiness checklist but **before** or **during** the Step 8c post-label verification. Without an explicit re-check, these late-arriving threads slip through as unresolved and cause the orchestrator's Step 5.1 to redispatch the agent.
+Every GitHub review platform posts `reviewThreads` asynchronously, and not on
+the same clock. The original race — `codex-github` posting a thread that was
+already in flight when the checklist ran — is measured in seconds. CodeRabbit's
+findings do not race the checklist at all; they arrive minutes later. Measured
+on PR #1573: HEAD at 00:17:29, walkthrough comment at 00:18:17, formal review
+with three findings at 00:30:32 — twelve minutes after the walkthrough. Across
+PRs #1532, #1541, #1555, #1568, #1569 and #1570 the same pattern produced 2, 3,
+5, 1, 3 and 8 late findings; every one was real, and on #1570 two were Major.
+A fixed ten-second wait would have caught none of them. The wait therefore
+belongs to the tool: `pr-review-loop.sh` settles before it reports `clean`
+(issue #1556), and this substep reads that result rather than re-implementing
+a wait of its own (issue #1574).
 
 **Procedure:**
 
-1. **Wait for async bot threads**:
+1. **Do not wait here — the loop already did, or the checklist already sent you back**:
 
-   ```bash
-   # Sleep to allow async bots time to post new threads after the agent's pre-Check-4 query
-   echo "Waiting 10 seconds for async-posting review bots (e.g., codex-github) to post any new threads..."
-   sleep 10
-   ```
+   Check 0.6 refused every unsettled state before the label was applied:
+   `POST_CLEAN_RECHECK` unset or suppressed, `POST_CLEAN_NO_SUBMITTED_REVIEW=1`,
+   and `POST_CLEAN_SETTLE_TIMEOUT=1`. Elapsed time is not quiet time — a bot
+   that edits its walkthrough mid-sleep and posts threads afterwards defeats any
+   fixed sleep — and only the loop's activity-aware settle (quiet timer reset on
+   every platform action) can tell the two apart. So what reaches this substep
+   is one of:
+
+   | Step 7 settle fields                                                                      | Action                                                                                                                                            |
+   | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `POST_CLEAN_SETTLED=1`                                                                   | Re-query now. The loop held the platform's quiet period after a submitted review; this re-query is the adjacency check Protocol 92 requires.       |
+   | `POST_CLEAN_RECHECK=0` with `POST_CLEAN_RECHECK_SKIP_REASON=no_thread_posting_platforms` | Not applicable — no configured platform posts threads. Skip 8a.1.                                                                                 |
+
+   This substep carries no wait and no number. If the loop output is not
+   available in this session, the answer is to re-run Step 7 (Check 0.6
+   enforces that), not to pick a wait.
 
 2. **Re-query review threads**:
 
    Before running the query, resolve the Codex bot login. Use the value of `CODEX_GITHUB_BOT_LOGIN` if set; otherwise default to `"chatgpt-codex-connector[bot]"` (the default used by `codex-github-reviewer.sh`). Strip the `[bot]` suffix because GraphQL `author.login` values omit it:
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
    # GraphQL author.login omits the "[bot]" suffix present in REST API logins; strip it.
    CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
    ```
 
+   <!-- workflow-shell-contract: bash-zsh -->
    ```bash
    JQ_FILTER="[.data.repository.pullRequest.reviewThreads.nodes[]
          | select(.isResolved == false)
@@ -2713,19 +3042,20 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
 
 3. **Handle late-arriving threads**:
    - If `$UNRESOLVED_RECHECK -gt 0`: New unresolved threads were discovered. Remove `ready-for-human-review`, add `needs-fixes`, and return to Step 7a to address them:
+     <!-- workflow-shell-contract: bash-zsh -->
      ```bash
      if [ "$UNRESOLVED_RECHECK" -gt 0 ]; then
-       echo "⚠️ LATE-ARRIVING THREADS: Re-check detected $UNRESOLVED_RECHECK new unresolved thread(s) from async bots."
+       echo "⚠️ LATE-ARRIVING THREADS: Re-check detected $UNRESOLVED_RECHECK new unresolved review thread(s)."
        echo "Removing ready-for-human-review label and returning to Step 7a."
-       gh pr edit "$PR_NUMBER" --remove-label "ready-for-human-review"
-       gh pr edit "$PR_NUMBER" --add-label "needs-fixes"
+       gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --remove-label "ready-for-human-review"
+       gh pr edit "$PR_NUMBER" --repo "$TARGET_REPO" --add-label "needs-fixes"
        echo "Return to Step 7a to address the newly-discovered threads."
-       exit 6  # Exit code 6 = "late-arriving async bot threads detected"
+       exit 6  # Exit code 6 = "late-arriving review threads detected"
      fi
      ```
    - If `$UNRESOLVED_RECHECK -eq 0`: No new threads found. Continue to Step 8b.
 
-**Note**: This re-check is especially important when `codex-github` is a configured Step 7 review platform. The Codex GitHub App bot response is inherently asynchronous — the re-check adds a safety net to catch race conditions without requiring orchestrator intervention.
+**Note**: The re-query is cheap and is always the last thing before Step 8b. Anything lengthy between the loop's verdict and the label — a CI poll, a sibling merge, a session break — makes it the only check that is still current (`POST_CLEAN_SETTLED_AT` is the instant the verdict was established; the gap is measurable, not guessed). The author allowlist in the query already includes `coderabbitai`; the mechanism was never blind to CodeRabbit — only the fixed wait was mis-sized.
 
 **Interpretation**:
 
@@ -2735,7 +3065,8 @@ Review bots like the Codex GitHub App (`codex-github`) post `reviewThreads` asyn
   - If `missing ready-for-regression` on implementation PR (exit 2 from Check 2): The label has been applied by Check 2. **Do not continue to Check 3/4.** Re-run `pr-ci-loop.sh` (Step 8) first to wait for the e2e/regression workflow triggered by the label. Only re-enter Step 8a after CI is green again. This ensures the e2e/regression check completes before the PR is marked ready.
   - If `ready-for-regression not verified` on implementation PR (exit 3 from pre-Check-4 gate): Step 7b was not completed. Apply the label via Step 7b, run Step 8 (CI loop), and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until `ready-for-regression` is verified present.
   - If `unresolved review threads found` (exit 4 from GraphQL pre-Check-4 gate): The GraphQL query returned unresolved bot-authored review threads. Address the findings, push fixes, and re-enter Step 8a from the beginning. This gate is a hard block — `ready-for-human-review` cannot be applied until the GraphQL query confirms all threads are resolved. **Do not rely on self-tracked thread state** — the GraphQL query is the authoritative check.
-  - If `late-arriving async bot threads detected` (exit 6 from Step 8a.1 re-check): Late-arriving threads from async bots (e.g., `codex-github`) were discovered after the pre-Check-4 gate. Remove `ready-for-human-review`, add `needs-fixes`, and return to Step 7a. This indicates a race condition where the bot posted its thread after the initial verification but before the label was applied.
+  - If `late-arriving review threads detected` (exit 6 from Step 8a.1 re-check): Unresolved review threads were discovered after the pre-Check-4 gate — a platform posted after the loop's verdict. Remove `ready-for-human-review`, add `needs-fixes`, and return to Step 7a.
+  - If `reviewer-loop verdict not settled` (exit 12 from Check 0.6): the latest Step 7 output is not in this environment, the loop's recheck was suppressed (`SKIP_POST_CLEAN_RECHECK`, `--compare`), the platform never submitted a review for this HEAD (`POST_CLEAN_NO_SUBMITTED_REVIEW=1`), the settle window ran out while the platform was still active (`POST_CLEAN_SETTLE_TIMEOUT=1`), or the verdict describes a head the PR has moved past (`POST_CLEAN_HEAD_SHA` differs from the live head). Do not apply `ready-for-human-review`. Re-run Step 7 for the current HEAD, export its `POST_CLEAN_*` fields, and re-enter Step 8a from the beginning. If a second consecutive run reports `POST_CLEAN_SETTLE_TIMEOUT=1`, escalate to the human with reason `settle_never_quiet` rather than re-running again.
   - If `reviewer-loop summary missing or non-clean` (exit 7 from Check 0.5): The latest automated reviewer-loop summary comment is absent or its `Result:` line is not `clean`/`skipped`. Do not apply `ready-for-human-review`. For `RESULT=escalate`, `pending_timeout`, `timeout`, `needs_fixes`, or any other non-clean terminal result, escalate or re-enter Step 7 according to the reviewer-loop result.
   - If `documentation-stage alignment mismatch` (exit 8 from Check 3.6):
     the PR is on `spec/*` or `implementation-plan/*` but includes files outside
@@ -2813,26 +3144,41 @@ gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comme
 
 For the `reviewThreads` resolution check, `gh pr view --json` does not expose `reviewThreads`; use the GraphQL API directly. **This query is mandatory — do not skip it or rely on self-tracked thread state:**
 
+<!-- workflow-shell-contract: bash-zsh -->
+
 ```bash
+CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
+CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
+BUGBOT_BOT_LOGIN="${BUGBOT_BOT_LOGIN:-cursor[bot]}"
+BUGBOT_BOT_LOGIN="${BUGBOT_BOT_LOGIN%\[bot\]}"
+
 gh api graphql -f query='
   query($owner:String!, $repo:String!, $number:Int!) {
     repository(owner:$owner, name:$repo) {
       pullRequest(number:$number) {
         reviewThreads(first: 100) {
-          nodes { isResolved comments(first: 1) { nodes { author { login } body } } }
+          nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } body } } }
         }
       }
     }
   }' -f owner=<owner> -f repo=<repo> -F number=<pr_number> \
-  | jq '.data.repository.pullRequest.reviewThreads.nodes[]
+  | jq --arg codex_bot "$CODEX_BOT_LOGIN" --arg bugbot_bot "$BUGBOT_BOT_LOGIN" '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
-        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps"] | index($a) != null)
+        | select((.isOutdated // false) == false)
+        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps",$codex_bot,$bugbot_bot] | index($a) != null)
         | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)'
 ```
 
-The bot login list above is a superset covering all platforms supported by `pr-review-loop.sh` (`coderabbit`, `devin`, `greptile`). The current default GitHub reviewer config in `.ai-dev-workflow.yaml` uses `review.on_draft.github: [pr-agent]` and `review.on_ready.github: [haystack]`. Update the list if your project uses different or additional review bots.
+The bot login list above is a superset covering async review-bot platforms
+supported by `pr-review-loop.sh` that may own GitHub review threads
+(`coderabbit`, `devin`, `greptile`, `codex-github`, `bugbot`). The current
+default GitHub reviewer config in `.ai-dev-workflow.yaml` uses
+`review.on_draft.github: [local-ai-reviewer, pr-agent]` and
+`review.on_ready.github: [bugbot]`; `local-ai-reviewer` and `pr-agent` do not
+own a GitHub review-thread bot login in this workflow. Update the list if your
+project uses different or additional review bots.
 
-The output must contain no unresolved threads from configured bot reviewers (e.g. `coderabbitai`, `devin-ai-integration`) before this step passes. A thread is considered resolved when `isResolved: true` **or** the first comment body contains `✅ Addressed` (CodeRabbit appends this when a fix commit lands). Any unresolved bot-authored thread that does not meet either condition — regardless of severity, including Nitpick and Trivial — blocks this check. For PRs with more than 100 threads, implement cursor-based pagination: add `pageInfo { hasNextPage endCursor }` to the `reviewThreads` field selection, capture `endCursor` from each response, and repeat the query with `reviewThreads(first: 100, after: $cursor)` until `hasNextPage` is false.
+The output must contain no unresolved, non-outdated threads from configured bot reviewers (e.g. `coderabbitai`, `devin-ai-integration`, `chatgpt-codex-connector`) before this step passes. A thread is considered non-blocking when `isResolved: true`, `isOutdated: true`, or the first comment body contains `✅ Addressed` (CodeRabbit appends this when a fix commit lands). Any unresolved, non-outdated bot-authored thread that does not meet those conditions — regardless of severity, including Nitpick and Trivial — blocks this check. For PRs with more than 100 threads, implement cursor-based pagination: add `pageInfo { hasNextPage endCursor }` to the `reviewThreads` field selection, capture `endCursor` from each response, and repeat the query with `reviewThreads(first: 100, after: $cursor)` until `hasNextPage` is false.
 
 Verify all of the following. If any check fails, **do not report ready** — treat it the same as `needs-fixes` and re-enter the fix loop from Step 7a:
 
@@ -2905,6 +3251,15 @@ state according to this table:
 | `spec/*`                                          | Spec Ready            |
 | `implementation-plan/*`                           | Plan Ready            |
 | `feature/*` / `fix/*` / `refactor/*` / `hotfix/*` | Merged                |
+
+**A PR may resolve more than one item** (#1391). `post-merge-cleanup.sh`
+processes the branch-derived issue plus every closing-keyword reference in the
+PR title, body, and commit messages, and warns about bare `#N` title
+references it did not process. Verify the transition for **each** referenced
+item — do not stop after the first. A "references issue(s) … without a closing
+keyword" warning is **non-terminal**: cleanup stays incomplete until every
+named issue has an explicit disposition — processed (closed and
+status-updated) or confirmed non-closing — recorded in the item report.
 
 **Key rules:**
 

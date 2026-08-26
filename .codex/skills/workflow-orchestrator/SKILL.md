@@ -51,9 +51,9 @@ Recommended model tier: `economy`
    pushed checkout as `--repo-root "$ARTIFACT_REPO_ROOT"`.
 15. For Protocol 94 batch merges, keep the explicit in-scope PR list frozen and
    run `batch-merge.sh recheck-remaining --prs <list> --after-merged-pr <pr>
-   --base <base>` after each successful sibling merge before selecting the next
-   PR. Apply Protocol 94 Step 4.2 as the source of truth for post-recheck
-   admission semantics.
+   --base <base> --approved-unready-prs <human-included-unready-list>` after
+   each successful sibling merge before selecting the next PR. Apply Protocol 94
+   Step 4.2 as the source of truth for post-recheck admission semantics.
 16. When supervising sweep, batch, helper-extraction, numeric-target, or
    pattern-completeness items, require residual gate evidence before accepting
    `ready-for-human-review` as terminal.

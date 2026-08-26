@@ -9,8 +9,8 @@ source "$SCRIPT_DIR/workflow-lib.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/development-workflow/run-epic-risk-classifier.sh --pr <number> [--max-risk <low|medium|high>] [--repo-root <path>] [--product-repo <name>] [--json]
-  ./scripts/development-workflow/run-epic-risk-classifier.sh --input <file> [--max-risk <low|medium|high>] [--repo-root <path>] [--product-repo <name>] [--json]
+  ./scripts/development-workflow/run-epic-risk-classifier.sh --pr <number> [--why-safe-file <file>] [--max-risk <low|medium|high>] [--repo-root <path>] [--product-repo <name>] [--json]
+  ./scripts/development-workflow/run-epic-risk-classifier.sh --input <file> [--why-safe-file <file>] [--max-risk <low|medium|high>] [--repo-root <path>] [--product-repo <name>] [--json]
 
 Classifies delegated /run-epic PR merge risk. The classifier is read-only: it
 does not run reviewers, poll CI, edit labels, update trackers, merge PRs, close
@@ -19,11 +19,64 @@ issues, post comments, or delete branches.
 In workflow_hub mode, pass --repo-root and --product-repo (or include
 productRepo.name / github_repo in the evidence) so hub ci_policy is applied when
 the evidence omits ciPolicy / ci_policy.
+
+--pr <number> reads live PR state via `gh pr view` / `gh pr diff`. On its own
+it has no way to attach why_safe_to_merge evidence, so a PR that classifies as
+medium risk will always end up "blocked" ("medium-risk PR is missing complete
+why_safe_to_merge evidence") unless you also pass --why-safe-file.
+
+--why-safe-file <file> merges a why_safe_to_merge object into the classified
+state before evaluation, for either --pr or --input mode (it overrides any
+why_safe_to_merge already present in an --input file's contents). Required
+shape -- all five fields are required, non-blank strings:
+
+  {
+    "scope": "what changed and why, in one or two sentences",
+    "tests": "what was run/verified locally and what it showed",
+    "reviewer_outcome": "delegated review disposition (e.g. clean / advisories accepted with rationale)",
+    "ci_outcome": "CI state summary (e.g. all required checks green)",
+    "rollback_or_cleanup_risk": "what happens if this needs to be reverted"
+  }
+
+--input <file> expects the SAME normalized shape --pr builds internally, not
+raw `gh pr view` JSON. Worked example (only pr_number is required; every other
+field is optional and defaults per classify_state's rules):
+
+  {
+    "pr_number": 42,
+    "title": "fix: example change",
+    "base": "develop",
+    "head": "fix/42-example",
+    "github_repo": "owner/repo",
+    "merge_state": "CLEAN",
+    "is_draft": false,
+    "labels": ["ready-for-human-review"],
+    "review_decision": "APPROVED",
+    "status_checks": [
+      {"name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS", "completed_at": "2026-08-20T12:00:00Z"}
+    ],
+    "changed_files": ["scripts/development-workflow/run-epic-risk-classifier.sh"],
+    "why_safe_to_merge": {
+      "scope": "...",
+      "tests": "...",
+      "reviewer_outcome": "...",
+      "ci_outcome": "...",
+      "rollback_or_cleanup_risk": "..."
+    }
+  }
+
+This is NOT the same schema run-epic-delegated-gate.sh --input expects (that
+gate needs a top-level .pr{} identity object, top-level .statusChecks[], and a
+top-level .policy{} -- see that script's --help for its worked example). Do
+not feed this script's --json output directly into that gate's --input;
+assemble each evidence file to its own documented shape (nest this script's
+result under a top-level "risk" key for the delegated gate instead).
 EOF
 }
 
 pr_number=""
 input_file=""
+why_safe_file=""
 repo_root=""
 product_repo=""
 max_risk="low"
@@ -118,7 +171,7 @@ live_pr_state() {
   require_gh
 
   if ! pr_json="$(gh pr view "$number" \
-    --json number,title,baseRefName,headRefName,headRepository,mergeStateStatus,labels,statusCheckRollup,reviewDecision,isDraft 2>/dev/null)"; then
+    --json number,title,baseRefName,headRefName,headRefOid,headRepository,mergeStateStatus,labels,statusCheckRollup,reviewDecision,isDraft 2>/dev/null)"; then
     error_exit "failed to read PR #$number"
   fi
   if [ -z "$pr_json" ]; then
@@ -140,6 +193,7 @@ live_pr_state() {
     title: .title,
     base: .baseRefName,
     head: .headRefName,
+    head_sha: (.headRefOid // null),
     github_repo: (
       if (.headRepository.owner.login? and .headRepository.name?) then
         (.headRepository.owner.login + "/" + .headRepository.name)
@@ -263,6 +317,45 @@ base64_decode() {
   fi
 }
 
+# ci_workflow_is_test_or_lint <path> — true when a .github/workflows file only
+# carries a test or lint job, judged by filename.
+#
+# Issue #1565: every .github/workflows change scored `high`, so a PR that wires
+# a test suite into CI exceeded a medium ceiling and could not be merged under
+# delegated policy — the risk model penalised closing a test-coverage gap.
+# Adding a test or lint job is close to the safest workflow edit there is;
+# changing deployment, release, or permission behavior is not.
+#
+# Filename is the only signal available: the classifier is handed a list of
+# changed paths (--input carries `changed_files` and nothing else), never file
+# contents, so it cannot inspect what a workflow actually does. That makes this
+# deliberately an allowlist, and one that yields to the deny-list below — an
+# unrecognised workflow stays `high`. Misjudging a deployment workflow as a
+# test job is far worse than making someone name a test workflow conventionally.
+ci_workflow_is_test_or_lint() {
+  [ "$#" -eq 1 ] && [ -n "${1:-}" ] \
+    || error_exit "ci_workflow_is_test_or_lint requires exactly one workflow path"
+  local base="${1##*/}"
+
+  # Deny-list wins. A name claiming both ("test-release.yml") is not a test job
+  # for this purpose.
+  case "$base" in
+    *deploy*|*release*|*publish*|*tag*|*secret*|*credential*|*permission*|*policy*|*token*)
+      return 1
+      ;;
+  esac
+
+  case "$base" in
+    test-*.yml|test-*.yaml|\
+    *-test.yml|*-test.yaml|*-tests.yml|*-tests.yaml|\
+    *lint*.yml|*lint*.yaml|\
+    shellcheck.yml|shellcheck.yaml)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 changed_file_risk() {
   local state_json="$1"
   local risk="low"
@@ -272,7 +365,20 @@ changed_file_risk() {
   while IFS= read -r file; do
     [ -n "$file" ] || continue
     case "$file" in
-      .github/workflows/*|*release*|*branch-deletion*|*delete-branch*|\
+      .github/workflows/*)
+        # Split before the sensitive category below, which would otherwise
+        # collapse every workflow edit into `high` (issue #1565).
+        if ci_workflow_is_test_or_lint "$file"; then
+          if [ "$risk" != "high" ]; then
+            risk="medium"
+          fi
+          reasons="$(append_json_array_string "$reasons" "test or lint CI workflow change: ${file}")"
+        else
+          risk="high"
+          reasons="$(append_json_array_string "$reasons" "sensitive or broad file category: ${file}")"
+        fi
+        ;;
+      *release*|*branch-deletion*|*delete-branch*|\
       auth/*|*/auth/*|*/auth|\
       authentication/*|*/authentication/*|*/authentication|\
       secret/*|*/secret/*|*/secret|\
@@ -452,6 +558,7 @@ classify_state() {
     '{
       pr_number: (.pr_number // .number // null),
       title: (.title // null),
+      head_sha: (.head_sha // .headRefOid // null),
       risk: $risk,
       max_risk: $maxRisk,
       merge_permitted: $mergePermitted,
@@ -501,6 +608,11 @@ while [ "$#" -gt 0 ]; do
     --input)
       require_value "$@"
       input_file="$2"
+      shift 2
+      ;;
+    --why-safe-file)
+      require_value "$@"
+      why_safe_file="$2"
       shift 2
       ;;
     --max-risk)
@@ -556,6 +668,16 @@ if [ -n "$input_file" ]; then
   state_json="$(normalize_fixture "$input_file")"
 else
   state_json="$(live_pr_state "$pr_number")"
+fi
+
+if [ -n "$why_safe_file" ]; then
+  why_safe_json="$(normalize_fixture "$why_safe_file")"
+  if ! printf '%s\n' "$why_safe_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    error_exit "--why-safe-file must contain a JSON object: $why_safe_file"
+  fi
+  if ! state_json="$(printf '%s\n' "$state_json" | jq --argjson why "$why_safe_json" '.why_safe_to_merge = $why')"; then
+    error_exit "failed to merge --why-safe-file into classified state"
+  fi
 fi
 
 effective_root="${repo_root:-$(workflow_repo_root)}"
