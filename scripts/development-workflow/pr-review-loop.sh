@@ -5167,6 +5167,7 @@ run_coderabbit_review() {
   # staleness so a reply the loop has already waited on cannot answer a newer
   # trigger (#1579, AC-1). Empty until this run posts its first trigger.
   local coderabbit_last_trigger_iso=""
+  local coderabbit_last_quota_refusal_trigger_iso=""
   # Defaults are sized against CodeRabbit's *hourly* quota reset: 4 retries x 900 s
   # covers 60 minutes of waiting, so a loop that hits the cap early in an hour can
   # still succeed once the vendor window rolls over. The previous 2 x 180 s (~6 min)
@@ -5391,6 +5392,13 @@ run_coderabbit_review() {
         rate_limit_comment_body="$(printf '%s' "$rate_limit_comment_json" | jq -r '.body // ""' 2>/dev/null)" || rate_limit_comment_body=""
         rate_limit_comment_created="$(printf '%s' "$rate_limit_comment_json" | jq -r '.effective_at // .created_at // ""' 2>/dev/null)" || rate_limit_comment_created=""
         if coderabbit_rate_limit_is_live "$rate_limit_comment_json" "$coderabbit_last_trigger_iso"; then
+          if [ -n "$coderabbit_last_trigger_iso" ] && [ "$coderabbit_last_quota_refusal_trigger_iso" != "$coderabbit_last_trigger_iso" ]; then
+            coderabbit_last_quota_refusal_trigger_iso="$coderabbit_last_trigger_iso"
+            if [ "$coderabbit_rate_limit_retries" -gt 0 ]; then
+              coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries - 1))
+            fi
+            echo "INFO: CodeRabbit quota refusal observed for last trigger — not counting it toward CODERABBIT_RATE_LIMIT_MAX_RETRIES" >&2
+          fi
           rate_limit_comment_count=1
         else
           echo "INFO: newest CodeRabbit rate-limit comment (${rate_limit_comment_created:-unknown time}) is past the window it announced — treating it as spent rather than waiting on it again (#1579)" >&2
