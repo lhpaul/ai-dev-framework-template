@@ -73,11 +73,16 @@ item_sort_key() {
 }
 
 collect_entries() {
-  local dir="$1" path name
+  local dir="$1" path name parent
   [ -d "$dir" ] || return 0
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     name="$(basename "$path")"
+    parent="$(dirname "$path")"
+    if [ "$parent" != "$dir" ]; then
+      printf 'candidate\t%s\n' "$path"
+      continue
+    fi
     case "$name" in
       README.md|.gitkeep|.DS_Store) continue ;;
     esac
@@ -93,7 +98,7 @@ collect_entries() {
         printf 'candidate\t%s\n' "$path"
       fi
     fi
-  done < <(find "$dir" -mindepth 1 -maxdepth 1 -type f | LC_ALL=C sort)
+  done < <(find "$dir" -mindepth 1 -type f | LC_ALL=C sort)
 }
 
 validate_body() {

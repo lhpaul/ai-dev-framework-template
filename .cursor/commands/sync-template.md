@@ -879,7 +879,7 @@ The sync-template PR is a `feature/*` branch, so the two-pass code review proced
 
 - No project-specific content was accidentally overwritten by the sync.
 - Always-sync files match what was approved in Step 3.
-- CHANGELOG entry (if any) is correctly formatted under `[Unreleased]`.
+- Changelog fragment (if any) is correctly formatted under `changelog.d/`.
 - `.ai-dev-workflow.yaml` was updated with `last_synced_version`.
 
 Apply any blocking fixes, commit, and push before proceeding. Continue until all configured internal reviewers have approved (or are unavailable under the configured policy).
