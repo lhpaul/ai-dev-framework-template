@@ -127,6 +127,23 @@ shell guard, and full workflow test suite selection if required by changed files
 focused regression suite for the PR policy workflow. Run broader workflow tests
 selected by the repository's changed-file test selection if available.
 
+### Complex workflow decision-gate matrix
+
+This plan modifies the `pr-policy.yml` event-routing gate that decides whether
+an event may apply `ready-for-regression` and dispatch regression.
+
+| Gate input | Allowed outcome | Required next action | Mirror surfaces / docs | Test coverage |
+| --- | --- | --- | --- | --- |
+| `pull_request_target` `opened`, `reopened`, or `ready_for_review` for an in-scope same-repo implementation branch | No regression label or dispatch from this event | Continue reviewer-loop guard status evaluation only | `pr-policy.yml`, `e2e-regression.md`, consolidated policy smoke runbook | Static assertion that lifecycle events do not call the regression label/dispatch path |
+| `pull_request_target` `synchronize` before any current-head clean reviewer evidence | Remove or leave absent stale regression readiness | Keep reviewer-loop guard status failing until Step 7 completes | `pr-policy.yml`, Protocol 91 Step 7b/Step 8a | Static assertion that stale labels are not preserved without current-head clean evidence |
+| Non-summary `issue_comment` | No label, dispatch, or status mutation | Exit early | `pr-policy.yml` | Existing non-summary skip assertion remains |
+| Canonical summary with non-clean result (`needs_fixes`, `escalate`, `pending_timeout`, `timeout`) | No regression label or dispatch | Post/keep reviewer-loop guard failure and require reviewer-loop/fixer path | `pr-policy.yml`, Protocol 92 readiness signal | Static assertions for non-clean result tokens |
+| Canonical summary with `Result: clean` bound to the live PR head | Apply `ready-for-regression` and dispatch regression idempotently | Revalidate metadata immediately before mutation; preserve guard success | `pr-policy.yml`, `e2e-regression.yml`, Protocol 91 Step 7b | Static assertion for current-head clean summary label/dispatch path |
+| Canonical summary with allowed `Result: skipped` bound to the live PR head | Apply `ready-for-regression` and dispatch regression only when the skip reason is allowed for Step 7 | Revalidate metadata immediately before mutation; otherwise fail closed | `pr-policy.yml`, Protocol 91/92 skipped semantics | Static assertion for allowed skipped summary and a negative assertion for unrecognized skip text |
+| Canonical clean/skipped summary whose recorded head differs from live PR head, or whose head cannot be proven | No regression label or dispatch | Fail closed and require fresh reviewer-loop evidence for the live head | `pr-policy.yml`, Protocol 91 `POST_CLEAN_HEAD_SHA` / reviewer-loop history concepts | Static assertion for stale-head summary rejection |
+| Fork-head PR for any otherwise matching event | No privileged mutation | Exit before label, status, or dispatch mutation | `pr-policy.yml` fork guard | Existing fork-safety assertions remain and cover dispatch too |
+| `spec/*`, `implementation-plan/*`, or graduation PR | No implementation-only regression label | Treat as exempt/non-implementation for regression readiness | Protocol 91 label derivation, Protocol 05b graduation exemption | Static assertion for exempt branch behavior |
+
 ### Parser-risk addendum
 
 - **Edge-case enumeration**:
