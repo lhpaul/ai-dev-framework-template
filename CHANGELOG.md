@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Prevent stale reviewer summaries from restoring regression label** (#1621):
+  `pr-review-loop.sh` now restores `ready-for-regression` only from clean or
+  skipped reviewer-loop summary evidence for the current PR head.
 - **Trigger regression after reviewer clean** (#1615): Moved the normal
   regression dispatch path behind current-head reviewer-loop clean evidence so
   implementation PRs no longer run regression from open/reopen/ready events.
