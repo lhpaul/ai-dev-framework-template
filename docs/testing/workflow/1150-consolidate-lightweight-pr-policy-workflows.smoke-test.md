@@ -69,12 +69,14 @@ the summary-comment readiness path.
 1. Confirm `IN_SCOPE_PREFIXES` includes `feature/`, `fix/`, `refactor/`, and
    `hotfix/`.
 2. Confirm non-implementation branches skip implementation-only label behavior.
-3. Confirm same-repository implementation PRs apply `ready-for-regression` on
-   open/reopen/ready-for-review.
-4. Confirm synchronize behavior removes `ready-for-regression` only when the
-   label is present and no canonical reviewer-loop summary comment exists.
-5. Confirm synchronize behavior preserves reviewer-loop-owned labels when a
-   canonical summary already exists.
+3. Confirm same-repository implementation PRs do not apply
+   `ready-for-regression` on open/reopen/ready-for-review alone.
+4. Confirm clean or allowed-skipped canonical reviewer-loop summaries for the
+   current PR head dispatch regression and then apply `ready-for-regression`.
+5. Confirm synchronize behavior removes `ready-for-regression` when the label is
+   present and no current-head clean reviewer-loop evidence exists.
+6. Confirm synchronize behavior preserves reviewer-loop-owned labels when a
+   clean canonical summary is bound to the current PR head.
 
 **Expected result**: The consolidated workflow preserves the intended
 `ready-for-regression` lifecycle and does not label non-implementation PRs.
@@ -141,7 +143,7 @@ Each checkbox maps to acceptance criteria from the spec.
 - [ ] One PR policy workflow owns the current apply-label, stale-label removal,
       and reviewer-loop guard behavior if consolidation proceeds.
 - [ ] Same-repository implementation PRs keep the expected
-      `ready-for-regression` lifecycle.
+      reviewer-clean `ready-for-regression` lifecycle.
 - [ ] Non-implementation PRs do not receive implementation-only labels or fail
       implementation-only reviewer-loop policy.
 - [ ] Reviewer-loop readiness is still derived from canonical summary markers.
@@ -172,7 +174,7 @@ No application seed data is required.
 | --- | --- | --- |
 | Static test still looks for `reviewer-loop-guard.yml` only | Test was not updated for consolidation | Point the test at `pr-policy.yml` and add label lifecycle assertions. |
 | Fork safety assertion fails | Workflow tries to mutate status or labels before checking head repository | Move fork-head checks before privileged operations. |
-| `ready-for-regression` is removed after reviewer loop has run | Summary-comment detection was not preserved in synchronize path | Restore canonical summary marker lookup before label removal. |
+| `ready-for-regression` is removed after reviewer loop has run clean for the current head | Summary-comment result or head binding was not preserved in synchronize path | Restore canonical summary result parsing and current-head lookup before label removal. |
 | Docs mention deleted workflow files as current behavior | Documentation updates missed old split workflow references | Update docs to name `pr-policy.yml` and keep old names only as historical replacement context. |
 
 ---
