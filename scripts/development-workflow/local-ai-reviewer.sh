@@ -169,6 +169,14 @@ case "$TIMEOUT" in
     ;;
 esac
 
+if [ -n "${LOCAL_AI_REVIEWER_EVIDENCE_FILE:-}" ]; then
+  case "$LOCAL_AI_REVIEWER_EVIDENCE_FILE" in
+    /*) ;;
+    *) LOCAL_AI_REVIEWER_EVIDENCE_FILE="$PWD/$LOCAL_AI_REVIEWER_EVIDENCE_FILE" ;;
+  esac
+  export LOCAL_AI_REVIEWER_EVIDENCE_FILE
+fi
+
 if [ "${LOCAL_AI_REVIEWER_DISABLED:-0}" = "1" ]; then
   print_result skipped 0 0 0 disabled_by_config disabled_by_config
   exit 3
@@ -472,7 +480,7 @@ write_evidence_file() {
   local final_suggestion_count="$5"
 
   [ -n "${LOCAL_AI_REVIEWER_EVIDENCE_FILE:-}" ] || return 0
-  jq -n \
+  if ! jq -n \
     --arg schema_version "local_ai_reviewer_evidence.v1" \
     --arg result "$final_result" \
     --arg reason "$final_reason" \
@@ -510,7 +518,9 @@ write_evidence_file() {
         diff_name_status: $diff_name_status,
         diff_stat: $diff_stat
       }
-    }' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"
+    }' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"; then
+    echo "WARN: could not write local AI reviewer evidence file: $LOCAL_AI_REVIEWER_EVIDENCE_FILE" >&2
+  fi
 }
 
 case "$result" in

@@ -14,12 +14,13 @@ OUTPUT_FILE="$(mktemp)"
 STDERR_FILE="$(mktemp)"
 EXIT_FILE="$(mktemp)"
 EVIDENCE_FILE="$(mktemp)"
+RELATIVE_EVIDENCE_FILE="local-ai-reviewer-relative-evidence.json"
 VALID_REPO_ROOT="$(mktemp -d)"
 
 cleanup() {
   local status=$?
   rm -rf "$MOCK_BIN" "$NO_GRAPH_BIN" "$VALID_REPO_ROOT"
-  rm -f "$OUTPUT_FILE" "$STDERR_FILE" "$EXIT_FILE" "$EVIDENCE_FILE"
+  rm -f "$OUTPUT_FILE" "$STDERR_FILE" "$EXIT_FILE" "$EVIDENCE_FILE" "$RELATIVE_EVIDENCE_FILE"
   exit "$status"
 }
 trap cleanup EXIT
@@ -176,6 +177,24 @@ run_reviewer "$MOCK_BIN:$PATH"
 run_test "evidence_schema" "local_ai_reviewer_evidence.v1" "$(jq -r '.schema_version' "$EVIDENCE_FILE")"
 run_test "evidence_result" "clean" "$(jq -r '.result' "$EVIDENCE_FILE")"
 run_test "evidence_changed_file" "scripts/example.sh" "$(jq -r '.context_summary.changed_files[0]' "$EVIDENCE_FILE")"
+
+reset_mocks
+rm -f "$RELATIVE_EVIDENCE_FILE" "$VALID_REPO_ROOT/$RELATIVE_EVIDENCE_FILE"
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+LOCAL_AI_REVIEWER_EVIDENCE_FILE="$RELATIVE_EVIDENCE_FILE"
+MOCK_PR_HEAD_SHA="$(git -C "$VALID_REPO_ROOT" rev-parse HEAD)"
+set_mock_stdout '{"result":"clean","findings":[]}'
+export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_EVIDENCE_FILE MOCK_LOCAL_REVIEWER_STDOUT MOCK_PR_HEAD_SHA
+run_reviewer "$MOCK_BIN:$PATH" --repo-root "$VALID_REPO_ROOT"
+run_test "relative_evidence_path_uses_original_cwd" "yes" "$([ -f "$RELATIVE_EVIDENCE_FILE" ] && [ ! -f "$VALID_REPO_ROOT/$RELATIVE_EVIDENCE_FILE" ] && echo yes || echo no)"
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+LOCAL_AI_REVIEWER_EVIDENCE_FILE="$VALID_REPO_ROOT/missing-dir/evidence.json"
+set_mock_stdout '{"result":"clean","findings":[]}'
+export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_EVIDENCE_FILE MOCK_LOCAL_REVIEWER_STDOUT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "unwritable_evidence_path_preserves_result" "RESULT=clean" "$(line_for RESULT)"
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock

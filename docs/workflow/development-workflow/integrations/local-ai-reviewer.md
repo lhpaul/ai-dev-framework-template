@@ -85,7 +85,9 @@ artifact. The artifact uses `schema_version: local_ai_reviewer_evidence.v1`
 and records the reviewed head, graph context, result, reason, counts, changed
 files, and compact diff summary. Keep this artifact alongside ready-phase
 reviewer-loop evidence when measuring whether Bugbot or another ready-phase
-reviewer found net-new blockers.
+reviewer found net-new blockers. Relative evidence paths are resolved from the
+operator's original working directory before `--repo-root` changes the checkout
+directory.
 
 ---
 
