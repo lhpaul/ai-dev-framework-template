@@ -5168,6 +5168,7 @@ run_coderabbit_review() {
   # trigger (#1579, AC-1). Empty until this run posts its first trigger.
   local coderabbit_last_trigger_iso=""
   local coderabbit_last_quota_refusal_trigger_iso=""
+  local coderabbit_rate_limit_hold_seen=0
   # Defaults are sized against CodeRabbit's *hourly* quota reset: 4 retries x 900 s
   # covers 60 minutes of waiting, so a loop that hits the cap early in an hour can
   # still succeed once the vendor window rolls over. The previous 2 x 180 s (~6 min)
@@ -5402,6 +5403,22 @@ run_coderabbit_review() {
           rate_limit_comment_count=1
         else
           echo "INFO: newest CodeRabbit rate-limit comment (${rate_limit_comment_created:-unknown time}) is past the window it announced — treating it as spent rather than waiting on it again (#1579)" >&2
+          if [ "$coderabbit_rate_limit_hold_seen" -eq 1 ] && [ "$coderabbit_rate_limit_retries" -lt "$coderabbit_rate_limit_max_retries" ]; then
+            coderabbit_rate_limit_hold_seen=0
+            echo "INFO: CodeRabbit rate-limit window elapsed after a held wait — posting @coderabbitai review" >&2
+            if gh pr comment "$pr_number" --body "@coderabbitai review" >/dev/null 2>&1; then
+              coderabbit_rate_limit_retries=$((coderabbit_rate_limit_retries + 1))
+              coderabbit_trigger_attempts=$((coderabbit_trigger_attempts + 1))
+              coderabbit_last_trigger_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+              echo "INFO: posted @coderabbitai review after rate-limit window elapsed" >&2
+            else
+              echo "WARN: failed to post @coderabbitai review after rate-limit window elapsed" >&2
+            fi
+            elapsed=0
+            _interruptible_sleep "$poll_interval"
+            elapsed=$((elapsed + poll_interval))
+            continue
+          fi
         fi
       fi
       if [ "${rate_limit_comment_count:-0}" -gt 0 ]; then
@@ -5471,6 +5488,7 @@ run_coderabbit_review() {
           _interruptible_sleep "$poll_interval"
           elapsed=$((elapsed + coderabbit_this_wait + poll_interval))
           if [ "$elapsed" -lt "$max_wait" ]; then
+            coderabbit_rate_limit_hold_seen=1
             continue
           fi
           coderabbit_skip_rate_limit_retrigger=1
@@ -5480,6 +5498,7 @@ run_coderabbit_review() {
           _interruptible_sleep "$poll_interval"
           elapsed=$((elapsed + coderabbit_this_wait + poll_interval))
           if [ "$elapsed" -lt "$max_wait" ]; then
+            coderabbit_rate_limit_hold_seen=1
             continue
           fi
           coderabbit_skip_rate_limit_retrigger=1

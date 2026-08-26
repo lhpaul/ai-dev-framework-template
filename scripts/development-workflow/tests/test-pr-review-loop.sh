@@ -15480,6 +15480,8 @@ run_test "1597_rate_limit_branch_holds_live_window" "yes" \
   "$([ "$(printf '%s' "$_1579_rl_branch" | grep -c 'not posting a trigger while quota refusal remains outstanding' || true)" -ge 1 ] && echo yes || echo no)"
 run_test "1597_rate_limit_refusal_refunds_retry_budget" "yes" \
   "$([ "$(grep_count_or_zero 'not counting it toward CODERABBIT_RATE_LIMIT_MAX_RETRIES' "$_1579_loop_src")" -ge 1 ] && echo yes || echo no)"
+run_test "1597_held_rate_limit_posts_when_spent" "yes" \
+  "$([ "$(grep_count_or_zero 'rate-limit window elapsed after a held wait' "$_1579_loop_src")" -ge 1 ] && echo yes || echo no)"
 run_test "1579_rate_limit_branch_does_not_post_resume" "0" \
   "$(printf '%s' "$_1579_rl_branch" | grep -c -- '--body "@coderabbitai resume"' || true)"
 # The extraction must actually have found the branch; an empty window would
