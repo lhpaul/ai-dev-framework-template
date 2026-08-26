@@ -1,7 +1,7 @@
 # Protocol: Batch Merge
 
 **Agent role**: Developer (or Portfolio Orchestrator when invoked from Protocol 90)
-**Purpose**: Merge all ready PRs in a parallel batch into the target integration branch (`develop` by default, or any epic integration branch) sequentially, auto-resolving trivial CHANGELOG and documentation conflicts (including duplicate section headers introduced by clean merges), pausing for human input on non-trivial ones, and running `post-merge-cleanup` for each successfully merged PR.
+**Purpose**: Merge all ready PRs in a parallel batch into the target integration branch (`develop` by default, or any epic integration branch) sequentially, auto-resolving trivial documentation conflicts and legacy direct-`CHANGELOG.md` conflicts (including duplicate section headers introduced by clean merges), pausing for human input on non-trivial ones, and running `post-merge-cleanup` for each successfully merged PR.
 
 **Shell helper**: `scripts/development-workflow/batch-merge.sh`
 
@@ -90,9 +90,9 @@ Candidate PRs for batch merge
 ──────────────────────────────────────────────────────────────────────────────
    1   │  #101  │ feat: add widget                  │ feature/101-widget  │ ready-for-human-review
    2   │  #103  │ fix: correct typo                 │ fix/103-typo        │ ready-for-human-review
-   3   │  #102  │ feat: update docs                 │ feature/102-docs    │ ready-for-human-review, CHANGELOG
+   3   │  #102  │ feat: update docs                 │ feature/102-docs    │ ready-for-human-review
 ──────────────────────────────────────────────────────────────────────────────
-Merge order: non-CHANGELOG PRs first (ascending PR #), then CHANGELOG PRs (ascending PR #).
+Merge order: normal fragment-based implementation PRs by ascending PR #; legacy direct-CHANGELOG PRs are grouped last when present.
 ```
 
 Fields: Order, PR number, title, branch name, labels, readiness status.
@@ -147,9 +147,9 @@ Display the final merge plan (only PRs approved so far) and proceed immediately:
 ```text
 Merge plan (will be executed in this order)
 ──────────────────────────────────────────
-  1. PR #101  feature/101-widget     (no CHANGELOG conflict expected)
-  2. PR #102  feature/102-docs       (no CHANGELOG conflict expected)
-  3. PR #103  fix/103-docs-update    (may cause CHANGELOG conflict — will auto-resolve)
+  1. PR #101  feature/101-widget     (fragment-based release note)
+  2. PR #102  feature/102-docs       (fragment-based release note)
+  3. PR #103  fix/103-docs-update    (fragment-based release note)
 
 Skipped (not ready): #104
 ```
@@ -599,7 +599,7 @@ Batch Merge Summary
  PR #  │ Title                       │ Outcome
 ──────────────────────────────────────────────────────────────────────────────
  #101  │ feat: add widget             │ merged_clean
- #102  │ feat: update CHANGELOG docs  │ merged_auto  (CHANGELOG combined)
+ #102  │ feat: update docs            │ merged_auto  (docs combined)
  #103  │ fix: conflict fix            │ merged_human
  #104  │ feat: missing label          │ skipped_not_ready
  #105  │ fix: bad conflict            │ skipped_conflict
@@ -614,7 +614,7 @@ Merged: 3  |  Skipped: 2  |  Blocked: 1  |  Observed: 1  |  Failed: 0  |  Not at
 | Code                | Meaning                                                                                  |
 | ------------------- | ---------------------------------------------------------------------------------------- |
 | `merged_clean`      | Merged without any conflicts                                                             |
-| `merged_auto`       | Merged with auto-resolved trivial conflicts (CHANGELOG or non-overlapping doc files)     |
+| `merged_auto`       | Merged with auto-resolved trivial conflicts (legacy direct `CHANGELOG.md` or non-overlapping doc files) |
 | `merged_human`      | Merged after human resolved non-trivial conflict(s)                                      |
 | `skipped_not_ready` | Skipped because PR lacked `ready-for-human-review` and human chose to exclude it         |
 | `skipped_conflict`  | Skipped because human aborted conflict resolution; `develop` returned to pre-merge state |
