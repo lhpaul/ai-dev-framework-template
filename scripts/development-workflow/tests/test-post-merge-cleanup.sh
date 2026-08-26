@@ -233,6 +233,49 @@ run_contains "merged_implementation_remote_deleted" "REMOTE_DELETE_RESULT=delete
 run_contains "merged_implementation_records_pr" "REMOTE_DELETE_PR_NUMBER=77" "$merged_output"
 run_test "merged_implementation_remote_ref_absent" "" "$("$REAL_GIT" -C "$merged_repo" ls-remote --heads origin "$merged_branch")"
 
+worktree_branch="feature/noissue-worktree-cleanup"
+worktree_repo="$(make_repo worktree-cleanup "$worktree_branch" yes)"
+mkdir -p "$worktree_repo/scripts/development-workflow"
+cp "$REPO_ROOT/scripts/development-workflow/post-merge-cleanup.sh" "$worktree_repo/scripts/development-workflow/post-merge-cleanup.sh"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh" "$worktree_repo/scripts/development-workflow/workflow-lib.sh"
+cp "$REPO_ROOT/scripts/development-workflow/workflow-config-resolver.py" "$worktree_repo/scripts/development-workflow/workflow-config-resolver.py"
+chmod +x "$worktree_repo/scripts/development-workflow/post-merge-cleanup.sh"
+worktree_pr_path="$TMP_ROOT/worktree-cleanup-pr"
+"$REAL_GIT" -C "$worktree_repo" worktree add -q "$worktree_pr_path" "$worktree_branch"
+worktree_output="$(
+  GH_MERGED_HEAD="$worktree_branch" \
+  GH_MERGED_PR=85 \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" \
+    --repo-root "$worktree_pr_path" \
+    --base develop \
+    --pr 85 \
+    "$worktree_branch"
+)"
+run_contains \
+  "worktree_cleanup_reenters_base_worktree" \
+  "Re-entering cleanup from that worktree" \
+  "$worktree_output"
+run_contains \
+  "worktree_cleanup_deletes_remote_branch" \
+  "REMOTE_DELETE_RESULT=deleted" \
+  "$worktree_output"
+run_test "worktree_cleanup_pr_worktree_removed" "no" "$(
+  if [ -d "$worktree_pr_path" ]; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+run_test "worktree_cleanup_local_branch_removed" "no" "$(
+  if "$REAL_GIT" -C "$worktree_repo" show-ref --quiet "refs/heads/$worktree_branch"; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+)"
+
 absent_branch="feature/noissue-already-absent"
 absent_repo="$(make_repo absent "$absent_branch" no)"
 absent_output="$(
