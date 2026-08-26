@@ -179,6 +179,18 @@ python3 "$ROOT_DIR/scripts/lint/markdown-heuristic-lint.py" "$dir/CHANGELOG.md"
 bash "$ROOT_DIR/scripts/lint/check-changelog-duplicate-headers.sh" "$dir/CHANGELOG.md"
 run_test "assembled_output_lints" "yes" "yes"
 
+dir="$(new_case malformed-retry)"
+cat > "$dir/CHANGELOG.md" <<'MD'
+# Changelog
+
+## [0.2.0] - 2026-02-03
+
+- Prior assembled notes.
+MD
+malformed_retry="$(assemble_case "$dir" --version 0.2.0 --date 2026-02-04)"
+run_test "assemble_idempotent_requires_unreleased" "yes" "$(contains "ASSEMBLE_RESULT=invalid" "$malformed_retry")"
+run_test "assemble_idempotent_not_before_unreleased_check" "no" "$(contains "ASSEMBLE_RESULT=already_assembled" "$malformed_retry")"
+
 echo ""
 echo "=== no notes and allow-empty ==="
 dir="$(new_case empty)"

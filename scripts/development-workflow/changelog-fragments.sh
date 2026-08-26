@@ -218,17 +218,17 @@ assemble_changelog() {
     return 1
   fi
 
-  if version_exists "$changelog" "$version"; then
-    printf 'ASSEMBLE_RESULT=already_assembled\n'
-    printf 'VERSION=%s\n' "$version"
-    return 0
-  fi
-
   require_single_unreleased "$changelog" || {
     printf 'ASSEMBLE_RESULT=invalid\n'
     printf 'VERSION=%s\n' "$version"
     return 1
   }
+
+  if version_exists "$changelog" "$version"; then
+    printf 'ASSEMBLE_RESULT=already_assembled\n'
+    printf 'VERSION=%s\n' "$version"
+    return 0
+  fi
 
   collect_entries "$dir" | awk -F '\t' '$1 == "fragment"' | LC_ALL=C sort -t $'\t' -k2,2n -k3,3 -k4,4 > "$entries_file"
   fragment_count="$(wc -l < "$entries_file" | tr -d ' ')"
