@@ -15075,6 +15075,12 @@ run_test "review_probe_detects_submitted_review" "1" \
 run_test "review_probe_detects_submitted_review_for_head" "1" \
   "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" deadbeefdeadbeefdeadbeefdeadbeefdeadbeef coderabbitai)"
 
+# GitHub may omit commit_id. Missing commit metadata is still acceptable, but
+# an explicit different commit must not satisfy the current-head settle.
+_1556_mkreviews '[{"user":{"login":"coderabbitai[bot]"},"submitted_at":"2026-08-22T00:30:32Z","state":"COMMENTED","commit_id":null,"body":"Actionable comments posted: 3"}]'
+run_test "review_probe_detects_submitted_review_for_head_without_commit_id" "1" \
+  "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" deadbeefdeadbeefdeadbeefdeadbeefdeadbeef coderabbitai)"
+
 # Empty-body review containers are produced when the bot replies inside
 # existing review threads. They are not a review of the current code.
 _1556_mkreviews '[{"user":{"login":"coderabbitai[bot]"},"submitted_at":"2026-08-22T00:30:32Z","state":"COMMENTED","commit_id":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef","body":""}]'
