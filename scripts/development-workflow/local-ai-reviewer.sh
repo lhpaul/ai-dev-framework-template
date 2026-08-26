@@ -351,11 +351,11 @@ setup_probe_output="$command_stderr"
 if ! printf '%s\n' "$command_stdout" | jq -e . >/dev/null 2>&1; then
   setup_probe_output="$combined_output"
 fi
-if printf '%s\n' "$setup_probe_output" | grep -Eiq 'missing[[:space:]_-]+model|model[[:space:]_-]+access|model.*unavailable'; then
+if grep -Eiq 'missing[[:space:]_-]+model|model[[:space:]_-]+access|model.*unavailable' <<< "$setup_probe_output"; then
   print_result escalate 0 0 0 missing_model_access missing_model_access
   exit 2
 fi
-if printf '%s\n' "$setup_probe_output" | grep -Eiq 'missing[[:space:]_-]+credentials|credentials[[:space:]_-]+missing|unauthori[sz]ed|forbidden|(^|[^[:alnum:]_])(401|403)([^[:alnum:]_]|$)'; then
+if grep -Eiq 'missing[[:space:]_-]+credentials|credentials[[:space:]_-]+missing|unauthori[sz]ed|forbidden|(^|[^[:alnum:]_])(401|403)([^[:alnum:]_]|$)' <<< "$setup_probe_output"; then
   print_result escalate 0 0 0 missing_credentials missing_credentials
   exit 2
 fi
