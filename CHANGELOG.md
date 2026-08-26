@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Local Codex reviewer preset and dogfood evidence** (#1609): adds a short
+  `local-codex-reviewer.sh` wrapper for the `local-ai-reviewer` platform,
+  enriches the local reviewer context bundle with compact diff metadata, and
+  can persist a JSON evidence artifact for comparing local-review outcomes
+  against ready-phase reviewers.
 - **Repo-native local AI reviewer platform** (#1604): adds an opt-in
   `local-ai-reviewer` Step 7 platform with a local companion script,
   conservative result parsing, current-head binding, optional graph-context
