@@ -293,7 +293,10 @@ field to the Portfolio Orchestrator. This isolation check complements, but does
 not replace, the #1200 nested artifact guard for duplicate or wrong-base PR
 artifacts.
 
-**CHANGELOG in parallel batches**: Each item in a parallel batch adds its own CHANGELOG entry as normal. CHANGELOG merge conflicts are resolved at merge time by the batch-merge auto-resolution (protocol 94 Step 4.3). Do not skip or consolidate CHANGELOG entries — see protocol 90 Step 3.6 for rationale.
+**CHANGELOG in parallel batches**: Each item in a parallel batch adds its own
+`changelog.d/` fragment as normal. Do not skip or consolidate release notes;
+the release workflow assembles pending fragments into `CHANGELOG.md` — see
+protocol 90 Step 3.6 for rationale.
 
 ### Explicit Item List Scope Guard
 
@@ -303,7 +306,7 @@ artifacts.
 - PR opening, labeling, or editing
 - Tracker status updates
 - Stage-agent dispatch
-- CHANGELOG edits
+- changelog fragment edits
 
 **Detection**: An explicit item list is present when the handoff metadata or human invocation includes a bounded set of issue numbers, tracker IDs, branch names, or PR numbers. A single-item invocation targeting one specific item is self-scoping and does not require a list check beyond confirming that any encountered open PR or branch belongs to the same item.
 
@@ -1266,7 +1269,9 @@ This protocol stays scoped to one item. It may call different stage agents over 
 
 ### CHANGELOG in parallel batches
 
-See Protocol 90 Step 3.6 for the canonical CHANGELOG strategy in parallel batches. CHANGELOG merge conflicts are resolved at merge time by the batch-merge auto-resolution (Protocol 94 Step 4.3).
+See Protocol 90 Step 3.6 for the canonical CHANGELOG strategy in parallel
+batches. Normal implementation PRs write per-item fragments under
+`changelog.d/`; final `CHANGELOG.md` assembly happens during Prepare Release.
 
 ### Scope Boundary Rule for Dispatched Agents
 

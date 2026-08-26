@@ -165,4 +165,4 @@ For each item below, document the design decision when the item applies, or note
 6. [Step 6: e.g., update seed data]
 7. [Step 7: e.g., verify smoke test runbook]
 8. [Step 8: Update project docs per **Documentation Updates** section above (if any)]
-9. [Step 9: update `CHANGELOG.md` under `[Unreleased]` — use the project's `**Bold Title** (#N):` format (e.g., `- **Bold Title** (#226): description`). Do NOT use conventional-commit format (`fix(scope): message`) in the CHANGELOG entry.]
+9. [Step 9: add or update a `changelog.d/<item>.<kind>.<slug>.md` fragment — use the project's `**Bold Title** (#N):` bullet format in the fragment body (e.g., `- **Bold Title** (#226): description`). Do NOT use conventional-commit format (`fix(scope): message`) in the changelog fragment.]
