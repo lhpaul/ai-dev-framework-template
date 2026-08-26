@@ -6283,7 +6283,7 @@ run_project_advisory_checks() {
 # the test harness can load them via HARNESS_MODE=1 sourcing without executing
 # the argument-parsing and main-loop sections below.
 
-# normalize_platform_verdict: map a raw platform result token to one of the five
+# normalize_platform_verdict: map a raw platform result token to one of the six
 # canonical compare-mode verdict values: clean, blocking, advisory, waiting, timed out, unavailable.
 # $1 = platform_result token (e.g. clean, needs_fixes, skipped, escalate, needs_rerun)
 # $2 = full platform output (key=value block; used to inspect REASON for timeout detection)
