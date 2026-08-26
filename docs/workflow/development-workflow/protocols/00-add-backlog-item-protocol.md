@@ -20,6 +20,7 @@ Before creating anything, read:
 
 Optional deterministic helper (destination resolution and GitHub issue creation):
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/add-backlog-item.sh resolve
 ./scripts/development-workflow/add-backlog-item.sh create --title "..." --body-file - --type Workflow
@@ -149,6 +150,7 @@ silent no-op:
 
 Pass inferred values directly to the helper:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 ./scripts/development-workflow/add-backlog-item.sh create \
   --title "..." \
