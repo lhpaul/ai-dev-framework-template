@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Trigger regression after reviewer clean** (#1615): Moved the normal
+  regression dispatch path behind current-head reviewer-loop clean evidence so
+  implementation PRs no longer run regression from open/reopen/ready events.
 - **Stop local reviewer loop while Codex is pending** (#1603):
   Codex GitHub review timeouts after a current-head trigger now surface
   `RESULT=waiting_on_reviewer` with trigger/head telemetry instead of

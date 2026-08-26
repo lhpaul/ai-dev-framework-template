@@ -6,16 +6,16 @@
 #
 # Event routing:
 #   pull_request_target opened/reopened/ready_for_review
-#     - same-repository implementation PRs: ensure and apply ready-for-regression
-#       and dispatch the e2e/regression workflow for the PR head
 #     - all same-repository PRs: evaluate reviewer-loop guard status
 #   pull_request_target synchronize
 #     - same-repository implementation PRs: remove stale ready-for-regression
-#       only when no canonical reviewer-loop summary exists
+#       when current-head reviewer-loop clean evidence is absent
 #     - all same-repository PRs: evaluate reviewer-loop guard status
 #   issue_comment created/edited
 #     - non-summary comments: exit without label or status mutation
-#     - canonical summary comments: refresh the PR-scoped guard status
+#     - clean current-head canonical summaries: dispatch regression and apply
+#       ready-for-regression
+#     - all canonical summary comments: refresh the PR-scoped guard status
 #
 # Fork-head PRs are skipped before any label or status mutation. This workflow
 # does not checkout PR code and does not execute untrusted fork content.
@@ -86,6 +86,10 @@ jobs:
           COMMENTS_FETCH_FAILED=false
           LABEL_POLICY_FAILED=false
           FOUND=0
+          LATEST_SUMMARY_BODY=""
+          LATEST_SUMMARY_RESULT="missing"
+          LATEST_SUMMARY_HEAD_SHA=""
+          LATEST_SUMMARY_HEAD_MATCHES=false
 
           post_failure_status_if_possible() {
             local sha="$1"
@@ -172,6 +176,7 @@ jobs:
 
           fetch_reviewer_loop_summary_count() {
             local comments_output
+            local latest_summary_json
 
             if comments_output=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate 2>&1); then
               if ! FOUND=$(printf '%s\n' "$comments_output" \
@@ -185,6 +190,22 @@ jobs:
                 COMMENTS_FETCH_FAILED=true
                 FOUND=0
               fi
+              if [ "${FOUND:-0}" -gt 0 ]; then
+                if latest_summary_json=$(printf '%s\n' "$comments_output" \
+                  | jq -crs --arg m1 "$MARKER1" --arg m2 "$MARKER2" \
+                    'add // []
+                    | [.[] | select(
+                      (.body // "" | contains($m1)) and
+                      (.body // "" | contains($m2))
+                    )]
+                    | sort_by(.updated_at // .created_at // "")
+                    | last // empty'); then
+                  LATEST_SUMMARY_BODY="$(printf '%s\n' "$latest_summary_json" | jq -r '.body // ""')"
+                else
+                  echo "ERROR: failed to identify latest reviewer-loop summary." >&2
+                  COMMENTS_FETCH_FAILED=true
+                fi
+              fi
             else
               echo "WARN: Failed to check for reviewer loop summary comment on PR #${PR_NUMBER}." >&2
               COMMENTS_FETCH_FAILED=true
@@ -194,6 +215,97 @@ jobs:
             if [ "$EVENT_COMMENT_HAS_SUMMARY" = "true" ] && [ "${FOUND:-0}" -eq 0 ]; then
               echo "Fresh comment listing did not include triggering summary comment; counting event payload."
               FOUND=1
+              LATEST_SUMMARY_BODY="$COMMENT_BODY"
+            fi
+          }
+
+          summarize_reviewer_loop_result() {
+            if [ -z "${LATEST_SUMMARY_BODY:-}" ]; then
+              LATEST_SUMMARY_RESULT="missing"
+              LATEST_SUMMARY_HEAD_SHA=""
+              LATEST_SUMMARY_HEAD_MATCHES=false
+              return 0
+            fi
+
+            if printf '%s\n' "$LATEST_SUMMARY_BODY" |
+              grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*(clean)([^[:alnum:]_]|$)'; then
+              LATEST_SUMMARY_RESULT="clean"
+            elif printf '%s\n' "$LATEST_SUMMARY_BODY" |
+              grep -Eiq '(^|[ *[:space:]])Result:([ *[:space:]])*(skipped)([^[:alnum:]_]|$)'; then
+              LATEST_SUMMARY_RESULT="skipped"
+            else
+              LATEST_SUMMARY_RESULT="non_clean"
+            fi
+
+            LATEST_SUMMARY_HEAD_SHA="$(
+              printf '%s\n' "$LATEST_SUMMARY_BODY" |
+                awk 'in_json && /^```/ {exit} in_json {print} /^```json$/ {in_json=1}' |
+                jq -r '.entries[-1].head_sha // ""' 2>/dev/null || true
+            )"
+
+            if [ -n "$LATEST_SUMMARY_HEAD_SHA" ] &&
+              [ "$LATEST_SUMMARY_HEAD_SHA" = "$HEAD_SHA" ]; then
+              LATEST_SUMMARY_HEAD_MATCHES=true
+            else
+              LATEST_SUMMARY_HEAD_MATCHES=false
+            fi
+          }
+
+          reviewer_summary_allows_regression() {
+            { [ "$LATEST_SUMMARY_RESULT" = "clean" ] ||
+              [ "$LATEST_SUMMARY_RESULT" = "skipped" ]; } &&
+              [ "$LATEST_SUMMARY_HEAD_MATCHES" = "true" ]
+          }
+
+          apply_regression_policy_after_clean_summary() {
+            local should_apply_regression_label=true
+
+            echo "Reviewer-loop summary result '${LATEST_SUMMARY_RESULT}' for PR #${PR_NUMBER}; head match: ${LATEST_SUMMARY_HEAD_MATCHES}."
+
+            if ! reviewer_summary_allows_regression; then
+              echo "Reviewer-loop summary is not clean/skipped for the live head; skipping ${LABEL_NAME} and regression dispatch."
+              return 0
+            fi
+
+            if [ "$REGRESSION_DISPATCH_ENABLED" != "true" ]; then
+              echo "Regression workflow dispatch disabled by PR_POLICY_REGRESSION_DISPATCH_ENABLED='${REGRESSION_DISPATCH_ENABLED}'; skipping ${LABEL_NAME}."
+              should_apply_regression_label=false
+            elif [ "$regression_base_in_scope" != "true" ]; then
+              echo "PR #${PR_NUMBER} targets '${BASE_BRANCH}', which is outside regression workflow branch scope. Skipping ${LABEL_NAME}."
+              should_apply_regression_label=false
+            else
+              if ! dispatch_regression_workflow; then
+                echo "WARN: Failed to dispatch '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER}. Skipping ${LABEL_NAME} and continuing to reviewer-loop guard status." >&2
+                should_apply_regression_label=false
+              else
+                echo "Dispatched '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER} at ${HEAD_SHA}."
+                if ! refresh_pr_metadata; then
+                  echo "WARN: Could not verify PR head after dispatch. Skipping ${LABEL_NAME} to avoid a stale regression-readiness signal." >&2
+                  should_apply_regression_label=false
+                elif [ "$latest_head_sha" != "$HEAD_SHA" ] ||
+                  [ "$latest_branch" != "$BRANCH" ] ||
+                  [ "$latest_base_branch" != "$BASE_BRANCH" ] ||
+                  [ "$latest_head_repo" != "$HEAD_REPO" ]; then
+                  echo "PR #${PR_NUMBER} changed after regression dispatch (${HEAD_SHA} -> ${latest_head_sha}). Skipping ${LABEL_NAME} until reviewer-loop clean evidence exists for the new head."
+                  should_apply_regression_label=false
+                fi
+              fi
+            fi
+
+            if [ "$should_apply_regression_label" != "true" ]; then
+              :
+            elif ! ensure_regression_label_exists; then
+              echo "WARN: Failed to ensure ${LABEL_NAME} label exists. Continuing to reviewer-loop guard status." >&2
+              LABEL_POLICY_FAILED=true
+            elif ! refreshed_metadata_matches_current_head; then
+              echo "WARN: PR #${PR_NUMBER} changed immediately before applying ${LABEL_NAME}. Skipping label to avoid a stale regression-readiness signal." >&2
+            elif ! gh pr edit "$PR_NUMBER" \
+              --repo "$REPO" \
+              --add-label "$LABEL_NAME"; then
+              echo "WARN: Failed to apply ${LABEL_NAME} to PR #${PR_NUMBER}. Continuing to reviewer-loop guard status." >&2
+              LABEL_POLICY_FAILED=true
+            else
+              echo "Label '${LABEL_NAME}' applied to PR #${PR_NUMBER}."
             fi
           }
 
@@ -277,92 +389,18 @@ jobs:
           if [ "$EVENT_NAME" != "issue_comment" ]; then
             case "$EVENT_ACTION" in
               opened|reopened|ready_for_review)
-                echo "Branch '${BRANCH}' is in scope; evaluating ${LABEL_NAME} dispatch policy."
-                should_apply_regression_label=true
-
-                if [ "$REGRESSION_DISPATCH_ENABLED" != "true" ]; then
-                  echo "Regression workflow dispatch disabled by PR_POLICY_REGRESSION_DISPATCH_ENABLED='${REGRESSION_DISPATCH_ENABLED}'; skipping ${LABEL_NAME}."
-                  should_apply_regression_label=false
-                elif [ "$regression_base_in_scope" != "true" ]; then
-                  echo "PR #${PR_NUMBER} targets '${BASE_BRANCH}', which is outside regression workflow branch scope. Skipping ${LABEL_NAME}."
-                  should_apply_regression_label=false
-                else
-                  dispatch_attempt=1
-                  while [ "$dispatch_attempt" -le 2 ]; do
-                    if ! dispatch_regression_workflow; then
-                      echo "WARN: Failed to dispatch '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER}. Skipping ${LABEL_NAME} and continuing to reviewer-loop guard status." >&2
-                      should_apply_regression_label=false
-                      break
-                    fi
-
-                    echo "Dispatched '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER} at ${HEAD_SHA}."
-                    if ! refresh_pr_metadata; then
-                      echo "WARN: Could not verify PR head after dispatch. Skipping ${LABEL_NAME} to avoid a stale regression-readiness signal." >&2
-                      should_apply_regression_label=false
-                      break
-                    fi
-
-                    if [ "$latest_head_sha" = "$HEAD_SHA" ] &&
-                       [ "$latest_branch" = "$BRANCH" ] &&
-                       [ "$latest_base_branch" = "$BASE_BRANCH" ] &&
-                       [ "$latest_head_repo" = "$HEAD_REPO" ]; then
-                      break
-                    fi
-
-                    if [ "$dispatch_attempt" -ge 2 ]; then
-                      echo "PR #${PR_NUMBER} changed again after regression dispatch (${HEAD_SHA} -> ${latest_head_sha}). Skipping ${LABEL_NAME} to avoid a stale regression-readiness signal."
-                      should_apply_regression_label=false
-                      break
-                    fi
-
-                    echo "PR #${PR_NUMBER} changed after regression dispatch (${HEAD_SHA} -> ${latest_head_sha}). Redispatching regression for the current head."
-                    HEAD_SHA="$latest_head_sha"
-                    BRANCH="$latest_branch"
-                    BASE_BRANCH="$latest_base_branch"
-                    HEAD_REPO="$latest_head_repo"
-                    if [ "$HEAD_REPO" != "$REPO" ]; then
-                      echo "Refreshed PR #${PR_NUMBER} head repository '${HEAD_REPO}' differs from base '${REPO}'. Skipping ${LABEL_NAME}."
-                      should_apply_regression_label=false
-                      break
-                    fi
-                    if ! branch_is_in_scope "$BRANCH"; then
-                      echo "Refreshed PR #${PR_NUMBER} branch '${BRANCH}' is not in scope. Skipping ${LABEL_NAME}."
-                      should_apply_regression_label=false
-                      break
-                    fi
-                    case "$BASE_BRANCH" in
-                      develop|develop-*|main) ;;
-                      *)
-                        echo "Refreshed PR #${PR_NUMBER} target '${BASE_BRANCH}' is outside regression workflow branch scope. Skipping ${LABEL_NAME}."
-                        should_apply_regression_label=false
-                        break
-                        ;;
-                    esac
-                    dispatch_attempt=$((dispatch_attempt + 1))
-                  done
-                fi
-
-                if [ "$should_apply_regression_label" != "true" ]; then
-                  :
-                elif ! ensure_regression_label_exists; then
-                  echo "WARN: Failed to ensure ${LABEL_NAME} label exists. Continuing to reviewer-loop guard status." >&2
-                  LABEL_POLICY_FAILED=true
-                elif ! refreshed_metadata_matches_current_head; then
-                  echo "WARN: PR #${PR_NUMBER} changed immediately before applying ${LABEL_NAME}. Skipping label to avoid a stale regression-readiness signal." >&2
-                elif ! gh pr edit "$PR_NUMBER" \
-                  --repo "$REPO" \
-                  --add-label "$LABEL_NAME"; then
-                  echo "WARN: Failed to apply ${LABEL_NAME} to PR #${PR_NUMBER}. Continuing to reviewer-loop guard status." >&2
-                  LABEL_POLICY_FAILED=true
-                else
-                  echo "Label '${LABEL_NAME}' applied to PR #${PR_NUMBER}."
-                fi
+                echo "Branch '${BRANCH}' is in scope; regression waits for current-head reviewer-loop clean evidence."
                 ;;
             esac
           fi
 
           echo "Branch '${BRANCH}' is in scope; inspecting PR comments for reviewer-loop summary."
           fetch_reviewer_loop_summary_count
+          summarize_reviewer_loop_result
+
+          if [ "$EVENT_NAME" = "issue_comment" ]; then
+            apply_regression_policy_after_clean_summary
+          fi
 
           if [ "$EVENT_NAME" != "issue_comment" ] && [ "$EVENT_ACTION" = "synchronize" ]; then
             if ! labels_json=$(gh pr view "$PR_NUMBER" \
@@ -382,10 +420,10 @@ jobs:
               echo "Label '${LABEL_NAME}' is not present on PR #${PR_NUMBER}; nothing to remove."
             elif [ "$COMMENTS_FETCH_FAILED" = "true" ]; then
               echo "WARN: Comment lookup failed. Skipping label removal to avoid dropping a loop-applied label on API failure." >&2
-            elif [ "${FOUND:-0}" -gt 0 ]; then
-              echo "Reviewer loop has already run on PR #${PR_NUMBER} (found ${FOUND} summary comment(s)). Skipping label removal."
+            elif reviewer_summary_allows_regression; then
+              echo "Reviewer loop has already run clean for current head on PR #${PR_NUMBER} (found ${FOUND} summary comment(s)). Skipping label removal."
             else
-              echo "Label '${LABEL_NAME}' found and reviewer loop has not run yet. Removing it."
+              echo "Label '${LABEL_NAME}' found without current-head reviewer-loop clean evidence. Removing it."
               if ! gh pr edit "$PR_NUMBER" \
                 --repo "$REPO" \
                 --remove-label "$LABEL_NAME"; then

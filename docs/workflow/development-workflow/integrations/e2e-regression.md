@@ -6,8 +6,9 @@ This template includes a label-gated GitHub Actions workflow for e2e/regression 
 
 The placeholder workflow listens for PRs targeting `develop`, `develop-*`, or
 `main` when the `ready-for-regression` label is present, and it can also be
-dispatched directly for a qualifying PR head by `pr-policy.yml`. The placeholder
-job is disabled by default. It installs dependencies and browsers only when the
+dispatched directly for a qualifying PR head by `pr-policy.yml` after the
+reviewer-loop summary is clean or legitimately skipped for the live PR head. The
+placeholder job is disabled by default. It installs dependencies and browsers only when the
 repository variable
 `ENABLE_TEMPLATE_PLACEHOLDER_REGRESSION` is set to `true`.
 
@@ -27,14 +28,17 @@ regression is intentionally manual and the repository does not want
 
 The `ready-for-regression` label is applied by the orchestrator (Step 7b in
 `91-orchestrate-work-protocol.md`) after the automated reviewer loop (Step 7) is
-clean, and before the CI loop (Step 8). The `pr-policy.yml` workflow also
-auto-applies the label to same-repository implementation PRs on open, reopen, or
-ready-for-review, dispatches this regression workflow on the PR head ref, applies
-the label only after dispatch succeeds and the PR head still matches, and removes
-stale labels on new pushes only when the reviewer loop has not yet posted its
-canonical summary. The explicit dispatch matters because labels applied with the
-default GitHub Actions token do not reliably create downstream workflow runs from
-`labeled` events. The
+clean, and before the CI loop (Step 8). The `pr-policy.yml` workflow mirrors
+that ordering for same-repository implementation PRs by waiting for the
+canonical reviewer-loop summary comment, requiring its result to be `clean` or
+allowed `skipped`, binding that summary to the live PR head, dispatching this
+regression workflow on the PR head ref, and applying the label only after
+dispatch succeeds and the PR head still matches. It does not apply
+`ready-for-regression` from PR open, reopen, or ready-for-review events alone.
+On new pushes, it removes stale labels unless current-head clean reviewer-loop
+evidence is present. The explicit dispatch matters because labels applied with
+the default GitHub Actions token do not reliably create downstream workflow runs
+from `labeled` events. The
 prepare-release flow applies the same label on production release PRs per
 `05-prepare-release-protocol.md` Step 7.4. This means:
 
@@ -129,14 +133,14 @@ The `ready-for-regression` label is applied to implementation PRs (`feature/*`, 
 ## Notes
 
 - The label persists on the PR after e2e tests pass. It is removed from
-  implementation PRs only when `pr-policy.yml` sees a new push before the
-  reviewer-loop summary exists.
+  implementation PRs when `pr-policy.yml` sees a new push without current-head
+  clean reviewer-loop evidence.
 - If `pr-policy.yml` cannot dispatch the regression workflow, it marks the
   condition in the policy logs and skips automatic `ready-for-regression`
   labeling. The reviewer-loop guard status is still evaluated independently.
-- If the PR head changes after dispatch but before labeling, `pr-policy.yml`
-  skips automatic labeling so a newer head is not marked ready using an older
-  dispatch.
+- If the PR head changes after reviewer-loop clean, dispatch, or pre-label
+  verification, `pr-policy.yml` skips automatic labeling so a newer head is not
+  marked ready using older reviewer or regression evidence.
 - `PR_POLICY_REGRESSION_DISPATCH_ENABLED=false` disables the explicit dispatch
   path for repositories that intentionally keep regression manual.
 - This workflow does not store test credentials or environment URLs in the template.
