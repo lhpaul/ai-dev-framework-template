@@ -64,6 +64,7 @@ review:
     # coderabbit-cli, local-ai-reviewer, pr-agent, codex-github,
     # claude-code-action, haystack, copilot, bugbot.
     github:
+      - local-ai-reviewer
       - pr-agent
 
   on_ready:
@@ -118,15 +119,15 @@ review:
   # "coderabbit" GitHub App platform):
   #   rate_limit_policy: warn      # warn|strict; default warn
   #
-  # Local AI reviewer platform options (local-only CLI reviewer; place
-  # "local-ai-reviewer" in on_draft.github to opt in before ready-phase
-  # reviewers):
+  # Local AI reviewer platform options (local-only CLI reviewer; enabled first
+  # in on_draft.github by default before PR-Agent and ready-phase reviewers):
   #   LOCAL_AI_REVIEWER_COMMAND        — command run under sh -c with
   #                                      CONTEXT_BUNDLE_PATH and PR metadata env
   #   LOCAL_AI_REVIEWER_TIMEOUT        — default local command timeout
   #   LOCAL_AI_REVIEWER_GRAPH_STRATEGY — none|auto|code-review-graph|graphify
   #   LOCAL_AI_REVIEWER_DISABLED=1     — intentionally skip with
   #                                      REASON=disabled_by_config
+  #                                      (or override on_draft.github locally)
   #
   # Configurable codex-github options (set via env vars or script flags to pr-review-loop.sh / codex-github-reviewer.sh):
   #   Setup/verification guide: docs/workflow/development-workflow/integrations/codex-github.md

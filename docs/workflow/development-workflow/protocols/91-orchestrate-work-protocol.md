@@ -3144,6 +3144,8 @@ For the `reviewThreads` resolution check, `gh pr view --json` does not expose `r
 ```bash
 CODEX_BOT_LOGIN="${CODEX_GITHUB_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
 CODEX_BOT_LOGIN="${CODEX_BOT_LOGIN%\[bot\]}"
+BUGBOT_BOT_LOGIN="${BUGBOT_BOT_LOGIN:-cursor[bot]}"
+BUGBOT_BOT_LOGIN="${BUGBOT_BOT_LOGIN%\[bot\]}"
 
 gh api graphql -f query='
   query($owner:String!, $repo:String!, $number:Int!) {
@@ -3155,14 +3157,21 @@ gh api graphql -f query='
       }
     }
   }' -f owner=<owner> -f repo=<repo> -F number=<pr_number> \
-  | jq --arg codex_bot "$CODEX_BOT_LOGIN" '.data.repository.pullRequest.reviewThreads.nodes[]
+  | jq --arg codex_bot "$CODEX_BOT_LOGIN" --arg bugbot_bot "$BUGBOT_BOT_LOGIN" '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
         | select((.isOutdated // false) == false)
-        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps",$codex_bot] | index($a) != null)
+        | select(.comments.nodes[0].author.login as $a | ["coderabbitai","devin-ai-integration","greptile-apps",$codex_bot,$bugbot_bot] | index($a) != null)
         | select((.comments.nodes[0].body // "") | test("✅ Addressed") | not)'
 ```
 
-The bot login list above is a superset covering all async review-bot platforms supported by `pr-review-loop.sh` (`coderabbit`, `devin`, `greptile`, `codex-github`). The current default GitHub reviewer config in `.ai-dev-workflow.yaml` uses `review.on_draft.github: [pr-agent]` and `review.on_ready.github: [codex-github]`. Update the list if your project uses different or additional review bots.
+The bot login list above is a superset covering async review-bot platforms
+supported by `pr-review-loop.sh` that may own GitHub review threads
+(`coderabbit`, `devin`, `greptile`, `codex-github`, `bugbot`). The current
+default GitHub reviewer config in `.ai-dev-workflow.yaml` uses
+`review.on_draft.github: [local-ai-reviewer, pr-agent]` and
+`review.on_ready.github: [bugbot]`; `local-ai-reviewer` and `pr-agent` do not
+own a GitHub review-thread bot login in this workflow. Update the list if your
+project uses different or additional review bots.
 
 The output must contain no unresolved, non-outdated threads from configured bot reviewers (e.g. `coderabbitai`, `devin-ai-integration`, `chatgpt-codex-connector`) before this step passes. A thread is considered non-blocking when `isResolved: true`, `isOutdated: true`, or the first comment body contains `✅ Addressed` (CodeRabbit appends this when a fix commit lands). Any unresolved, non-outdated bot-authored thread that does not meet those conditions — regardless of severity, including Nitpick and Trivial — blocks this check. For PRs with more than 100 threads, implement cursor-based pagination: add `pageInfo { hasNextPage endCursor }` to the `reviewThreads` field selection, capture `endCursor` from each response, and repeat the query with `reviewThreads(first: 100, after: $cursor)` until `hasNextPage` is false.
 
