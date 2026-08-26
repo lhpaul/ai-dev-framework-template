@@ -1616,6 +1616,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Local AI reviewer default promotion** (#1617): runs
+  `local-ai-reviewer` before PR-Agent in the default draft reviewer path, while
+  keeping Bugbot as the ready-phase reviewer and documenting setup/opt-out
+  controls for local runner environments.
 - **Conservative Codex verdict classifier** (#1491): `codex-github-reviewer.sh` now requires the response —
   whitespace-normalized, with no truncation step of any kind — to be an exact match, from its first
   character to its last, against one of a small set of clean-response templates captured verbatim from real

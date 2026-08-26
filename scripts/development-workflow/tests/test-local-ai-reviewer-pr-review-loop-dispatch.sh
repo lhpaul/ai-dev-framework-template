@@ -29,6 +29,12 @@ HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh
 actual="$(bot_login_for_platform local-ai-reviewer)"
 run_test "bot_login_for_platform_local_ai_reviewer_empty" "" "$actual"
 
+shared_config_copy="$(mktemp)"
+cp "$REPO_ROOT/.ai-dev-workflow.yaml" "$shared_config_copy"
+actual="$(workflow_config_review_on_draft_github "$shared_config_copy" | paste -sd ',' -)"
+rm -f "$shared_config_copy"
+run_test "default_draft_github_reviewers_start_with_local_ai" "local-ai-reviewer,pr-agent" "$actual"
+
 _local_ai_dispatch_called=0
 run_local_ai_reviewer_review() {
   _local_ai_dispatch_called=1

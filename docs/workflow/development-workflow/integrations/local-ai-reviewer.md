@@ -1,9 +1,10 @@
 # Integration: Local AI Reviewer
 
-`local-ai-reviewer` is an optional Step 7 review platform for running a
-repository-local review command before ready-phase reviewers such as Bugbot.
-It is implemented by `scripts/development-workflow/local-ai-reviewer.sh` and
-is consumed by `scripts/development-workflow/pr-review-loop.sh`.
+`local-ai-reviewer` is the default first Step 7 draft GitHub review platform in
+this template. It runs a repository-local review command before draft GitHub
+reviewers such as PR-Agent and before ready-phase reviewers such as Bugbot. It
+is implemented by `scripts/development-workflow/local-ai-reviewer.sh` and is
+consumed by `scripts/development-workflow/pr-review-loop.sh`.
 
 The platform is local-only. It does not post GitHub inline comments in this
 MVP, and a local clean result does not replace human review, CI, unresolved
@@ -13,8 +14,7 @@ thread checks, or the configured ready-phase reviewer.
 
 ## Configuration
 
-Enable it explicitly in `.ai-dev-workflow.yaml` or in
-`.ai-dev-workflow.local.yaml`:
+The shared template enables it before PR-Agent in `.ai-dev-workflow.yaml`:
 
 ```yaml
 review:
@@ -27,15 +27,17 @@ review:
       - bugbot
 ```
 
-The shared template does not enable `local-ai-reviewer` by default because a
-missing local command is a setup failure and emits `RESULT=escalate`.
-
 Set the local command in the runner environment:
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
 export LOCAL_AI_REVIEWER_COMMAND='my-review-command "$CONTEXT_BUNDLE_PATH"'
 ```
+
+A missing local command is a setup failure and emits `RESULT=escalate` with
+`REASON=missing_command`. To intentionally skip the default local reviewer for
+one run or one checkout, set `LOCAL_AI_REVIEWER_DISABLED=1` or override
+`review.on_draft.github` in `.ai-dev-workflow.local.yaml`.
 
 For Codex, use the bundled preset wrapper instead of hand-writing the full
 `codex exec` command:
