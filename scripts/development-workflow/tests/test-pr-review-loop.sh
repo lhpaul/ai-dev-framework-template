@@ -2375,6 +2375,64 @@ _mc_no_marker_body="### Automated Reviewer Loop Summary
 run_test "cycles_entries_count_no_marker" "0 0 available" \
   "$(reviewer_loop_history_entries_count "$_mc_no_marker_body" "run-x")"
 
+run_test "small_findings_docs_path_non_shipped" "yes" \
+  "$(reviewer_loop_path_is_non_shipped_artifact "docs/workflow/example.md" && echo yes || echo no)"
+run_test "small_findings_tests_path_non_shipped" "yes" \
+  "$(reviewer_loop_path_is_non_shipped_artifact "scripts/development-workflow/tests/test-pr-review-loop.sh" && echo yes || echo no)"
+run_test "small_findings_source_path_shipped" "no" \
+  "$(reviewer_loop_path_is_non_shipped_artifact "scripts/development-workflow/pr-review-loop.sh" && echo yes || echo no)"
+run_test "small_findings_all_paths_requires_a_path" "no" \
+  "$(printf '\n' | reviewer_loop_all_paths_non_shipped && echo yes || echo no)"
+run_test "small_findings_all_paths_rejects_mixed_source" "no" \
+  "$(printf '%s\n' "docs/a.md" "src/app.ts" | reviewer_loop_all_paths_non_shipped && echo yes || echo no)"
+run_test "small_findings_all_paths_accepts_docs_tests" "yes" \
+  "$(printf '%s\n' "docs/a.md" "tests/a.test.sh" | reviewer_loop_all_paths_non_shipped && echo yes || echo no)"
+run_test "small_findings_required_rounds_default" "2" \
+  "$(unset PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS; reviewer_loop_small_findings_required_rounds 2>/dev/null)"
+run_test "small_findings_required_rounds_env" "3" \
+  "$(PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS=3 reviewer_loop_small_findings_required_rounds 2>/dev/null)"
+run_test "small_findings_paths_from_output" "docs/a.md tests/b.sh" "$(
+  _sf_paths_output=$'RESULT=needs_fixes\nBLOCKING_COUNT=2\nBLOCKING_1_PATH=docs/a.md\nBLOCKING_2_PATH=tests/b.sh'
+  reviewer_loop_blocking_paths_from_output "$_sf_paths_output" 2 | tr '\n' ' ' | sed 's/[[:space:]]$//'
+)"
+
+_sf_history_payload="$(jq -n '{
+  schema: "reviewer_loop_history.v1",
+  history_status: "available",
+  entries: [
+    {iteration: 1, result: "needs_fixes", small_findings_only: true},
+    {iteration: 2, result: "needs_fixes", small_findings_only: true}
+  ]
+}')"
+_sf_history_body="### Automated Reviewer Loop Summary
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+$(printf '%s\n' "$_sf_history_payload" | jq '.')
+\`\`\`"
+run_test "small_findings_prior_consecutive_counts_tail" "2" \
+  "$(reviewer_loop_small_findings_prior_consecutive_count "$_sf_history_body")"
+
+_sf_history_interrupted_payload="$(jq -n '{
+  schema: "reviewer_loop_history.v1",
+  history_status: "available",
+  entries: [
+    {iteration: 1, result: "needs_fixes", small_findings_only: true},
+    {iteration: 2, result: "needs_fixes", small_findings_only: false},
+    {iteration: 3, result: "needs_fixes", small_findings_only: true}
+  ]
+}')"
+_sf_history_interrupted_body="### Automated Reviewer Loop Summary
+
+<!-- reviewer-loop-history:v1 -->
+\`\`\`json
+$(printf '%s\n' "$_sf_history_interrupted_payload" | jq '.')
+\`\`\`"
+run_test "small_findings_prior_consecutive_stops_at_non_tail" "1" \
+  "$(reviewer_loop_small_findings_prior_consecutive_count "$_sf_history_interrupted_body")"
+unset _sf_paths_output _sf_history_payload _sf_history_body
+unset _sf_history_interrupted_payload _sf_history_interrupted_body
+
 _mc_marker_no_json_body=$'### Automated Reviewer Loop Summary\n<!-- reviewer-loop-history:v1 -->\nNo fenced JSON block here.'
 run_test "cycles_entries_count_marker_no_json" "-1 -1 unavailable" \
   "$(reviewer_loop_history_entries_count "$_mc_marker_no_json_body" "run-x")"
