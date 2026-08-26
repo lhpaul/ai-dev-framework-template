@@ -7653,7 +7653,28 @@ _settle_config_for_platform() {
   printf '%s %s %s %s' "$window" "$quiet" "$poll" "$require_review"
 }
 
-# _bot_review_submitted_since <repo> <pr> <since-iso> <bot-login>...
+# _review_body_is_substantive <body>
+#
+# The GitHub reviews endpoint includes zero-body "review" containers when a bot
+# replies inside existing review threads. Those containers are not a review of
+# the current code and must not satisfy POST_CLEAN_REQUIRE_REVIEW.
+_review_body_is_substantive() {
+  local body="${1:-}"
+  local normalized normalized_key
+  normalized="$(printf '%s' "$body" | tr '\r\n\t' '   ' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  [ -n "$normalized" ] || return 1
+  normalized_key="$(printf '%s' "$normalized" | tr '[:upper:]' '[:lower:]' | sed 's/[[:space:][:punct:]]*$//')"
+
+  case "$normalized_key" in
+    "thanks"|"thank you"|"acknowledged"|"got it"|"the change is correct")
+      return 1
+      ;;
+  esac
+
+  return 0
+}
+
+# _bot_review_submitted_since <repo> <pr> <since-iso> [head-sha] <bot-login>...
 #
 # Echoes 1 when any listed bot has SUBMITTED a formal review at or after
 # <since-iso>, 0 when none has, and -1 when the query failed. This is the
@@ -7663,20 +7684,45 @@ _settle_config_for_platform() {
 _bot_review_submitted_since() {
   local repo="$1" pr="$2" since="$3"
   shift 3
-  local logins_json n
+  local head_sha=""
+  if [ "$#" -gt 0 ]; then
+    case "$1" in
+      [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]*)
+        head_sha="$1"
+        shift
+        ;;
+    esac
+  fi
+  local logins_json reviews matched=0 reviews_status=0
   logins_json="$(printf '%s\n' "$@" | jq -R . | jq -sc .)"
-  n="$(gh api "repos/$repo/pulls/$pr/reviews" --paginate 2>/dev/null \
-    | jq -s --argjson bots "$logins_json" --arg since "$since" '
-        [ .[][]? | select(
+  reviews="$(gh api "repos/$repo/pulls/$pr/reviews" --paginate 2>/dev/null \
+    | jq -sr --argjson bots "$logins_json" --arg since "$since" --arg head "$head_sha" '
+        .[][]? | select(
             ((.user.login // "")) as $raw
             | ($raw | rtrimstr("[bot]")) as $l
             | ((($bots | index($l)) != null) or (($bots | index($raw)) != null))
-          ) | select((.submitted_at // "") > $since)
-        ] | length' 2>/dev/null)" || n=""
-  case "$n" in
-    ''|*[!0-9]*) printf '%s' "-1"; return 0 ;;
-  esac
-  [ "$n" -gt 0 ] && printf '1' || printf '0'
+          )
+        | select((.submitted_at // "") > $since)
+        | select(($head == "") or ((.commit_id // $head) == $head))
+        | (.body // "")
+      ' 2>/dev/null)" || reviews_status=$?
+  if [ "$reviews_status" -ne 0 ]; then
+    printf '%s' "-1"
+    return 0
+  fi
+  if [ -z "$reviews" ]; then
+    printf '0'
+    return 0
+  fi
+
+  while IFS= read -r body; do
+    if _review_body_is_substantive "$body"; then
+      matched=1
+      break
+    fi
+  done <<< "$reviews"
+
+  [ "$matched" -eq 1 ] && printf '1' || printf '0'
 }
 
 # _bot_activity_since <repo> <pr> <since-iso> <bot-login>...
@@ -9095,7 +9141,7 @@ if [ "$aggregate_result" = "clean" ] \
     elif [ "$settle_require_review" -eq 1 ] && [ "$settle_review_seen" -eq 0 ]; then
       # Silence before the review lands is the platform thinking, not finishing.
       # Do not let it accumulate toward the quiet period.
-      settle_review_probe="$(_bot_review_submitted_since "$settle_repo" "$pr_number" "$settle_head_iso" "${unresolved_bot_logins[@]}")"
+      settle_review_probe="$(_bot_review_submitted_since "$settle_repo" "$pr_number" "$settle_head_iso" "$settle_head_sha" "${unresolved_bot_logins[@]}")"
       if [ "$settle_review_probe" = "1" ]; then
         settle_review_seen=1
         echo "INFO: post-clean settle — submitted review detected at ${settle_elapsed}s; quiet period starts now" >&2
