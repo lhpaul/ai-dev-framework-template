@@ -667,6 +667,127 @@ run_test \
     fi
   )"
 
+# Inline-code examples quoted in prose must not be treated as live references.
+inline_code_branch="fix/retro-525-doc-gaps"
+inline_code_repo="$(make_repo inline-code "$inline_code_branch" yes)"
+inline_code_pr_body='Cleans up doc gaps.
+
+The old parser matched `Closes #995` in prose.
+
+Closes #610'
+inline_code_output="$(
+  GH_MERGED_HEAD="$inline_code_branch" \
+  GH_MERGED_PR=658 \
+  GH_PR_BODY="$inline_code_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$inline_code_repo" --base develop --pr 658 "$inline_code_branch"
+)"
+run_contains \
+  "inline_code_example_closes_real_issue" \
+  "Closing issue #610..." \
+  "$inline_code_output"
+run_test \
+  "inline_code_example_does_not_close_quoted_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #995" <<<"$inline_code_output" || grep -Fq "Processing issue #995" <<<"$inline_code_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
+# Multi-line inline code spans must stay excluded until their closing delimiter.
+multiline_inline_branch="fix/retro-527-doc-gaps"
+multiline_inline_repo="$(make_repo multiline-inline "$multiline_inline_branch" yes)"
+multiline_inline_pr_body='Cleans up doc gaps.
+
+This quoted inline example starts here: `Closes #992
+and keeps quoting Closes #991`
+
+Closes #612'
+multiline_inline_output="$(
+  GH_MERGED_HEAD="$multiline_inline_branch" \
+  GH_MERGED_PR=660 \
+  GH_PR_BODY="$multiline_inline_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$multiline_inline_repo" --base develop --pr 660 "$multiline_inline_branch"
+)"
+run_contains \
+  "multiline_inline_code_example_closes_real_issue" \
+  "Closing issue #612..." \
+  "$multiline_inline_output"
+run_test \
+  "multiline_inline_code_example_does_not_close_quoted_issues" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #992" <<<"$multiline_inline_output" \
+      || grep -Fq "Processing issue #992" <<<"$multiline_inline_output" \
+      || grep -Fq "Closing issue #991" <<<"$multiline_inline_output" \
+      || grep -Fq "Processing issue #991" <<<"$multiline_inline_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
+# An unmatched backtick in an earlier paragraph must not swallow a later live
+# closing reference after a blank-line paragraph break.
+unmatched_inline_branch="fix/retro-528-doc-gaps"
+unmatched_inline_repo="$(make_repo unmatched-inline "$unmatched_inline_branch" yes)"
+unmatched_inline_pr_body='Cleans up doc gaps with an unmatched `example marker.
+
+Closes #613'
+unmatched_inline_output="$(
+  GH_MERGED_HEAD="$unmatched_inline_branch" \
+  GH_MERGED_PR=661 \
+  GH_PR_BODY="$unmatched_inline_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$unmatched_inline_repo" --base develop --pr 661 "$unmatched_inline_branch"
+)"
+run_contains \
+  "unmatched_inline_previous_paragraph_closes_real_issue" \
+  "Closing issue #613..." \
+  "$unmatched_inline_output"
+
+# Blockquoted closing-keyword examples must not be treated as live references.
+blockquote_branch="fix/retro-526-doc-gaps"
+blockquote_repo="$(make_repo blockquote "$blockquote_branch" yes)"
+blockquote_pr_body='Cleans up doc gaps.
+
+> Reviewer said: Closes #993
+
+Closes #611'
+blockquote_output="$(
+  GH_MERGED_HEAD="$blockquote_branch" \
+  GH_MERGED_PR=659 \
+  GH_PR_BODY="$blockquote_pr_body" \
+  GH_ISSUE_STATE=OPEN \
+  WORKFLOW_TARGET_GITHUB_REPO=example/repo \
+  PATH="$stub_bin:$PATH" \
+  "$HELPER" --repo-root "$blockquote_repo" --base develop --pr 659 "$blockquote_branch"
+)"
+run_contains \
+  "blockquote_example_closes_real_issue" \
+  "Closing issue #611..." \
+  "$blockquote_output"
+run_test \
+  "blockquote_example_does_not_close_quoted_issue" \
+  "no" \
+  "$(
+    if grep -Fq "Closing issue #993" <<<"$blockquote_output" || grep -Fq "Processing issue #993" <<<"$blockquote_output"; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi
+  )"
+
 # Tilde-fenced (~~~) code blocks must be excluded the same way as
 # backtick-fenced blocks.
 tilde_fenced_branch="fix/retro-520-doc-gaps"

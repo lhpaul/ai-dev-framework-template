@@ -502,24 +502,61 @@ fi
 # --- Update tracker status and close associated GitHub issue (if any) ---
 
 # strip_fenced_pr_body_blocks
-# Removes fenced code blocks from stdin before it is scanned for closing
-# keywords, so an example like "Closes #999" inside a code sample in the PR
-# body is not treated as a live closing reference. Handles both backtick
-# (```) and tilde (~~~) fence styles, and treats an unclosed opening fence as
-# extending to end of input (rather than leaving the rest of the body
-# unfiltered). Matches GitHub-Flavored Markdown's fence-matching rule: a
-# closing fence must use the same character as the opening fence, be at
-# least as long, and have nothing but trailing whitespace after the fence
-# marker — a shorter, differently-charactered, or content-suffixed line
-# (e.g. a nested example fence, or "``` end of block") is treated as still
-# being inside the fence rather than closing it. A fence delimiter may be
-# indented up to 3 spaces per GFM; 4+ spaces of leading whitespace makes it
-# indented code instead, so the raw line (not a fully whitespace-stripped
-# line) is matched to preserve that boundary — otherwise a 4-space-indented
-# "```" could be mistaken for a real fence and hide a live closing reference.
+# Removes quoted/example PR body text from stdin before it is scanned for
+# closing keywords, so an example like "Closes #999" inside a code sample,
+# inline code span, or blockquote is not treated as a live closing reference.
+# Handles both backtick (```) and tilde (~~~) fence styles, and treats an
+# unclosed opening fence as extending to end of input (rather than leaving the
+# rest of the body unfiltered). Matches GitHub-Flavored Markdown's
+# fence-matching rule: a closing fence must use the same character as the
+# opening fence, be at least as long, and have nothing but trailing whitespace
+# after the fence marker — a shorter, differently-charactered, or
+# content-suffixed line (e.g. a nested example fence, or "``` end of block") is
+# treated as still being inside the fence rather than closing it. A fence
+# delimiter may be indented up to 3 spaces per GFM; 4+ spaces of leading
+# whitespace makes it indented code instead, so the raw line (not a fully
+# whitespace-stripped line) is matched to preserve that boundary — otherwise a
+# 4-space-indented "```" could be mistaken for a real fence and hide a live
+# closing reference.
 strip_fenced_pr_body_blocks() {
   python3 -c '
 import re, sys
+
+def strip_inline_code_spans(line):
+    out = []
+    i = 0
+    while i < len(line):
+        if line[i] != "`":
+            out.append(line[i])
+            i += 1
+            continue
+        j = i
+        while j < len(line) and line[j] == "`":
+            j += 1
+        ticks = line[i:j]
+        closing = line.find(ticks, j)
+        if closing == -1:
+            out.append(line[i])
+            i += 1
+            continue
+        i = closing + len(ticks)
+    return "".join(out)
+
+def strip_inline_code_spans_by_paragraph(lines):
+    out_lines = []
+    paragraph = []
+    for line in lines:
+        if line.strip() == "":
+            if paragraph:
+                out_lines.extend(strip_inline_code_spans("\n".join(paragraph)).split("\n"))
+                paragraph = []
+            out_lines.append(line)
+        else:
+            paragraph.append(line)
+    if paragraph:
+        out_lines.extend(strip_inline_code_spans("\n".join(paragraph)).split("\n"))
+    return "\n".join(out_lines)
+
 lines = sys.stdin.read().split("\n")
 out = []
 fence_char = None
@@ -532,6 +569,8 @@ for line in lines:
             fence_char = match.group(1)[0]
             fence_len = len(match.group(1))
             continue
+        if re.match(r"^\s*>", line):
+            continue
         out.append(line)
     else:
         if (match and match.group(1)[0] == fence_char
@@ -540,7 +579,7 @@ for line in lines:
             fence_char = None
             fence_len = 0
         continue
-sys.stdout.write("\n".join(out))
+sys.stdout.write(strip_inline_code_spans_by_paragraph(out))
 '
 }
 
