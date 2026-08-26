@@ -161,6 +161,14 @@ run_test "clean_exit" "0" "$(exit_code)"
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+MOCK_LOCAL_REVIEWER_STDERR='missing model access warning in non-authoritative stderr'
+set_mock_stdout '{"result":"clean","findings":[]}'
+export LOCAL_AI_REVIEWER_COMMAND MOCK_LOCAL_REVIEWER_STDERR MOCK_LOCAL_REVIEWER_STDOUT
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "clean_json_ignores_nonfatal_stderr_probe" "RESULT=clean" "$(line_for RESULT)"
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
 LOCAL_AI_REVIEWER_EVIDENCE_FILE="$EVIDENCE_FILE"
 set_mock_stdout '{"result":"clean","findings":[]}'
 export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_EVIDENCE_FILE MOCK_LOCAL_REVIEWER_STDOUT
