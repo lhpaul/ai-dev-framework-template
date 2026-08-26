@@ -3305,8 +3305,15 @@ else
   _warn_emitted="no"
 fi
 run_test "restore_label_comments_api_fail_warn_emitted" "yes" "$_warn_emitted"
+if printf '%s\n' "$_warn_output" | grep -q "summary-comment lookup failed; fail-open restore" \
+    && ! printf '%s\n' "$_warn_output" | grep -q "current-head clean reviewer-loop summary found"; then
+  _failopen_reason_ok="yes"
+else
+  _failopen_reason_ok="no"
+fi
+run_test "restore_label_comments_api_fail_logs_failopen_reason" "yes" "$_failopen_reason_ok"
 rm -f "$_call_log_11"
-unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_EXIT MOCK_GH_HEAD_SHA _warn_output
+unset MOCK_GH_CALL_LOG MOCK_GH_COMMENTS_EXIT MOCK_GH_HEAD_SHA _warn_output _failopen_reason_ok
 
 # Reset mock state.
 export MOCK_GH_OUTPUT='[]'

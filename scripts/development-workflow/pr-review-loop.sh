@@ -6623,6 +6623,7 @@ restore_regression_label_if_missing() {
         local _rfr_latest_summary_result=""
         local _rfr_latest_summary_head=""
         local _rfr_restore_allowed=0
+        local _rfr_restore_reason="current-head clean reviewer-loop summary found"
         local _rfr_comments_raw=""
         if [ -n "${_rfr_repo:-}" ] && _rfr_comments_raw="$(gh api \
             "repos/${_rfr_repo}/issues/${pr_number}/comments" \
@@ -6652,9 +6653,10 @@ restore_regression_label_if_missing() {
         else
           echo "WARN: gh api failed for summary-comment gate on PR ${pr_number}; failing open — restoring label." >&2
           _rfr_restore_allowed=1
+          _rfr_restore_reason="summary-comment lookup failed; fail-open restore"
         fi
         if [ "${_rfr_restore_allowed:-0}" -eq 1 ]; then
-          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); current-head clean reviewer-loop summary found — restoring before loop runs." >&2
+          echo "INFO: ready-for-regression label missing on PR #${pr_number} (${branch_name}); ${_rfr_restore_reason} — restoring before loop runs." >&2
           # Do NOT redirect stderr here: surface gh errors so failures are observable
           # rather than silently swallowed. The || branch handles the non-zero exit.
           if ! gh pr edit "$pr_number" --add-label "ready-for-regression"; then
