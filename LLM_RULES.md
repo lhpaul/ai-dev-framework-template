@@ -10,7 +10,7 @@ Follow this repository's development workflow unless the human directs otherwise
 2. Run guards documented in the protocol (board membership, base-branch checks) before and after create.
 3. After the PR exists, advance through the automated reviewer loop (protocol 93) when `review.platforms` are configured in [`.ai-dev-workflow.yaml`](.ai-dev-workflow.yaml).
 
-Do not skip CHANGELOG updates for feature/fix PRs. See [`AGENTS.md`](AGENTS.md) and [`docs/best-practices/2-version-control.md`](docs/best-practices/2-version-control.md).
+Do not skip changelog artifacts for implementation PRs: normal feature/fix/refactor PRs add or update `changelog.d/` fragments, while hotfix PRs update `CHANGELOG.md` with a versioned section. See [`AGENTS.md`](AGENTS.md) and [`docs/best-practices/2-version-control.md`](docs/best-practices/2-version-control.md).
 
 ### Optional: Haystack submit
 
