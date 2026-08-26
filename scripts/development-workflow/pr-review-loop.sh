@@ -6715,6 +6715,91 @@ reviewer_loop_history_platforms_json() {
     jq -R -s -c 'split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) | map(select(length > 0 and . != "none"))'
 }
 
+reviewer_loop_path_is_non_shipped_artifact() {
+  local path="${1:-}"
+
+  case "$path" in
+    ""|docs/*|test/*|tests/*|fixtures/*|fixture/*|__fixtures__/*|__tests__/*|*.md|*.mdx|test-*|*.snap)
+      return 0
+      ;;
+  esac
+
+  case "$path" in
+    */docs/*|*/test/*|*/tests/*|*/fixtures/*|*/fixture/*|*/__fixtures__/*|*/__tests__/*|*/test-*|*/snapshots/*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+reviewer_loop_small_findings_required_rounds() {
+  local configured="${PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS:-2}"
+
+  if ! [[ "$configured" =~ ^[1-9][0-9]*$ ]] || [ "$configured" -gt 999 ]; then
+    echo "WARN: PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS must be an integer from 1-999; defaulting to 2" >&2
+    configured=2
+  fi
+
+  printf '%s\n' "$configured"
+}
+
+reviewer_loop_blocking_paths_from_output() {
+  local output="${1:-}"
+  local blocking_count="${2:-0}"
+  local index
+  local path
+
+  [[ "$blocking_count" =~ ^[0-9]+$ ]] || blocking_count=0
+  [ "$blocking_count" -gt 0 ] || return 0
+
+  for index in $(seq 1 "$blocking_count"); do
+    path="$(kv_value_default "BLOCKING_${index}_PATH" "$output" "")"
+    [ -n "$path" ] && printf '%s\n' "$path"
+  done
+}
+
+reviewer_loop_all_paths_non_shipped() {
+  local path
+  local saw_path=0
+
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    saw_path=1
+    if ! reviewer_loop_path_is_non_shipped_artifact "$path"; then
+      return 1
+    fi
+  done
+
+  [ "$saw_path" -eq 1 ]
+}
+
+reviewer_loop_small_findings_prior_consecutive_count() {
+  local body="${1:-}"
+  local json
+
+  json="$(printf '%s\n' "$body" | reviewer_loop_history_extract_latest_json)"
+  [ -n "$json" ] || { printf '0\n'; return 0; }
+
+  printf '%s\n' "$json" | jq -r '
+    if .schema != "reviewer_loop_history.v1"
+      or ((.history_status // "available") != "available")
+      or ((.entries | type) != "array")
+    then
+      0
+    else
+      reduce ((.entries // []) | reverse[]) as $entry (
+        {count: 0, active: true};
+        if .active and (($entry.small_findings_only // false) == true) then
+          .count += 1
+        else
+          .active = false
+        end
+      ) | .count
+    end
+  ' 2>/dev/null || printf '0\n'
+}
+
 reviewer_loop_history_current_head_sha() {
   local head_sha=""
   [ -n "${pr_number:-}" ] || return 0
@@ -6793,6 +6878,11 @@ reviewer_loop_history_build_entry() {
     --argjson phaseStarted "${phase_started:-0}" \
     --argjson phaseNetNewBlocker "${phase_net_new_blocker:-0}" \
     --arg phaseBlockingPlatform "$phase_blocking_platform" \
+    --argjson smallFindingsOnly "${small_findings_only:-0}" \
+    --argjson smallFindingsStop "${small_findings_stop:-0}" \
+    --argjson smallFindingsRounds "${small_findings_rounds:-0}" \
+    --argjson smallFindingsRequiredRounds "${small_findings_required_rounds:-0}" \
+    --arg smallFindingsPaths "${small_findings_paths:-}" \
     '{
       iteration: $iteration,
       recorded_at: $recordedAt,
@@ -6811,7 +6901,12 @@ reviewer_loop_history_build_entry() {
         started: ($phaseStarted == 1),
         net_new_blocker: ($phaseNetNewBlocker == 1),
         blocking_platform: $phaseBlockingPlatform
-      }
+      },
+      small_findings_only: ($smallFindingsOnly == 1),
+      small_findings_stop: ($smallFindingsStop == 1),
+      small_findings_rounds: $smallFindingsRounds,
+      small_findings_required_rounds: $smallFindingsRequiredRounds,
+      small_findings_paths: ($smallFindingsPaths | split("\n") | map(select(length > 0)))
     }'
 }
 
@@ -7517,6 +7612,25 @@ reviewer_loop_resolve_cycle_counts() {
   else
     printf '%s %s\n' -1 -1
   fi
+}
+
+reviewer_loop_fetch_latest_summary_body() {
+  local pr_number_arg="$1"
+  local repo="" record="" body=""
+
+  if [ -z "$pr_number_arg" ]; then
+    return 0
+  fi
+  if ! repo="$(repo_slug 2>/dev/null)" || [ -z "$repo" ]; then
+    return 0
+  fi
+  record="$(
+    set -o pipefail
+    gh api "repos/$repo/issues/$pr_number_arg/comments" --paginate 2>/dev/null \
+      | reviewer_loop_history_select_latest_summary_record
+  )" || return 0
+  body="$(printf '%s\n' "$record" | jq -r '.body // ""' 2>/dev/null)" || body=""
+  printf '%s\n' "$body"
 }
 
 
@@ -8344,7 +8458,14 @@ total_blocking_count=0
 total_suggestion_count=0
 aggregate_advisory_labels=""
 reviewer_failed_required=0
+small_findings_required_rounds="$(reviewer_loop_small_findings_required_rounds)"
+small_findings_only=0
+small_findings_stop=0
+small_findings_rounds=0
+small_findings_paths=""
+small_findings_paths_inline=""
 declare -a compare_verdicts=()
+declare -a aggregate_blocking_paths=()
 # The head this run reviews, captured BEFORE any reviewer is dispatched
 # (issue #1574). Every verdict below describes this commit; the settle emits it
 # as POST_CLEAN_HEAD_SHA, and the head-move guard after the settle turns a
@@ -8473,6 +8594,10 @@ for index in "${!platforms[@]}"; do
   total_comment_count=$((total_comment_count + platform_comment_count))
   total_blocking_count=$((total_blocking_count + platform_blocking_count))
   total_suggestion_count=$((total_suggestion_count + platform_suggestion_count))
+  while IFS= read -r _blocking_path; do
+    [ -n "$_blocking_path" ] && aggregate_blocking_paths+=("$_blocking_path")
+  done < <(reviewer_loop_blocking_paths_from_output "$platform_output" "$platform_blocking_count")
+  unset _blocking_path
   if [ -n "$platform_advisory_labels" ]; then
     if [ -n "$aggregate_advisory_labels" ]; then
       aggregate_advisory_labels="${aggregate_advisory_labels}|||${platform_advisory_labels}"
@@ -8646,7 +8771,9 @@ _post_review_summary() {
   local result_line
   case "$result" in
     clean)
-      if [ "$blocking" -eq 0 ] && [ "$suggestions" -eq 0 ]; then
+      if [ "${small_findings_stop:-0}" -eq 1 ]; then
+        result_line="clean (small-findings stop) — non-shipped tail recorded for human merge audit"
+      elif [ "$blocking" -eq 0 ] && [ "$suggestions" -eq 0 ]; then
         result_line="clean — no blocking findings"
       else
         result_line="clean"
@@ -8818,13 +8945,21 @@ Protocol 91 Step 7b requires this label on all \`${branch_name%%/*}/*\` PRs afte
     done
   fi
 
+  local small_findings_section=""
+  if [ "${small_findings_stop:-0}" -eq 1 ]; then
+    small_findings_section="
+**Small-findings stop:** ${small_findings_rounds:-0}/${small_findings_required_rounds:-0} consecutive review rounds contained only non-shipped-artifact findings, and the strict review-thread audit reported zero unresolved threads. Exact-head tests and CI still gate readiness after this review result.
+**Unreviewed tail:** ${small_findings_paths_inline:-none}"
+  fi
+
   local comment_body
   comment_body="$(cat <<EOF
 ### Automated Reviewer Loop Summary
 
 **Result:** ${result_line}
 **Platforms:** ${platform_list:-none}${policy_status_section}
-**Findings:** ${blocking} blocking, ${suggestions} suggestions${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${regression_label_section}
+**Findings:** ${blocking} blocking, ${suggestions} suggestions
+${small_findings_section}${phase_section}${compare_section}${advisory_section}${advisory_checks_section}${regression_label_section}
 
 *Posted automatically by \`pr-review-loop.sh\`.*
 EOF
@@ -8996,19 +9131,28 @@ fi
 # unresolved_bot_logins is declared here (outside the if-block) so the
 # post-clean recheck below can safely reference it regardless of code path.
 declare -a unresolved_bot_logins=()
-if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; then
-  # Build the array of bot logins from the configured platforms.
-  # Using an array (not a space-separated string) prevents Bash glob expansion of
-  # bracket characters in "[bot]" strings during iteration.
-  for _platform in "${platforms[@]}"; do
-    _login="$(bot_login_for_platform "$_platform")"
-    # REST API returns bot logins WITH the "[bot]" suffix; GraphQL API returns
-    # them WITHOUT it. Strip it here so check_unresolved_threads, which queries
-    # GraphQL, compares against the correct login form.
-    # (e.g. "chatgpt-codex-connector[bot]" → "chatgpt-codex-connector")
-    _login="${_login%\[bot\]}"
-    [ -n "$_login" ] && unresolved_bot_logins+=("$_login")
-  done
+for _platform in "${platforms[@]}"; do
+  _login="$(bot_login_for_platform "$_platform")"
+  # REST API returns bot logins WITH the "[bot]" suffix; GraphQL API returns
+  # them WITHOUT it. Strip it here so check_unresolved_threads, which queries
+  # GraphQL, compares against the correct login form.
+  # (e.g. "chatgpt-codex-connector[bot]" → "chatgpt-codex-connector")
+  _login="${_login%\[bot\]}"
+  [ -n "$_login" ] && unresolved_bot_logins+=("$_login")
+done
+
+if [ "$aggregate_result" = "needs_fixes" ] \
+    && [ "$total_blocking_count" -gt 0 ] \
+    && [ "${#aggregate_blocking_paths[@]}" -gt 0 ]; then
+  small_findings_paths="$(printf '%s\n' "${aggregate_blocking_paths[@]}" | sort -u)"
+  if printf '%s\n' "$small_findings_paths" | reviewer_loop_all_paths_non_shipped; then
+    small_findings_only=1
+    small_findings_paths_inline="$(printf '%s\n' "$small_findings_paths" | awk 'BEGIN { sep = "" } { printf "%s%s", sep, $0; sep = ", " } END { printf "\n" }')"
+  fi
+fi
+
+if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ] \
+    || [ "$small_findings_only" -eq 1 ]; then
 
   unresolved_thread_count=0
   if [ "${#unresolved_bot_logins[@]}" -gt 0 ]; then
@@ -9062,6 +9206,7 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
   if [ "$unresolved_thread_count" -gt 0 ]; then
     aggregate_result="needs_fixes"
     aggregate_reason="unresolved_review_threads"
+    small_findings_stop=0
     if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 1 ]; then
       phase_after_clean_net_new_blocker=1
       phase_after_clean_blocking_platform="${phase_after_clean_blocking_platform:-review_threads}"
@@ -9070,6 +9215,21 @@ if [ "$aggregate_result" = "clean" ] || [ "$aggregate_result" = "skipped" ]; the
     # No BLOCKING_N_* entries are emitted for thread findings — callers must use
     # REASON=unresolved_review_threads and UNRESOLVED_THREAD_COUNT to handle this case.
     total_blocking_count=$((total_blocking_count + unresolved_thread_count))
+  elif [ "$aggregate_result" = "needs_fixes" ] \
+      && [ "$unresolved_thread_count" -eq 0 ] \
+      && [ "$small_findings_only" -eq 1 ]; then
+    reviewer_loop_latest_summary_body="$(reviewer_loop_fetch_latest_summary_body "$pr_number")"
+    small_findings_prior_count="$(reviewer_loop_small_findings_prior_consecutive_count "$reviewer_loop_latest_summary_body")"
+    [[ "${small_findings_prior_count:-}" =~ ^[0-9]+$ ]] || small_findings_prior_count=0
+    small_findings_rounds=$((small_findings_prior_count + 1))
+    if [ "$small_findings_rounds" -ge "$small_findings_required_rounds" ]; then
+      aggregate_result="clean"
+      aggregate_reason="small_findings_terminal"
+      aggregate_status=0
+      small_findings_stop=1
+      echo "INFO: small-findings stop — ${small_findings_rounds}/${small_findings_required_rounds} consecutive rounds only touched non-shipped artifacts; strict thread audit found zero unresolved threads" >&2
+    fi
+    unset reviewer_loop_latest_summary_body small_findings_prior_count
   fi
 else
   print_kv UNRESOLVED_THREAD_COUNT 0
@@ -9305,9 +9465,18 @@ if [ "$aggregate_result" = "clean" ] && [ -n "$pr_number" ] && [ -n "$loop_head_
   fi
 fi
 
+if [ "$aggregate_result" != "clean" ]; then
+  small_findings_stop=0
+fi
+
 if [ "$phase_after_clean_enabled" -eq 1 ] && [ "$phase_after_clean_started" -eq 0 ]; then
   phase_after_clean_skip_reason="$aggregate_result"
 fi
+print_kv SMALL_FINDINGS_ONLY "$small_findings_only"
+print_kv SMALL_FINDINGS_STOP "$small_findings_stop"
+print_kv SMALL_FINDINGS_ROUNDS "$small_findings_rounds"
+print_kv SMALL_FINDINGS_REQUIRED_ROUNDS "$small_findings_required_rounds"
+[ -n "$small_findings_paths_inline" ] && print_kv SMALL_FINDINGS_PATHS "$small_findings_paths_inline"
 print_kv PHASE_AFTER_CLEAN_STARTED "$phase_after_clean_started"
 print_kv READY_PHASE_STARTED "$phase_after_clean_started"
 if [ "$phase_after_clean_enabled" -eq 1 ]; then

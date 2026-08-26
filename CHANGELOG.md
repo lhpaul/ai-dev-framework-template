@@ -57,6 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rate-limit comment remains live, reports `CODERABBIT_TRIGGER_ATTEMPTS` and
   `CODERABBIT_REVIEWS_RECEIVED` in CodeRabbit results, and treats quota
   refusals as waiting state rather than retry-budget consumption.
+- **Reviewer loop can terminate repeated non-shipped finding tails** (#1599):
+  `pr-review-loop.sh` now detects consecutive review rounds where every
+  machine-readable blocking path targets docs, tests, fixtures, snapshots, or
+  markdown, requires zero unresolved review threads, emits explicit
+  `SMALL_FINDINGS_*` telemetry, and records the unreviewed non-shipped tail in
+  the reviewer-loop summary before later exact-head test and CI gates run.
 - **Quoted closing keywords are ignored during post-merge cleanup** (#1585):
   `post-merge-cleanup.sh` now excludes inline code spans and blockquote lines
   before scanning PR bodies for closing keywords, preventing quoted examples

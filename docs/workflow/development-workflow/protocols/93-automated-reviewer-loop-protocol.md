@@ -695,6 +695,24 @@ Use the **PR feedback ledger** (keyed by `(platform, path, body_snippet)`) to de
    low-confidence cases; repeated low-confidence security labels indicate reviewer
    calibration drift, not necessarily a code defect.
 
+5. **Small non-shipped-artifact tail**: `pr-review-loop.sh` may stop a repeated
+   small-findings tail when all of the following are true:
+   - The current review result would otherwise be `needs_fixes`.
+   - Every blocking finding with a machine-readable path targets a non-shipped
+     artifact such as docs, tests, fixtures, snapshots, or markdown.
+   - The strict GraphQL review-thread audit reports
+     `UNRESOLVED_THREAD_COUNT=0`.
+   - The latest reviewer-loop history already contains enough consecutive
+     `small_findings_only=true` rounds for the current round to reach
+     `PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS` (default `2`).
+
+   When this rule fires, the script emits `RESULT=clean`,
+   `REASON=small_findings_terminal`, `SMALL_FINDINGS_STOP=1`, and records
+   `small_findings_paths` in the summary history. This is only a review-loop
+   terminal condition: the caller must still run exact-head tests, exact-head CI,
+   readiness self-checks, and merge gates. The summary's `Unreviewed tail` line
+   is the audit record for the non-shipped findings that ended the review loop.
+
 #### Escalation trigger
 
 Stop the loop and escalate to human when any of the above conditions are met. In the final summary comment (see "PR feedback tracking and comments" below), include:
