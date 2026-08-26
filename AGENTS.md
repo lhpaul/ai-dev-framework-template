@@ -131,12 +131,12 @@ For normal Codex usage, use `/run-work` to scan the portfolio and discover what 
 # Lint / Format
 # [your lint/format commands]
 
-# Markdown lint (spec, plan, and CHANGELOG files)
+# Markdown lint (spec, plan, changelog fragment, and CHANGELOG files)
 # Standard rules (trailing whitespace, relative links, files end with newline):
-npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "CHANGELOG.md"
+npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "changelog.d/**/*.md" "CHANGELOG.md"
 
 # Heuristic rules (GLOB001, COUNT001):
-find docs/specs/developments docs/testing/workflow -name "*.md" -print0 \
+find docs/specs/developments docs/testing/workflow changelog.d -name "*.md" -print0 \
   | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md
 
 # Duplicate section-header check (detects repeated ### Fixed / ### Added etc. within a ## block):

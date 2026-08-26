@@ -269,7 +269,7 @@ annotate_hold_comment() {
       "**Verdicts void at this head:** " + ((.verdicts_voided // []) | list),
       "**Required before any merge decision:** `" + (.required_action // "none") + "`",
       "",
-      "_Recorded at " + $ts + "; updated in place on every recheck. A held PR is not a parked PR: keep it conflict-free and re-verify the reviewer loop, CI, risk classification and the delegated gate at the current head before any merge decision (#1558). If the only conflicting file is `CHANGELOG.md` AND this head already has a clean verdict and green CI, `batch-merge.sh merge` resolves it at merge time without moving this head (Protocol 94 Step 4.3); a conflicting PR gets no `pull_request` CI, so any further push must resolve the conflict on the branch first. Check with `git merge-tree --write-tree --name-only origin/<base> origin/<head>`._"
+      "_Recorded at " + $ts + "; updated in place on every recheck. A held PR is not a parked PR: keep it conflict-free and re-verify the reviewer loop, CI, risk classification and the delegated gate at the current head before any merge decision (#1558). Normal implementation PRs should use `changelog.d/` fragments, but if the only conflicting file is legacy direct `CHANGELOG.md` AND this head already has a clean verdict and green CI, `batch-merge.sh merge` resolves it at merge time without moving this head (Protocol 94 Step 4.3); a conflicting PR gets no `pull_request` CI, so any further push must resolve the conflict on the branch first. Check with `git merge-tree --write-tree --name-only origin/<base> origin/<head>`._"
     ] | join("\n")' 2>/dev/null)" || { printf 'failed:render\n'; return 0; }
 
   # Look up separately from filtering so a real gh api failure (auth,
@@ -460,12 +460,14 @@ fetch_pr_meta() {
     has_human_checkpoint="false"
   fi
 
-  # Check whether the PR diff touches CHANGELOG.md. Capture the full file
-  # list first (see _list_has_exact_line above) so a match never races the
-  # `gh pr diff` producer via a `| grep -q` pipe. Also distinguish a genuine
-  # `gh` failure from "CHANGELOG.md legitimately not in the diff": both used
-  # to collapse to has_changelog=false silently, so a transient `gh` outage
-  # could be misreported as a real "no CHANGELOG entry" finding.
+  # Check whether the PR diff touches CHANGELOG.md. This remains a merge-order
+  # signal for legacy direct changelog edits; normal implementation PRs should
+  # carry changelog.d fragments instead. Capture the full file list first (see
+  # _list_has_exact_line above) so a match never races the `gh pr diff` producer
+  # via a `| grep -q` pipe. Also distinguish a genuine `gh` failure from
+  # "CHANGELOG.md legitimately not in the diff": both used to collapse to
+  # has_changelog=false silently, so a transient `gh` outage could be
+  # misreported as a real "no CHANGELOG entry" finding.
   local has_changelog="false"
   local diff_files diff_exit=0
   diff_files="$(gh pr diff --name-only "$pr_num" 2>/dev/null)" || diff_exit=$?
