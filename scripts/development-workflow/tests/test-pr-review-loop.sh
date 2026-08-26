@@ -15067,7 +15067,7 @@ run_test "review_probe_no_review_is_zero" "0" \
   "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" coderabbitai)"
 
 # The PR #1573 review, submitted 13 minutes after HEAD.
-_1556_mkreviews '[{"user":{"login":"coderabbitai[bot]"},"submitted_at":"2026-08-22T00:30:32Z","state":"COMMENTED","body":"Actionable comments posted: 3"}]'
+_1556_mkreviews '[{"user":{"login":"coderabbitai[bot]"},"submitted_at":"2026-08-22T00:30:32Z","state":"COMMENTED","commit_id":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef","body":"Actionable comments posted: 3"}]'
 run_test "review_probe_detects_submitted_review" "1" \
   "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" coderabbitai)"
 run_test "review_probe_detects_submitted_review_for_head" "1" \

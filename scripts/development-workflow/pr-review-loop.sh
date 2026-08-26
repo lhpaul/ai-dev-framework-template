@@ -7702,7 +7702,7 @@ _bot_review_submitted_since() {
             | ((($bots | index($l)) != null) or (($bots | index($raw)) != null))
           )
         | select((.submitted_at // "") > $since)
-        | select(($head == "") or ((.commit_id // "") == "") or (.commit_id == $head))
+        | select(($head == "") or ((.commit_id // "") == $head))
         | (.body // "")
       ' 2>/dev/null)" || reviews_status=$?
   if [ "$reviews_status" -ne 0 ]; then
