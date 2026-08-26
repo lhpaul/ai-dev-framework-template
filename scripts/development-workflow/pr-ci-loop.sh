@@ -288,13 +288,13 @@ is_devin_status_stale() {
 # ran no workflows" from "we do not know what it ran" — a gate that exists to
 # stop a false green must not be satisfied by its own lookup erroring out.
 #
-# --slurp is required with --paginate: without it `--jq` runs per page, so a
+# --slurp is required with --paginate: without it jq runs per page, so a
 # multi-page response yields one result per page instead of one aggregate.
 workflow_run_names_for_sha() {
   local repo="$1" sha="$2"
   [ -n "$sha" ] || return 1
-  gh api "repos/$repo/actions/runs?head_sha=$sha&per_page=100" --paginate --slurp \
-    --jq '[.[].workflow_runs[]?.name] | unique | .[]' 2>/dev/null
+  gh api "repos/$repo/actions/runs?head_sha=$sha&per_page=100" --paginate --slurp 2>/dev/null \
+    | jq -r '[.[].workflow_runs[]?.name] | unique | .[]'
 }
 
 # previous_head_check_names <repo> <pr_number> <current_head_sha>
@@ -305,8 +305,10 @@ previous_head_check_names() {
   local repo="$1" pr_number="$2" current_sha="$3" prev_sha=""
   # --slurp: with --paginate alone, `.[-2]` is evaluated per page, so a PR
   # with more than one page of commits emits one SHA per page.
-  prev_sha="$(gh api "repos/$repo/pulls/$pr_number/commits?per_page=100" --paginate --slurp \
-    --jq '[.[][].sha] | .[-2] // empty' 2>/dev/null)" || return 1
+  prev_sha="$(
+    gh api "repos/$repo/pulls/$pr_number/commits?per_page=100" --paginate --slurp 2>/dev/null \
+      | jq -r '[.[][].sha] | .[-2] // empty'
+  )" || return 1
   [ -n "$prev_sha" ] || return 0
   [ "$prev_sha" != "$current_sha" ] || return 0
   workflow_run_names_for_sha "$repo" "$prev_sha"
