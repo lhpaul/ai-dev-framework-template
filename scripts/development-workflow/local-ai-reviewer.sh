@@ -26,6 +26,7 @@ Environment:
                                     PR_NUMBER, OWNER, REPO, BASE_BRANCH,
                                     HEAD_BRANCH, and REVIEWED_HEAD in env.
   LOCAL_AI_REVIEWER_DISABLED=1      Emit RESULT=skipped / disabled_by_config.
+  LOCAL_AI_REVIEWER_EVIDENCE_FILE   Optional path for a JSON evidence artifact.
   LOCAL_AI_REVIEWER_GRAPH_STRATEGY  none|auto|code-review-graph|graphify.
 EOF
 }
@@ -183,6 +184,8 @@ BASE_BRANCH=""
 HEAD_BRANCH=""
 HEAD_SHA=""
 changed_files_json="[]"
+diff_name_status=""
+diff_stat=""
 diff_fetch_failed=0
 if command -v gh >/dev/null 2>&1; then
   pr_json=""
@@ -241,6 +244,15 @@ if [ -n "$REPO_ROOT" ]; then
   cd "$REPO_ROOT"
 fi
 
+if git rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
+  if diff_name_status_full="$(git diff --name-status --find-renames --find-copies "origin/$BASE_BRANCH...HEAD" 2>/dev/null)"; then
+    diff_name_status="${diff_name_status_full:0:12000}"
+  fi
+  if diff_stat_full="$(git diff --stat --find-renames --find-copies "origin/$BASE_BRANCH...HEAD" 2>/dev/null)"; then
+    diff_stat="${diff_stat_full:0:12000}"
+  fi
+fi
+
 if [ ! -f REVIEW.md ]; then
   echo "ERROR: REVIEW.md is required for local review" >&2
   print_result escalate 0 0 0 review_contract_missing review_contract_missing
@@ -289,8 +301,11 @@ jq -n \
   --arg head_branch "$HEAD_BRANCH" \
   --arg reviewed_head "$HEAD_SHA" \
   --arg graph_context "$graph_context" \
+  --arg diff_name_status "$diff_name_status" \
+  --arg diff_stat "$diff_stat" \
   --argjson changed_files "$changed_files_json" \
   '{
+    schema_version: "local_ai_reviewer_context.v1",
     pr_number: ($pr_number | tonumber),
     owner: $owner,
     repo: $repo,
@@ -298,6 +313,8 @@ jq -n \
     head_branch: $head_branch,
     reviewed_head: $reviewed_head,
     changed_files: $changed_files,
+    diff_name_status: $diff_name_status,
+    diff_stat: $diff_stat,
     review_contract: "REVIEW.md",
     graph_context: $graph_context
   }' >"$context_file"
@@ -444,35 +461,91 @@ blocking_count="${blocking_count:-0}"
 suggestion_count="${suggestion_count:-0}"
 reason="${reason:-}"
 
+write_evidence_file() {
+  local final_result="$1"
+  local final_reason="$2"
+  local final_comment_count="$3"
+  local final_blocking_count="$4"
+  local final_suggestion_count="$5"
+
+  [ -n "${LOCAL_AI_REVIEWER_EVIDENCE_FILE:-}" ] || return 0
+  jq -n \
+    --arg schema_version "local_ai_reviewer_evidence.v1" \
+    --arg result "$final_result" \
+    --arg reason "$final_reason" \
+    --arg pr_number "$PR_NUMBER" \
+    --arg owner "$OWNER" \
+    --arg repo "$REPO" \
+    --arg base_branch "$BASE_BRANCH" \
+    --arg head_branch "$HEAD_BRANCH" \
+    --arg reviewed_head "$HEAD_SHA" \
+    --arg graph_context "$graph_context" \
+    --arg diff_name_status "$diff_name_status" \
+    --arg diff_stat "$diff_stat" \
+    --argjson changed_files "$changed_files_json" \
+    --argjson comment_count "$final_comment_count" \
+    --argjson blocking_count "$final_blocking_count" \
+    --argjson suggestion_count "$final_suggestion_count" \
+    '{
+      schema_version: $schema_version,
+      result: $result,
+      reason: $reason,
+      pr_number: ($pr_number | tonumber),
+      owner: $owner,
+      repo: $repo,
+      base_branch: $base_branch,
+      head_branch: $head_branch,
+      reviewed_head: $reviewed_head,
+      graph_context: $graph_context,
+      counts: {
+        comments: $comment_count,
+        blocking: $blocking_count,
+        suggestions: $suggestion_count
+      },
+      context_summary: {
+        changed_files: $changed_files,
+        diff_name_status: $diff_name_status,
+        diff_stat: $diff_stat
+      }
+    }' >"$LOCAL_AI_REVIEWER_EVIDENCE_FILE"
+}
+
 case "$result" in
   clean)
     if [ "$command_exit" -ne 0 ]; then
+      write_evidence_file escalate malformed_output "$comment_count" "$blocking_count" "$suggestion_count"
       print_result escalate "$comment_count" "$blocking_count" "$suggestion_count" malformed_output malformed_output
       exit 2
     fi
+    write_evidence_file clean "" "$comment_count" 0 "$suggestion_count"
     print_result clean "$comment_count" 0 "$suggestion_count"
     exit 0
     ;;
   needs_fixes)
     [ "$blocking_count" -eq 0 ] && blocking_count=1
     [ "$comment_count" -eq 0 ] && comment_count=1
+    write_evidence_file needs_fixes local_ai_review_findings "$comment_count" "$blocking_count" "$suggestion_count"
     print_result needs_fixes "$comment_count" "$blocking_count" "$suggestion_count" local_ai_review_findings
     printf '%s\n' "$parse_result" | awk '/^BLOCKING_[0-9]+_(PATH|LINE|BODY)=/ { print }'
     exit 1
     ;;
   needs_rerun)
+    write_evidence_file needs_rerun "${reason:-needs_rerun}" "$comment_count" "$blocking_count" "$suggestion_count"
     print_result needs_rerun "$comment_count" "$blocking_count" "$suggestion_count" "${reason:-needs_rerun}"
     exit 1
     ;;
   skipped)
+    write_evidence_file skipped "${reason:-disabled_by_config}" "$comment_count" "$blocking_count" "$suggestion_count"
     print_result skipped "$comment_count" "$blocking_count" "$suggestion_count" "${reason:-disabled_by_config}" "${reason:-disabled_by_config}"
     exit 3
     ;;
   escalate)
+    write_evidence_file escalate "${reason:-malformed_output}" "$comment_count" "$blocking_count" "$suggestion_count"
     print_result escalate "$comment_count" "$blocking_count" "$suggestion_count" "${reason:-malformed_output}" "${reason:-malformed_output}"
     exit 2
     ;;
   *)
+    write_evidence_file escalate malformed_output 0 0 0
     print_result escalate 0 0 0 malformed_output malformed_output
     exit 2
     ;;

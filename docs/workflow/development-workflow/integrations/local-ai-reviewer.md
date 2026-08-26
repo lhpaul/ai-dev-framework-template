@@ -37,6 +37,25 @@ Set the local command in the runner environment:
 export LOCAL_AI_REVIEWER_COMMAND='my-review-command "$CONTEXT_BUNDLE_PATH"'
 ```
 
+For Codex, use the bundled preset wrapper instead of hand-writing the full
+`codex exec` command:
+
+<!-- workflow-shell-contract: bash-zsh -->
+```bash
+./scripts/development-workflow/local-codex-reviewer.sh \
+  <pr-number> <owner> <repo> \
+  --repo-root "$PWD" \
+  --timeout 900 \
+  --evidence-file /tmp/local-ai-reviewer-evidence.json
+```
+
+The wrapper sets `LOCAL_AI_REVIEWER_COMMAND` to
+`scripts/development-workflow/local-codex-review-command.sh`, which runs
+`codex exec --sandbox read-only` and writes only the model JSON output back to
+the companion script. Override `LOCAL_CODEX_REVIEWER_BIN`,
+`LOCAL_CODEX_REVIEWER_MODEL`, or `LOCAL_CODEX_REVIEWER_PROMPT` when a local
+machine needs a different Codex binary, model, or prompt.
+
 The command runs under `sh -c` with these environment variables:
 
 - `CONTEXT_BUNDLE_PATH`
@@ -47,8 +66,26 @@ The command runs under `sh -c` with these environment variables:
 - `HEAD_BRANCH`
 - `REVIEWED_HEAD`
 
+The context bundle JSON uses `schema_version:
+local_ai_reviewer_context.v1` and includes:
+
+- PR metadata and `reviewed_head`
+- `changed_files`
+- compact `diff_name_status` and `diff_stat` fields when the base ref is
+  available in the checkout
+- `review_contract`
+- `graph_context`
+
 Use `LOCAL_AI_REVIEWER_DISABLED=1` to intentionally skip the local platform
 with `RESULT=skipped` and `REASON=disabled_by_config`.
+
+Set `LOCAL_AI_REVIEWER_EVIDENCE_FILE=/path/to/file.json` or pass
+`--evidence-file` to `local-codex-reviewer.sh` to persist a local evidence
+artifact. The artifact uses `schema_version: local_ai_reviewer_evidence.v1`
+and records the reviewed head, graph context, result, reason, counts, changed
+files, and compact diff summary. Keep this artifact alongside ready-phase
+reviewer-loop evidence when measuring whether Bugbot or another ready-phase
+reviewer found net-new blockers.
 
 ---
 
