@@ -50,6 +50,11 @@ entries:
     mode_scope: product_repo_injection
     required_for_product_repo: true
     note: waits for product repository PR checks to settle
+  - group: changelog fragments
+    path: scripts/development-workflow/changelog-fragments.sh
+    mode_scope: product_repo_injection
+    required_for_product_repo: true
+    note: validates and assembles product repository release note fragments
   - group: product cleanup helper
     path: scripts/development-workflow/post-merge-cleanup.sh
     mode_scope: product_repo_injection
