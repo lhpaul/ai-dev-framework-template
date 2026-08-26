@@ -172,9 +172,9 @@ rules:
     type: llm
     severity: warning
     category: "patterns"
-    message: "Update the existing Unreleased section in CHANGELOG.md instead of creating duplicate Unreleased or subsection headers."
+    message: "For release and hotfix changelog edits, preserve a single Unreleased section and avoid duplicate subsection headers."
     llm:
-      prompt: "Update the existing Unreleased section in CHANGELOG.md instead of creating duplicate Unreleased or subsection headers."
+      prompt: "For release and hotfix changelog edits, preserve a single Unreleased section and avoid duplicate subsection headers. Normal development PRs should use changelog.d fragments instead of editing CHANGELOG.md directly."
   - id: "validate-numeric-env-settings"
     name: "Validate numeric retry and wait settings"
     type: llm

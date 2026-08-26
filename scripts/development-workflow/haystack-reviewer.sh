@@ -77,14 +77,15 @@
 # as advisory here to avoid false-positive blocks on style/coverage findings.
 # If your team wants "Major" to be blocking, set HAYSTACK_MAJOR_IS_BLOCKING=1.
 #
-# NOTE on "Rules violation": Haystack uses this category for custom rule findings
-# such as CHANGELOG structure checks (rule: keep-changelog-unreleased-structure-canonical).
-# This produces false positives in two known scenarios:
+# NOTE on "Rules violation": Haystack uses this category for custom rule
+# findings such as CHANGELOG structure checks (rule:
+# keep-single-unreleased-changelog-section). This can produce false positives
+# around release-owned CHANGELOG edits:
 #
-#   1. Regular PRs with correctly-formatted CHANGELOG entries under [Unreleased] ->
-#      ### Fixed (or other subsections). Haystack's LLM checker misidentifies the
-#      diff context and flags the entry as appended outside the section. This has
-#      recurred across multiple batches (Batches 34, 35, 55, and PR #801).
+#   1. Legacy regular PRs with correctly-formatted CHANGELOG entries under
+#      [Unreleased] -> ### Fixed (or other subsections). Normal development PRs
+#      now use changelog.d fragments, but older or downstream branches may still
+#      carry direct CHANGELOG edits.
 #
 #   2. Hotfix backport PRs (where the diff against develop shows an empty [Unreleased]
 #      section from main, which Haystack misidentifies as a structural violation).

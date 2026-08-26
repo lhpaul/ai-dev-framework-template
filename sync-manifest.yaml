@@ -131,6 +131,9 @@ categories:
     - path: scripts/README.md
       mode_scope: shared
       note: purpose and usage of scripts in scripts/
+    - path: changelog.d/README.md
+      mode_scope: shared
+      note: release note fragment authoring guide; individual fragments are project-specific pending release inputs
     - path: docs/best-practices/1-general.md
       mode_scope: shared
       note: general coding standards
