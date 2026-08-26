@@ -434,6 +434,49 @@ else
 fi
 echo ""
 
+reenter_base_worktree_if_needed() {
+  local current_root base_worktree script_path
+  local reenter_args=()
+
+  # Git refuses to check out a branch that is already checked out in another
+  # linked worktree. When cleanup is invoked from a merged PR worktree, continue
+  # from the existing base-branch worktree instead of failing on checkout.
+  current_root="$(CDPATH='' cd -- "$CLEANUP_REPO_ROOT" && pwd -P)" || return 1
+  base_worktree="$(git -C "$CLEANUP_REPO_ROOT" worktree list --porcelain | awk -v branch="branch refs/heads/$DEVELOP_BRANCH" '
+    /^worktree / { wt = substr($0, 10) }
+    $0 == branch  { print wt; exit }
+  ' || true)"
+
+  [ -n "$base_worktree" ] || return 0
+  base_worktree="$(CDPATH='' cd -- "$base_worktree" && pwd -P)" || return 1
+  [ "$base_worktree" != "$current_root" ] || return 0
+
+  if [ "${POST_MERGE_CLEANUP_REENTERED:-}" = "1" ]; then
+    echo "ERROR: base branch '$DEVELOP_BRANCH' is checked out at '$base_worktree', but cleanup already re-entered once from '$current_root'." >&2
+    return 1
+  fi
+
+  script_path="$base_worktree/scripts/development-workflow/post-merge-cleanup.sh"
+  if [ ! -f "$script_path" ]; then
+    echo "ERROR: base branch '$DEVELOP_BRANCH' is checked out at '$base_worktree', but cleanup helper is missing there: $script_path" >&2
+    return 1
+  fi
+
+  echo "Base branch '$DEVELOP_BRANCH' is already checked out at '$base_worktree'. Re-entering cleanup from that worktree..."
+  if [ -n "$target_repo" ]; then
+    reenter_args+=(--repo "$target_repo")
+  fi
+  reenter_args+=(--repo-root "$base_worktree" --base "$DEVELOP_BRANCH")
+  if [ -n "$merged_pr_number" ]; then
+    reenter_args+=(--pr "$merged_pr_number")
+  fi
+  reenter_args+=("$TO_DELETE")
+
+  exec env POST_MERGE_CLEANUP_REENTERED=1 "$script_path" "${reenter_args[@]}"
+}
+
+reenter_base_worktree_if_needed
+
 echo "Fetching origin..."
 # --prune: remove stale remote-tracking refs (e.g. origin/<merged-branch>)
 git fetch origin --prune
