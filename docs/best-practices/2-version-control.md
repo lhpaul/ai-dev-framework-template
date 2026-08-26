@@ -91,7 +91,7 @@ The issue ID prefix is the canonical identifier when a tracker is in use. The sl
 - Write a clear title following the commit message convention
 - Include context in the PR description: what, why, how to test
 - Link the relevant issue if one exists
-- Every PR must update `CHANGELOG.md` under `[Unreleased]` before merge (see the CHANGELOG section below for exceptions)
+- Every feature/fix/refactor PR must add or update a `changelog.d/` fragment before merge (see the CHANGELOG section below for exceptions)
 - Open PRs with `gh pr create` per the implementation protocol unless the team has adopted Haystack's submit workflow (see [`docs/workflow/development-workflow/integrations/haystack.md`](../workflow/development-workflow/integrations/haystack.md))
 
 ### Published branch updates
@@ -129,15 +129,15 @@ When in doubt, stop and ask. The cost of confirming is low; the cost of lost wor
 
 This project uses [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format.
 
-- Every feature/fix/hotfix PR adds an entry **before merge**, with these exceptions and rules:
+- Every feature/fix/refactor PR adds a changelog fragment **before merge**, with these exceptions and rules:
   - Spec-only or plan-only PRs (documentation artifacts for upcoming work) — no entry needed
-  - Fixes or changes to developments that have not been released yet — update the existing `[Unreleased]` entry instead of adding a new one; if the original entry already describes the corrected behavior, no change is needed
+  - Fixes or changes to developments that have not been released yet — update the existing fragment instead of adding a duplicate; if the original fragment already describes the corrected behavior, no change is needed
   - **Hotfix PRs** (branch prefix `hotfix/*`) — entry goes in a **new versioned section** (e.g., `[1.0.1] - YYYY-MM-DD`), **not** under `[Unreleased]`. A hotfix patches released code on `main` and is itself released immediately on merge. Determine the next patch version from the most recent released section header, then insert the new versioned section **directly below `[Unreleased]`** (above all prior versioned sections). This ensures the auto-tagging workflow extracts the correct version via the first semver header after `[Unreleased]`. Do **not** add an `[Unreleased]` entry for the hotfix; the backport PR carries the versioned entry to `develop` automatically.
-  - **Parallel batch items** (when orchestrated by protocol 90): each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved by batch-merge auto-resolution at merge time (see protocol 94 for details).
-- Never defer CHANGELOG entries to release time
-- **Describe shipped behavior, not the PR's review history.** Entries are read by downstream consumers of this template, who have no visibility into any individual PR's review cycles; phrases such as "caught in code review on this PR" or "per reviewer feedback" carry no meaning outside the PR that produced them. Attribute a change to the issue it resolves, not to the round of review that found it. This is a rule about **content, not length** — a thorough entry that explains a subtle behavior change is good.
-- Use the appropriate category: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
-- Release PRs move `[Unreleased]` entries to a versioned section: `[X.Y.Z] - YYYY-MM-DD`
+  - **Parallel batch items** (when orchestrated by protocol 90): each PR adds its own fragment as normal; Prepare Release assembles fragments into `CHANGELOG.md`.
+- Never defer writing the per-item release note fragment to release time
+- **Describe shipped behavior, not the PR's review history.** Fragment bodies are read by downstream consumers of this template after release assembly, who have no visibility into any individual PR's review cycles; phrases such as "caught in code review on this PR" or "per reviewer feedback" carry no meaning outside the PR that produced them. Attribute a change to the issue it resolves, not to the round of review that found it. This is a rule about **content, not length** — a thorough entry that explains a subtle behavior change is good.
+- Use the appropriate fragment kind: `added`, `changed`, `deprecated`, `removed`, `fixed`, `security`
+- Release PRs assemble pending `changelog.d/` fragments and any legacy `[Unreleased]` entries into a versioned section: `[X.Y.Z] - YYYY-MM-DD`
 - **Link reference definitions are mandatory**: every `## [X.Y.Z]` version heading (and `## [Unreleased]` when at least one versioned section exists) must have a corresponding link reference definition line at the bottom of the file following Keep a Changelog convention, for example:
   ```
   [Unreleased]: https://github.com/owner/repo/compare/vX.Y.Z...HEAD

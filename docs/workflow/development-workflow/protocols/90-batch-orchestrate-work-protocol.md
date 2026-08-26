@@ -192,7 +192,7 @@ Step 2.5), apply the backlog-start gate:
 - PR opening, labeling, or editing
 - Tracker status updates
 - Subagent dispatch (Work Item Runner or stage agent)
-- CHANGELOG edits
+- changelog fragment edits
 
 **Detection**: An explicit item list is present when the human invocation or handoff metadata includes a bounded set of issue numbers, tracker IDs, branch names, or PR numbers. An unrestricted invocation ("run everything that can advance") does **not** set the scope guard.
 
@@ -1029,7 +1029,7 @@ For each item in the batch, prepare a short handoff:
   to satisfy this requirement. Keep checkpoint commits scoped to the assigned
   item, branch, and worktree; this does not change review, CI, readiness-label,
   tracker, or merge gates.
-- Each item adds its own CHANGELOG entry as normal (see Step 3.6 for conflict resolution strategy)
+- Each item adds its own `changelog.d/` fragment as normal (see Step 3.6)
 
 ### Worktree isolation requirement
 
@@ -1441,27 +1441,36 @@ Proceed with batch dispatch only when all pre-flight checks pass.
 
 ---
 
-## Step 3.6: CHANGELOG Conflict Mitigation for Parallel Batches
+## Step 3.6: CHANGELOG Fragment Strategy for Parallel Batches
 
-When multiple PRs in a parallel batch touch `CHANGELOG.md`, merge conflicts are expected because they all add entries to the same `[Unreleased]` section.
+Parallel implementation PRs must not write normal release notes directly into
+`CHANGELOG.md`. Each item writes its own fragment under `changelog.d/`, named
+with the item's tracker identifier, so different items use different paths and
+do not contend for the shared `[Unreleased]` section.
 
-### Strategy: Per-PR Entries with Batch-Merge Auto-Resolution
+### Strategy: Per-Item Fragments
 
-Each PR in a parallel batch adds its own CHANGELOG entry as normal during implementation. CHANGELOG merge conflicts are resolved at merge time by the batch-merge auto-resolution (protocol 94 Step 4.3), which combines entries from both sides without dropping any.
+Each PR in a parallel batch adds or updates only its own fragment during
+implementation. The Prepare Release workflow assembles pending fragments into
+`CHANGELOG.md` when a release branch is created.
 
-**Why not consolidate into a single PR?** External reviewers (e.g., Devin, CodeRabbit) enforce per-PR diff scope and will flag CHANGELOG entries for work not present in the PR's diff as phantom/incorrect entries. Additionally, agents do not reliably parse `SKIP_CHANGELOG` metadata. The batch-merge auto-resolution handles CHANGELOG conflicts cleanly, making consolidation unnecessary.
+**Why not consolidate into a single PR?** External reviewers enforce per-PR
+diff scope and will flag release notes for work not present in the PR's diff as
+phantom/incorrect entries. Fragments keep each release note with the PR that
+implemented the change without creating shared-file conflicts.
 
 **Implementation**:
 
-1. **Do not pass `SKIP_CHANGELOG`** in handoff metadata. Each item adds its own CHANGELOG entry per the standard protocol 03 rules.
-2. **At merge time** (Step 5.5 or `/batch-merge`): the batch-merge protocol auto-resolves CHANGELOG conflicts by combining entries from both `HEAD` and the incoming branch. No entries are dropped.
-3. **If batch-merge is not used** (e.g., human merges manually): CHANGELOG conflicts are trivial to resolve — accept both sides' entries under the appropriate section.
+1. **Do not pass `SKIP_CHANGELOG`** in handoff metadata. Each item adds its own fragment per the standard protocol 03 rules.
+2. Validate pending fragments with `bash scripts/development-workflow/changelog-fragments.sh validate` before accepting implementation readiness.
+3. Leave final `CHANGELOG.md` assembly to Protocol 05.
 
 ### Special Cases
 
-**Spec-only or plan-only PRs**: These are exempt from CHANGELOG updates per the project's changelog policy (`docs/best-practices/2-version-control.md`). Spec and plan PRs do not trigger the conflict problem because they do not modify CHANGELOG at all.
+**Spec-only or plan-only PRs**: These are exempt from changelog updates per the project's changelog policy (`docs/best-practices/2-version-control.md`).
 
-**Single item in batch**: If a batch has only one implementation item, it updates CHANGELOG normally (no conflict possible).
+**Single item in batch**: If a batch has only one implementation item, it still
+adds or updates a changelog fragment normally.
 
 ---
 
@@ -1632,7 +1641,7 @@ Before reporting any PR as ready for human review, independently query the actua
 gh pr view <pr_number> --json baseRefName,isDraft,labels,statusCheckRollup,comments,files
 ```
 
-The `files` field is required to verify CHANGELOG presence independently (see table below). Do not skip it.
+The `files` field is required to verify changelog artifact presence independently (see table below). Do not skip it.
 
 For sweep, batch, helper-extraction, or pattern-completeness items, also require
 residual-gate evidence from `scripts/development-workflow/scope-residual-gate.sh`
@@ -1664,7 +1673,7 @@ Verify all of the following by querying artifact state directly. If any check fa
 | `ready-for-human-review` label                  | Present in the `labels` array returned by `gh pr view`                                                                                                                                                                                                                                                                                                                                                                    | Apply directly: `gh pr edit <pr_number> --add-label "ready-for-human-review"` (after all other checks pass)                                                                                                                                                                                       |
 | `ready-for-regression` label                    | Present in the `labels` array on `feature/*`, `fix/*`, `refactor/*`, `hotfix/*`, and `backport/hotfix/*` PRs; not required for `spec/*`, `implementation-plan/*`, or graduation PRs (head branch `develop-<slug>`, base branch `develop`)                                                                                                                                                                                 | **Apply directly** (primary enforcement point): `gh pr edit <pr_number> --add-label "ready-for-regression"`. Log as protocol deviation: `PROTOCOL_DEVIATION: ready-for-regression was missing on PR #<N> — applied by orchestrator Step 5.1`. **Do not redispatch the agent for this gap alone.** Do not apply this remediation to graduation PRs (`develop-<slug>` → `develop`) — they are explicitly exempt (BR-6 of the graduation spec). |
 | No `needs-fixes` label                          | Absent from the `labels` array                                                                                                                                                                                                                                                                                                                                                                                            | Remove: `gh pr edit <pr_number> --remove-label "needs-fixes"` (only after CI and reviews are confirmed clean)                                                                                                                                                                                     |
-| CHANGELOG presence                              | `CHANGELOG.md` appears in the `files` array for `feature/*`, `fix/*`, `refactor/*`, `hotfix/*` PRs (i.e., `gh pr view <pr_number> --json files --jq '[.files[].path] \| any(. == "CHANGELOG.md")'` returns `true`); not required for `spec/*`, `implementation-plan/*`, or `backport/hotfix/*` (the versioned CHANGELOG entry already exists in `main` and flows to `develop` via the merge)                              | Redispatch agent to add a CHANGELOG entry and push. Do not accept the PR as ready until `CHANGELOG.md` appears in the PR's file set.                                                                                                                                                              |
+| Changelog artifact presence                     | A top-level path matching `changelog.d/<item>.<kind>.<slug>.md` appears in the `files` array for `feature/*`, `fix/*`, and `refactor/*` PRs, where `<kind>` is `added`, `changed`, `deprecated`, `removed`, `fixed`, or `security`; `changelog.d/README.md`, nested paths, and malformed names do not satisfy the gate. Exception: if the PR fixes or adjusts unreleased work and intentionally leaves an existing fragment unchanged because that fragment already describes the corrected behavior, the PR body or reviewer-loop summary must name that existing top-level fragment and the fragment must exist on the base branch. `bash scripts/development-workflow/changelog-fragments.sh validate` must also pass. `CHANGELOG.md` appears for `hotfix/*` PRs; neither is required for `spec/*`, `implementation-plan/*`, or `backport/hotfix/*` (the versioned CHANGELOG entry already exists in `main` and flows to `develop` via the merge)                              | Redispatch agent to add the required changelog fragment or hotfix CHANGELOG entry and push, or to document the unchanged-existing-fragment exception with the fragment path and evidence that it exists on the base branch. Do not accept the PR as ready until the appropriate changelog artifact appears in the PR's file set, or the exception evidence is present, and fragment validation is clean.                                                                                                                                                              |
 | All automated-reviewer `reviewThreads` resolved | GraphQL `reviewThreads.nodes[].isResolved=true` (or `✅ Addressed` in body) for every thread authored by a configured bot login (skip this check only when Step 7 was `skipped` because no review platforms are configured)                                                                                                                                                                                               | Redispatch agent to address unresolved threads                                                                                                                                                                                                                                                    |
 | Automated reviewer loop summary comment         | At least one latest PR comment containing "Automated Reviewer Loop Summary", "Reviewer Loop Summary", or "No blocking PR feedback" whose result is `clean` or `skipped` (skip this check only when Step 7 was `skipped` because no review platforms are configured). **`pr-review-loop.sh` posts this comment automatically on clean, needs-fixes, and escalate exits** — a missing comment, stale comment, or comment whose latest result is `needs_fixes`, `escalate`, `timeout`, `pending_timeout`, or any other non-clean terminal state means Step 7 is not complete | Redispatch agent to run Step 7 to completion or escalate the non-clean reviewer-loop result                                                                                                                                                                                                        |
 | CI checks                                       | All required status checks are green (`state: SUCCESS` or `conclusion: success`)                                                                                                                                                                                                                                                                                                                                          | Redispatch agent to fix failing checks                                                                                                                                                                                                                                                            |

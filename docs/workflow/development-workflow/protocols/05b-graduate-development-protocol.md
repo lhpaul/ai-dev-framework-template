@@ -185,26 +185,33 @@ Accept `<slug>` as input. Derive the integration branch name: `develop-<slug>`.
 
 ---
 
-## Step 2.5: CHANGELOG Handling
+## Step 2.5: Changelog Fragment Handling
 
-Before opening the graduation PR, verify that all `[Unreleased]` CHANGELOG entries accumulated on `develop-<slug>` will be present in the graduation PR diff.
+Before opening the graduation PR, verify that all `changelog.d/` fragments
+accumulated on `develop-<slug>` will be present in the graduation PR diff.
 
-The sub-item PRs each added CHANGELOG entries to `develop-<slug>`. The graduation PR must carry those entries intact — they will land on `develop` together with the code when the graduation PR is merged.
+The sub-item PRs each added changelog fragments to `develop-<slug>`. The
+graduation PR must carry those fragments intact — they will land on `develop`
+together with the code when the graduation PR is merged and be assembled during
+Prepare Release.
 
-**Important (BR-5)**: Do not pre-absorb CHANGELOG entries separately from the graduation PR. The absorb commit must be part of the graduation branch itself (or already present via the sub-item PRs), not a separate prior merge into `develop`. This was a lesson learned during PR #737.
+**Important (BR-5)**: Do not pre-absorb changelog fragments separately from the graduation PR. The absorb commit must be part of the graduation branch itself (or already present via the sub-item PRs), not a separate prior merge into `develop`. This was a lesson learned during PR #737.
 
 **Verification**:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
-# Check whether CHANGELOG.md differs between develop and develop-<slug>
-git diff origin/develop..origin/develop-<slug> -- CHANGELOG.md | head -n 40
+# Check whether changelog fragments differ between develop and develop-<slug>
+git diff --name-only origin/develop..origin/develop-<slug> -- changelog.d/
 ```
 
-If the diff shows `[Unreleased]` entries on `develop-<slug>` that are absent from `develop`, these will be carried over by the graduation PR as expected — no additional action is needed.
+If the diff shows changelog fragments on `develop-<slug>` that are absent from
+`develop`, these will be carried over by the graduation PR as expected — no
+additional action is needed.
 
-If the diff is empty (no CHANGELOG difference), warn the human:
+If the diff is empty (no changelog fragment difference), warn the human:
 
-> Warning: CHANGELOG.md appears identical between `develop` and `develop-<slug>`. If no CHANGELOG entries were added by the sub-item PRs, this may be expected. If entries were expected, check whether they were accidentally merged to `develop` separately before the graduation PR.
+> Warning: no changelog fragments differ between `develop` and `develop-<slug>`. If no fragments were added by the sub-item PRs, this may be expected. If fragments were expected, check whether they were accidentally merged to `develop` separately before the graduation PR.
 
 ---
 

@@ -57,14 +57,15 @@ These conventions apply across all languages and frameworks in this project.
 - No trailing whitespace in files
 - Files end with a single newline
 - Consistent indentation (tabs vs spaces defined per language in `STACK-SPECIFIC.md`)
-- Spec, plan, and CHANGELOG markdown files are linted automatically on every PR touching
-  `docs/specs/developments/`, `docs/testing/workflow/`, or `CHANGELOG.md`. Rules are
-  configured in `.markdownlint.jsonc` (trailing whitespace, relative links, newline at EOF).
+- Spec, plan, changelog fragment, and CHANGELOG markdown files are linted automatically on every PR touching
+  `docs/specs/developments/`, `docs/testing/workflow/`, `changelog.d/`, or `CHANGELOG.md`.
+  Rules are configured in `.markdownlint.jsonc` (trailing whitespace, relative links, newline at EOF).
   Run locally:
 
+  <!-- workflow-shell-contract: bash-zsh -->
   ```bash
-  npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "CHANGELOG.md"
-  find docs/specs/developments docs/testing/workflow -name "*.md" -print0 \
+  npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "changelog.d/**/*.md" "CHANGELOG.md"
+  find docs/specs/developments docs/testing/workflow changelog.d -name "*.md" -print0 \
     | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md
   ```
 

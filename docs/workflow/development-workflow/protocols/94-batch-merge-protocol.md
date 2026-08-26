@@ -1,7 +1,7 @@
 # Protocol: Batch Merge
 
 **Agent role**: Developer (or Portfolio Orchestrator when invoked from Protocol 90)
-**Purpose**: Merge all ready PRs in a parallel batch into the target integration branch (`develop` by default, or any epic integration branch) sequentially, auto-resolving trivial CHANGELOG and documentation conflicts (including duplicate section headers introduced by clean merges), pausing for human input on non-trivial ones, and running `post-merge-cleanup` for each successfully merged PR.
+**Purpose**: Merge all ready PRs in a parallel batch into the target integration branch (`develop` by default, or any epic integration branch) sequentially, auto-resolving trivial documentation conflicts and legacy direct-`CHANGELOG.md` conflicts (including duplicate section headers introduced by clean merges), pausing for human input on non-trivial ones, and running `post-merge-cleanup` for each successfully merged PR.
 
 **Shell helper**: `scripts/development-workflow/batch-merge.sh`
 
@@ -90,9 +90,9 @@ Candidate PRs for batch merge
 ──────────────────────────────────────────────────────────────────────────────
    1   │  #101  │ feat: add widget                  │ feature/101-widget  │ ready-for-human-review
    2   │  #103  │ fix: correct typo                 │ fix/103-typo        │ ready-for-human-review
-   3   │  #102  │ feat: update docs                 │ feature/102-docs    │ ready-for-human-review, CHANGELOG
+   3   │  #102  │ feat: update docs                 │ feature/102-docs    │ ready-for-human-review
 ──────────────────────────────────────────────────────────────────────────────
-Merge order: non-CHANGELOG PRs first (ascending PR #), then CHANGELOG PRs (ascending PR #).
+Merge order: normal fragment-based implementation PRs by ascending PR #; legacy direct-CHANGELOG PRs are grouped last when present.
 ```
 
 Fields: Order, PR number, title, branch name, labels, readiness status.
@@ -147,9 +147,9 @@ Display the final merge plan (only PRs approved so far) and proceed immediately:
 ```text
 Merge plan (will be executed in this order)
 ──────────────────────────────────────────
-  1. PR #101  feature/101-widget     (no CHANGELOG conflict expected)
-  2. PR #102  feature/102-docs       (no CHANGELOG conflict expected)
-  3. PR #103  fix/103-docs-update    (may cause CHANGELOG conflict — will auto-resolve)
+  1. PR #101  feature/101-widget     (fragment-based release note)
+  2. PR #102  feature/102-docs       (fragment-based release note)
+  3. PR #103  fix/103-docs-update    (fragment-based release note)
 
 Skipped (not ready): #104
 ```
@@ -445,17 +445,19 @@ After a clean or resolved merge, in order:
    redispatched (Protocol 90 Step 5 item 4): an unmergeable PR is not
    `ready-for-human-review` in any sense that matters to the batch.
 
-   **CHANGELOG-only conflicts, and when they do not move the head.** Every PR
-   in a wave adds an `[Unreleased]` entry, so `merge_state_non_clean` after a
-   sibling merge is usually `CHANGELOG.md` alone. Step 4.3 resolves that at
-   merge time inside `batch-merge.sh merge`, without touching the PR branch —
-   **but only a PR whose reviewer verdict and CI already passed at its current
-   head can take that path.** GitHub builds no merge ref for a conflicting PR,
-   so no `pull_request` workflow runs on it (issue #1580: two pushes to PR
-   #1577 after it went `DIRTY` ran "PR policy" only, 4 checks instead of 16,
-   and the CI loop still said green). Any PR that needs another push — a fix,
-   a re-review — must resolve the conflict on its branch first, which moves
-   the head and voids its verdicts like any other head change. Before routing
+   **CHANGELOG-only conflicts, and when they do not move the head.** Normal
+   implementation PRs now write `changelog.d/` fragments, so `CHANGELOG.md`
+   conflicts are no longer expected in ordinary parallel waves. Legacy
+   branches, manual edits, and hotfix-related flows can still produce them.
+   Step 4.3 resolves that legacy case at merge time inside
+   `batch-merge.sh merge`, without touching the PR branch — **but only a PR
+   whose reviewer verdict and CI already passed at its current head can take
+   that path.** GitHub builds no merge ref for a conflicting PR, so no
+   `pull_request` workflow runs on it (issue #1580: two pushes to PR #1577
+   after it went `DIRTY` ran "PR policy" only, 4 checks instead of 16, and the
+   CI loop still said green). Any PR that needs another push — a fix, a
+   re-review — must resolve the conflict on its branch first, which moves the
+   head and voids its verdicts like any other head change. Before routing
    `resolve_conflict_then_reverify`, check which files conflict; the helper
    cannot see conflicted files from the GitHub API, which is why this check is
    the runner's:
@@ -478,9 +480,11 @@ When `MERGE_RESULT=conflict`, read `CONFLICTED_FILES` from the script output.
 
 Classify each conflicted file:
 
-#### CHANGELOG.md — trivial (auto-resolve)
+#### CHANGELOG.md — legacy trivial (auto-resolve)
 
-Applies when `CHANGELOG.md` is in the conflict list.
+Applies when `CHANGELOG.md` is in the conflict list. Normal implementation PRs
+should use `changelog.d/` fragments, so this path is primarily for legacy
+branches and manual direct changelog edits.
 
 Auto-resolution procedure:
 
@@ -595,7 +599,7 @@ Batch Merge Summary
  PR #  │ Title                       │ Outcome
 ──────────────────────────────────────────────────────────────────────────────
  #101  │ feat: add widget             │ merged_clean
- #102  │ feat: update CHANGELOG docs  │ merged_auto  (CHANGELOG combined)
+ #102  │ feat: update docs            │ merged_auto  (docs combined)
  #103  │ fix: conflict fix            │ merged_human
  #104  │ feat: missing label          │ skipped_not_ready
  #105  │ fix: bad conflict            │ skipped_conflict
@@ -610,7 +614,7 @@ Merged: 3  |  Skipped: 2  |  Blocked: 1  |  Observed: 1  |  Failed: 0  |  Not at
 | Code                | Meaning                                                                                  |
 | ------------------- | ---------------------------------------------------------------------------------------- |
 | `merged_clean`      | Merged without any conflicts                                                             |
-| `merged_auto`       | Merged with auto-resolved trivial conflicts (CHANGELOG or non-overlapping doc files)     |
+| `merged_auto`       | Merged with auto-resolved trivial conflicts (legacy direct `CHANGELOG.md` or non-overlapping doc files) |
 | `merged_human`      | Merged after human resolved non-trivial conflict(s)                                      |
 | `skipped_not_ready` | Skipped because PR lacked `ready-for-human-review` and human chose to exclude it         |
 | `skipped_conflict`  | Skipped because human aborted conflict resolution; `develop` returned to pre-merge state |

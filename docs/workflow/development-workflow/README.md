@@ -591,7 +591,7 @@ Release is triggered by a human when `develop` is ready to ship.
 Summary:
 
 1. Create `release/v[X.Y.Z]` from `develop`.
-2. Curate `CHANGELOG.md`, move `[Unreleased]` into the versioned release section, and bump any versioned manifests.
+2. Assemble pending `changelog.d/` fragments into `CHANGELOG.md`, curate the versioned release section, and bump any versioned manifests.
 3. Open two PRs from the release branch: one to `main`, one back to `develop`.
 4. Merge the `main` PR first so the release tag is created, then merge the backport PR.
 

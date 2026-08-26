@@ -1,6 +1,6 @@
 ---
 name: batch-merge
-description: Merge all ready PRs in a parallel batch into the target base branch sequentially, auto-resolving trivial CHANGELOG and documentation conflicts, pausing for human input only on non-trivial conflicts, and running post-merge-cleanup for each successfully merged PR. Prints the merge plan for visibility but proceeds immediately without requiring confirmation. Use when a parallel batch of PRs is ready for merge.
+description: Merge all ready PRs in a parallel batch into the target base branch sequentially, auto-resolving legacy trivial CHANGELOG and documentation conflicts, pausing for human input only on non-trivial conflicts, and running post-merge-cleanup for each successfully merged PR. Prints the merge plan for visibility but proceeds immediately without requiring confirmation. Use when a parallel batch of PRs is ready for merge.
 ---
 
 # Batch Merge
@@ -31,7 +31,7 @@ Follow `docs/workflow/development-workflow/protocols/94-batch-merge-protocol.md`
    - Run `./scripts/development-workflow/batch-merge.sh merge --pr <number> --expected-head-sha <reviewed-headRefOid>` using the head SHA captured by the latest readiness/review gate.
    - On `MERGE_RESULT=clean`: proceed to post-merge steps.
    - On `MERGE_RESULT=conflict`: classify each conflicted file:
-     - `CHANGELOG.md`: auto-resolve by combining all `[Unreleased]` entries (HEAD side first, incoming side second, no entries dropped). Report what was combined.
+     - `CHANGELOG.md`: legacy fallback only; auto-resolve by combining all `[Unreleased]` entries (HEAD side first, incoming side second, no entries dropped). Report what was combined.
      - Documentation files (`docs/`, `.claude/`, `.cursor/`, `.codex/`): auto-resolve if non-overlapping; escalate if overlapping.
      - All other files (or overlapping doc changes): pause, show conflict markers, wait for human to resolve or abort.
    - On `MERGE_RESULT=failed`: report the error, mark `failed`, continue.

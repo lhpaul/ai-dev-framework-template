@@ -131,12 +131,12 @@ For normal Codex usage, use `/run-work` to scan the portfolio and discover what 
 # Lint / Format
 # [your lint/format commands]
 
-# Markdown lint (spec, plan, and CHANGELOG files)
+# Markdown lint (spec, plan, changelog fragment, and CHANGELOG files)
 # Standard rules (trailing whitespace, relative links, files end with newline):
-npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "CHANGELOG.md"
+npx markdownlint-cli2 "docs/specs/developments/**/*.md" "docs/testing/workflow/**/*.md" "changelog.d/**/*.md" "CHANGELOG.md"
 
 # Heuristic rules (GLOB001, COUNT001):
-find docs/specs/developments docs/testing/workflow -name "*.md" -print0 \
+find docs/specs/developments docs/testing/workflow changelog.d -name "*.md" -print0 \
   | xargs -0 python3 scripts/lint/markdown-heuristic-lint.py CHANGELOG.md
 
 # Duplicate section-header check (detects repeated ### Fixed / ### Added etc. within a ## block):
@@ -185,9 +185,9 @@ automation; keep operational labels such as `ready-for-human-review`,
 
 - Follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format.
 - Use [Semantic Versioning](https://semver.org/): patch for fixes/tweaks, minor for new features or meaningful improvements, major for breaking changes to the template structure.
-- **Feature and fix PRs** merged into `develop` add entries under `[Unreleased]` in `CHANGELOG.md`; do not convert to a version number on merge. Spec-only and plan-only PRs are exempt. Fixes or changes to unreleased work should update the existing entry rather than adding a new one. In parallel batches, each PR adds its own CHANGELOG entry as normal; merge conflicts are resolved by the batch-merge auto-resolution (protocol 94 Step 4.3).
+- **Feature, fix, and refactor PRs** merged into `develop` add release-note fragments under `changelog.d/`; do not edit `CHANGELOG.md` directly for normal development PRs. Spec-only and plan-only PRs are exempt. Fixes or changes to unreleased work should update the existing fragment rather than adding a duplicate. Parallel batches keep one fragment per PR; Prepare Release assembles pending fragments into `CHANGELOG.md`.
 - **Hotfix PRs** (`hotfix/*`) are the exception: they write a **new versioned section** (e.g., `[1.0.1] - YYYY-MM-DD`) directly below `[Unreleased]` (above all prior versioned sections), not an `[Unreleased]` entry. A hotfix patches released code on `main` and is released immediately on merge — `auto-tag-release.yml` creates the corresponding tag automatically. The backport PR carries the versioned entry to `develop`.
-- **A new version is created when releasing or hotfixing**: for normal releases, run the Prepare Release workflow (`/prepare-release` or `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md`) — that creates a `release/v[X.Y.Z]` branch, renames `[Unreleased]` to `[X.Y.Z]` in the CHANGELOG, opens PRs to `main` and backport to `develop`, then skips release-branch reviewer loops while driving regression + CI readiness on the **main** release PR before merge. For hotfixes, the developer writes the versioned section directly in Step 6 of Path 4 (`03-implement-development-protocol.md`) — no release branch is created.
+- **A new version is created when releasing or hotfixing**: for normal releases, run the Prepare Release workflow (`/prepare-release` or `docs/workflow/development-workflow/protocols/05-prepare-release-protocol.md`) — that creates a `release/v[X.Y.Z]` branch, assembles pending `changelog.d/` fragments into `[X.Y.Z]` in the CHANGELOG, opens PRs to `main` and backport to `develop`, then skips release-branch reviewer loops while driving regression + CI readiness on the **main** release PR before merge. For hotfixes, the developer writes the versioned section directly in Step 6 of Path 4 (`03-implement-development-protocol.md`) — no release branch is created.
 
 ### Agent commit hooks (optional — Haystack)
 

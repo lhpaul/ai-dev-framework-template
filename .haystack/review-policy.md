@@ -16,7 +16,7 @@
 - **Reason**: Instruction wording changes can redirect automation behavior even when code checks still pass.
 
 ## Review release and changelog automation
-- **Paths**: `CHANGELOG.md`, `.github/workflows/auto-tag-release.yml`
+- **Paths**: `CHANGELOG.md`, `changelog.d/**`, `scripts/development-workflow/changelog-fragments.sh`, `.github/workflows/auto-tag-release.yml`
 - **Severity**: critical
 - **Reason**: Version parsing or changelog structure mistakes can create incorrect release tags that are hard to undo.
 

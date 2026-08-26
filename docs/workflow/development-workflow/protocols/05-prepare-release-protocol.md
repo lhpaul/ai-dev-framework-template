@@ -111,7 +111,9 @@ Before doing anything, verify the artifact-owning checkout:
 
 ## Step 1: Confirm Version
 
-If the version was not provided, inspect the `[Unreleased]` section of `CHANGELOG.md` and suggest the appropriate next version using [Semantic Versioning](https://semver.org/):
+If the version was not provided, inspect pending `changelog.d/` fragments and
+the `[Unreleased]` section of `CHANGELOG.md`, then suggest the appropriate next
+version using [Semantic Versioning](https://semver.org/):
 
 - **PATCH** (`x.y.Z`): bug fixes only
 - **MINOR** (`x.Y.0`): new features, backwards-compatible
@@ -246,7 +248,21 @@ git checkout -b "$RELEASE_BRANCH"
 
 In `CHANGELOG.md`:
 
-1. **Polish or trim the `[Unreleased]` content** (do this before renaming the section). Accumulated entries often read like a raw merge log: too long, repetitive, or full of implementation detail. Tighten them so the release is easy to scan:
+1. Validate and assemble pending changelog fragments into the release section:
+
+   <!-- workflow-shell-contract: bash -->
+   ```bash
+   bash scripts/development-workflow/changelog-fragments.sh validate
+   bash scripts/development-workflow/changelog-fragments.sh assemble --version "X.Y.Z" --date "YYYY-MM-DD"
+   ```
+
+   `assemble` writes `## [X.Y.Z] - YYYY-MM-DD`, creates a fresh empty
+   `## [Unreleased]` section, carries any legacy bullets that still exist in
+   the old `[Unreleased]` block, merges the pending fragment bodies by
+   changelog kind, and deletes the assembled fragment files. These are ordinary
+   uncommitted release-branch edits that must be included in the release commit.
+
+2. **Polish or trim the assembled `## [X.Y.Z]` content**. Accumulated entries often read like a raw merge log: too long, repetitive, or full of implementation detail. Tighten them so the release is easy to scan:
    - Prefer **short, scannable bullets**: one clear outcome or change per line where possible.
    - **Merge or drop** near-duplicates; keep a single bullet for a feature or fix instead of one per PR or sub-task unless each line adds distinct user value.
    - **User- or operator-facing language**: what changed for readers of the changelog, not file names or refactors unless those matter externally.
@@ -254,11 +270,7 @@ In `CHANGELOG.md`:
    - If a subsection (Added, Changed, Fixed, etc.) is crowded, **summarize** into fewer high-signal bullets rather than listing every incremental commit.
    - Stay faithful to what shipped: polish for clarity, do not invent or remove substantive release notes without human agreement.
 
-2. Rename `## [Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD` (use today's date)
-
-3. Add a new empty `## [Unreleased]` section at the top (above the versioned entry)
-
-4. **Reference-style link definitions** (Keep a Changelog): at the bottom of the file, update or add link definitions so version headers remain clickable comparison links on GitHub. **Do not remove** existing definitions; update them to include the new version.
+3. **Reference-style link definitions** (Keep a Changelog): at the bottom of the file, update or add link definitions so version headers remain clickable comparison links on GitHub. **Do not remove** existing definitions; update them to include the new version.
    - `[Unreleased]`: `https://github.com/<owner>/<repo>/compare/vX.Y.Z...HEAD`
    - `[X.Y.Z]`: `https://github.com/<owner>/<repo>/compare/v<previous>...vX.Y.Z`
    - Retain (or add) definitions for all other version headers. Use the same tag format as your CI (e.g. `v1.2.0` if auto-tag-release uses that).
