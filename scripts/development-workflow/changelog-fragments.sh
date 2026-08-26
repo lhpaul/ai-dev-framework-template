@@ -207,16 +207,16 @@ assemble_changelog() {
   bodies_file="$(mktemp "${TMPDIR:-/tmp}/changelog-fragments.bodies.XXXXXX")"
   trap 'rm -f "$entries_file" "$bodies_file"' RETURN
 
-  if version_exists "$changelog" "$version"; then
-    printf 'ASSEMBLE_RESULT=already_assembled\n'
-    printf 'VERSION=%s\n' "$version"
-    return 0
-  fi
-
   if ! validate_fragments "$dir"; then
     printf 'ASSEMBLE_RESULT=invalid\n'
     printf 'VERSION=%s\n' "$version"
     return 1
+  fi
+
+  if version_exists "$changelog" "$version"; then
+    printf 'ASSEMBLE_RESULT=already_assembled\n'
+    printf 'VERSION=%s\n' "$version"
+    return 0
   fi
 
   require_single_unreleased "$changelog" || {

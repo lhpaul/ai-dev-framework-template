@@ -156,9 +156,6 @@ run_test "assemble_added_before_changed" "yes" "$(
 second="$(assemble_case "$dir" --version 0.2.0 --date 2026-02-04)"
 run_test "assemble_idempotent_different_date" "yes" "$(contains "ASSEMBLE_RESULT=already_assembled" "$second")"
 run_test "assemble_keeps_first_date" "no" "$(contains "2026-02-04" "$(cat "$dir/CHANGELOG.md")")"
-printf 'invalid late note\n' > "$dir/changelog.d/9999.fixed.late-invalid.md"
-second_with_invalid="$(assemble_case "$dir" --version 0.2.0 --date 2026-02-05)"
-run_test "assemble_idempotent_ignores_late_invalid_fragment" "yes" "$(contains "ASSEMBLE_RESULT=already_assembled" "$second_with_invalid")"
 
 printf '[0.2.0]: https://example.com/compare/v0.1.0...v0.2.0\n' >> "$dir/CHANGELOG.md"
 node_modules/.bin/markdownlint-cli2 "$dir/CHANGELOG.md" >/dev/null
