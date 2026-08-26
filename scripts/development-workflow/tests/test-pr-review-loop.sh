@@ -15043,6 +15043,8 @@ run_test "settle_no_eval_in_lookup" "0" \
 
 run_test "review_probe_defined" "yes" \
   "$(type -t _bot_review_submitted_since >/dev/null 2>&1 && echo yes || echo no)"
+run_test "review_substantive_helper_defined" "yes" \
+  "$(type -t _review_body_is_substantive >/dev/null 2>&1 && echo yes || echo no)"
 
 _1556_rbin="$(mktemp -d)"
 _1556_mkreviews() {
@@ -15065,17 +15067,35 @@ run_test "review_probe_no_review_is_zero" "0" \
   "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" coderabbitai)"
 
 # The PR #1573 review, submitted 13 minutes after HEAD.
-_1556_mkreviews '[{"user":{"login":"coderabbitai[bot]"},"submitted_at":"2026-08-22T00:30:32Z","state":"COMMENTED"}]'
+_1556_mkreviews '[{"user":{"login":"coderabbitai[bot]"},"submitted_at":"2026-08-22T00:30:32Z","state":"COMMENTED","body":"Actionable comments posted: 3"}]'
 run_test "review_probe_detects_submitted_review" "1" \
   "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" coderabbitai)"
+run_test "review_probe_detects_submitted_review_for_head" "1" \
+  "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" deadbeefdeadbeefdeadbeefdeadbeefdeadbeef coderabbitai)"
+
+# Empty-body review containers are produced when the bot replies inside
+# existing review threads. They are not a review of the current code.
+_1556_mkreviews '[{"user":{"login":"coderabbitai[bot]"},"submitted_at":"2026-08-22T00:30:32Z","state":"COMMENTED","commit_id":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef","body":""}]'
+run_test "review_probe_empty_body_container_is_zero" "0" \
+  "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" deadbeefdeadbeefdeadbeefdeadbeefdeadbeef coderabbitai)"
+
+# A substantive review plus later empty containers still satisfies the settle.
+_1556_mkreviews '[{"user":{"login":"coderabbitai[bot]"},"submitted_at":"2026-08-22T00:30:32Z","state":"COMMENTED","commit_id":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef","body":"Actionable comments posted: 3"},{"user":{"login":"coderabbitai[bot]"},"submitted_at":"2026-08-22T00:33:22Z","state":"COMMENTED","commit_id":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef","body":""}]'
+run_test "review_probe_substantive_plus_container_is_one" "1" \
+  "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" deadbeefdeadbeefdeadbeefdeadbeefdeadbeef coderabbitai)"
+
+# Empty containers on a different head must not satisfy this head.
+_1556_mkreviews '[{"user":{"login":"coderabbitai[bot]"},"submitted_at":"2026-08-22T00:30:32Z","state":"COMMENTED","commit_id":"feedfacefeedfacefeedfacefeedfacefeedface","body":""}]'
+run_test "review_probe_other_head_container_is_zero" "0" \
+  "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" deadbeefdeadbeefdeadbeefdeadbeefdeadbeef coderabbitai)"
 
 # A review from a PREVIOUS head must not satisfy this head.
-_1556_mkreviews '[{"user":{"login":"coderabbitai[bot]"},"submitted_at":"2026-08-22T00:10:00Z","state":"COMMENTED"}]'
+_1556_mkreviews '[{"user":{"login":"coderabbitai[bot]"},"submitted_at":"2026-08-22T00:10:00Z","state":"COMMENTED","body":"Actionable comments posted: 3"}]'
 run_test "review_probe_ignores_stale_review" "0" \
   "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" coderabbitai)"
 
 # Another bot's review must not satisfy this bot.
-_1556_mkreviews '[{"user":{"login":"other-bot[bot]"},"submitted_at":"2026-08-22T00:30:32Z","state":"COMMENTED"}]'
+_1556_mkreviews '[{"user":{"login":"other-bot[bot]"},"submitted_at":"2026-08-22T00:30:32Z","state":"COMMENTED","body":"Actionable comments posted: 3"}]'
 run_test "review_probe_ignores_other_bot" "0" \
   "$(PATH="$_1556_rbin:$PATH" _bot_review_submitted_since owner/repo 42 "2026-08-22T00:17:29Z" coderabbitai)"
 
