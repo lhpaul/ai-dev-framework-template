@@ -88,6 +88,7 @@ jobs:
           FOUND=0
           LATEST_SUMMARY_BODY=""
           LATEST_SUMMARY_RESULT="missing"
+          LATEST_SUMMARY_HEAD_SHA=""
           LATEST_SUMMARY_HEAD_MATCHES=false
 
           post_failure_status_if_possible() {
@@ -221,6 +222,7 @@ jobs:
           summarize_reviewer_loop_result() {
             if [ -z "${LATEST_SUMMARY_BODY:-}" ]; then
               LATEST_SUMMARY_RESULT="missing"
+              LATEST_SUMMARY_HEAD_SHA=""
               LATEST_SUMMARY_HEAD_MATCHES=false
               return 0
             fi
@@ -235,8 +237,14 @@ jobs:
               LATEST_SUMMARY_RESULT="non_clean"
             fi
 
-            if printf '%s\n' "$LATEST_SUMMARY_BODY" |
-              grep -Fq "\"head_sha\": \"${HEAD_SHA}\""; then
+            LATEST_SUMMARY_HEAD_SHA="$(
+              printf '%s\n' "$LATEST_SUMMARY_BODY" |
+                awk 'in_json && /^```/ {exit} in_json {print} /^```json$/ {in_json=1}' |
+                jq -r '.entries[-1].head_sha // ""' 2>/dev/null || true
+            )"
+
+            if [ -n "$LATEST_SUMMARY_HEAD_SHA" ] &&
+              [ "$LATEST_SUMMARY_HEAD_SHA" = "$HEAD_SHA" ]; then
               LATEST_SUMMARY_HEAD_MATCHES=true
             else
               LATEST_SUMMARY_HEAD_MATCHES=false
@@ -251,7 +259,6 @@ jobs:
 
           apply_regression_policy_after_clean_summary() {
             local should_apply_regression_label=true
-            local dispatch_attempt
 
             echo "Reviewer-loop summary result '${LATEST_SUMMARY_RESULT}' for PR #${PR_NUMBER}; head match: ${LATEST_SUMMARY_HEAD_MATCHES}."
 
@@ -267,59 +274,22 @@ jobs:
               echo "PR #${PR_NUMBER} targets '${BASE_BRANCH}', which is outside regression workflow branch scope. Skipping ${LABEL_NAME}."
               should_apply_regression_label=false
             else
-              dispatch_attempt=1
-              while [ "$dispatch_attempt" -le 2 ]; do
-                if ! dispatch_regression_workflow; then
-                  echo "WARN: Failed to dispatch '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER}. Skipping ${LABEL_NAME} and continuing to reviewer-loop guard status." >&2
-                  should_apply_regression_label=false
-                  break
-                fi
-
+              if ! dispatch_regression_workflow; then
+                echo "WARN: Failed to dispatch '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER}. Skipping ${LABEL_NAME} and continuing to reviewer-loop guard status." >&2
+                should_apply_regression_label=false
+              else
                 echo "Dispatched '${REGRESSION_WORKFLOW}' for PR #${PR_NUMBER} at ${HEAD_SHA}."
                 if ! refresh_pr_metadata; then
                   echo "WARN: Could not verify PR head after dispatch. Skipping ${LABEL_NAME} to avoid a stale regression-readiness signal." >&2
                   should_apply_regression_label=false
-                  break
-                fi
-
-                if [ "$latest_head_sha" = "$HEAD_SHA" ] &&
-                   [ "$latest_branch" = "$BRANCH" ] &&
-                   [ "$latest_base_branch" = "$BASE_BRANCH" ] &&
-                   [ "$latest_head_repo" = "$HEAD_REPO" ]; then
-                  break
-                fi
-
-                if [ "$dispatch_attempt" -ge 2 ]; then
-                  echo "PR #${PR_NUMBER} changed again after regression dispatch (${HEAD_SHA} -> ${latest_head_sha}). Skipping ${LABEL_NAME} to avoid a stale regression-readiness signal."
+                elif [ "$latest_head_sha" != "$HEAD_SHA" ] ||
+                  [ "$latest_branch" != "$BRANCH" ] ||
+                  [ "$latest_base_branch" != "$BASE_BRANCH" ] ||
+                  [ "$latest_head_repo" != "$HEAD_REPO" ]; then
+                  echo "PR #${PR_NUMBER} changed after regression dispatch (${HEAD_SHA} -> ${latest_head_sha}). Skipping ${LABEL_NAME} until reviewer-loop clean evidence exists for the new head."
                   should_apply_regression_label=false
-                  break
                 fi
-
-                echo "PR #${PR_NUMBER} changed after regression dispatch (${HEAD_SHA} -> ${latest_head_sha}). Redispatching regression for the current head."
-                HEAD_SHA="$latest_head_sha"
-                BRANCH="$latest_branch"
-                BASE_BRANCH="$latest_base_branch"
-                HEAD_REPO="$latest_head_repo"
-                if [ "$HEAD_REPO" != "$REPO" ]; then
-                  echo "Refreshed PR #${PR_NUMBER} head repository '${HEAD_REPO}' differs from base '${REPO}'. Skipping ${LABEL_NAME}."
-                  should_apply_regression_label=false
-                  break
-                fi
-                if ! branch_is_in_scope "$BRANCH"; then
-                  echo "Refreshed PR #${PR_NUMBER} branch '${BRANCH}' is not in scope. Skipping ${LABEL_NAME}."
-                  should_apply_regression_label=false
-                  break
-                fi
-                case "$BASE_BRANCH" in
-                  develop|develop-*|main) ;;
-                  *)
-                    echo "Refreshed PR #${PR_NUMBER} target '${BASE_BRANCH}' is outside regression workflow branch scope. Skipping ${LABEL_NAME}."
-                    should_apply_regression_label=false
-                    break
-                    ;;
-                esac
-                dispatch_attempt=$((dispatch_attempt + 1))
-              done
+              fi
             fi
 
             if [ "$should_apply_regression_label" != "true" ]; then
