@@ -15,7 +15,7 @@ This feature warns the pull request author when a pull request declares that it 
 ### Use Case 1: A pull request claims an issue that belongs to a sibling
 
 **Actor**: The author of an implementation pull request — an agent running the development workflow, or a maintainer working by hand.
-**Preconditions**: The pull request is an open implementation pull request **originating from a branch in this repository**, and its description declares at least one closing keyword. The base branch is irrelevant: a hotfix targeting the default branch can close a sibling's issue just as an ordinary fix targeting the development branch can, so it is validated the same way.
+**Preconditions**: The pull request is an open implementation pull request **originating from a branch in this repository**, and its description declares at least one closing keyword. The base branch does not decide **whether** a pull request is validated — a hotfix targeting the default branch can close a sibling's issue just as an ordinary fix targeting the development branch can, so none is exempt. It does decide **how**: it selects which closer will act, and therefore whether the title contributes filtering state. See the filtering table in Business Rules.
 
 Fork-originated pull requests are out of scope. This repository requires a same-repository guard on every automated step that writes to it — posting comments included — so a warning could not be posted on a fork pull request without breaking that rule. The residual risk is recorded in Out of Scope rather than left implied.
 
@@ -229,7 +229,7 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 
 | #1644 objective | Disposition |
 | --- | --- |
-| PR validation, warn or block | Covered as **warn**, reporting from the description across every implementation branch type including hotfixes; ACs 1-4, 10, 17, 25-34. Blocking, and reporting keywords found only outside the description, are Out of Scope |
+| PR validation, warn or block | Covered as **warn**, reporting from the description for every implementation branch type including hotfixes, with filtering selected by the closer the base branch implies; ACs 1-4, 10, 17, 25-34. Blocking, and reporting keywords found only outside the description, are Out of Scope |
 | Reviewer-loop or prepare-commit blocking finding | Out of Scope, item 2 |
 | Release-cleanup report for merged-but-omitted items | Out of Scope, item 3 |
 | False positives minimized | Business Rules, including the implementation-only, single-signal ownership rule and the exclusion of platform-derived links; ACs 5-7, 9, 11-12, 18, 19, 21-24 |
@@ -249,7 +249,7 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 - [ ] For a pull request merging to a non-default branch, a closing keyword in the description is not reported when an unclosed fence opened in the title suppresses it, matching what the repository's cleanup excludes.
 - [ ] For a hotfix pull request merging to the default branch, a closing keyword in the description **is** reported despite an unclosed fence opened in the title, because the platform closes from the description alone.
 - [ ] A closing keyword that appears only in the pull request title is not reported, even when no fence is involved.
-- [ ] A hotfix pull request targeting the default branch is validated the same as any other implementation pull request, and warns when its description claims a sibling's issue.
+- [ ] A hotfix pull request targeting the default branch is validated rather than exempted, and warns when its description claims a sibling's issue.
 - [ ] A word that merely contains a closing keyword as a substring — for example "disclose" or "hotfix" — is not reported.
 - [ ] A fork-originated pull request is not validated: no report is posted on it and no label is created, whatever its description declares.
 - [ ] In a repository that does not yet have the `multi-issue-intentional` label, an author can still apply it — the validation creates it on first use, and creating it a second time concurrently does not fail.
