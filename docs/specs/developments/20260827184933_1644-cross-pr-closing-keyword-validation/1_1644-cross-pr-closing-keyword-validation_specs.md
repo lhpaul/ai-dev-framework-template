@@ -250,6 +250,7 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 | `Closes #1630` where no pull request carries #1630 | Silent | Ownership not established; absence of evidence is not a warning |
 | `Closes #97` where a sibling is on `fix/lh-97-some-slug` | Warning | A team-prefixed branch names issue 97 just as a bare-number branch would |
 | A title opening an unclosed fence, `Closes #1630` in the description, merging to a non-default branch | Silent | The cleanup that will close it reads title and description together, so the fence suppresses the reference |
+| A title ending in a backtick that the description later closes around `Closes #1630`, merging to a non-default branch | Silent | The same concatenation makes it one inline code span spanning both, so the reference is not live |
 | The same pull request merging to the default branch | Warning | The platform closes from the description alone and never saw the title, so the reference is live |
 
 ### Issue-objective traceability
@@ -280,7 +281,7 @@ Acceptance criteria are referenced by group rather than by number. The groups ar
 
 - [ ] A closing keyword that appears only inside a fenced code sample or a quoted line in the pull request description is not reported.
 - [ ] A closing keyword in the description is not reported when it appears inside any construct the canonical parser excludes: a backtick fence, a tilde fence, an inline code span, a code span spanning several lines, a blockquote, or a fence left unclosed. A keyword outside all of these is treated as a live reference and proceeds to scope evaluation; it is reported only when a sibling identifiably carries the issue and the `multi-issue-intentional` label is absent.
-- [ ] For a pull request merging to a non-default branch, a closing keyword in the description is not reported when an unclosed fence opened in the title suppresses it, matching what the repository's cleanup excludes.
+- [ ] For a pull request merging to a non-default branch, a closing keyword in the description is not reported when a construct **opened in the title** suppresses it — an unclosed fence, or a backtick that the description later closes, forming an inline code span across the two — matching what the repository's cleanup excludes when it reads title and description as one text.
 - [ ] For a hotfix pull request merging to the default branch, a closing keyword in the description **is** reported despite an unclosed fence opened in the title, because the platform closes from the description alone.
 - [ ] A closing keyword that appears only in the pull request title is not reported, even when no fence is involved.
 - [ ] A hotfix pull request targeting the default branch is validated rather than exempted, and warns when its description claims a sibling's issue.
