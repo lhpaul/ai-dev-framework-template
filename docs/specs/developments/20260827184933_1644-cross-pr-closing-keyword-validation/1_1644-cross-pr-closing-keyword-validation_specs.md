@@ -127,6 +127,7 @@ Fork-originated pull requests are out of scope. This repository requires a same-
 - **Readiness backstop**: the result is re-evaluated when the pull request reaches readiness for human review, so no pull request can carry a silence that went stale while it waited.
 - The validation is **read-only with respect to project state**, with one exception: it may post or update its own report on the pull request, and it may create the `multi-issue-intentional` label if the repository does not have it yet. It does nothing else.
 - **The opt-out label must exist before an author can use it.** A fresh installation of this template does not have it, and the workflow's own bootstrap provisions only the readiness labels. The validation therefore creates it idempotently on first use — the same pattern the repository already uses for `ready-for-regression`, including tolerating a concurrent creator. An opt-out an author cannot reach is not an opt-out.
+- **A failed label creation does not suppress the warning.** Provisioning is a convenience, not an input to the decision: if creating the label fails — a transient error, or insufficient permission — the validation still knows whether the pull request claims a sibling's issue, and still says so. The report additionally states that the opt-out label could not be created and names it, so an author who needs the opt-out knows what to create by hand. Treating this as indeterminate would suppress a true warning over a label, which is the wrong trade in a feature whose whole purpose is to raise that warning.
 - **A later result always wins.** Triggers overlap — a sibling can open moments before an author applies the opt-out — so two runs can be in flight at once and finish out of order. Two rules together make the outcome deterministic:
   - **Freshness.** A run publishes only if the inputs it read are still current at the moment it writes. If any of them moved while it was working, it discards its result and leaves the newer run's standing.
   - **Ordering.** Writes for one pull request are serialized, and each published result records which run produced it. A run never overwrites a result published by a run that started later than itself, even when both read identical inputs — duplicate deliveries and manual re-runs produce exactly that case, and freshness alone cannot see it, because neither run observes an input moving.
@@ -171,7 +172,7 @@ Rules:
 - **Where the warning appears**: on the pull request itself, as a single report that is updated in place rather than re-posted, so a pull request that is corrected and re-checked does not accumulate a stack of contradictory warnings.
 - **Where an indeterminate run appears**: as a neutral, non-blocking check conclusion plus a log line naming what could not be read. Never as a failing check, and never as a change to mergeability. The next conclusive run replaces that check, whatever its outcome.
 - **What a clean result looks like**: nothing is posted. Silence is the clean signal.
-- **Label provisioning**: the `multi-issue-intentional` label is created on first use in repositories that do not have it, idempotently, so the opt-out works on a fresh template installation without a manual setup step.
+- **Label provisioning**: the `multi-issue-intentional` label is created on first use in repositories that do not have it, idempotently, so the opt-out works on a fresh template installation without a manual setup step. When creation fails, the warning is still posted and its report names the label the author needs.
 - **Audit trail**: the `multi-issue-intentional` label stays on the pull request after merge, so a later release reconciliation can tell a deliberate multi-issue pull request from an accidental one.
 
 ---
@@ -201,6 +202,7 @@ The gate re-evaluates on a change to any of its inputs: the pull request's descr
 | No declared closing keywords | Silent | Nothing posted; any prior report cleared and any prior indeterminate check superseded | None |
 | All named issues carried by this pull request | Silent | Nothing posted; any prior report cleared and any prior indeterminate check superseded | None |
 | At least one named issue identifiably carried by a sibling, label absent | **Warning** | Posts or updates one report naming each out-of-scope issue and its sibling; supersedes any prior indeterminate check | Drop the keyword, or apply `multi-issue-intentional` |
+| The same, but the `multi-issue-intentional` label is missing and could not be created | **Warning** | Same report, plus a line saying the opt-out label could not be created and naming it | Drop the keyword, or create the label by hand and apply it |
 | At least one named issue identifiably carried by a sibling, label present | Silent | Clears any prior report and supersedes any prior indeterminate check | None |
 | Ownership cannot be established for a named issue — no signal on any open pull request | Silent **for that issue** | That issue is not reported; other issues are judged on their own | None |
 | Ownership is contested — the same rank points at two or more open pull requests | Silent **for that issue** | Not reported; guessing an owner is the mistake this feature exists to catch | None |
@@ -236,12 +238,12 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 
 | #1644 objective | Disposition |
 | --- | --- |
-| PR validation, warn or block | Covered as **warn**, reporting from the description for every implementation branch type including hotfixes, with filtering selected by the closer the base branch implies; ACs 1-4, 10, 17, 25-41. Blocking, and reporting keywords found only outside the description, are Out of Scope |
+| PR validation, warn or block | Covered as **warn**, reporting from the description for every implementation branch type including hotfixes, with filtering selected by the closer the base branch implies; ACs 1-4, 10, 17, 26-42. Blocking, and reporting keywords found only outside the description, are Out of Scope |
 | Reviewer-loop or prepare-commit blocking finding | Out of Scope, item 2 |
 | Release-cleanup report for merged-but-omitted items | Out of Scope, item 3 |
-| False positives minimized | Business Rules, including the implementation-only, single-signal ownership rule and the exclusion of platform-derived links; ACs 5-7, 9, 11-12, 18, 19, 21-24 |
-| Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 13-16, including label provisioning on a fresh installation |
-| Tests for parser and validator edge cases | ACs 5-12 and 18-41 — ACs 5-9 and 11 cover parity with what each closer excludes, including the divergent handling of title fence state; ACs 18-24 the ownership rule with its contested, no-signal, team-prefixed, platform-link, documentation-stage and closed-sibling cases; ACs 25-29 the sibling-lifecycle, title, retarget and readiness triggers; ACs 30-37 the indeterminate outcome across every gate input, how it stays non-blocking and how a conclusive re-run supersedes it; ACs 38-40 the superseded-run freshness and ordering rules; AC 12 the fork-origin exclusion and AC 41 idempotence |
+| False positives minimized | Business Rules, including the implementation-only, single-signal ownership rule and the exclusion of platform-derived links; ACs 5-7, 9, 11-12, 19, 20, 22-25 |
+| Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 13-17, including label provisioning on a fresh installation and a failed provisioning that still warns |
+| Tests for parser and validator edge cases | ACs 5-12 and 19-42 — ACs 5-9 and 11 cover parity with what each closer excludes, including the divergent handling of title fence state; ACs 18-24 the ownership rule with its contested, no-signal, team-prefixed, platform-link, documentation-stage and closed-sibling cases; ACs 25-29 the sibling-lifecycle, title, retarget and readiness triggers; ACs 31-38 the indeterminate outcome across every gate input, how it stays non-blocking and how a conclusive re-run supersedes it; ACs 39-41 the superseded-run freshness and ordering rules; AC 12 the fork-origin exclusion and AC 42 idempotence |
 
 ---
 
@@ -260,6 +262,7 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 - [ ] A word that merely contains a closing keyword as a substring — for example "disclose" or "hotfix" — is not reported.
 - [ ] A fork-originated pull request is not validated: no report is posted on it and no label is created, whatever its description declares.
 - [ ] In a repository that does not yet have the `multi-issue-intentional` label, an author can still apply it — the validation creates it on first use, and creating it a second time concurrently does not fail.
+- [ ] When the `multi-issue-intentional` label is missing and cannot be created, a warranted warning is still posted, and its report says the opt-out label could not be created and names it.
 - [ ] A pull request carrying the `multi-issue-intentional` label produces no warning, even when its closing keywords name issues that another pull request carries.
 - [ ] Applying the `multi-issue-intentional` label to an already-warned pull request clears the existing warning, without any push to the pull request.
 - [ ] Removing the `multi-issue-intentional` label makes the warning reappear, without any push to the pull request.
