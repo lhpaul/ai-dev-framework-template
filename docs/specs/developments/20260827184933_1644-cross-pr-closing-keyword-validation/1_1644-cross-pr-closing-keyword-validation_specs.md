@@ -45,7 +45,7 @@ Fork-originated pull requests are out of scope. This repository requires a same-
 
 - Closing keywords that appear inside quoted prose or a code sample are not live references and must not be reported.
 - An issue that no other pull request carries is not, on its own, evidence of a mistake — a pull request may legitimately be the first and only one to address it.
-- The check must re-run when the pull request description changes, when its labels change, and when an open pull request whose branch names one of the issues appears or departs, so a corrected pull request stops warning — and a newly conflicted one starts — without anyone re-triggering it by hand.
+- The check must re-run when the pull request description changes, when its labels change, when its own branch is renamed, and when an open pull request whose branch names one of the issues appears or departs, so a corrected pull request stops warning — and a newly conflicted one starts — without anyone re-triggering it by hand.
 
 ---
 
@@ -121,6 +121,7 @@ Fork-originated pull requests are out of scope. This repository requires a same-
   - its description changes;
   - **its title changes**, for a pull request merging to a non-default branch, where the title contributes filtering state — adding or removing an unclosed fence in the title flips whether a description reference is live, with the description untouched;
   - its labels change;
+  - **its own head branch is renamed** — a pull request renamed from `fix/98-slug` to `fix/97-slug` while its description declares `Closes #97` goes from non-owner to owner of issue 97, with nothing else about it changing;
   - **its base branch changes** — retargeting between the default branch and a non-default branch swaps which closer will act, and therefore which filtering applies, without a single character of the description changing;
   - **ownership evidence for an issue it names changes** — another pull request whose branch names that issue opens, closes, or merges.
 - A stale warning must not survive the edit that fixed it, and a stale **silence** must not survive the sibling that created the conflict. A pull request that was silent because no sibling existed must warn once a sibling appears, without anyone touching it.
@@ -188,11 +189,12 @@ This feature is a workflow decision gate: its outcome depends on several inputs,
 | Declared closing keywords in the pull request description | Reported from the description only — never from the title or the commit messages. Filtered as the closer for this pull request filters: title and description together when it merges to a non-default branch, the description alone when it merges to the default branch | The set of issues the description claims to close |
 | Sibling ownership of each named issue | The branch names of the other open **implementation** pull requests (`feature/`, `fix/`, `refactor/`, `hotfix/`, `backport/hotfix/`), in either the bare-number or the team-prefixed form | Establishes whether a different pull request identifiably carries that issue |
 | `multi-issue-intentional` label | The pull request's labels | Author's recorded statement that multi-issue scope is deliberate |
+| The pull request's own head branch | Its name, in either accepted form | Decides whether this pull request is itself the owner of an issue it declares — a rename can flip it between owner and non-owner |
 | The pull request's base branch | Whether it is the repository's default branch | Selects which closer will act, and therefore which filtering the validation must match |
 | Existing validation report | The pull request's own prior report, if any | Decides whether to update or clear rather than post again |
 | Sibling lifecycle events | Another **implementation** pull request whose branch names the same issue opening, closing, or merging | Ownership evidence is mutable and lives outside this pull request, so it is an input in its own right |
 
-The gate re-evaluates on a change to any of its inputs: the pull request's description, its title where the title contributes filtering state, its labels, its base branch, or the set of open implementation pull requests whose branches name the issues it declares. A label change is a trigger in its own right — applying the opt-out clears an existing warning, and removing it restores one, without waiting for a push. A sibling opening, closing, or merging is likewise a trigger for every pull request whose result could turn on it, and readiness re-evaluates as a backstop.
+The gate re-evaluates on a change to any of its inputs: the pull request's description, its title where the title contributes filtering state, its labels, its own head branch, its base branch, or the set of open implementation pull requests whose branches name the issues it declares. A label change is a trigger in its own right — applying the opt-out clears an existing warning, and removing it restores one, without waiting for a push. A sibling opening, closing, or merging is likewise a trigger for every pull request whose result could turn on it, and readiness re-evaluates as a backstop.
 
 ### Allowed outcomes and required next actions
 
@@ -238,12 +240,12 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 
 | #1644 objective | Disposition |
 | --- | --- |
-| PR validation, warn or block | Covered as **warn**, reporting from the description for every implementation branch type including hotfixes, with filtering selected by the closer the base branch implies; ACs 1-4, 10, 17, 26-42. Blocking, and reporting keywords found only outside the description, are Out of Scope |
+| PR validation, warn or block | Covered as **warn**, reporting from the description for every implementation branch type including hotfixes, with filtering selected by the closer the base branch implies; ACs 1-4, 10, 17, 26-43. Blocking, and reporting keywords found only outside the description, are Out of Scope |
 | Reviewer-loop or prepare-commit blocking finding | Out of Scope, item 2 |
 | Release-cleanup report for merged-but-omitted items | Out of Scope, item 3 |
 | False positives minimized | Business Rules, including the implementation-only, single-signal ownership rule and the exclusion of platform-derived links; ACs 5-7, 9, 11-12, 19, 20, 22-25 |
 | Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 13-17, including label provisioning on a fresh installation and a failed provisioning that still warns |
-| Tests for parser and validator edge cases | ACs 5-12 and 19-42 — ACs 5-9 and 11 cover parity with what each closer excludes, including the divergent handling of title fence state; ACs 18-24 the ownership rule with its contested, no-signal, team-prefixed, platform-link, documentation-stage and closed-sibling cases; ACs 25-29 the sibling-lifecycle, title, retarget and readiness triggers; ACs 31-38 the indeterminate outcome across every gate input, how it stays non-blocking and how a conclusive re-run supersedes it; ACs 39-41 the superseded-run freshness and ordering rules; AC 12 the fork-origin exclusion and AC 42 idempotence |
+| Tests for parser and validator edge cases | ACs 5-12 and 19-43 — ACs 5-9 and 11 cover parity with what each closer excludes, including the divergent handling of title fence state; ACs 18-24 the ownership rule with its contested, no-signal, team-prefixed, platform-link, documentation-stage and closed-sibling cases; ACs 25-29 the sibling-lifecycle, title, retarget and readiness triggers; ACs 32-39 the indeterminate outcome across every gate input, how it stays non-blocking and how a conclusive re-run supersedes it; ACs 40-42 the superseded-run freshness and ordering rules; AC 12 the fork-origin exclusion and AC 43 idempotence |
 
 ---
 
@@ -277,6 +279,7 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 - [ ] A pull request that was silent because no sibling carried the issue warns once a sibling pull request naming that issue opens, without any change to the pull request being warned.
 - [ ] A pull request that was warning stops warning once the sibling that carried the issue closes or merges, without any change to the pull request being warned.
 - [ ] For a pull request merging to a non-default branch, adding or removing an unclosed fence in the title re-evaluates it, so a warning appears or disappears with the description untouched.
+- [ ] Renaming a pull request's own branch so that it now names an issue its description declares re-evaluates it, and clears a warning that only the old branch name justified.
 - [ ] Retargeting a pull request between the default branch and a non-default branch re-evaluates it, so a warning that only the old base suppressed does not survive the change and a silence that only the new base justifies is not delayed.
 - [ ] A pull request reaching readiness for human review has its result re-evaluated, so a silence that went stale while it waited is corrected before a human reviews it.
 - [ ] When the description cannot be fetched or filtered, an existing warning on that pull request is left in place rather than cleared, and the run does not report a clean result.
