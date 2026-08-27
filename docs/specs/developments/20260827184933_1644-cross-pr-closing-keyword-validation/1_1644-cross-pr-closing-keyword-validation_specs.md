@@ -129,6 +129,7 @@ Fork-originated pull requests are out of scope. This repository requires a same-
 - **The opt-out label must exist before an author can use it.** A fresh installation of this template does not have it, and the workflow's own bootstrap provisions only the readiness labels. The validation therefore creates it idempotently on first use — the same pattern the repository already uses for `ready-for-regression`, including tolerating a concurrent creator. An opt-out an author cannot reach is not an opt-out.
 - **A later result always wins.** Triggers overlap — a sibling can open moments before an author applies the opt-out — so two runs can be in flight at once and finish out of order. A run publishes its result only if the inputs it read are still current at the moment it writes; if any of them moved while it was working, it discards its result and leaves the newer run's report standing. An older run must never restore a warning a newer one cleared, or clear one a newer one raised.
 - **A failure is never read as a clean result.** If the description cannot be fetched or filtered, or the open pull requests cannot be listed, the outcome is *indeterminate*: any existing report is left untouched and no new report is posted. The canonical parser already draws this distinction deliberately, and for the same reason — a transient platform error must not be allowed to erase a valid warning by looking like "no closing keywords found".
+- **A conclusive run always supersedes an indeterminate one.** Every conclusive outcome — silent or warning — replaces the check conclusion left by an earlier indeterminate run on the same pull request, so the neutral "did not conclude" signal never outlives the failure that caused it. A clean result that posts no report still updates that check; otherwise the documented re-run would never produce an unambiguously conclusive state.
 - **An indeterminate run is visible without being blocking.** It is surfaced in two places: the run's own log, which names what could not be read, and a **neutral**, non-blocking check conclusion on the pull request, so an author can see that the validation did not conclude. It is never a failing check. Nothing about it changes mergeability, contributes a required check, or blocks a merge — the advisory-only guarantee holds for failures exactly as it holds for warnings. An author who wants a conclusive result re-runs it once the transient condition clears; nobody is required to.
 - The validation is **never posted on a fork-originated pull request**, because this repository forbids automated writes on those. Such a pull request is not validated at all rather than validated silently.
 
@@ -165,7 +166,7 @@ Rules:
 ## Operational Visibility
 
 - **Where the warning appears**: on the pull request itself, as a single report that is updated in place rather than re-posted, so a pull request that is corrected and re-checked does not accumulate a stack of contradictory warnings.
-- **Where an indeterminate run appears**: as a neutral, non-blocking check conclusion plus a log line naming what could not be read. Never as a failing check, and never as a change to mergeability.
+- **Where an indeterminate run appears**: as a neutral, non-blocking check conclusion plus a log line naming what could not be read. Never as a failing check, and never as a change to mergeability. The next conclusive run replaces that check, whatever its outcome.
 - **What a clean result looks like**: nothing is posted. Silence is the clean signal.
 - **Label provisioning**: the `multi-issue-intentional` label is created on first use in repositories that do not have it, idempotently, so the opt-out works on a fresh template installation without a manual setup step.
 - **Audit trail**: the `multi-issue-intentional` label stays on the pull request after merge, so a later release reconciliation can tell a deliberate multi-issue pull request from an accidental one.
@@ -194,10 +195,10 @@ The gate re-evaluates on a change to any of its inputs: the pull request's descr
 | Inputs | Outcome | What the validation does | Author's next action |
 | --- | --- | --- | --- |
 | The pull request originates from a fork | **Not validated** | Nothing posted; no label created | None available here — see Out of Scope |
-| No declared closing keywords | Silent | Nothing posted; any prior report cleared | None |
-| All named issues carried by this pull request | Silent | Nothing posted; any prior report cleared | None |
-| At least one named issue identifiably carried by a sibling, label absent | **Warning** | Posts or updates one report naming each out-of-scope issue and its sibling | Drop the keyword, or apply `multi-issue-intentional` |
-| At least one named issue identifiably carried by a sibling, label present | Silent | Clears any prior report | None |
+| No declared closing keywords | Silent | Nothing posted; any prior report cleared and any prior indeterminate check superseded | None |
+| All named issues carried by this pull request | Silent | Nothing posted; any prior report cleared and any prior indeterminate check superseded | None |
+| At least one named issue identifiably carried by a sibling, label absent | **Warning** | Posts or updates one report naming each out-of-scope issue and its sibling; supersedes any prior indeterminate check | Drop the keyword, or apply `multi-issue-intentional` |
+| At least one named issue identifiably carried by a sibling, label present | Silent | Clears any prior report and supersedes any prior indeterminate check | None |
 | Ownership cannot be established for a named issue — no signal on any open pull request | Silent **for that issue** | That issue is not reported; other issues are judged on their own | None |
 | Ownership is contested — the same rank points at two or more open pull requests | Silent **for that issue** | Not reported; guessing an owner is the mistake this feature exists to catch | None |
 | An input cannot be read — the description could not be fetched or filtered, or the open pull requests could not be listed | **Indeterminate** | Any existing report is left exactly as it is; a neutral, non-blocking check conclusion and a log line record what could not be read | Optionally re-run once the transient condition clears; nothing is blocked meanwhile |
@@ -231,12 +232,12 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 
 | #1644 objective | Disposition |
 | --- | --- |
-| PR validation, warn or block | Covered as **warn**, reporting from the description for every implementation branch type including hotfixes, with filtering selected by the closer the base branch implies; ACs 1-4, 10, 17, 25-36. Blocking, and reporting keywords found only outside the description, are Out of Scope |
+| PR validation, warn or block | Covered as **warn**, reporting from the description for every implementation branch type including hotfixes, with filtering selected by the closer the base branch implies; ACs 1-4, 10, 17, 25-37. Blocking, and reporting keywords found only outside the description, are Out of Scope |
 | Reviewer-loop or prepare-commit blocking finding | Out of Scope, item 2 |
 | Release-cleanup report for merged-but-omitted items | Out of Scope, item 3 |
 | False positives minimized | Business Rules, including the implementation-only, single-signal ownership rule and the exclusion of platform-derived links; ACs 5-7, 9, 11-12, 18, 19, 21-24 |
 | Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 13-16, including label provisioning on a fresh installation |
-| Tests for parser and validator edge cases | ACs 5-12 and 18-36 — ACs 5-9 and 11 cover parity with what each closer excludes, including the divergent handling of title fence state; ACs 18-24 the ownership rule with its contested, no-signal, team-prefixed, platform-link, documentation-stage and closed-sibling cases; ACs 25-29 the sibling-lifecycle, title, retarget and readiness triggers; ACs 30-33 the indeterminate outcome and how it stays non-blocking; ACs 34-35 the superseded-run ordering rule; AC 12 the fork-origin exclusion and AC 36 idempotence |
+| Tests for parser and validator edge cases | ACs 5-12 and 18-37 — ACs 5-9 and 11 cover parity with what each closer excludes, including the divergent handling of title fence state; ACs 18-24 the ownership rule with its contested, no-signal, team-prefixed, platform-link, documentation-stage and closed-sibling cases; ACs 25-29 the sibling-lifecycle, title, retarget and readiness triggers; ACs 30-34 the indeterminate outcome, how it stays non-blocking and how a conclusive re-run supersedes it; ACs 35-36 the superseded-run ordering rule; AC 12 the fork-origin exclusion and AC 37 idempotence |
 
 ---
 
@@ -275,6 +276,7 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 - [ ] When the open pull requests cannot be listed, an existing warning is left in place and the run does not report a clean result.
 - [ ] An indeterminate run leaves a neutral, non-blocking check conclusion and a log line naming what could not be read; it never leaves a failing check.
 - [ ] A pull request whose validation is indeterminate remains exactly as mergeable as it was before the run.
+- [ ] After an indeterminate run, a conclusive re-run on the same commit replaces the neutral "did not conclude" check, including when the conclusive result is silent and posts no report.
 - [ ] When two runs overlap and the later one clears a warning, an earlier run finishing afterwards does not restore it.
 - [ ] When two runs overlap and the later one raises a warning, an earlier run finishing afterwards does not clear it.
 - [ ] Running the validation twice on an unchanged pull request leaves a single report, not two.
