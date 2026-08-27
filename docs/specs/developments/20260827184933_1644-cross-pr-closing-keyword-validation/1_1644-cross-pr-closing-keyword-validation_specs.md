@@ -15,7 +15,7 @@ This feature warns the pull request author when a pull request declares that it 
 ### Use Case 1: A pull request claims an issue that belongs to a sibling
 
 **Actor**: The author of an implementation pull request — an agent running the development workflow, or a maintainer working by hand.
-**Preconditions**: The pull request is open against an integration or development branch, and its text declares at least one closing keyword.
+**Preconditions**: The pull request is an open implementation pull request and its description declares at least one closing keyword. The base branch is irrelevant: a hotfix targeting the default branch can close a sibling's issue just as an ordinary fix targeting the development branch can, so it is validated the same way.
 
 **Steps**:
 
@@ -100,7 +100,8 @@ This feature warns the pull request author when a pull request declares that it 
 - The validation reports on a pull request's **own declared closing keywords**, and only those. It does not infer that a pull request ought to close something.
 - An issue named by a closing keyword is **in scope** for a pull request when that pull request is identifiably the one carrying its implementation, established from the ownership rule below. An issue identifiably carried by a *different* open pull request is **out of scope** and is reported.
 - When ownership cannot be established either way, the validation **stays silent**. A warning that fires on absence of evidence would train people to ignore it.
-- The validation reads the **pull request description**. It does not read the title or the commit messages.
+- The validation **reports** only closing keywords found in the **pull request description**. It never reports one found only in the title or in a commit message.
+- The **title participates in filtering state, and nothing else**. The canonical parser reads the title and the description as one piece of text before filtering, so an unclosed fence opened in the title suppresses what follows it in the description. The validation inherits that: it establishes filtering state from the title and description together, then reports only from the description. Filtering the description in isolation would make the warning contradict what the cleanup actually closes — the very disagreement the consistency requirement exists to prevent.
 - Within the description, what counts as quoted prose or a code sample — and is therefore **not a live reference** — follows the **filtering semantics of the canonical parser** (the one post-merge cleanup uses). This is agreement about how text is filtered, not about which text is read: the canonical parser additionally reads the title and the commit messages, and this feature deliberately does not.
 - Because the input surfaces differ, a closing keyword that appears **only** in the title or in a commit message is outside what this feature examines. That gap is recorded in Out of Scope rather than papered over.
 - The graduation closeout recognizes a narrower set of excluded constructs today. That difference is pre-existing, is neither introduced nor widened here, and reconciling the two parsers is not part of this feature.
@@ -158,7 +159,7 @@ This feature is a workflow decision gate: its outcome depends on several inputs,
 
 | Input | Where it comes from | Why it matters |
 | --- | --- | --- |
-| Declared closing keywords in the pull request description | The description only — not the title, not the commit messages — filtered by the canonical parser's semantics | The set of issues the description claims to close |
+| Declared closing keywords in the pull request description | Reported from the description only — never from the title or the commit messages — but filtered with the title and description read together, as the canonical parser reads them | The set of issues the description claims to close |
 | Sibling ownership of each named issue | The branch names of the other **open** pull requests, in either the bare-number or the team-prefixed form | Establishes whether a different pull request identifiably carries that issue |
 | `multi-issue-intentional` label | The pull request's labels | Author's recorded statement that multi-issue scope is deliberate |
 | Existing validation report | The pull request's own prior report, if any | Decides whether to update or clear rather than post again |
@@ -183,7 +184,7 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 
 | Surface | Relationship | Consistency requirement |
 | --- | --- | --- |
-| Post-merge cleanup's closing-keyword reading | Decides what actually gets closed; reads the title, description, and commit messages | **Canonical for filtering semantics only.** Within the description, the validation must exclude exactly what this parser excludes, so a warning cannot contradict what gets closed. The input surfaces are *not* identical — this feature reads the description alone. |
+| Post-merge cleanup's closing-keyword reading | Decides what actually gets closed; reads the title, description, and commit messages, concatenating title and description before filtering | **Canonical for filtering semantics.** The validation must exclude exactly what this parser excludes, including the effect of fence state opened in the title. It differs in what it *reports*: the description only, never the title or the commit messages. |
 | Graduation closeout's closing-keyword reading | Same parsing question on graduation pull requests | **Deliberately not mirrored.** It recognizes a narrower set of non-live references than the canonical parser does today. Unchanged by this feature, and reconciling the two is out of scope. |
 | Release-scope ancestry gate | Consumes the consequences of a wrongly closed issue | Out of scope here; this feature reduces how often that gate sees the problem, and changes none of its behavior |
 
@@ -202,12 +203,12 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 
 | #1644 objective | Disposition |
 | --- | --- |
-| PR validation, warn or block | Covered as **warn** over the description; blocking, and keywords outside the description, are Out of Scope |
+| PR validation, warn or block | Covered as **warn**, reporting from the description across every implementation branch type including hotfixes; blocking, and reporting keywords found only outside the description, are Out of Scope |
 | Reviewer-loop or prepare-commit blocking finding | Out of Scope, item 2 |
 | Release-cleanup report for merged-but-omitted items | Out of Scope, item 3 |
-| False positives minimized | Business Rules, including the single-signal ownership rule and the exclusion of platform-derived links; ACs 5-7, 12-18 |
+| False positives minimized | Business Rules, including the single-signal ownership rule and the exclusion of platform-derived links; ACs 5-10, 15-21 |
 | Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 8-10 |
-| Tests for parser and validator edge cases | ACs 5-7 and 12-21 — AC 6 covers parity with every construct the canonical parser excludes; ACs 12-18 the ownership rule with its contested, no-signal, team-prefixed, platform-link and closed-sibling cases; ACs 19-21 the sibling-lifecycle and readiness triggers |
+| Tests for parser and validator edge cases | ACs 5-10 and 15-24 — ACs 6-8 cover parity with every construct the canonical parser excludes, including fence state opened in the title; ACs 15-21 the ownership rule with its contested, no-signal, team-prefixed, platform-link and closed-sibling cases; ACs 22-24 the sibling-lifecycle and readiness triggers |
 
 ---
 
@@ -219,6 +220,9 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 - [ ] A pull request that declares no closing keywords produces no warning and no comment.
 - [ ] A closing keyword that appears only inside a fenced code sample or a quoted line in the pull request description is not reported.
 - [ ] A closing keyword in the description is not reported when it appears inside any construct the canonical parser excludes: a backtick fence, a tilde fence, an inline code span, a code span spanning several lines, a blockquote, or a fence left unclosed. A keyword outside all of these is treated as a live reference and proceeds to scope evaluation; it is reported only when a sibling identifiably carries the issue and the `multi-issue-intentional` label is absent.
+- [ ] A closing keyword in the description is not reported when an unclosed fence opened in the pull request title suppresses it, matching what the canonical parser excludes.
+- [ ] A closing keyword that appears only in the pull request title is not reported, even when no fence is involved.
+- [ ] A hotfix pull request targeting the default branch is validated the same as any other implementation pull request, and warns when its description claims a sibling's issue.
 - [ ] A word that merely contains a closing keyword as a substring — for example "disclose" or "hotfix" — is not reported.
 - [ ] A pull request carrying the `multi-issue-intentional` label produces no warning, even when its closing keywords name issues that another pull request carries.
 - [ ] Applying the `multi-issue-intentional` label to an already-warned pull request clears the existing warning, without any push to the pull request.
@@ -245,7 +249,7 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 - **Per-issue opt-out.** The opt-out is the `multi-issue-intentional` label, which applies to the whole pull request.
 - **Any opt-out mechanism other than the label** — a description marker, a checkbox, or a magic comment.
 - **Retroactive scanning of already-merged pull requests.** This feature looks at open pull requests going forward; it does not reconcile history.
-- **Closing keywords outside the description.** The canonical parser also honours the title and the commit messages, so a cross-PR keyword placed there is not caught here. This follows the agreed scope — pull request *description* validation — and is a known residual gap, not an oversight.
+- **Reporting closing keywords found outside the description.** The canonical parser also honours the title and the commit messages, so a cross-PR keyword placed only in one of those is not reported here. This follows the agreed scope — pull request *description* validation — and is a known residual gap, not an oversight. The title is still read for filtering state, so the two never disagree about what counts as a live reference.
 - **Changing how closing keywords are parsed anywhere else.** The existing post-merge cleanup and graduation closeout keep their current behavior; this feature reads, it does not redefine.
 - **Ownership established by tracker linkage.** Branch naming is the only ownership signal. A pull request whose branch does not name an issue is never treated as its owner, so work whose branch predates the naming convention or was renamed produces silence rather than a warning.
 - **Reconciling the two existing parsers with each other.** They disagree today about which non-live references to exclude. This feature follows the canonical one and leaves the divergence exactly as it found it; unifying them is separate work.
