@@ -43,7 +43,7 @@ This feature warns the pull request author when a pull request declares that it 
 
 - Closing keywords that appear inside quoted prose or a code sample are not live references and must not be reported.
 - An issue that no other pull request carries is not, on its own, evidence of a mistake — a pull request may legitimately be the first and only one to address it.
-- The check must re-run when the pull request text changes, so a corrected pull request stops warning without anyone re-triggering it by hand.
+- The check must re-run when the pull request text changes, and when its labels change, so a corrected pull request stops warning without anyone re-triggering it by hand.
 
 ---
 
@@ -78,7 +78,7 @@ This feature warns the pull request author when a pull request declares that it 
 
 1. The author reads the warning and confirms the pull request really does resolve all of the issues named.
 2. The author applies the label **`multi-issue-intentional`** to the pull request.
-3. The validation runs again on the next update and sees the label.
+3. Applying the label re-runs the validation on its own; the author does not have to push anything.
 
 **Postconditions**: The pull request carries the `multi-issue-intentional` label, and the warning no longer appears. Any warning already posted is cleared on the next run.
 
@@ -100,10 +100,10 @@ This feature warns the pull request author when a pull request declares that it 
 - The validation reports on a pull request's **own declared closing keywords**, and only those. It does not infer that a pull request ought to close something.
 - An issue named by a closing keyword is **in scope** for a pull request when that pull request is identifiably the one carrying its implementation. An issue whose implementation is identifiably carried by a different pull request is **out of scope** and is reported.
 - When scope cannot be established either way, the validation **stays silent**. A warning that fires on absence of evidence would train people to ignore it.
-- Closing keywords that appear inside quoted prose or a code sample are **not live references** and are never reported. This matches how the existing post-merge cleanup already reads pull request text, so the two cannot disagree about what a pull request claims to close.
+- Closing keywords that appear inside quoted prose or a code sample are **not live references** and are never reported. What counts as quoted prose or a code sample is whatever the existing post-merge cleanup already treats as such — it is the canonical reading, so a warning can never contradict what actually gets closed. The graduation closeout recognizes a narrower set today; that difference is pre-existing, is not introduced or widened here, and reconciling the two is not part of this feature.
 - A pull request labelled **`multi-issue-intentional`** produces no warning, regardless of how many issues it names. The label is the only opt-out; there is no per-issue variant and no description marker.
 - The opt-out is evaluated **at the time the validation runs**. Applying the label does not retroactively rewrite history, and removing it restores the warning on the next run.
-- The result is **recomputed** whenever the pull request's text changes. A stale warning must not survive the edit that fixed it.
+- The result is **recomputed** whenever the pull request's text changes **or its labels change**. A stale warning must not survive the edit that fixed it, and applying or removing the opt-out must take effect on its own — neither should wait for an unrelated push.
 - The validation is **read-only with respect to project state**: it may post or update its own report on the pull request, and does nothing else.
 
 ---
@@ -129,6 +129,8 @@ This feature is a workflow decision gate: its outcome depends on several inputs,
 | `multi-issue-intentional` label | The pull request's labels | Author's recorded statement that multi-issue scope is deliberate |
 | Existing validation report | The pull request's own prior report, if any | Decides whether to update or clear rather than post again |
 
+The gate re-evaluates on a change to the pull request's text or to its labels. A label change is a trigger in its own right: applying the opt-out clears an existing warning, and removing it restores one, without waiting for a push.
+
 ### Allowed outcomes and required next actions
 
 | Inputs | Outcome | What the validation does | Author's next action |
@@ -145,8 +147,8 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 
 | Surface | Relationship | Consistency requirement |
 | --- | --- | --- |
-| Post-merge cleanup's closing-keyword reading | Reads the same pull request text to decide what to close | Must agree on what counts as a live reference; this feature reads, it does not redefine |
-| Graduation closeout's closing-keyword reading | Same parsing question on graduation pull requests | Same requirement; unchanged by this feature |
+| Post-merge cleanup's closing-keyword reading | Reads the same pull request text to decide what to close | **Canonical.** The validation must agree with this one about what counts as a live reference, so a warning cannot contradict what actually gets closed. It reads that behavior; it does not redefine it. |
+| Graduation closeout's closing-keyword reading | Same parsing question on graduation pull requests | **Deliberately not mirrored.** It recognizes a narrower set of non-live references than the canonical parser does today. Unchanged by this feature, and reconciling the two is out of scope. |
 | Release-scope ancestry gate | Consumes the consequences of a wrongly closed issue | Out of scope here; this feature reduces how often that gate sees the problem, and changes none of its behavior |
 
 ### Examples
@@ -181,8 +183,8 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 - [ ] A closing keyword that appears only inside a fenced code sample or a quoted line in the pull request description is not reported.
 - [ ] A word that merely contains a closing keyword as a substring — for example "disclose" or "hotfix" — is not reported.
 - [ ] A pull request carrying the `multi-issue-intentional` label produces no warning, even when its closing keywords name issues that another pull request carries.
-- [ ] Applying the `multi-issue-intentional` label to an already-warned pull request clears the existing warning on the next run.
-- [ ] Removing the `multi-issue-intentional` label makes the warning reappear on the next run.
+- [ ] Applying the `multi-issue-intentional` label to an already-warned pull request clears the existing warning, without any push to the pull request.
+- [ ] Removing the `multi-issue-intentional` label makes the warning reappear, without any push to the pull request.
 - [ ] Editing a warned pull request to drop the out-of-scope closing keyword makes the warning clear on the next run, without leaving a stale warning behind.
 - [ ] When scope cannot be established for an issue, no warning is produced for it.
 - [ ] Running the validation twice on an unchanged pull request leaves a single report, not two.
@@ -198,4 +200,5 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 - **Any opt-out mechanism other than the label** — a description marker, a checkbox, or a magic comment.
 - **Retroactive scanning of already-merged pull requests.** This feature looks at open pull requests going forward; it does not reconcile history.
 - **Changing how closing keywords are parsed anywhere else.** The existing post-merge cleanup and graduation closeout keep their current behavior; this feature reads, it does not redefine.
+- **Reconciling the two existing parsers with each other.** They disagree today about which non-live references to exclude. This feature follows the canonical one and leaves the divergence exactly as it found it; unifying them is separate work.
 - **Any automatic correction.** The validation never edits a pull request description, reopens an issue, or restores a milestone.
