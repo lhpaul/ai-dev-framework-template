@@ -68,6 +68,41 @@ require, and runs those; a nightly scheduled job runs all of them. Adding a new
 [`select-test-suites.sh`](#select-test-suitessh) below for the mapping rules and
 for the `# covers:` header a suite uses when its name does not match a script.
 
+### Suites must not assert template-only defaults
+
+These suites run in two very different trees: this template, and every
+repository that syncs it. A downstream consumer legitimately replaces the
+placeholder `deploy.yml` / `e2e-regression.yml`, declines `pr-policy.yml`, and
+configures its own Step 7 reviewers. A suite that asserts this repository's
+shipped defaults therefore turns a successful sync into a red required check
+(#1631, first hit on the v0.43.0 sync in `mome-cl/mome-platform#2706`).
+
+When an assertion depends on something a consumer may legitimately change,
+read the live configuration or skip — do not hard-code the template value:
+
+<!-- workflow-shell-contract: bash-zsh -->
+
+```bash
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
+
+# Assertions about files this template ships as placeholders.
+if [ "$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")" = "true" ]; then
+  # ... placeholder-shape assertions ...
+fi
+
+# Assertions about a reviewer's companion workflow file.
+if workflow_config_review_github_reviewer_configured "pr-agent" \
+     "$REPO_ROOT/.ai-dev-workflow.yaml"; then
+  # ... pr-agent.yml assertions ...
+fi
+```
+
+Print an explicit `SKIP: <test name> - <why>` line when an assertion is gated
+out, so a consumer reading the job log can tell a skipped check from a check
+that never existed. `test-consumer-tree-test-gating.sh` covers both helpers and
+asserts the gates stay wired into the suites that need them.
+
 ## `select-test-suites.sh`
 
 Resolves which test suites a change set requires, and reports coverage gaps.

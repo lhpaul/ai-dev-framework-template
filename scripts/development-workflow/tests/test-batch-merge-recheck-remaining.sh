@@ -9,6 +9,9 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 HELPER="$REPO_ROOT/scripts/development-workflow/batch-merge.sh"
 
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
+
 TMP_ROOT="$(mktemp -d)"
 MOCK_BIN="$TMP_ROOT/bin"
 CALL_LOG="$TMP_ROOT/gh-calls.log"
@@ -574,14 +577,22 @@ set -e
 run_test "invalid_config_status" "2" "$bad_config_status"
 run_test "invalid_config_error_record" "helper_failed" "$(json_field "$bad_config_output" null classification)"
 
-run_test "placeholder_e2e_workflow_name_synced" "1" "$(
-  if grep -q 'name: E2E regression (placeholder)' "$REPO_ROOT/.github/workflows/e2e-regression.yml" &&
-     grep -q 'E2E regression \\\\(placeholder\\\\)' "$HELPER"; then
-    printf '1\n'
-  else
-    printf '0\n'
-  fi
-)"
+# This asserts the helper's placeholder-check pattern stays in sync with the
+# placeholder e2e workflow name this template ships. A consumer replaces
+# e2e-regression.yml with a real pipeline under its own name, so the assertion
+# is meaningless there and only produced a red required check on sync (#1631).
+if [ "$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")" = "true" ]; then
+  run_test "placeholder_e2e_workflow_name_synced" "1" "$(
+    if grep -q 'name: E2E regression (placeholder)' "$REPO_ROOT/.github/workflows/e2e-regression.yml" &&
+       grep -q 'E2E regression \\\\(placeholder\\\\)' "$HELPER"; then
+      printf '1\n'
+    else
+      printf '0\n'
+    fi
+  )"
+else
+  echo "SKIP: placeholder_e2e_workflow_name_synced - template.is_template is not true (consumer repository)"
+fi
 
 run_test "no_mutation_calls" "0" "$(grep -Ec 'pr edit|pr merge|pr comment' "$CALL_LOG" || true)"
 
