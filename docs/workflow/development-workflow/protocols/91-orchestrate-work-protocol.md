@@ -58,23 +58,25 @@ restate this rule for those two specifically):**
 
 - Run the step in the foreground and wait for it to finish, in the same turn, or
 - If the step must be backgrounded, poll it yourself in the same turn until it
-  returns. Capture `pgrep`'s status **inside** the loop — do not rely on `$?`
+  returns. Capture `pgrep`'s exit code **inside** the loop — do not rely on `$?`
   after `while pgrep ...; do ...; done` (bash sets that to the last body
   command, typically `sleep`, or to `0` if the body never ran — never to
   `pgrep`'s exit status). Use a pattern like:
 
+  <!-- workflow-shell-contract: bash-zsh -->
   ```bash
   while true; do
     pgrep -f "[p]r-review-loop.sh 1550" >/dev/null
-    status=$?
-    case $status in
+    pgrep_rc=$?
+    case $pgrep_rc in
       0) sleep 20 ;;
       1) break ;;  # no match — step ended
       *) break ;;  # 2/3/127 = polling failure
     esac
   done
-  # Inspect $status (not $? after the while): 1 = done, proceed to PR state;
+  # Inspect $pgrep_rc (not $? after the while): 1 = done, proceed to PR state;
   # 2 invalid pattern / 3 fatal / 127 not found = polling failure, not done.
+  # Use pgrep_rc, not status — zsh treats status as a read-only special parameter.
   ```
 
   Make the `pgrep -f` pattern specific enough that it cannot match an unrelated
@@ -89,7 +91,7 @@ restate this rule for those two specifically):**
   Pattern-matching the running process is the correct mechanism for this
   multi-invocation model, not a workaround for it — keep the pattern specific
   instead of switching to PID capture. Before concluding the step is done,
-  inspect the captured `$status`: `1` means no process matched — the step has
+  inspect the captured `$pgrep_rc`: `1` means no process matched — the step has
   genuinely ended, proceed to read the actual outcome from PR state. Any other
   nonzero status (`2` invalid pattern syntax, `3` fatal error, `127` command
   not found) is a polling failure, not evidence of completion — do not treat it
