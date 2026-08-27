@@ -106,6 +106,12 @@ categories:
       glob: "**/*"
       mode_scope: hub_only
       note: workflow helper scripts (state inspection, PR/CI loops, etc.)
+    - path: .github/workflows/workflow-tests.yml
+      mode_scope: hub_only
+      note: >
+        selector-driven workflow test harness CI (issue #1537 / #1630). Must
+        sync with the helper scripts it invokes; files absent from this
+        manifest are omitted from always-sync batches.
     - path: scripts/development-workflow/workflow-config-resolver.py
       mode_scope: product_repo_injection
       note: product-repo runtime helper for repository mode and release contract resolution
@@ -242,6 +248,13 @@ categories:
         history. Takes precedence over the enclosing docs/workflow/ always_sync
         glob (see Precedence note above) — never overwrite with the template's
         own rows.
+    - path: scripts/development-workflow/run-advisory-checks.sh
+      mode_scope: hub_only
+      note: >
+        replaceable downstream advisory hook. The template ships a no-op;
+        projects may replace the body. Takes precedence over the enclosing
+        scripts/development-workflow/ always_sync glob (see Precedence note
+        above) — never overwrite a project implementation with the stub.
 
 # migration_notes: versioned manual steps required when syncing across a breaking structural change.
 #
