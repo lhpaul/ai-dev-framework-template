@@ -71,7 +71,7 @@ review:
     # Ordered list of GitHub/App/CLI reviewers that run only after draft gates
     # are clean and the PR has been converted with `gh pr ready`.
     github:
-      - codex-github
+      - bugbot
 
   # Optional: TWO independent reviewer-loop cycle caps enforced by
   # pr-review-loop.sh (issue #1502; dual-cap decision recorded on PR #1507's
