@@ -197,9 +197,9 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 | PR validation, warn or block | Covered as **warn** over the description; blocking, and keywords outside the description, are Out of Scope |
 | Reviewer-loop or prepare-commit blocking finding | Out of Scope, item 2 |
 | Release-cleanup report for merged-but-omitted items | Out of Scope, item 3 |
-| False positives minimized | Business Rules, including the ownership precedence table; ACs 5, 6, 7, 12-15 |
-| Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 8, 9, 10 |
-| Tests for parser and validator edge cases | ACs 5, 6, 7, 12-19 — AC 6 covers parity with every construct the canonical parser excludes; ACs 12-15 the ownership edge cases; ACs 16-18 the sibling-lifecycle and readiness triggers |
+| False positives minimized | Business Rules, including the ownership precedence table; ACs 5-7, 12-17 |
+| Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 8-10 |
+| Tests for parser and validator edge cases | ACs 5-7 and 12-22 — AC 6 covers parity with every construct the canonical parser excludes; ACs 12-17 the ownership signals, precedence, contested and no-signal cases; ACs 18-21 the sibling-lifecycle, tracker-linkage and readiness triggers |
 
 ---
 
@@ -219,9 +219,12 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 - [ ] When no open pull request carries an issue named by a closing keyword, no warning is produced for it.
 - [ ] When two open pull requests both name the same issue in their branch, ownership is contested and no warning is produced for that issue.
 - [ ] A pull request whose branch names the issue is treated as the owner even when the issue's tracker item links a different pull request, and produces no warning for it.
+- [ ] A pull request whose branch does not name the issue is still treated as the owner when the issue's tracker item links it as the implementation, and produces no warning for that issue.
+- [ ] A pull request declaring a closing keyword for an issue whose tracker item links a *different* open pull request, where no branch names that issue, produces a warning naming that sibling.
 - [ ] A closed or merged pull request is never treated as the sibling owner.
 - [ ] A pull request that was silent because no sibling carried the issue warns once a sibling pull request naming that issue opens, without any change to the pull request being warned.
 - [ ] A pull request that was warning stops warning once the sibling that carried the issue closes or merges, without any change to the pull request being warned.
+- [ ] Changing an issue's tracker linkage to point at a different open pull request re-evaluates the affected pull requests, without any change to their descriptions or labels.
 - [ ] A pull request reaching readiness for human review has its result re-evaluated, so a silence that went stale while it waited is corrected before a human reviews it.
 - [ ] Running the validation twice on an unchanged pull request leaves a single report, not two.
 
