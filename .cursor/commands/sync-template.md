@@ -923,6 +923,7 @@ Update the tracker status to `Development in Review` if an issue tracker is conf
 
 Before reporting the sync PR terminal, run Protocol 91's completion self-check:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
 
