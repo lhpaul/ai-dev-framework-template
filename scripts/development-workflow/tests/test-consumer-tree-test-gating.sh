@@ -539,6 +539,58 @@ run_test "workflow_pins_pyyaml_version" "yes" \
 run_test "workflow_has_no_sc2016_sed_summary" "0" \
   "$(grep -cF -- "sed 's/^/- " "$workflow_file" || true)"
 
+# ---------------------------------------------------------------------------
+# Area 5: planted-violation proof for the PyYAML provisioning step
+#
+# The `Provision PyYAML` step in workflow-tests.yml materially changes a CI
+# job, so REVIEW.md requires both directions demonstrated at a concrete file
+# and line, not a description. The violation it targets is "PyYAML is absent
+# from the interpreter the suites run under", and the check that catches it is
+# the gate at scripts/development-workflow/tests/test-workflow-branch-filters.sh:245
+# (`if ! python3 -c 'import yaml'`), which reports at line 246.
+#
+# Negative direction: shadow `yaml` with a module that refuses to import, which
+# is what the runner looks like without the provisioning step — the suite must
+# fail at that gate. Positive direction: with `yaml` importable, which is what
+# the provisioning step guarantees on the runner, the same suite must pass.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Area 5: PyYAML provisioning planted-violation proof ==="
+
+branch_filters_suite="$REPO_ROOT/scripts/development-workflow/tests/test-workflow-branch-filters.sh"
+
+run_test "pyyaml_gate_line_is_where_expected" "yes" \
+  "$(if sed -n '245p' "$branch_filters_suite" | grep -Fq "python3 -c 'import yaml'"; then printf 'yes\n'; else printf 'no\n'; fi)"
+
+# Negative direction — PyYAML unavailable.
+blocked_pythonpath="$TMP_ROOT/no-pyyaml"
+mkdir -p "$blocked_pythonpath"
+printf '%s\n' \
+  'raise ImportError("PyYAML intentionally unavailable: planted-violation proof for the Provision PyYAML step")' \
+  > "$blocked_pythonpath/yaml.py"
+
+set +e
+blocked_output="$(PYTHONPATH="$blocked_pythonpath" bash "$branch_filters_suite" 2>&1)"
+blocked_status=$?
+set -e
+run_test "branch_filters_fails_without_pyyaml" "yes" \
+  "$(if [ "$blocked_status" -ne 0 ]; then printf 'yes\n'; else printf 'no\n'; fi)"
+run_test "branch_filters_names_the_pyyaml_gate" "yes" \
+  "$(output_contains "$blocked_output" "FAIL: pyyaml_available")"
+
+# Positive direction — PyYAML available, which is exactly what the CI step
+# provisions. Skipped rather than faked where the interpreter has no PyYAML:
+# a stubbed module would not parse the workflow YAML these tests read.
+if python3 -c 'import yaml' 2>/dev/null; then
+  set +e
+  bash "$branch_filters_suite" >/dev/null 2>&1
+  available_status=$?
+  set -e
+  run_test "branch_filters_passes_with_pyyaml" "0" "$available_status"
+else
+  echo "SKIP: branch_filters_passes_with_pyyaml - this interpreter has no PyYAML; the CI 'Provision PyYAML' step supplies it on the runner"
+fi
+
 echo ""
 echo "=== Summary ==="
 echo "Passed: $PASS_COUNT"
