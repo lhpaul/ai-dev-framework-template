@@ -167,9 +167,10 @@ This feature is a workflow decision gate: its outcome depends on several inputs,
 
 | Input | Where it comes from | Why it matters |
 | --- | --- | --- |
-| Declared closing keywords in the pull request description | Reported from the description only — never from the title or the commit messages — but filtered with the title and description read together, as the canonical parser reads them | The set of issues the description claims to close |
+| Declared closing keywords in the pull request description | Reported from the description only — never from the title or the commit messages. Filtered as the closer for this pull request filters: title and description together when it merges to a non-default branch, the description alone when it merges to the default branch | The set of issues the description claims to close |
 | Sibling ownership of each named issue | The branch names of the other **open** pull requests, in either the bare-number or the team-prefixed form | Establishes whether a different pull request identifiably carries that issue |
 | `multi-issue-intentional` label | The pull request's labels | Author's recorded statement that multi-issue scope is deliberate |
+| The pull request's base branch | Whether it is the repository's default branch | Selects which closer will act, and therefore which filtering the validation must match |
 | Existing validation report | The pull request's own prior report, if any | Decides whether to update or clear rather than post again |
 | Sibling lifecycle events | Another pull request whose branch names the same issue opening, closing, or merging | Ownership evidence is mutable and lives outside this pull request, so it is an input in its own right |
 
@@ -261,7 +262,7 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 - **Per-issue opt-out.** The opt-out is the `multi-issue-intentional` label, which applies to the whole pull request.
 - **Any opt-out mechanism other than the label** — a description marker, a checkbox, or a magic comment.
 - **Retroactive scanning of already-merged pull requests.** This feature looks at open pull requests going forward; it does not reconcile history.
-- **Reporting closing keywords found outside the description.** The canonical parser also honours the title and the commit messages, so a cross-PR keyword placed only in one of those is not reported here. This follows the agreed scope — pull request *description* validation — and is a known residual gap, not an oversight. The title is still read for filtering state, so the two never disagree about what counts as a live reference.
+- **Reporting closing keywords found outside the description.** The repository's cleanup also honours the title and the commit messages, so a cross-PR keyword placed only in one of those is not reported here. This follows the agreed scope — pull request *description* validation — and is a known residual gap, not an oversight. Where the title affects filtering, it is still read for that purpose, so the two never disagree about what counts as a live reference.
 - **Changing how closing keywords are parsed anywhere else.** The existing post-merge cleanup and graduation closeout keep their current behavior; this feature reads, it does not redefine.
 - **Ownership established by tracker linkage.** Branch naming is the only ownership signal. A pull request whose branch does not name an issue is never treated as its owner, so work whose branch predates the naming convention or was renamed produces silence rather than a warning.
 - **Reconciling the two existing parsers with each other.** They disagree today about which non-live references to exclude. This feature follows the canonical one and leaves the divergence exactly as it found it; unifying them is separate work.
