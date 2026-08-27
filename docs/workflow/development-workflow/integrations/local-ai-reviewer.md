@@ -27,17 +27,30 @@ review:
       - bugbot
 ```
 
-Set the local command in the runner environment:
+Set the local command in the runner environment when you need a custom command.
+When `LOCAL_AI_REVIEWER_COMMAND` is unset, `local-ai-reviewer.sh` defaults to
+the bundled Codex preset at
+`scripts/development-workflow/local-codex-review-command.sh` (requires the
+`codex` CLI on `PATH` and a working Codex login). Set
+`LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1` to restore the old missing-command
+behavior for tests or minimal environments.
 
 <!-- workflow-shell-contract: bash-zsh -->
 ```bash
+# Optional overrides (the bundled preset is used when LOCAL_AI_REVIEWER_COMMAND is unset):
+export LOCAL_CODEX_REVIEWER_BIN='codex'
+export LOCAL_CODEX_REVIEWER_MODEL='gpt-5.4'   # optional; codex uses its own default when omitted
+export LOCAL_AI_REVIEWER_TIMEOUT='900'
+
+# Custom command instead of the bundled Codex preset:
 export LOCAL_AI_REVIEWER_COMMAND='my-review-command "$CONTEXT_BUNDLE_PATH"'
 ```
 
-A missing local command is a setup failure and emits `RESULT=escalate` with
-`REASON=missing_command`. To intentionally skip the default local reviewer for
-one run or one checkout, set `LOCAL_AI_REVIEWER_DISABLED=1` or override
-`review.on_draft.github` in `.ai-dev-workflow.local.yaml`.
+A missing local command **after** default resolution is a setup failure and
+emits `RESULT=escalate` with `REASON=missing_command`. To intentionally skip
+the default local reviewer for one run or one checkout, set
+`LOCAL_AI_REVIEWER_DISABLED=1` or override `review.on_draft.github` in
+`.ai-dev-workflow.local.yaml`.
 
 For Codex, use the bundled preset wrapper instead of hand-writing the full
 `codex exec` command:
