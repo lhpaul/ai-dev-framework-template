@@ -81,10 +81,13 @@ schema_version: 2
 review:
   on_draft:
     github:
-      # local-ai-reviewer: local-only CLI reviewer. Requires
-      # LOCAL_AI_REVIEWER_COMMAND in the runner environment. Missing command,
-      # credentials, model access, timeout, or malformed output escalates.
-      # Set LOCAL_AI_REVIEWER_DISABLED=1 or override this list locally to skip.
+      # local-ai-reviewer: local-only CLI reviewer. When
+      # LOCAL_AI_REVIEWER_COMMAND is unset, local-ai-reviewer.sh defaults to
+      # scripts/development-workflow/local-codex-review-command.sh (Codex CLI).
+      # Missing codex binary, credentials, model access, timeout, or malformed
+      # output escalates. Set LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1 to require an
+      # explicit LOCAL_AI_REVIEWER_COMMAND. Set LOCAL_AI_REVIEWER_DISABLED=1
+      # or override this list locally to skip.
       - local-ai-reviewer
       - pr-agent
     # claude-code-action: own-key, own-CI reviewer with no per-hour vendor cap.

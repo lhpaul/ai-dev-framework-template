@@ -109,6 +109,7 @@ reset_mocks() {
   unset MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE
   unset LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_DISABLED LOCAL_AI_REVIEWER_TIMEOUT
   unset LOCAL_AI_REVIEWER_EVIDENCE_FILE LOCAL_AI_REVIEWER_GRAPH_STRATEGY
+  unset LOCAL_AI_REVIEWER_DISABLE_DEFAULT
 }
 
 set_mock_stdout() {
@@ -155,10 +156,31 @@ run_test "disabled_reason" "REASON=disabled_by_config" "$(line_for REASON)"
 run_test "disabled_exit" "3" "$(exit_code)"
 
 reset_mocks
+LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1
+export LOCAL_AI_REVIEWER_DISABLE_DEFAULT
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "missing_command_result" "RESULT=escalate" "$(line_for RESULT)"
 run_test "missing_command_reason" "REASON=missing_command" "$(line_for REASON)"
 run_test "missing_command_exit" "2" "$(exit_code)"
+
+reset_mocks
+cat > "$MOCK_BIN/codex" <<'MOCK_CODEX'
+#!/usr/bin/env bash
+output_file=""
+previous=""
+for arg in "$@"; do
+  if [ "$previous" = "-o" ]; then
+    output_file="$arg"
+  fi
+  previous="$arg"
+done
+[ -n "$output_file" ] || exit 2
+printf '{"result":"clean","reviewed_head":"%s","findings":[]}\n' "${REVIEWED_HEAD:?}" > "$output_file"
+MOCK_CODEX
+chmod +x "$MOCK_BIN/codex"
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "default_command_result" "RESULT=clean" "$(line_for RESULT)"
+run_test "default_command_info" "yes" "$(grep -q 'LOCAL_AI_REVIEWER_COMMAND defaulted to bundled Codex preset' "$STDERR_FILE" && echo yes || echo no)"
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock

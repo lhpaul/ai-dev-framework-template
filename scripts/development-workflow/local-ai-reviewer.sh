@@ -21,14 +21,36 @@ Options:
                        match the pull request head SHA before review runs.
 
 Environment:
-  LOCAL_AI_REVIEWER_COMMAND         Required unless LOCAL_AI_REVIEWER_DISABLED=1.
+  LOCAL_AI_REVIEWER_COMMAND         Optional. When unset, defaults to the bundled
+                                    Codex preset at local-codex-review-command.sh
+                                    unless LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1.
                                     The command receives CONTEXT_BUNDLE_PATH,
                                     PR_NUMBER, OWNER, REPO, BASE_BRANCH,
                                     HEAD_BRANCH, and REVIEWED_HEAD in env.
+  LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1
+                                    Do not apply the bundled Codex preset default.
   LOCAL_AI_REVIEWER_DISABLED=1      Emit RESULT=skipped / disabled_by_config.
   LOCAL_AI_REVIEWER_EVIDENCE_FILE   Optional path for a JSON evidence artifact.
   LOCAL_AI_REVIEWER_GRAPH_STRATEGY  none|auto|code-review-graph|graphify.
+  LOCAL_CODEX_REVIEWER_BIN          Codex binary for the bundled preset (default: codex).
+  LOCAL_CODEX_REVIEWER_MODEL        Optional model for the bundled preset.
 EOF
+}
+
+resolve_local_ai_reviewer_command() {
+  if [ -n "${LOCAL_AI_REVIEWER_COMMAND:-}" ]; then
+    return 0
+  fi
+  if [ "${LOCAL_AI_REVIEWER_DISABLE_DEFAULT:-0}" = "1" ]; then
+    return 0
+  fi
+
+  local default_command="$SCRIPT_DIR/local-codex-review-command.sh"
+  if [ -f "$default_command" ]; then
+    LOCAL_AI_REVIEWER_COMMAND="$default_command"
+    export LOCAL_AI_REVIEWER_COMMAND
+    echo "INFO: LOCAL_AI_REVIEWER_COMMAND defaulted to bundled Codex preset: $default_command" >&2
+  fi
 }
 
 print_result() {
@@ -190,6 +212,8 @@ if [ "${LOCAL_AI_REVIEWER_DISABLED:-0}" = "1" ]; then
   print_result skipped 0 0 0 disabled_by_config disabled_by_config
   exit 3
 fi
+
+resolve_local_ai_reviewer_command
 
 if [ -z "${LOCAL_AI_REVIEWER_COMMAND:-}" ]; then
   echo "ERROR: LOCAL_AI_REVIEWER_COMMAND is not configured" >&2
