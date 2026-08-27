@@ -15,7 +15,9 @@ This feature warns the pull request author when a pull request declares that it 
 ### Use Case 1: A pull request claims an issue that belongs to a sibling
 
 **Actor**: The author of an implementation pull request — an agent running the development workflow, or a maintainer working by hand.
-**Preconditions**: The pull request is an open implementation pull request and its description declares at least one closing keyword. The base branch is irrelevant: a hotfix targeting the default branch can close a sibling's issue just as an ordinary fix targeting the development branch can, so it is validated the same way.
+**Preconditions**: The pull request is an open implementation pull request **originating from a branch in this repository**, and its description declares at least one closing keyword. The base branch is irrelevant: a hotfix targeting the default branch can close a sibling's issue just as an ordinary fix targeting the development branch can, so it is validated the same way.
+
+Fork-originated pull requests are out of scope. This repository requires a same-repository guard on every automated step that writes to it — posting comments included — so a warning could not be posted on a fork pull request without breaking that rule. The residual risk is recorded in Out of Scope rather than left implied.
 
 **Steps**:
 
@@ -122,7 +124,9 @@ This feature warns the pull request author when a pull request declares that it 
   - **ownership evidence for an issue it names changes** — another pull request whose branch names that issue opens, closes, or merges.
 - A stale warning must not survive the edit that fixed it, and a stale **silence** must not survive the sibling that created the conflict. A pull request that was silent because no sibling existed must warn once a sibling appears, without anyone touching it.
 - **Readiness backstop**: the result is re-evaluated when the pull request reaches readiness for human review, so no pull request can carry a silence that went stale while it waited.
-- The validation is **read-only with respect to project state**: it may post or update its own report on the pull request, and does nothing else.
+- The validation is **read-only with respect to project state**, with one exception: it may post or update its own report on the pull request, and it may create the `multi-issue-intentional` label if the repository does not have it yet. It does nothing else.
+- **The opt-out label must exist before an author can use it.** A fresh installation of this template does not have it, and the workflow's own bootstrap provisions only the readiness labels. The validation therefore creates it idempotently on first use — the same pattern the repository already uses for `ready-for-regression`, including tolerating a concurrent creator. An opt-out an author cannot reach is not an opt-out.
+- The validation is **never posted on a fork-originated pull request**, because this repository forbids automated writes on those. Such a pull request is not validated at all rather than validated silently.
 
 ---
 
@@ -158,6 +162,7 @@ Rules:
 
 - **Where the warning appears**: on the pull request itself, as a single report that is updated in place rather than re-posted, so a pull request that is corrected and re-checked does not accumulate a stack of contradictory warnings.
 - **What a clean result looks like**: nothing is posted. Silence is the clean signal.
+- **Label provisioning**: the `multi-issue-intentional` label is created on first use in repositories that do not have it, idempotently, so the opt-out works on a fresh template installation without a manual setup step.
 - **Audit trail**: the `multi-issue-intentional` label stays on the pull request after merge, so a later release reconciliation can tell a deliberate multi-issue pull request from an accidental one.
 
 ---
@@ -183,6 +188,7 @@ The gate re-evaluates on a change to any of its inputs: the pull request's descr
 
 | Inputs | Outcome | What the validation does | Author's next action |
 | --- | --- | --- | --- |
+| The pull request originates from a fork | **Not validated** | Nothing posted; no label created | None available here — see Out of Scope |
 | No declared closing keywords | Silent | Nothing posted; any prior report cleared | None |
 | All named issues carried by this pull request | Silent | Nothing posted; any prior report cleared | None |
 | At least one named issue identifiably carried by a sibling, label absent | **Warning** | Posts or updates one report naming each out-of-scope issue and its sibling | Drop the keyword, or apply `multi-issue-intentional` |
@@ -218,12 +224,12 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 
 | #1644 objective | Disposition |
 | --- | --- |
-| PR validation, warn or block | Covered as **warn**, reporting from the description across every implementation branch type including hotfixes; ACs 1-4, 10, 15, 23-27. Blocking, and reporting keywords found only outside the description, are Out of Scope |
+| PR validation, warn or block | Covered as **warn**, reporting from the description across every implementation branch type including hotfixes; ACs 1-4, 10, 17, 25-29. Blocking, and reporting keywords found only outside the description, are Out of Scope |
 | Reviewer-loop or prepare-commit blocking finding | Out of Scope, item 2 |
 | Release-cleanup report for merged-but-omitted items | Out of Scope, item 3 |
-| False positives minimized | Business Rules, including the implementation-only, single-signal ownership rule and the exclusion of platform-derived links; ACs 5-7, 9, 11, 16, 17, 19-22 |
-| Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 12-14 |
-| Tests for parser and validator edge cases | ACs 5-11 and 16-27 — ACs 5-9 and 11 cover parity with what each closer excludes, including the divergent handling of title fence state; ACs 16-22 the ownership rule with its contested, no-signal, team-prefixed, platform-link, documentation-stage and closed-sibling cases; ACs 23-27 the sibling-lifecycle, retarget, readiness and idempotence behaviors |
+| False positives minimized | Business Rules, including the implementation-only, single-signal ownership rule and the exclusion of platform-derived links; ACs 5-7, 9, 11-12, 18, 19, 21-24 |
+| Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 13-16, including label provisioning on a fresh installation |
+| Tests for parser and validator edge cases | ACs 5-12 and 18-29 — ACs 5-9 and 11 cover parity with what each closer excludes, including the divergent handling of title fence state; ACs 18-24 the ownership rule with its contested, no-signal, team-prefixed, platform-link, documentation-stage and closed-sibling cases; ACs 25-29 the sibling-lifecycle, retarget, readiness and idempotence behaviors; AC 12 the fork-origin exclusion |
 
 ---
 
@@ -240,6 +246,8 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 - [ ] A closing keyword that appears only in the pull request title is not reported, even when no fence is involved.
 - [ ] A hotfix pull request targeting the default branch is validated the same as any other implementation pull request, and warns when its description claims a sibling's issue.
 - [ ] A word that merely contains a closing keyword as a substring — for example "disclose" or "hotfix" — is not reported.
+- [ ] A fork-originated pull request is not validated: no report is posted on it and no label is created, whatever its description declares.
+- [ ] In a repository that does not yet have the `multi-issue-intentional` label, an author can still apply it — the validation creates it on first use, and creating it a second time concurrently does not fail.
 - [ ] A pull request carrying the `multi-issue-intentional` label produces no warning, even when its closing keywords name issues that another pull request carries.
 - [ ] Applying the `multi-issue-intentional` label to an already-warned pull request clears the existing warning, without any push to the pull request.
 - [ ] Removing the `multi-issue-intentional` label makes the warning reappear, without any push to the pull request.
@@ -272,3 +280,4 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 - **Ownership established by tracker linkage.** Branch naming is the only ownership signal. A pull request whose branch does not name an issue is never treated as its owner, so work whose branch predates the naming convention or was renamed produces silence rather than a warning.
 - **Reconciling the two existing parsers with each other.** They disagree today about which non-live references to exclude. This feature follows the canonical one and leaves the divergence exactly as it found it; unifying them is separate work.
 - **Any automatic correction.** The validation never edits a pull request description, reopens an issue, or restores a milestone.
+- **Fork-originated pull requests.** This repository forbids automated writes on them, so they are not validated. A fork pull request can still claim a sibling's issue without a warning; that residual risk is accepted here rather than worked around.
