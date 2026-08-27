@@ -60,8 +60,10 @@ restate this rule for those two specifically):**
 - If the step must be backgrounded, poll it yourself in the same turn until it
   returns, e.g. `while pgrep -f "<cmd>" >/dev/null; do sleep 20; done`. Make
   `<cmd>` specific enough that it cannot match an unrelated process — include
-  the PR number or another identifying argument (e.g.
-  `pgrep -f "pr-review-loop.sh 1550"`, not a bare script name). A captured
+  the PR number or another identifying argument, and avoid matching the
+  polling shell itself (e.g. `pgrep -f "[p]r-review-loop.sh 1550"`, not a
+  bare `pgrep -f "pr-review-loop.sh 1550"` whose command line contains the
+  same literal and can look eternally alive). A captured
   `$!` PID plus `wait "$pid"` is not available here the way it would be inside
   a single continuous shell script: this runner's tool calls are separate
   shell invocations with no persisted variable state between them, so a PID

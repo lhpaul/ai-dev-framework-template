@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Protocol 91 `pgrep` self-match example**: document the bracket trick
+  (`pgrep -f "[p]r-review-loop.sh <PR>"`) so a wait loop cannot match its own
+  shell command line and look eternally alive.
+
 ## [0.43.1] - 2026-08-27
 
 ### Changed
