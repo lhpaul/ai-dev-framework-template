@@ -184,7 +184,7 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 - [ ] A pull request whose declared closing keywords all name work it carries produces no warning and no comment.
 - [ ] A pull request that declares no closing keywords produces no warning and no comment.
 - [ ] A closing keyword that appears only inside a fenced code sample or a quoted line in the pull request description is not reported.
-- [ ] A closing keyword in the description is not reported when it appears inside any construct the canonical parser excludes: a backtick fence, a tilde fence, an inline code span, a code span spanning several lines, a blockquote, or a fence left unclosed. A keyword outside all of these is reported.
+- [ ] A closing keyword in the description is not reported when it appears inside any construct the canonical parser excludes: a backtick fence, a tilde fence, an inline code span, a code span spanning several lines, a blockquote, or a fence left unclosed. A keyword outside all of these is treated as a live reference and proceeds to scope evaluation; it is reported only when a sibling identifiably carries the issue and the `multi-issue-intentional` label is absent.
 - [ ] A word that merely contains a closing keyword as a substring — for example "disclose" or "hotfix" — is not reported.
 - [ ] A pull request carrying the `multi-issue-intentional` label produces no warning, even when its closing keywords name issues that another pull request carries.
 - [ ] Applying the `multi-issue-intentional` label to an already-warned pull request clears the existing warning, without any push to the pull request.
