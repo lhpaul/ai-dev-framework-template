@@ -43,7 +43,7 @@ This feature warns the pull request author when a pull request declares that it 
 
 - Closing keywords that appear inside quoted prose or a code sample are not live references and must not be reported.
 - An issue that no other pull request carries is not, on its own, evidence of a mistake — a pull request may legitimately be the first and only one to address it.
-- The check must re-run when the pull request text changes, and when its labels change, so a corrected pull request stops warning without anyone re-triggering it by hand.
+- The check must re-run when the pull request description changes, when its labels change, and when ownership evidence on another pull request changes, so a corrected pull request stops warning — and a newly conflicted one starts — without anyone re-triggering it by hand.
 
 ---
 
@@ -106,7 +106,12 @@ This feature warns the pull request author when a pull request declares that it 
 - The graduation closeout recognizes a narrower set of excluded constructs today. That difference is pre-existing, is neither introduced nor widened here, and reconciling the two parsers is not part of this feature.
 - A pull request labelled **`multi-issue-intentional`** produces no warning, regardless of how many issues it names. The label is the only opt-out; there is no per-issue variant and no description marker.
 - The opt-out is evaluated **at the time the validation runs**. Applying the label does not retroactively rewrite history, and removing it restores the warning on the next run.
-- The result is **recomputed** whenever the pull request's text changes **or its labels change**. A stale warning must not survive the edit that fixed it, and applying or removing the opt-out must take effect on its own — neither should wait for an unrelated push.
+- The result is **recomputed** whenever any input to it changes. Because ownership evidence lives on *other* pull requests, that is more than this pull request's own edits:
+  - its description changes;
+  - its labels change;
+  - **ownership evidence for an issue it names changes** — another pull request naming that issue opens, closes, or merges, or that issue's tracker linkage changes.
+- A stale warning must not survive the edit that fixed it, and a stale **silence** must not survive the sibling that created the conflict. A pull request that was silent because no sibling existed must warn once a sibling appears, without anyone touching it.
+- **Readiness backstop**: the result is re-evaluated when the pull request reaches readiness for human review, so no pull request can carry a silence that went stale while it waited.
 - The validation is **read-only with respect to project state**: it may post or update its own report on the pull request, and does nothing else.
 
 ---
@@ -150,8 +155,9 @@ This feature is a workflow decision gate: its outcome depends on several inputs,
 | Sibling ownership of each named issue | The other **open** pull requests, judged by the ownership signals in Business Rules (branch naming first, tracker linkage second) | Establishes whether a different pull request identifiably carries that issue |
 | `multi-issue-intentional` label | The pull request's labels | Author's recorded statement that multi-issue scope is deliberate |
 | Existing validation report | The pull request's own prior report, if any | Decides whether to update or clear rather than post again |
+| Sibling lifecycle events | Another pull request naming the same issue opening, closing, or merging; a change to that issue's tracker linkage | Ownership evidence is mutable and lives outside this pull request, so it is an input in its own right |
 
-The gate re-evaluates on a change to the pull request's text or to its labels. A label change is a trigger in its own right: applying the opt-out clears an existing warning, and removing it restores one, without waiting for a push.
+The gate re-evaluates on a change to any of its inputs: the pull request's description, its labels, or the ownership evidence on other pull requests. A label change is a trigger in its own right — applying the opt-out clears an existing warning, and removing it restores one, without waiting for a push. A sibling opening, closing, or merging is likewise a trigger for every pull request whose result could turn on it, and readiness re-evaluates as a backstop.
 
 ### Allowed outcomes and required next actions
 
@@ -193,7 +199,7 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 | Release-cleanup report for merged-but-omitted items | Out of Scope, item 3 |
 | False positives minimized | Business Rules, including the ownership precedence table; ACs 5, 6, 7, 12-15 |
 | Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 8, 9, 10 |
-| Tests for parser and validator edge cases | ACs 5, 6, 7, 12-16 — AC 6 covers parity with every construct the canonical parser excludes; ACs 12-15 cover the ownership edge cases |
+| Tests for parser and validator edge cases | ACs 5, 6, 7, 12-19 — AC 6 covers parity with every construct the canonical parser excludes; ACs 12-15 the ownership edge cases; ACs 16-18 the sibling-lifecycle and readiness triggers |
 
 ---
 
@@ -214,6 +220,9 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 - [ ] When two open pull requests both name the same issue in their branch, ownership is contested and no warning is produced for that issue.
 - [ ] A pull request whose branch names the issue is treated as the owner even when the issue's tracker item links a different pull request, and produces no warning for it.
 - [ ] A closed or merged pull request is never treated as the sibling owner.
+- [ ] A pull request that was silent because no sibling carried the issue warns once a sibling pull request naming that issue opens, without any change to the pull request being warned.
+- [ ] A pull request that was warning stops warning once the sibling that carried the issue closes or merges, without any change to the pull request being warned.
+- [ ] A pull request reaching readiness for human review has its result re-evaluated, so a silence that went stale while it waited is corrected before a human reviews it.
 - [ ] Running the validation twice on an unchanged pull request leaves a single report, not two.
 
 ---
