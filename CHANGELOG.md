@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.1] - 2026-08-27
+
+### Changed
+
+- **Local AI reviewer Codex default** (#1640): when `LOCAL_AI_REVIEWER_COMMAND`
+  is unset, `local-ai-reviewer.sh` now defaults to the bundled Codex preset so
+  Step 7 loops run local review instead of escalating with `missing_command`.
+
+### Fixed
+
+- **Document backlog item Type creation** (#1545): updates the add-backlog-item
+  protocol to pass `--type` when creating GitHub Project-backed issues, so new
+  Backlog items get routeable project classification at creation time.
+
+- **Post-merge cleanup worktree re-entry** (#1626): re-enter the existing
+  base-branch worktree when invoked from a merged PR worktree, avoiding
+  `git checkout develop` failures when `develop` is already checked out
+  elsewhere.
+
+- **Port RADAR sync-template review fixes** (#1628): document required
+  `--pr` on post-merge cleanup command/skill surfaces, stop `/sync-template`
+  Step 6.4 from aborting when `ISSUE_NUMBER` is unset, and add the missing
+  bash-zsh shell-contract markers for Step 6.4 snippets.
+
+- **Skip Haystack commit-msg tests when the hook is not versioned** (#1633):
+  exit 0 if `hooks/commit-msg` is missing so downstream CI is not red when
+  `/hooks/` is gitignored; still fail if a present hook is not executable.
+
+- **CI-loop prior-head uses the last SHA that actually ran workflows** (#1634):
+  walk earlier PR commits instead of `.[-2]`, so a multi-commit push cannot
+  treat an empty penultimate run set as “no expectation” and fail-open green.
+
+- **Local AI reviewer timeout kills the process group** (#1635): the macOS
+  fallback starts the command as a process-group leader and terminates the
+  group, so descendant model processes do not keep running after timeout.
+
 ## [0.43.0] - 2026-08-26
 
 ### Added
@@ -3049,7 +3085,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.claude/settings.json` with pre-approved permissions for common git and fetch operations; `.claude/settings.local.json.example` documenting machine-specific overrides for optional integrations
 - `.gitignore` covering local Claude settings, `.env` files, and common system files
 
-[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.43.1...HEAD
+[0.43.1]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/lhpaul/ai-dev-framework-template/compare/v0.40.0...v0.41.0

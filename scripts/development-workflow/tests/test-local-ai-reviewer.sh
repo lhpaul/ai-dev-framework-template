@@ -10,6 +10,7 @@ REVIEWER="$REPO_ROOT/scripts/development-workflow/local-ai-reviewer.sh"
 
 MOCK_BIN="$(mktemp -d)"
 NO_GRAPH_BIN="$(mktemp -d)"
+FALLBACK_BIN="$(mktemp -d)"
 OUTPUT_FILE="$(mktemp)"
 STDERR_FILE="$(mktemp)"
 EXIT_FILE="$(mktemp)"
@@ -19,15 +20,17 @@ VALID_REPO_ROOT="$(mktemp -d)"
 
 cleanup() {
   local status=$?
-  rm -rf "$MOCK_BIN" "$NO_GRAPH_BIN" "$VALID_REPO_ROOT"
+  rm -rf "$MOCK_BIN" "$NO_GRAPH_BIN" "$FALLBACK_BIN" "$VALID_REPO_ROOT"
   rm -f "$OUTPUT_FILE" "$STDERR_FILE" "$EXIT_FILE" "$EVIDENCE_FILE" "$RELATIVE_EVIDENCE_FILE"
   exit "$status"
 }
 trap cleanup EXIT
 
-for _cmd in awk bash cat dirname git grep jq mktemp rm sh sleep tr; do
+for _cmd in awk bash cat dirname git grep jq mktemp perl rm sh sleep tr; do
   _cmd_path="$(command -v "$_cmd")"
+  [ -n "$_cmd_path" ] || continue
   ln -sf "$_cmd_path" "$NO_GRAPH_BIN/$_cmd"
+  ln -sf "$_cmd_path" "$FALLBACK_BIN/$_cmd"
 done
 unset _cmd _cmd_path
 
@@ -78,6 +81,11 @@ MOCK_GH
 install_local_reviewer_mock() {
   cat > "$MOCK_BIN/local-reviewer-mock" <<'MOCK_REVIEWER'
 #!/usr/bin/env bash
+if [ -n "${MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE:-}" ]; then
+  sleep 30 &
+  printf '%s\n' "$!" > "$MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE"
+  wait
+fi
 if [ -n "${MOCK_LOCAL_REVIEWER_SLEEP:-}" ]; then
   sleep "$MOCK_LOCAL_REVIEWER_SLEEP"
 fi
@@ -98,8 +106,10 @@ reset_mocks() {
   install_local_reviewer_mock
   unset MOCK_PR_HEAD_SHA MOCK_PR_DIFF_EXIT MOCK_LOCAL_REVIEWER_STDOUT MOCK_LOCAL_REVIEWER_STDERR
   unset MOCK_LOCAL_REVIEWER_EXIT MOCK_LOCAL_REVIEWER_SLEEP
+  unset MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE
   unset LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_DISABLED LOCAL_AI_REVIEWER_TIMEOUT
   unset LOCAL_AI_REVIEWER_EVIDENCE_FILE LOCAL_AI_REVIEWER_GRAPH_STRATEGY
+  unset LOCAL_AI_REVIEWER_DISABLE_DEFAULT
 }
 
 set_mock_stdout() {
@@ -146,10 +156,31 @@ run_test "disabled_reason" "REASON=disabled_by_config" "$(line_for REASON)"
 run_test "disabled_exit" "3" "$(exit_code)"
 
 reset_mocks
+LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1
+export LOCAL_AI_REVIEWER_DISABLE_DEFAULT
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "missing_command_result" "RESULT=escalate" "$(line_for RESULT)"
 run_test "missing_command_reason" "REASON=missing_command" "$(line_for REASON)"
 run_test "missing_command_exit" "2" "$(exit_code)"
+
+reset_mocks
+cat > "$MOCK_BIN/codex" <<'MOCK_CODEX'
+#!/usr/bin/env bash
+output_file=""
+previous=""
+for arg in "$@"; do
+  if [ "$previous" = "-o" ]; then
+    output_file="$arg"
+  fi
+  previous="$arg"
+done
+[ -n "$output_file" ] || exit 2
+printf '{"result":"clean","reviewed_head":"%s","findings":[]}\n' "${REVIEWED_HEAD:?}" > "$output_file"
+MOCK_CODEX
+chmod +x "$MOCK_BIN/codex"
+run_reviewer "$MOCK_BIN:$PATH"
+run_test "default_command_result" "RESULT=clean" "$(line_for RESULT)"
+run_test "default_command_info" "yes" "$(grep -q 'LOCAL_AI_REVIEWER_COMMAND defaulted to bundled Codex preset' "$STDERR_FILE" && echo yes || echo no)"
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
@@ -288,6 +319,27 @@ export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_TIMEOUT MOCK_LOCAL_REVIEWER_S
 run_reviewer "$MOCK_BIN:$PATH"
 run_test "timeout_result" "RESULT=escalate" "$(line_for RESULT)"
 run_test "timeout_reason" "REASON=timeout" "$(line_for REASON)"
+
+reset_mocks
+LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock
+LOCAL_AI_REVIEWER_TIMEOUT=1
+MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE="$(mktemp)"
+export LOCAL_AI_REVIEWER_COMMAND LOCAL_AI_REVIEWER_TIMEOUT MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE
+run_reviewer "$MOCK_BIN:$FALLBACK_BIN"
+run_test "fallback_timeout_result" "RESULT=escalate" "$(line_for RESULT)"
+run_test "fallback_timeout_reason" "REASON=timeout" "$(line_for REASON)"
+_grandchild_pid=""
+if [ -s "$MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE" ]; then
+  _grandchild_pid="$(cat "$MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE")"
+fi
+_grandchild_alive=0
+if [ -n "$_grandchild_pid" ] && kill -0 "$_grandchild_pid" 2>/dev/null; then
+  _grandchild_alive=1
+  kill -KILL "$_grandchild_pid" 2>/dev/null || true
+fi
+run_test "fallback_timeout_kills_grandchild" "0" "$_grandchild_alive"
+rm -f "$MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE"
+unset MOCK_LOCAL_REVIEWER_GRANDCHILD_PIDFILE _grandchild_pid _grandchild_alive
 
 reset_mocks
 LOCAL_AI_REVIEWER_COMMAND=local-reviewer-mock

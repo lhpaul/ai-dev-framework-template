@@ -923,13 +923,16 @@ Update the tracker status to `Development in Review` if an issue tracker is conf
 
 Before reporting the sync PR terminal, run Protocol 91's completion self-check:
 
+<!-- workflow-shell-contract: bash-zsh -->
 ```bash
 set -euo pipefail
 
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
 source scripts/development-workflow/workflow-lib.sh
 
-ISSUE_NUMBER="${ISSUE_NUMBER:?Set ISSUE_NUMBER to the tracker issue for this sync}"
+# Sync PRs often have no backlog issue. Prefer an explicit ISSUE_NUMBER when
+# one exists; otherwise use the PR number so set -u cannot abort the check.
+ISSUE_NUMBER="${ISSUE_NUMBER:-$PR_NUMBER}"
 SYNC_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 WORKTREE_PATH=$(pwd -P)
 REVIEW_SELF_CHECK_REQUIRED=false
@@ -947,6 +950,7 @@ fi
   --expected-label ready-for-human-review \
   --expected-label ready-for-regression \
   --forbid-label needs-fixes \
+  --tracker-required false \
   --require-review-summary "$REVIEW_SELF_CHECK_REQUIRED" \
   --require-review-threads "$REVIEW_SELF_CHECK_REQUIRED"
 ```

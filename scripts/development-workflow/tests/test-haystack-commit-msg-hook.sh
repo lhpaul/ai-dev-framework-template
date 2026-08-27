@@ -28,6 +28,14 @@ _harness_exit() {
 }
 trap _harness_exit EXIT
 
+# Downstream repos may gitignore /hooks/ (local git-hook tooling). The suite
+# is still selected on a full workflow-tests.yml run, so skip instead of
+# failing CI when the hook is not versioned there.
+if [ ! -f "$HOOK" ]; then
+  echo "SKIP: commit-msg hook not present at $HOOK"
+  exit 0
+fi
+
 if [ ! -x "$HOOK" ]; then
   echo "ERROR: commit-msg hook not executable at $HOOK" >&2
   exit 1

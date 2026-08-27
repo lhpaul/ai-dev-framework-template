@@ -60,7 +60,7 @@ bash scripts/development-workflow/tests/test-local-ai-reviewer-pr-review-loop-di
 
 **Maps to**: Failure-state classification
 
-1. Unset `LOCAL_AI_REVIEWER_COMMAND`.
+1. Unset `LOCAL_AI_REVIEWER_COMMAND` and set `LOCAL_AI_REVIEWER_DISABLE_DEFAULT=1`.
 2. Run the companion script or reviewer loop.
 3. Confirm output includes `RESULT=escalate` and `REASON=missing_command`.
 
