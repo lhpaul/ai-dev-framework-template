@@ -27,7 +27,7 @@ Fork-originated pull requests are out of scope. This repository requires a same-
 4. It finds at least one issue that a *different* open pull request identifiably carries.
 5. It reports the mismatch on the pull request.
 
-**Postconditions**: The mismatch is visible on the pull request, and the pull request remains mergeable. No issue, label, or milestone has been changed.
+**Postconditions**: The mismatch is visible on the pull request, and the pull request remains mergeable. No issue, milestone or release has been changed, and no label has been applied to or removed from any pull request. The `multi-issue-intentional` label may have been *created* in the repository if it did not exist, so the author can reach the opt-out the warning points them at.
 
 **Information shown**:
 
@@ -98,7 +98,7 @@ Fork-originated pull requests are out of scope. This repository requires a same-
 
 ## Business Rules
 
-- The validation is **advisory only**. It never blocks a merge, never changes the mergeability of a pull request, and never edits an issue, label, milestone, or release.
+- The validation is **advisory only**. It never blocks a merge, never changes the mergeability of a pull request, and never edits an issue, milestone or release. It never applies or removes a label on any pull request — applying and removing the opt-out is the author's act, never the validation's. Creating the `multi-issue-intentional` label in a repository that lacks it is the single exception, and it is definitional rather than incidental: an opt-out an author cannot reach is not an opt-out.
 - The validation reports on a pull request's **own declared closing keywords**, and only those. It does not infer that a pull request ought to close something.
 - An issue named by a closing keyword is **in scope** for a pull request when that pull request is identifiably the one carrying its implementation, established from the ownership rule below. An issue identifiably carried by a *different* open pull request is **out of scope** and is reported.
 - When ownership cannot be established either way, the validation **stays silent**. A warning that fires on absence of evidence would train people to ignore it.
@@ -196,7 +196,7 @@ The gate re-evaluates on a change to any of its inputs: the pull request's descr
 | Ownership cannot be established for a named issue — no signal on any open pull request | Silent **for that issue** | That issue is not reported; other issues are judged on their own | None |
 | Ownership is contested — the same rank points at two or more open pull requests | Silent **for that issue** | Not reported; guessing an owner is the mistake this feature exists to catch | None |
 
-No input combination blocks a merge, changes mergeability, or edits an issue, label, milestone, or release.
+No input combination blocks a merge, changes mergeability, or edits an issue, milestone or release, and none applies or removes a label on a pull request. The one repository-level write anywhere in this gate is creating the `multi-issue-intentional` label when it is missing.
 
 ### Mirror surfaces
 
