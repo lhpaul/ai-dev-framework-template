@@ -96,16 +96,25 @@ run_with_timeout() {
     return $?
   fi
 
-  "$@" >"$stdout_file" 2>"$stderr_file" &
-  local child_pid=$!
+  # macOS and other hosts without GNU timeout: start a new process group so
+  # descendant reviewer processes die with the leader (Codex P2 / #1635).
+  local child_pid
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@" >"$stdout_file" 2>"$stderr_file" &
+    child_pid=$!
+  else
+    perl -e 'setpgrp; exec @ARGV' -- "$@" >"$stdout_file" 2>"$stderr_file" &
+    child_pid=$!
+  fi
   local elapsed=0
   while kill -0 "$child_pid" 2>/dev/null && [ "$elapsed" -lt "$timeout_seconds" ]; do
     sleep 1
     elapsed=$((elapsed + 1))
   done
   if [ "$elapsed" -ge "$timeout_seconds" ]; then
-    kill "$child_pid" 2>/dev/null || true
+    kill -TERM -- "-$child_pid" 2>/dev/null || kill -TERM "$child_pid" 2>/dev/null || true
     wait "$child_pid" 2>/dev/null || true
+    kill -KILL -- "-$child_pid" 2>/dev/null || true
     return 124
   fi
   wait "$child_pid"
