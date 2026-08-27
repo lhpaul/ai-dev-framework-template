@@ -11,6 +11,7 @@ allowed-tools: Bash(./scripts/development-workflow/post-merge-cleanup.sh:*), Bas
 Run the post-merge cleanup script from the repository root.
 
 - **From repo root**, run:
+  <!-- workflow-shell-contract: bash-zsh -->
   ```bash
   ./scripts/development-workflow/post-merge-cleanup.sh [--base base-branch] [--pr merged-pr-number] [branch-name]
   ```
