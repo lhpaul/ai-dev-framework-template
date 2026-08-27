@@ -100,7 +100,15 @@ jobs:
             if [ "$count" -eq 0 ]; then
               echo "_No workflow test suite covers this change set._"
             else
-              printf '%s\n' "$lines" | sed 's/^/- `/; s/$/`/'
+              # Formatted with printf rather than sed, and with the
+              # backticks escaped inside double quotes: a literal backtick in
+              # a single-quoted string trips shellcheck SC2016, which
+              # actionlint surfaces in consumer repositories that lint this
+              # workflow (#1631).
+              while IFS= read -r suite; do
+                [ -n "$suite" ] || continue
+                printf -- "- \`%s\`\n" "$suite"
+              done <<< "$lines"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -145,6 +153,33 @@ jobs:
           # code. The suites only ever fetch from this public repository, so
           # they do not need authenticated remote git access.
           persist-credentials: false
+
+      # Some suites parse workflow YAML with Python (e.g.
+      # test-workflow-branch-filters.sh) and hard-fail when PyYAML is absent.
+      # The runner image is not a contract, so provide it explicitly (#1631).
+      #
+      # A dedicated venv with a pinned version, rather than "install if
+      # missing": an unpinned install takes whatever PyPI serves that day, and
+      # an "already present" branch takes whatever the image happens to ship —
+      # both leave the same commit free to change YAML-parsing behavior between
+      # runs, which is the nondeterminism this step exists to remove. The venv
+      # also keeps the install off the runner's system interpreter, which is
+      # externally managed on current images.
+      - name: Provision PyYAML
+        env:
+          PYYAML_VERSION: '6.0.2'
+        run: |
+          set -euo pipefail
+          venv="${RUNNER_TEMP}/pyyaml-venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install --quiet --disable-pip-version-check \
+            "PyYAML==${PYYAML_VERSION}"
+          # Fail loudly here rather than letting a suite report a confusing
+          # parse error later.
+          "$venv/bin/python" -c \
+            "import yaml, sys; v = yaml.__version__; print('PyYAML ' + v); sys.exit(0 if v == '${PYYAML_VERSION}' else 1)"
+          # Subsequent steps resolve python3 from the venv.
+          echo "$venv/bin" >> "$GITHUB_PATH"
 
       - name: Run ${{ matrix.suite }}
         # Longest suite is test-pr-review-loop.sh at ~13 min; this bounds a hang
