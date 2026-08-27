@@ -118,6 +118,7 @@ This feature warns the pull request author when a pull request declares that it 
 - The result is **recomputed** whenever any input to it changes. Because ownership evidence lives on *other* pull requests, that is more than this pull request's own edits:
   - its description changes;
   - its labels change;
+  - **its base branch changes** — retargeting between the default branch and a non-default branch swaps which closer will act, and therefore which filtering applies, without a single character of the description changing;
   - **ownership evidence for an issue it names changes** — another pull request whose branch names that issue opens, closes, or merges.
 - A stale warning must not survive the edit that fixed it, and a stale **silence** must not survive the sibling that created the conflict. A pull request that was silent because no sibling existed must warn once a sibling appears, without anyone touching it.
 - **Readiness backstop**: the result is re-evaluated when the pull request reaches readiness for human review, so no pull request can carry a silence that went stale while it waited.
@@ -128,6 +129,8 @@ This feature warns the pull request author when a pull request declares that it 
 ### Establishing ownership
 
 "Identifiably carries" is not a judgement call. An open pull request carries an issue when, and only when, **its branch names that issue**. The signal is set when the branch is cut, and it is what the rest of the workflow already keys off.
+
+Only an **implementation** pull request can own an issue. Its branch prefix must be one of `feature/`, `fix/`, `refactor/`, `hotfix/`, or `backport/hotfix/`. A `spec/` or `implementation-plan/` branch names the same issue number by design — those are the earlier stages of the same item — but it carries the item's documentation, not its implementation, and treating one as the owner would produce a false warning against a sibling, or make ownership look contested when it is not.
 
 A branch names an issue in either of the two forms the branch-name guard accepts:
 
@@ -142,8 +145,8 @@ There is deliberately **one** signal. An earlier draft added the issue's tracker
 
 Rules:
 
-- **No open pull request's branch names the issue** → ownership is unestablished. Silent.
-- **Two or more open pull requests' branches name the same issue** → ownership is contested, not established. Silent, because guessing which sibling is "the" owner is exactly the mistake this feature exists to catch.
+- **No open implementation pull request's branch names the issue** → ownership is unestablished. Silent. Open `spec/` or `implementation-plan/` pull requests for the same issue do not count and do not change this.
+- **Two or more open implementation pull requests' branches name the same issue** → ownership is contested, not established. Silent, because guessing which sibling is "the" owner is exactly the mistake this feature exists to catch.
 - **The pull request being validated is itself the owner** → the issue is in scope. Silent.
 - **A different open pull request is the owner** → the issue is out of scope. Reported.
 - A closed or merged pull request is not considered. Only open pull requests can be a sibling owner, because only they represent work still in flight in the same batch.
@@ -168,13 +171,13 @@ This feature is a workflow decision gate: its outcome depends on several inputs,
 | Input | Where it comes from | Why it matters |
 | --- | --- | --- |
 | Declared closing keywords in the pull request description | Reported from the description only — never from the title or the commit messages. Filtered as the closer for this pull request filters: title and description together when it merges to a non-default branch, the description alone when it merges to the default branch | The set of issues the description claims to close |
-| Sibling ownership of each named issue | The branch names of the other **open** pull requests, in either the bare-number or the team-prefixed form | Establishes whether a different pull request identifiably carries that issue |
+| Sibling ownership of each named issue | The branch names of the other open **implementation** pull requests (`feature/`, `fix/`, `refactor/`, `hotfix/`, `backport/hotfix/`), in either the bare-number or the team-prefixed form | Establishes whether a different pull request identifiably carries that issue |
 | `multi-issue-intentional` label | The pull request's labels | Author's recorded statement that multi-issue scope is deliberate |
 | The pull request's base branch | Whether it is the repository's default branch | Selects which closer will act, and therefore which filtering the validation must match |
 | Existing validation report | The pull request's own prior report, if any | Decides whether to update or clear rather than post again |
-| Sibling lifecycle events | Another pull request whose branch names the same issue opening, closing, or merging | Ownership evidence is mutable and lives outside this pull request, so it is an input in its own right |
+| Sibling lifecycle events | Another **implementation** pull request whose branch names the same issue opening, closing, or merging | Ownership evidence is mutable and lives outside this pull request, so it is an input in its own right |
 
-The gate re-evaluates on a change to any of its inputs: the pull request's description, its labels, or the set of open pull requests whose branches name the issues it declares. A label change is a trigger in its own right — applying the opt-out clears an existing warning, and removing it restores one, without waiting for a push. A sibling opening, closing, or merging is likewise a trigger for every pull request whose result could turn on it, and readiness re-evaluates as a backstop.
+The gate re-evaluates on a change to any of its inputs: the pull request's description, its labels, its base branch, or the set of open pull requests whose branches name the issues it declares. A label change is a trigger in its own right — applying the opt-out clears an existing warning, and removing it restores one, without waiting for a push. A sibling opening, closing, or merging is likewise a trigger for every pull request whose result could turn on it, and readiness re-evaluates as a backstop.
 
 ### Allowed outcomes and required next actions
 
@@ -215,12 +218,12 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 
 | #1644 objective | Disposition |
 | --- | --- |
-| PR validation, warn or block | Covered as **warn**, reporting from the description across every implementation branch type including hotfixes; ACs 1-4, 10, 15, 22-25. Blocking, and reporting keywords found only outside the description, are Out of Scope |
+| PR validation, warn or block | Covered as **warn**, reporting from the description across every implementation branch type including hotfixes; ACs 1-4, 10, 15, 23-27. Blocking, and reporting keywords found only outside the description, are Out of Scope |
 | Reviewer-loop or prepare-commit blocking finding | Out of Scope, item 2 |
 | Release-cleanup report for merged-but-omitted items | Out of Scope, item 3 |
-| False positives minimized | Business Rules, including the single-signal ownership rule and the exclusion of platform-derived links; ACs 5-7, 9, 11, 16, 17, 19-21 |
+| False positives minimized | Business Rules, including the implementation-only, single-signal ownership rule and the exclusion of platform-derived links; ACs 5-7, 9, 11, 16, 17, 19-22 |
 | Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 12-14 |
-| Tests for parser and validator edge cases | ACs 5-11 and 16-25 — ACs 5-9 and 11 cover parity with what each closer excludes, including the divergent handling of title fence state; ACs 16-21 the ownership rule with its contested, no-signal, team-prefixed, platform-link and closed-sibling cases; ACs 22-25 the sibling-lifecycle, readiness and idempotence behaviors |
+| Tests for parser and validator edge cases | ACs 5-11 and 16-27 — ACs 5-9 and 11 cover parity with what each closer excludes, including the divergent handling of title fence state; ACs 16-22 the ownership rule with its contested, no-signal, team-prefixed, platform-link, documentation-stage and closed-sibling cases; ACs 23-27 the sibling-lifecycle, retarget, readiness and idempotence behaviors |
 
 ---
 
@@ -246,9 +249,11 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 - [ ] A sibling whose branch names the issue in team-prefixed form is recognized as the owner, and produces the same warning as a sibling whose branch names it in bare-number form.
 - [ ] A pull request whose only connection to an issue is the platform link derived from its own closing keyword is **not** treated as that issue's owner, and still produces a warning when a sibling's branch names the issue.
 - [ ] A pull request whose branch does not name an issue it declares is not treated as that issue's owner, whatever the issue's tracker item links.
+- [ ] An open `spec/` or `implementation-plan/` pull request naming the issue is never treated as its owner, and does not make ownership contested.
 - [ ] A closed or merged pull request is never treated as the sibling owner.
 - [ ] A pull request that was silent because no sibling carried the issue warns once a sibling pull request naming that issue opens, without any change to the pull request being warned.
 - [ ] A pull request that was warning stops warning once the sibling that carried the issue closes or merges, without any change to the pull request being warned.
+- [ ] Retargeting a pull request between the default branch and a non-default branch re-evaluates it, so a warning that only the old base suppressed does not survive the change and a silence that only the new base justifies is not delayed.
 - [ ] A pull request reaching readiness for human review has its result re-evaluated, so a silence that went stale while it waited is corrected before a human reviews it.
 - [ ] Running the validation twice on an unchanged pull request leaves a single report, not two.
 
