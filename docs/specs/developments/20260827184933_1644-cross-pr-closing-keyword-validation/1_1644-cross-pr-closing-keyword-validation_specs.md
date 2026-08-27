@@ -122,6 +122,8 @@ Fork-originated pull requests are out of scope. This repository requires a same-
   - **its title changes**, for a pull request merging to a non-default branch, where the title contributes filtering state — adding or removing an unclosed fence in the title flips whether a description reference is live, with the description untouched;
   - its labels change;
   - **its own head branch is renamed** — a pull request renamed from `fix/98-slug` to `fix/97-slug` while its description declares `Closes #97` goes from non-owner to owner of issue 97, with nothing else about it changing;
+  - **it is opened or reopened** — a closed pull request is not evaluated, so its owning sibling may have merged in the meantime and the warning it carried may already be obsolete;
+  - **the repository's default branch changes**, even with this pull request's own base untouched — what matters is whether its base *is* the default branch;
   - **its base branch changes** — retargeting between the default branch and a non-default branch swaps which closer will act, and therefore which filtering applies, without a single character of the description changing;
   - **ownership evidence for an issue it names changes** — another implementation pull request whose branch names that issue opens, closes, or merges, **or an open one is renamed into or out of naming it**. A sibling renamed from `fix/98-slug` to `fix/97-slug` starts carrying issue 97 without any lifecycle event at all.
 - A stale warning must not survive the edit that fixed it, and a stale **silence** must not survive the sibling that created the conflict. A pull request that was silent because no sibling existed must warn once a sibling appears, without anyone touching it.
@@ -190,7 +192,7 @@ This feature is a workflow decision gate: its outcome depends on several inputs,
 | Sibling ownership of each named issue | The branch names of the other open **implementation** pull requests (`feature/`, `fix/`, `refactor/`, `hotfix/`, `backport/hotfix/`), in either the bare-number or the team-prefixed form | Establishes whether a different pull request identifiably carries that issue |
 | `multi-issue-intentional` label | The pull request's labels | Author's recorded statement that multi-issue scope is deliberate |
 | The pull request's own head branch | Its name, in either accepted form | Decides whether this pull request is itself the owner of an issue it declares — a rename can flip it between owner and non-owner |
-| The pull request's base branch | Whether it is the repository's default branch | Selects which closer will act, and therefore which filtering the validation must match |
+| The pull request's base branch, and the repository's default branch | Whether the base *is* the default branch — either side of that comparison can move | Selects which closer will act, and therefore which filtering the validation must match |
 | Existing validation report | The pull request's own prior report, if any | Decides whether to update or clear rather than post again |
 Every row above is **state the validation reads**. Failing to read any of them makes the run indeterminate.
 
@@ -206,6 +208,8 @@ Triggers are events, not state: they decide *when* the gate runs, and are never 
 | The pull request's own head branch is renamed | Can flip it between owner and non-owner |
 | The base branch changes | Swaps which closer will act, and therefore the filtering |
 | An open implementation sibling opens, closes, merges, or is renamed into or out of naming a declared issue | Ownership evidence lives outside this pull request and is mutable |
+| The pull request is opened, or reopened | Opening is the first evaluation. Reopening matters because a closed pull request is not evaluated at all: its owning sibling can merge while it is closed, so the warning it carried may already be obsolete when it comes back |
+| The repository's default branch changes | The gate input is whether this pull request's base *is* the default branch. Moving the default under a pull request that never changed its own base swaps the responsible closer, and therefore whether title fence state applies |
 | The pull request reaches readiness for human review | Backstop, so no silence can go stale while a pull request waits |
 
 ### Allowed outcomes and required next actions
@@ -315,6 +319,8 @@ Acceptance criteria are referenced by group rather than by number. The groups ar
 - [ ] Renaming an open sibling's branch so that it no longer names the issue clears a warning that only the old sibling name justified.
 - [ ] Renaming a pull request's own branch so that it now names an issue its description declares re-evaluates it, and clears a warning that only the old branch name justified.
 - [ ] Retargeting a pull request between the default branch and a non-default branch re-evaluates it, so a warning that only the old base suppressed does not survive the change and a silence that only the new base justifies is not delayed.
+- [ ] Reopening a pull request re-evaluates it, so a warning that became obsolete while it was closed — because the sibling carrying the issue merged — does not survive the reopen.
+- [ ] Changing the repository's default branch re-evaluates the affected pull requests, even those whose own base was never touched.
 - [ ] A pull request reaching readiness for human review has its result re-evaluated, so a silence that went stale while it waited is corrected before a human reviews it.
 
 ### The indeterminate outcome
