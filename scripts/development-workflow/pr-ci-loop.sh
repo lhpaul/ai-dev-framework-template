@@ -306,7 +306,7 @@ workflow_run_names_for_sha() {
 # or none of the earlier SHAs ran workflows). Exit 1 means a lookup failed
 # and the expectation is unknown.
 previous_head_check_names() {
-  local repo="$1" pr_number="$2" current_sha="$3" shas="" sha="" names=""
+  local repo="$1" pr_number="$2" current_sha="$3" shas="" sha="" workflow_names=""
   # GitHub returns oldest-first. Reverse so we try newest earlier SHA first.
   # --slurp: with --paginate alone, jq runs per page and cannot reverse the
   # full commit list.
@@ -317,9 +317,9 @@ previous_head_check_names() {
   while IFS= read -r sha; do
     [ -n "$sha" ] || continue
     [ "$sha" != "$current_sha" ] || continue
-    names="$(workflow_run_names_for_sha "$repo" "$sha")" || return 1
-    if [ -n "$names" ]; then
-      printf '%s\n' "$names"
+    workflow_names="$(workflow_run_names_for_sha "$repo" "$sha")" || return 1
+    if [ -n "$workflow_names" ]; then
+      printf '%s\n' "$workflow_names"
       return 0
     fi
   done <<< "$shas"
