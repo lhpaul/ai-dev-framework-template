@@ -1130,7 +1130,13 @@ workflow_config_field() {
       return value
     }
 
-    $0 ~ ("^" section ":[[:space:]]*$") {
+    # A trailing comment on the section header is valid YAML
+    # ("template: # framework settings"), and issue_tracker parsing below
+    # already accepts one. Requiring a bare header here made
+    # workflow_template_is_template report false for such a file, silently
+    # downgrading a template repository to consumer handling and skipping the
+    # template-only assertions that guard it (#1631).
+    $0 ~ ("^" section ":[[:space:]]*(#.*)?$") {
       in_section = 1
       next
     }

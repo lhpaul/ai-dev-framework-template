@@ -156,17 +156,30 @@ jobs:
 
       # Some suites parse workflow YAML with Python (e.g.
       # test-workflow-branch-filters.sh) and hard-fail when PyYAML is absent.
-      # The runner image is not a contract, so install it explicitly rather
-      # than relying on whatever the image happens to ship (#1631).
-      - name: Ensure PyYAML is available
+      # The runner image is not a contract, so provide it explicitly (#1631).
+      #
+      # A dedicated venv with a pinned version, rather than "install if
+      # missing": an unpinned install takes whatever PyPI serves that day, and
+      # an "already present" branch takes whatever the image happens to ship —
+      # both leave the same commit free to change YAML-parsing behavior between
+      # runs, which is the nondeterminism this step exists to remove. The venv
+      # also keeps the install off the runner's system interpreter, which is
+      # externally managed on current images.
+      - name: Provision PyYAML
+        env:
+          PYYAML_VERSION: '6.0.2'
         run: |
           set -euo pipefail
-          if python3 -c 'import yaml' 2>/dev/null; then
-            echo "PyYAML already available."
-            exit 0
-          fi
-          python3 -m pip install --quiet --disable-pip-version-check PyYAML
-          python3 -c 'import yaml; print("PyYAML " + yaml.__version__)'
+          venv="${RUNNER_TEMP}/pyyaml-venv"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install --quiet --disable-pip-version-check \
+            "PyYAML==${PYYAML_VERSION}"
+          # Fail loudly here rather than letting a suite report a confusing
+          # parse error later.
+          "$venv/bin/python" -c \
+            "import yaml, sys; v = yaml.__version__; print('PyYAML ' + v); sys.exit(0 if v == '${PYYAML_VERSION}' else 1)"
+          # Subsequent steps resolve python3 from the venv.
+          echo "$venv/bin" >> "$GITHUB_PATH"
 
       - name: Run ${{ matrix.suite }}
         # Longest suite is test-pr-review-loop.sh at ~13 min; this bounds a hang

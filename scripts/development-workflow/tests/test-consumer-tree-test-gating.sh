@@ -128,6 +128,22 @@ write_config "$TMP_ROOT/dir with spaces [x]/cfg.yaml" 'template:' '  is_template
 run_test "is_template_path_with_spaces_and_glob" "true" \
   "$(workflow_template_is_template "$TMP_ROOT/dir with spaces [x]/cfg.yaml")"
 
+# A trailing comment on the section header is valid YAML. Reading it as "not a
+# template" would silently downgrade a template repository to consumer handling
+# and skip the very assertions these gates protect.
+write_config "$TMP_ROOT/commented-header.yaml" 'template: # framework settings' '  is_template: true'
+run_test "is_template_commented_section_header" "true" \
+  "$(workflow_template_is_template "$TMP_ROOT/commented-header.yaml")"
+
+write_config "$TMP_ROOT/spaced-header.yaml" 'template:   #   framework settings' '  is_template: true'
+run_test "is_template_spaced_commented_section_header" "true" \
+  "$(workflow_template_is_template "$TMP_ROOT/spaced-header.yaml")"
+
+# Negative: a commented header must not turn a consumer into a template either.
+write_config "$TMP_ROOT/commented-consumer.yaml" 'template: # framework settings' '  is_template: false'
+run_test "is_template_commented_header_consumer_stays_false" "false" \
+  "$(workflow_template_is_template "$TMP_ROOT/commented-consumer.yaml")"
+
 # The repository's own config is the live contract this template ships.
 run_test "is_template_live_repo_config" "true" \
   "$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")"
@@ -290,15 +306,215 @@ run_test "pr_policy_suite_template_reports_failure" "yes" \
   "$(output_contains "$template_output" "FAIL: workflow_exists")"
 
 # ---------------------------------------------------------------------------
-# Area 4: the suites that encode template defaults are actually gated
+# Area 4: planted-violation proof that the gates are load-bearing
 #
-# Static wiring checks. If someone re-hardcodes one of these assertions, the
-# downstream break returns silently; asserting the gate is present is what
-# makes that a red suite here rather than a red required check in a consumer.
+# Grepping a suite for the helper name proves nothing: the name matches from a
+# comment or a dead branch, so moving a template-only assertion back outside
+# its guard would reintroduce the consumer failure while this suite stayed
+# green. Instead, run each affected suite twice against the same fabricated
+# consumer tree — once as shipped, and once with the guard mechanically
+# removed. The gate is load-bearing only if the first passes and the second
+# fails. If the assertion ever drifts outside the guard, the "planted" run
+# stops differing from the shipped one and this suite goes red.
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== Area 4: gating is wired into the affected suites ==="
+echo "=== Area 4: planted-violation proof ==="
 
+# Remove a guard block from a copy of a suite, so the guarded assertions run
+# unconditionally — exactly the regression these gates exist to prevent.
+#
+#   drop-block   delete the `if` through its matching `fi` entirely (used where
+#                the guard is an early skip/return)
+#   unwrap-else  keep only the `else` body, dropping the `if` header and the
+#                `fi` (used where the guard wraps the assertions themselves)
+#
+# The guard is located by a needle matched against the `if` line, not by the
+# helper name, because a suite may compute the helper's value into a variable
+# on an earlier line.
+plant_violation() {
+  local src="$1"
+  local dest="$2"
+  local mode="$3"
+  local guard_needle="$4"
+
+  python3 - "$src" "$dest" "$mode" "$guard_needle" <<'PLANT'
+import io
+import sys
+
+src, dest, mode, needle = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+lines = io.open(src, encoding="utf-8").read().split("\n")
+
+guards = [
+    i for i, line in enumerate(lines)
+    if needle in line and line.lstrip().startswith("if ")
+]
+if len(guards) != 1:
+    sys.exit("expected exactly one guard matching %r, found %d" % (needle, len(guards)))
+
+guard = guards[0]
+depth = 0
+closer = None
+for j in range(guard, len(lines)):
+    stripped = lines[j].strip()
+    if stripped.startswith("if ") or stripped == "if":
+        depth += 1
+    elif stripped == "fi" or stripped.startswith("fi "):
+        depth -= 1
+        if depth == 0:
+            closer = j
+            break
+
+if closer is None:
+    sys.exit("could not find the guard's matching fi")
+
+if mode == "drop-block":
+    planted = lines[:guard] + lines[closer + 1:]
+elif mode == "unwrap-else":
+    body_start = None
+    depth = 0
+    for j in range(guard, closer):
+        stripped = lines[j].strip()
+        if stripped.startswith("if ") or stripped == "if":
+            depth += 1
+        elif stripped == "fi" or stripped.startswith("fi "):
+            depth -= 1
+        elif stripped == "else" and depth == 1:
+            body_start = j + 1
+            break
+    if body_start is None:
+        sys.exit("guard has no else branch to unwrap")
+    planted = lines[:guard] + lines[body_start:closer] + lines[closer + 1:]
+else:
+    sys.exit("unknown mode %r" % mode)
+
+io.open(dest, "w", encoding="utf-8").write("\n".join(planted))
+PLANT
+}
+
+# --- test-reviewer-loop-guard-workflow.sh -----------------------------------
+# Already proven to skip as shipped (Area 3). Now prove the guard is what does
+# it: without the guard the suite must fail in the same consumer tree.
+planted_pr_policy="$consumer_root/scripts/development-workflow/tests/planted-pr-policy.sh"
+# Planted violation: drop the early-skip block entirely, so the suite runs its
+# pr-policy.yml assertions in a tree that has no such file.
+plant_violation \
+  "$REPO_ROOT/scripts/development-workflow/tests/test-reviewer-loop-guard-workflow.sh" \
+  "$planted_pr_policy" drop-block '! -f "$WORKFLOW"' 
+
+set +e
+bash "$planted_pr_policy" >/dev/null 2>&1
+planted_pr_policy_status=$?
+set -e
+run_test "pr_policy_guard_is_load_bearing" "yes" \
+  "$(if [ "$planted_pr_policy_status" -ne 0 ]; then printf 'yes\n'; else printf 'no\n'; fi)"
+
+# --- test-placeholder-workflows-opt-in.sh -----------------------------------
+# Needs the template-owned docs it asserts against; symlink the real ones so the
+# fabricated tree differs from this repository only in the ways a consumer
+# actually differs.
+placeholder_root="$TMP_ROOT/placeholder-consumer"
+build_fake_root "$placeholder_root" false
+mkdir -p "$placeholder_root/docs/workflow/development-workflow"
+ln -s "$REPO_ROOT/docs/workflow/development-workflow/integrations" \
+  "$placeholder_root/docs/workflow/development-workflow/integrations"
+ln -s "$REPO_ROOT/docs/workflow/development-workflow/protocols" \
+  "$placeholder_root/docs/workflow/development-workflow/protocols"
+
+# A consumer's real pipelines, not this template's placeholders.
+printf '%s\n' 'name: Deploy' 'on:' '  push:' '    branches: [main]' \
+  > "$placeholder_root/.github/workflows/deploy.yml"
+printf '%s\n' 'name: E2E regression' 'on:' '  workflow_dispatch:' \
+  > "$placeholder_root/.github/workflows/e2e-regression.yml"
+
+cp "$REPO_ROOT/scripts/development-workflow/tests/test-placeholder-workflows-opt-in.sh" \
+  "$placeholder_root/scripts/development-workflow/tests/"
+
+set +e
+placeholder_output="$(bash "$placeholder_root/scripts/development-workflow/tests/test-placeholder-workflows-opt-in.sh" 2>&1)"
+placeholder_status=$?
+set -e
+run_test "placeholder_suite_consumer_exit_status" "0" "$placeholder_status"
+run_test "placeholder_suite_consumer_skips" "yes" \
+  "$(output_contains "$placeholder_output" "SKIP: placeholder deploy/e2e workflow assertions")"
+
+planted_placeholder="$placeholder_root/scripts/development-workflow/tests/planted-placeholder.sh"
+# Planted violation: unwrap the guard so the placeholder-shape assertions run
+# against this consumer tree's real deploy/e2e workflows.
+plant_violation \
+  "$REPO_ROOT/scripts/development-workflow/tests/test-placeholder-workflows-opt-in.sh" \
+  "$planted_placeholder" unwrap-else '"$IS_TEMPLATE" != "true"' 
+
+set +e
+bash "$planted_placeholder" >/dev/null 2>&1
+planted_placeholder_status=$?
+set -e
+run_test "placeholder_guard_is_load_bearing" "yes" \
+  "$(if [ "$planted_placeholder_status" -ne 0 ]; then printf 'yes\n'; else printf 'no\n'; fi)"
+
+# --- the two suites too expensive to nest -----------------------------------
+# test-batch-merge-recheck-remaining.sh mocks a full gh surface, and
+# test-pr-review-loop.sh runs for roughly 13 minutes; re-running either inside
+# this suite would dominate its cost. Assert structurally instead that the
+# gated assertion sits *inside* the guard block, which a comment or a dead
+# branch cannot satisfy. Both still run for real in CI, in both trees.
+assertion_is_inside_guard() {
+  local suite="$1"
+  local guard_needle="$2"
+  local assertion_needle="$3"
+
+  python3 - "$REPO_ROOT/scripts/development-workflow/tests/$suite" \
+    "$guard_needle" "$assertion_needle" <<'INSIDE'
+import io
+import sys
+
+path, guard_needle, assertion_needle = sys.argv[1], sys.argv[2], sys.argv[3]
+lines = io.open(path, encoding="utf-8").read().split("\n")
+
+guards = [
+    i for i, line in enumerate(lines)
+    if guard_needle in line and line.lstrip().startswith("if ")
+]
+if len(guards) != 1:
+    print("no")
+    raise SystemExit(0)
+
+guard = guards[0]
+depth = 0
+closer = None
+for j in range(guard, len(lines)):
+    stripped = lines[j].strip()
+    if stripped.startswith("if ") or stripped == "if":
+        depth += 1
+    elif stripped == "fi" or stripped.startswith("fi "):
+        depth -= 1
+        if depth == 0:
+            closer = j
+            break
+
+if closer is None:
+    print("no")
+    raise SystemExit(0)
+
+hits = [i for i, line in enumerate(lines) if assertion_needle in line]
+print("yes" if hits and all(guard < i < closer for i in hits) else "no")
+INSIDE
+}
+
+# Self-check: the containment helper must be able to say "no". Without this, a
+# helper that always printed "yes" would make both checks above vacuous — the
+# same weakness that the planted-violation runs exist to remove.
+run_test "containment_helper_rejects_ungated_assertion" "no" \
+  "$(assertion_is_inside_guard test-batch-merge-recheck-remaining.sh \
+      'workflow_template_is_template' 'SCRIPT_DIR=')"
+
+run_test "batch_merge_assertion_inside_is_template_guard" "yes" \
+  "$(assertion_is_inside_guard test-batch-merge-recheck-remaining.sh \
+      'workflow_template_is_template' 'placeholder_e2e_workflow_name_synced')"
+run_test "pr_review_loop_assertion_inside_reviewer_guard" "yes" \
+  "$(assertion_is_inside_guard test-pr-review-loop.sh \
+      'workflow_config_review_github_reviewer_configured' 'workflows/pr-agent.yml')"
+
+# --- assertions that must not come back -------------------------------------
 suite_contains() {
   local suite="$1"
   local pattern="$2"
@@ -309,24 +525,17 @@ suite_contains() {
   fi
 }
 
-run_test "placeholder_suite_gated_on_is_template" "yes" \
-  "$(suite_contains test-placeholder-workflows-opt-in.sh 'workflow_template_is_template')"
-run_test "batch_merge_suite_gated_on_is_template" "yes" \
-  "$(suite_contains test-batch-merge-recheck-remaining.sh 'workflow_template_is_template')"
-run_test "pr_policy_suite_gated_on_is_template" "yes" \
-  "$(suite_contains test-reviewer-loop-guard-workflow.sh 'workflow_template_is_template')"
-run_test "pr_review_loop_suite_gated_on_configured_reviewer" "yes" \
-  "$(suite_contains test-pr-review-loop.sh 'workflow_config_review_github_reviewer_configured "pr-agent"')"
-
-# The literal template reviewer list must not come back as an assertion.
+# The literal template reviewer list must not return as an assertion.
 run_test "local_ai_suite_drops_hardcoded_reviewer_list" "no" \
   "$(suite_contains test-local-ai-reviewer-pr-review-loop-dispatch.sh '"local-ai-reviewer,pr-agent"')"
 
-# The workflow harness must install PyYAML before running suites that parse
-# workflow YAML, and must not reintroduce the SC2016 sed program.
+# The workflow harness must provision a pinned PyYAML before running suites
+# that parse workflow YAML, and must not reintroduce the SC2016 sed program.
 workflow_file="$REPO_ROOT/.github/workflows/workflow-tests.yml"
-run_test "workflow_installs_pyyaml" "yes" \
-  "$(grep -Fq -- 'Ensure PyYAML is available' "$workflow_file" && printf 'yes\n' || printf 'no\n')"
+run_test "workflow_provisions_pyyaml" "yes" \
+  "$(grep -Fq -- 'Provision PyYAML' "$workflow_file" && printf 'yes\n' || printf 'no\n')"
+run_test "workflow_pins_pyyaml_version" "yes" \
+  "$(grep -Eq -- 'PyYAML==\$\{PYYAML_VERSION\}' "$workflow_file" && printf 'yes\n' || printf 'no\n')"
 run_test "workflow_has_no_sc2016_sed_summary" "0" \
   "$(grep -cF -- "sed 's/^/- " "$workflow_file" || true)"
 
