@@ -192,9 +192,21 @@ This feature is a workflow decision gate: its outcome depends on several inputs,
 | The pull request's own head branch | Its name, in either accepted form | Decides whether this pull request is itself the owner of an issue it declares — a rename can flip it between owner and non-owner |
 | The pull request's base branch | Whether it is the repository's default branch | Selects which closer will act, and therefore which filtering the validation must match |
 | Existing validation report | The pull request's own prior report, if any | Decides whether to update or clear rather than post again |
-| Sibling lifecycle and branch events | Another **implementation** pull request whose branch names the same issue opening, closing, or merging, or an open one being renamed into or out of naming it | Ownership evidence is mutable and lives outside this pull request, so it is an input in its own right |
+Every row above is **state the validation reads**. Failing to read any of them makes the run indeterminate.
 
-The gate re-evaluates on a change to any of its inputs: the pull request's description, its title where the title contributes filtering state, its labels, its own head branch, its base branch, or the set of open implementation pull requests whose branches name the issues it declares. A label change is a trigger in its own right — applying the opt-out clears an existing warning, and removing it restores one, without waiting for a push. A sibling opening, closing, or merging is likewise a trigger for every pull request whose result could turn on it, and readiness re-evaluates as a backstop.
+### Triggers
+
+Triggers are events, not state: they decide *when* the gate runs, and are never read as inputs, so their absence is not a failure and cannot make a run indeterminate.
+
+| Trigger | Why it fires |
+| --- | --- |
+| The description changes | Changes which issues are claimed |
+| The title changes, where the title contributes filtering state | Can flip whether a description reference is live |
+| The labels change | Applying or removing the opt-out takes effect on its own |
+| The pull request's own head branch is renamed | Can flip it between owner and non-owner |
+| The base branch changes | Swaps which closer will act, and therefore the filtering |
+| An open implementation sibling opens, closes, merges, or is renamed into or out of naming a declared issue | Ownership evidence lives outside this pull request and is mutable |
+| The pull request reaches readiness for human review | Backstop, so no silence can go stale while a pull request waits |
 
 ### Allowed outcomes and required next actions
 
@@ -240,12 +252,12 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 
 | #1644 objective | Disposition |
 | --- | --- |
-| PR validation, warn or block | Covered as **warn**, reporting from the description for every implementation branch type including hotfixes, with filtering selected by the closer the base branch implies; ACs 1-4, 10, 17, 26-46. Blocking, and reporting keywords found only outside the description, are Out of Scope |
+| PR validation, warn or block | Covered as **warn**, reporting from the description for every implementation branch type including hotfixes, with filtering selected by the closer the base branch implies; ACs 1-4, 10, 17, 26-47. Blocking, and reporting keywords found only outside the description, are Out of Scope |
 | Reviewer-loop or prepare-commit blocking finding | Out of Scope, item 2 |
 | Release-cleanup report for merged-but-omitted items | Out of Scope, item 3 |
 | False positives minimized | Business Rules, including the implementation-only, single-signal ownership rule and the exclusion of platform-derived links; ACs 5-7, 9, 11-12, 19, 20, 22-25 |
 | Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 13-17, including label provisioning on a fresh installation and a failed provisioning that still warns |
-| Tests for parser and validator edge cases | ACs 5-12 and 19-46 — ACs 5-9 and 11 cover parity with what each closer excludes, including the divergent handling of title fence state; ACs 18-24 the ownership rule with its contested, no-signal, team-prefixed, platform-link, documentation-stage and closed-sibling cases; ACs 25-29 the sibling-lifecycle, title, retarget and readiness triggers; ACs 32-40 the indeterminate outcome across every gate input, how it stays non-blocking and how a conclusive re-run supersedes it; ACs 43-45 the superseded-run freshness and ordering rules; AC 12 the fork-origin exclusion and AC 46 idempotence |
+| Tests for parser and validator edge cases | ACs 5-12 and 19-47 — ACs 5-9 and 11 cover parity with what each closer excludes, including the divergent handling of title fence state; ACs 18-24 the ownership rule with its contested, no-signal, team-prefixed, platform-link, documentation-stage and closed-sibling cases; ACs 25-29 the sibling-lifecycle, title, retarget and readiness triggers; ACs 33-41 the indeterminate outcome across every gate input, how it stays non-blocking and how a conclusive re-run supersedes it; ACs 44-46 the superseded-run freshness and ordering rules; AC 12 the fork-origin exclusion and AC 47 idempotence |
 
 ---
 
@@ -279,7 +291,8 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 - [ ] A pull request that was silent because no sibling carried the issue warns once a sibling pull request naming that issue opens, without any change to the pull request being warned.
 - [ ] A pull request that was warning stops warning once the sibling that carried the issue closes or merges, without any change to the pull request being warned.
 - [ ] For a pull request merging to a non-default branch, adding or removing an unclosed fence in the title re-evaluates it, so a warning appears or disappears with the description untouched.
-- [ ] Renaming an open sibling's branch so that it now names an issue this pull request declares re-evaluates this pull request, and raises a warning that no lifecycle event would have triggered.
+- [ ] Renaming an open sibling's branch so that it becomes the sole owner of an issue this pull request declares — with this pull request not an owner and no other sibling naming it — re-evaluates this pull request and raises a warning that no lifecycle event would have triggered.
+- [ ] Renaming an open sibling's branch into naming an issue this pull request already owns, or that another sibling already names, leaves the result silent, because ownership is then this pull request's own or contested.
 - [ ] Renaming an open sibling's branch so that it no longer names the issue clears a warning that only the old sibling name justified.
 - [ ] Renaming a pull request's own branch so that it now names an issue its description declares re-evaluates it, and clears a warning that only the old branch name justified.
 - [ ] Retargeting a pull request between the default branch and a non-default branch re-evaluates it, so a warning that only the old base suppressed does not survive the change and a silence that only the new base justifies is not delayed.
