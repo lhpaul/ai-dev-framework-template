@@ -250,23 +250,30 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 
 ### Issue-objective traceability
 
+Acceptance criteria are referenced by group rather than by number. The groups are the sub-headings under **Acceptance Criteria**; numbering has shifted repeatedly during review, and a numeric range silently stops meaning what it says the moment a criterion is inserted.
+
 | #1644 objective | Disposition |
 | --- | --- |
-| PR validation, warn or block | Covered as **warn**, reporting from the description for every implementation branch type including hotfixes, with filtering selected by the closer the base branch implies; ACs 1-4, 10, 17, 26-47. Blocking, and reporting keywords found only outside the description, are Out of Scope |
+| PR validation, warn or block | Covered as **warn**, reporting from the description for every implementation branch type including hotfixes, with filtering selected by the closer the base branch implies. Groups: *Reporting a mismatch*, *Re-evaluation triggers*. Blocking, and reporting keywords found only outside the description, are Out of Scope |
 | Reviewer-loop or prepare-commit blocking finding | Out of Scope, item 2 |
 | Release-cleanup report for merged-but-omitted items | Out of Scope, item 3 |
-| False positives minimized | Business Rules, including the implementation-only, single-signal ownership rule and the exclusion of platform-derived links; ACs 5-7, 9, 11-12, 19, 20, 22-25 |
-| Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 13-17, including label provisioning on a fresh installation and a failed provisioning that still warns |
-| Tests for parser and validator edge cases | ACs 5-12 and 19-47 — ACs 5-9 and 11 cover parity with what each closer excludes, including the divergent handling of title fence state; ACs 18-24 the ownership rule with its contested, no-signal, team-prefixed, platform-link, documentation-stage and closed-sibling cases; ACs 25-29 the sibling-lifecycle, title, retarget and readiness triggers; ACs 33-41 the indeterminate outcome across every gate input, how it stays non-blocking and how a conclusive re-run supersedes it; ACs 44-46 the superseded-run freshness and ordering rules; AC 12 the fork-origin exclusion and AC 47 idempotence |
+| False positives minimized | Business Rules, including the implementation-only, single-signal ownership rule and the exclusion of platform-derived links. Groups: *Which keywords count as live*, *Establishing ownership*, *The indeterminate outcome* |
+| Documented opt-out for intentional multi-issue pull requests | Use Case 3. Group: *The opt-out*, including provisioning on a fresh installation and a failed provisioning that still warns |
+| Tests for parser and validator edge cases | Every group carries its own edge cases; *Which keywords count as live* covers parity with what each closer excludes, *Establishing ownership* the contested, no-signal, team-prefixed, platform-link, documentation-stage and closed-sibling cases, *The indeterminate outcome* every unreadable input, and *Ordering and idempotence* the overlapping-run cases. *Fork-originated pull requests* records the one excluded shape |
 
 ---
 
 ## Acceptance Criteria
 
+### Reporting a mismatch
+
 - [ ] A pull request whose description declares a closing keyword for an issue that a different open pull request identifiably carries produces a warning naming that issue number, and the pull request remains mergeable.
 - [ ] The warning names, for each reported issue, the pull request that appears to carry it.
 - [ ] A pull request whose declared closing keywords all name work it carries produces no warning and no comment.
 - [ ] A pull request that declares no closing keywords produces no warning and no comment.
+
+### Which keywords count as live
+
 - [ ] A closing keyword that appears only inside a fenced code sample or a quoted line in the pull request description is not reported.
 - [ ] A closing keyword in the description is not reported when it appears inside any construct the canonical parser excludes: a backtick fence, a tilde fence, an inline code span, a code span spanning several lines, a blockquote, or a fence left unclosed. A keyword outside all of these is treated as a live reference and proceeds to scope evaluation; it is reported only when a sibling identifiably carries the issue and the `multi-issue-intentional` label is absent.
 - [ ] For a pull request merging to a non-default branch, a closing keyword in the description is not reported when an unclosed fence opened in the title suppresses it, matching what the repository's cleanup excludes.
@@ -274,13 +281,22 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 - [ ] A closing keyword that appears only in the pull request title is not reported, even when no fence is involved.
 - [ ] A hotfix pull request targeting the default branch is validated rather than exempted, and warns when its description claims a sibling's issue.
 - [ ] A word that merely contains a closing keyword as a substring — for example "disclose" or "hotfix" — is not reported.
+
+### Fork-originated pull requests
+
 - [ ] A fork-originated pull request is not validated: no report is posted on it and no label is created, whatever its description declares.
+
+### The opt-out
+
 - [ ] In a repository that does not yet have the `multi-issue-intentional` label, an author can still apply it — the validation creates it on first use, and creating it a second time concurrently does not fail.
 - [ ] When the `multi-issue-intentional` label is missing and cannot be created, a warranted warning is still posted, and its report says the opt-out label could not be created and names it.
 - [ ] A pull request carrying the `multi-issue-intentional` label produces no warning, even when its closing keywords name issues that another pull request carries.
 - [ ] Applying the `multi-issue-intentional` label to an already-warned pull request clears the existing warning, without any push to the pull request.
 - [ ] Removing the `multi-issue-intentional` label makes the warning reappear, without any push to the pull request.
 - [ ] Editing a warned pull request to drop the out-of-scope closing keyword makes the warning clear on the next run, without leaving a stale warning behind.
+
+### Establishing ownership
+
 - [ ] When no open pull request carries an issue named by a closing keyword, no warning is produced for it.
 - [ ] When two open pull requests both name the same issue in their branch, ownership is contested and no warning is produced for that issue.
 - [ ] A sibling whose branch names the issue in team-prefixed form is recognized as the owner, and produces the same warning as a sibling whose branch names it in bare-number form.
@@ -288,6 +304,9 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 - [ ] A pull request whose branch does not name an issue it declares is not treated as that issue's owner, whatever the issue's tracker item links.
 - [ ] An open `spec/` or `implementation-plan/` pull request naming the issue is never treated as its owner, and does not make ownership contested.
 - [ ] A closed or merged pull request is never treated as the sibling owner.
+
+### Re-evaluation triggers
+
 - [ ] A pull request that was silent because no sibling carried the issue warns once a sibling pull request naming that issue opens, without any change to the pull request being warned.
 - [ ] A pull request that was warning stops warning once the sibling that carried the issue closes or merges, without any change to the pull request being warned.
 - [ ] For a pull request merging to a non-default branch, adding or removing an unclosed fence in the title re-evaluates it, so a warning appears or disappears with the description untouched.
@@ -297,6 +316,9 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 - [ ] Renaming a pull request's own branch so that it now names an issue its description declares re-evaluates it, and clears a warning that only the old branch name justified.
 - [ ] Retargeting a pull request between the default branch and a non-default branch re-evaluates it, so a warning that only the old base suppressed does not survive the change and a silence that only the new base justifies is not delayed.
 - [ ] A pull request reaching readiness for human review has its result re-evaluated, so a silence that went stale while it waited is corrected before a human reviews it.
+
+### The indeterminate outcome
+
 - [ ] When the description cannot be fetched or filtered, an existing warning on that pull request is left in place rather than cleared, and the run does not report a clean result.
 - [ ] When the open pull requests cannot be listed, an existing warning is left in place and the run does not report a clean result.
 - [ ] When the opt-out label cannot be read, the run is indeterminate rather than warning — an unreadable label is never treated as an absent one.
@@ -306,6 +328,9 @@ No input combination blocks a merge, changes mergeability, or edits an issue, mi
 - [ ] An indeterminate run leaves a neutral, non-blocking check conclusion and a log line naming what could not be read; it never leaves a failing check.
 - [ ] A pull request whose validation is indeterminate remains exactly as mergeable as it was before the run.
 - [ ] After an indeterminate run, a conclusive re-run on the same commit replaces the neutral "did not conclude" check, including when the conclusive result is silent and posts no report.
+
+### Ordering and idempotence
+
 - [ ] When two runs read identical inputs and the later-started one finishes first with a conclusive result, an earlier-started indeterminate run finishing afterwards does not replace that conclusive check with "did not conclude".
 - [ ] When two runs overlap and the later one clears a warning, an earlier run finishing afterwards does not restore it.
 - [ ] When two runs overlap and the later one raises a warning, an earlier run finishing afterwards does not clear it.
