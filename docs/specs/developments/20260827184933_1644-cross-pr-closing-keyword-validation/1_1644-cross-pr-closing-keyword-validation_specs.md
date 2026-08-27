@@ -19,8 +19,8 @@ This feature warns the pull request author when a pull request declares that it 
 
 **Steps**:
 
-1. The author opens the pull request, or updates its description or commits.
-2. The validation reads the pull request's own declared closing keywords.
+1. The author opens the pull request, updates its description, or changes its labels.
+2. The validation reads the closing keywords declared in the pull request description.
 3. For each issue named, it establishes whether this pull request is the one carrying that issue's work.
 4. It finds at least one issue that a *different* open pull request identifiably carries.
 5. It reports the mismatch on the pull request.
@@ -98,8 +98,8 @@ This feature warns the pull request author when a pull request declares that it 
 
 - The validation is **advisory only**. It never blocks a merge, never changes the mergeability of a pull request, and never edits an issue, label, milestone, or release.
 - The validation reports on a pull request's **own declared closing keywords**, and only those. It does not infer that a pull request ought to close something.
-- An issue named by a closing keyword is **in scope** for a pull request when that pull request is identifiably the one carrying its implementation. An issue whose implementation is identifiably carried by a different pull request is **out of scope** and is reported.
-- When scope cannot be established either way, the validation **stays silent**. A warning that fires on absence of evidence would train people to ignore it.
+- An issue named by a closing keyword is **in scope** for a pull request when that pull request is identifiably the one carrying its implementation, established from the ownership signals below. An issue identifiably carried by a *different* open pull request is **out of scope** and is reported.
+- When ownership cannot be established either way, the validation **stays silent**. A warning that fires on absence of evidence would train people to ignore it.
 - The validation reads the **pull request description**. It does not read the title or the commit messages.
 - Within the description, what counts as quoted prose or a code sample — and is therefore **not a live reference** — follows the **filtering semantics of the canonical parser** (the one post-merge cleanup uses). This is agreement about how text is filtered, not about which text is read: the canonical parser additionally reads the title and the commit messages, and this feature deliberately does not.
 - Because the input surfaces differ, a closing keyword that appears **only** in the title or in a commit message is outside what this feature examines. That gap is recorded in Out of Scope rather than papered over.
@@ -108,6 +108,25 @@ This feature warns the pull request author when a pull request declares that it 
 - The opt-out is evaluated **at the time the validation runs**. Applying the label does not retroactively rewrite history, and removing it restores the warning on the next run.
 - The result is **recomputed** whenever the pull request's text changes **or its labels change**. A stale warning must not survive the edit that fixed it, and applying or removing the opt-out must take effect on its own — neither should wait for an unrelated push.
 - The validation is **read-only with respect to project state**: it may post or update its own report on the pull request, and does nothing else.
+
+---
+
+### Establishing ownership
+
+"Identifiably carries" is not a judgement call. An open pull request is taken to carry an issue on these signals, in this order of precedence:
+
+| Rank | Signal | Why it ranks here |
+| --- | --- | --- |
+| 1 | The pull request's **branch names the issue** — this repository's implementation branches are `<prefix>/<issue-number>-<slug>`, and the branch-name guard already enforces a bare numeric identifier | The strongest and cheapest signal: it is set when the branch is cut, and it is what the rest of the workflow already keys off |
+| 2 | The **tracker item for the issue links this pull request** as its implementation | Covers work whose branch predates the convention or was renamed |
+
+Rules for combining them:
+
+- **A higher-ranked signal wins.** If a pull request's branch names issue 42 but issue 42's tracker item links a different pull request, rank 1 decides: the branch owner carries it.
+- **No signal on any open pull request** → ownership is unestablished. Silent.
+- **The same rank points at two or more open pull requests** — for example two open branches both naming issue 42 — → ownership is contested, not established. Silent, because guessing which sibling is "the" owner is exactly the mistake this feature exists to catch.
+- **The pull request being validated is itself the owner** → the issue is in scope. Silent.
+- A closed or merged pull request is not considered. Only open pull requests can be a sibling owner, because only they represent work still in flight in the same batch.
 
 ---
 
@@ -128,7 +147,7 @@ This feature is a workflow decision gate: its outcome depends on several inputs,
 | Input | Where it comes from | Why it matters |
 | --- | --- | --- |
 | Declared closing keywords in the pull request description | The description only — not the title, not the commit messages — filtered by the canonical parser's semantics | The set of issues the description claims to close |
-| Sibling ownership of each named issue | The other open pull requests | Establishes whether a different pull request identifiably carries that issue |
+| Sibling ownership of each named issue | The other **open** pull requests, judged by the ownership signals in Business Rules (branch naming first, tracker linkage second) | Establishes whether a different pull request identifiably carries that issue |
 | `multi-issue-intentional` label | The pull request's labels | Author's recorded statement that multi-issue scope is deliberate |
 | Existing validation report | The pull request's own prior report, if any | Decides whether to update or clear rather than post again |
 
@@ -142,7 +161,8 @@ The gate re-evaluates on a change to the pull request's text or to its labels. A
 | All named issues carried by this pull request | Silent | Nothing posted; any prior report cleared | None |
 | At least one named issue identifiably carried by a sibling, label absent | **Warning** | Posts or updates one report naming each out-of-scope issue and its sibling | Drop the keyword, or apply `multi-issue-intentional` |
 | At least one named issue identifiably carried by a sibling, label present | Silent | Clears any prior report | None |
-| Ownership cannot be established for a named issue | Silent **for that issue** | That issue is not reported; other issues are judged on their own | None |
+| Ownership cannot be established for a named issue — no signal on any open pull request | Silent **for that issue** | That issue is not reported; other issues are judged on their own | None |
+| Ownership is contested — the same rank points at two or more open pull requests | Silent **for that issue** | Not reported; guessing an owner is the mistake this feature exists to catch | None |
 
 No input combination blocks a merge, changes mergeability, or edits an issue, label, milestone, or release.
 
@@ -171,9 +191,9 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 | PR validation, warn or block | Covered as **warn** over the description; blocking, and keywords outside the description, are Out of Scope |
 | Reviewer-loop or prepare-commit blocking finding | Out of Scope, item 2 |
 | Release-cleanup report for merged-but-omitted items | Out of Scope, item 3 |
-| False positives minimized | Business Rules; ACs 5, 6, 7, 12 |
+| False positives minimized | Business Rules, including the ownership precedence table; ACs 5, 6, 7, 12-15 |
 | Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 8, 9, 10 |
-| Tests for parser and validator edge cases | ACs 5, 6, 7, 12, 13 — AC 6 covers parity with every construct the canonical parser excludes |
+| Tests for parser and validator edge cases | ACs 5, 6, 7, 12-16 — AC 6 covers parity with every construct the canonical parser excludes; ACs 12-15 cover the ownership edge cases |
 
 ---
 
@@ -190,7 +210,10 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 - [ ] Applying the `multi-issue-intentional` label to an already-warned pull request clears the existing warning, without any push to the pull request.
 - [ ] Removing the `multi-issue-intentional` label makes the warning reappear, without any push to the pull request.
 - [ ] Editing a warned pull request to drop the out-of-scope closing keyword makes the warning clear on the next run, without leaving a stale warning behind.
-- [ ] When scope cannot be established for an issue, no warning is produced for it.
+- [ ] When no open pull request carries an issue named by a closing keyword, no warning is produced for it.
+- [ ] When two open pull requests both name the same issue in their branch, ownership is contested and no warning is produced for that issue.
+- [ ] A pull request whose branch names the issue is treated as the owner even when the issue's tracker item links a different pull request, and produces no warning for it.
+- [ ] A closed or merged pull request is never treated as the sibling owner.
 - [ ] Running the validation twice on an unchanged pull request leaves a single report, not two.
 
 ---
