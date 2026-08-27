@@ -101,7 +101,15 @@ This feature warns the pull request author when a pull request declares that it 
 - An issue named by a closing keyword is **in scope** for a pull request when that pull request is identifiably the one carrying its implementation, established from the ownership rule below. An issue identifiably carried by a *different* open pull request is **out of scope** and is reported.
 - When ownership cannot be established either way, the validation **stays silent**. A warning that fires on absence of evidence would train people to ignore it.
 - The validation **reports** only closing keywords found in the **pull request description**. It never reports one found only in the title or in a commit message.
-- The **title participates in filtering state, and nothing else**. The canonical parser reads the title and the description as one piece of text before filtering, so an unclosed fence opened in the title suppresses what follows it in the description. The validation inherits that: it establishes filtering state from the title and description together, then reports only from the description. Filtering the description in isolation would make the warning contradict what the cleanup actually closes — the very disagreement the consistency requirement exists to prevent.
+- **Which filtering applies depends on who will do the closing.** Two different closers exist, and the validation must agree with whichever one will act on this pull request:
+
+| Pull request merges to | Who closes the issue | Filtering the validation must match |
+| --- | --- | --- |
+| A branch that is **not** the default branch — the ordinary development and integration case | The repository's own cleanup, which reads the title and description as one piece of text before filtering | Filtering state is established from the **title and description together**, so an unclosed fence opened in the title suppresses what follows it in the description |
+| The **default branch** — the hotfix case | The platform, natively, from the description | The **description is filtered on its own**; a fence opened in the title does not suppress anything, because the platform never saw the title as part of that text |
+
+- In both cases, reporting still comes from the description alone. What changes between them is only which text establishes filtering state.
+- Matching the wrong closer in either direction would break the guarantee: filtering the description in isolation for a development pull request would report a keyword the cleanup will never act on, and inheriting title state for a hotfix would stay silent on a keyword the platform will act on.
 - Within the description, what counts as quoted prose or a code sample — and is therefore **not a live reference** — follows the **filtering semantics of the canonical parser** (the one post-merge cleanup uses). This is agreement about how text is filtered, not about which text is read: the canonical parser additionally reads the title and the commit messages, and this feature deliberately does not.
 - Because the input surfaces differ, a closing keyword that appears **only** in the title or in a commit message is outside what this feature examines. That gap is recorded in Out of Scope rather than papered over.
 - The graduation closeout recognizes a narrower set of excluded constructs today. That difference is pre-existing, is neither introduced nor widened here, and reconciling the two parsers is not part of this feature.
@@ -184,7 +192,8 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 
 | Surface | Relationship | Consistency requirement |
 | --- | --- | --- |
-| Post-merge cleanup's closing-keyword reading | Decides what actually gets closed; reads the title, description, and commit messages, concatenating title and description before filtering | **Canonical for filtering semantics.** The validation must exclude exactly what this parser excludes, including the effect of fence state opened in the title. It differs in what it *reports*: the description only, never the title or the commit messages. |
+| Post-merge cleanup's closing-keyword reading | Decides what gets closed for pull requests merging to a non-default branch; reads the title, description, and commit messages, concatenating title and description before filtering | **Canonical for those pull requests.** The validation must exclude exactly what this parser excludes, including the effect of fence state opened in the title. It differs in what it *reports*: the description only. |
+| The platform's own closing-keyword handling | Decides what gets closed for pull requests merging to the default branch, natively, from the description | **Canonical for those pull requests.** The description is filtered on its own; title fence state does not apply, because the platform never read the title as part of that text. |
 | Graduation closeout's closing-keyword reading | Same parsing question on graduation pull requests | **Deliberately not mirrored.** It recognizes a narrower set of non-live references than the canonical parser does today. Unchanged by this feature, and reconciling the two is out of scope. |
 | Release-scope ancestry gate | Consumes the consequences of a wrongly closed issue | Out of scope here; this feature reduces how often that gate sees the problem, and changes none of its behavior |
 
@@ -198,17 +207,19 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 | `Closes #1630` with `multi-issue-intentional` applied | Silent | Author recorded deliberate multi-issue scope |
 | `Closes #1630` where no pull request carries #1630 | Silent | Ownership not established; absence of evidence is not a warning |
 | `Closes #97` where a sibling is on `fix/lh-97-some-slug` | Warning | A team-prefixed branch names issue 97 just as a bare-number branch would |
+| A title opening an unclosed fence, `Closes #1630` in the description, merging to a non-default branch | Silent | The cleanup that will close it reads title and description together, so the fence suppresses the reference |
+| The same pull request merging to the default branch | Warning | The platform closes from the description alone and never saw the title, so the reference is live |
 
 ### Issue-objective traceability
 
 | #1644 objective | Disposition |
 | --- | --- |
-| PR validation, warn or block | Covered as **warn**, reporting from the description across every implementation branch type including hotfixes; ACs 1-4, 9, 14, 21-24. Blocking, and reporting keywords found only outside the description, are Out of Scope |
+| PR validation, warn or block | Covered as **warn**, reporting from the description across every implementation branch type including hotfixes; ACs 1-4, 10, 15, 22-25. Blocking, and reporting keywords found only outside the description, are Out of Scope |
 | Reviewer-loop or prepare-commit blocking finding | Out of Scope, item 2 |
 | Release-cleanup report for merged-but-omitted items | Out of Scope, item 3 |
-| False positives minimized | Business Rules, including the single-signal ownership rule and the exclusion of platform-derived links; ACs 5-8, 10, 15, 16, 18-20 |
-| Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 11-13 |
-| Tests for parser and validator edge cases | ACs 5-10 and 15-24 — ACs 5-8 and 10 cover parity with every construct the canonical parser excludes, including fence state opened in the title; ACs 15-20 the ownership rule with its contested, no-signal, team-prefixed, platform-link and closed-sibling cases; ACs 21-24 the sibling-lifecycle, readiness and idempotence behaviors |
+| False positives minimized | Business Rules, including the single-signal ownership rule and the exclusion of platform-derived links; ACs 5-7, 9, 11, 16, 17, 19-21 |
+| Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 12-14 |
+| Tests for parser and validator edge cases | ACs 5-11 and 16-25 — ACs 5-9 and 11 cover parity with what each closer excludes, including the divergent handling of title fence state; ACs 16-21 the ownership rule with its contested, no-signal, team-prefixed, platform-link and closed-sibling cases; ACs 22-25 the sibling-lifecycle, readiness and idempotence behaviors |
 
 ---
 
@@ -220,7 +231,8 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 - [ ] A pull request that declares no closing keywords produces no warning and no comment.
 - [ ] A closing keyword that appears only inside a fenced code sample or a quoted line in the pull request description is not reported.
 - [ ] A closing keyword in the description is not reported when it appears inside any construct the canonical parser excludes: a backtick fence, a tilde fence, an inline code span, a code span spanning several lines, a blockquote, or a fence left unclosed. A keyword outside all of these is treated as a live reference and proceeds to scope evaluation; it is reported only when a sibling identifiably carries the issue and the `multi-issue-intentional` label is absent.
-- [ ] A closing keyword in the description is not reported when an unclosed fence opened in the pull request title suppresses it, matching what the canonical parser excludes.
+- [ ] For a pull request merging to a non-default branch, a closing keyword in the description is not reported when an unclosed fence opened in the title suppresses it, matching what the repository's cleanup excludes.
+- [ ] For a hotfix pull request merging to the default branch, a closing keyword in the description **is** reported despite an unclosed fence opened in the title, because the platform closes from the description alone.
 - [ ] A closing keyword that appears only in the pull request title is not reported, even when no fence is involved.
 - [ ] A hotfix pull request targeting the default branch is validated the same as any other implementation pull request, and warns when its description claims a sibling's issue.
 - [ ] A word that merely contains a closing keyword as a substring — for example "disclose" or "hotfix" — is not reported.
