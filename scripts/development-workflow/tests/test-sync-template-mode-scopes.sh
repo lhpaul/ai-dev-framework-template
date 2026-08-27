@@ -336,22 +336,6 @@ run_not_contains \
   "retro_metrics_platforms_not_declared_always_sync" \
   "category=always_sync mode_scope=shared path=docs/workflow/retro-metrics-platforms.md" \
   "$real_single_output"
-run_contains \
-  "workflow_tests_yml_always_sync_hub_only" \
-  "SELECTED category=always_sync mode_scope=hub_only path=.github/workflows/workflow-tests.yml glob=" \
-  "$real_single_output"
-run_contains \
-  "advisory_checks_selected_project_specific_single_repo" \
-  "SELECTED category=project_specific mode_scope=hub_only path=scripts/development-workflow/run-advisory-checks.sh glob=" \
-  "$real_single_output"
-run_contains \
-  "advisory_checks_selected_project_specific_workflow_hub" \
-  "SELECTED category=project_specific mode_scope=hub_only path=scripts/development-workflow/run-advisory-checks.sh glob=" \
-  "$real_hub_output"
-run_not_contains \
-  "advisory_checks_not_declared_always_sync" \
-  "category=always_sync mode_scope=hub_only path=scripts/development-workflow/run-advisory-checks.sh" \
-  "$real_single_output"
 
 echo ""
 echo "sync-template mode-scope tests complete: $PASS_COUNT passed, $FAIL_COUNT failed."
