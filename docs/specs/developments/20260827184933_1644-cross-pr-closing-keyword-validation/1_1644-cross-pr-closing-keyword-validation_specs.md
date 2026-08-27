@@ -45,7 +45,7 @@ Fork-originated pull requests are out of scope. This repository requires a same-
 
 - Closing keywords that appear inside quoted prose or a code sample are not live references and must not be reported.
 - An issue that no other pull request carries is not, on its own, evidence of a mistake — a pull request may legitimately be the first and only one to address it.
-- The check must re-run when the pull request description changes, when its labels change, when its own branch is renamed, and when an open pull request whose branch names one of the issues appears, departs, or is renamed into or out of naming it, so a corrected pull request stops warning — and a newly conflicted one starts — without anyone re-triggering it by hand.
+- The check must re-run when the pull request description changes, when its labels change, when its own branch is renamed, and when a pull request whose branch names one of the issues appears, reappears, departs, or is renamed into or out of naming it, so a corrected pull request stops warning — and a newly conflicted one starts — without anyone re-triggering it by hand.
 
 ---
 
@@ -125,7 +125,7 @@ Fork-originated pull requests are out of scope. This repository requires a same-
   - **it is opened or reopened** — a closed pull request is not evaluated, so its owning sibling may have merged in the meantime and the warning it carried may already be obsolete;
   - **the repository's default branch changes**, even with this pull request's own base untouched — what matters is whether its base *is* the default branch;
   - **its base branch changes** — retargeting between the default branch and a non-default branch swaps which closer will act, and therefore which filtering applies, without a single character of the description changing;
-  - **ownership evidence for an issue it names changes** — another implementation pull request whose branch names that issue opens, closes, or merges, **or an open one is renamed into or out of naming it**. A sibling renamed from `fix/98-slug` to `fix/97-slug` starts carrying issue 97 without any lifecycle event at all.
+  - **ownership evidence for an issue it names changes** — another implementation pull request whose branch names that issue opens, reopens, closes, or merges, **or an open one is renamed into or out of naming it**. A sibling renamed from `fix/98-slug` to `fix/97-slug` starts carrying issue 97 without any lifecycle event at all.
 - A stale warning must not survive the edit that fixed it, and a stale **silence** must not survive the sibling that created the conflict. A pull request that was silent because no sibling existed must warn once a sibling appears, without anyone touching it.
 - **Readiness backstop**: the result is re-evaluated when the pull request reaches readiness for human review, so no pull request can carry a silence that went stale while it waited.
 - The validation is **read-only with respect to project state**, with one exception: it may post or update its own report on the pull request, and it may create the `multi-issue-intentional` label if the repository does not have it yet. It does nothing else.
@@ -207,7 +207,7 @@ Triggers are events, not state: they decide *when* the gate runs, and are never 
 | The labels change | Applying or removing the opt-out takes effect on its own |
 | The pull request's own head branch is renamed | Can flip it between owner and non-owner |
 | The base branch changes | Swaps which closer will act, and therefore the filtering |
-| An open implementation sibling opens, closes, merges, or is renamed into or out of naming a declared issue | Ownership evidence lives outside this pull request and is mutable |
+| An implementation sibling opens, **reopens**, closes, merges, or is renamed into or out of naming a declared issue | Ownership evidence lives outside this pull request and is mutable. Reopening restores ownership evidence exactly as closing removed it, so it has to be as much of a trigger |
 | The pull request is opened, or reopened | Opening is the first evaluation. Reopening matters because a closed pull request is not evaluated at all: its owning sibling can merge while it is closed, so the warning it carried may already be obsolete when it comes back |
 | The repository's default branch changes | The gate input is whether this pull request's base *is* the default branch. Moving the default under a pull request that never changed its own base swaps the responsible closer, and therefore whether title fence state applies |
 | The pull request reaches readiness for human review | Backstop, so no silence can go stale while a pull request waits |
@@ -313,6 +313,7 @@ Acceptance criteria are referenced by group rather than by number. The groups ar
 
 - [ ] A pull request that was silent because no sibling carried the issue warns once a sibling pull request naming that issue opens, without any change to the pull request being warned.
 - [ ] A pull request that was warning stops warning once the sibling that carried the issue closes or merges, without any change to the pull request being warned.
+- [ ] Reopening a sole owning sibling restores the warning on the pull request that declares its issue, without any change to that pull request.
 - [ ] For a pull request merging to a non-default branch, adding or removing an unclosed fence in the title re-evaluates it, so a warning appears or disappears with the description untouched.
 - [ ] Renaming an open sibling's branch so that it becomes the sole owner of an issue this pull request declares — with this pull request not an owner and no other sibling naming it — re-evaluates this pull request and raises a warning that no lifecycle event would have triggered.
 - [ ] Renaming an open sibling's branch into naming an issue this pull request already owns, or that another sibling already names, leaves the result silent, because ownership is then this pull request's own or contested.
