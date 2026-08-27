@@ -13,7 +13,7 @@ description: After a development PR is merged, sync with origin, switch to the m
 2. **No argument**: the current branch is the one to delete (user runs while still on the merged branch).
 3. **With `branch-name`**: delete that local branch (e.g. `feature/my-feature`).
 4. **With `--base base-branch`**: explicitly choose the cleanup base branch. When omitted for hub-owned cleanup, the script queries the merged PR base and fails closed if that lookup is unavailable.
-5. **With `--pr merged-pr-number`**: bind implementation remote branch cleanup to the exact merged PR before deleting any remote branch. Use this after a known PR merge.
+5. **With `--pr merged-pr-number`**: bind implementation remote branch cleanup to the exact merged PR before deleting any remote branch. Required on implementation branches; the helper fail-fasts with exit 64 when this flag is missing.
 6. In `workflow_hub`, preserve the selected product repository context for product-owned implementation cleanup and pass it through to shared cleanup helpers; hub-owned spec, plan, and workflow PR cleanup remains in the hub. Missing mode or `single_repo` keeps current cleanup behavior.
 7. **Update the issue tracker (if configured)**
    The merged branch name often contains an issue identifier (e.g. `feature/ENG-123-user-auth` → `ENG-123`, `fix/PROJ-456-login` → `PROJ-456`, `feature/42-user-auth` → `#42`). After the script succeeds, update the corresponding issue using the branch-type-based status table from Step 10 of `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`:
