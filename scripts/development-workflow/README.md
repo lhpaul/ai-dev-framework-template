@@ -80,7 +80,7 @@ shipped defaults therefore turns a successful sync into a red required check
 When an assertion depends on something a consumer may legitimately change,
 read the live configuration or skip — do not hard-code the template value:
 
-<!-- workflow-shell-contract: bash -->
+<!-- workflow-shell-contract: bash-zsh -->
 
 ```bash
 # shellcheck source=scripts/development-workflow/workflow-lib.sh
