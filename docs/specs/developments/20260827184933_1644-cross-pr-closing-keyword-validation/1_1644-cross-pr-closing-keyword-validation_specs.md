@@ -118,7 +118,16 @@ This feature warns the pull request author when a pull request declares that it 
 
 ### Establishing ownership
 
-"Identifiably carries" is not a judgement call. An open pull request carries an issue when, and only when, **its branch names that issue**. This repository's implementation branches are `<prefix>/<issue-number>-<slug>`, and the branch-name guard already enforces a bare numeric identifier, so the signal is set when the branch is cut and is what the rest of the workflow already keys off.
+"Identifiably carries" is not a judgement call. An open pull request carries an issue when, and only when, **its branch names that issue**. The signal is set when the branch is cut, and it is what the rest of the workflow already keys off.
+
+A branch names an issue in either of the two forms the branch-name guard accepts:
+
+| Form | Example | The issue it names |
+| --- | --- | --- |
+| Bare number | `fix/1858-some-slug` | 1858 |
+| Team-prefixed | `fix/lh-97-some-slug` | 97 |
+
+**The issue is the numeric part, with any team prefix ignored.** A team-prefixed branch names the same issue as the bare-number form, so a sibling on `fix/lh-97-some-slug` is the owner of issue 97 exactly as one on `fix/97-some-slug` would be. Reading only the bare-number form would leave every team-prefixed sibling invisible, and the warning would go silent on precisely the mistake it exists to catch.
 
 There is deliberately **one** signal. An earlier draft added the issue's tracker link as a second, lower-ranked signal, to catch work whose branch predates the convention or was renamed. It was removed: the platform creates an issue-to-pull-request link from the very closing keyword this feature examines, so a pull request that wrongly claimed an issue would be linked to it *because* of that claim, read as the issue's owner, and suppress the warning it was supposed to produce. Distinguishing a deliberately recorded link from a platform-derived one is not reliably observable, and a signal that cannot be classified deterministically is worse than no signal. Ownership by tracker linkage is recorded in Out of Scope.
 
@@ -150,7 +159,7 @@ This feature is a workflow decision gate: its outcome depends on several inputs,
 | Input | Where it comes from | Why it matters |
 | --- | --- | --- |
 | Declared closing keywords in the pull request description | The description only — not the title, not the commit messages — filtered by the canonical parser's semantics | The set of issues the description claims to close |
-| Sibling ownership of each named issue | The branch names of the other **open** pull requests | Establishes whether a different pull request identifiably carries that issue |
+| Sibling ownership of each named issue | The branch names of the other **open** pull requests, in either the bare-number or the team-prefixed form | Establishes whether a different pull request identifiably carries that issue |
 | `multi-issue-intentional` label | The pull request's labels | Author's recorded statement that multi-issue scope is deliberate |
 | Existing validation report | The pull request's own prior report, if any | Decides whether to update or clear rather than post again |
 | Sibling lifecycle events | Another pull request whose branch names the same issue opening, closing, or merging | Ownership evidence is mutable and lives outside this pull request, so it is an input in its own right |
@@ -187,6 +196,7 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 | `This does not disclose #1630` | Silent | `disclose` merely contains a closing keyword as a substring |
 | `Closes #1630` with `multi-issue-intentional` applied | Silent | Author recorded deliberate multi-issue scope |
 | `Closes #1630` where no pull request carries #1630 | Silent | Ownership not established; absence of evidence is not a warning |
+| `Closes #97` where a sibling is on `fix/lh-97-some-slug` | Warning | A team-prefixed branch names issue 97 just as a bare-number branch would |
 
 ### Issue-objective traceability
 
@@ -195,9 +205,9 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 | PR validation, warn or block | Covered as **warn** over the description; blocking, and keywords outside the description, are Out of Scope |
 | Reviewer-loop or prepare-commit blocking finding | Out of Scope, item 2 |
 | Release-cleanup report for merged-but-omitted items | Out of Scope, item 3 |
-| False positives minimized | Business Rules, including the single-signal ownership rule and the exclusion of platform-derived links; ACs 5-7, 12-17 |
+| False positives minimized | Business Rules, including the single-signal ownership rule and the exclusion of platform-derived links; ACs 5-7, 12-18 |
 | Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 8-10 |
-| Tests for parser and validator edge cases | ACs 5-7 and 12-20 — AC 6 covers parity with every construct the canonical parser excludes; ACs 12-17 the ownership rule with its contested, no-signal, platform-link and closed-sibling cases; ACs 18-20 the sibling-lifecycle and readiness triggers |
+| Tests for parser and validator edge cases | ACs 5-7 and 12-21 — AC 6 covers parity with every construct the canonical parser excludes; ACs 12-18 the ownership rule with its contested, no-signal, team-prefixed, platform-link and closed-sibling cases; ACs 19-21 the sibling-lifecycle and readiness triggers |
 
 ---
 
@@ -216,6 +226,7 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 - [ ] Editing a warned pull request to drop the out-of-scope closing keyword makes the warning clear on the next run, without leaving a stale warning behind.
 - [ ] When no open pull request carries an issue named by a closing keyword, no warning is produced for it.
 - [ ] When two open pull requests both name the same issue in their branch, ownership is contested and no warning is produced for that issue.
+- [ ] A sibling whose branch names the issue in team-prefixed form is recognized as the owner, and produces the same warning as a sibling whose branch names it in bare-number form.
 - [ ] A pull request whose only connection to an issue is the platform link derived from its own closing keyword is **not** treated as that issue's owner, and still produces a warning when a sibling's branch names the issue.
 - [ ] A pull request whose branch does not name an issue it declares is not treated as that issue's owner, whatever the issue's tracker item links.
 - [ ] A closed or merged pull request is never treated as the sibling owner.
