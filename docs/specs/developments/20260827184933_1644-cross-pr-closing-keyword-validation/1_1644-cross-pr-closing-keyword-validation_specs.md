@@ -203,12 +203,12 @@ No input combination blocks a merge, changes mergeability, or edits an issue, la
 
 | #1644 objective | Disposition |
 | --- | --- |
-| PR validation, warn or block | Covered as **warn**, reporting from the description across every implementation branch type including hotfixes; blocking, and reporting keywords found only outside the description, are Out of Scope |
+| PR validation, warn or block | Covered as **warn**, reporting from the description across every implementation branch type including hotfixes; ACs 1-4, 9, 14, 21-24. Blocking, and reporting keywords found only outside the description, are Out of Scope |
 | Reviewer-loop or prepare-commit blocking finding | Out of Scope, item 2 |
 | Release-cleanup report for merged-but-omitted items | Out of Scope, item 3 |
-| False positives minimized | Business Rules, including the single-signal ownership rule and the exclusion of platform-derived links; ACs 5-10, 15-21 |
-| Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 8-10 |
-| Tests for parser and validator edge cases | ACs 5-10 and 15-24 — ACs 6-8 cover parity with every construct the canonical parser excludes, including fence state opened in the title; ACs 15-21 the ownership rule with its contested, no-signal, team-prefixed, platform-link and closed-sibling cases; ACs 22-24 the sibling-lifecycle and readiness triggers |
+| False positives minimized | Business Rules, including the single-signal ownership rule and the exclusion of platform-derived links; ACs 5-8, 10, 15, 16, 18-20 |
+| Documented opt-out for intentional multi-issue pull requests | Use Case 3; ACs 11-13 |
+| Tests for parser and validator edge cases | ACs 5-10 and 15-24 — ACs 5-8 and 10 cover parity with every construct the canonical parser excludes, including fence state opened in the title; ACs 15-20 the ownership rule with its contested, no-signal, team-prefixed, platform-link and closed-sibling cases; ACs 21-24 the sibling-lifecycle, readiness and idempotence behaviors |
 
 ---
 
