@@ -298,20 +298,32 @@ workflow_run_names_for_sha() {
 }
 
 # previous_head_check_names <repo> <pr_number> <current_head_sha>
-# Prints the previous head's workflow-run names. Exit 0 with no output means
-# "no previous head" (single-commit PR, or the same SHA); exit 1 means the
-# lookup failed and the expectation is unknown.
+# Prints workflow-run names from the latest earlier PR commit that actually
+# has workflow-run evidence. A push of two or more commits makes `.[-2]` only
+# the penultimate SHA, which often never triggered pull_request workflows;
+# comparing against that empty set would fail-open as RESULT=green.
+# Exit 0 with no output means "no earlier head with runs" (single-commit PR,
+# or none of the earlier SHAs ran workflows). Exit 1 means a lookup failed
+# and the expectation is unknown.
 previous_head_check_names() {
-  local repo="$1" pr_number="$2" current_sha="$3" prev_sha=""
-  # --slurp: with --paginate alone, `.[-2]` is evaluated per page, so a PR
-  # with more than one page of commits emits one SHA per page.
-  prev_sha="$(
+  local repo="$1" pr_number="$2" current_sha="$3" shas="" sha="" names=""
+  # GitHub returns oldest-first. Reverse so we try newest earlier SHA first.
+  # --slurp: with --paginate alone, jq runs per page and cannot reverse the
+  # full commit list.
+  shas="$(
     gh api "repos/$repo/pulls/$pr_number/commits?per_page=100" --paginate --slurp 2>/dev/null \
-      | jq -r '[.[][].sha] | .[-2] // empty'
+      | jq -r '[.[][].sha] | reverse | .[]'
   )" || return 1
-  [ -n "$prev_sha" ] || return 0
-  [ "$prev_sha" != "$current_sha" ] || return 0
-  workflow_run_names_for_sha "$repo" "$prev_sha"
+  while IFS= read -r sha; do
+    [ -n "$sha" ] || continue
+    [ "$sha" != "$current_sha" ] || continue
+    names="$(workflow_run_names_for_sha "$repo" "$sha")" || return 1
+    if [ -n "$names" ]; then
+      printf '%s\n' "$names"
+      return 0
+    fi
+  done <<< "$shas"
+  return 0
 }
 
 while :; do

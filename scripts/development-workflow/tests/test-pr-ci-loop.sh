@@ -92,6 +92,11 @@ case "$*" in
     [ "${MOCK_RUNS_FAIL:-0}" = "1" ] && exit 1
     # Both sides of the evidence comparison hit this endpoint; distinguish
     # them by the head_sha in the query so a test can make them differ.
+    if [ -n "${MOCK_EMPTY_RUN_SHA:-}" ]; then
+      case "$*" in
+        *"head_sha=${MOCK_EMPTY_RUN_SHA}"*) emit '{"workflow_runs":[]}' ; exit 0 ;;
+      esac
+    fi
     case "$*" in
       *"head_sha=${MOCK_HEAD_SHA:-$head_default}"*) emit "${MOCK_CURRENT_RUNS:-$runs_default}" ;;
       *) emit "${MOCK_PREV_CHECKS:-$runs_default}" ;;
@@ -193,6 +198,15 @@ run_test "skip_flag_bypasses_lookup_failure" "RESULT=green" "$(grep '^RESULT=' <
 #     but no --slurp, `--jq` runs per page and emits one result per page.
 _out="$(run_ci MOCK_ROLLUP="$_success_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CURRENT_RUNS="$_runs_two" MOCK_PR_COMMITS="$_commits_two" MOCK_PAGINATED=1)"
 run_test "paginated_lookup_still_green" "RESULT=green" "$(grep '^RESULT=' <<<"$_out" || true)"
+
+# 4f. A multi-commit push: the penultimate SHA never ran pull_request
+#     workflows, but an earlier SHA did. Using `.[-2]` would treat the prior
+#     set as empty and fail-open green while the current head is missing a
+#     workflow. Walk back to the latest earlier SHA that has runs.
+_commits_three='[{"sha":"bbbb222000000000000"},{"sha":"cccc333000000000000"},{"sha":"aaaa111000000000000"}]'
+_out="$(run_ci MOCK_ROLLUP="$_subset_rollup" MOCK_PREV_CHECKS="$_runs_two" MOCK_CURRENT_RUNS="$_runs_one" MOCK_PR_COMMITS="$_commits_three" MOCK_EMPTY_RUN_SHA=cccc333000000000000)"
+run_test "penultimate_without_runs_still_uses_earlier_evidence" "RESULT=red" "$(grep '^RESULT=' <<<"$_out" || true)"
+run_test "penultimate_without_runs_names_missing_workflow" "MISSING_CHECKS=workflow test harnesses" "$(grep '^MISSING_CHECKS=' <<<"$_out" || true)"
 
 # 5. A genuinely failing check is still red (the gate did not displace it).
 _fail_rollup='{"statusCheckRollup":[{"__typename":"CheckRun","name":"ShellCheck","status":"COMPLETED","conclusion":"FAILURE"}]}'
