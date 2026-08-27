@@ -14319,10 +14319,21 @@ run_test "pr_agent_trigger_failure_reason" "REASON=pr_agent_trigger_failed" \
 rm -rf "$_pr_agent_mock_dir_1706"
 unset _pr_agent_mock_dir_1706 actual_output
 
-run_test "pr_agent_workflow_synchronize_trigger" "1" \
-  "$(grep_count_or_zero "types:.*synchronize" "$REPO_ROOT/.github/workflows/pr-agent.yml")"
-run_test "pr_agent_workflow_exact_review_command" "1" \
-  "$(grep_count_or_zero "github.event.comment.body == '/review'" "$REPO_ROOT/.github/workflows/pr-agent.yml")"
+# These two assertions check the pr-agent companion workflow, which only
+# exists in repositories that actually run pr-agent as a Step 7 GitHub
+# reviewer. A consumer that syncs this template but keeps pr-agent out of
+# review.on_*.github (or ships a workflow_dispatch-only overlay) has no reason
+# to satisfy them, and failing there turned a successful sync into a red
+# required check (#1631). Gate on the live config, not on the template default.
+if workflow_config_review_github_reviewer_configured "pr-agent" "$REPO_ROOT/.ai-dev-workflow.yaml"; then
+  run_test "pr_agent_workflow_synchronize_trigger" "1" \
+    "$(grep_count_or_zero "types:.*synchronize" "$REPO_ROOT/.github/workflows/pr-agent.yml")"
+  run_test "pr_agent_workflow_exact_review_command" "1" \
+    "$(grep_count_or_zero "github.event.comment.body == '/review'" "$REPO_ROOT/.github/workflows/pr-agent.yml")"
+else
+  echo "SKIP: pr_agent_workflow_synchronize_trigger - pr-agent is not a configured Step 7 GitHub reviewer in this repository"
+  echo "SKIP: pr_agent_workflow_exact_review_command - pr-agent is not a configured Step 7 GitHub reviewer in this repository"
+fi
 
 # ---------------------------------------------------------------------------
 # Area: coderabbit_success_status_count (issue #1437)

@@ -16,6 +16,23 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/../../.." && pwd)"
 WORKFLOW="$REPO_ROOT/.github/workflows/pr-policy.yml"
 
+# shellcheck source=scripts/development-workflow/workflow-lib.sh
+source "$REPO_ROOT/scripts/development-workflow/workflow-lib.sh"
+
+# Every assertion in this suite is a static check of pr-policy.yml, a workflow
+# this template ships. Consumers that sync the template are not required to
+# adopt it, and in a repository without the file the whole suite failed, turning
+# a successful sync into a red required check (#1631). A missing file is still a
+# hard failure in the template itself, where its absence is a real regression.
+if [ ! -f "$WORKFLOW" ]; then
+  if [ "$(workflow_template_is_template "$REPO_ROOT/.ai-dev-workflow.yaml")" = "true" ]; then
+    echo "FAIL: workflow_exists - $WORKFLOW not found in a template repository"
+    exit 1
+  fi
+  echo "SKIP: consolidated PR policy workflow static checks - $WORKFLOW is not present in this repository"
+  exit 0
+fi
+
 PASS_COUNT=0
 FAIL_COUNT=0
 

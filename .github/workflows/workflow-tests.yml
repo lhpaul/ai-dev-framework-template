@@ -100,7 +100,15 @@ jobs:
             if [ "$count" -eq 0 ]; then
               echo "_No workflow test suite covers this change set._"
             else
-              printf '%s\n' "$lines" | sed 's/^/- `/; s/$/`/'
+              # Formatted with printf rather than sed, and with the
+              # backticks escaped inside double quotes: a literal backtick in
+              # a single-quoted string trips shellcheck SC2016, which
+              # actionlint surfaces in consumer repositories that lint this
+              # workflow (#1631).
+              while IFS= read -r suite; do
+                [ -n "$suite" ] || continue
+                printf -- "- \`%s\`\n" "$suite"
+              done <<< "$lines"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -145,6 +153,20 @@ jobs:
           # code. The suites only ever fetch from this public repository, so
           # they do not need authenticated remote git access.
           persist-credentials: false
+
+      # Some suites parse workflow YAML with Python (e.g.
+      # test-workflow-branch-filters.sh) and hard-fail when PyYAML is absent.
+      # The runner image is not a contract, so install it explicitly rather
+      # than relying on whatever the image happens to ship (#1631).
+      - name: Ensure PyYAML is available
+        run: |
+          set -euo pipefail
+          if python3 -c 'import yaml' 2>/dev/null; then
+            echo "PyYAML already available."
+            exit 0
+          fi
+          python3 -m pip install --quiet --disable-pip-version-check PyYAML
+          python3 -c 'import yaml; print("PyYAML " + yaml.__version__)'
 
       - name: Run ${{ matrix.suite }}
         # Longest suite is test-pr-review-loop.sh at ~13 min; this bounds a hang

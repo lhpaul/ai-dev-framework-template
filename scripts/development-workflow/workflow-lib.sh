@@ -910,6 +910,57 @@ workflow_config_review_platforms() {
   workflow_config_review_on_ready_github "$config_file"
 }
 
+# workflow_config_review_github_reviewer_configured <platform> [config_file]
+#
+# Exit 0 when <platform> appears in the effective Step 7 GitHub reviewer lists
+# (on_draft.github or on_ready.github, including the legacy fallbacks those
+# helpers already resolve), non-zero otherwise.
+#
+# Test suites use this to skip assertions about a reviewer's companion workflow
+# file in repositories that do not run that reviewer. The template ships
+# `pr-agent` enabled; a downstream consumer that drops it from
+# `.ai-dev-workflow.yaml` must not fail on assertions about `pr-agent.yml`.
+workflow_config_review_github_reviewer_configured() {
+  local platform="$1"
+  local config_file="${2:-$(workflow_config_file)}"
+  local platforms
+
+  [ -n "$platform" ] || return 1
+  [ -f "$config_file" ] || return 1
+
+  # No pipe into `grep -q`: this library runs under `set -euo pipefail`, where
+  # grep closing the pipe early kills the producer with SIGPIPE and aborts the
+  # caller with 141. Capture first, match against a here-string.
+  if ! platforms="$(workflow_config_review_platforms "$config_file")"; then
+    return 1
+  fi
+
+  grep -Fxq -- "$platform" <<<"$platforms"
+}
+
+# workflow_template_is_template [config_file]
+#
+# Print `true` when the repository declares `template.is_template: true`,
+# `false` otherwise (including when the key or the config file is absent).
+#
+# This is the template-vs-consumer switch. Assertions that encode this
+# repository's own shipped defaults — placeholder `deploy.yml` /
+# `e2e-regression.yml`, the presence of `pr-policy.yml`, the placeholder E2E
+# check name — are only meaningful in the template itself. Downstream
+# consumers legitimately replace those files, so those suites must skip there
+# rather than report a red required check on a successful sync (#1631).
+workflow_template_is_template() {
+  local config_file="${1:-$(workflow_config_file)}"
+  local value
+
+  value="$(workflow_config_field template is_template "$config_file")"
+
+  case "$value" in
+    true | True | TRUE | yes | Yes | YES) printf 'true\n' ;;
+    *) printf 'false\n' ;;
+  esac
+}
+
 # _workflow_config_review_scalar <config_file> <key>
 #
 # Internal helper shared by workflow_config_review_max_cycles and

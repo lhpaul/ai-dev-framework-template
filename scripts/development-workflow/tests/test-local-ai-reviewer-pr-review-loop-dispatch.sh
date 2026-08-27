@@ -29,11 +29,26 @@ HARNESS_MODE=1 source "$REPO_ROOT/scripts/development-workflow/pr-review-loop.sh
 actual="$(bot_login_for_platform local-ai-reviewer)"
 run_test "bot_login_for_platform_local_ai_reviewer_empty" "" "$actual"
 
+# The invariant is that the parser surfaces local-ai-reviewer *first* in the
+# repository's own draft list — not that the list equals the template default.
+# A consumer that syncs this template legitimately configures a different set
+# (MOME drops pr-agent), so asserting the literal template list turned a
+# successful sync into a red required check (#1631). Read the live config and
+# skip when this repository does not run local-ai-reviewer on draft PRs at all.
 shared_config_copy="$(mktemp)"
 cp "$REPO_ROOT/.ai-dev-workflow.yaml" "$shared_config_copy"
-actual="$(workflow_config_review_on_draft_github "$shared_config_copy" | paste -sd ',' -)"
+draft_reviewers="$(workflow_config_review_on_draft_github "$shared_config_copy")"
 rm -f "$shared_config_copy"
-run_test "default_draft_github_reviewers_start_with_local_ai" "local-ai-reviewer,pr-agent" "$actual"
+
+# Here-strings rather than pipes into `grep -q` / `head`: this script runs
+# under `set -euo pipefail`, where the reader closing the pipe early kills the
+# writer with SIGPIPE and aborts the suite with 141.
+if grep -Fxq -- "local-ai-reviewer" <<< "$draft_reviewers"; then
+  read -r actual <<< "$draft_reviewers"
+  run_test "default_draft_github_reviewers_start_with_local_ai" "local-ai-reviewer" "$actual"
+else
+  echo "SKIP: default_draft_github_reviewers_start_with_local_ai - local-ai-reviewer is not a configured on_draft.github reviewer in this repository"
+fi
 
 _local_ai_dispatch_called=0
 run_local_ai_reviewer_review() {
