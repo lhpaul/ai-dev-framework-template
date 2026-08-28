@@ -247,7 +247,8 @@ fails, the change did not tighten the rule — it deleted it.
 2. Confirm P1 through P9 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: nine proofs. **Six** plant the **permissive** direction —
+**Expected result**: nine proofs in three groups. **Six** plant the
+**permissive** direction —
 P1 through P5 and P8, reproducing the original bug; P8 skips the current round's
 head check and requires Step 4's fifth run to fail. **Two** plant the
 **restrictive** direction, and neither is optional: **P6** makes every `docs/`

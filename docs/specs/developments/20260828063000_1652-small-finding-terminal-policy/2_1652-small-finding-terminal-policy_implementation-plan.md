@@ -363,8 +363,8 @@ Not applicable — no user interface in this repository.
 - `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenarios 1, 2,
   3, 4, 5, 6, 6a, 7, 8, 8a, 9, 9a, 10, 10a, 10b, 11 and 14, as new cases in the
   existing `HARNESS_MODE=1` harness. Listed individually rather than as a range: the
-  sub-lettered scenarios are the ones a range drops, and all three of them
-  (6a, 8a, 9a) guard a failure direction the others do not.
+  sub-lettered scenarios are the ones a range drops, and all five of them
+  (6a, 8a, 9a, 10a, 10b) guard a behavior the others do not.
 - `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` —
   a new suite for scenarios 12 and 13, the two replay regressions, which need
   their own ledger fixtures. It must declare:
@@ -512,20 +512,49 @@ reviewer_loop_path_is_normative_document() {
   return 1
 }
 
-# Allow-list of contract-bearing surfaces. A body this does not recognise falls
-# through to the path rule, so the test can only make the loop stricter.
+# Allow-list of contract-bearing surfaces, as ordered (identity, pattern) pairs.
+# Prints the matched surface identity and returns success; prints nothing and
+# returns failure on no match. A bare boolean would leave the summary renderer
+# with nothing to name. First match in table order wins, so output is
+# deterministic when a body touches more than one surface.
+#
+# Every pattern is a phrase or a qualified form. Bare common words such as
+# "gate", "scope", "state", "status", "proof", "parse" and "contract" are
+# deliberately absent: they appear in ordinary cosmetic findings and would make
+# almost everything non-small, disabling the terminal rule from the restrictive
+# side. See scenario 6a and proof P7.
+#
+# Separators are literal, never the regex wildcard ".": "fail.closed" would
+# match "failXclosed" and reintroduce over-matching. Each pattern lists exactly
+# the spellings the normative table names, and no others.
+REVIEWER_LOOP_CONTRACT_SURFACES=(
+  'acceptance_criteria|acceptance criterion|acceptance criteria|AC-[0-9]'
+  'decision_gates_and_matrices|decision gate|decision matrix|matrix row|readiness gate|gate condition|gating'
+  'parser_and_input_behavior|parser|regex|input surface|word boundary'
+  'scope_and_coverage|out of scope|in scope|scope creep|coverage matrix|brief objective'
+  'fail_closed_semantics|fail-closed|fail closed|allow-list|deny-list|vacuous'
+  'state_and_status_models|state machine|state table|evidence state|valid transition|status label|status transition'
+  'telemetry_and_contracts|telemetry|stdout key|key=value contract|output contract'
+  'proof_obligations|planted-violation|planted violation|proof obligation'
+)
+
 reviewer_loop_finding_touches_contract_surface() {
   local body="$1"
+  local entry identity pattern
+
   [ -n "${body//[[:space:]]/}" ] || return 1
-  # Word-boundary, case-insensitive: "delegates" must not match "gate".
-  # Separators are an explicit [ -] class, never the regex wildcard ".":
-  # "fail.closed" would match "failXclosed" and reintroduce over-matching.
-  # Phrases and qualified forms only. Bare common words such as "gate",
-  # "scope", "state", "status", "proof", "parse" and "contract" are
-  # deliberately absent: they appear in ordinary cosmetic findings and would
-  # make almost everything non-small, disabling the terminal rule from the
-  # restrictive side. See scenario 6a and proof P7.
-  printf '%s' "$body" | grep -Eqi '\b(acceptance criteri[ao]n?|AC-[0-9]|decision gate|decision matrix|matrix row|readiness gate|gate condition|gating|parser|regex|input surface|word boundary|out of scope|in scope|scope creep|coverage matrix|brief objective|fail[ -]closed|allow[ -]list|deny[ -]list|vacuous|state machine|state table|evidence state|valid transition|status label|status transition|telemetry|stdout key|key=value contract|output contract|planted[ -]violation|proof obligation)\b'
+
+  for entry in "${REVIEWER_LOOP_CONTRACT_SURFACES[@]}"; do
+    identity="${entry%%|*}"
+    pattern="${entry#*|}"
+    # Case-insensitive, word-boundary: "delegates" must not match "gate".
+    if printf '%s' "$body" | grep -Eqi "\\b(${pattern})\\b"; then
+      printf '%s\n' "$identity"
+      return 0
+    fi
+  done
+
+  return 1
 }
 ```
 
@@ -542,9 +571,13 @@ reviewer_loop_finding_touches_contract_surface() {
    `reviewer_loop_path_is_non_shipped_artifact`. **Verify**: scenarios 1-3 — the
    five paths flip to shipped and the four control paths do not.
 2. Add `reviewer_loop_finding_touches_contract_surface` with case-insensitive
-   word-boundary matching over the phrase list — no bare common words.
-   **Verify**: scenario 4, scenario 6a's seven cosmetic bodies, and every row of
-   the parser-risk edge-case list including the `delegates`/`gate` negative.
+   word-boundary matching over the phrase list — no bare common words, and
+   literal `[ -]` separators rather than the regex wildcard. It **prints the
+   matched surface identity** and returns success, printing nothing on no
+   match, and resolves ties by first match in table order. **Verify**:
+   scenario 4, scenario 6a's seven cosmetic bodies, scenario 10b's identity and
+   determinism assertions, and every row of the parser-risk edge-case list
+   including the `delegates`/`gate` and `failXclosed` negatives.
 3. Rename `reviewer_loop_all_paths_non_shipped` to
    `reviewer_loop_all_findings_are_small`, take finding bodies alongside paths,
    and fail when any finding is shipped-path **or** contract-surface.
@@ -556,11 +589,19 @@ reviewer_loop_finding_touches_contract_surface() {
    and 14.
 5. Wire the current-head requirement into the terminal decision — for the prior
    entries via the counter, and for the deciding round via the per-reviewer
-   reviewed head from #1648 — and emit `SMALL_FINDINGS_BLOCKED_BY`. **Verify**:
-   scenarios 8a, 10 and 11.
-6. Extend the summary's small-findings line to name the blocking surface or
-   path. **Verify**: read the rendered line for one `contract_surface` case and
-   one `shipped_path` case.
+   reviewed head from #1648, requiring **every** contributing reviewer to report
+   `loop_head_sha`. **Verify**: scenarios 8a, 10 and 11.
+5a. Implement the four-level `SMALL_FINDINGS_BLOCKED_BY` precedence
+   (`shipped_path` > `contract_surface` > `stale_head` > `head_unknown`) and
+   collect **every** cause present rather than only the reported one, since the
+   summary line names them all. **Verify**: scenarios 10a and 11 — the key
+   carries the first cause by precedence and the collected set carries the rest.
+6. Extend the summary's small-findings line to name every collected cause: the
+   shipped paths, the matched contract-surface identities as printed by the
+   predicate, and the platform responsible for any stale or unknown head.
+   **Verify**: read the rendered line for a `contract_surface` case, a
+   `shipped_path` case, and one of scenario 10a's co-occurring cases, confirming
+   the last names both causes even though the key reports one.
 7. Add the two replay suites and their ledger fixtures, including both
    `# covers:` lines on the new suite. **Verify**: scenarios 12 and 13, and that
    `select-test-suites.sh` selects the new suite for a change touching only
