@@ -831,7 +831,9 @@ object exposes it.
 3. Add `reviewer_loop_local_evidence_state`. **Verify**: scenario 6 — one case
    per row, including both routes to `unknown`.
 4. Add `reviewer_loop_missed_finding_records` with its four exclusions as early
-   `continue`s, and the two head sources with the downgrade. **Verify**:
+   `continue`s, and the two head sources — recorded as `head_source`, with
+   **no** effect on `classification`, which stays a function of the local
+   evidence state alone per AC-17. **Verify**:
    scenarios 7, 8, 9, 10, 13b, 13d and 16 — including the
    unattributable-commit case, which must produce no record **and** report the
    attribution reason.
