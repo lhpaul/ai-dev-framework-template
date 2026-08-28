@@ -136,9 +136,22 @@ Proof P8.
    pass is running**.
 2. Let the pass return clean.
 
+3. Read the ledger entry for that round and the loop's cycle count.
+
 **Expected result**: the gate does **not** open. The cycle ends with
-`needs_fixes` and reason `head_moved_during_pass`, and no ready-phase platform
-is dispatched.
+`needs_fixes` and the loop's **existing** reason `head_moved_during_run`; no
+ready-phase platform is dispatched; the round is **not counted** as a cycle and
+no fixer is dispatched for it. `LOCAL_SECOND_PASS_REASON` carries the finer
+`head_moved_during_pass`.
+
+Reusing the established token is deliberate. `head_moved_during_run` already
+carries two contracts — `reviewer_loop_history_entries_count` excludes entries
+holding it from the qualifying set, and Protocol 91 treats it as nothing-to-fix
+— and both are exactly right for a mid-pass move: the head moved, there is
+nothing for a fixer to do, and the round did no review work. A newly minted
+token inherits neither, so it would consume a cycle and send a fixer after
+nothing. The distinction that matters for telemetry lives in this item's own
+key. Proof P14.
 
 Without the re-read, a clean verdict for the *old* commit opens the gate and
 expensive reviewers read code the local reviewer never saw — the guarantee this
@@ -324,11 +337,11 @@ ready-phase gate already existed and this alters when it fires.
 ## Step 12: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P13 each record the command, the file and line of the
+2. Confirm P1 through P14 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: thirteen proofs in three groups — **six** fail-open,
-**four** loop and cost, **three** integration, per the plan's proof-group
+**Expected result**: fourteen proofs in three groups — **six** fail-open,
+**five** loop and cost, **three** integration, per the plan's proof-group
 table.
 
 P2 is the one to read twice: returning `not_required` for a history with no
