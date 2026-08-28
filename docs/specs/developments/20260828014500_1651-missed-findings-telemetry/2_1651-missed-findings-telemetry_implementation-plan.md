@@ -687,7 +687,7 @@ Not applicable — this repository ships workflow tooling, not a service.
 
       | Field | Bound | Source of the bound |
       | --- | --- | --- |
-      | Literal text of both parts | 42 | fixed strings |
+      | Literal text of both parts | 56 | `prefix` 42 — `missed-finding: ` 16, ` on ` 4, ` — ` 3, ` blocking, ` 11, ` files (` 8 — plus `suffix` 14: `) — local: ` 11, ` [` 2, `]` 1 |
       | Reviewer name | 18 | the longest of the eleven names `run_platform_review` dispatches, `claude-code-action` |
       | Short SHA | 8 | fixed rendering |
       | Blocking count, path total | their own decimal width, **exact** | AC-14 requires the total and the omitted count to be exact, so neither is clamped or abbreviated |
@@ -713,16 +713,18 @@ Not applicable — this repository ships workflow tooling, not a service.
       the line. Nothing is clamped: AC-14 requires the total and the omitted
       count to be exact.
 
-      With the fixed parts at 102 characters — literals 42, reviewer 18, short
-      SHA 8, label and classification 34 — what remains for the two counts, the
-      remainder's own copy of the total, and at least zero paths is:
+      The fixed parts total **116** characters: literals 56, reviewer 18, short
+      SHA 8, label and classification 34. The remainder text `, +<total> more`
+      contributes 8 literal characters plus its own copy of the total's digits.
+      What remains for the two counts and at least zero paths is:
 
       ```text
-      blocking_digits + 2 × total_digits ≤ 98
+      116 + blocking_digits + total_digits + 8 + total_digits ≤ 200
+      ⇒ blocking_digits + 2 × total_digits ≤ 76
       ```
 
       A pull request with 9,999,999 findings across 9,999,999 files spends 21
-      of those 98. Exhausting the budget needs a **46-digit** file count, which
+      of those 76. Exhausting the budget needs a **35-digit** file count, which
       is not a number a diff can produce and not one the ledger's JSON could
       hold as an exact integer. So `budget ≥ 0` holds for every reachable
       record with nothing abbreviated, and AC-13 and AC-14 hold together.
@@ -867,9 +869,11 @@ Not applicable — this repository ships workflow tooling, not a service.
     eligibility rows.
 13. The summary line: one line per record; at most 200 characters; at most three
     paths; the total always stated; and a zero-path case whose path length is
-    **derived from the budget**, not chosen. With the fixed parts at 102 and a
-    12-file record's counts and remainder taking 11, the budget is about 87
-    characters, so a single 90-character path cannot fit and no path is named.
+    **derived from the budget**, not chosen. With the fixed parts at 116 and a
+    12-file record's counts and remainder taking 13 — `7` at one digit, `12` at
+    two, and the remainder's 8 literals plus two more digits — the budget is
+    about 71 characters, so a single 90-character path cannot fit and no path
+    is named.
     A "longer than 60 characters" fixture names one and proves nothing.
 13a. Paths are de-duplicated before counting and naming: eight blocking findings
     spread over three files produce `path_total` 3, not 8, and the named paths
