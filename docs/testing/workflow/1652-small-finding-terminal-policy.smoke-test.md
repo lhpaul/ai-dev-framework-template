@@ -334,10 +334,13 @@ test that asserts only whether the rule fired.
 3. Run `pr-review-loop.sh --help`.
 
 **Expected result**: all three describe the same rule — normative documents are
-shipped artifacts, a contract-surface finding is never small wherever it lives,
-**both** the prior counted rounds and the round being decided must be on the
-current head, and an unknown head ends the run — and all three name the same four
-`SMALL_FINDINGS_BLOCKED_BY` values. Reading
+a contract-surface finding is never small **wherever it lives**, the path
+classifier is deliberately unchanged so a cosmetic finding on a spec is still
+small, **both** the prior counted rounds and the round being decided must be on
+the current head, and an unknown head ends the run — and all three name the same
+four `SMALL_FINDINGS_BLOCKED_BY` values. **None may say that findings on
+normative documents are never small**; that was an earlier design and is not
+what ships. Reading
 them against Steps 1 through 5 must surface no contradiction.
 
 ### Step 10: Static checks

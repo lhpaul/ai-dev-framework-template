@@ -19,8 +19,8 @@ no unresolved threads then flip the aggregate to `clean` with reason
 `small_findings_terminal`, and the PR proceeds carrying live blocking findings.
 
 This plan makes the classification depend on **what the finding is about**, not
-only where it lives. It moves this repository's normative documents onto the
-shipped side, adds a contract-surface test that keeps a finding non-small
+only where it lives. It adds a contract-surface test that keeps a finding
+non-small
 wherever it lives when it touches acceptance criteria, decision gates, matrices,
 parser behavior or scope, and requires the counted rounds to have been on the
 current head before the terminal rule may mark clean.
@@ -310,15 +310,20 @@ Not applicable — no user interface in this repository.
 ### Documentation
 
 - [ ] `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
-      — document the tightened rule: that normative documents are shipped
-      artifacts in this repository, that a contract-surface finding is non-small
-      wherever it lives, that counted rounds must be on the current head, that an
-      unknown head ends the run, and what `SMALL_FINDINGS_BLOCKED_BY` reports.
+      — document the tightened rule: that a finding touching a contract surface
+      is non-small **wherever it lives**, including on paths the classifier
+      still treats as non-shipped; that the path classifier itself is
+      deliberately unchanged, so a cosmetic finding on a spec is still small;
+      that both the prior counted rounds and the round being decided must be on
+      the current head; that an unknown head ends the run; and what
+      `SMALL_FINDINGS_BLOCKED_BY` reports.
 - [ ] `REVIEW.md` — add a short block under the review contract covering the
       same rule Protocol 93 states, so a reviewer knows the classification
-      without reading the loop: that a finding on a spec, plan, protocol or the
-      review contract itself is never small; that a finding touching a contract
-      surface is never small wherever it lives; that the terminal rule requires
+      without reading the loop: that a finding touching a contract surface is
+      never small **wherever it lives**, which in practice means most findings
+      on specs, plans, protocols and the review contract itself; that a purely
+      cosmetic finding on those same artifacts is still small, because the path
+      classifier is unchanged; that the terminal rule requires
       both the prior counted rounds and the round being decided to be on the
       current head; and that `SMALL_FINDINGS_BLOCKED_BY` reports one of
       `shipped_path`, `contract_surface`, `stale_head` or `head_unknown`.
@@ -430,11 +435,11 @@ Not applicable — no user interface in this repository.
     does **not** fire, where today it fires on round two. The paths are
     non-shipped and stay that way; it is the **bodies** that make these findings
     non-small, which is what the brief asks for.
-13. **The cosmetic counter-case.** Replay the same *ledger shape* — same round
-    count, same adjacency, same head — but on **genuinely non-shipped paths**
-    (`docs/project/1-business-domain.md`, `tests/fixtures/x.json`,
-    `CHANGELOG.md`) with bodies naming only a trailing space and a heading
-    capitalisation. Assert the terminal rule **does** fire.
+13. **The cosmetic counter-case.** Replay scenario 12's ledger exactly — same
+    round count, same adjacency, same head, **and the same
+    `docs/specs/developments/**` paths** — changing only the finding bodies to
+    name a trailing space and a heading capitalisation. Assert the terminal rule
+    **does** fire.
 
     The paths may now be the **same** as scenario 12's, and using them is the
     stronger test: with the path rule dropped, `docs/specs/developments/**`
@@ -550,7 +555,7 @@ point. No listeners, timers, or shared mutable state are introduced.
 | Co-occurring-cause fixtures | Three rounds driving scenario 10a: one carrying both a shipped-path and a contract-surface finding; one whose findings are all small with one stale contributor and one reporting no head; and one carrying a contract-surface finding together with a contributor on a stale head, to prove the currency check is never reached | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Head-comparison ledger fixture | Ledger payloads with prior small rounds on an older head, on the current head, and with absent, empty and placeholder heads — driving scenarios 8, 9, 10 and 14 | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | #1661 replay ledger | A `reviewer_loop_history.v1` payload reproducing PR #1661's consecutive small-findings rounds, with the real finding bodies naming fail-closed semantics, matrix rows and acceptance criteria | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
-| Cosmetic replay ledger | The same ledger *shape* as the #1661 replay — same round count, adjacency and head — but on genuinely non-shipped paths (`docs/project/1-business-domain.md`, `tests/fixtures/x.json`, `CHANGELOG.md`) with cosmetic bodies only, driving scenario 13. The path set must differ from the #1661 replay's, or the counter-case is unsatisfiable | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
+| Cosmetic replay ledger | The #1661 replay ledger with **only the finding bodies changed** to cosmetic ones — same round count, adjacency, head and `docs/specs/developments/**` paths — driving scenario 13. The paths must be **identical** to the #1661 replay's, so body alone decides the outcome | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
 
 No repository fixture files are added; both suites build their fixtures inline
 and require no network access.
@@ -698,9 +703,11 @@ reviewer_loop_finding_touches_contract_surface() {
    `pr-review-loop.sh`.
 8. Update
    `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
-   and `REVIEW.md` per **Documentation Updates**. **Verify**: both describe the
-   same rule, the same current-head requirement and the same four
-   `SMALL_FINDINGS_BLOCKED_BY` values.
+   and `REVIEW.md` per **Documentation Updates**. **Verify**: both state that
+   the *content* rule decides and that the path classifier is unchanged, both
+   describe the same current-head requirement, and both name the same four
+   `SMALL_FINDINGS_BLOCKED_BY` values. Neither may say that findings on
+   normative documents are never small.
 9. Document the new behavior in the `--help` usage block. **Verify**: run
    `pr-review-loop.sh --help` and confirm the predicate, the contract-surface
    list, the current-head requirement and `SMALL_FINDINGS_BLOCKED_BY` appear.
@@ -717,7 +724,7 @@ reviewer_loop_finding_touches_contract_surface() {
     exactly:
 
     ```markdown
-    - **Tighten the small-finding terminal policy** (#1652): findings on specs, plans, protocols and the review contract are no longer classified as small, a finding that touches a contract surface is never small wherever it lives, and the terminal rule now requires its counted rounds to be on the current head.
+    - **Tighten the small-finding terminal policy** (#1652): a finding that touches a contract surface — acceptance criteria, decision gates, matrices, parser behavior or scope — is no longer classified as small wherever it lives, and the terminal rule now requires both its prior counted rounds and the round being decided to be on the current head.
     ```
 
 13. Update project docs per **Documentation Updates** above (step 8 covers them;
