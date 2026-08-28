@@ -439,7 +439,9 @@ Not applicable.
 `docs/testing/workflow/1653-split-reviewer-prompts-by-stage.smoke-test.md`
 
 **Regression suite**: the repository's regression surface for workflow scripts
-is the two shell harnesses named above; both are extended in this item.
+is the shell harnesses named above; all **three** are extended in this item —
+`test-local-ai-reviewer.sh`, `test-local-codex-review-command.sh` and
+`test-pr-review-loop.sh`.
 
 ---
 
