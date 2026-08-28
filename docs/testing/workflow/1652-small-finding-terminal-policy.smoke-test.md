@@ -140,9 +140,10 @@ which is the more likely of the two mistakes because it appears to succeed.
 4. With `PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS` at its default `2`, seed two
    prior small rounds on a stale head and run the terminal decision.
 5. Seed two prior small rounds **on the current head**, so the prior count is
-   sufficient, but make the reviewer that produced *this* round's findings
-   report a reviewed head other than `loop_head_sha` — then again reporting
-   none. Run the terminal decision for each.
+   sufficient, and give the deciding round counted findings from **two**
+   platforms. Run the terminal decision for four combinations: both platforms
+   reporting `loop_head_sha`; one reporting a different head; one reporting no
+   head; both stale.
 
 **Expected result**: step 1 returns **1**, not 3 — a round on an older head ends
 the consecutive run rather than extending it. All three cases in step 2 also end
@@ -151,10 +152,18 @@ and `not_small` respectively; a bare count could not distinguish the first two,
 which `SMALL_FINDINGS_BLOCKED_BY` must. Step 4 does **not** fire the terminal
 rule and reports `SMALL_FINDINGS_BLOCKED_BY=stale_head`.
 
-**Step 5 must also not fire.** The consecutive run is `prior entries + 1`, and
-the `+ 1` is the round being decided; verifying only the prior entries would
-leave it unchecked and let the rule terminate on findings that describe a commit
-which is no longer the head — the exact staleness the brief names.
+**Step 5**: only the first combination may fire. The other three must not —
+`stale_head` for the differing head, `head_unknown` for the missing one, and
+`stale_head` for both stale — and the summary line must name the platform
+responsible.
+
+Two things are being guarded. The consecutive run is `prior entries + 1`, and
+the `+ 1` is the round being decided, so verifying only the prior entries would
+let the rule terminate on findings describing a commit that is no longer the
+head. And a round can aggregate blockers from several platforms, so the check is
+per contributor: one platform's current-head evidence says nothing about what
+another was looking at, which is why **every** contributor must report
+`loop_head_sha` rather than any one of them.
 
 An unprovable head must end the run rather than be skipped over: the terminal
 rule exists to be demonstrated, and a round whose head cannot be established
@@ -220,15 +229,15 @@ fails, the change did not tighten the rule — it deleted it.
 2. Confirm P1 through P8 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: eight proofs. Five plant the **permissive** direction,
-reproducing the original bug. Three plant the **restrictive** direction and none
-is optional: **P6** makes every `docs/` path shipped and requires Steps 1, 2 and
-7 to fail; **P7** restores the bare common words to the contract-surface list
-and requires Step 3's seven bare-word rows and Step 7 to fail; **P8** skips the
-current round's head check and requires Step 4's fifth run to fail. A tightening
-that disables the mechanism would pass every permissive proof while introducing
-a different defect, and it is the more likely mistake because it looks like
-success.
+**Expected result**: eight proofs. **Six** plant the **permissive** direction —
+P1 through P5 and P8, reproducing the original bug; P8 skips the current round's
+head check and requires Step 4's fifth run to fail. **Two** plant the
+**restrictive** direction, and neither is optional: **P6** makes every `docs/`
+path shipped and requires Steps 1, 2 and 7 to fail; **P7** restores the bare
+common words to the contract-surface list and requires Step 3's seven bare-word
+rows and Step 7 to fail. A tightening that disables the mechanism would pass
+every permissive proof while introducing a different defect, and it is the more
+likely mistake because it looks like success.
 
 ### Step 9: Documentation agrees across all three surfaces
 

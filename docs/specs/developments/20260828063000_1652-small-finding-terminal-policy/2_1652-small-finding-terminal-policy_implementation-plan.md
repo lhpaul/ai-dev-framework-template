@@ -169,12 +169,19 @@ Not applicable — this repository ships workflow tooling, not a service.
          extending it.
       2. Before the `+ 1`, require the **current** round's findings to have been
          produced on `loop_head_sha`, using the per-reviewer reviewed-head
-         evidence #1648 introduces. When the reviewer that produced this round's
-         findings reports a reviewed head other than `loop_head_sha`, or reports
-         none, the current round does not contribute and the terminal rule does
-         not fire. Without this the rule could still terminate on a round whose
-         findings describe a commit that is no longer the head — the exact
-         staleness the brief's second scope bullet names.
+         evidence #1648 introduces. A round can aggregate blocking findings from
+         **several** platforms, so the requirement is per contributor, not per
+         round: **every** reviewer that contributed at least one counted finding
+         must report a reviewed head equal to `loop_head_sha`. If any single
+         contributor reports a different head, or reports none, the current
+         round does not contribute and the terminal rule does not fire —
+         `stale_head` and `head_unknown` respectively, naming the platform in
+         the summary line. Requiring all of them rather than any of them is the
+         fail-closed direction: one contributor's current-head evidence says
+         nothing about what another contributor was looking at. Without this the
+         rule could terminate on a round whose findings describe a commit that
+         is no longer the head — the exact staleness the brief's second scope
+         bullet names.
 - [ ] **Fail closed when the head of a counted round cannot be established.** An
       entry whose recorded head is absent, empty, or the synthetic
       `unknown-<epoch>-<pid>-<rand>` placeholder ends the consecutive run. It is
@@ -273,11 +280,14 @@ Not applicable — no user interface in this repository.
    differs from the current head: with two prior small rounds on an older head
    and one on the current head, the count is 1, not 3, and the stop reason is
    `stale_head`.
-8a. The **current** round is verified too: with the prior count sufficient but
-    the reviewer that produced this round's findings reporting a reviewed head
-    other than `loop_head_sha`, or reporting none, the terminal rule does not
-    fire. Checking only the prior entries would leave the deciding round — the
-    `+ 1` in `prior + 1` — unverified.
+8a. The **current** round is verified too, per contributing reviewer. With the
+    prior count sufficient and counted findings from two platforms, four
+    combinations: both reporting `loop_head_sha` → the rule may fire; one
+    reporting a different head → does not fire, `stale_head`; one reporting no
+    head → does not fire, `head_unknown`; both stale → does not fire. Checking
+    only the prior entries would leave the deciding round — the `+ 1` in
+    `prior + 1` — unverified, and checking only one contributor would let a
+    second platform's stale evidence through.
 9. The consecutive count stops at an entry whose head is absent, empty, or a
    synthetic `unknown-…` placeholder — three cases, each ending the run rather
    than being skipped, each with stop reason `head_unknown`.
@@ -339,9 +349,10 @@ above are the regression coverage for this change.
 This plan materially modifies an automated guard, so `REVIEW.md` §
 Planted-violation proof applies and the pure-refactor exemption does not. Two
 demonstrated runs per proof, each citing a concrete file and line. Of the eight
-proofs, five plant the **permissive** direction — reproducing the original bug —
-and three plant the **restrictive** direction, where the tightening would
-disable the mechanism instead of sharpening it.
+proofs, **six** plant the **permissive** direction — P1 through P5 and P8,
+reproducing the original bug — and **two** plant the **restrictive** direction —
+P6 and P7, where the tightening would disable the mechanism instead of
+sharpening it.
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
@@ -354,7 +365,7 @@ disable the mechanism instead of sharpening it.
 | P7 | Over-tighten by term: restore the bare common words `gate`, `scope`, `state`, `status`, `proof`, `parse` and `contract` to the contract-surface list | same scratch copy | scenario 6a fails on all seven cosmetic bodies and scenario 13 stops firing, because ordinary prose now reads as contract-bearing; restoring the phrase-only list passes |
 | P8 | Skip the current round's head check, verifying only the prior ledger entries | a scratch copy of the terminal decision | scenario 8a fails, because the rule terminates on a deciding round whose findings describe a commit that is no longer the head; restoring the check passes |
 
-P6 and P7 are the restrictive-direction proofs and neither is optional. A
+P6 and P7 are the two restrictive-direction proofs and neither is optional. A
 tightening that removes the mechanism — whether by classifying every path as
 shipped, or by matching common words that appear in ordinary prose — would pass
 every permissive-direction proof here while leaving the loop unable to terminate
@@ -399,7 +410,8 @@ point. No listeners, timers, or shared mutable state are introduced.
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
 | Path classification fixture | The five paths that change disposition and the four that must not, driving scenarios 1-3 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
-| Contract-surface body fixture | One body per row of the contract-surface table, three cosmetic bodies, and the eight parser edge cases | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Contract-surface body fixture | One body per row of the contract-surface table; three cosmetic bodies; the **seven bare-common-word cosmetic bodies** of scenario 6a, one per removed term; the three qualified-phrase controls that must still match; and the ten parser edge cases including the two substring negatives | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Multi-contributor round fixture | A single round with counted findings from two platforms, in four combinations — both on the current head, one stale, one reporting no head, and both stale — driving scenario 8a | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Head-comparison ledger fixture | Ledger payloads with prior small rounds on an older head, on the current head, and with absent, empty and placeholder heads — driving scenarios 8, 9, 10 and 14 | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | #1661 replay ledger | A `reviewer_loop_history.v1` payload reproducing PR #1661's consecutive small-findings rounds, with the real finding bodies naming fail-closed semantics, matrix rows and acceptance criteria | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
 | Cosmetic replay ledger | The same ledger shape with cosmetic bodies only, driving scenario 13 | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
@@ -427,7 +439,7 @@ and require no network access.
 | The tightening removes the terminal mechanism entirely | Med | High — every PR with a cosmetic documentation tail would loop to its cycle cap | The non-shipped list is narrowed, not deleted: `docs/project/**`, fixtures, snapshots and `CHANGELOG.md` stay non-shipped. Scenarios 3, 6 and 13 assert the mechanism still fires on cosmetic findings, and proof P6 plants the over-tightening specifically |
 | The contract-surface test is written as a deny-list of cosmetic terms | Med | High — an unrecognised contract finding would be classified small, reproducing the bug | The test is an explicit allow-list of surfaces, and a body it does not recognise falls through to the path rule rather than being declared cosmetic; proof P3 plants the inversion |
 | The contract-surface test over-matches ordinary prose | **High** | High — matching bare common words like `state`, `scope` or `gate` would make almost every finding non-small, disabling the terminal rule from the restrictive side while appearing to tighten it | Every matched term is a phrase or a qualified form; no bare common word is on the list, and the plan records that an earlier draft's bare terms were removed for this reason. Scenario 6a tests one cosmetic body per removed word, and the parser-risk addendum adds word-boundary negatives (`delegates`/`gate`, `microscope`/`scope`) |
-| The current round is decided without checking its own head | Med | High — the rule could terminate on a round whose findings describe a commit that is no longer the head, which is the staleness the brief names | The run is `prior + 1` and both halves are verified: the counter checks prior entries, and the current round's reviewed head must equal `loop_head_sha` before it contributes; scenario 8a pins the `+ 1` half |
+| The current round is decided without checking its own head | Med | High — the rule could terminate on a round whose findings describe a commit that is no longer the head, which is the staleness the brief names | The run is `prior + 1` and both halves are verified: the counter checks prior entries, and **every** reviewer contributing a counted finding to the current round must report `loop_head_sha` before it contributes. Scenario 8a's four combinations pin the `+ 1` half, including the two-platform case where only one contributor is stale; proof P8 plants the omission |
 | An old ledger without head data silently counts as current | Med | High — the current-head requirement would be inert on exactly the PRs that predate it | An absent, empty or placeholder head ends the consecutive run; scenarios 9 and 14 and proof P5 pin all three forms |
 | A maintainer cannot tell a correctly-refusing loop from a still-failing one | Med | Med | `SMALL_FINDINGS_BLOCKED_BY` names the cause, and the summary line names the contract surface or shipped path; scenario 11 pins all four values and both empty cases, and scenario 9a pins the counter's stop reasons that feed two of them |
 | The rename of `reviewer_loop_all_paths_non_shipped` breaks an unseen caller | Low | Med | The PR records whether any caller outside this change set exists; a thin wrapper is kept only if one does |
@@ -462,7 +474,12 @@ reviewer_loop_finding_touches_contract_surface() {
   local body="$1"
   [ -n "${body//[[:space:]]/}" ] || return 1
   # Word-boundary, case-insensitive: "delegates" must not match "gate".
-  printf '%s' "$body" | grep -Eqi '\b(acceptance criteri[ao]n?|AC-[0-9]|decision (gate|matrix)|matrix row|gate|parser|regex|parse|input surface|scope|coverage matrix|objective|out of scope|fail.closed|allow.list|deny.list|vacuous|state|status|enum|transition|telemetry|contract|stdout key|emitted|planted.violation|proof)\b'
+  # Phrases and qualified forms only. Bare common words such as "gate",
+  # "scope", "state", "status", "proof", "parse" and "contract" are
+  # deliberately absent: they appear in ordinary cosmetic findings and would
+  # make almost everything non-small, disabling the terminal rule from the
+  # restrictive side. See scenario 6a and proof P7.
+  printf '%s' "$body" | grep -Eqi '\b(acceptance criteri[ao]n?|AC-[0-9]|decision gate|decision matrix|matrix row|readiness gate|gate condition|gating|parser|regex|input surface|word boundary|out of scope|in scope|scope creep|coverage matrix|brief objective|fail.closed|allow.list|deny.list|vacuous|state machine|state table|evidence state|valid transition|status label|status transition|telemetry|stdout key|key=value contract|output contract|planted.violation|proof obligation)\b'
 }
 ```
 
@@ -513,8 +530,8 @@ reviewer_loop_finding_touches_contract_surface() {
 10. Produce the eight planted-violation proofs (P1-P8) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
-    once removed. P6 and P7 are the restrictive-direction proofs and neither is
-    optional.
+    once removed. P6 and P7 are the two restrictive-direction proofs and
+    neither is optional.
 11. Run `shellcheck` on `scripts/development-workflow/pr-review-loop.sh` and
     `markdownlint-cli2` on the two changed documentation files, this plan and
     the runbook. **Verify**: both tools exit 0 on every file named here.
