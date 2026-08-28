@@ -71,10 +71,12 @@ checklist on a branch that is not a spec branch. Proof P2 plants exactly that.
 4. Call it with an **empty** list.
 5. Call `reviewer_resolve_review_stage 'feature/x' '["REVIEW.md","src/app/main.ts"]'`,
    then again with `[]` and with `""` as the second argument.
+6. Call it once more with a 501-entry array whose **first** element is
+   `REVIEW.md`, generated with `jq -n '["REVIEW.md"] + [range(500)|"src/f\(.).ts"]' -c`.
 
 **Expected result**: all nine entries match; none of the four controls does;
 step 3 matches; step 4 does **not**. Step 5's first call names both Code and
-Workflow Policy; the other two name Code alone.
+Workflow Policy; the other two name Code alone. Step 6 also names both.
 
 Step 5 is the one that catches the seam. The predicate reads newline-delimited
 paths; `changed_files_json` is a compact JSON array, so the caller must decode
@@ -82,6 +84,16 @@ it with `jq -r '.[]?'` first. Hand the array straight to the predicate and it
 arrives as a single line matching no `case` arm — the Workflow Policy checklist
 is then never added on any PR, while the predicate's own tests and every
 stubbed merge test still pass. Proof P9.
+
+Step 6 is the length case, and it is a different defect from Step 5. The script
+runs under `set -o pipefail`; the predicate returns on its first match. Decode
+with `jq -r '.[]?' | reviewer_changed_files_touch_workflow_policy` and, on a
+list long enough to exceed the pipe buffer, `jq` is still writing when the
+reader exits, takes SIGPIPE, and reports 141 — the pipeline fails, the `elif` is
+not taken, and the checklist is dropped. On Step 5's two-path list the same code
+passes, so the 501 entries are the point of the step, not decoration. Buffering
+the decode into a variable and feeding the predicate from a here-string removes
+the pipeline entirely. Proof P10.
 
 Steps 3 and 4 are the two directions the predicate can be got wrong. `all`
 instead of `any` breaks step 3 — the mixed change, which is the one most likely
@@ -254,10 +266,10 @@ contradiction.
 **Maps to**: `REVIEW.md` → Core Rules → Verification Discipline.
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P9 each record the command, the file and line of the
+2. Confirm P1 through P10 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: nine proofs in three groups — **four** narrowing, **four**
+**Expected result**: ten proofs in three groups — **four** narrowing, **five**
 misclassification, **one** contract, per the plan's proof-group table.
 
 The narrowing group carries the weight, because narrowing is the failure mode
