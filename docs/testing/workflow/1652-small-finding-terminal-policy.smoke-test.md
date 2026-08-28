@@ -26,7 +26,8 @@
 | Item | Value |
 | --- | --- |
 | Reviewer loop | `scripts/development-workflow/pr-review-loop.sh` |
-| Path classifier (**unchanged** by this item) | `reviewer_loop_path_is_non_shipped_artifact` |
+| Tier-1 normative-document predicate | `reviewer_loop_path_is_normative_document` |
+| Tier-2 contract-surface predicate | `reviewer_loop_finding_touches_contract_surface` |
 | Contract-surface predicate | `reviewer_loop_finding_touches_contract_surface` |
 | Smallness aggregate | `reviewer_loop_all_findings_are_small` |
 | Consecutive counter | `reviewer_loop_small_findings_prior_consecutive_count` |
@@ -40,9 +41,14 @@
 
 ## Smoke Test Steps
 
-### Step 1: The path classifier is unchanged, and the body decides
+### Step 1: Two tiers — path decides first, body escalates second
 
 **Maps to**: brief scope bullet 1.
+
+Only **blocking** findings reach this rule at all: `small_findings_paths` is
+built from `reviewer_loop_blocking_paths_from_output`. Advisory findings are out
+of scope, so every case below is a finding the reviewer already said must be
+fixed.
 
 1. Source the loop in harness mode:
 
@@ -52,23 +58,32 @@
    HARNESS_MODE=1 source scripts/development-workflow/pr-review-loop.sh
    ```
 
-2. Call `reviewer_loop_path_is_non_shipped_artifact` on the nine paths the
-   plan's scenario 1 lists, plus `scripts/development-workflow/pr-review-loop.sh`.
-3. Run the loop with a **cosmetic** finding on
-   `docs/specs/developments/x/1_x_specs.md`, then with a **contract** finding on
-   the same path.
+2. Call `reviewer_loop_path_is_normative_document` on the ten first-tier
+   patterns and on five controls: `docs/project/1-business-domain.md`,
+   `tests/fixtures/x.json`, `__snapshots__/x.snap`, `CHANGELOG.md` and
+   `scripts/development-workflow/pr-review-loop.sh`.
+3. Run the loop three times with a blocking finding on
+   `docs/specs/developments/x/1_x_specs.md`: a body naming a decision matrix; a
+   body reading only "trailing whitespace"; and a body reading "required error
+   handling is missing", which contains **no** listed contract term.
+4. Run it twice with a blocking finding on `docs/project/1-business-domain.md`:
+   once cosmetic, once naming a decision matrix.
 
-**Expected result**: step 2 shows the classifier's dispositions **unchanged** —
-every documentation and fixture path still non-shipped, the script still
-shipped. Step 3's cosmetic finding is still **small**; its contract finding is
-**not**. The path is identical in both runs, so only the body decided.
+**Expected result**: step 2 matches all ten patterns and none of the five
+controls. All three of step 3's findings are **non-small** — including the third,
+which no vocabulary list would have caught. Step 4's cosmetic finding is
+**small** and its contract finding is not.
 
-This is the item's central design choice. An earlier draft reclassified specs,
-plans, protocols and `REVIEW.md` as shipped, which would have made every finding
-on them non-small — including a trailing space. Every pull request in this epic
-is a documentation pull request, so that would have removed the cosmetic-tail
-escape exactly where it is used most. The brief asks for a content rule, and
-this is it.
+Step 3's third case is the point of the two-tier design. A vocabulary-only rule
+catches only findings that happen to use its words; *"required error handling is
+missing"* and *"this permits an invalid value"* are contract findings containing
+none of them, and would fall through and be cleared. The path tier is what makes
+the guard fail-closed, and the vocabulary tier only escalates where a cosmetic
+tail is still wanted.
+
+Step 4 is the counterweight: the normative list is deliberately narrow, so
+`docs/project/**`, fixtures, snapshots and `CHANGELOG.md` keep the cosmetic-tail
+escape.
 
 ### Step 2: A contract-surface finding is never small, wherever it lives
 
@@ -277,29 +292,31 @@ unvalidated bound that defeated its own cap — not typographical ones.
 
 **Maps to**: the "tightening removes the mechanism" risk.
 
-1. In the same suite, inspect the case replaying the identical ledger *shape*
-   **and the same paths** as Step 6's case — `docs/specs/developments/**` — with
-   bodies naming only a trailing space and a heading capitalisation.
+1. In the same suite, inspect the case replaying Step 6's ledger *shape* — same
+   round count, adjacency and head — on **non-normative** non-shipped paths
+   (`docs/project/1-business-domain.md`, `tests/fixtures/x.json`,
+   `CHANGELOG.md`) with cosmetic bodies.
+2. Confirm those paths are not on the tier-1 list.
 
 **Expected result**: the terminal rule **does** fire. If Step 6 passes and this
 fails, the change did not tighten the rule — it deleted it.
 
-Sharing the paths with Step 6 is what makes this the strong form of the test.
-With the path rule dropped, `docs/specs/developments/**` stays non-shipped, so
-the two cases differ in **body alone**: same ledger shape, same paths, opposite
-outcomes, decided only by what the findings say. A counter-case on different
-paths would leave open whether the path or the body produced the difference.
+The paths must differ from Step 6's. Step 6's findings are on normative
+documents, where tier 1 makes a blocking finding non-small whatever its body
+says — so no cosmetic body could let the rule fire there, and it is not meant
+to. What the two cases share is the ledger shape; what they must not share is
+the tier.
 
 ### Step 8: Planted-violation proofs are present and two-directional
 
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P11 each record the command, the file and line of the
+2. Confirm P1 through P12 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: eleven proofs in three groups. **Eight** plant the
-**permissive** direction — P1 through P5, P8, P10 and P11, reproducing the
+**Expected result**: twelve proofs in three groups. **Nine** plant the
+**permissive** direction — P1 through P5, P8, P10, P11 and P12, reproducing the
 original bug; P8 skips the current round's head check and requires Step 4's
 fifth run to fail; P10 reads `head_sha` instead of `classification_head` and
 requires Step 4's step 1b to fail; P11 checks only a prior entry's
@@ -334,13 +351,13 @@ test that asserts only whether the rule fired.
 3. Run `pr-review-loop.sh --help`.
 
 **Expected result**: all three describe the same rule — normative documents are
-a contract-surface finding is never small **wherever it lives**, the path
-classifier is deliberately unchanged so a cosmetic finding on a spec is still
-small, **both** the prior counted rounds and the round being decided must be on
+a **blocking** finding on a normative document is never small whatever it says,
+a contract-surface finding is escalated on other documentation paths while a
+cosmetic one there is not, **both** the prior counted rounds and the round being decided must be on
 the current head, and an unknown head ends the run — and all three name the same
-four `SMALL_FINDINGS_BLOCKED_BY` values. **None may say that findings on
-normative documents are never small**; that was an earlier design and is not
-what ships. Reading
+four `SMALL_FINDINGS_BLOCKED_BY` values. **None may describe the classification
+as vocabulary-only**, and none may claim that *every* finding on a normative
+document is non-small — only blocking findings reach this rule at all. Reading
 them against Steps 1 through 5 must surface no contradiction.
 
 ### Step 10: Static checks
