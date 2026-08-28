@@ -32,6 +32,12 @@ return non-zero as a normal answer; call them inside an `if` or suffix with
 Neither is classified from the prior round's verdict, and neither reports
 `not_yet_run`.
 
+Pin **both** arrays in each fixture: the composed synthetic entry must carry the
+round's `reviewed_heads[]` as well as its `platform_results`. The selector takes
+the outcome from one and the commit from the other, so composing only the
+results yields an empty head, an undecidable ancestry and `unknown` — while
+every assertion about the *outcome* still passes. Proof P21.
+
 This is the case the feature exists for, and it is the one a natural
 implementation cannot see. At the moment the records are built, the round's own
 verdicts live only in the freshly collected `platform_result_records` — the
@@ -483,11 +489,12 @@ not what Protocol 03 Step 6 asks for.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P20 each record the command, the file and line of the
+2. Confirm P1 through P21 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: twenty proofs in three groups — **thirteen** overclaiming,
-**six** contract, **one** under-recording, per the plan's proof-group table.
+**Expected result**: twenty-one proofs in three groups — **fourteen**
+overclaiming, **six** contract, **one** under-recording, per the plan's
+proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:
 each of its plants produces a plausible number, and a number is believed. P3 is

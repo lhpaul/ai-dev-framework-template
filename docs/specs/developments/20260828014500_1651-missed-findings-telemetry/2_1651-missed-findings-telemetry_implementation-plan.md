@@ -359,6 +359,15 @@ Not applicable — this repository ships workflow tooling, not a service.
       So the caller composes before it selects: the current round's records are
       appended to `entries[]` as a synthetic entry carrying the current
       iteration number, and the composed value is what the selector receives.
+
+      **The synthetic entry must carry `reviewed_heads[]` too, not only
+      `platform_results`.** The selector reads the outcome from one and the
+      commit from the other, joined on platform name, so an entry with results
+      and no heads yields an empty head, an undecidable ancestry and `unknown` —
+      on precisely the same-round case this composition exists to serve. Both
+      arrays are built from the same per-platform block and are available at the
+      same moment; composing one without the other is the kind of half-move that
+      passes a test written against the field it did include.
       The composition happens at the call site rather than inside the selector,
       so the function stays a pure query over one payload and the tests can
       supply either shape. Scenarios 1a and 1b pin both halves — the current
@@ -615,7 +624,10 @@ Not applicable — this repository ships workflow tooling, not a service.
 
 **Key scenarios to test**:
 
-1a. The **current round** supplies the verdict when it has one: a round in which
+1a. The **current round** supplies the verdict when it has one, with the
+    synthetic entry carrying **both** `platform_results` and `reviewed_heads[]`
+    — both pinned in the fixture, since omitting the heads yields `unknown`
+    while every assertion about the outcome still passes: a round in which
     the local reviewer reported clean and an external reviewer reported blocking
     findings yields `clean_same_commit` and a confirmed miss — not a state
     derived from the previous round. This is AC-1's case and the one the feature
@@ -919,12 +931,12 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The twenty proofs fall into
+runs per proof, each citing a concrete file and line. The twenty-one proofs fall into
 three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Overclaiming | **13** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16, P17, P18, P19 |
+| Overclaiming | **14** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16, P17, P18, P19, P21 |
 | Under-recording | **1** | P20 | evidence discarded at write time that cannot be recovered later | a number asserted on evidence that does not support it |
 | Contract | **6** | P5, P6, P7, P9, P11, P13 | a report, a line, or a stored history that breaks its own stated contract |
 
@@ -946,12 +958,13 @@ three groups:
 | P16 | Fall back to the entry's `head_sha` when a local verdict has no `reviewed_head` | a scratch copy of the selector | scenario 6a fails: the local reviewer's verdict is compared against the live head at write time rather than the commit it examined, so two unrelated facts can produce `clean_same_commit` and a confirmed miss. The plant is invisible whenever the two happen to coincide, which is most rounds; restoring the empty head — and with it an undecidable ancestry and `unknown` — passes |
 | P19 | Test configured-platform membership with a comma-delimited `case` | a scratch copy of the selector's guard | scenario 2b's first case fails: a repository configuring three platforms, `local-ai-reviewer` among them, is reported `not_configured` — the state meaning the reviewer will never run — so every round on it is excluded from the denominator and the effectiveness rate is computed over the wrong population. The plant passes whenever the reviewer is the only configured platform, which is the shape every single-platform fixture has; restoring `grep -Fxq` passes |
 | P18 | Give `claude-code-action` a head by falling back to the pull request's current head | a scratch copy of that adapter | scenario 13f's `claude-code-action` case fails: an adapter whose only artifact is an issue comment gains a head it never stated, and its rounds start producing records — and confirmed misses — against a commit nobody claimed to have reviewed. The plant is the natural reading of "every adapter emits a head", which is why the table's one no-head row is tested rather than described; restoring the no-head result passes |
+| P21 | Compose the current round's `platform_results` without its `reviewed_heads[]` | a scratch copy of the call site | scenarios 1a and 1b fail: the same-round local-clean verdict is found, its head is empty, the ancestry is undecidable and the state is `unknown` — so the confirmed miss this feature exists to record becomes an unknown, and the half-move looks correct because the outcome half of the composition works; restoring both arrays passes |
 | P20 | Store only the three paths the summary line will name | a scratch copy of the record builder | scenario 13a-i fails: a twelve-file round's record holds three paths and the other nine are unrecoverable, so AC-16's read-back is incomplete and #1657 cannot answer which files external reviewers find things in. Every other scenario passes, because they all read the rendered line rather than the record; restoring the complete list passes |
 | P17 | Emit the first `commit_id` when a round's artifacts name two | a scratch copy of an adapter's head extraction | scenario 13e's two-commit case fails: a head is emitted for a round whose findings straddle a push, so the record names a commit some of the findings do not belong to and a `clean_same_commit` can follow from it. The plant looks like ordinary defaulting and only a fixture that straddles a push exposes it; restoring the no-head rule passes |
 | P15 | Substitute `loop_head_sha` for a missing `REVIEWED_HEAD` | a scratch copy of the attribution gate | scenario 13d fails: a round whose external reviewer never stated its head produces a record, and a `clean_same_commit` in it enters the **confirmed** count on the loop's inference about what the reviewer read. AC-11 requires no record when the commit cannot be established, and `clean_same_commit` is defined against the commit the external reviewer *reviewed*. The plant is the tempting one — it makes an empty telemetry produce data — which is why it is planted rather than argued about; restoring the no-fallback rule passes |
 | P6 | Enforce the 200-character bound by truncating the finished line | a scratch copy of the renderer | scenario 13's long-path case fails: truncation removes the tail, which is where the local evidence state and the classification sit, so the line that survives is the one carrying paths and no verdict — exactly inverted from what a reader needs; restoring build-order enforcement passes |
 
-Thirteen proofs plant the overclaiming direction because that is the direction with
+Fourteen proofs plant the overclaiming direction because that is the direction with
 no symptom: every one of them produces a plausible number, and a number is
 believed. P3 is the one to read twice — its plant passes every test written
 against a healthy repository, and only a fixture with a deliberately deleted
@@ -977,7 +990,8 @@ object exposes it.
 2. Add `reviewer_loop_local_latest_verdict`, taking the history payload and the
    newline-delimited configured-platform list tested with `grep -Fxq`, and
    compose the current round's
-   `platform_result_records` into the payload at the call site before selecting.
+   `platform_result_records` **and** its `reviewed_heads[]` into the payload at
+   the call site before selecting.
    **Verify**: scenarios 1a, 1b and 2b first — a selector that reads only
    persisted entries passes every other scenario in this list, and a
    comma-delimited membership test passes every one that configures a single
@@ -1020,7 +1034,7 @@ object exposes it.
    **Step 12a**, which reads both documentation surfaces against the
    implementation, and confirm the fragment's name matches
    `<item>.<kind>.<slug>.md` with a bare `1651`.
-10. Produce the twenty planted-violation proofs (P1-P20) and record them in the PR
+10. Produce the twenty-one planted-violation proofs (P1-P21) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
