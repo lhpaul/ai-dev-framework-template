@@ -303,6 +303,24 @@ Not applicable — this repository ships workflow tooling, not a service.
       bounded number of deferrals rather than blocking forever, and by
       `PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS` for a one-off run. Both are
       explicit; neither silently relaxes the gate.
+- [ ] **Read the local evidence from in-loop state, not from the environment.**
+      #1648 defines `LOCAL_AI_CONFIGURED` and `LOCAL_AI_HEAD_CURRENT` as
+      *top-level stdout keys*, printed once for the run. They are not shell
+      variables set before the platform iteration, so a gate that reads
+      `${LOCAL_AI_CONFIGURED:-}` mid-loop would always see them unset and defer
+      on every invocation — the gate would be inert in the worst way, always
+      refusing. Both values must be derived at gate time from the same in-loop
+      state #1648 already maintains:
+
+      | Gate input | In-loop source |
+      | --- | --- |
+      | `local_ai_configured` | whether `local-ai-reviewer` appears in the resolved `platforms[@]` list — the same membership test `is_expensive_reviewer_platform` uses, applied to the local reviewer |
+      | `local_ai_head_current` | `reviewer_loop_head_evidence_classify` (from #1648) applied to the `local-ai-reviewer` entry of `platform_reviewed_heads` against `loop_head_sha`; `current` maps to `1`, `not-current` to `0`, and a missing entry to the empty string |
+
+      The stdout keys stay exactly as #1648 defines them — they are the
+      *serialization* of this same in-loop state at the end of the run, not a
+      second source of truth. One producer, two consumers: the gate reads the
+      variables, the run prints them, and they cannot disagree.
 - [ ] **Condition 1 is an allow-list, not a deny-list.** Both keys are matched
       against their exact expected value: the condition passes only when
       `LOCAL_AI_CONFIGURED` is the literal `1` and `LOCAL_AI_HEAD_CURRENT` is
@@ -563,6 +581,14 @@ reads them against each other and fails on any divergence.
     `EXPENSIVE_GATE_DEFERRALS=-1`, and the loop escalates. Without this the
     bounded-deferral guarantee would hold only when the ledger happens to be
     readable, which is not a guarantee.
+22. In-loop derivation matches the printed contract: with #1648's actual
+    producer populating `platform_reviewed_heads` — not with the variables
+    pre-seeded — `expensive_gate_local_ai_configured` and
+    `expensive_gate_local_ai_head_current` return exactly the values the run
+    later prints as `LOCAL_AI_CONFIGURED` and `LOCAL_AI_HEAD_CURRENT`, for a
+    current head, a stale head, an unreported head, and a run where
+    `local-ai-reviewer` is not configured. This is the composition test with the
+    dependency rather than a mock of it.
 21. A draft-phase defer does not start the ready phase: with `codex-github` on
     draft deferring and `bugbot` on ready, the loop breaks out immediately —
     `ensure_pr_ready_for_ready_phase` is not called, `gh pr ready` is not run,
@@ -593,7 +619,7 @@ reads them against each other and fails on any divergence.
   add `# covers: scripts/development-workflow/workflow-lib.sh` so a later edit
   to the relocated function also selects it.
 - `scripts/development-workflow/tests/test-expensive-reviewer-gate.sh` — a new
-  suite for scenarios 15–17 and 21, the override and composition cases, which need
+  suite for scenarios 15–17, 21 and 22, the override and composition cases, which need
   their own mock scaffolding for the phase and filter paths. It must declare:
 
   ```text
@@ -631,6 +657,7 @@ concrete file and line:
 | P5 | Ordering regression: **delete the `reorder_expensive_reviewers_last` call**, leaving a platform list that declares `codex-github` before `pr-agent` | a scratch copy of the platform-resolution block | scenario 6 fails and scenario 7's suppressed-reorder case shows the gate deferring on every invocation with `peer_reviewer_not_run` — a deferral that can never resolve; restoring the call passes |
 | P9 | Phase-bucket regression: replace the per-bucket partition with a single global one | a scratch copy of `reorder_expensive_reviewers_last` | scenario 6b fails, because a draft-configured `codex-github` is placed after the ready-phase `bugbot` and therefore runs only after `gh pr ready`; restoring the per-bucket partition passes |
 | P10 | Peer-evidence regression: accept any `skipped` peer instead of consulting `reviewer_failed_label_required_for_result` | a scratch copy of condition 2 | scenario 8's `unavailable`, `timeout` and `unauthorized` rows fail, because the gate dispatches with a peer that never produced a verdict; restoring the helper call passes |
+| P17 | Environment-read regression: change the gate to read `LOCAL_AI_CONFIGURED` and `LOCAL_AI_HEAD_CURRENT` as environment variables instead of calling the two derivation helpers | a scratch copy of condition 1 | scenario 22 fails and every condition-1 case defers with `local_evidence_missing`, because those names are stdout keys printed at end of run and are unset during the platform iteration; restoring the helpers passes |
 | P16 | Vacuous-green regression: make `expensive_gate_baseline_checks_status` return `green` for an empty non-reviewer check set | a scratch copy of the helper | scenario 10's two empty cases fail, because the gate dispatches with no baseline evidence on a head whose CI has not registered; restoring the `empty` state defers with `baseline_checks_unobserved` |
 | P15 | No-short-circuit regression: make a `deferred` result set the aggregate without breaking out of the platform iteration | a scratch copy of the gate call site | scenario 21 fails, because the loop continues to the ready-phase platform and calls `gh pr ready` on a PR whose draft-phase expensive reviewer never ran; restoring the break passes |
 | P14 | Reviewer-check-classification regression: make `expensive_gate_baseline_checks_status` treat every check as a baseline check | a scratch copy of the helper | scenario 10's reviewer-owned-pending row fails, because `codex-github` waits on a check it is responsible for producing; restoring the `configured_reviewer_check_names_json` exclusion passes |
@@ -641,7 +668,7 @@ concrete file and line:
 | P11 | Absent-ledger regression: change the counter to return `-1` for an absent ledger as well as a malformed one | same fixture | scenario 19b fails, because a PR with no prior reviewer-loop history escalates on its first run and the bound is never exercised; restoring the three-state mapping passes |
 | P12 | Deny-list regression: rewrite condition 1 to reject only `0` and empty rather than requiring exactly `1` | a scratch copy of condition 1 | scenario 4's `2` and `true` rows fail, because the gate dispatches with an unrecognized evidence value; restoring the exact-match allow-list passes |
 
-Record all sixteen in the implementation PR under a `Planted-Violation Proofs`
+Record all seventeen in the implementation PR under a `Planted-Violation Proofs`
 heading, each with the command, the file and line of the planted violation, and
 both outcomes.
 
@@ -722,6 +749,7 @@ with mock `gh` commands and require no network access.
 | Platform ordering decides whether the gate is effective | Med | High — a config listing `codex-github` first would either dispatch it before the cheap reviewers ran, or defer at the same point forever | Detection is not enough, so the loop reorders: `reorder_expensive_reviewers_last` moves expensive platforms to the end of their own bucket before iteration, making the gate's precondition reachable; condition 2's peer set is computed from the reordered list, so `peer_reviewer_not_run` fires as a defensive assertion if the reorder did not happen. Scenarios 6 and 7 and proof P5 pin both halves |
 | The peer set and the phase-bucket reorder contradict each other | Med | High — a draft-phase expensive reviewer would wait on a ready-phase peer that cannot have run yet, deadlocking until the cap | The peer set is the platforms that *precede* this reviewer under the reordered list — its own bucket's non-expensive platforms plus every earlier bucket — rather than the whole resolved list; scenario 7's table and proof P13 pin it, including the draft-plus-ready configuration |
 | The reorder silently moves a reviewer across the draft/ready boundary | Med | High — a draft-configured expensive reviewer would run only after `gh pr ready`, inverting the configuration contract | The partition is per phase bucket, assigned with the existing `is_phase_after_clean_platform` predicate, and the buckets are concatenated in their original order; scenario 6b and proof P9 pin it |
+| The gate reads the local evidence from the environment and always defers | Med | High — #1648's `LOCAL_AI_*` are stdout keys printed at end of run, so an environment read is unset during the loop and the gate would refuse on every invocation | Both values are derived at gate time from the in-loop state #1648 already maintains — platform-list membership and `reviewer_loop_head_evidence_classify` over `platform_reviewed_heads` — with the stdout keys as the serialization of that same state rather than a second source. Scenario 22 composes with #1648's real producer instead of pre-seeding, and proof P17 plants the environment read |
 | An unrecognized evidence value falls through condition 1 | Med | High — a `2` or a stray `true` would authorize the expensive reviewer with no valid local-clean evidence, the exact opposite of fail-closed | Condition 1 is an exact-match allow-list requiring the literal `1` on both keys, not a deny-list on `0` and empty; anything else reports `local_evidence_missing`. Scenario 4's eight-row table and proof P12 pin it |
 | A peer that never produced a verdict is accepted as evidence | Med | High — `codex-github` would dispatch with no cheap pre-filter having actually run, which is the state the item exists to prevent | Acceptance delegates to `reviewer_failed_label_required_for_result`, which already classifies `unavailable`, `timeout`, `thread-check-failed`, `pending_timeout`, `forbidden` and `unauthorized` skips as reviewer failures, so only `clean` and deliberate policy skips count; scenario 8's table and proof P10 pin it, and reusing the helper keeps the two definitions from drifting |
 | Thread and CI evidence describes a newer commit than the reviewer verdicts | Med | High — dispatch would be authorized on an inconsistent mix of two heads | Conditions 3 and 4 require the live head returned with their queries to equal `loop_head_sha`, and defer with `evidence_head_moved` otherwise; scenario 11 pins it |
@@ -748,20 +776,28 @@ expensive_reviewer_gate() {
   local head_sha="$3"
   local reason=""
   local deferrals
+  local configured
+  local head_current
+
+  # Derived from in-loop state, NOT from the environment: #1648's LOCAL_AI_*
+  # keys are stdout serializations printed once at end of run, so reading them
+  # here would always see them unset and the gate would defer forever.
+  configured="$(expensive_gate_local_ai_configured)"
+  head_current="$(expensive_gate_local_ai_head_current "$head_sha")"
 
   if [ -z "$head_sha" ]; then
     reason="evidence_unavailable_head"
-  elif [ "${LOCAL_AI_CONFIGURED:-}" = "0" ]; then
+  elif [ "$configured" = "0" ]; then
     # No current-head local evidence exists. The brief requires fail-closed
     # here; the deferral cap and the explicit override are the release valves.
     reason="local_reviewer_not_configured"
-  elif [ "${LOCAL_AI_CONFIGURED:-}" != "1" ]; then
+  elif [ "$configured" != "1" ]; then
     # Allow-list, not deny-list: anything that is not exactly 0 or 1 is as
-    # uninformative as an absent key, so it must not fall through.
+    # uninformative as an absent value, so it must not fall through.
     reason="local_evidence_missing"
-  elif [ "${LOCAL_AI_HEAD_CURRENT:-}" = "0" ]; then
+  elif [ "$head_current" = "0" ]; then
     reason="local_evidence_stale"
-  elif [ "${LOCAL_AI_HEAD_CURRENT:-}" != "1" ]; then
+  elif [ "$head_current" != "1" ]; then
     reason="local_evidence_missing"
   fi
   # Conditions 2-4 follow, each appending its own reason and each comparing the
@@ -840,6 +876,14 @@ Summary-comment line, illustrative:
    mirroring `reviewer_loop_history_entries_count`'s own three states.
    **Verify**: scenarios 13, 14, 19 and 19b — the count reflects only the
    current head, an absent ledger yields `0`, and a malformed one yields `-1`.
+3a. Add `expensive_gate_local_ai_configured` (membership of
+   `local-ai-reviewer` in the resolved `platforms[@]`) and
+   `expensive_gate_local_ai_head_current <head_sha>` (which applies #1648's
+   `reviewer_loop_head_evidence_classify` to the `local-ai-reviewer` entry of
+   `platform_reviewed_heads`). **Verify**: scenario 22 — with #1648's real
+   producer populating `platform_reviewed_heads`, both helpers return the same
+   values the run later prints as `LOCAL_AI_CONFIGURED` and
+   `LOCAL_AI_HEAD_CURRENT`. Do not read those names as environment variables.
 3b. Move `configured_reviewer_check_names_json` verbatim from `pr-ci-loop.sh`
    to `workflow-lib.sh`, delete the local definition, and add
    `expensive_gate_baseline_checks_status`. **Verify**: scenario 20 — the CI
@@ -897,7 +941,7 @@ Summary-comment line, illustrative:
     `scripts/development-workflow/select-test-suites.sh` selects the new suite
     for a change touching only `pr-review-loop.sh` and selects
     `test-pr-ci-loop.sh` for a change touching only `workflow-lib.sh`.
-11. Produce the sixteen planted-violation proofs (P1–P16) and record them in the PR
+11. Produce the seventeen planted-violation proofs (P1–P17) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed.

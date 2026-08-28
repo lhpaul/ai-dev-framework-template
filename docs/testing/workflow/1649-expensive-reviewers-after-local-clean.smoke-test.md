@@ -210,6 +210,25 @@ exact configuration Step 3c exists to support. The peer set is well-defined only
 because of the reorder — after it, "precedes this reviewer" and "should have
 produced evidence before this reviewer" are the same set.
 
+### Step 3e: The local evidence is derived in-loop, not read from the environment
+
+**Maps to**: the "gate reads the local evidence from the environment" risk.
+
+1. With #1648's actual producer populating `platform_reviewed_heads` — **not**
+   with `LOCAL_AI_CONFIGURED` / `LOCAL_AI_HEAD_CURRENT` pre-seeded as
+   variables — run the gate for a current head, a stale head, an unreported
+   head, and a run where `local-ai-reviewer` is not configured.
+2. Compare the gate's inputs with the values the run later prints as
+   `LOCAL_AI_CONFIGURED` and `LOCAL_AI_HEAD_CURRENT`.
+3. Grep the gate implementation for reads of those two names as variables.
+
+**Expected result**: the derived values match the printed ones in all four
+runs, and the gate reads neither name from the environment. #1648 defines them
+as top-level stdout keys printed once at end of run, so an environment read
+would be unset during the platform iteration and the gate would defer on every
+invocation — inert in the worst way, always refusing. The stdout keys are the
+serialization of the same in-loop state, not a second source of truth.
+
 ### Step 4: Unreadable evidence defers, and does not escalate
 
 **Maps to**: brief scope bullet 2 (fail-closed).
@@ -372,10 +391,10 @@ so it would run only when the test file itself changed.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR description's `Planted-Violation Proofs` heading.
-2. Confirm P1–P16 from the plan each record the command, the file and line of
+2. Confirm P1–P17 from the plan each record the command, the file and line of
    the planted violation, and both outcomes.
 
-**Expected result**: sixteen proofs, each showing the check failing with the
+**Expected result**: seventeen proofs, each showing the check failing with the
 violation present and passing once removed. Four carry the most weight: P4
 deletes the `expensive_reviewer_gate` call so the function is defined but
 unreachable, and requires Step 3's stale-evidence row to fail — that is what
@@ -394,7 +413,8 @@ peer set back to the whole resolved list and requires Step 3d's first run to
 fail. P14 makes the baseline-check helper treat every check as a baseline check
 and requires Step 3's reviewer-owned-pending row to fail. P15 removes the
 short-circuit on a defer and requires Step 6b to fail. P16 makes an empty
-check set read as green and requires Step 3's two empty-set rows to fail.
+check set read as green and requires Step 3's two empty-set rows to fail. P17
+reads the local evidence from the environment and requires Step 3e to fail.
 
 ### Step 10: Documentation states one contract
 
