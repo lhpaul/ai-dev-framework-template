@@ -41,12 +41,30 @@ escalation contract — so the guard has to be provably incapable of running
 twice for the same head, and its interaction with both caps has to be decided
 rather than inherited.
 
-**Dependencies**: **#1648 must be implemented and merged before this item's
-implementation PR opens.** The condition reads the local reviewer's reviewed
-head per reviewer, which is #1648's `reviewed_heads[]`. #1649's plan is merged
-and its implementation is not; the two touch adjacent code but not the same
-lines, and this plan records the boundary in **Interaction with #1649** rather
-than sequencing them.
+**Dependencies**: **#1648 and #1651 must both be implemented and merged before
+this item's implementation PR opens, in that order.** The condition needs the
+local reviewer's most recent verdict *and* the commit it describes, and neither
+exists on the base branch today:
+
+- **#1648** adds `reviewed_heads[]`, the per-reviewer commit.
+- **#1651** adds `platform_results` and
+  `reviewer_loop_local_latest_verdict <history_payload> <configured_platforms>`
+  — the selector this item's condition calls, with that two-argument signature.
+  #1651 itself depends on #1648, so the chain is **#1648 → #1651 → #1656**.
+
+An earlier revision of this plan named only #1648 and called the selector with
+one argument. That was wrong twice: the helper belongs to #1651, and its
+signature takes the configured-platform list, without which `not_configured`
+cannot be distinguished from `not_yet_run` — a distinction this item's
+`no_evidence` row depends on.
+
+Defining a second selector here instead was considered and rejected: two
+readers of the same ledger field is how the two drift, and #1651's already
+handles the four absence cases this condition must classify.
+
+#1649's plan is merged and its implementation is not; the two touch adjacent
+code but not the same lines, and this plan records the boundary in
+**Interaction with #1649** rather than sequencing them.
 
 ---
 
@@ -76,15 +94,20 @@ would make the count zero afterwards.
 | --- | --- | --- | --- | --- | --- |
 | Approved base branch for this item | `develop-internal-reviewer-effectiveness` | `integration-branch:internal-reviewer-effectiveness` label on #1656 | 2026-08-28, repo SHA `d55d3e7f` | Epic #1647 items | `Verified` |
 | Per-reviewer head evidence exists | Introduced by #1648 | #1648's merged plan | 2026-08-28, repo SHA `d55d3e7f` | #1648 and #1656 | `Conflict` — see below |
+| The verdict selector exists, with two arguments | `reviewer_loop_local_latest_verdict <payload> <configured_platforms>`, introduced by #1651 | #1651's merged plan | 2026-08-28, repo SHA `d55d3e7f` | #1651 and #1656 | `Conflict` — see below |
 | The ready-phase gate's insertion point | `pr-review-loop.sh:8580-8616` | The file | 2026-08-28, repo SHA `d55d3e7f` | `pr-review-loop.sh`, #1649 | `Conflict` — see below |
 
-**Conflict record.** Two. First, the condition needs each reviewer's reviewed
+**Conflict record.** Three. First, the condition needs each reviewer's reviewed
 head, which does not exist on the base branch: #1648's plan is merged, its
-implementation is not. Second, #1649 adds its own gate in the same region.
-Affected plan statements: the guard's condition and its insertion point.
+implementation is not. Second, it calls #1651's verdict selector, which is in
+the same state — and whose two-argument signature is what separates
+`not_configured` from `not_yet_run`. Third, #1649 adds its own gate in the same
+region. Affected plan statements: the guard's condition and its insertion
+point.
 
-**Resolution status**: `Resolved`. The first by sequencing — **Implementation
-Order step 0**, a hard stop on #1648. The second by scope, recorded in
+**Resolution status**: `Resolved`. The first two by sequencing —
+**Implementation Order step 0**, a hard stop on the chain #1648 → #1651 →
+#1656. The second by scope, recorded in
 **Interaction with #1649**: that item decides *whether to dispatch* an expensive
 reviewer given the evidence; this one decides *whether to produce* the evidence
 first. Decision owner: LH — if #1649 is implemented as a single combined gate,
@@ -113,7 +136,7 @@ Not applicable — this repository ships workflow tooling, not a service.
 ### Shared Packages / Libraries
 
 - [ ] **Decide whether a second pass is owed.** Add
-      `reviewer_loop_local_pass_required <history_payload> <loop_head_sha>`,
+      `reviewer_loop_local_pass_required <history_payload> <loop_head_sha> <configured_platforms>`,
       printing one of four values — three that owe a pass and one that does
       not:
 
@@ -222,8 +245,10 @@ Not applicable — this repository ships workflow tooling, not a service.
 
 ### Infrastructure / Configuration
 
-- [ ] Document both keys and the four reasons in the `--help` block and in
-      Protocol 93.
+- [ ] Document both keys and **all five** reasons — the four conditions plus
+      `failed_for_head` — in the `--help` block and in Protocol 93. Four would
+      omit the refusal, which is the only reason that reports a *blocked* gate
+      rather than a satisfied or a repaired one.
 
 ---
 
@@ -363,9 +388,13 @@ Order step 0.
 # Four values, not a boolean: the reason is reported, and `1` cannot be read
 # backwards into a cause.
 reviewer_loop_local_pass_required() {
-  local payload="${1:-}" head="${2:-}" verdict outcome verdict_head
+  local payload="${1:-}" head="${2:-}" configured="${3:-}"
+  local verdict outcome verdict_head
 
-  verdict="$(reviewer_loop_local_latest_verdict "$payload")"
+  # #1651's selector, with its two-argument signature: the configured-platform
+  # list is what separates `not_configured` from `not_yet_run`, and this
+  # condition's `no_evidence` row needs both.
+  verdict="$(reviewer_loop_local_latest_verdict "$payload" "$configured")"
   outcome="$(printf '%s' "$verdict" | jq -r '.outcome // "unknown"')"
   verdict_head="$(printf '%s' "$verdict" | jq -r '.head_sha // ""')"
 
@@ -416,11 +445,14 @@ pull requests it lets through are exactly the ones nobody reviewed locally.
 
 ## Implementation Order
 
-0. **Hard stop**: confirm #1648 is implemented and merged, and read #1649's
-   implementation — merged or in flight — to confirm it is a *check* and not a
-   combined gate. If it is combined, stop and revise this plan.
-1. Add `reviewer_loop_local_pass_required`. **Verify**: scenarios 1, 2 and 3 —
-   all four values, `no_evidence` for silence, and both head-mismatch shapes.
+0. **Hard stop**: confirm **#1648 and #1651** are both implemented and merged,
+   and that `reviewer_loop_local_latest_verdict` exists with the two-argument
+   signature #1651's plan specifies. Then read #1649's implementation — merged
+   or in flight — to confirm it is a *check* and not a combined gate. If either
+   check fails, stop and revise this plan.
+1. Add `reviewer_loop_local_pass_required`, calling #1651's selector with both
+   of its arguments. **Verify**: scenarios 1, 2 and 3 — all four values,
+   `no_evidence` for silence, and both head-mismatch shapes.
 2. Add the three-way guard — dispatch, refuse, or proceed — with the flag
    holding the head a pass **failed** on, before
    `ensure_pr_ready_for_ready_phase`. **Verify**: scenarios 4, 5, 6, 7, 8, 8a
