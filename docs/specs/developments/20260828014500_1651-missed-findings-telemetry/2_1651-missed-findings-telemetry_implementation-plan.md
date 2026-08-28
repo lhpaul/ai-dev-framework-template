@@ -177,8 +177,14 @@ Not applicable — this repository ships workflow tooling, not a service.
       | Situation | Returned outcome | Why it is distinct |
       | --- | --- | --- |
       | The local reviewer is **not** in the configured platform list | `not_configured` | a repository that will never produce local evidence — checked **first**, because an unconfigured reviewer with an empty history must not read as `not_yet_run` |
-      | It is configured and appears in no entry's `platform_results` | `not_yet_run` | a pull request early in its life |
-      | It is configured, entries exist, but none carries `platform_results` — or none names it | `unknown` | the history is healthy and silent, including every entry written before this change |
+      | It is configured and the history has **no entries at all** | `not_yet_run` | a pull request early in its life |
+      | It is configured, entries **exist**, but none names it in `platform_results` — including every entry written before this change | `unknown` | the history is healthy and silent |
+
+      The last two rows are separated by whether `entries` is empty, not by
+      whether the search found anything. Both searches come back empty-handed,
+      and collapsing them would report `not_yet_run` for a pull request with
+      forty rounds of history that happens to say nothing about the local
+      reviewer — which is AC-7's `unknown`, not "has not run yet".
 
 - [ ] **Classify a clean verdict by ancestry.** Add
       `reviewer_loop_commit_ancestry <clean_head> <reviewed_head>`, printing
@@ -192,6 +198,16 @@ Not applicable — this repository ships workflow tooling, not a service.
       both return 1                                      → unrelated
       either returns anything else, or a commit is absent → undecidable
       ```
+
+      **Every one of those statuses must be captured with `|| status=$?`, not
+      read from a bare call.** `pr-review-loop.sh` runs under `set -euo
+      pipefail`, and status 1 — "not an ancestor", the answer this function
+      exists to read — would terminate the shell before the status could be
+      examined. A command in a `||` list is exempt from errexit; a standalone
+      one is not. The failure is not subtle in effect: `ancestor`,
+      `descendant` and `unrelated` would all be unreachable, so every clean
+      verdict on a different commit would abort the round rather than be
+      classified.
 
       **`undecidable` is the state a naive implementation loses**, and losing it
       is not cosmetic. `git merge-base --is-ancestor` exits 0 for yes, **1 for
@@ -360,12 +376,14 @@ Not applicable — this repository ships workflow tooling, not a service.
    2 and a `needs_fixes` local verdict at iteration 5 returns the iteration-5
    verdict. This is AC-4a, and it is the single most likely implementation
    error in the item.
-2. It returns `not_yet_run` when the local reviewer is configured and appears in
-   no entry's `platform_results`, and `not_configured` when it is absent from
-   the configured list — **with the same empty history in both calls**, so the
-   only thing that differs is the configured-platform argument. The two are
+2. It returns `not_yet_run` when the local reviewer is configured and the
+   history has **no entries at all**, and `not_configured` when it is absent
+   from the configured list — **with the same empty history in both calls**, so
+   the only thing that differs is the configured-platform argument. The two are
    asserted to be different values, not merely both non-clean.
-3. It returns `unknown` when entries exist but none names the local reviewer.
+3. It returns `unknown` when **entries exist** but none names the local
+   reviewer — distinguished from scenario 2's `not_yet_run` by the presence of
+   entries alone, since both searches come back empty-handed.
 3a. It returns `unknown` for an entry written **before** this change — one with
     `platforms` but no `platform_results` — even when that entry's aggregate
     `result` is `clean`. Reading the aggregate as the local verdict is the
@@ -383,6 +401,12 @@ Not applicable — this repository ships workflow tooling, not a service.
    repository, a `--is-ancestor` exit status other than 0 or 1, and an empty
    commit argument. Asserted as `undecidable` specifically, never as
    `unrelated`.
+5a. Every branch runs under `set -euo pipefail` without terminating the shell,
+    exercised by sourcing the loop with `HARNESS_MODE=1` — which is how the
+    script itself runs — and calling the function for each of the five results.
+    The `ancestor`, `descendant` and `unrelated` cases all pass through an exit
+    status of 1, which a bare call would turn into an aborted round rather than
+    a classification.
 6. `reviewer_loop_local_evidence_state` produces each of the ten states, one
    case per row of its eleven-row table, including both routes to `unknown`.
 7. A record is **not** built for the local reviewer's own blocking findings.
@@ -465,6 +489,7 @@ Not applicable — this repository ships workflow tooling, not a service.
 | The derivation reaches for the most recent **clean** verdict | **High** — it is the more natural sentence, and it reads as more helpful | **High** — a reviewer that cleared one commit and then reported findings on a later one would be recorded as having missed something it had already caught | Selection is by recency and classification is second, stated in that order in the plan and in the function's name. Scenario 1 and proof **P1** |
 | Records are written only for misses | Med | **High** — the denominator becomes unknowable and the reported rate is always 100% | A record is written on every qualifying external round, including `not_clean` and `unknown`. Scenario 9 and proof **P2** |
 | A telemetry failure is reported when nothing was owed | Med | Low — noise on pull requests where the feature had nothing to do, which erodes trust in the signal | The eligibility test runs before the writability test, matching the spec's row order. Scenario 12 and proof **P5** |
+| A `git` exit status of 1 is read from a bare call under `set -e` | **High** — it is the shorter and more obvious way to write it | **High** — three of the five results become unreachable and the round aborts instead of classifying | Every status is captured with `\|\| status=$?`, which is exempt from errexit. Scenario 5a and proof **P9** |
 | The summary line's bound is enforced by truncating the finished string | Med | Med — truncation removes the tail, which is where the state and the classification sit | The line is built with the total and the state **before** the paths, and paths stop at the first one that would exceed the bound. Scenario 13's zero-path case and proof **P6** |
 | The additive fields break a ledger reader | Low | Med | The schema string is unchanged and every existing field keeps its name and type; scenario 14 asserts them individually |
 | A pre-change entry's aggregate result is read as the local reviewer's verdict | **High** — it is the only outcome those entries carry | **High** — rounds the local reviewer never ran become confirmed misses, in the historical half of the data where nobody checks | Entries without `platform_results` yield `unknown`, never the aggregate. Scenario 3a and proof **P8** |
@@ -492,13 +517,17 @@ reviewer_loop_commit_ancestry() {
   git cat-file -e "${clean}^{commit}" 2>/dev/null || { printf 'undecidable\n'; return 0; }
   git cat-file -e "${reviewed}^{commit}" 2>/dev/null || { printf 'undecidable\n'; return 0; }
 
-  git merge-base --is-ancestor "$clean" "$reviewed" >/dev/null 2>&1
-  status=$?
+  # `|| status=$?` and not a bare call: the script runs under `set -e`, and the
+  # expected status 1 — "not an ancestor", the answer this function exists to
+  # read — would terminate the shell before the next line. A command in a `||`
+  # list is exempt from errexit; a standalone one is not.
+  status=0
+  git merge-base --is-ancestor "$clean" "$reviewed" >/dev/null 2>&1 || status=$?
   [ "$status" -eq 0 ] && { printf 'ancestor\n'; return 0; }
   [ "$status" -ne 1 ] && { printf 'undecidable\n'; return 0; }
 
-  git merge-base --is-ancestor "$reviewed" "$clean" >/dev/null 2>&1
-  status=$?
+  status=0
+  git merge-base --is-ancestor "$reviewed" "$clean" >/dev/null 2>&1 || status=$?
   [ "$status" -eq 0 ] && { printf 'descendant\n'; return 0; }
   [ "$status" -ne 1 ] && { printf 'undecidable\n'; return 0; }
 
@@ -518,17 +547,23 @@ reviewer_loop_local_latest_verdict() {
   esac
 
   printf '%s' "$payload" | jq -c '
-    [ (.entries // [])[]
-      | . as $entry
-      | ((.platform_results // [])[]
-         | select(.platform == "local-ai-reviewer")
-         | {outcome: (.result // "unknown"),
-            head_sha: (.reviewed_head // $entry.head_sha // ""),
-            iteration: $entry.iteration})
-    ]
+    (.entries // []) as $entries
+    | [ $entries[]
+        | . as $entry
+        | ((.platform_results // [])[]
+           | select(.platform == "local-ai-reviewer")
+           | {outcome: (.result // "unknown"),
+              head_sha: (.reviewed_head // $entry.head_sha // ""),
+              iteration: $entry.iteration})
+      ]
     | sort_by(.iteration)
     | last
-    // {outcome: "not_yet_run", head_sha: "", iteration: 0}'
+    # An empty search result means two different things, and the difference is
+    # whether any round ran at all — not whether this search found something.
+    // (if ($entries | length) == 0
+        then {outcome: "not_yet_run", head_sha: "", iteration: 0}
+        else {outcome: "unknown",     head_sha: "", iteration: 0}
+        end)'
 }
 ```
 
@@ -537,18 +572,20 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The eight proofs fall into
+runs per proof, each citing a concrete file and line. The ten proofs fall into
 two groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Overclaiming | **5** | P1, P2, P3, P4, P8 | a number asserted on evidence that does not support it |
-| Contract | **3** | P5, P6, P7 | a report, a line, or a stored history that breaks its own stated contract |
+| Overclaiming | **6** | P1, P2, P3, P4, P8, P10 | a number asserted on evidence that does not support it |
+| Contract | **4** | P5, P6, P7, P9 | a report, a line, or a stored history that breaks its own stated contract |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
 | P1 | Select the most recent **clean** local verdict instead of the most recent verdict | a scratch copy of `reviewer_loop_local_latest_verdict` | scenario 1 fails: a reviewer that cleared iteration 2 and reported findings at iteration 5 is recorded as `clean_earlier_commit` — a possible miss — on a verdict it had already superseded. The confirmed and possible counts both rise on evidence the reviewer itself withdrew; restoring recency-first selection passes |
 | P2 | Write records only when the state is a confirmed or possible miss | a scratch copy of the record builder | scenario 9 fails: the denominator disappears, and every report built on these records reads 100% missed. This is the failure that makes the whole feature worse than nothing, because it produces a confident wrong number rather than no number; restoring the every-qualifying-round rule passes |
+| P9 | Read `--is-ancestor` with a bare call instead of `\|\| status=$?` | a scratch copy of `reviewer_loop_commit_ancestry` | scenario 5a fails: under `set -e` the expected status 1 terminates the shell, so `ancestor`, `descendant` and `unrelated` become unreachable and every clean verdict on a different commit aborts the round instead of being classified. Scenario 4's `same` case still passes, because it returns before any `git` call; restoring the `\|\| status=$?` capture passes all five |
+| P10 | Return `not_yet_run` whenever the local-reviewer search finds nothing | a scratch copy of the selector | scenario 3 fails: a pull request with forty rounds of history that says nothing about the local reviewer is reported as "has not run yet", so a repository whose local reviewer silently stopped appearing looks like a young pull request forever; restoring the empty-entries test passes |
 | P3 | Treat any non-zero `--is-ancestor` status as "not an ancestor" | a scratch copy of `reviewer_loop_commit_ancestry` | scenario 5 fails in all three cases: an absent commit, a non-0/1 exit, and an empty argument are all recorded as `clean_unrelated_commit`, asserting a severed relationship the repository never established. Scenario 4 still passes, which is the point — the plant is invisible to every test with a healthy repository; restoring the five-way return passes |
 | P4 | Merge `not_yet_run` into `not_configured` | a scratch copy of the verdict selector | scenario 2 fails: a pull request early in its life and a repository with no local reviewer become the same value, and the report can no longer tell "has not run yet" from "will never run"; restoring the two values passes |
 | P5 | Test writability before eligibility | a scratch copy of the record entry point | scenario 12 fails: a round whose only findings came from the local reviewer reports a telemetry failure on an unwritable history, though no record was owed. Scenario 11 still passes; restoring the spec's row order passes both |
@@ -556,7 +593,7 @@ two groups:
 | P8 | Fall back to the entry's aggregate `result` when `platform_results` is absent | a scratch copy of the selector | scenario 3a fails: a pre-change entry whose round was aggregate-clean is read as a clean **local** verdict, so rounds the local reviewer never ran are recorded as confirmed misses. The plant only affects historical entries, which is where nobody looks; restoring the `unknown` fallback passes |
 | P6 | Enforce the 200-character bound by truncating the finished line | a scratch copy of the renderer | scenario 13's long-path case fails: truncation removes the tail, which is where the local evidence state and the classification sit, so the line that survives is the one carrying paths and no verdict — exactly inverted from what a reader needs; restoring build-order enforcement passes |
 
-Five proofs plant the overclaiming direction because that is the direction with
+Six proofs plant the overclaiming direction because that is the direction with
 no symptom: every one of them produces a plausible number, and a number is
 believed. P3 is the one to read twice — its plant passes every test written
 against a healthy repository, and only a fixture with a deliberately deleted
@@ -570,8 +607,9 @@ object exposes it.
    `develop-internal-reviewer-effectiveness`, and that its per-reviewer head
    evidence matches what its plan describes. If it does not, stop and revise
    this plan. **Verify**: the merged commit and the field names it introduced.
-1. Add `reviewer_loop_commit_ancestry`. **Verify**: scenarios 4 and 5 in the new
-   suite, including the deleted-object fixture.
+1. Add `reviewer_loop_commit_ancestry`, capturing every `git` status with
+   `|| status=$?`. **Verify**: scenarios 4, 5 and 5a in the new suite,
+   including the deleted-object fixture and the errexit check.
 1a. Add `platform_results` to `reviewer_loop_history_build_entry`, built from
    `platform_result_tokens`. **Verify**: scenario 14 and scenario 3b.
 2. Add `reviewer_loop_local_latest_verdict`, taking the history payload and the
@@ -593,7 +631,7 @@ object exposes it.
    zero-path line.
 8. Update Protocol 93 and the `--help` block. **Verify**: runbook Step 9 reads
    both against the code.
-10. Produce the eight planted-violation proofs (P1-P8) and record them in the PR
+10. Produce the ten planted-violation proofs (P1-P10) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---

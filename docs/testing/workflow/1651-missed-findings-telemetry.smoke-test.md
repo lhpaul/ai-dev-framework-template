@@ -41,8 +41,8 @@ P1.
 
 **Maps to**: AC-6.
 
-1. Call the selector with an **empty** history and a configured list that
-   contains `local-ai-reviewer`.
+1. Call the selector with a history that has **no entries at all** and a
+   configured list that contains `local-ai-reviewer`.
 2. Call it with the **same** empty history and a configured list that does not.
 
 **Expected result**: `not_yet_run` and `not_configured`, asserted as those two
@@ -62,7 +62,8 @@ P4.
 
 **Maps to**: AC-7.
 
-1. Call the selector with entries that exist but name no local-reviewer result.
+1. Call the selector with entries that **exist** but name no local-reviewer
+   result.
 2. Call it with an entry written **before** this change — `platforms` present,
    `platform_results` absent — whose aggregate `result` is `clean`.
 3. Call it with an entry whose aggregate `result` is `needs_fixes` because an
@@ -84,6 +85,11 @@ Case 3 is the same confusion in the present tense: the aggregate says
 `needs_fixes` because *someone* failed, and the local reviewer was clean. Only
 `platform_results` distinguishes them.
 
+Case 1 is separated from Step 2's `not_yet_run` by the presence of entries, not
+by whether the search found anything — both searches come back empty-handed. A
+pull request with forty rounds of history that says nothing about the local
+reviewer is `unknown`, not "has not run yet". Proof P10.
+
 ## Step 4: Ancestry answers four ways on a healthy repository
 
 **Maps to**: AC-1 through AC-4.
@@ -94,6 +100,12 @@ Case 3 is the same confusion in the present tense: the aggregate says
    descendant, against an ancestor, and across the two branches.
 
 **Expected result**: `same`, `ancestor`, `descendant`, `unrelated`.
+
+Run this step in a shell that has sourced the loop, so `set -euo pipefail` is
+active — which is how the script itself runs. Three of these four results pass
+through a `git merge-base --is-ancestor` exit status of **1**, and a bare call
+would terminate the shell there rather than return an answer. Every status must
+be captured with `|| status=$?`, which is exempt from errexit. Proof P9.
 
 ## Step 5: Ancestry that cannot be computed is `undecidable`, never `unrelated`
 
@@ -264,11 +276,11 @@ status. The records change what is *known*, never what happens.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P8 each record the command, the file and line of the
+2. Confirm P1 through P10 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: eight proofs in two groups — **five** overclaiming,
-**three** contract, per the plan's proof-group table.
+**Expected result**: ten proofs in two groups — **six** overclaiming, **four**
+contract, per the plan's proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:
 each of its plants produces a plausible number, and a number is believed. P3 is
