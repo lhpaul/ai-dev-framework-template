@@ -213,32 +213,6 @@ Not applicable — this repository ships workflow tooling, not a service.
       follows: AC-11 and Decision Matrix row 3 require no record and a reported
       reason. The record is withheld.
 
-      **The consequence is real and is stated rather than engineered around:
-      today only `local-ai-reviewer` emits `REVIEWED_HEAD`, so no external round
-      produces a record and this feature collects nothing until an external
-      adapter reports its head.** An earlier revision of this plan substituted
-      `loop_head_sha` — the head the loop *dispatched* the round against — to
-      avoid that. It is withdrawn. The dispatched head is what the loop sent,
-      not what the reviewer read; a reviewer that started late read a newer
-      commit, and the spec's `clean_same_commit` is defined as the local
-      reviewer having cleared *the exact commit the external reviewer
-      reviewed*. Recording an inference under that name would put unearned
-      entries into the confirmed count, which is the single number this feature
-      exists to make trustworthy, and would do it invisibly.
-
-      An empty telemetry is a poor outcome. A confidently wrong one is worse,
-      and it is the one nobody can detect from the data. The plan takes the
-      empty one and names the unblocking work.
-
-      **Follow-up, not scope creep**: extending the external adapters to emit
-      `REVIEWED_HEAD` is what turns this feature on. It changes the companion
-      contract of every external platform and belongs to its own item, which
-      this plan recommends opening. Until then the loop reports the attribution
-      failure per AC-11 on every external round — which is itself the signal
-      that the adapters need extending, visible on every pull request rather
-      than buried in a plan.
-      confirmed misses count, with no change here.
-
       The normalization applied at collection time:
 
       | `result` | `reason` | Outcome recorded |
