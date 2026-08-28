@@ -92,7 +92,8 @@ The objectives below are the discrete requirements stated in issue #1654. Every 
 1. The maintainer writes a new entry: the pattern's name, the general shape, a minimal example, and the question a reviewer should ask to detect it.
 2. The maintainer removes every trace of the specific occurrence — no pull request number, no issue number, no file path from the incident, no title.
 3. The maintainer opens a pull request in the ordinary way.
-4. The repository's checks confirm the entry is well-formed, is generic, and that the catalogue still fits its bound.
+4. The repository's checks confirm the entry is well-formed, carries no mechanically detectable incident reference, and that the catalogue still fits its bound.
+5. A human reviewer confirms the rest of the generality rule — no person's name, no document title, no wording that only makes sense to someone who saw the original incident. This half is not automated, and the pull request is where it is caught.
 
 **Postconditions**: The catalogue has one more pattern and is still within bound.
 
@@ -115,13 +116,14 @@ The objectives below are the discrete requirements stated in issue #1654. Every 
 
 1. The reviewer reads the document under review against the doctrine's patterns.
 2. It finds a passage matching one of the shapes.
-3. It reports the finding in its ordinary format, naming the pattern it matched.
+3. It reports the finding in its ordinary format. The catalogue's preamble **asks** it to name the pattern it matched.
 
-**Postconditions**: The finding carries the pattern's name, so a later reader can tell doctrine-driven findings from the rest.
+**Postconditions**: The finding is reported. When the reviewer followed the request, it carries the pattern's name and a later reader can tell doctrine-driven findings from the rest.
 
 **Considerations**:
 
-- Naming the pattern is required of the report, not of the judgement. A reviewer must not withhold a real finding because it fits no catalogued pattern, and the doctrine says so in its own preamble. The catalogue is a list of things worth looking for, never the list of things worth reporting.
+- **The pattern name is requested, not required, and the spec does not pretend otherwise.** Whether a model names the pattern it applied is no more observable from outside than whether it read the doctrine at all — the same limit recorded in Out of Scope item 5. What this feature can guarantee is that the request is present in the catalogue's preamble, which AC-3a makes checkable; what it cannot guarantee is compliance, so no acceptance criterion claims it.
+- Naming the pattern is asked of the report, never of the judgement. A reviewer must not withhold a real finding because it fits no catalogued pattern, and the preamble says so. The catalogue is a list of things worth looking for, never the list of things worth reporting.
 
 ---
 
@@ -239,6 +241,7 @@ The count is *patterns supplied*, never *patterns present*. An `oversized` catal
 1. **AC-1**: A review-doctrine catalogue exists in the repository as a single document.
 2. **AC-2**: The catalogue contains the five seeded patterns named in Statuses / Enum Values, and each has a name, a shape, a minimal example and a detection question.
 3. **AC-3**: The catalogue's preamble states that it lists shapes worth looking for and is not the set of things worth reporting.
+3a. **AC-3a**: The catalogue's preamble asks a reviewer that matches a pattern to name it in the finding. The criterion is satisfied by the request being present; whether a reviewer complies is not claimed — see Out of Scope item 5.
 4. **AC-4**: No catalogue entry contains any of these **mechanically detectable** references to a specific incident: a `#` followed by digits; a URL whose host is the repository's forge; the word `PR` or `issue` followed by digits, case-insensitively; or a path beginning `docs/specs/developments/`.
 5. **AC-5**: A repository check fails when an entry violates AC-4, and passes when it does not. The check's authoritative prohibited set is exactly the four forms listed in AC-4 — no more, so the check is implementable, and no fewer, so it is worth running.
 5a. **AC-5a**: The remaining half of the generality rule — no person's name, no document title, no wording that only makes sense to someone who saw the original incident — is a **human review** obligation, listed in the catalogue's own contribution guidance and in the `Workflow Policy Review Checklist`. No automated check is claimed for it. A person's name and a document title have no reliable machine representation, and a check that pretended to catch them would report clean on the cases it cannot see, which is worse than having no check at all.
@@ -264,4 +267,4 @@ The count is *patterns supplied*, never *patterns present*. An `oversized` catal
 2. **Automatic extraction of patterns from external reviewer output.** Every entry is written by a human or an agent acting deliberately. Automatic extraction would fill the catalogue with incident-shaped text, which is the failure the generality rule exists to prevent, and it would do so faster than review could catch it.
 3. **Patterns observed outside PR #1646.** The brief names five seeds and this feature ships exactly those. Later patterns — including any drawn from this epic's own review history — are added through Use Case 3 like any other, once someone has seen the shape recur.
 4. **Per-stage doctrine subsets.** The catalogue is supplied whole to every stage. Splitting it by stage is a plausible later refinement and would need evidence that a stage's reviewer is being distracted by patterns that do not apply to it; no such evidence exists.
-5. **Enforcing that a reviewer used the doctrine.** The feature can supply the doctrine and record that it did. Whether a model applied it is not observable from outside, and a check that claimed to verify it would be a declared-but-unverifiable control.
+5. **Enforcing that a reviewer used the doctrine, or that it named the pattern it matched.** The feature can supply the doctrine, record that it did, and ask in the preamble for the pattern name (AC-3a). Whether a model applies the doctrine or honours the request is not observable from outside, and a check claiming to verify either would be a declared-but-unverifiable control. This is also why the pattern name is absent from the acceptance criteria as an output requirement: a criterion that cannot fail is not a criterion.
