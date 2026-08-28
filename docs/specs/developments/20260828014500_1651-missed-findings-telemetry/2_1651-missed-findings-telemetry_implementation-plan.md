@@ -176,7 +176,12 @@ Not applicable — this repository ships workflow tooling, not a service.
 
       So this plan **joins** rather than duplicates: `platform_results` holds
       the outcome fields, `reviewed_heads[]` holds the heads, and the two are
-      matched on the platform name. The derivation reads the head for a platform
+      matched on the platform name. #1648 defines each element of that array
+      with the keys `platform`, `reviewed_head`, `state` and `reason`, so the
+      join reads `.reviewed_head` — the field names come from #1648's plan and
+      must be re-read there at implementation time, since a wrong key here
+      yields an empty head, an undecidable ancestry, and `unknown` on every
+      round. The derivation reads the head for a platform
       from `reviewed_heads[]` and nowhere else. Where #1648's field records the
       empty string, the reviewed commit **cannot be established**, and the spec
       is unambiguous: AC-11 and Decision Matrix row 3 require no record and a
@@ -824,7 +829,10 @@ Not applicable — this repository ships workflow tooling, not a service.
     `platform_results` and `missed_findings`. Asserted against an enumerated
     list, not a count.
 14a. `platform_results` carries **no** head field, and every head the derivation
-    uses comes from `reviewed_heads[]` matched on platform name. Two persisted
+    uses comes from `reviewed_heads[]` matched on platform name, read from that
+    element's `reviewed_head` key. The fixture uses #1648's element shape —
+    `platform`, `reviewed_head`, `state`, `reason` — so a lookup on the wrong
+    key fails the scenario rather than silently returning null. Two persisted
     copies of one fact is the defect; asserting the absence is what stops the
     second copy being reintroduced by an implementer who finds the join
     inconvenient.
@@ -983,7 +991,11 @@ reviewer_loop_local_latest_verdict() {
                 ($entry.reviewed_heads // [])
                 | map(select(.platform == "local-ai-reviewer"))
                 | first
-                | .head // ""
+                # `.reviewed_head`, the key #1648 defines on each element
+                # (its plan, "`platform`, `reviewed_head`, `state`, and
+                # `reason`") — not `.head`, which would always be null and
+                # would map every clean verdict to `unknown`.
+                | .reviewed_head // ""
               ),
               iteration: $entry.iteration})
       ]
