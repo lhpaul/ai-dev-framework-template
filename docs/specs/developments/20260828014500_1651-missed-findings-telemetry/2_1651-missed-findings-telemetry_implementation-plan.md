@@ -674,11 +674,24 @@ Not applicable — this repository ships workflow tooling, not a service.
       | Reviewer name | 18 | the longest of the eleven names `run_platform_review` dispatches, `claude-code-action` |
       | Short SHA | 8 | fixed rendering |
       | Blocking count, path total | 5 each | **clamped**: a value above 9,999 renders as `9999+` |
-      | State label | 23 | the longest of the spec's ten, `Clean, unrelated commit` |
-      | Classification | 14 | the longer of `confirmed miss` and `possible miss` |
+      | State label **and** classification, jointly | 34 | the largest **reachable** pair — see below |
 
-      Worst case: `prefix` 78, `suffix` 51, `remainder_max` 13 — 142 of 200,
-      leaving at least **58** characters for paths. The count clamp is the only
+      The label and the classification are bounded **together**, not
+      separately, because the classification is a function of the state and
+      most pairings cannot occur. Taking each field's own maximum would bound a
+      record that does not exist:
+
+      | Reachable pair | Length |
+      | --- | --- |
+      | `Clean, earlier commit` + `possible_miss` | 21 + 13 = **34** |
+      | `Clean, unrelated commit` + `not_a_miss` | 23 + 10 = 33 |
+      | `Clean, same commit` + `confirmed_miss` | 18 + 14 = 32 |
+
+      The longest label carries the *shortest* classification, so the true
+      worst case is the middle row, not the pairing of the two field maxima.
+
+      Worst case: `prefix` 78, `suffix` 48, `remainder_max` 13 — 139 of 200,
+      leaving at least **61** characters for paths. The count clamp is the only
       one of these bounds this plan introduces, and it exists precisely so this
       sum is closed; without it a pathological count could consume the line.
       Scenario 13c-ii asserts the clamp and the worst-case line together.
@@ -806,12 +819,16 @@ Not applicable — this repository ships workflow tooling, not a service.
     summary line names three. Read the record back and confirm every path is
     present — the assertion that separates storage from rendering, and the one
     that fails if an implementer applies the line's bound to the record.
-13c-ii. The worst-case line fits: a record with the longest reviewer name
-    (`claude-code-action`), the longest state label
-    (`Clean, unrelated commit`), the `confirmed miss` classification, and both
-    counts above 9,999 renders at most 200 characters, with the counts shown as
-    `9999+` and at least one path named. The clamp is asserted directly — a
-    count of 1,000,000 must render as `9999+`, not as seven digits.
+13c-ii. The worst-case line fits, and the fixture is a **reachable** record: the
+    longest reviewer name (`claude-code-action`), the longest reachable
+    label-and-classification pair (`Clean, earlier commit` with
+    `possible_miss`, 34 characters — longer than the longest label paired with
+    its own classification), and both counts above 9,999. It renders at most 200
+    characters, with the counts shown as `9999+` and at least one path named.
+    The clamp is asserted directly — a count of 1,000,000 must render as
+    `9999+`, not as seven digits. Pairing `Clean, unrelated commit` with
+    `confirmed_miss` would be a shorter line *and* an impossible record, since
+    AC-17 makes `clean_same_commit` the only confirmed miss.
 13c-i. The bound is met by **reservation**: a record whose paths would fit
     exactly 200 characters *without* the remainder text still leaves room for
     it, so the emitted line is at most 200 with `, +N more` included. Appending

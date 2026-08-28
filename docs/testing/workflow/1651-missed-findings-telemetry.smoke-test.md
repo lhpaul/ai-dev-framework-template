@@ -409,7 +409,7 @@ do with. Proof P5.
 6. Render a record whose path names are sized so the list would fill the line to
    exactly 200 characters **without** the remainder text.
 7. Render the worst case: reviewer `claude-code-action`, state
-   `Clean, unrelated commit`, classification `confirmed miss`, and both counts
+   `Clean, earlier commit` with classification `possible_miss`, and both counts
    above 9,999.
 
 **Expected result**: one line per record, each at most 200 characters, naming at
@@ -437,11 +437,18 @@ Cases 1 through 5 pass with that defect in place, because none is near the
 boundary. Proof P23.
 
 Case 7 shows the bound is closed rather than merely usually satisfied. Both
-counts render clamped as `9999+`, and the worst case still leaves at least 58
+counts render clamped as `9999+`, and the worst case still leaves at least 61
 characters for paths: literals 42, reviewer 18, short SHA 8, two counts at 5,
-state label 23, classification 14, `remainder_max` 13 — 142 of 200. The clamp is
-the only one of those bounds this plan introduces, and it is what closes the
-sum; a seven-digit count would reopen it. Proof P24.
+label-and-classification 34, `remainder_max` 13 — 139 of 200. The clamp is the
+only one of those bounds this plan introduces, and it is what closes the sum; a
+seven-digit count would reopen it. Proof P24.
+
+The label and the classification are bounded **together** because the
+classification is a function of the state: the longest label,
+`Clean, unrelated commit`, is `not_a_miss` (33), while `Clean, earlier commit`
+with `possible_miss` reaches 34. Pairing the longest label with the longest
+classification would bound a record AC-17 makes impossible — a fixture that
+cannot occur proves nothing about the ones that can.
 
 Reserving the *maximum* rather than the actual remainder is deliberate: the
 actual value is not known until the list stops, and a budget that depends on the
