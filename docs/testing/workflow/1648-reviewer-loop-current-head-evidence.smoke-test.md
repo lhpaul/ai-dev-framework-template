@@ -179,18 +179,27 @@ live head.
 
 1. Read the *Conditions for `ready-for-human-review`* section of Protocol 92.
 2. Read the readiness checklist in Protocol 91 where `POST_CLEAN_HEAD_SHA` is
-   already enforced.
+   already enforced, and the exit-12 row of its exit-code table.
+3. Read the Protocol 91 § "Carry the settle verdict forward" snippet.
 
-**Expected result**: Both documents state the same fail-closed rule as the
-implementation plan and as Step 7 below — when `local-ai-reviewer` is in the
-resolved platform list and Step 7 returned `clean`, `LOCAL_AI_HEAD_CURRENT`
-must be exactly `1`; both `0` and a present-but-empty value block
-`ready-for-human-review`, the latter because the reviewer ran and reported no
-head, which is missing evidence. Neither document may describe an empty value as
-non-blocking: the non-applicable case is the **absent** key, emitted only when
-the platform is not in the resolved list, and that distinction must be explicit
-in both. Reading the two documents against the Step 7 table below must surface
-no contradiction.
+**Expected result**: all three surfaces state the same fail-closed rule as the
+implementation plan and as the Step 7 table below, with applicability read from
+`LOCAL_AI_CONFIGURED` and never from a key being absent:
+
+| `LOCAL_AI_CONFIGURED` | `LOCAL_AI_HEAD_CURRENT` | Required behavior |
+| --- | --- | --- |
+| unset | any | **blocked** — the loop's telemetry never reached the checklist; re-run Step 7 and export its `POST_CLEAN_*` and `LOCAL_AI_*` fields |
+| `0` | any | condition does not apply; continue |
+| `1` | `1` | condition satisfied; continue |
+| `1` | `0` | **blocked** — not-current evidence |
+| `1` | empty | **blocked** — the reviewer ran and reported no head; missing evidence is not a pass |
+
+No document may describe an empty `LOCAL_AI_HEAD_CURRENT` as non-blocking, and
+none may describe an absent key as "not applicable". The carry-forward snippet
+must include `LOCAL_AI_` in both its unset pattern and its grep, or the first
+row above is the only outcome the gate can ever produce. Reading the three
+surfaces against this table and against the Step 7 table below must surface no
+contradiction.
 
 ### Step 7: The three readiness states are distinguishable
 
