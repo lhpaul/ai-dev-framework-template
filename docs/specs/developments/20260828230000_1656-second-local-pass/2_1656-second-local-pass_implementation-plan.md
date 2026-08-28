@@ -356,6 +356,24 @@ produce the evidence — the loop could never advance past a local finding,
 because the thing that would clear the refusal is the dispatch the refusal
 prevents.
 
+**One consequence of the repository-configured list reaches #1649 and must be
+recorded there rather than assumed.** #1649's plan derives
+`local_ai_configured` from the invocation-filtered `platforms[]`. On the
+motivating case — an explicit `--platform` run that omits a configured local
+reviewer — this item's guard now dispatches that reviewer and produces
+current-head clean evidence, and #1649 would still report
+`local_reviewer_not_configured` and refuse `codex-github`. The evidence exists;
+the check cannot see that it was allowed to.
+
+The fix belongs to whichever item lands second, and this plan states which:
+**#1649 must derive `local_ai_configured` from the repository's configured list**
+— `reviewer_loop_repo_configured_platforms`, the helper this item adds — rather
+than from `platforms[]`. If #1649 is implemented first, this is a one-line
+follow-up in its file; if this item is implemented first, the helper is already
+there. Implementation Order step 0 requires reading #1649's implementation and
+confirming which case applies, and scenario 12a asserts the composed behaviour
+end to end.
+
 If #1649 is implemented as a single combined gate rather than a check, this plan
 must be revised rather than layered on it. That is a hard stop in Implementation
 Order step 0.
@@ -441,6 +459,11 @@ Order step 0.
     `not_required`, and `LOCAL_SECOND_PASS` is `0` there.
 12. Both values reach the ledger entry and the loop summary, and the summary
     line names the reason and the result.
+12a. Composed with #1649 on the motivating case: an explicit `--platform` run
+    that omits a configured local reviewer dispatches the pass, produces
+    current-head clean evidence, and `codex-github` is **not** refused. Asserted
+    end to end rather than on each item's own unit, because the failure is
+    exactly that two correct units disagree about what "configured" means.
 13. The guard is a no-op when no ready-phase platform is configured: with
     `phase_after_clean_enabled` at 0, nothing is dispatched whatever the
     condition says. The pass exists to protect the gate; with no gate there is
@@ -496,6 +519,7 @@ Order step 0.
 | The condition receives the invocation's platform list | **High** — `platforms` is in scope and looks right | **High** — an explicit `--platform` run omitting a configured reviewer reports `no_local_reviewer` and proceeds, which is the item's motivating case turned into a fail-open | The repository's configured list is resolved independently of `--platform`, by its own helper. Scenario 2b and proof **P11** |
 | The condition ignores the current round | **High** — the persisted payload is the obvious input | Med — every ordinary run dispatches the local reviewer twice, and the guard becomes a tax on the path it was meant to leave alone | The round's in-memory results are composed in first, using #1651's helper. Scenarios 4 and 5b, proof **P7** |
 | The guard runs when there is no gate to protect | Med | Low — doubles the local reviewer's cost on every draft-only run | No-op when `phase_after_clean_enabled` is 0. Scenario 13 and proof **P5** |
+| #1649 keeps deriving `local_ai_configured` from `platforms[]` | **High** — that is what its merged plan says | **High** — the guard produces the evidence and #1649 refuses anyway, so the motivating case still cannot reach `codex-github` | Both read `reviewer_loop_repo_configured_platforms`; step 0 requires confirming or changing it. Scenario 12a asserts the composition end to end |
 | This item and #1649 are implemented as one refusal | Med | **High** — the loop can never advance past a local finding, because the evidence that would clear the refusal is the dispatch the refusal prevents | The order is stated in **Interaction with #1649** and enforced by Implementation Order step 0 |
 
 ---
@@ -505,7 +529,7 @@ Order step 0.
 <!-- workflow-shell-contract: bash -->
 
 ```bash
-# Four values, not a boolean: the reason is reported, and `1` cannot be read
+# Five values, not a boolean: the reason is reported, and `1` cannot be read
 # backwards into a cause.
 reviewer_loop_local_pass_required() {
   local payload="${1:-}" head="${2:-}" configured="${3:-}"
@@ -578,8 +602,11 @@ pull requests it lets through are exactly the ones nobody reviewed locally.
 0. **Hard stop**: confirm **#1648 and #1651** are both implemented and merged,
    and that `reviewer_loop_local_latest_verdict` exists with the two-argument
    signature #1651's plan specifies. Then read #1649's implementation — merged
-   or in flight — to confirm it is a *check* and not a combined gate. If either
-   check fails, stop and revise this plan.
+   or in flight — to confirm it is a *check* and not a combined gate, **and**
+   that its `local_ai_configured` derives from the repository's configured list
+   rather than from `platforms[]`. If it derives from `platforms[]`, change it
+   to use `reviewer_loop_repo_configured_platforms` as part of this item. If it
+   is a combined gate, stop and revise this plan.
 1. Add `reviewer_loop_repo_configured_platforms`, reading the configuration
    unconditionally, and `reviewer_loop_local_pass_required`, calling #1651's
    selector with both of its arguments and never with the `platforms` array.
