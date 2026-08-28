@@ -284,9 +284,16 @@ Not applicable — no user interface in this repository.
       artifacts in this repository, that a contract-surface finding is non-small
       wherever it lives, that counted rounds must be on the current head, that an
       unknown head ends the run, and what `SMALL_FINDINGS_BLOCKED_BY` reports.
-- [ ] `REVIEW.md` — add one line under the review contract stating that a
-      finding on a spec, plan, protocol or the review contract itself is never
-      small, so a reviewer knows the classification without reading the loop.
+- [ ] `REVIEW.md` — add a short block under the review contract covering the
+      same rule Protocol 93 states, so a reviewer knows the classification
+      without reading the loop: that a finding on a spec, plan, protocol or the
+      review contract itself is never small; that a finding touching a contract
+      surface is never small wherever it lives; that the terminal rule requires
+      both the prior counted rounds and the round being decided to be on the
+      current head; and that `SMALL_FINDINGS_BLOCKED_BY` reports one of
+      `shipped_path`, `contract_surface`, `stale_head` or `head_unknown`.
+      Protocol 93 remains the normative home and carries the full detail;
+      `REVIEW.md` states the rule and points to it.
 
 ---
 
@@ -449,10 +456,11 @@ externally-supplied finding text.
 - **Edge-case enumeration**: a body containing a listed term as a substring of a
   longer word (`gates` in `delegates`, `scope` in `microscope`); a term in a
   different case (`Acceptance Criteria`, `FAIL-CLOSED`); a term inside a fenced
-  code block quoted from the diff; a term inside a URL; an empty body; a body of
-  only whitespace; a body containing a listed term in a quoted *negation*
-  (\"this is not a decision gate\"); a multi-line body where the term appears
-  only on the last line.
+  code block quoted from the diff; a **listed phrase** inside a URL, and a
+  **bare unlisted word** inside a URL; an empty body; a body of only whitespace;
+  a body containing a listed term in a quoted *negation* (\"this is not a
+  decision gate\"); a multi-line body where the term appears only on the last
+  line.
 - **Required behavior**: matching is case-insensitive and on word boundaries, so
   `delegates` does not match `gate` and `microscope` does not match `scope`. A
   term inside a code fence or URL still matches — a finding that quotes the

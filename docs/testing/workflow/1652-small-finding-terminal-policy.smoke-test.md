@@ -106,7 +106,8 @@ Call the contract-surface predicate with each case and read match / no-match:
 | `Acceptance Criteria are inconsistent` | match — case-insensitive |
 | `FAIL-CLOSED contract is violated` | match — case-insensitive |
 | a body quoting `decision gate` inside a fenced code block | match |
-| a body containing a URL with `scope` in the path | match |
+| a body containing a URL whose path contains `coverage-matrix` | match — a listed phrase still matches inside a URL |
+| a body containing a URL whose path contains only `scope` | no match — bare `scope` is not a listed phrase, wherever it appears |
 | `""` (empty) | no match |
 | a whitespace-only body | no match |
 | `this is not a decision gate` | match — the classifier does not read intent |
