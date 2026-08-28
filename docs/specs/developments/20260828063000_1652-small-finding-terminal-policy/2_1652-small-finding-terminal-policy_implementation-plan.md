@@ -49,7 +49,7 @@ the implementation is ordered.
 | --- | --- | --- |
 | Repo revision | `git rev-parse --short origin/develop-internal-reviewer-effectiveness` | `7998d43d` |
 | The classifier is path-only | `sed -n '6758,6774p' scripts/development-workflow/pr-review-loop.sh` | `reviewer_loop_path_is_non_shipped_artifact` matches on two `case` blocks over the path string alone; nothing about the finding's content reaches it |
-| This repository's normative docs are all classified non-shipped | Sourced the loop with `HARNESS_MODE=1` and called the classifier on six real paths | `docs/specs/developments/**/1_*_specs.md`, `docs/workflow/development-workflow/protocols/91-*.md`, `REVIEW.md`, `docs/best-practices/3-testing.md` and `docs/testing/workflow/*.smoke-test.md` all return non-shipped; only `scripts/development-workflow/pr-review-loop.sh` returns shipped |
+| Every normative document is classified non-shipped today | Sourced the loop with `HARNESS_MODE=1` and called the classifier on six real paths | `docs/specs/developments/**/1_*_specs.md`, `docs/workflow/development-workflow/protocols/91-*.md`, `REVIEW.md`, `docs/best-practices/3-testing.md` and `docs/testing/workflow/*.smoke-test.md` all return non-shipped; only `scripts/development-workflow/pr-review-loop.sh` returns shipped. This is why a path-only rule classifies every contract finding in this repository as small — and also why reclassifying those paths would make every *cosmetic* finding non-small, which the plan rejects |
 | Terminal rule requires two rounds and zero threads | `sed -n '9276,9290p' scripts/development-workflow/pr-review-loop.sh` | The `elif` fires only when `aggregate_result` is `needs_fixes`, `unresolved_thread_count` is 0, and `small_findings_only` is 1; it then flips `aggregate_result` to `clean` with `aggregate_reason=small_findings_terminal` once the consecutive count reaches the required rounds |
 | Nothing checks the head of the counted rounds | Same range, plus `grep -n "small_findings" scripts/development-workflow/pr-review-loop.sh` | The consecutive count is read from the ledger by `reviewer_loop_small_findings_prior_consecutive_count`, which selects entries by `small_findings_only` and adjacency only — no head comparison anywhere in the path |
 | Round count is configurable and already validated | `sed -n '6776,6787p' scripts/development-workflow/pr-review-loop.sh` | `PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS`, default 2, range 1-999, `WARN`-and-fall-back on anything else — the convention this plan follows for its own new inputs |
@@ -107,22 +107,25 @@ Not applicable — this repository ships workflow tooling, not a service.
 
 `scripts/development-workflow/pr-review-loop.sh` (shell contract: `bash`):
 
-- [ ] **Move this repository's normative documents to the shipped side.** Add
-      `reviewer_loop_path_is_normative_document`, matching, in this order:
+- [ ] **Do not reclassify whole paths.** An earlier draft moved this
+      repository's normative documents — specs, plans, protocols, `REVIEW.md`,
+      the best-practices set — wholesale onto the shipped side, so that *every*
+      finding on them became non-small. That overreaches the brief and was
+      dropped.
 
-      | Pattern | Why it is shipped |
-      | --- | --- |
-      | `REVIEW.md` | the review contract every reviewer is measured against |
-      | `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `LLM_RULES.md` | the agent contracts |
-      | `docs/workflow/**` | the protocols the workflow executes |
-      | `docs/best-practices/**` | the rules reviewers enforce |
-      | `docs/specs/developments/**` | specs and plans — the deliverable of two of the three stages |
-      | `docs/testing/workflow/**` | the smoke runbooks a human executes |
-      | `.ai-dev-workflow.yaml` | the configuration the loop reads |
+      The brief's scope bullet is specific: reclassify spec and plan **contract**
+      findings as non-small *when they affect acceptance criteria, gates,
+      matrices, parser behavior, or scope*. It asks for a content rule, not a
+      path rule. Its Outcome — "stricter for normative docs, specs, plans, and
+      review protocols" — is satisfied by that content rule, because contract
+      findings overwhelmingly occur on exactly those artifacts.
 
-      `reviewer_loop_path_is_non_shipped_artifact` consults this predicate first
-      and returns non-shipped only when it does not match. A path that is both
-      `docs/*` and normative is shipped: the normative test wins.
+      The cost of the path rule was concrete rather than theoretical: every pull
+      request in this epic is a documentation pull request, so making all their
+      findings non-small would remove the cosmetic-tail escape precisely where
+      it is used most, and the loop would run to its cycle cap on a trailing
+      space. `reviewer_loop_path_is_non_shipped_artifact` is therefore left
+      **unchanged**, and the content rule below carries the item.
 - [ ] **Add a contract-surface test that is independent of path.** Add
       `reviewer_loop_finding_touches_contract_surface <body>`. It returns
       success when the finding's text names a contract-bearing surface, **and
@@ -330,17 +333,22 @@ Not applicable — no user interface in this repository.
 
 **Key scenarios to test**:
 
-1. `reviewer_loop_path_is_normative_document` matches each of the seven patterns
-   in the table, one case per row, and rejects `scripts/development-workflow/pr-review-loop.sh`,
-   `package.json`, and `docs/project/1-business-domain.md`.
-2. `reviewer_loop_path_is_non_shipped_artifact` now returns **shipped** for
-   `docs/specs/developments/x/1_x_specs.md`, `REVIEW.md`,
+1. `reviewer_loop_path_is_non_shipped_artifact` is **unchanged**: it still
+   returns non-shipped for `docs/specs/developments/x/1_x_specs.md`,
+   `REVIEW.md`,
    `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`,
-   `docs/best-practices/3-testing.md` and `docs/testing/workflow/x.smoke-test.md`
-   — the five paths the Verification Log records as non-shipped today.
-3. It still returns **non-shipped** for `docs/project/1-business-domain.md`,
-   `tests/fixtures/x.json`, `__snapshots__/x.snap` and `CHANGELOG.md`, so the
-   change did not make every documentation finding blocking.
+   `docs/best-practices/3-testing.md`, `docs/testing/workflow/x.smoke-test.md`,
+   `docs/project/1-business-domain.md`, `tests/fixtures/x.json`,
+   `__snapshots__/x.snap` and `CHANGELOG.md`, and shipped for
+   `scripts/development-workflow/pr-review-loop.sh`. Reclassifying paths was
+   considered and rejected as beyond the brief; this scenario is the regression
+   test against re-introducing it.
+2. A **cosmetic** finding on a normative document — a trailing space on
+   `docs/specs/developments/x/1_x_specs.md` — is still **small**, so a cosmetic
+   tail on the artifacts this repository edits most can still terminate.
+3. A **contract** finding on the same path is **not** small. The path is
+   identical in scenarios 2 and 3; only the body differs, which is the whole
+   point of the content rule.
 4. `reviewer_loop_finding_touches_contract_surface` matches one case per row of
    the contract-surface table, and rejects three cosmetic bodies: a typo report,
    a trailing-whitespace report, and a heading-capitalisation report.
@@ -419,20 +427,20 @@ Not applicable — no user interface in this repository.
     history — consecutive rounds whose only findings were on
     `docs/specs/developments/**` with bodies naming fail-closed semantics,
     decision-matrix rows, and acceptance criteria — and assert the terminal rule
-    does **not** fire, where today it fires on round two.
+    does **not** fire, where today it fires on round two. The paths are
+    non-shipped and stay that way; it is the **bodies** that make these findings
+    non-small, which is what the brief asks for.
 13. **The cosmetic counter-case.** Replay the same *ledger shape* — same round
     count, same adjacency, same head — but on **genuinely non-shipped paths**
     (`docs/project/1-business-domain.md`, `tests/fixtures/x.json`,
     `CHANGELOG.md`) with bodies naming only a trailing space and a heading
     capitalisation. Assert the terminal rule **does** fire.
 
-    The paths must differ from scenario 12's. Scenario 12 uses
-    `docs/specs/developments/**`, which scenarios 1-3 require to be classified
-    as *shipped*, so no body — however cosmetic — could make those findings
-    small and the rule could never fire on them. Reusing scenario 12's paths
-    here would make the counter-case unsatisfiable and give false confidence
-    that the mechanism survives. What the two scenarios share is the ledger
-    shape; what they must not share is the path set.
+    The paths may now be the **same** as scenario 12's, and using them is the
+    stronger test: with the path rule dropped, `docs/specs/developments/**`
+    stays non-shipped, so scenarios 12 and 13 can differ in **body alone**. That
+    isolates the content rule exactly — same ledger shape, same paths, opposite
+    outcomes, decided only by what the findings say.
 14. A ledger entry written before this change, carrying no head on its
     small-findings entries, ends the consecutive run rather than being counted —
     backward compatibility in the fail-closed direction.
@@ -479,12 +487,12 @@ sharpening it.
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
-| P1 | Remove `docs/specs/developments/**` from the normative-document list | a scratch copy of the predicate | scenario 2 fails and scenario 12 fires the terminal rule on a spec contract finding; restoring the pattern passes |
+| P1 | Reclassify `docs/specs/developments/**` as shipped, restoring the rejected path rule | a scratch copy of `reviewer_loop_path_is_non_shipped_artifact` | scenario 2 fails, because a cosmetic trailing-space finding on a spec becomes non-small and the cosmetic tail can no longer terminate; restoring the classifier passes |
 | P2 | Make the contract-surface test consult the path as well, so a non-shipped path short-circuits it | a scratch copy of the predicate | scenario 5 fails, because a contract finding on a `docs/` path becomes small again; restoring the path-independent test passes |
 | P3 | Turn the contract-surface allow-list into a deny-list of cosmetic terms | same scratch copy | scenario 4's three cosmetic bodies still pass, but a contract body using none of the listed cosmetic terms is classified small — the failure mode the allow-list exists to prevent; restoring the allow-list passes |
 | P4 | Drop the current-head comparison from the consecutive count | a scratch copy of the counter | scenario 8 fails, because rounds on an older head extend the run; restoring the comparison passes |
 | P5 | Treat an entry with an absent or placeholder head as matching the current head | same scratch copy | scenario 9 fails in all three cases, because an unprovable head extends the run; restoring the fail-closed branch passes |
-| P6 | Over-tighten by path: make every `docs/` path shipped, dropping the non-shipped patterns entirely | a scratch copy of the predicate | scenarios 3, 6 and 13 fail — 13 in particular, because `docs/project/1-business-domain.md` becomes shipped and the cosmetic tail can no longer terminate; restoring the narrowed list passes |
+| P6 | Over-tighten by path: make every `docs/` path shipped | a scratch copy of `reviewer_loop_path_is_non_shipped_artifact` | scenarios 1, 2, 6 and 13 fail, because no documentation finding can be small and the loop runs to its cycle cap on a trailing space; restoring the classifier passes |
 | P7 | Over-tighten by term: restore the bare common words `gate`, `scope`, `state`, `status`, `proof`, `parse` and `contract` to the contract-surface list | same scratch copy | scenario 6a fails on all seven cosmetic bodies and scenario 13 stops firing, because ordinary prose now reads as contract-bearing; restoring the phrase-only list passes |
 | P9 | Invert both within-group precedences: report `contract_surface` over `shipped_path`, and `head_unknown` over `stale_head` | a scratch copy of the blocked-by mapping | scenario 10a's first two rows fail — the content row reports `contract_surface` where a shipped path is present, and the currency row reports `head_unknown` where a known-different head is present. Both are detectable because both are genuine co-occurrences within a group; restoring the order passes |
 | P10 | Make the counter read `head_sha` instead of `classification_head` | a scratch copy of the counter | scenario 8c fails, because a round whose write-time head happens to match counts even though it described an older commit; restoring `classification_head` passes |
@@ -564,7 +572,7 @@ and require no network access.
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| The tightening removes the terminal mechanism entirely | Med | High — every PR with a cosmetic documentation tail would loop to its cycle cap | The non-shipped list is narrowed, not deleted: `docs/project/**`, fixtures, snapshots and `CHANGELOG.md` stay non-shipped. Scenarios 3, 6 and 13 assert the mechanism still fires on cosmetic findings, and proof P6 plants the over-tightening specifically |
+| The tightening removes the terminal mechanism entirely | Med | High — every PR with a cosmetic documentation tail would loop to its cycle cap, and every PR in this epic is a documentation PR | `reviewer_loop_path_is_non_shipped_artifact` is left unchanged, so no path changes disposition; only the finding body can make a round non-small. Scenarios 1, 2, 6 and 13 assert the mechanism still fires on cosmetic findings — including on specs — and proofs P1 and P6 plant the two ways a path rule could creep back in |
 | The contract-surface test is written as a deny-list of cosmetic terms | Med | High — an unrecognised contract finding would be classified small, reproducing the bug | The test is an explicit allow-list of surfaces, and a body it does not recognise falls through to the path rule rather than being declared cosmetic; proof P3 plants the inversion |
 | The contract-surface test over-matches ordinary prose | **High** | High — matching bare common words like `state`, `scope` or `gate` would make almost every finding non-small, disabling the terminal rule from the restrictive side while appearing to tighten it | Every matched term is a phrase or a qualified form; no bare common word is on the list, and the plan records that an earlier draft's bare terms were removed for this reason. Scenario 6a tests one cosmetic body per removed word, and the parser-risk addendum adds word-boundary negatives (`delegates`/`gate`, `microscope`/`scope`) |
 | The current round is decided without checking its own head | Med | High — the rule could terminate on a round whose findings describe a commit that is no longer the head, which is the staleness the brief names | The run is `prior + 1` and both halves are verified: the counter checks prior entries, and **every** reviewer contributing a counted finding to the current round must report `loop_head_sha` before it contributes. Scenario 8a's four combinations pin the `+ 1` half, including the two-platform case where only one contributor is stale; proof P8 plants the omission |
@@ -584,18 +592,6 @@ The snippet uses Bash `case` and `[[ ]]`, matching `pr-review-loop.sh`'s own
 
 ```bash
 # Illustrative — adapt during implementation.
-
-# This repository's product is its documentation, so its normative documents
-# are shipped artifacts. Checked before the non-shipped patterns.
-reviewer_loop_path_is_normative_document() {
-  case "$1" in
-    REVIEW.md|AGENTS.md|CLAUDE.md|GEMINI.md|LLM_RULES.md|.ai-dev-workflow.yaml)
-      return 0 ;;
-    docs/workflow/*|docs/best-practices/*|docs/specs/developments/*|docs/testing/workflow/*)
-      return 0 ;;
-  esac
-  return 1
-}
 
 # Allow-list of contract-bearing surfaces, as ordered (identity, pattern) pairs.
 # Prints the matched surface identity and returns success; prints nothing and
@@ -652,9 +648,11 @@ reviewer_loop_finding_touches_contract_surface() {
    `gh pr view 1660 --json state,baseRefName` returns `MERGED` with the
    integration branch as base. If not, stop and report — do not implement the
    current-head requirement against a guessed contract.
-1. Add `reviewer_loop_path_is_normative_document` and consult it first from
-   `reviewer_loop_path_is_non_shipped_artifact`. **Verify**: scenarios 1-3 — the
-   five paths flip to shipped and the four control paths do not.
+1. Leave `reviewer_loop_path_is_non_shipped_artifact` **unchanged** and add
+   scenario 1 as the regression test that it stays that way. **Verify**:
+   scenarios 1-3 — the classifier's dispositions are untouched, a cosmetic
+   finding on a spec is still small, and a contract finding on the same path is
+   not.
 2. Add `reviewer_loop_finding_touches_contract_surface` with case-insensitive
    word-boundary matching over **exactly the spellings the normative table
    lists** — no bare common words, no wildcard separators, and no additional

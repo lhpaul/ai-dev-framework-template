@@ -26,7 +26,7 @@
 | Item | Value |
 | --- | --- |
 | Reviewer loop | `scripts/development-workflow/pr-review-loop.sh` |
-| Normative-document predicate | `reviewer_loop_path_is_normative_document` |
+| Path classifier (**unchanged** by this item) | `reviewer_loop_path_is_non_shipped_artifact` |
 | Contract-surface predicate | `reviewer_loop_finding_touches_contract_surface` |
 | Smallness aggregate | `reviewer_loop_all_findings_are_small` |
 | Consecutive counter | `reviewer_loop_small_findings_prior_consecutive_count` |
@@ -40,7 +40,7 @@
 
 ## Smoke Test Steps
 
-### Step 1: Normative documents are shipped artifacts
+### Step 1: The path classifier is unchanged, and the body decides
 
 **Maps to**: brief scope bullet 1.
 
@@ -52,18 +52,23 @@
    HARNESS_MODE=1 source scripts/development-workflow/pr-review-loop.sh
    ```
 
-2. Call `reviewer_loop_path_is_non_shipped_artifact` on the five paths the plan's
-   Verification Log records as non-shipped today:
-   `docs/specs/developments/x/1_x_specs.md`, `REVIEW.md`,
-   `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`,
-   `docs/best-practices/3-testing.md`, `docs/testing/workflow/x.smoke-test.md`.
-3. Call it on four control paths: `docs/project/1-business-domain.md`,
-   `tests/fixtures/x.json`, `__snapshots__/x.snap`, `CHANGELOG.md`.
+2. Call `reviewer_loop_path_is_non_shipped_artifact` on the nine paths the
+   plan's scenario 1 lists, plus `scripts/development-workflow/pr-review-loop.sh`.
+3. Run the loop with a **cosmetic** finding on
+   `docs/specs/developments/x/1_x_specs.md`, then with a **contract** finding on
+   the same path.
 
-**Expected result**: all five return **shipped**; all four controls still return
-**non-shipped**. The controls matter as much as the five: a change that made
-every documentation path shipped would pass step 2 and disable the terminal
-mechanism entirely, which is a different defect rather than a fix.
+**Expected result**: step 2 shows the classifier's dispositions **unchanged** —
+every documentation and fixture path still non-shipped, the script still
+shipped. Step 3's cosmetic finding is still **small**; its contract finding is
+**not**. The path is identical in both runs, so only the body decided.
+
+This is the item's central design choice. An earlier draft reclassified specs,
+plans, protocols and `REVIEW.md` as shipped, which would have made every finding
+on them non-small — including a trailing space. Every pull request in this epic
+is a documentation pull request, so that would have removed the cosmetic-tail
+escape exactly where it is used most. The brief asks for a content rule, and
+this is it.
 
 ### Step 2: A contract-surface finding is never small, wherever it lives
 
@@ -272,21 +277,18 @@ unvalidated bound that defeated its own cap — not typographical ones.
 
 **Maps to**: the "tightening removes the mechanism" risk.
 
-1. In the same suite, inspect the case replaying the identical ledger *shape* —
-   same round count, adjacency and head — on **genuinely non-shipped paths**
-   (`docs/project/1-business-domain.md`, `tests/fixtures/x.json`,
-   `CHANGELOG.md`) with bodies naming only a trailing space and a heading
-   capitalisation.
-2. Confirm those paths differ from the ones Step 6's case uses.
+1. In the same suite, inspect the case replaying the identical ledger *shape*
+   **and the same paths** as Step 6's case — `docs/specs/developments/**` — with
+   bodies naming only a trailing space and a heading capitalisation.
 
 **Expected result**: the terminal rule **does** fire. If Step 6 passes and this
 fails, the change did not tighten the rule — it deleted it.
 
-Step 2 is not a formality. Step 6's case uses `docs/specs/developments/**`,
-which Step 1 requires to be classified as shipped, so no body — however cosmetic
-— could make those findings small and the rule could never fire on them. A
-counter-case reusing those paths would be unsatisfiable, and would pass only by
-never being able to demonstrate anything.
+Sharing the paths with Step 6 is what makes this the strong form of the test.
+With the path rule dropped, `docs/specs/developments/**` stays non-shipped, so
+the two cases differ in **body alone**: same ledger shape, same paths, opposite
+outcomes, decided only by what the findings say. A counter-case on different
+paths would leave open whether the path or the body produced the difference.
 
 ### Step 8: Planted-violation proofs are present and two-directional
 
