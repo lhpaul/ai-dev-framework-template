@@ -79,6 +79,21 @@ spec's `not_configured` means *will never run*, which the list contradicts, so
 the honest state is a configured reviewer that did not run — `unavailable`. The
 reverse disagreement cannot arise: the list is consulted first.
 
+4. Call it with a configured list of **three** platforms, `local-ai-reviewer`
+   among them; then with a list containing only `local-ai-reviewer-v2`.
+
+**Expected result for call 4**: the three-platform list is recognised — not
+`not_configured` — and the `-v2` list is not.
+
+The configured list is newline-delimited, one platform per line
+(`pr-review-loop.sh:8336-8339`), so membership must be a whole-line literal
+comparison. A comma-split `case` matches only when the reviewer is the sole
+entry, and reports a configured repository as `not_configured` — the state that
+means *will never run* — excluding every round on it from the denominator. A
+substring test accepts `local-ai-reviewer-v2`. Call 4 excludes both wrong
+implementations, and it matters that the first case has three platforms: every
+single-platform fixture passes under the comma-split. Proof P19.
+
 The two calls differ only in the configured-platform argument, which is the
 point: an empty history looks identical for a repository that has not run the
 reviewer yet and one that never will, so no amount of history can separate them.
@@ -428,10 +443,10 @@ status. The records change what is *known*, never what happens.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P18 each record the command, the file and line of the
+2. Confirm P1 through P19 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: eighteen proofs in two groups — **twelve** overclaiming,
+**Expected result**: nineteen proofs in two groups — **thirteen** overclaiming,
 **six** contract, per the plan's proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:
