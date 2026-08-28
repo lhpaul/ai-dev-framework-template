@@ -467,13 +467,27 @@ Not applicable — this repository ships workflow tooling, not a service.
         "reviewer": "codex-github",
         "reviewed_head": "<40-hex, joined from #1648's reviewed_heads[]>",
         "blocking_count": 7,
-        "paths": ["a.ts", "b.ts", "c.ts"],
+        "paths": ["a.ts", "b.ts", "c.ts", "…all twelve, de-duplicated…"],
         "path_total": 12,
+        "_paths_is": "every distinct file, in first-appearance order",
         "_path_total_is": "distinct files, not findings",
         "local_evidence_state": "clean_same_commit",
         "classification": "confirmed_miss"
       }
       ```
+
+      **The record stores every distinct path; only the summary line is
+      limited to three.** The spec's three-path bound is AC-14, which governs
+      the *line*; AC-1 asks the record to capture the files the findings touch
+      and AC-16 requires the record to be readable in full later without
+      re-running a reviewer. A record holding three of twelve paths would
+      satisfy neither: the other nine would be unrecoverable, and a report
+      asking *which files do external reviewers find things in* — the question
+      #1657 exists to answer — could not be answered from the history at all.
+
+      So truncation happens **at render time and nowhere else**. The record
+      holds the complete de-duplicated list in first-appearance order; the
+      renderer takes as many as fit.
 
       **`path_total` counts distinct paths, not findings.**
       `reviewer_loop_blocking_paths_from_output` emits one line per finding, so
@@ -689,6 +703,10 @@ Not applicable — this repository ships workflow tooling, not a service.
 13a. Paths are de-duplicated before counting and naming: eight blocking findings
     spread over three files produce `path_total` 3, not 8, and the named paths
     are three **distinct** files rather than repeats of one.
+13a-i. The **record** holds all twelve paths of a twelve-file round while its
+    summary line names three. Read the record back and confirm every path is
+    present — the assertion that separates storage from rendering, and the one
+    that fails if an implementer applies the line's bound to the record.
 13c. The remainder is stated and is correct at every truncation point: a record
     naming three of twelve files reads `+9 more`; the zero-path line of
     scenario 13 reads `+12 more`; and a record whose files all fit omits the
@@ -901,12 +919,13 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The nineteen proofs fall into
-two groups:
+runs per proof, each citing a concrete file and line. The twenty proofs fall into
+three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Overclaiming | **13** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16, P17, P18, P19 | a number asserted on evidence that does not support it |
+| Overclaiming | **13** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16, P17, P18, P19 |
+| Under-recording | **1** | P20 | evidence discarded at write time that cannot be recovered later | a number asserted on evidence that does not support it |
 | Contract | **6** | P5, P6, P7, P9, P11, P13 | a report, a line, or a stored history that breaks its own stated contract |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
@@ -927,6 +946,7 @@ two groups:
 | P16 | Fall back to the entry's `head_sha` when a local verdict has no `reviewed_head` | a scratch copy of the selector | scenario 6a fails: the local reviewer's verdict is compared against the live head at write time rather than the commit it examined, so two unrelated facts can produce `clean_same_commit` and a confirmed miss. The plant is invisible whenever the two happen to coincide, which is most rounds; restoring the empty head — and with it an undecidable ancestry and `unknown` — passes |
 | P19 | Test configured-platform membership with a comma-delimited `case` | a scratch copy of the selector's guard | scenario 2b's first case fails: a repository configuring three platforms, `local-ai-reviewer` among them, is reported `not_configured` — the state meaning the reviewer will never run — so every round on it is excluded from the denominator and the effectiveness rate is computed over the wrong population. The plant passes whenever the reviewer is the only configured platform, which is the shape every single-platform fixture has; restoring `grep -Fxq` passes |
 | P18 | Give `claude-code-action` a head by falling back to the pull request's current head | a scratch copy of that adapter | scenario 13f's `claude-code-action` case fails: an adapter whose only artifact is an issue comment gains a head it never stated, and its rounds start producing records — and confirmed misses — against a commit nobody claimed to have reviewed. The plant is the natural reading of "every adapter emits a head", which is why the table's one no-head row is tested rather than described; restoring the no-head result passes |
+| P20 | Store only the three paths the summary line will name | a scratch copy of the record builder | scenario 13a-i fails: a twelve-file round's record holds three paths and the other nine are unrecoverable, so AC-16's read-back is incomplete and #1657 cannot answer which files external reviewers find things in. Every other scenario passes, because they all read the rendered line rather than the record; restoring the complete list passes |
 | P17 | Emit the first `commit_id` when a round's artifacts name two | a scratch copy of an adapter's head extraction | scenario 13e's two-commit case fails: a head is emitted for a round whose findings straddle a push, so the record names a commit some of the findings do not belong to and a `clean_same_commit` can follow from it. The plant looks like ordinary defaulting and only a fixture that straddles a push exposes it; restoring the no-head rule passes |
 | P15 | Substitute `loop_head_sha` for a missing `REVIEWED_HEAD` | a scratch copy of the attribution gate | scenario 13d fails: a round whose external reviewer never stated its head produces a record, and a `clean_same_commit` in it enters the **confirmed** count on the loop's inference about what the reviewer read. AC-11 requires no record when the commit cannot be established, and `clean_same_commit` is defined against the commit the external reviewer *reviewed*. The plant is the tempting one — it makes an empty telemetry produce data — which is why it is planted rather than argued about; restoring the no-fallback rule passes |
 | P6 | Enforce the 200-character bound by truncating the finished line | a scratch copy of the renderer | scenario 13's long-path case fails: truncation removes the tail, which is where the local evidence state and the classification sit, so the line that survives is the one carrying paths and no verdict — exactly inverted from what a reader needs; restoring build-order enforcement passes |
@@ -977,8 +997,11 @@ object exposes it.
    artifact shapes, and one case per adapter including
    `claude-code-action`'s no-head result.
 4. Add `reviewer_loop_missed_finding_records` with its four exclusions as early
-   `continue`s. Attribution uses the reviewer's own `REVIEWED_HEAD` and has
-   **no fallback**; `loop_head_sha` must not be substituted. **Verify**:
+   `continue`s, storing the **complete** de-duplicated path list. Attribution
+   uses the reviewer's own `REVIEWED_HEAD` and has **no fallback**;
+   `loop_head_sha` must not be substituted. **Verify**: scenario 13a-i first —
+   a builder that stores three paths passes every other scenario, because every
+   other one reads the line rather than the record. Then
    scenarios 7, 8, 9, 10, 13b, 13d and 16 — including the
    unattributable-commit case, which must produce no record **and** report the
    attribution reason.
@@ -997,7 +1020,7 @@ object exposes it.
    **Step 12a**, which reads both documentation surfaces against the
    implementation, and confirm the fragment's name matches
    `<item>.<kind>.<slug>.md` with a bare `1651`.
-10. Produce the nineteen planted-violation proofs (P1-P19) and record them in the PR
+10. Produce the twenty planted-violation proofs (P1-P20) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---

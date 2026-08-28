@@ -368,6 +368,13 @@ valid line, not a failure. Case 3 reports `path_total` **3**, not 8, and names
 three distinct files. Case 4 adds at most twenty lines and 4,000 characters.
 Case 5 names both of its two files.
 
+Read case 1's **record** as well as its line: the record holds all twelve
+paths, de-duplicated and in first-appearance order, while the line names three.
+The three-path bound is AC-14 and governs the line; AC-1 asks the record to
+capture the files the findings touch and AC-16 requires it to be readable in
+full later. A builder that stored three would pass every other step here,
+because they all read the rendered line. Proof P20.
+
 Every line that omits files states **how many more**, computed from the paths
 actually named rather than from a fixed three: case 1 reads `+9 more`, case 2's
 zero-path line reads `+12 more`, and case 5 omits the remainder entirely rather
@@ -476,11 +483,11 @@ not what Protocol 03 Step 6 asks for.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P19 each record the command, the file and line of the
+2. Confirm P1 through P20 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: nineteen proofs in two groups — **thirteen** overclaiming,
-**six** contract, per the plan's proof-group table.
+**Expected result**: twenty proofs in three groups — **thirteen** overclaiming,
+**six** contract, **one** under-recording, per the plan's proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:
 each of its plants produces a plausible number, and a number is believed. P3 is
