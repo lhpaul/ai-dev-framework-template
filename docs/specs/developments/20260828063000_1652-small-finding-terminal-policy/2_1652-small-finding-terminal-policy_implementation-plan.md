@@ -659,8 +659,8 @@ Not applicable — no user interface in this repository.
   (4a, 4b, 6a, 7a, 7b, 7b-i, 7c, 7d, 7e, 8a, 8b, 8c, 9a, 9b, 10a, 10b) guard a
   behavior the others do not.
 - `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` —
-  a new suite for scenarios 12 and 13, the two replay regressions, which need
-  their own ledger fixtures. It must declare:
+  a new suite for scenarios 12, 12a and 13, the three replay regressions, which
+  need their own ledger fixtures. It must declare:
 
   ```text
   # covers: scripts/development-workflow/pr-review-loop.sh

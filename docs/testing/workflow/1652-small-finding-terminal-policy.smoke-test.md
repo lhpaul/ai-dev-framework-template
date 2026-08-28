@@ -398,8 +398,9 @@ tier 1 makes those findings non-small whatever the body says.
 **Expected result**: twenty-one proofs in four groups — **fifteen** permissive,
 **four** restrictive, **one** observability, **one** fidelity, per the plan's
 proof-group table.
-The permissive group is P1 through P5, P8, P10, P11, P12, P14, P15, P16 and P17,
-reproducing the original bug in each of the ways it can return; P8 skips the current round's head check and requires Step 4's
+The permissive group is P1 through P5, P8, P10, P11, P12, P14, P15, P16, P17,
+P20 and P21 — fifteen — reproducing the original bug in each of the ways it can
+return; P8 skips the current round's head check and requires Step 4's
 fifth run to fail; P10 reads `head_sha` instead of `classification_head` and
 requires Step 4's step 1b to fail; P14 breaks the contract-surface
 matching entirely and requires Step 6b to fail while Step 6 still passes, which
