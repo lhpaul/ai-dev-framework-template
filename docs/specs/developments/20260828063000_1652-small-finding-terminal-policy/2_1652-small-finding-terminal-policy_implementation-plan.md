@@ -208,12 +208,39 @@ Not applicable — this repository ships workflow tooling, not a service.
       path**. The list is an allow-list on purpose: a finding this test does not
       recognise falls through to the path rule, which is the existing behavior,
       so the change can only make the loop stricter and never more permissive.
-- [ ] Make `reviewer_loop_all_paths_non_shipped` take the finding bodies
-      alongside the paths, and return failure when **any** finding either has a
-      shipped path or touches a contract surface. Rename it
-      `reviewer_loop_all_findings_are_small` so the name states what it decides;
-      keep a thin wrapper under the old name only if an existing caller outside
-      this change set needs it, and record in the PR whether one did.
+- [ ] **Collect findings as path/body pairs, and say exactly how.** Today
+      `reviewer_loop_blocking_paths_from_output` emits only paths, one per line,
+      and the caller accumulates them into `aggregate_blocking_paths`. Bodies
+      are never collected, so "take the finding bodies alongside the paths" is
+      not implementable without a stated representation. The concrete change:
+
+      1. Add `reviewer_loop_blocking_findings_from_output <output> <count>`,
+         emitting one record per finding as
+         `<path><TAB><platform><TAB><escaped-body>`. A tab is safe as the
+         separator because a path cannot contain one and the body is
+         single-line by construction (see 3).
+      2. Accumulate those records into `aggregate_blocking_findings`, a parallel
+         array to the existing `aggregate_blocking_paths`. **Do not deduplicate.**
+         The existing path array may be deduplicated; the findings array must
+         not be, because two findings can share a path and differ in body — one
+         cosmetic and one contract-bearing — and collapsing them would lose the
+         one that decides the outcome.
+      3. **Decode the body before matching.** `local-ai-reviewer.sh` emits
+         `BLOCKING_<n>_BODY` with newlines replaced by a literal `\n`
+         two-character sequence, so the key=value contract stays one line per
+         key. The classifier must reverse that substitution before applying the
+         contract-surface test, or a term appearing after a line break in the
+         original body will be adjacent to `\n` and fail the word-boundary
+         match.
+      4. Record the platform on each record so the summary can name which
+         reviewer produced the finding that kept the round non-small — the same
+         attribution the current-head rule already needs per contributor.
+- [ ] Replace `reviewer_loop_all_paths_non_shipped` with
+      `reviewer_loop_all_findings_are_small`, taking the path/body/platform
+      records and returning failure when **any** finding is on a normative
+      document, has a shipped path, or touches a contract surface. Keep a thin
+      wrapper under the old name only if a caller outside this change set needs
+      it, and record in the PR whether one did.
 - [ ] **Require the counted rounds to be on the current head — including the
       round now being decided.** The consecutive run is `prior entries + 1`, and
       the `+ 1` is this round, so checking only the prior entries would leave
@@ -408,6 +435,16 @@ Not applicable — no user interface in this repository.
     while appearing to tighten it.
 7. `reviewer_loop_all_findings_are_small` returns failure when any one of three
    findings is non-small, and success only when all three are small.
+7a. Pairing survives collection: with two findings **on the same path** — one
+    cosmetic, one naming a decision matrix — the round is non-small. A
+    deduplicating collector would keep one record and could keep the cosmetic
+    one, making the round small; this is the pairing-loss case.
+7b. A body whose original text spanned lines is decoded before matching: a body
+    emitted as `some prose\ndecision matrix is wrong` matches, where matching
+    the raw escaped string would not, because the term would abut the literal
+    `\n`.
+7c. Each record carries its platform, and the summary names the platform that
+    produced the finding which kept the round non-small.
 8. The consecutive count stops at the first ledger entry whose recorded head
    differs from the current head: with two prior small rounds on an older head
    and one on the current head, the count is 1, not 3, and the stop reason is
@@ -502,10 +539,11 @@ Not applicable — no user interface in this repository.
 **Files**:
 
 - `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenarios 1, 2,
-  3, 4, 4a, 5, 6, 6a, 7, 8, 8a, 8b, 8c, 9, 9a, 10, 10a, 10b, 11 and 14, as new
-  cases in the existing `HARNESS_MODE=1` harness. Listed individually rather than as a range: the
-  sub-lettered scenarios are the ones a range drops, and all eight of them
-  (4a, 6a, 8a, 8b, 8c, 9a, 10a, 10b) guard a behavior the others do not.
+  3, 4, 4a, 5, 6, 6a, 7, 7a, 7b, 7c, 8, 8a, 8b, 8c, 9, 9a, 10, 10a, 10b, 11 and
+  14, as new cases in the existing `HARNESS_MODE=1` harness. Listed individually rather than as a range: the
+  sub-lettered scenarios are the ones a range drops, and all eleven of them
+  (4a, 6a, 7a, 7b, 7c, 8a, 8b, 8c, 9a, 10a, 10b) guard a behavior the others do
+  not.
 - `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` —
   a new suite for scenarios 12 and 13, the two replay regressions, which need
   their own ledger fixtures. It must declare:
@@ -532,17 +570,19 @@ above are the regression coverage for this change.
 
 This plan materially modifies an automated guard, so `REVIEW.md` §
 Planted-violation proof applies and the pure-refactor exemption does not. Two
-demonstrated runs per proof, each citing a concrete file and line. The fourteen proofs fall into three groups:
+demonstrated runs per proof, each citing a concrete file and line. The sixteen proofs fall into three groups:
 
 | Group | Count | Proofs | What they plant |
 | --- | --- | --- | --- |
-| Permissive | **10** | P1-P5, P8, P10, P11, P12, P14 | the original bug, in each of the ways it can return |
+| Permissive | **12** | P1-P5, P8, P10, P11, P12, P14, P15, P16 | the original bug, in each of the ways it can return |
 | Restrictive | **3** | P6, P7, P13 | a tightening that disables the mechanism instead of sharpening it |
 | Observability | **1** | P9 | an inverted within-group reporting precedence, which hides the more actionable cause without changing whether the rule fires |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
 | P1 | Remove `docs/specs/developments/**` from the normative-document list | a scratch copy of `reviewer_loop_path_is_normative_document` | scenario 2's second and third cases fail — a trailing-whitespace body and a body with no listed contract term both become small on a spec — and scenario 12 fires the terminal rule; restoring the pattern passes |
+| P15 | Deduplicate the findings array by path, keeping the first record | a scratch copy of the collector | scenario 7a fails when the cosmetic finding sorts first: the contract finding is dropped and the round is classified small; restoring the non-deduplicating collection passes |
+| P16 | Match the contract-surface test against the raw escaped body without decoding | a scratch copy of the classifier | scenario 7b fails, because a term following a line break abuts the literal `\n` and misses the word boundary; restoring the decode passes |
 | P14 | Break the contract-surface matching entirely, returning failure for every body | a scratch copy of the tier-2 predicate | scenario 12a fails, because a #1661-shaped ledger on a non-normative path terminates; scenario 12 still passes, which is exactly why 12a exists. Restoring the predicate passes both |
 | P13 | Replace the character-class boundary with `\b` | a scratch copy of the predicate | scenario 4a fails under BSD grep — `decision gate` no longer matches at all, so tier 2 silently stops escalating anything; restoring the POSIX form passes under both greps |
 | P12 | Make the contract-surface test the only guard, dropping the normative-path tier | a scratch copy of the classifier | scenario 2's third case fails: *"required error handling is missing"* contains no listed term, falls through to the path rule, and is cleared as small. This is the vocabulary-dependence failure the two-tier design exists to prevent; restoring the tier passes |
@@ -609,6 +649,7 @@ point. No listeners, timers, or shared mutable state are introduced.
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
 | Path classification fixture | The ten normative patterns of scenario 1 and the five non-matching controls, plus the three bodies of scenario 2 on one normative path and the two bodies of scenario 3 on `docs/project/1-business-domain.md` | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Path/body pair fixture | Two findings on one identical path — one cosmetic, one naming a decision matrix — plus a body containing an escaped `\n` sequence and a two-platform record set, driving scenarios 7a, 7b and 7c | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Contract-surface body fixture | One body per row of the contract-surface table; three cosmetic bodies; the **seven bare-common-word cosmetic bodies** of scenario 6a, one per removed term; the three qualified-phrase controls that must still match; and **twelve** parser edge cases — the ten enumerated in the parser-risk addendum, plus the `failXclosed` wildcard negative and the unhyphenated `allow list` negative that the runbook's Step 3 table adds | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Multi-contributor round fixture | A single round with counted findings from two platforms, in four combinations — both on the current head, one stale, one reporting no head, and both stale — driving scenario 8a | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Co-occurring-cause fixtures | Three rounds driving scenario 10a: one carrying both a shipped-path and a contract-surface finding; one whose findings are all small with one stale contributor and one reporting no head; and one carrying a contract-surface finding together with a contributor on a stale head, to prove the currency check is never reached | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
@@ -651,6 +692,8 @@ and neither may claim that *every* finding on a normative document is non-small
 | The tightening removes the terminal mechanism entirely | Med | High — every PR with a cosmetic documentation tail would loop to its cycle cap | The normative-document list is narrow and enumerated: `docs/project/**`, fixtures, snapshots and `CHANGELOG.md` stay in the second tier, where a cosmetic blocking finding is still small. Scenarios 3, 6 and 13 assert the mechanism still fires there, and proof P6 plants the widening |
 | The classification depends on reviewers using particular vocabulary | **High** | High — a contract finding worded as *"required error handling is missing"* contains no listed term and would be cleared as small, which is the original bug for ordinary wording | The vocabulary test is never the only guard: tier 1 makes a blocking finding on a normative document non-small whatever it says, and tier 2's escalation applies only where a cosmetic tail is still wanted. Scenario 2's third case uses a contract finding with no listed term, and proof P12 drops tier 1 and requires it to fail |
 | The contract-surface test is written as a deny-list of cosmetic terms | Med | High — an unrecognised contract finding would be classified small, reproducing the bug | The test is an explicit allow-list of surfaces, and a body it does not recognise falls through to the path rule rather than being declared cosmetic; proof P3 plants the inversion |
+| Path/body pairing is lost in collection | Med | High — a body would be classified against the wrong path, or a contract finding sharing a path with a cosmetic one would be dropped and the round called small | Findings are collected as `<path><TAB><platform><TAB><body>` records in a dedicated array that is explicitly **not** deduplicated, separate from the existing path array; scenarios 7a and 7c and proof P15 pin it |
+| The escaped body is matched without decoding | Med | Med — a contract term following a line break abuts the literal `\n` and misses the word boundary, so the finding is classified small | The `\n` substitution `local-ai-reviewer.sh` applies is reversed before matching; scenario 7b and proof P16 pin it |
 | The boundary expression is not portable | Med | High — `\b` works on GNU grep and on the CI runner but not on BSD grep, so tier 2 would silently match nothing on a developer's macOS machine while passing CI | The boundary is `(^|[^[:alnum:]_])…([^[:alnum:]_]|$)`, POSIX ERE and the convention this repository already uses in `local-ai-reviewer.sh`; scenario 4a runs the positive and negative cases under both greps and proof P13 plants the `\b` form |
 | The contract-surface test over-matches ordinary prose | **High** | High — matching bare common words like `state`, `scope` or `gate` would make almost every finding non-small, disabling the terminal rule from the restrictive side while appearing to tighten it | Every matched term is a phrase or a qualified form; no bare common word is on the list, and the plan records that an earlier draft's bare terms were removed for this reason. Scenario 6a tests one cosmetic body per removed word, and the parser-risk addendum adds word-boundary negatives (`delegates`/`gate`, `microscope`/`scope`) |
 | The current round is decided without checking its own head | Med | High — the rule could terminate on a round whose findings describe a commit that is no longer the head, which is the staleness the brief names | The run is `prior + 1` and both halves are verified: the counter checks prior entries, and **every** reviewer contributing a counted finding to the current round must report `loop_head_sha` before it contributes. Scenario 8a's four combinations pin the `+ 1` half, including the two-platform case where only one contributor is stale; proof P8 plants the omission |
@@ -767,10 +810,14 @@ reviewer_loop_finding_touches_contract_surface() {
    scenario 4, scenario 6a's seven cosmetic bodies, scenario 10b's identity and
    determinism assertions, and every row of the parser-risk edge-case list
    including the `delegates`/`gate` and `failXclosed` negatives.
-3. Rename `reviewer_loop_all_paths_non_shipped` to
-   `reviewer_loop_all_findings_are_small`, take finding bodies alongside paths,
-   and fail when any finding is shipped-path **or** contract-surface.
-   **Verify**: scenarios 5-7. Record in the PR whether any caller outside this
+3. Add `reviewer_loop_blocking_findings_from_output` emitting
+   `<path><TAB><platform><TAB><escaped-body>` records, accumulate them
+   **without deduplication** into `aggregate_blocking_findings`, decode the
+   `\n` escape before matching, and replace
+   `reviewer_loop_all_paths_non_shipped` with
+   `reviewer_loop_all_findings_are_small`. **Verify**: scenarios 5, 6, 7, 7a,
+   7b and 7c — in particular that two findings on one path both survive
+   collection. Record in the PR whether any caller outside this
    change set required the old name.
 4. Extend `reviewer_loop_small_findings_prior_consecutive_count` to take the
    current head and stop at the first entry that fails either half of the
@@ -815,7 +862,7 @@ reviewer_loop_finding_touches_contract_surface() {
 9. Document the new behavior in the `--help` usage block. **Verify**: run
    `pr-review-loop.sh --help` and confirm the predicate, the contract-surface
    list, the current-head requirement and `SMALL_FINDINGS_BLOCKED_BY` appear.
-10. Produce the fourteen planted-violation proofs (P1-P14) and record them in the PR
+10. Produce the sixteen planted-violation proofs (P1-P16) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed. P6, P7 and P13 are the three restrictive-direction proofs and

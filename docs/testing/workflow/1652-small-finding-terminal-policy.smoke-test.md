@@ -149,6 +149,22 @@ guard the **restrictive** direction:
 Over-matching here disables the terminal rule while looking like a tightening,
 which is the more likely of the two mistakes because it appears to succeed.
 
+### Step 3f: Findings survive collection as path/body pairs
+
+**Maps to**: the "path/body pairing is lost in collection" risk.
+
+1. Run the loop with **two findings on the same path** — one cosmetic, one
+   naming a decision matrix.
+2. Run it with a body emitted as `some prose\ndecision matrix is wrong`, where
+   the `\n` is the literal two-character escape `local-ai-reviewer.sh` writes.
+3. Run it with findings from two platforms and read the summary line.
+
+**Expected result**: run 1 is **non-small** — a collector that deduplicated by
+path could have kept only the cosmetic record and called the round small. Run 2
+is **non-small**, which requires the body to be decoded before matching; against
+the raw escaped string the term abuts the literal `\n` and misses the word
+boundary. Run 3's summary names the platform that produced the deciding finding.
+
 ### Step 4: Counted rounds must be on the current head
 
 **Maps to**: brief scope bullet 2.
@@ -329,16 +345,19 @@ tier 1 makes those findings non-small whatever the body says.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P14 each record the command, the file and line of the
+2. Confirm P1 through P16 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: fourteen proofs in three groups. **Ten** plant the
-**permissive** direction — P1 through P5, P8, P10, P11, P12 and P14, reproducing the
-original bug; P8 skips the current round's head check and requires Step 4's
+**Expected result**: sixteen proofs in three groups — **twelve** permissive,
+**three** restrictive, **one** observability, per the plan's proof-group table.
+The permissive group is P1 through P5, P8, P10, P11, P12, P14, P15 and P16,
+reproducing the original bug in each of the ways it can return; P8 skips the current round's head check and requires Step 4's
 fifth run to fail; P10 reads `head_sha` instead of `classification_head` and
 requires Step 4's step 1b to fail; P14 breaks the contract-surface
 matching entirely and requires Step 6b to fail while Step 6 still passes, which
-is precisely why Step 6b exists; P11 checks only a prior entry's
+is precisely why Step 6b exists; P15 deduplicates the findings array and P16
+matches the raw escaped body, both requiring Step 3f to fail; P11 checks only a
+prior entry's
 `classification_head` and skips its `reviewed_heads[]`, requiring step 1a to
 fail; **P12** drops tier 1 and leaves the vocabulary test as the only guard, requiring Step 1's third case — a contract finding containing no listed term — to fail. **Three** plant the
 **restrictive** direction, and none is optional: **P13** replaces the portable
