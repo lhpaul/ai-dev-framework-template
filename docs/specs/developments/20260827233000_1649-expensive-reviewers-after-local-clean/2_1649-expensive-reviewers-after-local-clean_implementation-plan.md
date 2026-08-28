@@ -18,10 +18,13 @@ check is whether the accumulated evidence is (a) about the current head and
 (b) complete: it evaluates only earlier reviewer verdicts from this same run,
 never review threads, never baseline CI, and it has no notion of a stale local
 clean result. This plan adds a dedicated pre-dispatch gate for `codex-github`
-that requires four current-head conditions — local reviewer clean and current,
-PR-Agent clean, zero unresolved review threads, and green non-reviewer baseline
-checks — evaluated immediately before the platform is dispatched, fail-closed when any input is
-missing or stale, with one explicit documented override for manual escalation.
+that requires four current-head conditions — the local reviewer clean and
+current; every reviewer that **precedes** it having produced acceptable evidence
+(a `clean` result, or a `skipped` one whose reason is not a reviewer failure —
+deliberately **not** every `skipped`); zero unresolved non-outdated review
+threads; and green non-reviewer baseline checks — evaluated immediately before
+the platform is dispatched, fail-closed when any input is missing or stale, with
+one explicit documented override for manual escalation.
 A gate that holds the reviewer back **defers** rather than skipping: it sets the
 loop's aggregate to `needs_fixes` so readiness is withheld and Step 7 re-runs,
 which is what makes the deferral guaranteed rather than merely hoped for.
@@ -58,7 +61,8 @@ implementation is ordered.
 | `codex-github` dispatch path | `grep -n "codex-github" scripts/development-workflow/pr-review-loop.sh` | Dispatched via `run_codex_github_review` at the `codex-github)` case of `run_platform_review`; `codex_github_defaults_should_apply` already tests membership with `array_contains_value` |
 | `codex-github` is not configured here | `sed -n '/^review:/,/^ *guardrails:/p' .ai-dev-workflow.yaml` | This repository's `on_draft.github` is `local-ai-reviewer, pr-agent` and `on_ready.github` is `bugbot`; `codex-github` appears in neither, so the gate must be inert-by-absence here and exercised through harness fixtures |
 | Evidence keys come from #1648 | `gh pr view 1660 --json state --jq .state` and the plan on that PR | `LOCAL_AI_CONFIGURED` / `LOCAL_AI_HEAD_CURRENT` are defined by #1648, whose plan PR #1660 is `ready-for-human-review` and not yet merged |
-| Baseline vs reviewer checks | `grep -n "REVIEWER_CHECKS\|REVIEWER_CHECK_COUNT" scripts/development-workflow/pr-ci-loop.sh` | `pr-ci-loop.sh` already separates reviewer-owned checks from baseline checks and emits `REVIEWER_CHECKS` / `REVIEWER_CHECKS_JSON`, so the gate can reuse that classification rather than inventing one |
+| Baseline vs reviewer checks | `sed -n '112,147p' scripts/development-workflow/pr-ci-loop.sh` | The classification lives in one function, `configured_reviewer_check_names_json`, which maps configured review platforms to their GitHub check names (`haystack` → `Haystack / Review`, `bugbot` → `Cursor Bugbot`). Everything downstream — `REVIEWER_CHECK_COUNT`, `REVIEWER_CHECKS`, `REVIEWER_CHECKS_JSON` — is `jq` over that one list, so relocating the function is enough to share it |
+| Both scripts already share a library | `grep -n "source .*workflow-lib" scripts/development-workflow/pr-ci-loop.sh scripts/development-workflow/pr-review-loop.sh` | Both source `workflow-lib.sh` at line 7 and line 10 respectively, so the function can move there with no new dependency and no change to either script's load order |
 | `codex-github` integration doc exists | `ls docs/workflow/development-workflow/integrations/` | `codex-github.md` is present alongside `local-ai-reviewer.md`, `pr-agent.md`, and `bugbot.md`, so the gate's documentation target already exists and no new file is created |
 | Reviewer-loop protocol target | `grep -c "" docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` | 1142 lines; this is the protocol that documents loop behavior, and is the right home for the gate's normative description |
 | Cycle caps exist | `grep -n "MAX_CYCLES\|MAX_TOTAL_CYCLES" scripts/development-workflow/pr-review-loop.sh` | Dual caps are present: `max_cycles` per run and `max_total_cycles` per PR lifetime |
@@ -121,7 +125,7 @@ Not applicable — this repository ships workflow tooling, not a service.
       | 1 | `LOCAL_AI_CONFIGURED` is exactly `1` **and** `LOCAL_AI_HEAD_CURRENT` is exactly `1` | `local_reviewer_not_configured` when `LOCAL_AI_CONFIGURED` is `0`; `local_evidence_stale` when `LOCAL_AI_HEAD_CURRENT` is `0`; `local_evidence_missing` when either is empty, unset, or any value other than `0` or `1` |
       | 2 | Every platform in this reviewer's **peer set** (defined below) has already run in this invocation **and** produced acceptable peer evidence | `peer_reviewer_not_run` when one has not run yet; `peer_reviewer_not_clean` when one ran without producing acceptable evidence |
       | 3 | Zero unresolved, non-outdated review threads | `unresolved_threads` |
-      | 4 | Every non-reviewer check is `SUCCESS`, `SKIPPED`, or `NEUTRAL` | `baseline_checks_not_green` when one failed; `baseline_checks_pending` when one is still running |
+      | 4 | Every non-reviewer check on `loop_head_sha` is `SUCCESS`, `SKIPPED`, or `NEUTRAL` | `baseline_checks_not_green` when one failed; `baseline_checks_pending` when one is still running |
 
 - [ ] **Reorder expensive reviewers last *within their own phase bucket*.** Add
       `reorder_expensive_reviewers_last`, called once after the platform list is
@@ -147,6 +151,35 @@ Not applicable — this repository ships workflow tooling, not a service.
 - [ ] Emit `EXPENSIVE_REVIEWERS_REORDERED=1` and the reordered `PLATFORM_LIST`
       when the partition changed the order, so the behavior is visible rather
       than a silent rewrite of the caller's configuration.
+- [ ] **Share the reviewer/baseline check classification by relocating one
+      function — do not call `pr-ci-loop.sh`.** Condition 4 needs to know which
+      checks are reviewer-owned so a reviewer's own check cannot gate that
+      reviewer. That classification exists today as
+      `configured_reviewer_check_names_json` in
+      `scripts/development-workflow/pr-ci-loop.sh` (lines 112–147); everything
+      downstream of it — `REVIEWER_CHECK_COUNT`, `REVIEWER_CHECKS`,
+      `REVIEWER_CHECKS_JSON` — is `jq` over the list it returns. The concrete
+      change:
+      1. Move `configured_reviewer_check_names_json` **verbatim** from
+         `pr-ci-loop.sh` into `scripts/development-workflow/workflow-lib.sh`,
+         and delete the local definition. Both scripts already source
+         `workflow-lib.sh` (`pr-ci-loop.sh` line 7, `pr-review-loop.sh`
+         line 10), so no new dependency and no load-order change is introduced.
+         This is a pure relocation of already-proven logic with no behavior
+         change; state that exemption rationale in the PR per
+         `docs/best-practices/3-testing.md`.
+      2. Add `expensive_gate_baseline_checks_status <pr_number> <head_sha>` in
+         `pr-review-loop.sh`. It fetches the check rollup **once** via
+         `gh pr view --json statusCheckRollup,headRefOid`, excludes any check
+         whose name appears in `configured_reviewer_check_names_json`, and
+         prints one of `green`, `failed`, `pending`, or `unavailable` plus the
+         live head it observed.
+      3. **Do not invoke `pr-ci-loop.sh` from the gate.** That script is a
+         polling loop with its own waits and its own exit semantics; calling it
+         here would block the reviewer loop inside a gate that must be a
+         non-blocking snapshot, and would conflate "CI is not green yet" with
+         "the gate says wait". The gate takes a snapshot; the CI loop remains
+         Step 8's job.
 - [ ] **Define acceptable peer evidence — not every `skipped` counts.**
       Accepting any `skipped` peer would let `codex-github` dispatch when a
       configured peer was unavailable, timed out, or was rejected for
@@ -495,6 +528,11 @@ reads them against each other and fails on any divergence.
     `EXPENSIVE_GATE_DEFERRALS=-1`, and the loop escalates. Without this the
     bounded-deferral guarantee would hold only when the ledger happens to be
     readable, which is not a guarantee.
+20. The relocation is behavior-preserving: `pr-ci-loop.sh` produces identical
+    `REVIEWER_CHECK_COUNT`, `REVIEWER_CHECKS` and `REVIEWER_CHECKS_JSON` before
+    and after `configured_reviewer_check_names_json` moves to
+    `workflow-lib.sh`, and `expensive_gate_baseline_checks_status` classifies
+    the same check names as reviewer-owned.
 19b. The ledger is **absent** — no summary comment yet, or a body with no
     history marker — → `EXPENSIVE_GATE_DEFERRALS=0` and the gate defers or
     dispatches normally. This is every PR's first reviewer-loop run; escalating
@@ -506,6 +544,13 @@ reads them against each other and fails on any divergence.
 - `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenarios 1–14
   (including 6b), 18 and 19, as new cases in the existing `HARNESS_MODE=1`
   harness.
+- `scripts/development-workflow/tests/test-pr-ci-loop.sh` — scenario 20, which
+  asserts that `pr-ci-loop.sh` still produces the same `REVIEWER_CHECK_COUNT`,
+  `REVIEWER_CHECKS` and `REVIEWER_CHECKS_JSON` after
+  `configured_reviewer_check_names_json` moves to `workflow-lib.sh`. Its
+  existing `# covers:` mapping already selects it for a `pr-ci-loop.sh` change;
+  add `# covers: scripts/development-workflow/workflow-lib.sh` so a later edit
+  to the relocated function also selects it.
 - `scripts/development-workflow/tests/test-expensive-reviewer-gate.sh` — a new
   suite for scenarios 15–17, the override and composition cases, which need
   their own mock scaffolding for the phase and filter paths. It must declare:
@@ -545,6 +590,7 @@ concrete file and line:
 | P5 | Ordering regression: **delete the `reorder_expensive_reviewers_last` call**, leaving a platform list that declares `codex-github` before `pr-agent` | a scratch copy of the platform-resolution block | scenario 6 fails and scenario 7's suppressed-reorder case shows the gate deferring on every invocation with `peer_reviewer_not_run` — a deferral that can never resolve; restoring the call passes |
 | P9 | Phase-bucket regression: replace the per-bucket partition with a single global one | a scratch copy of `reorder_expensive_reviewers_last` | scenario 6b fails, because a draft-configured `codex-github` is placed after the ready-phase `bugbot` and therefore runs only after `gh pr ready`; restoring the per-bucket partition passes |
 | P10 | Peer-evidence regression: accept any `skipped` peer instead of consulting `reviewer_failed_label_required_for_result` | a scratch copy of condition 2 | scenario 8's `unavailable`, `timeout` and `unauthorized` rows fail, because the gate dispatches with a peer that never produced a verdict; restoring the helper call passes |
+| P14 | Reviewer-check-classification regression: make `expensive_gate_baseline_checks_status` treat every check as a baseline check | a scratch copy of the helper | scenario 10's reviewer-owned-pending row fails, because `codex-github` waits on a check it is responsible for producing; restoring the `configured_reviewer_check_names_json` exclusion passes |
 | P13 | Peer-set regression: widen the peer set from the preceding platforms back to every non-expensive platform in the resolved list | a scratch copy of the peer-set computation | scenario 7's first row fails, because a draft-phase `codex-github` waits on a ready-phase `bugbot` that cannot have run yet and defers until the cap; restoring the phase-scoped set passes |
 | P6 | Readiness regression: make a defer leave the aggregate result unchanged instead of setting `needs_fixes` | a scratch copy of the gate call site | scenario 3's aggregate assertion fails, and a run in which `codex-github` never executed would satisfy Protocol 92's readiness conditions; restoring the `needs_fixes` aggregate passes |
 | P7 | Unbounded-deferral regression: replace the head-scoped deferral counter with the existing `reviewer_loop_history_entries_count` caps | a scratch copy of the cap check | scenario 13 fails, because repeated `needs_fixes` results on one unchanged head collapse under that function's `unique` bucketing by `head_sha` + `result` and neither cap ever trips; restoring the dedicated counter escalates with `expensive_gate_deferral_cap` |
@@ -552,7 +598,7 @@ concrete file and line:
 | P11 | Absent-ledger regression: change the counter to return `-1` for an absent ledger as well as a malformed one | same fixture | scenario 19b fails, because a PR with no prior reviewer-loop history escalates on its first run and the bound is never exercised; restoring the three-state mapping passes |
 | P12 | Deny-list regression: rewrite condition 1 to reject only `0` and empty rather than requiring exactly `1` | a scratch copy of condition 1 | scenario 4's `2` and `true` rows fail, because the gate dispatches with an unrecognized evidence value; restoring the exact-match allow-list passes |
 
-Record all thirteen in the implementation PR under a `Planted-Violation Proofs`
+Record all fourteen in the implementation PR under a `Planted-Violation Proofs`
 heading, each with the command, the file and line of the planted violation, and
 both outcomes.
 
@@ -626,7 +672,8 @@ with mock `gh` commands and require no network access.
 | Fail-closed on unreadable evidence turns a transient API blip into a permanent defer | Med | Med | A defer is per-invocation, not sticky: the `needs_fixes` aggregate makes Protocol 91 re-run Step 7, which re-evaluates from scratch. The bound is the gate's own head-scoped deferral counter, not the existing dual cycle caps — those cannot see a deferral loop, as the Verification Log records — and an unreadable budget escalates rather than deferring again. The gate adds no retry path of its own, so it cannot loop |
 | The gate contradicts the existing phase mechanism | Med | High — two gates disagreeing on whether a platform runs is worse than either alone | Composition is specified explicitly (phase gate first, then this gate; `--pre-after-clean-only` filters before both) and pinned by scenarios 16 and 17, including the no-phantom-telemetry case |
 | Implementation starts before #1648 lands and wires the gate to keys that do not exist | Med | High — the gate would read unset variables and hold everything, or be written against a guessed contract | Recorded as a Conflict in the Cross-Cutting check and as Implementation Order step 0, which is a hard stop that verifies #1648 is merged into the approved base before any edit |
-| A reviewer's own check gates that reviewer | Low | Med — `codex-github` would wait on a check it is responsible for producing | Condition 4 evaluates non-reviewer checks only, reusing the reviewer/baseline classification `pr-ci-loop.sh` already emits rather than a new one; scenario 10's third case pins it |
+| A reviewer's own check gates that reviewer | Low | Med — `codex-github` would wait on a check it is responsible for producing | Condition 4 evaluates non-reviewer checks only, excluding the names returned by `configured_reviewer_check_names_json`, which moves from `pr-ci-loop.sh` to `workflow-lib.sh` so both callers share one definition rather than two drifting copies; scenario 10's third case and proof P14 pin it |
+| The shared classification is duplicated or the gate blocks on the CI loop | Med | Med — a duplicated copy drifts, and calling `pr-ci-loop.sh` would make a snapshot gate poll | The plan names the exact function, the exact destination file, the fact that both scripts already source it, and an explicit prohibition on invoking `pr-ci-loop.sh` from the gate; scenario 20 asserts the relocation is behavior-preserving |
 | Platform ordering decides whether the gate is effective | Med | High — a config listing `codex-github` first would either dispatch it before the cheap reviewers ran, or defer at the same point forever | Detection is not enough, so the loop reorders: `reorder_expensive_reviewers_last` moves expensive platforms to the end of their own bucket before iteration, making the gate's precondition reachable; condition 2's peer set is computed from the reordered list, so `peer_reviewer_not_run` fires as a defensive assertion if the reorder did not happen. Scenarios 6 and 7 and proof P5 pin both halves |
 | The peer set and the phase-bucket reorder contradict each other | Med | High — a draft-phase expensive reviewer would wait on a ready-phase peer that cannot have run yet, deadlocking until the cap | The peer set is the platforms that *precede* this reviewer under the reordered list — its own bucket's non-expensive platforms plus every earlier bucket — rather than the whole resolved list; scenario 7's table and proof P13 pin it, including the draft-plus-ready configuration |
 | The reorder silently moves a reviewer across the draft/ready boundary | Med | High — a draft-configured expensive reviewer would run only after `gh pr ready`, inverting the configuration contract | The partition is per phase bucket, assigned with the existing `is_phase_after_clean_platform` predicate, and the buckets are concatenated in their original order; scenario 6b and proof P9 pin it |
@@ -748,6 +795,12 @@ Summary-comment line, illustrative:
    mirroring `reviewer_loop_history_entries_count`'s own three states.
    **Verify**: scenarios 13, 14, 19 and 19b — the count reflects only the
    current head, an absent ledger yields `0`, and a malformed one yields `-1`.
+3b. Move `configured_reviewer_check_names_json` verbatim from `pr-ci-loop.sh`
+   to `workflow-lib.sh`, delete the local definition, and add
+   `expensive_gate_baseline_checks_status`. **Verify**: scenario 20 — the CI
+   loop's three reviewer-check outputs are unchanged, and the new helper
+   classifies the same names as reviewer-owned. Do not call `pr-ci-loop.sh`
+   from the gate.
 4. Add `expensive_reviewer_gate` with the conditions in the documented order,
    condition 2 computing the peer set from the reordered list and this
    reviewer's index in it and delegating acceptance to
@@ -791,7 +844,7 @@ Summary-comment line, illustrative:
     **Verify**: both suites exit 0, and
     `scripts/development-workflow/select-test-suites.sh` selects the new suite
     for a change touching only `pr-review-loop.sh`.
-11. Produce the thirteen planted-violation proofs (P1–P13) and record them in the PR
+11. Produce the fourteen planted-violation proofs (P1–P14) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed.
@@ -803,7 +856,7 @@ Summary-comment line, illustrative:
     containing exactly:
 
     ```markdown
-    - **Gate expensive reviewers on current-head local evidence** (#1649): `codex-github` now runs only after the local reviewer, peer reviewers, review threads, and baseline checks are clean on the current head, and defers fail-closed when that evidence is missing or stale.
+    - **Gate expensive reviewers on current-head local evidence** (#1649): `codex-github` now runs only after the local reviewer is clean on the current head, every reviewer that precedes it has produced acceptable evidence, review threads are resolved, and non-reviewer checks are green — and defers fail-closed, with a bounded retry budget, when that evidence is missing or stale.
     ```
 
 14. Update project docs per **Documentation Updates** above (step 9 covers

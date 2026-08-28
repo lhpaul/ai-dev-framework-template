@@ -28,7 +28,8 @@
 | Item | Value |
 | --- | --- |
 | Reviewer loop | `scripts/development-workflow/pr-review-loop.sh` |
-| CI loop (reviewer/baseline check classification) | `scripts/development-workflow/pr-ci-loop.sh` |
+| Reviewer/baseline check classification | `configured_reviewer_check_names_json`, relocated to `scripts/development-workflow/workflow-lib.sh` |
+| CI loop (its consumer; **not** called by the gate) | `scripts/development-workflow/pr-ci-loop.sh` |
 | Suite selector | `scripts/development-workflow/select-test-suites.sh` |
 | Loop harness suite | `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Gate suite (new) | `scripts/development-workflow/tests/test-expensive-reviewer-gate.sh` |
@@ -61,6 +62,13 @@ matched would be held back by a gate that assumes an expensive one, inverting
 the item's intent.
 
 ### Step 2: The gate dispatches when all conditions are met
+
+The four conditions are: the local reviewer clean and current; every reviewer
+that **precedes** this one having produced acceptable evidence — a `clean`
+result, or a `skipped` one whose reason is not a reviewer failure, deliberately
+**not** every `skipped`; zero unresolved non-outdated review threads; and green
+non-reviewer baseline checks. Steps 3 and 3d pin the second condition's two
+halves.
 
 **Maps to**: brief scope bullet 1.
 
@@ -299,6 +307,23 @@ legacy entry still parses through
 backward compatible. A repeated defer must be readable from the PR without
 re-running anything.
 
+### Step 7e: The shared classification moved without changing behavior
+
+**Maps to**: the "shared classification is duplicated or the gate blocks on the
+CI loop" risk.
+
+1. Confirm `configured_reviewer_check_names_json` is defined in
+   `workflow-lib.sh` and no longer in `pr-ci-loop.sh`.
+2. Run `scripts/development-workflow/tests/test-pr-ci-loop.sh`.
+3. Grep the gate's implementation for any invocation of `pr-ci-loop.sh`.
+
+**Expected result**: one definition, in the library both scripts already source;
+`pr-ci-loop.sh` still emits identical `REVIEWER_CHECK_COUNT`, `REVIEWER_CHECKS`
+and `REVIEWER_CHECKS_JSON`; and the gate calls `pr-ci-loop.sh` nowhere. The gate
+takes a single non-blocking snapshot of the check rollup — invoking the polling
+CI loop would block the reviewer loop inside a gate and conflate "CI is not
+green yet" with "the gate says wait".
+
 ### Step 8: The new suite is selected by the right change sets
 
 **Maps to**: the `# covers:` declaration requirement in the plan.
@@ -318,10 +343,10 @@ so it would run only when the test file itself changed.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR description's `Planted-Violation Proofs` heading.
-2. Confirm P1–P13 from the plan each record the command, the file and line of
+2. Confirm P1–P14 from the plan each record the command, the file and line of
    the planted violation, and both outcomes.
 
-**Expected result**: thirteen proofs, each showing the check failing with the
+**Expected result**: fourteen proofs, each showing the check failing with the
 violation present and passing once removed. Four carry the most weight: P4
 deletes the `expensive_reviewer_gate` call so the function is defined but
 unreachable, and requires Step 3's stale-evidence row to fail — that is what
@@ -337,7 +362,8 @@ Step 3's three rejected-skip rows to fail. P11 makes an absent ledger return
 `-1` and requires Step 4b's sixth run to fail. P12 rewrites condition 1 as a
 deny-list and requires Step 3's unexpected-value rows to fail. P13 widens the
 peer set back to the whole resolved list and requires Step 3d's first run to
-fail.
+fail. P14 makes the baseline-check helper treat every check as a baseline check
+and requires Step 3's reviewer-owned-pending row to fail.
 
 ### Step 10: Documentation states one contract
 
@@ -357,7 +383,8 @@ must surface no contradiction.
 
 ### Step 11: Static checks
 
-1. Run `shellcheck` on `scripts/development-workflow/pr-review-loop.sh`.
+1. Run `shellcheck` on `scripts/development-workflow/pr-review-loop.sh`,
+   `pr-ci-loop.sh`, and `workflow-lib.sh` — the relocation touches all three.
 2. Run `markdownlint-cli2` on the two changed documentation files, this runbook,
    and the implementation plan.
 
