@@ -678,13 +678,13 @@ demonstrated runs per proof, each citing a concrete file and line. The nineteen 
 | P19 | Require a current head from **every** `reviewed_heads[]` entry rather than only the contributing platforms | same scratch copy | scenario 8b's third row fails: a non-contributing reviewer that returned clean or was skipped breaks the count, and on a repository where one reviewer never reports the terminal rule can never fire again. Restoring the contributor scoping passes |
 | P8 | Skip the current round's head check, verifying only the prior ledger entries | a scratch copy of the terminal decision | scenario 8a fails, because the rule terminates on a deciding round whose findings describe a commit that is no longer the head; restoring the check passes |
 
-P6, P7 and P13 are the three restrictive-direction proofs and none is optional.
-A tightening that removes the mechanism — by widening the normative list so no
-documentation finding can be small, by matching common words that appear in
-ordinary prose, or by using a `\b` boundary that matches nothing under BSD grep
-— would pass every permissive-direction proof here while leaving the loop unable
-to terminate on cosmetic findings. That is a different defect, not a fix, and it
-is the more likely of the two mistakes because it looks like success.
+**No proof is optional, and the restrictive group least of all.** A tightening
+that removes the mechanism would pass every permissive-direction proof while
+leaving the loop unable to terminate on cosmetic findings — a different defect,
+not a fix, and the more likely of the two mistakes because the reasoning that
+produces it is "be stricter", which sounds like the goal. The group's membership
+is the table above; it is not restated here, because a restated count is the
+thing that drifts.
 
 ### Parser-risk addendum
 
@@ -961,8 +961,8 @@ reviewer_loop_finding_touches_contract_surface() {
 10. Produce the nineteen planted-violation proofs (P1-P19) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
-    once removed. P6, P7 and P13 are the three restrictive-direction proofs and
-    none is optional.
+    once removed. Every proof is mandatory, including the whole restrictive
+    group; see the proof-group table for its membership.
 11. Run `shellcheck` on `scripts/development-workflow/pr-review-loop.sh` and
     `markdownlint-cli2` on the two changed documentation files, this plan and
     the runbook. **Verify**: both tools exit 0 on every file named here.
