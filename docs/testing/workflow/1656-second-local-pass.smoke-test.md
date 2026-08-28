@@ -1,0 +1,201 @@
+# Smoke Test: Second Local Pass Before Ready-Phase Reviewers (#1656)
+
+**Item**: [#1656](https://github.com/lhpaul/ai-dev-framework-template/issues/1656)
+**Plan**: [2_1656-second-local-pass_implementation-plan.md](../../specs/developments/20260828230000_1656-second-local-pass/2_1656-second-local-pass_implementation-plan.md)
+
+Steps 1 and 2 source the loop with `HARNESS_MODE=1` and call the condition
+directly; the rest exercise the assembled behavior. Sourcing enables
+`set -euo pipefail`; call anything that returns non-zero as a normal answer
+inside an `if` or with `|| true`.
+
+---
+
+## Step 1: The condition's four values
+
+**Maps to**: brief scope bullets 1 and 2.
+
+1. Call `reviewer_loop_local_pass_required` with a history whose local verdict is
+   **clean on `loop_head_sha`**.
+2. Call it with a local clean verdict on an **ancestor** of `loop_head_sha`.
+3. Call it with a local clean verdict on an **unrelated** commit.
+4. Call it with a local **needs_fixes** verdict.
+5. Call it with entries that **never name** the local reviewer.
+
+**Expected result**: `not_required`, `head_changed`, `head_changed`,
+`prior_findings`, `no_evidence`.
+
+Case 5 is the one a permissive reading gets wrong. A history that says nothing
+about the local reviewer has not been locally reviewed, and `not_required` there
+would let an invocation whose `--platform` list omits the reviewer walk straight
+through the gate — the fail-open this epic exists to close. It is also not a
+rare state: `filter_phase_after_clean_platforms` lets an invocation carry
+ready-phase platforms and no local reviewer at all. Proof P2.
+
+Cases 2 and 3 both owe a pass. An ancestor is the ordinary fix-was-pushed case;
+an unrelated commit is a force-push. Neither is evidence about the commit the
+ready-phase reviewers are about to read.
+
+## Step 2: Four values, not a boolean
+
+**Maps to**: the reporting contract.
+
+1. Read `LOCAL_SECOND_PASS_REASON` on a run where the pass did not run.
+
+**Expected result**: the key is present and reads `not_required`; and
+`LOCAL_SECOND_PASS` is `0`.
+
+Emitting the reason only on the interesting path would make its absence
+ambiguous — an old script, a skipped guard and a satisfied condition would all
+look alike — and this is telemetry #1657 will read.
+
+## Step 3: No extra dispatch when the evidence is current
+
+**Maps to**: brief scope bullet 3, the cost half.
+
+1. Run the loop on a pull request whose local reviewer is clean on
+   `loop_head_sha`.
+2. Compare the platform dispatch sequence to the same run before this change.
+
+**Expected result**: byte-for-byte identical. The guard adds nothing to the path
+it does not need to protect.
+
+## Step 4: A clean second pass opens the gate
+
+**Maps to**: the brief's outcome.
+
+1. Run the loop on a pull request whose local reviewer reported findings, then
+   push a fix so `loop_head_sha` moves.
+2. Let the loop reach the ready-phase gate.
+
+**Expected result**: the local reviewer is dispatched **once** before
+`ensure_pr_ready_for_ready_phase`, through `run_platform_review` like any
+platform; it reports clean; the pull request is converted; ready-phase reviewers
+run. `LOCAL_SECOND_PASS=1`, `LOCAL_SECOND_PASS_REASON=head_changed`.
+
+## Step 5: A failed second pass closes it, and changes nothing else
+
+**Maps to**: the brief's outcome, the failure half.
+
+1. Same as Step 4, but the second pass reports `needs_fixes`.
+
+**Expected result**: three things, all asserted:
+
+- the cycle ends with `needs_fixes`;
+- the pull request is **not** converted to ready;
+- **no** ready-phase platform is dispatched.
+
+Asserting only the result would pass an implementation that converts the pull
+request first and then reports the failure — leaving it ready, with no reviewer
+dispatched, in a state the loop never intended and a human has to undo. Proof
+P4.
+
+## Step 6: At most once per head, and again when the head moves
+
+**Maps to**: brief scope bullet 3, the loop half.
+
+1. Run two cycles with **no** new commit between them and count local-reviewer
+   dispatches.
+2. Run a cycle, land a commit, run another cycle, and count again.
+
+**Expected result**: case 1 dispatches the guard's pass **once**; case 2
+dispatches it twice.
+
+Count dispatches, not the flag. A per-cycle boolean reads as "at most once" and
+is not: it allows one pass per cycle forever, and on a pull request whose local
+reviewer never goes clean it burns the entire cycle budget on repeated local
+reviews. Keying the flag on the head allows one pass per **commit**, and the
+loop cannot manufacture a commit. Proof P1.
+
+## Step 7: The caps mean what they meant
+
+**Maps to**: brief scope bullet 3, the cap half.
+
+1. Run two identical inputs, one needing a pass and one not, and compare
+   `CYCLE_COUNT` and `TOTAL_CYCLE_COUNT`.
+2. Run a pull request whose local reviewer never goes clean to
+   `max_cycles_exceeded` and note the cycle count at escalation.
+
+**Expected result**: case 1's counts are equal. Case 2 escalates at the same
+count as before this change.
+
+The pass is a dispatch inside a cycle that is already counted. Incrementing a
+cap would make `max_cycles_exceeded` mean two different things — cycles for
+platforms, cycles-plus-passes here — and would silently shorten every run the
+guard helps. Proof P3.
+
+## Step 8: No gate, no guard
+
+**Maps to**: the cost of protecting nothing.
+
+1. Run with no ready-phase platform configured — `phase_after_clean_enabled` at
+   0 — and a condition that would otherwise owe a pass.
+
+**Expected result**: no extra dispatch; the run is what it is today.
+
+The pass exists to protect the ready-phase gate. With no gate, dispatching
+anyway doubles the local reviewer's cost on every draft-only run for no benefit.
+Proof P5.
+
+## Step 9: The two keys, the ledger and the summary
+
+**Maps to**: the reporting contract.
+
+1. Read the loop's `key=value` stdout on a run where the pass ran and on one
+   where it did not.
+2. Read the reviewer-loop history entry for both.
+3. Read the summary comment on the run where it ran.
+
+**Expected result**: both keys present in both runs; both values in both ledger
+entries; and a summary line naming the reason and the result — `second local
+pass: head_changed → clean`.
+
+## Step 10: Documentation agrees
+
+**Maps to**: the documentation-drift risk.
+
+1. Read the guard's description in
+   `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`.
+2. Run `scripts/development-workflow/pr-review-loop.sh --help`.
+3. Read `changelog.d/1656.changed.second-local-pass.md`.
+
+**Expected result**: both surfaces describe the same four reasons and the same
+two keys, and neither describes the pass as consuming a cycle or as running
+without a ready-phase platform. The fragment is `changed`, not `added` — the
+ready-phase gate already existed and this alters when it fires.
+
+## Step 11: Static checks
+
+1. Run `shellcheck` on `scripts/development-workflow/pr-review-loop.sh`.
+2. Run
+
+   <!-- workflow-shell-contract: bash -->
+
+   ```bash
+   python3 scripts/lint/workflow-shell-guard-lint.py \
+     --base-ref origin/develop-internal-reviewer-effectiveness
+   ```
+
+3. Run `markdownlint-cli2` on the changed documentation.
+
+**Expected result**: all three exit 0.
+
+## Step 12: Planted-violation proofs
+
+1. Read the implementation PR's `Planted-Violation Proofs` heading.
+2. Confirm P1 through P5 each record the command, the file and line of the
+   planted violation, and both outcomes.
+
+**Expected result**: five proofs in two groups — **two** fail-open, **three**
+loop and cost, per the plan's proof-group table.
+
+P2 is the one to read twice: returning `not_required` for a history with no
+local verdict is the natural default, it passes every scenario that supplies a
+verdict, and the pull requests it lets through are exactly the ones nobody
+reviewed locally.
+
+---
+
+## Rollback verification
+
+Revert the implementation PR and re-run Steps 3 and 4. No extra dispatch may
+occur in either, and neither key may appear in the loop's output.
