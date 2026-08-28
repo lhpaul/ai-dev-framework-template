@@ -112,7 +112,16 @@ Not applicable — this repository ships workflow tooling, not a service.
       ```bash
       # The review doctrine's maximum size, in bytes as `wc -c` measures them.
       # AC-12: one source of truth, read by both the linter and the reviewer.
-      REVIEW_DOCTRINE_MAX_BYTES=12000
+      # `:-` and not a bare assignment: an unconditional one would overwrite an
+      # environment value, and scenario 15 — the only check that the two
+      # consumers share a bound — works by setting one. Validation follows
+      # PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS: warn and fall back rather
+      # than trust an unusable value.
+      REVIEW_DOCTRINE_MAX_BYTES="${REVIEW_DOCTRINE_MAX_BYTES:-12000}"
+      if ! [[ "$REVIEW_DOCTRINE_MAX_BYTES" =~ ^[1-9][0-9]*$ ]]; then
+        echo "WARN: REVIEW_DOCTRINE_MAX_BYTES must be a positive integer; defaulting to 12000" >&2
+        REVIEW_DOCTRINE_MAX_BYTES=12000
+      fi
       ```
 
       **This is why the linter is a shell script.** AC-12 asks for one value the
@@ -197,11 +206,18 @@ Not applicable — this repository ships workflow tooling, not a service.
       `local_ai_reviewer_context.v1`:
 
       ```text
-      review_doctrine:               "<full text, or empty>"
+      review_doctrine:               "<the catalogue's stored bytes, or empty>"
       review_doctrine_state:         "supplied" | "absent" | "unreadable" | "oversized"
       review_doctrine_pattern_count: <integer>
       review_doctrine_version:       "<12 hex, or empty>"
       ```
+
+      **The text is the file's bytes, unmodified.** It is read with
+      `jq --rawfile`, never through a command substitution: `$(cat …)` strips
+      every trailing newline, so the bundle would carry a catalogue that differs
+      from the stored one — and the difference is invisible to any test that
+      matches an interior sentence. AC-6 asks for the full text; scenario 7a
+      asserts byte equality against the file.
 
       The text is carried **in** the bundle rather than as a path for the
       command to read. The bundle is the command's contract, a command may run
@@ -256,6 +272,10 @@ catalogue and the reviewer's recorded output.
 6. With **neither** `sha256sum` nor `shasum` on `PATH`, the state is
    `unreadable`, not `supplied` with an empty version. Exercised with a `PATH`
    containing neither.
+7a. `review_doctrine` is **byte-identical** to the catalogue on disk, compared
+   with `cmp` against the file rather than by matching a sentence inside it. A
+   command substitution passes an interior-sentence check and fails this one,
+   because what it loses is at the end.
 7. The bundle carries all four fields, and its thirteen existing
    `local_ai_reviewer_context.v1` fields are unchanged in name and type,
    asserted against an enumerated list.
@@ -280,9 +300,15 @@ catalogue and the reviewer's recorded output.
 14. It fails at 12,001 bytes and passes at 12,000 — the boundary, not a value
     near it.
 15. The linter and the reviewer agree about the bound: with
-    `REVIEW_DOCTRINE_MAX_BYTES` overridden to a small value in the test
-    environment, both the linter's failure and the reviewer's `oversized` state
-    move together. This is AC-12, and it is the scenario that fails if either
+    `REVIEW_DOCTRINE_MAX_BYTES` exported to a small value, both the linter's
+    failure and the reviewer's `oversized` state move together, **and the test
+    asserts the overridden value took effect** rather than only that the two
+    agree — two consumers ignoring the override agree too. The override is the
+    scenario's mechanism, which is why the constant uses `:-`.
+15a. An **invalid** override — `0`, `-1`, `abc`, empty — warns and falls back to
+    12,000 in both consumers, rather than being trusted. Following
+    `PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS`'s convention, and asserted in
+    both so they cannot diverge on the fallback either. This is AC-12, and it is the scenario that fails if either
     grows its own copy of the number.
 16. The catalogue in the repository passes its own linter, contains exactly the
     five seeded patterns, and its preamble contains the AC-3 statement and the
@@ -374,10 +400,13 @@ The supply reader, with the two rows that are easy to get wrong:
 ```bash
 reviewer_doctrine_supply() {
   local path="docs/workflow/development-workflow/review-doctrine.md"
-  local bytes text version count
+  local bytes version count
 
   [ -f "$path" ] || { printf '{"state":"absent","text":"","pattern_count":0,"version":""}\n'; return 0; }
-  text="$(cat "$path" 2>/dev/null)" || {
+  # Readability is probed without capturing: `$(cat …)` strips every trailing
+  # newline, and the bundle must carry the catalogue's stored bytes exactly.
+  # The text itself is read by `jq --rawfile` below, which preserves them.
+  [ -r "$path" ] || {
     printf '{"state":"unreadable","text":"","pattern_count":0,"version":""}\n'; return 0; }
 
   # No digest command is `unreadable`, never `supplied` with an empty version:
@@ -396,7 +425,9 @@ reviewer_doctrine_supply() {
   fi
 
   count="$(grep -c '^### ' "$path" || true)"
-  jq -n --arg t "$text" --arg v "$version" --argjson c "${count:-0}" \
+  # --rawfile, never --arg with a command substitution: it reads the file's
+  # bytes verbatim, trailing newlines included.
+  jq -n --rawfile t "$path" --arg v "$version" --argjson c "${count:-0}" \
     '{state:"supplied", text:$t, pattern_count:$c, version:$v}'
 }
 ```
@@ -406,18 +437,20 @@ reviewer_doctrine_supply() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The seven proofs fall into
+runs per proof, each citing a concrete file and line. The nine proofs fall into
 two groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Silent | **4** | P1, P2, P5, P7 | a review that used less doctrine than it reports, with nothing to show it |
-| Contract | **3** | P3, P4, P6 | a check or an output that breaks its own stated rule |
+| Contract | **5** | P3, P4, P6, P8, P9 | a check or an output that breaks its own stated rule |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
 | P1 | Collapse `absent`, `unreadable` and `oversized` into one `not_supplied` state | a scratch copy of `reviewer_doctrine_supply` | scenario 1 fails: the three states have different owners — a repository that never adopted the catalogue, a broken environment, and a maintainer's edit that needs undoing — and only the third is actionable by anyone reading the pull request; restoring the four states passes |
 | P2 | Supply the first `REVIEW_DOCTRINE_MAX_BYTES` of an oversized catalogue | same scratch copy | scenario 2 fails: `text` is non-empty in the `oversized` row, so the reviewer receives a catalogue that looks complete and is missing its most recent patterns. This is AC-9, and the plant is the obvious thing to do with a too-large string; restoring the empty text passes |
+| P8 | Declare the bound with a bare `REVIEW_DOCTRINE_MAX_BYTES=12000` instead of `:-` | a scratch copy of `workflow-lib.sh` | scenario 15 fails on its overridden-value assertion. Without that assertion the plant would be invisible — the override is ignored, both consumers keep 12,000, and "the two agree" is still true — which is why the scenario checks the value took effect rather than only that they match; restoring `:-` passes |
+| P9 | Read the text with `text="$(cat "$path")"` and pass it as `--arg` | a scratch copy of `reviewer_doctrine_supply` | scenario 7a fails: the bundle's copy loses the file's trailing newlines, so what the reviewer receives is not what the repository stores. Scenario 5's interior-sentence match still passes, which is why 7a compares bytes; restoring `--rawfile` passes |
 | P3 | Give `review-doctrine-lint.sh` its own copy of the bound instead of sourcing `workflow-lib.sh` | a scratch copy of the linter | scenario 15 fails: with the constant overridden, the linter and the reviewer disagree about the same catalogue — CI rejects what the reviewer supplies, or the reverse. Scenarios 11, 12 and 14 all pass, because they never move the constant; restoring the source passes |
 | P4 | Apply the incident-reference check to the whole file rather than to entries | same scratch copy | scenario 13 fails: a catalogue whose preamble cites `docs/specs/developments/` — which is what contribution guidance does — is rejected, so the check must be either weakened or switched off; restoring the entry scope passes |
 | P5 | Return `supplied` with an empty version when no digest command exists | a scratch copy of the version helper | scenario 6 fails: two reviews that saw different catalogues become indistinguishable, and the failure is confined to machines without `sha256sum` or `shasum` — so it would ship green everywhere it was tested; restoring the `unreadable` state passes |
@@ -436,8 +469,10 @@ everywhere it is tested.
 0. **Hard stop**: confirm #1653 is implemented and merged, and re-read the
    `jq -n` bundle object and the `print_kv` block against the merged code rather
    than against #1653's plan. **Verify**: the field list in both places.
-1. Declare `REVIEW_DOCTRINE_MAX_BYTES` in `workflow-lib.sh`. **Verify**: it is
-   visible to both a sourcing script and the linter.
+1. Declare `REVIEW_DOCTRINE_MAX_BYTES` in `workflow-lib.sh` with the `:-`
+   override form and its validation. **Verify**: scenarios 15 and 15a — the
+   override reaches both consumers, and an invalid one warns and falls back in
+   both.
 2. Add `scripts/lint/review-doctrine-lint.sh` with its three checks and the
    0/1 exit contract. **Verify**: scenarios 11 through 15, including the
    12,000/12,001 boundary and the shared-constant case.
@@ -448,13 +483,14 @@ everywhere it is tested.
    1 through 6 — all four states with all four values, the `oversized` row's
    empty text and present version, and the missing-digest case.
 5. Add the four bundle fields and the three `print_kv` lines, plus the evidence
-   object. **Verify**: scenarios 7, 8 and 10 — the enumerated field list, the
+   object. **Verify**: scenarios 7, 7a, 8 and 10 — the enumerated field list,
+   the byte-for-byte text comparison, the
    real `emit_prefixed_platform_output`, and the unchanged existing context.
 6. Add the CI step. **Verify**: the linter runs and fails the build on a
    deliberately malformed catalogue.
 7. Update the `--help` block, the integration document, Protocol 93, and add
    `changelog.d/1654.added.review-doctrine.md`. **Verify**: runbook Step 8.
-8. Produce the seven planted-violation proofs (P1-P7) and record them in the PR
+8. Produce the nine planted-violation proofs (P1-P9) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---

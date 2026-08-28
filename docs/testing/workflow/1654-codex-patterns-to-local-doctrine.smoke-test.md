@@ -101,12 +101,20 @@ to answer. Proof P5.
    `local_ai_reviewer_context.v1`.
 4. Assert `review_doctrine` contains **text from the catalogue** — a sentence
    matched literally — not merely that the field is non-empty.
+5. Extract `review_doctrine` to a file and `cmp` it against the catalogue on
+   disk: **byte-identical**, trailing newlines included.
 
 **Expected result**: all present and unchanged; four added; version unchanged.
 
 Step 4 is AC-10's requirement and the difference between testing the plumbing
 and testing the payload: a field that is non-empty proves a variable was set,
 not that the doctrine arrived.
+
+Step 5 is the difference between *some* of the payload and *all* of it. Reading
+the file with `text="$(cat …)"` strips every trailing newline, so the bundle
+would carry a catalogue that differs from the stored one — and Step 4 would
+still pass, because what is lost is at the end. The text is read with
+`jq --rawfile`. Proof P9.
 
 The text travels **in** the bundle rather than as a path. A command may run
 where the repository is not checked out, and a path would make `supplied` mean
@@ -171,12 +179,15 @@ bash scripts/lint/review-doctrine-lint.sh; echo "exit=$?"
 5. Run it on a catalogue whose **preamble** cites a
    `docs/specs/developments/…` path and whose entries are clean.
 6. Run it at exactly **12,000** bytes and at **12,001**.
-7. Override `REVIEW_DOCTRINE_MAX_BYTES` to a small value in the environment and
-   run both the linter and the reviewer against the same catalogue.
+7. Export `REVIEW_DOCTRINE_MAX_BYTES` as a small value and run both the linter
+   and the reviewer against the same catalogue. Assert the **overridden** value
+   took effect, not only that the two agree.
+8. Export it as `0`, then `-1`, then `abc`, then empty, and run both.
 
 **Expected result**: 1 exits 0; 2 and 3 exit 1; 4 exits 0; 5 exits **0**; 6
 exits 0 then 1; 7 shows both the linter's failure and the reviewer's `oversized`
-state moving together.
+state moving together at the overridden value; 8 warns and falls back to 12,000
+in **both**.
 
 Case 5 is the scope rule. Contribution guidance legitimately cites repository
 documents by path — that is what guidance is — so a file-scoped check would
@@ -186,6 +197,13 @@ Case 7 is AC-12 and the reason the linter is Bash rather than Python like its
 neighbours: both it and the reviewer source `workflow-lib.sh`, so the bound is
 literally the same value in both rather than two copies that agree today.
 Nothing else in this runbook would notice them drifting. Proof P3.
+
+Its assertion has to be that the **overridden** value took effect. A constant
+declared with a bare `=` ignores the export, both consumers keep 12,000, and
+"the two agree" is still true — the case would pass while proving nothing. That
+is why the constant uses `:-`, and why case 8 checks the fallback too: an
+invalid override must be refused identically in both, or they diverge on the
+one path nobody exercises. Proofs P8 and P3.
 
 Case 6 tests the boundary, not a value near it. A catalogue "about the right
 size" passes whatever the comparison operator is.
@@ -251,10 +269,10 @@ changelog bullet from the reader's perspective.
 ## Step 12: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P7 each record the command, the file and line of the
+2. Confirm P1 through P9 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: seven proofs in two groups — **four** silent, **three**
+**Expected result**: nine proofs in two groups — **four** silent, **five**
 contract, per the plan's proof-group table.
 
 The silent group carries the weight, because a review that used less doctrine
