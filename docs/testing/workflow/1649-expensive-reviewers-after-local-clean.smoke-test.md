@@ -104,6 +104,8 @@ Drive the fixture with exactly one condition unmet at a time and read
 | A non-reviewer check failed | `deferred` / `baseline_checks_not_green` |
 | A non-reviewer check still running | `deferred` / `baseline_checks_pending` |
 | A reviewer-owned check still running | `dispatched` |
+| The check rollup is empty | `deferred` / `baseline_checks_unobserved` |
+| The rollup contains only reviewer-owned checks | `deferred` / `baseline_checks_unobserved` |
 | The threads or checks query returns a live head different from `loop_head_sha` | `deferred` / `evidence_head_moved` |
 
 **Expected result**: each row returns exactly its stated result, and
@@ -138,6 +140,13 @@ of the weight:
 - The **reviewer-owned pending check** row must dispatch: a reviewer's own check
   must never gate that reviewer, or `codex-github` would wait on a check it is
   responsible for producing.
+- The two **empty-set** rows are the vacuous-green guard. "Every member is
+  green" is trivially true of an empty set, so an unguarded implementation would
+  dispatch on a head whose CI has not registered yet. The gate does not try to
+  tell "this repository has no baseline CI" from "the checks have not appeared
+  yet" — one snapshot cannot — so both defer, and the deferral cap sends the
+  genuinely-no-CI repository to a human, which is the right owner for the
+  decision to run an expensive reviewer with no CI at all.
 
 ### Step 3c: Expensive reviewers are reordered to the end
 
@@ -363,10 +372,10 @@ so it would run only when the test file itself changed.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR description's `Planted-Violation Proofs` heading.
-2. Confirm P1–P15 from the plan each record the command, the file and line of
+2. Confirm P1–P16 from the plan each record the command, the file and line of
    the planted violation, and both outcomes.
 
-**Expected result**: fifteen proofs, each showing the check failing with the
+**Expected result**: sixteen proofs, each showing the check failing with the
 violation present and passing once removed. Four carry the most weight: P4
 deletes the `expensive_reviewer_gate` call so the function is defined but
 unreachable, and requires Step 3's stale-evidence row to fail — that is what
@@ -384,7 +393,8 @@ deny-list and requires Step 3's unexpected-value rows to fail. P13 widens the
 peer set back to the whole resolved list and requires Step 3d's first run to
 fail. P14 makes the baseline-check helper treat every check as a baseline check
 and requires Step 3's reviewer-owned-pending row to fail. P15 removes the
-short-circuit on a defer and requires Step 6b to fail.
+short-circuit on a defer and requires Step 6b to fail. P16 makes an empty
+check set read as green and requires Step 3's two empty-set rows to fail.
 
 ### Step 10: Documentation states one contract
 

@@ -125,7 +125,7 @@ Not applicable — this repository ships workflow tooling, not a service.
       | 1 | `LOCAL_AI_CONFIGURED` is exactly `1` **and** `LOCAL_AI_HEAD_CURRENT` is exactly `1` | `local_reviewer_not_configured` when `LOCAL_AI_CONFIGURED` is `0`; `local_evidence_stale` when `LOCAL_AI_HEAD_CURRENT` is `0`; `local_evidence_missing` when either is empty, unset, or any value other than `0` or `1` |
       | 2 | Every platform in this reviewer's **peer set** (defined below) has already run in this invocation **and** produced acceptable peer evidence | `peer_reviewer_not_run` when one has not run yet; `peer_reviewer_not_clean` when one ran without producing acceptable evidence |
       | 3 | Zero unresolved, non-outdated review threads | `unresolved_threads` |
-      | 4 | Every non-reviewer check on `loop_head_sha` is `SUCCESS`, `SKIPPED`, or `NEUTRAL` | `baseline_checks_not_green` when one failed; `baseline_checks_pending` when one is still running |
+      | 4 | The non-reviewer check set on `loop_head_sha` is **non-empty** and every member is `SUCCESS`, `SKIPPED`, or `NEUTRAL` | `baseline_checks_not_green` when one failed; `baseline_checks_pending` when one is still running; `baseline_checks_unobserved` when the set is empty |
 
 - [ ] **Reorder expensive reviewers last *within their own phase bucket*.** Add
       `reorder_expensive_reviewers_last`, called once after the platform list is
@@ -172,8 +172,26 @@ Not applicable — this repository ships workflow tooling, not a service.
          `pr-review-loop.sh`. It fetches the check rollup **once** via
          `gh pr view --json statusCheckRollup,headRefOid`, excludes any check
          whose name appears in `configured_reviewer_check_names_json`, and
-         prints one of `green`, `failed`, `pending`, or `unavailable` plus the
-         live head it observed.
+         prints one of `green`, `failed`, `pending`, `empty`, or `unavailable`
+         plus the live head it observed.
+      2b. **An empty check set is not green.** "Every member is green" is
+         vacuously true of an empty set, so a snapshot taken before CI jobs
+         register on the new head would dispatch the expensive reviewer with no
+         baseline evidence at all — the fail-closed contract inverted by a
+         quantifier. `expensive_gate_baseline_checks_status` therefore returns
+         a distinct `empty` state, and the gate defers with
+         `baseline_checks_unobserved`.
+
+         The gate deliberately does **not** try to distinguish "this repository
+         legitimately runs no baseline checks" from "the checks have not
+         registered yet": a single rollup snapshot cannot tell them apart, and
+         guessing would reintroduce the vacuous-green hole. Both defer. A
+         repository with genuinely no baseline CI reaches a human through the
+         deferral cap after `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS` rounds,
+         with `baseline_checks_unobserved` naming the cause — which is the right
+         outcome, because "run an expensive reviewer with no CI at all" is a
+         decision worth a human, not a default. `PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS`
+         covers the one-off case.
       3. **Do not invoke `pr-ci-loop.sh` from the gate.** That script is a
          polling loop with its own waits and its own exit semantics; calling it
          here would block the reviewer loop inside a gate that must be a
@@ -492,10 +510,15 @@ reads them against each other and fails on any divergence.
    duplicated list, so a future change to that helper moves this gate with it.
 9. One unresolved non-outdated review thread → `deferred` /
    `unresolved_threads`; the same thread marked outdated → `dispatched`.
-10. A failing baseline check → `deferred` / `baseline_checks_not_green`; a
-    pending one → `deferred` / `baseline_checks_pending`; a reviewer-owned check
-    that is pending → `dispatched`, because a reviewer's own check must not gate
-    the reviewer.
+10. Baseline-check states, one case each: a failing check → `deferred` /
+    `baseline_checks_not_green`; a pending one → `deferred` /
+    `baseline_checks_pending`; a reviewer-owned check that is pending →
+    `dispatched`, because a reviewer's own check must not gate the reviewer; an
+    **empty** non-reviewer set → `deferred` / `baseline_checks_unobserved`, and
+    a set containing only reviewer-owned checks → the same, since filtering
+    leaves it empty. The two empty cases are the vacuous-green guard: "every
+    member is green" is trivially true of an empty set, so an unguarded
+    implementation would dispatch with no baseline evidence.
 11. The threads or checks query returns a live head different from
     `loop_head_sha` → `deferred` / `evidence_head_moved`. Without this, evidence
     from a newer commit could authorize dispatch against reviewer verdicts taken
@@ -608,6 +631,7 @@ concrete file and line:
 | P5 | Ordering regression: **delete the `reorder_expensive_reviewers_last` call**, leaving a platform list that declares `codex-github` before `pr-agent` | a scratch copy of the platform-resolution block | scenario 6 fails and scenario 7's suppressed-reorder case shows the gate deferring on every invocation with `peer_reviewer_not_run` — a deferral that can never resolve; restoring the call passes |
 | P9 | Phase-bucket regression: replace the per-bucket partition with a single global one | a scratch copy of `reorder_expensive_reviewers_last` | scenario 6b fails, because a draft-configured `codex-github` is placed after the ready-phase `bugbot` and therefore runs only after `gh pr ready`; restoring the per-bucket partition passes |
 | P10 | Peer-evidence regression: accept any `skipped` peer instead of consulting `reviewer_failed_label_required_for_result` | a scratch copy of condition 2 | scenario 8's `unavailable`, `timeout` and `unauthorized` rows fail, because the gate dispatches with a peer that never produced a verdict; restoring the helper call passes |
+| P16 | Vacuous-green regression: make `expensive_gate_baseline_checks_status` return `green` for an empty non-reviewer check set | a scratch copy of the helper | scenario 10's two empty cases fail, because the gate dispatches with no baseline evidence on a head whose CI has not registered; restoring the `empty` state defers with `baseline_checks_unobserved` |
 | P15 | No-short-circuit regression: make a `deferred` result set the aggregate without breaking out of the platform iteration | a scratch copy of the gate call site | scenario 21 fails, because the loop continues to the ready-phase platform and calls `gh pr ready` on a PR whose draft-phase expensive reviewer never ran; restoring the break passes |
 | P14 | Reviewer-check-classification regression: make `expensive_gate_baseline_checks_status` treat every check as a baseline check | a scratch copy of the helper | scenario 10's reviewer-owned-pending row fails, because `codex-github` waits on a check it is responsible for producing; restoring the `configured_reviewer_check_names_json` exclusion passes |
 | P13 | Peer-set regression: widen the peer set from the preceding platforms back to every non-expensive platform in the resolved list | a scratch copy of the peer-set computation | scenario 7's first row fails, because a draft-phase `codex-github` waits on a ready-phase `bugbot` that cannot have run yet and defers until the cap; restoring the phase-scoped set passes |
@@ -617,7 +641,7 @@ concrete file and line:
 | P11 | Absent-ledger regression: change the counter to return `-1` for an absent ledger as well as a malformed one | same fixture | scenario 19b fails, because a PR with no prior reviewer-loop history escalates on its first run and the bound is never exercised; restoring the three-state mapping passes |
 | P12 | Deny-list regression: rewrite condition 1 to reject only `0` and empty rather than requiring exactly `1` | a scratch copy of condition 1 | scenario 4's `2` and `true` rows fail, because the gate dispatches with an unrecognized evidence value; restoring the exact-match allow-list passes |
 
-Record all fifteen in the implementation PR under a `Planted-Violation Proofs`
+Record all sixteen in the implementation PR under a `Planted-Violation Proofs`
 heading, each with the command, the file and line of the planted violation, and
 both outcomes.
 
@@ -646,7 +670,7 @@ by the same sequential block that already writes `platform_result_tokens`.
 | Gate condition fixture | A table-driven set of the conditions with each one independently unmet, plus the eight-row unexpected-value table for condition 1, driving scenarios 2–5 and 9–11 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Platform-order fixture | A resolved list declaring `codex-github` first, an already-correct list, and a two-bucket list with `codex-github` on draft and `bugbot` on ready — driving scenarios 6, 6b and 7 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Peer-evidence fixture | One peer per row of scenario 8's table, covering `clean`, the three accepted skip reasons, the three rejected skip reasons, `needs_fixes` and `escalate` | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
-| Unreadable-input mocks | Mock `gh` commands that exit non-zero for the threads query and for the check rollup, driving scenario 12 and proof P3 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Unreadable-input mocks | Mock `gh` commands that exit non-zero for the threads query and for the check rollup, plus a rollup that returns an empty array and one containing only reviewer-owned checks — driving scenarios 10 and 12 and proofs P3 and P16 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Deferral-budget fixtures | Ledger payloads carrying `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS` `expensive_gate.result=deferred` entries at the current head, one fewer, the same count at a different head, and an unparseable payload — driving scenarios 13, 14, 19 and 19b and proofs P7, P8 and P11 — including an absent ledger, a malformed one, and a well-formed one | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Composition fixture | A platform list where `codex-github` is both a phase platform and an expensive reviewer, driving scenarios 16 and 17 | inline in `scripts/development-workflow/tests/test-expensive-reviewer-gate.sh` |
 | Legacy ledger payload | A `reviewer_loop_history.v1` entry with no `expensive_gate` object, driving scenario 18 | inline heredoc in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
@@ -692,6 +716,7 @@ with mock `gh` commands and require no network access.
 | A defer still triggers the ready-phase transition | Med | High — `gh pr ready` would convert the PR out of draft even though the draft-phase expensive reviewer never ran, a visible side effect from a gate that refused to proceed | A `deferred` or `deferral_cap` outcome breaks out of the platform iteration immediately, exactly as the existing non-clean short-circuit does, so no later platform is considered; scenario 21 and proof P15 pin it |
 | The gate contradicts the existing phase mechanism | Med | High — two gates disagreeing on whether a platform runs is worse than either alone | Composition is specified explicitly (phase gate first, then this gate; `--pre-after-clean-only` filters before both) and pinned by scenarios 16 and 17, including the no-phantom-telemetry case |
 | Implementation starts before #1648 lands and wires the gate to keys that do not exist | Med | High — the gate would read unset variables and hold everything, or be written against a guessed contract | Recorded as a Conflict in the Cross-Cutting check and as Implementation Order step 0, which is a hard stop that verifies #1648 is merged into the approved base before any edit |
+| An empty check set reads as green | Med | High — a snapshot taken before CI registers on the new head would dispatch with no baseline evidence, inverting the fail-closed contract by a quantifier | Condition 4 requires the non-reviewer set to be **non-empty** as well as all-green; an empty set defers with `baseline_checks_unobserved`. The gate does not guess whether the repository has no CI or the checks have not registered — both defer, and the deferral cap sends the genuinely-no-CI case to a human, which is the right owner for "run an expensive reviewer with no CI". Scenario 10's two empty cases and proof P16 pin it |
 | A reviewer's own check gates that reviewer | Low | Med — `codex-github` would wait on a check it is responsible for producing | Condition 4 evaluates non-reviewer checks only, excluding the names returned by `configured_reviewer_check_names_json`, which moves from `pr-ci-loop.sh` to `workflow-lib.sh` so both callers share one definition rather than two drifting copies; scenario 10's third case and proof P14 pin it |
 | The shared classification is duplicated or the gate blocks on the CI loop | Med | Med — a duplicated copy drifts, and calling `pr-ci-loop.sh` would make a snapshot gate poll | The plan names the exact function, the exact destination file, the fact that both scripts already source it, and an explicit prohibition on invoking `pr-ci-loop.sh` from the gate; scenario 20 asserts the relocation is behavior-preserving |
 | Platform ordering decides whether the gate is effective | Med | High — a config listing `codex-github` first would either dispatch it before the cheap reviewers ran, or defer at the same point forever | Detection is not enough, so the loop reorders: `reorder_expensive_reviewers_last` moves expensive platforms to the end of their own bucket before iteration, making the gate's precondition reachable; condition 2's peer set is computed from the reordered list, so `peer_reviewer_not_run` fires as a defensive assertion if the reorder did not happen. Scenarios 6 and 7 and proof P5 pin both halves |
@@ -872,7 +897,7 @@ Summary-comment line, illustrative:
     `scripts/development-workflow/select-test-suites.sh` selects the new suite
     for a change touching only `pr-review-loop.sh` and selects
     `test-pr-ci-loop.sh` for a change touching only `workflow-lib.sh`.
-11. Produce the fifteen planted-violation proofs (P1–P15) and record them in the PR
+11. Produce the sixteen planted-violation proofs (P1–P16) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed.
