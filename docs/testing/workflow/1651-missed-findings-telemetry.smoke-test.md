@@ -201,13 +201,15 @@ from an undecidable ancestry and once from an unrecognised outcome.
 for 4, neither replacing the other. Case 5's output states the attribution
 failure and its reason.
 
-Case 6's two rounds produce the **same** local evidence state and **different**
-classifications: `reported` head plus `clean_same_commit` is a confirmed miss;
-`dispatch` head plus `clean_same_commit` is a possible miss. The loop knows what
-it dispatched, not what the reviewer read, so a confirmed claim resting on that
-inference would inflate the one number the feature exists to make trustworthy —
-and today no external platform reports its head, so every confirmed miss would
-rest on it. Proof P15.
+Case 6's two rounds produce the **same** local evidence state and the **same**
+classification — a confirmed miss — with different `head_source` values. AC-17
+fixes classification as a function of the state alone, so provenance is
+recorded, not applied: a `dispatch` head is the loop's knowledge of what it
+sent, and the record says so rather than quietly discounting itself. #1657
+stratifies the confirmed count by provenance, which is worth having from the
+first report because today every external record will read `dispatch`. Proof P15
+plants the provenance-dependent classification, which is the tempting error
+because it looks more careful.
 
 Case 5 is the third of the spec's three no-record paths, and the only one that
 reaches attribution before failing — the other two are excluded before the

@@ -175,15 +175,30 @@ Not applicable — this repository ships workflow tooling, not a service.
       | `dispatch` | `loop_head_sha`, the head the loop dispatched the round against | the platform emits nothing |
       | — | empty; the record is not written | neither is available |
 
-      **A `dispatch` head is an inference, and the classification is downgraded
-      accordingly.** The loop knows what it dispatched, not what the reviewer
-      read, and a reviewer that started late may have read a newer commit. So a
-      state of `clean_same_commit` derived against a `dispatch` head is recorded
-      as a **possible** miss, never a confirmed one — the confirmed count stays
-      reserved for rounds where the external reviewer stated its own head. This
-      keeps the narrow-numerator property intact instead of buying coverage with
-      it: without the downgrade, adding external coverage would have inflated
-      exactly the number this feature exists to make trustworthy.
+      **`head_source` is recorded, and it does not change the classification.**
+      The merged spec fixes classification as a function of the local evidence
+      state alone — AC-17: exactly one state is a confirmed miss, exactly one is
+      a possible miss — so a plan that downgraded `clean_same_commit` to
+      possible when the head was inferred would be implementing a different
+      contract than the one that was approved. An earlier revision of this plan
+      did exactly that; it is withdrawn.
+
+      The limitation is therefore **recorded rather than compensated for**. A
+      `dispatch` head is the loop's knowledge of what it *sent*, not the
+      reviewer's statement of what it *read*, and a reviewer that started late
+      may have read a newer commit. `head_source` is written into every record
+      so a reader can see which rounds rest on that inference, and so #1657 can
+      report the confirmed count stratified by provenance instead of as one
+      undifferentiated number. Today every external record will read `dispatch`,
+      which makes the stratification worth having from the first report.
+
+      **This is a judgement about which of two errors is worse, and it belongs
+      to a human.** Excluding un-self-reported heads yields a telemetry with no
+      external rounds at all — empty, and indistinguishable from "no misses".
+      Including them yields a confirmed count that rests on an inference the
+      record names. The plan takes the second and makes the inference visible;
+      the first is a one-line change to the attribution gate if the maintainer
+      prefers it. Recorded here and in the PR rather than settled silently.
 
       Extending the external adapters to emit `REVIEWED_HEAD` would remove the
       inference and is deliberately **out of scope**: it changes the companion
@@ -592,13 +607,12 @@ Not applicable — this repository ships workflow tooling, not a service.
     naming three of twelve files reads `+9 more`; the zero-path line of
     scenario 13 reads `+12 more`; and a record whose files all fit omits the
     remainder rather than printing `+0 more`.
-13d. Head attribution and its consequence: an external platform that emits
-    `REVIEWED_HEAD` produces a record with `head_source: "reported"`, and a
-    `clean_same_commit` state there is a **confirmed** miss. An external
-    platform that emits nothing produces `head_source: "dispatch"` with
-    `loop_head_sha`, and the same state there is a **possible** miss. Asserted
-    as different classifications from identical evidence but different head
-    provenance.
+13d. Head attribution is recorded and does not alter classification: an external
+    platform that emits `REVIEWED_HEAD` produces `head_source: "reported"`, one
+    that emits nothing produces `head_source: "dispatch"` carrying
+    `loop_head_sha`, and a `clean_same_commit` state is a **confirmed miss in
+    both**. Asserted as identical classification with different provenance —
+    the pairing that a later revision "improving" the numerator would break.
 13b. An external round whose reviewed commit **cannot be established** produces
     no record, and the round's output states the attribution failure and its
     reason. This is AC-11, and it is the third of the spec's three no-record
@@ -668,7 +682,8 @@ Not applicable — this repository ships workflow tooling, not a service.
 | A `git` exit status of 1 is read from a bare call under `set -e` | **High** — it is the shorter and more obvious way to write it | **High** — three of the five results become unreachable and the round aborts instead of classifying | Every status is captured with `\|\| status=$?`, which is exempt from errexit. Scenario 5a and proof **P9** |
 | The summary line's bound is enforced by truncating the finished string | Med | Med — truncation removes the tail, which is where the state and the classification sit | The line is built with the total and the state **before** the paths, and paths stop at the first one that would exceed the bound. Scenario 13's zero-path case and proof **P6** |
 | The additive fields break a ledger reader | Low | Med | The schema string is unchanged and every existing field keeps its name and type; scenario 14 asserts them individually |
-| External reviewers report no head, so nothing is attributable | **High** — only `local-ai-reviewer` emits `REVIEWED_HEAD` today | **High** — every external round would be excluded at the attribution gate and the telemetry would be empty while looking like "no misses" | `head_source` records `reported` or `dispatch`, with `loop_head_sha` as the fallback; a `dispatch` head downgrades a confirmed miss to possible, so coverage is not bought with the numerator's credibility. Scenario 13d and proof **P15** |
+| External reviewers report no head, so nothing is attributable | **High** — only `local-ai-reviewer` emits `REVIEWED_HEAD` today | **High** — every external round would be excluded at the attribution gate and the telemetry would be empty while looking like "no misses" | `head_source` records `reported` or `dispatch`, with `loop_head_sha` as the fallback. Classification stays a function of state alone, per AC-17; the inference is made visible rather than compensated for, and #1657 stratifies by provenance. Scenario 13d and proof **P15** |
+| The confirmed count rests on an inferred head | **High** — today every external record will read `dispatch` | Med — the count is right whenever the head did not move mid-round, and wrong in a direction no reader can see without `head_source` | Recorded, not hidden: `head_source` is in every record, #1657 reports stratified by it, and adapters emitting `REVIEWED_HEAD` remove the inference item by item. Flagged to the maintainer as a decision rather than settled in this plan |
 | The current round's verdict is not composed in before selection | **High** — the selector's input is naturally the persisted payload | **High** — the confirmed-miss case in AC-1 is exactly a same-round local clean, so the feature would miss the thing it exists to record while passing every other test | The call site composes the round's `platform_result_records` as a synthetic entry before selecting. Scenarios 1a and 1b, proof **P14** |
 | A pre-change entry's aggregate result is read as the local reviewer's verdict | **High** — it is the only outcome those entries carry | **High** — rounds the local reviewer never ran become confirmed misses, in the historical half of the data where nobody checks | Entries without `platform_results` yield `unknown`, never the aggregate. Scenario 3a and proof **P8** |
 | An unappendable history is replaced by an empty stub | **High** — it is the current behavior | **High** — every entry the pull request held is lost, and the stub looks like a well-formed report rather than a deletion | The render path leaves the prior block untouched; the stub is written only when there is no prior block. Scenario 11 and proof **P7** |
@@ -780,7 +795,7 @@ two groups:
 | P12 | Count `path_total` without de-duplicating | a scratch copy of the record builder | scenario 13a fails: eight findings across three files report twelve files and name one file three times, overstating the blast radius of every record and wasting the line's three path slots; restoring the de-duplication passes |
 | P13 | Compute the remainder as `path_total - 3` instead of from the paths actually named | a scratch copy of the renderer | scenario 13c fails at every truncation point: the zero-path line reads `+9 more` for twelve files, and a record with two files fitting reads `-1 more`. The plant is invisible whenever exactly three paths fit, which is the common case; restoring the count-what-was-named rule passes |
 | P14 | Select from persisted entries only, omitting the current round's records | a scratch copy of the call site | scenarios 1a and 1b fail: a round where the local reviewer was clean and an external reviewer found blockers is classified from the previous round's verdict, or as `not_yet_run` when there is no previous round — so the confirmed miss the feature exists to record is the one case it cannot see. Every other scenario still passes, because they all supply the verdict as prior history; restoring the composition passes |
-| P15 | Count a `clean_same_commit` state as a confirmed miss when `head_source` is `dispatch` | a scratch copy of the classifier | scenario 13d fails: a round whose external reviewer never stated its head is counted as a confirmed miss on the loop's inference about what it read, so the confirmed count — the one number this feature exists to make trustworthy — is inflated by every external reviewer that does not report a head, which today is all of them; restoring the downgrade passes |
+| P15 | Make `classification` depend on `head_source`, downgrading a `dispatch`-head `clean_same_commit` to a possible miss | a scratch copy of the classifier | scenario 13d fails, and the failure is the point: AC-17 fixes classification as a function of the local evidence state alone, so any provenance-dependent classification implements a contract other than the approved spec. The plant is the tempting one — it looks more careful — which is why it is planted rather than argued about; restoring the state-only mapping passes |
 | P6 | Enforce the 200-character bound by truncating the finished line | a scratch copy of the renderer | scenario 13's long-path case fails: truncation removes the tail, which is where the local evidence state and the classification sit, so the line that survives is the one carrying paths and no verdict — exactly inverted from what a reader needs; restoring build-order enforcement passes |
 
 Nine proofs plant the overclaiming direction because that is the direction with
