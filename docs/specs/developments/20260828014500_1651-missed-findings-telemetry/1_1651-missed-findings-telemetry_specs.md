@@ -150,7 +150,7 @@ under **Out of Scope (MVP)** with a deferral note. No objective is dropped.
 ### Use Case 5: The history itself cannot be read or written
 
 **Actor**: The reviewer loop.
-**Preconditions**: An external reviewer has reported blocking findings, and the reviewer-loop history surface on the pull request is unavailable — it cannot be read, it does not parse, or it cannot be appended to.
+**Preconditions**: A record was owed and could not be written. Specifically: an external reviewer other than the local one has reported **blocking** findings, the commit it reviewed **can** be established, and the reviewer-loop history surface on the pull request is unavailable — it cannot be read, it does not parse, or it cannot be appended to. If any of the first two conditions does not hold, no record was owed and this use case does not apply, whatever state the history is in.
 
 **Steps**:
 
@@ -174,6 +174,7 @@ under **Out of Scope (MVP)** with a deferral note. No objective is dropped.
 - This is deliberately distinct from Use Case 4. There, the history is healthy and simply does not say what the local reviewer concluded, so an `unknown` record is both possible and useful. Here nothing can be written at all, so `unknown` is not available as an outcome — a state that describes evidence cannot be recorded when the place it would be recorded is the thing that failed.
 - The loop must not append to, rebuild, or overwrite a history it could not read. A partial or reconstructed history would silently discard prior evidence, which is worse than a gap: a gap is visible, and a rewritten history looks authoritative.
 - The omission must be visible in the round's output rather than silent. Telemetry that can disappear without anyone noticing cannot be trusted later, which is the same reason the `unknown` state exists at all.
+- The report is owed **only when a record was owed**. A round carrying the local reviewer's own findings, or only advisory findings, or findings on a commit that cannot be established, terminates before history writability is ever considered — reporting a telemetry failure there would raise an alarm about a record nobody was going to write.
 
 ---
 
@@ -300,7 +301,8 @@ that failed.
 - [ ] **AC-5.** When the local reviewer's most recent verdict reported findings, the record is still written and its local evidence state is `not_clean`, and it does not count as missed.
 - [ ] **AC-6.** When the local reviewer was skipped, was unavailable, is configured but has not yet produced a verdict, or is not configured at all, the record is written with the corresponding state, the four are distinguishable from one another and from `not_clean`, **and none of the four counts as missed**.
 - [ ] **AC-7.** When the history is readable but does not establish the local reviewer's most recent verdict, the record is written with state `unknown` and does not count as missed.
-- [ ] **AC-7a.** When the reviewer-loop history cannot be read, parsed, or appended to, no missed-finding record is written, the existing history is left byte-for-byte unchanged, and the round's output states that telemetry could not be recorded and why.
+- [ ] **AC-7a.** When an external reviewer has reported blocking findings on an establishable commit **and** the reviewer-loop history cannot be read, parsed, or appended to, no missed-finding record is written, the existing history is left byte-for-byte unchanged, and the round's output states that telemetry could not be recorded and why.
+- [ ] **AC-7b.** When no record was owed in the first place — the findings came from the local reviewer, or were advisory only, or the reviewed commit could not be established — an unwritable history produces **no** telemetry-failure report, because nothing was owed.
 - [ ] **AC-8.** Advisory or suggestion-level external findings produce no missed-finding record.
 - [ ] **AC-9.** Findings reported by the local reviewer itself produce no missed-finding record.
 - [ ] **AC-10.** Two qualifying external rounds on the same pull request produce two records; neither replaces the other.
