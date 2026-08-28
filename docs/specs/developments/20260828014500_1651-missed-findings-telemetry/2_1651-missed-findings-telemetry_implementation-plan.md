@@ -146,9 +146,9 @@ Not applicable — this repository ships workflow tooling, not a service.
       ```text
       "platform_results": [
         {"platform": "local-ai-reviewer", "result": "clean",
-         "raw_result": "clean",   "raw_reason": "",            "reviewed_head": "<40-hex>"},
+         "raw_result": "clean",   "raw_reason": ""},
         {"platform": "codex-github",      "result": "unavailable",
-         "raw_result": "skipped", "raw_reason": "unavailable",  "reviewed_head": ""}
+         "raw_result": "skipped", "raw_reason": "unavailable"}
       ]
       ```
 
@@ -162,12 +162,30 @@ Not applicable — this repository ships workflow tooling, not a service.
       `reason` is carried because two spec states are distinguished by it and
       by nothing else.
 
-      **`reviewed_head` is the reviewer's own statement, and there is no
-      fallback.** It comes from the companion script's `REVIEWED_HEAD` — #1648's
-      per-reviewer evidence. When a platform does not emit one, the reviewed
-      commit **cannot be established**, and the spec is unambiguous about what
-      follows: AC-11 and Decision Matrix row 3 require no record and a reported
-      reason. The record is withheld.
+      **`platform_results` carries no head, because #1648 already persists
+      one.** #1648's plan adds `reviewed_heads[]` to the entry — one entry per
+      platform, populated from `kv_value_default REVIEWED_HEAD` in the same
+      per-platform block, with the empty string for reviewers that report none
+      — plus `classification_head`, the snapshot those states were computed
+      against. Storing the head a second time inside `platform_results` would
+      create two persisted copies of one fact with no rule for what to do when
+      they disagree.
+
+      So this plan **joins** rather than duplicates: `platform_results` holds
+      the outcome fields, `reviewed_heads[]` holds the heads, and the two are
+      matched on the platform name. The derivation reads the head for a platform
+      from `reviewed_heads[]` and nowhere else. Where #1648's field records the
+      empty string, the reviewed commit **cannot be established**, and the spec
+      is unambiguous: AC-11 and Decision Matrix row 3 require no record and a
+      reported reason.
+
+      **What this item still owns is the adapter work.** #1648 reads whatever
+      each platform emits and renders a non-reporting reviewer as
+      `not-reported`; it does not make any platform start reporting. Today only
+      `local-ai-reviewer` does, so `reviewed_heads[]` would be empty for every
+      external platform and no external round could be attributed. Extending the
+      adapters is therefore this plan's, and it fills #1648's field rather than
+      creating a parallel one.
 
       **Each external adapter emits `REVIEWED_HEAD` from its own artifact.**
       Only `local-ai-reviewer` does today, and an earlier revision of this plan
@@ -193,6 +211,10 @@ Not applicable — this repository ships workflow tooling, not a service.
       column records what each adapter already fetches — the implementer must
       re-read each function and confirm the field before writing the extraction,
       because this table is a starting map and not a substitute for looking:
+
+      Each adapter emits `REVIEWED_HEAD` in its `key=value` output, which
+      #1648's collection already reads; nothing here writes to
+      `reviewed_heads[]` directly.
 
       | Adapter | Function line | Artifact it already consumes | Head field |
       | --- | --- | --- | --- |
@@ -443,7 +465,7 @@ Not applicable — this repository ships workflow tooling, not a service.
       ```text
       {
         "reviewer": "codex-github",
-        "reviewed_head": "<40-hex, the reviewer's own REVIEWED_HEAD>",
+        "reviewed_head": "<40-hex, joined from #1648's reviewed_heads[]>",
         "blocking_count": 7,
         "paths": ["a.ts", "b.ts", "c.ts"],
         "path_total": 12,
@@ -634,7 +656,8 @@ Not applicable — this repository ships workflow tooling, not a service.
     a classification.
 6. `reviewer_loop_local_evidence_state` produces each of the ten states, one
    case per row of its eleven-row table, including both routes to `unknown`.
-6a. A **local** verdict carrying no `reviewed_head` yields `unknown`, not a
+6a. A **local** verdict whose `reviewed_heads[]` entry is empty yields
+    `unknown`, not a
     state derived from the entry's `head_sha`. The entry's head is the live head
     at write time — what the pull request pointed at when the row was written —
     and using it would compare the external reviewer's commit against a commit
@@ -694,10 +717,16 @@ Not applicable — this repository ships workflow tooling, not a service.
     cases — the other two, local-reviewer findings and advisory-only findings,
     are scenarios 7 and 8. Without it the only tested no-record paths would be
     the two that never reach attribution.
-14. The history entry retains all eighteen existing fields and the
-    `phase_after_clean` object, unchanged in name and type, and adds exactly
-    two: `platform_results` and `missed_findings`. Asserted against an
-    enumerated list, not a count.
+14. The history entry retains all eighteen existing fields, the
+    `phase_after_clean` object, and #1648's `reviewed_heads[]` and
+    `classification_head`, unchanged in name and type, and adds exactly two:
+    `platform_results` and `missed_findings`. Asserted against an enumerated
+    list, not a count.
+14a. `platform_results` carries **no** head field, and every head the derivation
+    uses comes from `reviewed_heads[]` matched on platform name. Two persisted
+    copies of one fact is the defect; asserting the absence is what stops the
+    second copy being reintroduced by an implementer who finds the join
+    inconvenient.
 15. Twenty records add at most twenty lines and 4,000 characters, with paths
     chosen to be long — AC-15, which is only meaningful when the fixture tries
     to break it.
@@ -837,11 +866,18 @@ reviewer_loop_local_latest_verdict() {
            | {outcome: (.result // "unknown"),   # normalized at collection time; the
                                          # reconciliation below is the only
                                          # transformation applied after
-              # No fallback to $entry.head_sha: that is the live head at write
-              # time, not the commit this reviewer examined. A verdict with no
-              # reviewer-supplied head cannot be compared, and an empty head
-              # makes the ancestry undecidable, which maps to `unknown`.
-              head_sha: (.reviewed_head // ""),
+              # The head comes from #1648's reviewed_heads[], joined on the
+              # platform name — never from $entry.head_sha, which is the live
+              # head at write time rather than the commit this reviewer
+              # examined. A verdict with no reviewer-supplied head cannot be
+              # compared, and an empty head makes the ancestry undecidable,
+              # which maps to `unknown`.
+              head_sha: (
+                ($entry.reviewed_heads // [])
+                | map(select(.platform == "local-ai-reviewer"))
+                | first
+                | .head // ""
+              ),
               iteration: $entry.iteration})
       ]
     | sort_by(.iteration)
@@ -914,7 +950,8 @@ object exposes it.
    including the deleted-object fixture and the errexit check.
 1a. Collect `platform_result_records` from the raw `platform_result` and
    `platform_reason` at the per-platform call site, and write it into the entry
-   as `platform_results`. **Verify**: scenario 14, scenario 3b, and one case per
+   as `platform_results` — outcome fields only, **no** head; heads stay in
+   #1648's `reviewed_heads[]`. **Verify**: scenario 14, scenario 3b, and one case per
    row of the raw-to-outcome table — in particular the two `skipped` reasons and
    `escalate`, which `platform_result_tokens` cannot distinguish.
 2. Add `reviewer_loop_local_latest_verdict`, taking the history payload and the
@@ -967,7 +1004,24 @@ object exposes it.
 
 ## Rollback
 
-Revert the implementation PR. The change is additive: one array in the history
-entry, three derivation functions, one renderer. Reverting leaves the ledger
-with `missed_findings` keys on historical entries, which readers ignore, and no
-other behavior depends on them.
+Revert the implementation PR. What it removes:
+
+- two history-entry arrays, `platform_results` and `missed_findings`;
+- three derivation functions — the ancestry classifier, the verdict selector,
+  and the evidence-state mapping — plus the record builder;
+- the summary renderer and its remainder logic;
+- the `REVIEWED_HEAD` emission added to ten external adapters and the two local
+  companion scripts;
+- the render-path change that preserves an unappendable history, which
+  **reverts to overwriting it with an empty stub** — the one part of the revert
+  that restores a defect rather than removing a feature, and the reason a
+  revert should be followed by re-applying that change alone if the history
+  matters;
+- the Protocol 93, `--help` and changelog-fragment updates, and the two test
+  suites.
+
+Historical entries keep their `platform_results` and `missed_findings` keys,
+which readers ignore. Nothing outside this item's own code reads them, and
+#1648's `reviewed_heads[]` is untouched by the revert — the adapters simply stop
+filling it for external platforms, returning it to the `not-reported` rendering
+#1648 already handles.
