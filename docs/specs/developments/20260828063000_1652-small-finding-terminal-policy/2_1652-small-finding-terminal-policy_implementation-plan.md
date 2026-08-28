@@ -549,7 +549,7 @@ point. No listeners, timers, or shared mutable state are introduced.
 
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
-| Path classification fixture | The five paths that change disposition and the four that must not, driving scenarios 1-3 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Path classification fixture | The ten paths of scenario 1, **none of which changes disposition** — nine non-shipped and one shipped — asserting the classifier is untouched, plus the cosmetic and contract bodies on one identical spec path that drive scenarios 2 and 3 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Contract-surface body fixture | One body per row of the contract-surface table; three cosmetic bodies; the **seven bare-common-word cosmetic bodies** of scenario 6a, one per removed term; the three qualified-phrase controls that must still match; and **twelve** parser edge cases — the ten enumerated in the parser-risk addendum, plus the `failXclosed` wildcard negative and the unhyphenated `allow list` negative that the runbook's Step 3 table adds | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Multi-contributor round fixture | A single round with counted findings from two platforms, in four combinations — both on the current head, one stale, one reporting no head, and both stale — driving scenario 8a | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Co-occurring-cause fixtures | Three rounds driving scenario 10a: one carrying both a shipped-path and a contract-surface finding; one whose findings are all small with one stale contributor and one reporting no head; and one carrying a contract-surface finding together with a contributor on a stale head, to prove the currency check is never reached | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
@@ -564,11 +564,21 @@ and require no network access.
 
 ## Documentation Updates
 
+Both documents state the **same** rule; the Layer-by-Layer entries above carry
+the full wording, and neither may say that findings on normative documents are
+never small.
+
 - [ ] `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
-      — the tightened rule, the current-head requirement, the unknown-head
-      behavior, and `SMALL_FINDINGS_BLOCKED_BY`.
-- [ ] `REVIEW.md` — one line stating that a finding on a spec, plan, protocol or
-      the review contract itself is never small.
+      — the normative home: the content rule, the fact that the path classifier
+      is unchanged, the current-head requirement covering both the prior rounds
+      and the round being decided, the unknown-head behavior, and the four
+      `SMALL_FINDINGS_BLOCKED_BY` values with their two within-group
+      precedences.
+- [ ] `REVIEW.md` — a short block stating that a finding touching a contract
+      surface is never small **wherever it lives**, that a purely cosmetic
+      finding on those same artifacts is still small, and that the terminal rule
+      requires current-head evidence — then pointing to Protocol 93 for the
+      detail.
 - [ ] `AGENTS.md` — no change. It does not describe reviewer-loop internals.
 
 ---
