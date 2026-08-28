@@ -305,8 +305,9 @@ must surface no contradiction.
 ## Rollback
 
 Revert the implementation PR. The change is additive — one gate function, one
-call site, one reorder step, five stdout keys, one summary line, and one
-optional ledger object —
+call site, one reorder step, one deferral counter, six `EXPENSIVE_GATE_*` keys
+plus `EXPENSIVE_REVIEWERS_REORDERED`, one summary line, and one optional ledger
+object —
 and reverting restores the previous behavior, in which an expensive reviewer
 runs as soon as the phase mechanism reaches it. Ledger entries already written
 with `expensive_gate` remain parseable by the reverted reader, which dereferences
