@@ -60,11 +60,12 @@ look alike — and this is telemetry #1657 will read.
    `loop_head_sha`.
 2. Compare the platform dispatch sequence to the same run before this change.
 
-3. Compare the loop's entire `key=value` output to the same run before this
-   change.
+3. Compare the loop's `key=value` output to the same run before this change,
+   **excluding** `LOCAL_SECOND_PASS` and `LOCAL_SECOND_PASS_REASON`, which this
+   item adds on every run by design.
 
-**Expected result**: the dispatch sequence and the whole `key=value` output are
-byte-for-byte identical. The guard adds nothing to the path it does not need to
+**Expected result**: the dispatch sequence is identical, and every `key=value`
+line that existed before this change is byte-for-byte identical. The guard adds nothing to the path it does not need to
 protect.
 
 Two different things are being checked. The **dispatch** comparison depends on
@@ -125,12 +126,22 @@ P4.
 2. Run a cycle, land a commit, run another cycle, and count again.
 
 3. After a **failed** pass, run another cycle at the same head.
+3a. After a **failed** pass ends the run, start a **new invocation** of the loop
+   at the same head.
 4. After a **clean** pass, run another cycle at the same head.
 
 **Expected result**: case 1 dispatches the guard's pass **once**; case 2
-dispatches it twice. Case 3 **refuses** — the cycle ends with `needs_fixes`,
+dispatches it twice. Cases 3 and 3a both **refuse** — the cycle ends with `needs_fixes`,
 reason `local_pass_failed_for_head`, no dispatch, no conversion. Case 4 takes
 the `not_required` path: no dispatch, no refusal.
+
+Case 3a is the hole an in-memory flag leaves, and it is the ordinary case rather
+than an edge: the loop is re-invoked after every blocking result, which is what
+a failed pass produces. A variable starts empty in the new invocation, the
+verdict is still non-clean, and the guard dispatches again — one dispatch per
+invocation forever. The failed head therefore lives in the **ledger**, the
+loop's existing cross-invocation memory. Case 3 passes with a variable, so only
+crossing an invocation separates the two. Proof P9.
 
 Case 3 is the hole a two-way guard leaves. Suppressing the dispatch without
 refusing means the condition still owes a pass, nothing runs, and the gate is
@@ -226,11 +237,11 @@ ready-phase gate already existed and this alters when it fires.
 ## Step 12: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P8 each record the command, the file and line of the
+2. Confirm P1 through P9 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: eight proofs in three groups — **three** fail-open,
-**three** loop and cost, **two** integration, per the plan's proof-group
+**Expected result**: nine proofs in three groups — **three** fail-open,
+**three** loop and cost, **three** integration, per the plan's proof-group
 table.
 
 P2 is the one to read twice: returning `not_required` for a history with no

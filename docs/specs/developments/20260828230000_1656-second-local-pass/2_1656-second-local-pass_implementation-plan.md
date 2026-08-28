@@ -201,14 +201,29 @@ Not applicable — this repository ships workflow tooling, not a service.
       merely delayed, and the pull request is not converted, so the expensive
       reviewers are not woken at all.
 
-- [ ] **Make repetition impossible without opening a hole.** A flag,
-      `local_second_pass_failed_for_head`, holding the head a pass ran against
-      **and failed on**. It produces a three-way guard, not a two-way one:
+- [ ] **Make repetition impossible without opening a hole, across invocations
+      as well as within one.** A **ledger field**,
+      `local_second_pass_failed_head`, holding the head a pass ran against and
+      failed on — written into the entry, not held in a variable.
 
-      | Condition | Flag matches `loop_head_sha` | Action |
+      An in-memory flag would not survive the run. The loop is re-invoked after
+      every blocking result, which is exactly what a failed pass produces: the
+      next invocation starts with an empty flag, sees the same non-clean
+      verdict, and dispatches again. The guarantee would then be "at most once
+      per head **per invocation**", which on a pull request whose local reviewer
+      never goes clean is one dispatch per invocation forever — the loop this
+      item is supposed to prevent, arrived at from outside the run instead of
+      inside it.
+
+      The guard therefore reads the most recent ledger entry carrying the field
+      and compares it to `loop_head_sha`. The ledger is already the loop's
+      cross-invocation memory; this is one more field in it, not a new
+      mechanism. It produces a three-way guard, not a two-way one:
+
+      | Condition | Recorded failed head matches `loop_head_sha` | Action |
       | --- | --- | --- |
       | `not_required` | — | proceed to the gate; no dispatch |
-      | owes a pass | no | **dispatch once**; clean → proceed, otherwise end the cycle and set the flag |
+      | owes a pass | no | **dispatch once**; clean → proceed, otherwise end the cycle and record the head |
       | owes a pass | yes | **refuse**: end the cycle with `needs_fixes`, reason `local_pass_failed_for_head`, no dispatch and no conversion |
 
       **The third row is the one a two-way guard gets wrong**, and it is not a
@@ -219,14 +234,16 @@ Not applicable — this repository ships workflow tooling, not a service.
       deterministic, costs no dispatch, and keeps the guarantee the item exists
       for.
 
-      A **clean** pass sets no flag and needs none: the verdict it produced is
-      clean on `loop_head_sha`, so the condition itself returns `not_required`
-      on every later cycle. The flag exists only for the failed case.
+      A **clean** pass records nothing and needs to record nothing: the verdict
+      it produced is clean on `loop_head_sha`, so the condition itself returns
+      `not_required` on every later cycle and in every later invocation. The
+      field exists only for the failed case.
 
       Keying on the head rather than on a per-cycle boolean is still the
-      anti-loop argument: at most one *dispatch* per commit, and commits only
-      appear when someone pushes. The loop cannot manufacture the condition that
-      lets it dispatch again.
+      anti-loop argument, and persisting it is what makes the argument hold
+      where it matters: at most one *dispatch* per commit, across the whole pull
+      request rather than per run, and commits only appear when someone pushes.
+      The loop cannot manufacture the condition that lets it dispatch again.
 
 - [ ] **Leave both cycle caps alone.** The pass does not increment
       `CYCLE_COUNT` or `TOTAL_CYCLE_COUNT`: it is a dispatch within a cycle, as
@@ -261,8 +278,10 @@ Not applicable — this repository ships workflow tooling, not a service.
       satisfied condition all look alike — and this is telemetry #1657 will
       read.
 
-      The same two values are added to the ledger entry, so a later report can
-      count passes per pull request without re-reading stdout.
+      The same two values are added to the ledger entry, together with
+      `local_second_pass_failed_head` — which is not merely telemetry but the
+      guard's own cross-invocation memory, and is why it lives in the ledger
+      rather than in a variable.
 
 ### Frontend / UI
 
@@ -327,8 +346,9 @@ Order step 0.
    calls — so the pass is parsed, aggregated, forwarded and recorded in the
    ledger entry like any platform's.
 5a. The extraction is behaviour-preserving: for a pull request that needs **no**
-   pass, the loop's entire `key=value` output is byte-identical to the same run
-   before this change. This is the scenario that fails if the extraction drops
+   pass, every `key=value` line that existed before this change is byte-identical
+   to the same run before it — the comparison excludes `LOCAL_SECOND_PASS` and
+   `LOCAL_SECOND_PASS_REASON`, which this item adds on every run by design. This is the scenario that fails if the extraction drops
    or reorders a key, and every other scenario here would pass with that defect.
 5b. The condition sees the **current round**: a cycle in which the local
    reviewer already reported clean, whose ledger entry is not yet written,
@@ -342,7 +362,12 @@ Order step 0.
    request in a state the loop did not intend.
 8. The guard dispatches **at most once per head**: two cycles with no new
    commit dispatch it once; a cycle after a new commit dispatches it again.
-   Asserted by counting dispatches, not by reading the flag.
+   Asserted by counting dispatches, not by reading the field.
+8c. The guarantee survives **re-invocation**: after a failed pass ends a run, a
+   **new** invocation of the loop at the same head refuses rather than
+   dispatching again. This is the case an in-memory flag loses, and it is not
+   hypothetical — the loop is re-invoked after every blocking result, which is
+   what a failed pass produces.
 8a. After a **failed** pass, the next cycle at the same head **refuses**: the
    cycle ends with `needs_fixes` and reason `local_pass_failed_for_head`, no
    local reviewer is dispatched, and the pull request is not converted. A guard
@@ -395,7 +420,8 @@ Order step 0.
 ## Documentation Updates
 
 - `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
-  — the guard, its four reasons, and the two keys.
+  — the guard, all **five** reasons including `failed_for_head`, the two keys,
+  and the `local_second_pass_failed_head` ledger field.
 - The `--help` block of `pr-review-loop.sh`.
 - `changelog.d/1656.changed.second-local-pass.md` — `changed` rather than
   `added`: the ready-phase gate already existed and this alters when it fires.
@@ -406,7 +432,8 @@ Order step 0.
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| The guard loops — a pass that keeps triggering itself | Med | **High** — a run that never terminates, or one that burns its cycle budget on repeated local reviews | The flag is keyed on the **head**, so a second dispatch requires a new commit, which the loop cannot manufacture. Scenario 8 counts dispatches across cycles; proof **P1** replaces the key with a per-cycle boolean |
+| The guard loops — a pass that keeps triggering itself | Med | **High** — a run that never terminates, or one that burns its cycle budget on repeated local reviews | Keyed on the **head**, so a second dispatch requires a new commit, which the loop cannot manufacture. Scenario 8 counts dispatches across cycles; proof **P1** replaces the key with a per-cycle boolean |
+| The anti-loop state is lost between invocations | **High** — the loop is re-invoked after every blocking result, which is what a failed pass produces | **High** — one dispatch per invocation forever, the same loop arrived at from outside the run | The failed head lives in the ledger, the loop's existing cross-invocation memory. Scenario 8c and proof **P9** |
 | The anti-loop flag creates a fail-open | **High** — a two-way guard is the obvious shape | **High** — the cycle after a failed pass reaches the gate with no current clean evidence, and the mechanism meant to bound the guard is what lets it through | Three-way guard: dispatch, refuse, or proceed. Scenario 8a and proof **P6** |
 | Silence is read as satisfaction | **High** — `not_required` is the natural default for "nothing to compare" | **High** — a pull request the local reviewer never examined passes the gate, which is the exact fail-open this epic exists to close | `no_evidence` owes a pass. Scenario 2 and proof **P2** |
 | The pass increments a cycle cap | Med | Med — every run needing a pass gets a shorter budget, and `max_cycles_exceeded` starts meaning two different things | The pass is a dispatch inside an already-counted cycle. Scenarios 9 and 10; proof **P3** increments |
@@ -458,19 +485,20 @@ reviewer_loop_local_pass_required() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The eight proofs fall into
+runs per proof, each citing a concrete file and line. The nine proofs fall into
 three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Fail-open | **3** | P2, P4, P6 | the gate reached, or the pull request converted, without the evidence |
 | Loop and cost | **3** | P1, P3, P5 |
-| Integration | **2** | P7, P8 | a guard wired in beside the pipeline rather than into it | a guard that repeats, shortens the run, or runs where there is nothing to guard |
+| Integration | **3** | P7, P8, P9 | a guard wired in beside the pipeline rather than into it | a guard that repeats, shortens the run, or runs where there is nothing to guard |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
 | P1 | Key the flag on a per-cycle boolean instead of the head | a scratch copy of the guard | scenario 8 fails: two cycles with no new commit dispatch the local reviewer twice, and a pull request whose reviewer never goes clean burns its whole budget on repeated local reviews. The plant looks equivalent — one pass per cycle reads as "at most once" — and only counting dispatches across cycles separates them; restoring the head key passes |
 | P7 | Read the persisted payload without composing the current round | a scratch copy of the condition | scenario 5b fails: a cycle whose local reviewer has already reported clean owes a pass anyway, so every ordinary run dispatches the reviewer twice — the guard becomes a tax on the path it was meant to leave alone. Scenario 4's no-dispatch case fails with it, which is the visible symptom; restoring the composition passes both |
+| P9 | Hold the failed head in a shell variable instead of the ledger | a scratch copy of the guard | scenario 8c fails: the invocation after a failed pass starts with an empty variable, sees the same non-clean verdict, and dispatches again — one dispatch per invocation forever on a pull request whose reviewer never goes clean. Scenario 8's within-run count still passes, because a variable survives a run; only crossing an invocation separates them; restoring the ledger field passes |
 | P8 | Call `run_platform_review` from the guard without processing its output | a scratch copy of the dispatch block | scenario 5's ledger assertion fails: the pass runs, its verdict decides the gate, and it appears in no ledger entry and no `key=value` output — so the telemetry says the gate opened with no evidence of what opened it. The gate behaviour is still correct, which is what makes this the plant a hurried extraction invites; restoring the shared processor passes |
 | P6 | Make the flag suppress the dispatch without refusing the gate | same scratch copy | scenario 8a fails: the cycle after a failed pass reaches the gate with no current clean evidence, because the condition still owes a pass and nothing runs — a fail-open created by the anti-loop mechanism itself. Scenario 8's dispatch count still passes, which is what makes this the plant a two-way guard invites; restoring the refusal passes both |
 | P2 | Return `not_required` when the history names no local verdict | same scratch copy | scenario 2 fails: a pull request the local reviewer never examined reaches the gate and its ready-phase reviewers run, which is the fail-open this item exists to close. Every other scenario passes, because they all supply a verdict; restoring `no_evidence` passes |
@@ -499,10 +527,10 @@ pull requests it lets through are exactly the ones nobody reviewed locally.
    scenario 5a — byte-identical `key=value` output for a run that needs no pass.
    Do this as its own commit, so the extraction's diff can be read on its own.
 2. Add the three-way guard — dispatch, refuse, or proceed — with the flag
-   holding the head a pass **failed** on, before
+   recording in the ledger the head a pass **failed** on, before
    `ensure_pr_ready_for_ready_phase`, and compose the current round into the
    payload before evaluating the condition. **Verify**: scenarios 4, 5, 5b, 6,
-   7, 8, 8a and 8b — the dispatch count across cycles, all three consequences of a failed
+   7, 8, 8a, 8b and 8c — the dispatch count across cycles, all three consequences of a failed
    pass, the refusal on the next cycle at the same head, and the `not_required`
    path after a clean pass.
 3. Confirm the caps are untouched. **Verify**: scenarios 9 and 10.
@@ -512,7 +540,7 @@ pull requests it lets through are exactly the ones nobody reviewed locally.
    **Verify**: scenarios 11 and 12.
 6. Update Protocol 93, the `--help` block, and add
    `changelog.d/1656.changed.second-local-pass.md`. **Verify**: runbook Step 8.
-7. Produce the eight planted-violation proofs (P1-P8) and record them in the PR
+7. Produce the nine planted-violation proofs (P1-P9) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
