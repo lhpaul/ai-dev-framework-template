@@ -232,6 +232,28 @@ Proof P5.
 entries; and a summary line naming the reason and the result — `second local
 pass: head_changed → clean`.
 
+## Step 9a: Composed with #1649 on the motivating case
+
+**Maps to**: the cross-item contract.
+
+1. Run an explicit `--platform` invocation that omits a local reviewer the
+   repository configures, on a pull request whose local verdict is stale.
+2. Let the guard dispatch the pass and produce a current-head clean result.
+3. Observe whether `codex-github` is dispatched or refused.
+
+**Expected result**: the pass runs, the evidence is current-head clean, and
+`codex-github` is **not** refused.
+
+This is the one case where two correct units disagree. #1649's check derives
+`local_ai_configured` from the invocation-filtered `platforms[]`, which on this
+run does not contain the local reviewer — so it would report
+`local_reviewer_not_configured` and refuse, while the evidence it wants is
+sitting in the ledger. Both must read the repository's configured list, through
+the same helper this item adds.
+
+Assert it end to end rather than on either item's unit tests: each is correct in
+isolation, and the failure is only visible where they meet.
+
 ## Step 10: Documentation agrees
 
 **Maps to**: the documentation-drift risk.
