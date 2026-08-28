@@ -156,16 +156,26 @@ which is the more likely of the two mistakes because it appears to succeed.
 1. Run the loop with **two findings on the same path** — one cosmetic, one
    naming a decision matrix.
 2. Run it with a body emitted as `some prose\ndecision matrix is wrong`, where
-   the `\n` is the literal two-character escape `local-ai-reviewer.sh` writes.
+   the `\n` is the literal two-character sequence `local-ai-reviewer.sh` writes.
+2a. Run it twice more: once where the body's original text contained a **real
+   newline**, once where it contained a **literal `\n`**. Both arrive
+   identically encoded.
 3. Run it with findings from two platforms and read the summary line.
 4. Run it four more times with hostile characters: a **tab in the path**, a
    **tab in the body**, a double quote in the body, and a backslash in the body.
 
 **Expected result**: run 1 is **non-small** — a collector that deduplicated by
-path could have kept only the cosmetic record and called the round small. Run 2
-is **non-small**, which requires the body to be decoded before matching; against
-the raw escaped string the term abuts the literal `\n` and misses the word
-boundary. Run 3's summary names the platform that produced the deciding finding.
+path could have kept only the cosmetic record and called the round small. Run 2 is **non-small**, which requires the `\n` sequence to be normalised to a
+space before matching; against the raw string the sequence leaves an `n` abutting
+`decision`, so the word boundary fails.
+
+Both of run 2a's cases are also **non-small**, and they are indistinguishable by
+construction: `local-ai-reviewer.sh` does not escape pre-existing backslashes
+before encoding newlines, so the two originals produce identical bytes and no
+downstream step can tell them apart. The plan does not claim to — it normalises
+rather than decodes, and the classification is correct either way. Confirm the
+**stored** record and the summary still carry the body as received; the
+normalisation is applied only to the string handed to the matcher. Run 3's summary names the platform that produced the deciding finding.
 
 All four of run 4's cases are classified from **intact fields** and the contract
 term is still found. These are the cases a delimiter-separated record would
@@ -354,19 +364,22 @@ tier 1 makes those findings non-small whatever the body says.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P17 each record the command, the file and line of the
+2. Confirm P1 through P18 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: seventeen proofs in three groups — **thirteen** permissive,
-**three** restrictive, **one** observability, per the plan's proof-group table.
+**Expected result**: eighteen proofs in four groups — **thirteen** permissive,
+**three** restrictive, **one** observability, **one** fidelity, per the plan's
+proof-group table.
 The permissive group is P1 through P5, P8, P10, P11, P12, P14, P15, P16 and P17,
 reproducing the original bug in each of the ways it can return; P8 skips the current round's head check and requires Step 4's
 fifth run to fail; P10 reads `head_sha` instead of `classification_head` and
 requires Step 4's step 1b to fail; P14 breaks the contract-surface
 matching entirely and requires Step 6b to fail while Step 6 still passes, which
 is precisely why Step 6b exists; P15 deduplicates the findings array, P16
-matches the raw escaped body, and P17 replaces the JSON record with a
-tab-separated one — all three requiring Step 3f to fail; P11 checks only a
+matches the raw body without normalising, and P17 replaces the JSON record with
+a tab-separated one — all three requiring Step 3f to fail; **P18** stores the
+normalised body instead of the raw one, requiring Step 3f's fidelity check to
+fail while its matching checks still pass; P11 checks only a
 prior entry's
 `classification_head` and skips its `reviewed_heads[]`, requiring step 1a to
 fail; **P12** drops tier 1 and leaves the vocabulary test as the only guard, requiring Step 1's third case — a contract finding containing no listed term — to fail. **Three** plant the
