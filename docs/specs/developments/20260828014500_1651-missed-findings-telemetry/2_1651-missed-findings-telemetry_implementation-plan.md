@@ -459,19 +459,31 @@ Not applicable — this repository ships workflow tooling, not a service.
       printing one of the spec's ten values. It is a pure mapping over the two
       previous functions and holds no logic of its own beyond the table:
 
-      | Verdict outcome | Ancestry | State |
+      Its input is the **normalized** outcome the selector returns — the value
+      collection already produced — so the rows are keyed on those seven values
+      and never on the companion script's raw ones. Keying a row on `escalate`
+      or `timeout` would be keying it on something the selector never emits:
+      collection maps both to `unavailable`, that row would never match, and the
+      verdict would fall through to `unknown` — losing exactly the distinction
+      AC-6 requires between an outage and missing evidence.
+
+      | Normalized outcome | Ancestry | State |
       | --- | --- | --- |
-      | clean | `same` | `clean_same_commit` |
-      | clean | `ancestor` | `clean_earlier_commit` |
-      | clean | `descendant` | `clean_later_commit` |
-      | clean | `unrelated` | `clean_unrelated_commit` |
-      | clean | `undecidable` | `unknown` |
-      | needs_fixes | — | `not_clean` |
-      | skipped | — | `skipped` |
-      | escalate / timeout / credentials | — | `unavailable` |
+      | `clean` | `same` | `clean_same_commit` |
+      | `clean` | `ancestor` | `clean_earlier_commit` |
+      | `clean` | `descendant` | `clean_later_commit` |
+      | `clean` | `unrelated` | `clean_unrelated_commit` |
+      | `clean` | `undecidable` | `unknown` |
+      | `needs_fixes` | — | `not_clean` |
+      | `skipped` | — | `skipped` |
+      | `unavailable` | — | `unavailable` |
       | `not_yet_run` | — | `not_yet_run` |
       | `not_configured` | — | `not_configured` |
       | anything else | — | `unknown` |
+
+      The `unavailable` row is an identity, which looks redundant and is not:
+      the normalization that produced it happened at collection, in a different
+      function, and this table is what says the state survives the trip.
 
       Eleven rows over ten states: `unknown` is reached two ways, from an
       undecidable ancestry and from an unrecognised outcome, and the plan keeps
@@ -775,6 +787,9 @@ Not applicable — this repository ships workflow tooling, not a service.
     a classification.
 6. `reviewer_loop_local_evidence_state` produces each of the ten states, one
    case per row of its eleven-row table, including both routes to `unknown`.
+   Every case supplies a **normalized** outcome, since that is what the selector
+   returns; a case built from a raw `escalate` would exercise the fall-through
+   row rather than the `unavailable` one.
 6b. **Normalization, one case per row of the collection table** — seven: `clean`;
     `needs_fixes`; `skipped` with reason `unavailable`; `skipped` with reason
     `not_configured`; `skipped` with any other reason; `escalate`; and an
@@ -1069,14 +1084,14 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The twenty-six proofs fall into
+runs per proof, each citing a concrete file and line. The twenty-seven proofs fall into
 three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Overclaiming | **16** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16, P17, P18, P19, P21, P22, P25 |
 | Under-recording | **1** | P20 | evidence discarded at write time that cannot be recovered later | a number asserted on evidence that does not support it |
-| Contract | **9** | P5, P6, P7, P9, P11, P13, P23, P24, P26 | a report, a line, or a stored history that breaks its own stated contract |
+| Contract | **10** | P5, P6, P7, P9, P11, P13, P23, P24, P26, P27 | a report, a line, or a stored history that breaks its own stated contract |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
@@ -1099,6 +1114,7 @@ three groups:
 | P22 | Feed the membership check with `printf '%s\\n' "$configured" \| grep -Fxq` | a scratch copy of the guard | scenario 2c fails under `set -o pipefail`: `grep -q` closes its input on the first match, the producer takes SIGPIPE on the remaining 499 lines, the pipeline reports non-zero, and a configured reviewer is classified `not_configured` — removing every round on that repository from the denominator. Scenario 2b still passes on its short lists, which is why 2c specifies both the early match and the length; restoring the here-string passes |
 | P21 | Compose the current round's `platform_results` without its `reviewed_heads[]` | a scratch copy of the call site | scenarios 1a and 1b fail: the same-round local-clean verdict is found, its head is empty, the ancestry is undecidable and the state is `unknown` — so the confirmed miss this feature exists to record becomes an unknown, and the half-move looks correct because the outcome half of the composition works; restoring both arrays passes |
 | P25 | Take one `reviewed_head` for the whole round instead of joining per platform | a scratch copy of the record builder | scenario 16b fails: two platforms that reviewed different commits are both attributed to one, so one record names a commit its reviewer never read and a `clean_same_commit` can follow from it. Every single-platform scenario passes, which is all of the others; restoring the per-platform join passes |
+| P27 | Key the evidence-state rows on the raw outcomes `escalate` and `timeout` instead of the normalized `unavailable` | a scratch copy of the mapping | scenario 6's `unavailable` case fails: nothing the selector emits matches those rows, the verdict falls through to `unknown`, and an outage becomes indistinguishable from missing evidence — the distinction AC-6 exists for. Every other row still passes, because only this one was renamed by normalization; restoring the normalized key passes |
 | P26 | Omit `classification` for the eight non-miss states | a scratch copy of the classifier | scenario 16a fails on eight of its ten cases: a record with no key is indistinguishable from one written before the field existed, so a later report cannot tell *judged and not a miss* from *not judged*; restoring `not_a_miss` passes |
 | P24 | Render counts unclamped | a scratch copy of the renderer | scenario 13c-ii fails: a record with a seven-digit count consumes the space the arithmetic reserves for it, `budget` goes negative, and the line either exceeds 200 characters or names no path on a record whose paths would have fit. The clamp is the only bound this plan introduces into the worst-case sum, so removing it is the one change that reopens it; restoring `9999+` passes |
 | P23 | Append paths until the budget is full, then add the remainder text | a scratch copy of the renderer | scenario 13c-i fails: a record sized to the boundary emits a line longer than 200 characters, over-long by exactly the `, +N more` that announces the omission — so the one line guaranteed to be short is the one that says it left something out. Scenario 13's ordinary cases pass, because they are nowhere near the boundary; restoring the reserved budget passes |
@@ -1182,7 +1198,7 @@ object exposes it.
    **Step 12a**, which reads both documentation surfaces against the
    implementation, and confirm the fragment's name matches
    `<item>.<kind>.<slug>.md` with a bare `1651`.
-10. Produce the twenty-six planted-violation proofs (P1-P26) and record them in the PR
+10. Produce the twenty-seven planted-violation proofs (P1-P27) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---

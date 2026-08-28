@@ -257,6 +257,14 @@ why its fixture deliberately deletes an object. Proof P3.
 from an undecidable ancestry and once from an unrecognised outcome. Call 2
 yields **`unknown`**, not `clean_same_commit`.
 
+Every case supplies a **normalized** outcome, because that is what the selector
+returns. A row keyed on a raw value — `escalate`, `timeout` — would never match
+anything the selector emits, so the verdict would fall through to `unknown` and
+an outage would become indistinguishable from missing evidence, which is the
+distinction AC-6 exists for. The `unavailable` row is an identity mapping and is
+tested anyway: the normalization that produced it happened in a different
+function, and this step is what says the value survives the trip. Proof P27.
+
 Call 2 is the entry-head trap. An entry's `head_sha` is the live head at write
 time — what the pull request pointed at when the row was written — not the
 commit that reviewer examined. Falling back to it compares the external
@@ -584,11 +592,11 @@ not what Protocol 03 Step 6 asks for.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P26 each record the command, the file and line of the
+2. Confirm P1 through P27 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: twenty-six proofs in three groups — **sixteen**
-overclaiming, **nine** contract, **one** under-recording, per the plan's
+**Expected result**: twenty-seven proofs in three groups — **sixteen**
+overclaiming, **ten** contract, **one** under-recording, per the plan's
 proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:
