@@ -138,7 +138,7 @@ Every objective stated in issue #1650 maps to acceptance criteria and use cases 
 - The strict checks run **only** at the spec stage.
 - Strict findings are **non-blocking**. They never change a review's verdict in either direction.
 - Every strict finding names the check that produced it.
-- Every review at the spec stage reports a strict-finding **count**, including zero.
+- Every review reports the strict-check **state**. The **count** accompanies it only when the state is `applied` — including when it is zero — and is empty otherwise, so a round the checks never examined cannot be counted as one they found nothing in.
 - A review where the checks did not run reports that fact and its reason, and is distinguishable from a review where they ran and found nothing.
 - A strict finding that a maintainer ignores has no consequence: no label, no gate, no repetition of the demand.
 - Each check answers a question that can be **wrong**, not one that is a matter of taste. A check whose finding is a preference produces noise, and noise is what makes a label stop being read.
@@ -177,9 +177,9 @@ Each is stated as the question it asks and the shape of a finding it produces. T
 | --- | --- |
 | `applied` | The checks ran; the count is what they found, and may be zero |
 | `not_applicable` | The change is not at the spec stage |
-| `unavailable` | The checks could not run — the checklist is missing, or the stage could not be resolved |
+| `unavailable` | The checks could not run — the stage could not be resolved, or the checklist is missing |
 
-Three states, and `applied` with a count of zero is deliberately not the same as `unavailable`.
+Three states, and `applied` with a count of zero is deliberately not the same as `unavailable`. The **count accompanies `applied` only**: it is empty in the other two states, because a number there would claim the checks reached a verdict they never reached.
 
 ---
 
@@ -187,24 +187,29 @@ Three states, and `applied` with a count of zero is deliberately not the same as
 
 The complete gate, from a review starting to strict findings existing or not. Rows are evaluated in order and the first match decides.
 
-| # | Stage | Checklist available | Strict checks run | Findings | State | Verdict affected |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | not spec | — | No | — | `not_applicable` | No |
-| 2 | spec | **No** | No | — | `unavailable` | No |
-| 3 | spec | Yes | Yes | none | `applied`, count 0 | No |
-| 4 | spec | Yes | Yes | one or more | `applied`, count *n* | **No** |
+| # | Stage resolves | Stage | Checklist available | Checks run | Findings | State | Count | Verdict affected |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | **No** | — | — | No | — | `unavailable` | **empty** | No |
+| 2 | Yes | not spec | — | No | — | `not_applicable` | **empty** | No |
+| 3 | Yes | spec | **No** | No | — | `unavailable` | **empty** | No |
+| 4 | Yes | spec | Yes | Yes | none | `applied` | `0` | No |
+| 5 | Yes | spec | Yes | Yes | one or more | `applied` | *n* | **No** |
 
-Row 4's last column is the feature's central claim and the one most likely to erode: findings exist, are labelled, are counted, and change nothing about whether the pull request may proceed.
+Five rows over three ordered inputs: can the stage be resolved, is it the spec stage, is the checklist available. The order matters — an unresolved stage cannot be compared against `spec`, so row 1 precedes row 2 and no combination evaluates both.
 
-Rows 1 and 2 differ in what a reader can conclude. Row 1 is a change the checks do not apply to; row 2 is a spec the checks could not examine. Reporting both as "no strict findings" would make the second invisible, and the second is a defect.
+**The count is empty, not zero, in every row but the last two.** `0` means *the checks ran and found nothing*, and it is the only thing distinguishing a clean specification from one the checks never examined. Writing `0` for `unavailable` or `not_applicable` would put those rounds into the denominator of any later rate as if they had been checked, which is precisely the measurement this feature exists to make possible.
+
+Row 5's last column is the feature's central claim and the one most likely to erode: findings exist, are labelled, are counted, and change nothing about whether the pull request may proceed.
+
+Rows 1, 2 and 3 differ in what a reader can conclude. Row 2 is a change the checks do not apply to; rows 1 and 3 are changes the checks *should* have examined and could not — one because the stage was unknown, one because the checklist was missing. Both are defects, with different owners, and collapsing either into "no strict findings" makes it invisible.
 
 ---
 
 ## Operational Visibility
 
-- **Reviewer output**: the strict-check state and the finding count, on every review.
+- **Reviewer output**: the strict-check state on every review, and the finding count when the state is `applied`.
 - **Review comments**: each strict finding, labelled with its check identifier, grouped separately from blocking findings.
-- **Reviewer-loop history**: the state and the count recorded per round, so counts accumulate across a pull request's life without re-reading comments.
+- **Reviewer-loop history**: the state recorded per round, with the count where it applies, so counts accumulate across a pull request's life without re-reading comments — and rounds the checks did not examine stay out of the total.
 
 ---
 
@@ -226,7 +231,8 @@ Rows 1 and 2 differ in what a reader can conclude. Row 1 is a change the checks 
 - [ ] **AC-14.** The strict checks do not run outside the spec stage, and the state is `not_applicable`.
 - [ ] **AC-15.** At the spec stage with the checks applied and nothing found, the state is `applied` and the count is `0` — distinguishable from `unavailable` and from `not_applicable`.
 - [ ] **AC-16.** When the checklist cannot be supplied, the state is `unavailable`, the review still runs, and its verdict is unaffected.
-- [ ] **AC-17.** The state and the count appear in the reviewer's output and in the reviewer-loop history for every review at the spec stage.
+- [ ] **AC-17.** The state appears in the reviewer's output and in the reviewer-loop history for **every** review, at any stage. The count accompanies it only in the `applied` state; in `not_applicable` and `unavailable` the count is **empty**, never `0`.
+- [ ] **AC-17a.** A round recorded as `unavailable` or `not_applicable` is distinguishable from one recorded as `applied` with count `0`, by reading the history alone.
 - [ ] **AC-18.** Ignoring a strict finding has no effect on any later review: no label, no gate, no escalation, and the same finding may be reported again on a later round without penalty.
 
 ---
