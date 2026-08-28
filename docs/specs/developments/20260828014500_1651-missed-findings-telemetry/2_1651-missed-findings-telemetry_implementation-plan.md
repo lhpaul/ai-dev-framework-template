@@ -608,15 +608,38 @@ Not applicable — this repository ships workflow tooling, not a service.
       and a line naming all of them omits the remainder entirely rather than
       printing `+0 more`.
 
-      The bound is enforced by construction rather than by truncating the
-      finished line: paths are appended one at a time and the first one that
-      would exceed the bound stops the list. The remainder is computed **after**
-      the list stops, from what was actually named, so it stays correct at every
-      truncation point. **The total file count and the
-      state are written before the paths**, so the two values a reader needs
-      most cannot be the ones the bound removes. A line that names zero paths
-      is valid — AC-14a says so explicitly — and is what a pull request with
-      very long paths produces.
+      **The bound is enforced by reservation, not by writing order and not by
+      truncating the finished line.** The paths sit in the middle of the line,
+      as the sample shows, so "write the state first" would not protect it —
+      what protects it is that the path list is the only variable-length part
+      and it is given a budget rather than a position:
+
+      1. `prefix` = `missed-finding: <reviewer> on <short-sha> — <n> blocking,
+         <total> files (`
+      2. `suffix` = `) — local: <state label> [<classification>]`
+      3. `remainder_max` = the length of `, +<path_total> more`, the longest
+         remainder text this record can produce.
+      4. `budget` = 200 − length(`prefix`) − length(`suffix`) − `remainder_max`.
+      5. Append paths one at a time while the next still fits the budget; stop
+         at the first that does not.
+      6. Compute the actual remainder from the paths **named**; omit it
+         entirely when it is zero.
+
+      Reserving `remainder_max` up front is the step a naive implementation
+      skips: appending paths until full and *then* adding `, +9 more` overflows
+      the bound by exactly the text that says something was omitted. Reserving
+      the maximum rather than the actual value is deliberate — the actual
+      remainder is not known until the list stops, and a budget that depends on
+      the answer cannot be used to compute it.
+
+      A line that names **zero** paths is valid — AC-14a says so explicitly —
+      and is what a pull request with very long paths produces. If `prefix` and
+      `suffix` alone exceed 200 characters the line is emitted over-length
+      rather than mangled: every field in them is bounded by something outside
+      this feature's control — a platform name, a short SHA, two counts and a
+      fixed state label — and silently truncating a reviewer's name or a
+      classification would corrupt the record's meaning to satisfy a display
+      rule. Scenario 13c-i covers it.
 
 ### Infrastructure / Configuration
 
@@ -738,6 +761,12 @@ Not applicable — this repository ships workflow tooling, not a service.
     summary line names three. Read the record back and confirm every path is
     present — the assertion that separates storage from rendering, and the one
     that fails if an implementer applies the line's bound to the record.
+13c-i. The bound is met by **reservation**: a record whose paths would fit
+    exactly 200 characters *without* the remainder text still leaves room for
+    it, so the emitted line is at most 200 with `, +N more` included. Appending
+    until full and adding the remainder afterwards overflows by precisely the
+    text announcing the omission, and only a fixture sized to the boundary
+    catches it.
 13c. The remainder is stated and is correct at every truncation point: a record
     naming three of twelve files reads `+9 more`; the zero-path line of
     scenario 13 reads `+12 more`; and a record whose files all fit omits the
@@ -956,14 +985,14 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The twenty-two proofs fall into
+runs per proof, each citing a concrete file and line. The twenty-three proofs fall into
 three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Overclaiming | **15** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16, P17, P18, P19, P21, P22 |
 | Under-recording | **1** | P20 | evidence discarded at write time that cannot be recovered later | a number asserted on evidence that does not support it |
-| Contract | **6** | P5, P6, P7, P9, P11, P13 | a report, a line, or a stored history that breaks its own stated contract |
+| Contract | **7** | P5, P6, P7, P9, P11, P13, P23 | a report, a line, or a stored history that breaks its own stated contract |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
@@ -985,6 +1014,7 @@ three groups:
 | P18 | Give `claude-code-action` a head by falling back to the pull request's current head | a scratch copy of that adapter | scenario 13f's `claude-code-action` case fails: an adapter whose only artifact is an issue comment gains a head it never stated, and its rounds start producing records — and confirmed misses — against a commit nobody claimed to have reviewed. The plant is the natural reading of "every adapter emits a head", which is why the table's one no-head row is tested rather than described; restoring the no-head result passes |
 | P22 | Feed the membership check with `printf '%s\\n' "$configured" \| grep -Fxq` | a scratch copy of the guard | scenario 2c fails under `set -o pipefail`: `grep -q` closes its input on the first match, the producer takes SIGPIPE on the remaining 499 lines, the pipeline reports non-zero, and a configured reviewer is classified `not_configured` — removing every round on that repository from the denominator. Scenario 2b still passes on its short lists, which is why 2c specifies both the early match and the length; restoring the here-string passes |
 | P21 | Compose the current round's `platform_results` without its `reviewed_heads[]` | a scratch copy of the call site | scenarios 1a and 1b fail: the same-round local-clean verdict is found, its head is empty, the ancestry is undecidable and the state is `unknown` — so the confirmed miss this feature exists to record becomes an unknown, and the half-move looks correct because the outcome half of the composition works; restoring both arrays passes |
+| P23 | Append paths until the budget is full, then add the remainder text | a scratch copy of the renderer | scenario 13c-i fails: a record sized to the boundary emits a line longer than 200 characters, over-long by exactly the `, +N more` that announces the omission — so the one line guaranteed to be short is the one that says it left something out. Scenario 13's ordinary cases pass, because they are nowhere near the boundary; restoring the reserved budget passes |
 | P20 | Store only the three paths the summary line will name | a scratch copy of the record builder | scenario 13a-i fails: a twelve-file round's record holds three paths and the other nine are unrecoverable, so AC-16's read-back is incomplete and #1657 cannot answer which files external reviewers find things in. Every other scenario passes, because they all read the rendered line rather than the record; restoring the complete list passes |
 | P17 | Emit the first `commit_id` when a round's artifacts name two | a scratch copy of an adapter's head extraction | scenario 13e's two-commit case fails: a head is emitted for a round whose findings straddle a push, so the record names a commit some of the findings do not belong to and a `clean_same_commit` can follow from it. The plant looks like ordinary defaulting and only a fixture that straddles a push exposes it; restoring the no-head rule passes |
 | P15 | Substitute `loop_head_sha` for a missing `REVIEWED_HEAD` | a scratch copy of the attribution gate | scenario 13d fails: a round whose external reviewer never stated its head produces a record, and a `clean_same_commit` in it enters the **confirmed** count on the loop's inference about what the reviewer read. AC-11 requires no record when the commit cannot be established, and `clean_same_commit` is defined against the commit the external reviewer *reviewed*. The plant is the tempting one — it makes an empty telemetry produce data — which is why it is planted rather than argued about; restoring the no-fallback rule passes |
@@ -1063,7 +1093,7 @@ object exposes it.
    **Step 12a**, which reads both documentation surfaces against the
    implementation, and confirm the fragment's name matches
    `<item>.<kind>.<slug>.md` with a bare `1651`.
-10. Produce the twenty-two planted-violation proofs (P1-P22) and record them in the PR
+10. Produce the twenty-three planted-violation proofs (P1-P23) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
