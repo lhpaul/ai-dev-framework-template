@@ -539,7 +539,9 @@ pull requests it lets through are exactly the ones nobody reviewed locally.
 5. Add both `print_kv` lines, the ledger fields and the summary line.
    **Verify**: scenarios 11 and 12.
 6. Update Protocol 93, the `--help` block, and add
-   `changelog.d/1656.changed.second-local-pass.md`. **Verify**: runbook Step 8.
+   `changelog.d/1656.changed.second-local-pass.md`. **Verify**: runbook **Step
+   10**, which reads both surfaces and the fragment against each other — Step 8
+   is the no-gate/no-guard case.
 7. Produce the nine planted-violation proofs (P1-P9) and record them in the PR
    with the command, file, line and both outcomes for each.
 
