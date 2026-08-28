@@ -408,6 +408,9 @@ do with. Proof P5.
 5. Render a record whose findings touch **two** files, both short.
 6. Render a record whose path names are sized so the list would fill the line to
    exactly 200 characters **without** the remainder text.
+7. Render the worst case: reviewer `claude-code-action`, state
+   `Clean, unrelated commit`, classification `confirmed miss`, and both counts
+   above 9,999.
 
 **Expected result**: one line per record, each at most 200 characters, naming at
 most three paths and **always** the total file count. Case 1 names three of its
@@ -433,6 +436,13 @@ one line guaranteed to be short is the one that says it left something out.
 Cases 1 through 5 pass with that defect in place, because none is near the
 boundary. Proof P23.
 
+Case 7 shows the bound is closed rather than merely usually satisfied. Both
+counts render clamped as `9999+`, and the worst case still leaves at least 58
+characters for paths: literals 42, reviewer 18, short SHA 8, two counts at 5,
+state label 23, classification 14, `remainder_max` 13 — 142 of 200. The clamp is
+the only one of those bounds this plan introduces, and it is what closes the
+sum; a seven-digit count would reopen it. Proof P24.
+
 Reserving the *maximum* rather than the actual remainder is deliberate: the
 actual value is not known until the list stops, and a budget that depends on the
 answer cannot be used to compute it.
@@ -451,11 +461,14 @@ record claiming twelve files on a pull request touching four overstates the
 blast radius of every finding, and the three path slots can be filled by three
 copies of one name. Proof P12.
 
-The bound is enforced by build order, not by truncation: the total and the state
-are written before the paths, and paths stop at the first one that would exceed
-the bound. Truncating a finished line removes the tail, which is where the state
-and the classification live — leaving the reader a line of file names and no
-verdict, exactly inverted from what it is for. Proof P6.
+The bound is enforced by **reservation**, not by truncation and not by writing
+order — the paths sit in the middle of the line, so no ordering would protect
+the suffix. The renderer computes
+`budget = 200 − prefix − suffix − remainder_max` before appending any path, and
+paths stop at the first that would exceed it. Truncating a finished line instead
+removes the tail, which is where the state and the classification live, leaving
+the reader a line of file names and no verdict — exactly inverted from what the
+line is for. Proof P6.
 
 ## Step 10: The ledger keeps its contract
 
@@ -545,11 +558,11 @@ not what Protocol 03 Step 6 asks for.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P23 each record the command, the file and line of the
+2. Confirm P1 through P24 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: twenty-three proofs in three groups — **fifteen**
-overclaiming, **seven** contract, **one** under-recording, per the plan's
+**Expected result**: twenty-four proofs in three groups — **fifteen**
+overclaiming, **eight** contract, **one** under-recording, per the plan's
 proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:
