@@ -54,7 +54,9 @@ sequencing constraint on implementation only.
 | The command receives the bundle by path | `sed -n '372,384p' scripts/development-workflow/local-ai-reviewer.sh` | `CONTEXT_BUNDLE_PATH` is exported alongside six other variables. A command that reads the bundle gets the doctrine with no change to its own contract |
 | `workflow-lib.sh` is sourced by the reviewer | `sed -n '9,11p' scripts/development-workflow/local-ai-reviewer.sh` | `source "$SCRIPT_DIR/workflow-lib.sh"` — the shared library is already in scope, so a constant declared there needs no new plumbing |
 | A shell lint has precedent | `sed -n '1,30p' scripts/lint/check-changelog-duplicate-headers.sh` | `scripts/lint/` already contains one Bash linter with a documented usage block and 0/1 exit contract; the two Python linters are not the only convention |
-| Lints are wired into CI as explicit steps | `sed -n '80,87p' .github/workflows/markdown-lint.yml` | Each linter is its own `run:` step — `python3 scripts/lint/markdown-heuristic-lint.py …`, `bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md`. Adding a step is the whole CI change |
+| Lints are wired into CI as explicit steps | `sed -n '80,87p' .github/workflows/markdown-lint.yml` | Each linter is its own `run:` step — `python3 scripts/lint/markdown-heuristic-lint.py …`, `bash scripts/lint/check-changelog-duplicate-headers.sh CHANGELOG.md` |
+| …but the step is **not** the whole CI change | `sed -n '11,23p' .github/workflows/markdown-lint.yml` | The trigger enumerates paths — `docs/specs/developments/**`, `docs/testing/workflow/**`, `changelog.d/**`, and each linter script by name — and includes neither `docs/workflow/**` nor the new linter. A catalogue-only pull request would run nothing |
+| `12000` is already in the reviewer | `grep -n '12000' scripts/development-workflow/local-ai-reviewer.sh` | Lines 292 and 295, truncating `diff_name_status` and `diff_stat`. A structural check that greps for the bare literal would fail on correct code, which is why scenario 15 checks the assignment and the comparison instead |
 | Evidence keys reach the loop summary unchanged | `sed -n '754,772p' scripts/development-workflow/pr-review-loop.sh` | `emit_prefixed_platform_output` re-emits every key except five, so `REVIEW_DOCTRINE_*` appears as `PLATFORM_<n>_REVIEW_DOCTRINE_*` with no loop change |
 | The five seed patterns are the brief's | issue #1654, Scope bullet 1 | criteria/matrix mismatch, opt-out ambiguity, parser-surface conflict, trigger ambiguity, examples contradicting rules — five, matching the spec's Statuses table |
 
@@ -273,6 +275,23 @@ catalogue and the reviewer's recorded output.
 - [ ] Add the linter as its own CI step in `.github/workflows/markdown-lint.yml`,
       beside the existing `check-changelog-duplicate-headers.sh` step:
       `bash scripts/lint/review-doctrine-lint.sh`.
+- [ ] **Add both new files to that workflow's `paths` filter**, and the linter
+      to `shellcheck.yml`'s. The step alone is not the whole CI change: the
+      `markdown-lint.yml` trigger lists specific paths and includes neither
+      `docs/workflow/**` nor `scripts/lint/review-doctrine-lint.sh`, so a
+      **catalogue-only pull request** — someone adding a pattern, which is the
+      case AC-2a, AC-5 and AC-11 exist for — would run no linter at all. Two
+      entries added:
+
+      ```yaml
+      - 'docs/workflow/development-workflow/review-doctrine.md'
+      - 'scripts/lint/review-doctrine-lint.sh'
+      ```
+
+      `shellcheck.yml` already covers `scripts/development-workflow/**/*.sh`,
+      which catches `workflow-lib.sh` and `local-ai-reviewer.sh`, but its
+      `scripts/lint/` entries are enumerated one file at a time — so the new
+      linter is added there explicitly rather than assumed covered.
 - [ ] Document the four fields, the three evidence keys and the four states in
       the `--help` block and in
       `docs/workflow/development-workflow/integrations/local-ai-reviewer.md`.
@@ -355,12 +374,21 @@ catalogue and the reviewer's recorded output.
     file-scoped.
 14. It fails at 12,001 bytes and passes at 12,000 — the boundary, not a value
     near it.
-15. The bound has exactly one definition, checked **structurally**: the literal
-    `12000` appears once in `workflow-lib.sh` and **nowhere** in
-    `review-doctrine-lint.sh` or `local-ai-reviewer.sh`, and both name
-    `REVIEW_DOCTRINE_MAX_BYTES`. This is the assertion the withdrawn
-    environment override was reaching for, and it needs no production hook to
-    make it.
+15. The bound has exactly one definition, checked **structurally** — and not by
+    grepping for `12000`, which `local-ai-reviewer.sh` already contains twice at
+    lines 292 and 295, where it truncates `diff_name_status` and `diff_stat`. A
+    bare-literal check would fail on correct code and could not tell P3's plant
+    from the baseline. Two assertions instead:
+
+    - `REVIEW_DOCTRINE_MAX_BYTES=` is assigned in **exactly one** file
+      repository-wide, `workflow-lib.sh`;
+    - neither consumer compares a size against a numeric literal — no
+      `-gt <digits>` in `review-doctrine-lint.sh` or in
+      `reviewer_doctrine_supply` — and both name the constant.
+
+    Together they catch both shapes of duplication: a second assignment, and a
+    literal spliced into the comparison. This is what the withdrawn environment
+    override was reaching for, and it needs no production hook.
 15b. The two consumers agree **behaviourally at the boundary**, on one fixture:
     a 12,000-byte catalogue passes the linter and is `supplied`; a 12,001-byte
     one fails the linter and is `oversized`. Two copies of the bound that happen
@@ -369,6 +397,12 @@ catalogue and the reviewer's recorded output.
 16. The catalogue in the repository passes its own linter, contains exactly the
     five seeded patterns, and its preamble contains the AC-3 statement and the
     AC-3a request.
+17. A pull request touching **only** `docs/workflow/development-workflow/review-doctrine.md`
+    triggers `markdown-lint.yml`, and one touching only
+    `scripts/lint/review-doctrine-lint.sh` triggers both it and `shellcheck.yml`.
+    Checked by reading the `paths` filters against the two file paths — the
+    single-file case is the one the current filters miss, and it is the ordinary
+    way a pattern gets added.
 16a. `REVIEW.md`'s Workflow Policy checklist contains the generality question,
     and the catalogue's contribution guidance contains the same obligation.
     AC-5a names **both** places, and asserting only one would leave the other
@@ -470,7 +504,8 @@ item's question too.
 | `scripts/lint/review-doctrine-lint.sh` | **New** | the three checks |
 | `scripts/development-workflow/workflow-lib.sh` | **Edit** | the shared bound |
 | `scripts/development-workflow/local-ai-reviewer.sh` | **Edit** | reader, bundle, evidence, `--help` |
-| `.github/workflows/markdown-lint.yml` | **Edit** | the linter's CI step |
+| `.github/workflows/markdown-lint.yml` | **Edit** | the linter's CI step **and two `paths` entries** |
+| `.github/workflows/shellcheck.yml` | **Edit** | the linter in the enumerated `scripts/lint/` list |
 | The integration document and Protocol 93 | **Edit** | the fields, keys and states |
 | The two test suites and `changelog.d/` | **New** | scenarios and the fragment |
 
@@ -571,13 +606,13 @@ reviewer_doctrine_supply() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The thirteen proofs fall into
+runs per proof, each citing a concrete file and line. The fourteen proofs fall into
 three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Silent | **4** | P1, P2, P5, P7 | a review that used less doctrine than it reports, with nothing to show it |
-| Contract | **6** | P3, P4, P6, P8, P9, P13 | a check or an output that breaks its own stated rule |
+| Contract | **7** | P3, P4, P6, P8, P9, P13, P14 | a check or an output that breaks its own stated rule |
 | Fail-open | **3** | P10, P11, P12 | an error or a race reported as a successful supply |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
@@ -586,11 +621,12 @@ three groups:
 | P2 | Supply the first `REVIEW_DOCTRINE_MAX_BYTES` of an oversized catalogue | same scratch copy | scenario 2 fails: `text` is non-empty in the `oversized` row, so the reviewer receives a catalogue that looks complete and is missing its most recent patterns. This is AC-9, and the plant is the obvious thing to do with a too-large string; restoring the empty text passes |
 | P8 | Make the bound overridable with `"${REVIEW_DOCTRINE_MAX_BYTES:-12000}"` | a scratch copy of `workflow-lib.sh` | scenario 14 fails when the environment carries a larger value: a 12,001-byte catalogue passes the linter and is `supplied`, so an oversized doctrine reaches the reviewer and CI accepts it — the bound exists precisely so a catalogue that no longer fits is edited rather than excused; restoring the fixed `readonly` passes |
 | P11 | Derive each value from a fresh read of the live file instead of one snapshot | a scratch copy of `reviewer_doctrine_supply` | scenario 1b fails: with the catalogue rewritten mid-collection, the bundle's `version` is the hash of bytes its `text` does not contain, and every later report that groups reviews by version groups that one wrongly. The plant is invisible whenever nobody edits the file during a review, which is nearly always; restoring the single snapshot passes |
+| P14 | Add the CI step without the `paths` entries | a scratch copy of `markdown-lint.yml` | scenario 17 fails: a branch that touches only the catalogue triggers no workflow, so the three checks AC-2a, AC-5 and AC-11 require never run on the change they exist for — adding a pattern. Every other scenario passes, because they invoke the linter directly; restoring the entries passes |
 | P13 | Write the evidence file without the `review_doctrine` object | a scratch copy of `write_evidence_file` | scenario 8a fails: the `key=value` output still carries all three values and the loop summary still shows them, so every other check passes — and the artifact a later report actually reads has nothing. AC-15 names the evidence file separately for that reason; restoring the object passes |
 | P12 | Count patterns with `grep -c … \|\| true` | same scratch copy | scenario 1a's pattern-count case fails: `grep`'s exit 1 (no matches) and its exit >1 (error) are flattened into count 0, so an unreadable snapshot reports `supplied` with zero patterns instead of `unreadable`. An empty catalogue — the legitimate zero — still passes, which is why the scenario separates the two exits; restoring the status check passes |
 | P10 | Replace the read handlers with a single `[ -r "$path" ]` test | a scratch copy of `reviewer_doctrine_supply` | scenario 1a fails: with the file removed after the test, the reviewer aborts under `set -e` instead of reporting `unreadable`, so the round produces no result at all rather than a review that ran without the doctrine. Scenario 1's ordinary unreadable case — a permission bit — still passes, because there the test itself catches it; restoring the per-operation handlers passes both |
 | P9 | Read the text with `text="$(cat "$path")"` and pass it as `--arg` | a scratch copy of `reviewer_doctrine_supply` | scenario 7a fails: the bundle's copy loses the file's trailing newlines, so what the reviewer receives is not what the repository stores. Scenario 5's interior-sentence match still passes, which is why 7a compares bytes; restoring `--rawfile` passes |
-| P3 | Give `review-doctrine-lint.sh` its own `12000` instead of sourcing `workflow-lib.sh` | a scratch copy of the linter | scenario 15 fails on the structural check — the literal appears in a second file. Scenario 15b still passes, because two copies agree until one is edited, which is exactly the drift the structural check exists to catch before it happens; restoring the source passes |
+| P3 | Give `review-doctrine-lint.sh` its own bound instead of sourcing `workflow-lib.sh` | a scratch copy of the linter | scenario 15 fails on whichever assertion the plant trips — a second `REVIEW_DOCTRINE_MAX_BYTES=` if the copy is named, or a `-gt <digits>` comparison if the literal is spliced in. Scenario 15b still passes, because two copies agree until one is edited, which is exactly the drift the structural check exists to catch before it happens; restoring the source passes |
 | P4 | Apply the incident-reference check to the whole file rather than to entries | same scratch copy | scenario 13 fails: a catalogue whose preamble cites `docs/specs/developments/` — which is what contribution guidance does — is rejected, so the check must be either weakened or switched off; restoring the entry scope passes |
 | P5 | Return `supplied` with an empty version when no digest command exists | a scratch copy of the version helper | scenario 6 fails: two reviews that saw different catalogues become indistinguishable, and the failure is confined to machines without `sha256sum` or `shasum` — so it would ship green everywhere it was tested; restoring the `unreadable` state passes |
 | P6 | Print the doctrine's text as a fourth `key=value` line | a scratch copy of the print block | scenario 8 fails: the loop's `emit_prefixed_platform_output` reads line by line, so every line of the catalogue after the first is re-emitted as a fabricated `PLATFORM_1_<text>` key. The plant looks like completeness — the same value the bundle carries; restoring the three scalars passes |
@@ -628,12 +664,14 @@ everywhere it is tested.
    list, the byte-for-byte text comparison, the evidence artifact's three
    values, the real `emit_prefixed_platform_output`, and the unchanged existing
    context.
-6. Add the CI step. **Verify**: the linter runs and fails the build on a
-   deliberately malformed catalogue.
+6. Add the CI step **and both `paths` entries**, plus the `shellcheck.yml`
+   entry. **Verify**: scenario 17 — a branch touching only the catalogue
+   triggers the workflow, and the linter fails the build on a deliberately
+   malformed catalogue.
 7. Update the `--help` block, the integration document, Protocol 93, and add
    `changelog.d/1654.added.review-doctrine.md`. **Verify**: runbook **Step 10**,
    which reads all four surfaces against each other — Step 8 tests the linter.
-8. Produce the thirteen planted-violation proofs (P1-P13) and record them in the PR
+8. Produce the fourteen planted-violation proofs (P1-P14) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---

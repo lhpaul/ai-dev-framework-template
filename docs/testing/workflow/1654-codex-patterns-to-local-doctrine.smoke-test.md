@@ -238,21 +238,25 @@ bash scripts/lint/review-doctrine-lint.sh; echo "exit=$?"
 5. Run it on a catalogue whose **preamble** cites a
    `docs/specs/developments/…` path and whose entries are clean.
 6. Run it at exactly **12,000** bytes and at **12,001**.
-7. Check the bound structurally:
+7. Check the bound structurally — **not** by grepping for `12000`, which
+   `local-ai-reviewer.sh` already contains at lines 292 and 295 where it
+   truncates the diff metadata:
 
    <!-- workflow-shell-contract: bash -->
 
    ```bash
-   grep -c '12000' scripts/development-workflow/workflow-lib.sh
-   grep -c '12000' scripts/lint/review-doctrine-lint.sh
-   grep -c '12000' scripts/development-workflow/local-ai-reviewer.sh
+   grep -rl 'REVIEW_DOCTRINE_MAX_BYTES=' scripts | wc -l
+   grep -cE '\-gt[[:space:]]+[0-9]+' scripts/lint/review-doctrine-lint.sh
+   grep -c 'REVIEW_DOCTRINE_MAX_BYTES' scripts/lint/review-doctrine-lint.sh
    ```
 
 8. Run **both** consumers against the same 12,000-byte catalogue, then against
    the same 12,001-byte one.
 
 **Expected result**: 1 exits 0; 2 and 3 exit 1; 4 exits 0; 5 exits **0**; 6
-exits 0 then 1; 7 prints `1`, `0`, `0` — one definition, no second copy; 8 shows
+exits 0 then 1; 7 prints `1`, `0`, and a non-zero count — one assignment
+repository-wide, no numeric-literal size comparison in the linter, and the
+constant named there; 8 shows
 the linter passing and the reviewer `supplied` at 12,000, and the linter failing
 and the reviewer `oversized` at 12,001.
 
@@ -265,7 +269,12 @@ neighbours: both it and the reviewer source `workflow-lib.sh`, so the bound is
 literally the same value in both rather than two copies that agree today.
 Nothing else in this runbook would notice them drifting. Proof P3.
 
-It is proved **structurally**, not by moving the bound. An earlier revision of
+It is proved **structurally**, not by moving the bound — and not by grepping
+for the bare literal, which appears in `local-ai-reviewer.sh` for an unrelated
+truncation. A literal check would fail on correct code and could not distinguish
+P3's plant from the baseline. The two assertions above catch both shapes of
+duplication instead: a second named assignment, and a literal spliced into the
+comparison. An earlier revision of
 this plan made the constant overridable so a test could change it — which would
 also let an environment value above 12,000 make CI and the reviewer both accept
 an oversized catalogue, defeating AC-11 and the rule the bound exists for. The
@@ -321,6 +330,32 @@ doctrine as truncated when oversized or as supplied by path. The fragment is
 named `<item>.<kind>.<slug>.md` with a bare `1654` and reads as a finished
 changelog bullet from the reader's perspective.
 
+## Step 10a: A catalogue-only change runs the linter
+
+**Maps to**: AC-2a, AC-5, AC-11 — the checks that exist for exactly this change.
+
+1. Read `.github/workflows/markdown-lint.yml`'s `paths` filter and confirm it
+   lists `docs/workflow/development-workflow/review-doctrine.md` and
+   `scripts/lint/review-doctrine-lint.sh`.
+2. Read `.github/workflows/shellcheck.yml`'s `paths` filter and confirm it lists
+   the new linter.
+3. Open a branch touching **only** the catalogue and confirm the markdown-lint
+   workflow triggers.
+
+**Expected result**: all three hold.
+
+Adding the `run:` step is not the whole CI change, and this is the step that
+says so. `markdown-lint.yml`'s trigger enumerates paths — `docs/specs/…`,
+`docs/testing/workflow/…`, `changelog.d/…`, and each linter script by name — and
+includes neither the catalogue nor its linter. So the ordinary way a pattern
+gets added, a pull request touching only the catalogue, would run **no** checks
+at all: the three the linter enforces exist precisely for that change. Every
+other step here invokes the linter directly and would pass regardless. Proof P14.
+
+`shellcheck.yml` already covers `scripts/development-workflow/**/*.sh`, but its
+`scripts/lint/` entries are named one file at a time, so the new linter is added
+explicitly rather than assumed covered.
+
 ## Step 11: Static checks
 
 1. Run `shellcheck` on `scripts/development-workflow/local-ai-reviewer.sh`,
@@ -343,11 +378,11 @@ changelog bullet from the reader's perspective.
 ## Step 12: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P13 each record the command, the file and line of the
+2. Confirm P1 through P14 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: thirteen proofs in three groups — **four** silent, **six**
-contract, **three** fail-open, per the plan's proof-group table.
+**Expected result**: fourteen proofs in three groups — **four** silent,
+**seven** contract, **three** fail-open, per the plan's proof-group table.
 
 The silent group carries the weight, because a review that used less doctrine
 than it reports leaves no trace anywhere. P5 is the one to read twice: its
