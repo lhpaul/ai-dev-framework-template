@@ -290,6 +290,24 @@ platform is filtered out before the gate is consulted and **no**
 a platform that was never in scope would misreport why the reviewer did not
 run.
 
+### Step 6b: A defer does not start the ready phase
+
+**Maps to**: the "defer still triggers the ready-phase transition" risk.
+
+1. Configure `codex-github` on draft and `bugbot` on ready.
+2. Make the gate defer for any reason from Step 3, and run the loop.
+3. Read the PR's draft state, the phase telemetry, and whether
+   `ensure_pr_ready_for_ready_phase` was called.
+
+**Expected result**: the loop breaks out at the defer.
+`ensure_pr_ready_for_ready_phase` is not called, `gh pr ready` is not run, the
+PR stays draft, and no `EXPENSIVE_GATE_*` or phase telemetry is emitted for
+`bugbot`. Setting the `needs_fixes` aggregate without breaking out would leave
+the iteration running, and the later ready-phase platform would convert the PR
+out of draft even though the draft-phase expensive reviewer never ran — a
+visible, hard-to-undo side effect produced by a gate whose purpose was to not
+proceed.
+
 ### Step 7: Gate outcome is visible in both durable surfaces
 
 **Maps to**: the "silently stops `codex-github` from ever running" risk.
@@ -343,10 +361,10 @@ so it would run only when the test file itself changed.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR description's `Planted-Violation Proofs` heading.
-2. Confirm P1–P14 from the plan each record the command, the file and line of
+2. Confirm P1–P15 from the plan each record the command, the file and line of
    the planted violation, and both outcomes.
 
-**Expected result**: fourteen proofs, each showing the check failing with the
+**Expected result**: fifteen proofs, each showing the check failing with the
 violation present and passing once removed. Four carry the most weight: P4
 deletes the `expensive_reviewer_gate` call so the function is defined but
 unreachable, and requires Step 3's stale-evidence row to fail — that is what
@@ -363,7 +381,8 @@ Step 3's three rejected-skip rows to fail. P11 makes an absent ledger return
 deny-list and requires Step 3's unexpected-value rows to fail. P13 widens the
 peer set back to the whole resolved list and requires Step 3d's first run to
 fail. P14 makes the baseline-check helper treat every check as a baseline check
-and requires Step 3's reviewer-owned-pending row to fail.
+and requires Step 3's reviewer-owned-pending row to fail. P15 removes the
+short-circuit on a defer and requires Step 6b to fail.
 
 ### Step 10: Documentation states one contract
 

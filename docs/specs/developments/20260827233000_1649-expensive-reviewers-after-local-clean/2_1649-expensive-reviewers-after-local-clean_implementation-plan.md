@@ -309,6 +309,16 @@ Not applicable — this repository ships workflow tooling, not a service.
       Deferring is cheap — the expensive reviewer runs on the retry the
       `needs_fixes` aggregate forces — while dispatching on unknown evidence is
       the waste this item exists to remove.
+- [ ] **A defer must short-circuit the iteration, not merely set the
+      aggregate.** Setting `needs_fixes` without breaking out would leave the
+      per-platform loop running, so a later ready-phase platform would still
+      reach `ensure_pr_ready_for_ready_phase` and call `gh pr ready` — converting
+      the PR out of draft even though a draft-phase expensive reviewer never
+      ran. That is a visible, hard-to-undo side effect produced by a gate whose
+      whole purpose was to *not* proceed. A `deferred` or `deferral_cap` outcome
+      therefore breaks out of the platform iteration immediately, exactly as the
+      existing non-clean short-circuit does, before any later platform is
+      considered. `forced` and `dispatched` continue normally.
 - [ ] Call the gate from the per-platform block, immediately before
       `run_platform_review`, only when `is_expensive_reviewer_platform` matches.
       It composes with the existing phase mechanism rather than replacing it: a
@@ -529,6 +539,12 @@ reads them against each other and fails on any divergence.
     `EXPENSIVE_GATE_DEFERRALS=-1`, and the loop escalates. Without this the
     bounded-deferral guarantee would hold only when the ledger happens to be
     readable, which is not a guarantee.
+21. A draft-phase defer does not start the ready phase: with `codex-github` on
+    draft deferring and `bugbot` on ready, the loop breaks out immediately —
+    `ensure_pr_ready_for_ready_phase` is not called, `gh pr ready` is not run,
+    the PR stays draft, and no `EXPENSIVE_GATE_*` or phase telemetry is emitted
+    for `bugbot`. Without the short-circuit the gate would produce a visible,
+    hard-to-undo side effect while refusing to proceed.
 20. The relocation is behavior-preserving: `pr-ci-loop.sh` produces identical
     `REVIEWER_CHECK_COUNT`, `REVIEWER_CHECKS` and `REVIEWER_CHECKS_JSON` before
     and after `configured_reviewer_check_names_json` moves to
@@ -553,7 +569,7 @@ reads them against each other and fails on any divergence.
   add `# covers: scripts/development-workflow/workflow-lib.sh` so a later edit
   to the relocated function also selects it.
 - `scripts/development-workflow/tests/test-expensive-reviewer-gate.sh` — a new
-  suite for scenarios 15–17, the override and composition cases, which need
+  suite for scenarios 15–17 and 21, the override and composition cases, which need
   their own mock scaffolding for the phase and filter paths. It must declare:
 
   ```text
@@ -591,6 +607,7 @@ concrete file and line:
 | P5 | Ordering regression: **delete the `reorder_expensive_reviewers_last` call**, leaving a platform list that declares `codex-github` before `pr-agent` | a scratch copy of the platform-resolution block | scenario 6 fails and scenario 7's suppressed-reorder case shows the gate deferring on every invocation with `peer_reviewer_not_run` — a deferral that can never resolve; restoring the call passes |
 | P9 | Phase-bucket regression: replace the per-bucket partition with a single global one | a scratch copy of `reorder_expensive_reviewers_last` | scenario 6b fails, because a draft-configured `codex-github` is placed after the ready-phase `bugbot` and therefore runs only after `gh pr ready`; restoring the per-bucket partition passes |
 | P10 | Peer-evidence regression: accept any `skipped` peer instead of consulting `reviewer_failed_label_required_for_result` | a scratch copy of condition 2 | scenario 8's `unavailable`, `timeout` and `unauthorized` rows fail, because the gate dispatches with a peer that never produced a verdict; restoring the helper call passes |
+| P15 | No-short-circuit regression: make a `deferred` result set the aggregate without breaking out of the platform iteration | a scratch copy of the gate call site | scenario 21 fails, because the loop continues to the ready-phase platform and calls `gh pr ready` on a PR whose draft-phase expensive reviewer never ran; restoring the break passes |
 | P14 | Reviewer-check-classification regression: make `expensive_gate_baseline_checks_status` treat every check as a baseline check | a scratch copy of the helper | scenario 10's reviewer-owned-pending row fails, because `codex-github` waits on a check it is responsible for producing; restoring the `configured_reviewer_check_names_json` exclusion passes |
 | P13 | Peer-set regression: widen the peer set from the preceding platforms back to every non-expensive platform in the resolved list | a scratch copy of the peer-set computation | scenario 7's first row fails, because a draft-phase `codex-github` waits on a ready-phase `bugbot` that cannot have run yet and defers until the cap; restoring the phase-scoped set passes |
 | P6 | Readiness regression: make a defer leave the aggregate result unchanged instead of setting `needs_fixes` | a scratch copy of the gate call site | scenario 3's aggregate assertion fails, and a run in which `codex-github` never executed would satisfy Protocol 92's readiness conditions; restoring the `needs_fixes` aggregate passes |
@@ -599,7 +616,7 @@ concrete file and line:
 | P11 | Absent-ledger regression: change the counter to return `-1` for an absent ledger as well as a malformed one | same fixture | scenario 19b fails, because a PR with no prior reviewer-loop history escalates on its first run and the bound is never exercised; restoring the three-state mapping passes |
 | P12 | Deny-list regression: rewrite condition 1 to reject only `0` and empty rather than requiring exactly `1` | a scratch copy of condition 1 | scenario 4's `2` and `true` rows fail, because the gate dispatches with an unrecognized evidence value; restoring the exact-match allow-list passes |
 
-Record all fourteen in the implementation PR under a `Planted-Violation Proofs`
+Record all fifteen in the implementation PR under a `Planted-Violation Proofs`
 heading, each with the command, the file and line of the planted violation, and
 both outcomes.
 
@@ -671,6 +688,7 @@ with mock `gh` commands and require no network access.
 | A consumer that never configures a local reviewer is blocked forever | Med | High — downstream template consumers would stall | The brief requires fail-closed on missing local evidence, so the gate defers rather than inventing an implicit dispatch. The release valves are explicit: the deferral cap escalates to a human after a bounded number of tries, and `PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS` covers a one-off run. Scenario 5 pins the defer and scenario 13 the escalation |
 | The gate is defined but never consulted, leaving behavior unchanged | Med | High — the item would appear complete while changing nothing | The call site is in the per-platform block immediately before `run_platform_review`, and proof P4 deletes that call outright and requires scenario 3 to fail — a gate that is not wired in cannot pass its own proof |
 | Fail-closed on unreadable evidence turns a transient API blip into a permanent defer | Med | Med | A defer is per-invocation, not sticky: the `needs_fixes` aggregate makes Protocol 91 re-run Step 7, which re-evaluates from scratch. The bound is the gate's own head-scoped deferral counter, not the existing dual cycle caps — those cannot see a deferral loop, as the Verification Log records — and an unreadable budget escalates rather than deferring again. The gate adds no retry path of its own, so it cannot loop |
+| A defer still triggers the ready-phase transition | Med | High — `gh pr ready` would convert the PR out of draft even though the draft-phase expensive reviewer never ran, a visible side effect from a gate that refused to proceed | A `deferred` or `deferral_cap` outcome breaks out of the platform iteration immediately, exactly as the existing non-clean short-circuit does, so no later platform is considered; scenario 21 and proof P15 pin it |
 | The gate contradicts the existing phase mechanism | Med | High — two gates disagreeing on whether a platform runs is worse than either alone | Composition is specified explicitly (phase gate first, then this gate; `--pre-after-clean-only` filters before both) and pinned by scenarios 16 and 17, including the no-phantom-telemetry case |
 | Implementation starts before #1648 lands and wires the gate to keys that do not exist | Med | High — the gate would read unset variables and hold everything, or be written against a guessed contract | Recorded as a Conflict in the Cross-Cutting check and as Implementation Order step 0, which is a hard stop that verifies #1648 is merged into the approved base before any edit |
 | A reviewer's own check gates that reviewer | Low | Med — `codex-github` would wait on a check it is responsible for producing | Condition 4 evaluates non-reviewer checks only, excluding the names returned by `configured_reviewer_check_names_json`, which moves from `pr-ci-loop.sh` to `workflow-lib.sh` so both callers share one definition rather than two drifting copies; scenario 10's third case and proof P14 pin it |
@@ -816,8 +834,11 @@ Summary-comment line, illustrative:
    `REASON=expensive_gate_deferred`; a `deferral_cap` result sets it to
    `escalate` with `REASON=expensive_gate_deferral_cap`, or
    `REASON=expensive_gate_deferral_budget_unreadable` when the counter returned
-   `-1`. **Verify**: scenario 3 shows `run_platform_review` is not called and
-   the aggregate is `needs_fixes`; scenarios 13 and 19 show both escalations.
+   `-1`. Both **break out of the platform iteration** so no later platform is
+   considered. **Verify**: scenario 3 shows `run_platform_review` is not called
+   and the aggregate is `needs_fixes`; scenarios 13 and 19 show both
+   escalations; scenario 21 shows `gh pr ready` is not called after a
+   draft-phase defer.
 6. Add the override branch, confirm the reason survives it, and confirm a
    `forced` result does **not** set the `needs_fixes` aggregate. **Verify**:
    scenario 15.
@@ -845,7 +866,7 @@ Summary-comment line, illustrative:
     **Verify**: both suites exit 0, and
     `scripts/development-workflow/select-test-suites.sh` selects the new suite
     for a change touching only `pr-review-loop.sh`.
-11. Produce the fourteen planted-violation proofs (P1–P14) and record them in the PR
+11. Produce the fifteen planted-violation proofs (P1–P15) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed.
