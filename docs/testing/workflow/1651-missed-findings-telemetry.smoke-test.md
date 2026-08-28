@@ -416,9 +416,9 @@ do with. Proof P5.
 5. Render a record whose findings touch **two** files, both short.
 6. Render a record whose path names are sized so the list would fill the line to
    exactly 200 characters **without** the remainder text.
-7. Render the worst case: reviewer `claude-code-action`, state
+7. Render the worst realistic case: reviewer `claude-code-action`, state
    `Clean, earlier commit` with classification `possible_miss`, and both counts
-   above 9,999.
+   at 9,999,999.
 
 **Expected result**: one line per record, each at most 200 characters, naming at
 most three paths and **always** the total file count. Case 1 names three of its
@@ -444,12 +444,21 @@ one line guaranteed to be short is the one that says it left something out.
 Cases 1 through 5 pass with that defect in place, because none is near the
 boundary. Proof P23.
 
-Case 7 shows the bound is closed rather than merely usually satisfied. Both
-counts render clamped as `9999+`, and the worst case still leaves at least 61
-characters for paths: literals 42, reviewer 18, short SHA 8, two counts at 5,
-label-and-classification 34, `remainder_max` 13 — 139 of 200. The clamp is the
-only one of those bounds this plan introduces, and it is what closes the sum; a
-seven-digit count would reopen it. Proof P24.
+Case 7 shows the bound is closed rather than merely usually satisfied, and that
+it is closed **without** abbreviating anything: both counts render in full —
+`9999999`, seven digits each — because AC-14 requires the total and the omitted
+count to be exact.
+
+The fixed parts occupy 102 characters (literals 42, reviewer 18, short SHA 8,
+label-and-classification 34), so what remains for the two counts, the
+remainder's own copy of the total, and at least zero paths is
+`blocking_digits + 2 × total_digits ≤ 98`. This case spends 21 of the 98.
+Exhausting it needs a 46-digit file count — not a number a diff can produce.
+
+The budget must be computed from the counts' **actual** width. A fixed
+reservation fails both ways: too small and a seven-digit count overflows the
+line, too large and a one-digit count drops a path that would have fit. Proof
+P24.
 
 The label and the classification are bounded **together** because the
 classification is a function of the state: the longest label,
