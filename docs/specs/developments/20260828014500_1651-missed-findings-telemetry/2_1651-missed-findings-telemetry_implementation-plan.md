@@ -56,8 +56,10 @@ sequencing constraint on implementation only — the two plan PRs are independen
 | --- | --- | --- |
 | Repo revision | `git rev-parse --short origin/develop-internal-reviewer-effectiveness` | `903de533` |
 | The history entry builder and its shape | `sed -n '6876,6950p' scripts/development-workflow/pr-review-loop.sh` | `reviewer_loop_history_build_entry` produces a flat object of eighteen fields plus one nested object, `phase_after_clean`. The nested object is the precedent this plan follows: a related group of values belongs in one sub-object rather than as five sibling keys |
-| The entry already carries the head and the platforms | Same range | `head_sha` and `platforms` are already written per iteration, so the record's commit and reviewer fields are derivable at the same call site rather than re-fetched |
-| Writability is already a decided state, not a new one | `sed -n '6960,7030p' scripts/development-workflow/pr-review-loop.sh` | `append_safe`, `history_status` and `history_unavailable_reason` already exist: on malformed history, unknown schema, or a prior unavailable payload, the loop replaces the payload with an empty stub and refuses to append. The spec's Decision Matrix row 4 is this branch; the plan reports through it rather than inventing a second failure surface |
+| The entry carries no per-platform outcome | Same range | `result` is the **aggregate** loop result for the round and `platforms` is a list of names. A round where the local reviewer was clean and an external one reported findings records `needs_fixes` and nothing that separates them, so the local verdict cannot be recovered from a stored entry. #1648 adds per-reviewer *heads*, not per-reviewer *outcomes* — hence `platform_results` in this plan |
+| The per-platform outcome exists in memory but is not persisted | `sed -n '9603,9614p' scripts/development-workflow/pr-review-loop.sh` | `platform_result_tokens[]` holds `name:display` pairs for the current round and is used only to build the summary line. `platform_results` is that data written to the ledger, not a new derivation |
+| The configured platform list has a source | `grep -n "workflow_config_review_platforms" scripts/development-workflow/pr-review-loop.sh` | Produced at line 8339. It is the only thing that distinguishes `not_configured` from `not_yet_run`, since both look identical in an empty history |
+| Writability is already a decided state — and today it **destroys** the history | `sed -n '6960,7030p' scripts/development-workflow/pr-review-loop.sh` | `append_safe`, `history_status` and `history_unavailable_reason` already exist. On malformed history, unknown schema, or a prior unavailable payload the loop builds a **replacement** payload with `entries: []` and renders it over the previous block. The spec's row 4 is this branch, but AC-7a's byte-for-byte preservation is **not** current behavior and needs the change described in Layer-by-Layer |
 | The reason vocabulary that already exists | Same range | `malformed_history`, `unknown_schema`, and a pass-through `prior_unavailable`. Row 4's "report why" is satisfied by surfacing these, not by adding new ones |
 | Blocking paths are already extracted per platform | `sed -n '6786,6800p' scripts/development-workflow/pr-review-loop.sh` | `reviewer_loop_blocking_paths_from_output` reads `BLOCKING_<n>_PATH` from a platform's output. The record's path list and total come from here; nothing new parses reviewer output |
 | Ancestry has a precedent in this repository | `grep -rn "merge-base --is-ancestor" scripts/development-workflow/` | Two call sites — `validate-branch-reuse.sh:408` and `prepare-release-post-merge-cleanup.sh:532` — both using `git merge-base --is-ancestor A B` with output discarded and the **exit status** read. This plan uses the same form and, unlike both, distinguishes the third exit status |
@@ -113,14 +115,54 @@ Not applicable — this repository ships workflow tooling, not a service.
 
 ### Shared Packages / Libraries
 
+- [ ] **Persist per-platform verdicts in the ledger entry.** The entry records
+      `result` — the **aggregate** loop result for the round — and `platforms`,
+      a list of names with no outcomes. Neither says what the *local* reviewer
+      concluded, so a round in which the local reviewer was clean and an
+      external one reported findings has `result: "needs_fixes"` and nothing to
+      distinguish the two. The derivation below cannot be built on that, and
+      AC-4a cannot be satisfied by it. #1648 supplies each reviewer's reviewed
+      **head**; it does not supply each reviewer's **outcome**.
+
+      Add `platform_results` to the entry, built from `platform_result_tokens`
+      — the `name:display` array the loop already assembles for the summary
+      comment at `pr-review-loop.sh:9605`:
+
+      ```text
+      "platform_results": [
+        {"platform": "local-ai-reviewer", "result": "clean",       "reviewed_head": "<40-hex>"},
+        {"platform": "codex-github",      "result": "needs_fixes", "reviewed_head": "<40-hex>"}
+      ]
+      ```
+
+      `reviewed_head` is #1648's per-reviewer evidence, carried here so one
+      array answers both questions the derivation asks.
+
+      **Entries written before this change carry no `platform_results`, and
+      those entries yield `unknown` — never the aggregate `result`.** Reading
+      the aggregate as if it were the local reviewer's verdict is exactly the
+      confusion this field exists to end, and a back-compatibility path that
+      reintroduces it would put wrong values into the historical half of the
+      data, where nobody would look for them. Fail-closed, and scenario 3a pins
+      it.
+
 - [ ] **Select the local reviewer's most recent verdict.** Add
-      `reviewer_loop_local_latest_verdict <history_payload>`, returning one
-      compact JSON object:
+      `reviewer_loop_local_latest_verdict <history_payload> <configured_platforms>`,
+      returning one compact JSON object:
       `{"outcome":…,"head_sha":…,"iteration":…}`.
 
+      **Two inputs, because two different questions are being asked.** The
+      payload answers *what did the local reviewer most recently conclude*; the
+      configured-platform list answers *is it configured at all*, which no
+      amount of history can establish — an empty history looks identical for a
+      repository that has not run the reviewer yet and one that never will. The
+      list is the value `workflow_config_review_platforms` already produces at
+      `pr-review-loop.sh:8339`, passed in rather than re-read, so the function
+      stays testable without a configuration file.
+
       It scans `entries[]` in **descending iteration order** and returns the
-      first entry in which the local reviewer appears among the platforms that
-      ran, whatever that entry's outcome was. Selection by recency, then
+      first entry whose `platform_results` names the local reviewer, taking
+      **that platform's** `result` — never the entry's aggregate `result`. Selection by recency, then
       classification — never "the most recent clean verdict", which is the same
       sentence with the search order and the filter swapped, and which AC-4a
       exists to forbid: a reviewer that cleared one commit and then reported
@@ -134,9 +176,9 @@ Not applicable — this repository ships workflow tooling, not a service.
 
       | Situation | Returned outcome | Why it is distinct |
       | --- | --- | --- |
-      | The local reviewer appears in no entry, and is configured | `not_yet_run` | a pull request early in its life |
-      | The local reviewer is not in the configured platform list | `not_configured` | a repository that will never produce local evidence |
-      | Entries exist but none establishes an outcome for it | `unknown` | the history is healthy and silent |
+      | The local reviewer is **not** in the configured platform list | `not_configured` | a repository that will never produce local evidence — checked **first**, because an unconfigured reviewer with an empty history must not read as `not_yet_run` |
+      | It is configured and appears in no entry's `platform_results` | `not_yet_run` | a pull request early in its life |
+      | It is configured, entries exist, but none carries `platform_results` — or none names it | `unknown` | the history is healthy and silent, including every entry written before this change |
 
 - [ ] **Classify a clean verdict by ancestry.** Add
       `reviewer_loop_commit_ancestry <clean_head> <reviewed_head>`, printing
@@ -246,12 +288,33 @@ Not applicable — this repository ships workflow tooling, not a service.
       asserts field-by-field that the eighteen existing fields and
       `phase_after_clean` are unchanged.
 
-- [ ] **Report row 4 through the surface that already exists.** When
-      `append_safe` is 0, no record is written and the existing history is left
-      untouched — both already true of the current code. The addition is that
-      the round's output states telemetry could not be recorded, using the
-      reason the loop already computed: `malformed_history`, `unknown_schema`,
-      or the passed-through `prior_unavailable`.
+- [ ] **Preserve the existing history when it cannot be appended to, and report
+      the failure.** AC-7a requires the existing history to be left
+      byte-for-byte unchanged, and **that is not what the code does today**.
+      When `append_safe` is 0, `reviewer_loop_history_payload_from_existing`
+      builds a replacement payload with `entries: []` and
+      `history_status: "unavailable"`, and the render path writes it over the
+      previously posted block — so a history that merely failed to parse this
+      once is replaced by an empty stub, and the entries it held are gone from
+      the pull request.
+
+      The change, therefore, is a real one and not a report bolted onto
+      existing behavior:
+
+      1. When `append_safe` is 0, **do not re-render the history section at
+         all.** Leave the previously posted block exactly as it stands,
+         including a malformed one — a block that failed to parse is the
+         evidence of the failure, and overwriting it destroys the only copy.
+      2. Report the failure in the summary body instead, naming the reason the
+         loop already computed: `malformed_history`, `unknown_schema`, or the
+         passed-through `prior_unavailable`. No new reason vocabulary.
+      3. Keep `reviewer_loop_history_unavailable_stub_body` for the case it is
+         genuinely for — a pull request with **no** prior history block at all,
+         where there is nothing to preserve and the stub is the first thing
+         written.
+
+      Scenario 11 asserts the byte-for-byte preservation against the prior
+      body, and proof **P7** plants the current stub-replacement behavior.
 
       **And only when something was owed.** AC-7b requires no telemetry-failure
       report when no record was due — the findings came from the local reviewer,
@@ -298,9 +361,21 @@ Not applicable — this repository ships workflow tooling, not a service.
    verdict. This is AC-4a, and it is the single most likely implementation
    error in the item.
 2. It returns `not_yet_run` when the local reviewer is configured and appears in
-   no entry, and `not_configured` when it is absent from the configured list.
-   The two are asserted to be different values, not merely both non-clean.
-3. It returns `unknown` when entries exist but none establishes an outcome.
+   no entry's `platform_results`, and `not_configured` when it is absent from
+   the configured list — **with the same empty history in both calls**, so the
+   only thing that differs is the configured-platform argument. The two are
+   asserted to be different values, not merely both non-clean.
+3. It returns `unknown` when entries exist but none names the local reviewer.
+3a. It returns `unknown` for an entry written **before** this change — one with
+    `platforms` but no `platform_results` — even when that entry's aggregate
+    `result` is `clean`. Reading the aggregate as the local verdict is the
+    confusion `platform_results` exists to end, and a back-compatibility path
+    that reintroduced it would put wrong values into the historical half of the
+    data.
+3b. The verdict comes from the **local reviewer's** entry in
+    `platform_results`, not the aggregate: an entry whose aggregate `result` is
+    `needs_fixes` because an external reviewer failed, while the local
+    reviewer's own result is `clean`, yields `clean`.
 4. `reviewer_loop_commit_ancestry` returns each of `same`, `ancestor`,
    `descendant` and `unrelated` against a purpose-built fixture repository with
    two branches and a common root.
@@ -319,8 +394,11 @@ Not applicable — this repository ships workflow tooling, not a service.
 10. Two qualifying rounds produce two records; the second does not replace the
     first, and no de-duplication occurs even when reviewer, commit and finding
     count are identical.
-11. With `append_safe` at 0, no record is written, the existing history payload
-    is byte-for-byte unchanged, and the round's output names the reason.
+11. With `append_safe` at 0 and a prior history block present, no record is
+    written, the prior block is **byte-for-byte unchanged** — asserted against a
+    saved copy of the prior body, not against a re-render — and the summary body
+    names the reason. A separate case with **no** prior block writes the
+    unavailable stub, which is what the stub is for.
 12. With `append_safe` at 0 **and** no record owed — local-reviewer findings, or
     advisory only — the output contains **no** telemetry-failure report. AC-7b,
     and the scenario that fails if the two tests are ordered the other way.
@@ -329,7 +407,8 @@ Not applicable — this repository ships workflow tooling, not a service.
     fit, which must still state the total and the state.
 14. The history entry retains all eighteen existing fields and the
     `phase_after_clean` object, unchanged in name and type, and adds exactly
-    `missed_findings`. Asserted against an enumerated list, not a count.
+    two: `platform_results` and `missed_findings`. Asserted against an
+    enumerated list, not a count.
 15. Twenty records add at most twenty lines and 4,000 characters, with paths
     chosen to be long — AC-15, which is only meaningful when the fixture tries
     to break it.
@@ -387,7 +466,9 @@ Not applicable — this repository ships workflow tooling, not a service.
 | Records are written only for misses | Med | **High** — the denominator becomes unknowable and the reported rate is always 100% | A record is written on every qualifying external round, including `not_clean` and `unknown`. Scenario 9 and proof **P2** |
 | A telemetry failure is reported when nothing was owed | Med | Low — noise on pull requests where the feature had nothing to do, which erodes trust in the signal | The eligibility test runs before the writability test, matching the spec's row order. Scenario 12 and proof **P5** |
 | The summary line's bound is enforced by truncating the finished string | Med | Med — truncation removes the tail, which is where the state and the classification sit | The line is built with the total and the state **before** the paths, and paths stop at the first one that would exceed the bound. Scenario 13's zero-path case and proof **P6** |
-| The additive field breaks a ledger reader | Low | Med | The schema string is unchanged and every existing field keeps its name and type; scenario 14 asserts them individually |
+| The additive fields break a ledger reader | Low | Med | The schema string is unchanged and every existing field keeps its name and type; scenario 14 asserts them individually |
+| A pre-change entry's aggregate result is read as the local reviewer's verdict | **High** — it is the only outcome those entries carry | **High** — rounds the local reviewer never ran become confirmed misses, in the historical half of the data where nobody checks | Entries without `platform_results` yield `unknown`, never the aggregate. Scenario 3a and proof **P8** |
+| An unappendable history is replaced by an empty stub | **High** — it is the current behavior | **High** — every entry the pull request held is lost, and the stub looks like a well-formed report rather than a deletion | The render path leaves the prior block untouched; the stub is written only when there is no prior block. Scenario 11 and proof **P7** |
 
 ---
 
@@ -424,19 +505,30 @@ reviewer_loop_commit_ancestry() {
   printf 'unrelated\n'
 }
 
-# Recency first, outcome second. Never "the most recent clean verdict".
+# Recency first, outcome second. Never "the most recent clean verdict", and
+# never the entry's aggregate `.result` — that is the round's outcome, not the
+# local reviewer's. Entries with no platform_results yield unknown.
 reviewer_loop_local_latest_verdict() {
-  printf '%s' "${1:-}" | jq -c '
+  local payload="${1:-}" configured="${2:-}"
+
+  case ",${configured}," in
+    *,local-ai-reviewer,*) ;;
+    *) printf '{"outcome":"not_configured","head_sha":"","iteration":0}\n'
+       return 0 ;;
+  esac
+
+  printf '%s' "$payload" | jq -c '
     [ (.entries // [])[]
-      | select((.platforms // []) | index("local-ai-reviewer"))
+      | . as $entry
+      | ((.platform_results // [])[]
+         | select(.platform == "local-ai-reviewer")
+         | {outcome: (.result // "unknown"),
+            head_sha: (.reviewed_head // $entry.head_sha // ""),
+            iteration: $entry.iteration})
     ]
     | sort_by(.iteration)
     | last
-    | if . == null then {outcome: "not_yet_run", head_sha: "", iteration: 0}
-      else {outcome: (.result // "unknown"),
-            head_sha: (.head_sha // ""),
-            iteration: .iteration}
-      end'
+    // {outcome: "not_yet_run", head_sha: "", iteration: 0}'
 }
 ```
 
@@ -445,13 +537,13 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The six proofs fall into
+runs per proof, each citing a concrete file and line. The eight proofs fall into
 two groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Overclaiming | **4** | P1, P2, P3, P4 | a number asserted on evidence that does not support it |
-| Contract | **2** | P5, P6 | a report or a line that breaks its own stated bound |
+| Overclaiming | **5** | P1, P2, P3, P4, P8 | a number asserted on evidence that does not support it |
+| Contract | **3** | P5, P6, P7 | a report, a line, or a stored history that breaks its own stated contract |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
@@ -460,9 +552,11 @@ two groups:
 | P3 | Treat any non-zero `--is-ancestor` status as "not an ancestor" | a scratch copy of `reviewer_loop_commit_ancestry` | scenario 5 fails in all three cases: an absent commit, a non-0/1 exit, and an empty argument are all recorded as `clean_unrelated_commit`, asserting a severed relationship the repository never established. Scenario 4 still passes, which is the point — the plant is invisible to every test with a healthy repository; restoring the five-way return passes |
 | P4 | Merge `not_yet_run` into `not_configured` | a scratch copy of the verdict selector | scenario 2 fails: a pull request early in its life and a repository with no local reviewer become the same value, and the report can no longer tell "has not run yet" from "will never run"; restoring the two values passes |
 | P5 | Test writability before eligibility | a scratch copy of the record entry point | scenario 12 fails: a round whose only findings came from the local reviewer reports a telemetry failure on an unwritable history, though no record was owed. Scenario 11 still passes; restoring the spec's row order passes both |
+| P7 | Keep the current behavior: re-render the history section with the unavailable stub when `append_safe` is 0 | a scratch copy of the render path | scenario 11 fails: the prior block is replaced by an empty stub, so a history that failed to parse once loses every entry it held — and the loss is invisible, because the stub looks like a well-formed report of a problem; restoring the do-not-re-render rule passes |
+| P8 | Fall back to the entry's aggregate `result` when `platform_results` is absent | a scratch copy of the selector | scenario 3a fails: a pre-change entry whose round was aggregate-clean is read as a clean **local** verdict, so rounds the local reviewer never ran are recorded as confirmed misses. The plant only affects historical entries, which is where nobody looks; restoring the `unknown` fallback passes |
 | P6 | Enforce the 200-character bound by truncating the finished line | a scratch copy of the renderer | scenario 13's long-path case fails: truncation removes the tail, which is where the local evidence state and the classification sit, so the line that survives is the one carrying paths and no verdict — exactly inverted from what a reader needs; restoring build-order enforcement passes |
 
-Four proofs plant the overclaiming direction because that is the direction with
+Five proofs plant the overclaiming direction because that is the direction with
 no symptom: every one of them produces a plausible number, and a number is
 believed. P3 is the one to read twice — its plant passes every test written
 against a healthy repository, and only a fixture with a deliberately deleted
@@ -478,21 +572,28 @@ object exposes it.
    this plan. **Verify**: the merged commit and the field names it introduced.
 1. Add `reviewer_loop_commit_ancestry`. **Verify**: scenarios 4 and 5 in the new
    suite, including the deleted-object fixture.
-2. Add `reviewer_loop_local_latest_verdict`. **Verify**: scenarios 1, 2 and 3 —
-   recency over cleanliness, and the two absent-reviewer values kept apart.
+1a. Add `platform_results` to `reviewer_loop_history_build_entry`, built from
+   `platform_result_tokens`. **Verify**: scenario 14 and scenario 3b.
+2. Add `reviewer_loop_local_latest_verdict`, taking the history payload and the
+   configured-platform list. **Verify**: scenarios 1, 2, 3, 3a and 3b — recency
+   over cleanliness, the two absent-reviewer values kept apart by the
+   configuration argument alone, and the `unknown` fallback for pre-change
+   entries.
 3. Add `reviewer_loop_local_evidence_state`. **Verify**: scenario 6 — one case
    per row, including both routes to `unknown`.
 4. Add `reviewer_loop_missed_finding_records` with its four exclusions as early
    `continue`s. **Verify**: scenarios 7, 8, 9, 10 and 16.
 5. Extend `reviewer_loop_history_build_entry` with `missed_findings`, schema
    string unchanged. **Verify**: scenario 14, field by field.
-6. Add the eligibility-then-writability ordering and the row-4 report.
-   **Verify**: scenarios 11 and 12.
+6. Change the render path so an unappendable history is **not** re-rendered,
+   and add the eligibility-then-writability ordering and the row-4 report.
+   **Verify**: scenarios 11 and 12, including the byte-for-byte comparison
+   against a saved prior body.
 7. Add the summary renderer. **Verify**: scenarios 13 and 15, including the
    zero-path line.
 8. Update Protocol 93 and the `--help` block. **Verify**: runbook Step 9 reads
    both against the code.
-9. Produce the six planted-violation proofs (P1-P6) and record them in the PR
+10. Produce the eight planted-violation proofs (P1-P8) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---

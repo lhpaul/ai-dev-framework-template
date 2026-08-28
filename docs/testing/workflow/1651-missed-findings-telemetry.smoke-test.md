@@ -41,12 +41,17 @@ P1.
 
 **Maps to**: AC-6.
 
-1. Call the selector with a payload where the local reviewer appears in no
-   entry and **is** in the configured platform list.
-2. Call it with a payload where it is absent from the configured list.
+1. Call the selector with an **empty** history and a configured list that
+   contains `local-ai-reviewer`.
+2. Call it with the **same** empty history and a configured list that does not.
 
 **Expected result**: `not_yet_run` and `not_configured`, asserted as those two
 values — not merely as two non-clean results.
+
+The two calls differ only in the configured-platform argument, which is the
+point: an empty history looks identical for a repository that has not run the
+reviewer yet and one that never will, so no amount of history can separate them.
+That is why the selector takes two inputs.
 
 A pull request early in its life and a repository that will never produce local
 evidence are different facts about different repositories. Summed, they make a
@@ -57,14 +62,27 @@ P4.
 
 **Maps to**: AC-7.
 
-1. Call the selector with entries that exist but establish no outcome for the
-   local reviewer.
+1. Call the selector with entries that exist but name no local-reviewer result.
+2. Call it with an entry written **before** this change — `platforms` present,
+   `platform_results` absent — whose aggregate `result` is `clean`.
+3. Call it with an entry whose aggregate `result` is `needs_fixes` because an
+   external reviewer failed, while the local reviewer's own entry in
+   `platform_results` reads `clean`.
 
-**Expected result**: `unknown`, a record still written, neither a confirmed nor
-a possible miss.
+**Expected result**: `unknown` for 1 and 2; `clean` for 3. A record is written
+in every case, and 1 and 2 are neither confirmed nor possible misses.
 
 `unknown` here is not a failure — the history is readable and simply does not
 say. That is why it belongs in the denominator rather than being dropped.
+
+Case 2 is the fail-closed one. A pre-change entry carries only the **aggregate**
+round result, and reading that as the local reviewer's verdict would record
+rounds the local reviewer never ran as confirmed misses — in the historical half
+of the data, where nobody checks. Proof P8.
+
+Case 3 is the same confusion in the present tense: the aggregate says
+`needs_fixes` because *someone* failed, and the local reviewer was clean. Only
+`platform_results` distinguishes them.
 
 ## Step 4: Ancestry answers four ways on a healthy repository
 
@@ -140,11 +158,21 @@ observation about the reviewer, not a duplicate row.
 2. With the history unwritable and **no** record owed — findings from the local
    reviewer, or advisory only: run it.
 
-**Expected result**: case 1 writes no record, leaves the existing payload
-byte-for-byte unchanged, and states in its output that telemetry could not be
-recorded and why, naming the reason the loop already computed
-(`malformed_history`, `unknown_schema`, or `prior_unavailable`). Case 2 produces
-**no** telemetry-failure report.
+3. With the history unwritable and **no prior history block at all**: run it.
+
+**Expected result**: case 1 writes no record, leaves the previously posted
+history block **byte-for-byte unchanged** — compared against a saved copy of the
+prior body, never against a re-render — and states in the summary body that
+telemetry could not be recorded and why, naming the reason the loop already
+computed (`malformed_history`, `unknown_schema`, or `prior_unavailable`). Case 2
+produces **no** telemetry-failure report. Case 3 writes the unavailable stub,
+which is what the stub is for.
+
+Case 1 is a **change**, not a confirmation. Today the loop builds a replacement
+payload with empty entries and renders it over the previous block, so a history
+that merely failed to parse once loses every entry it held — and the loss is
+invisible, because the stub looks like a well-formed report of a problem rather
+than a deletion. Proof P7.
 
 Case 2 fails whenever the two tests are ordered the other way, and that ordering
 is the natural one: writability is a property of the loop and eligibility a
@@ -178,10 +206,10 @@ verdict, exactly inverted from what it is for. Proof P6.
 1. Read a history entry produced by the implementation.
 2. Assert each of the eighteen existing fields by name and type, and the
    `phase_after_clean` object with its five keys.
-3. Assert `missed_findings` is present and is an array.
+3. Assert `platform_results` and `missed_findings` are present and are arrays.
 4. Assert `schema` still reads `reviewer_loop_history.v1`.
 
-**Expected result**: all present and unchanged; exactly one field added; the
+**Expected result**: all present and unchanged; exactly two fields added; the
 schema string unchanged.
 
 Asserted field by field rather than by counting, so an accidental rename cannot
@@ -236,11 +264,11 @@ status. The records change what is *known*, never what happens.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P6 each record the command, the file and line of the
+2. Confirm P1 through P8 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: six proofs in two groups — **four** overclaiming, **two**
-contract, per the plan's proof-group table.
+**Expected result**: eight proofs in two groups — **five** overclaiming,
+**three** contract, per the plan's proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:
 each of its plants produces a plausible number, and a number is believed. P3 is
@@ -252,5 +280,5 @@ repository.
 ## Rollback verification
 
 Revert the implementation PR and re-run Steps 1 and 10. The derivation functions
-must be absent, and a freshly written history entry must carry no
-`missed_findings` key.
+must be absent, and a freshly written history entry must carry neither
+`platform_results` nor `missed_findings`.
