@@ -786,7 +786,7 @@ by the same sequential block that already writes `platform_result_tokens`.
 
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
-| Gate condition fixture | A table-driven set of the conditions with each one independently unmet, plus the eight-row unexpected-value table for condition 1, driving scenarios 2–5 and 9–11 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Gate condition fixture | A table-driven set of the conditions with each one independently unmet, plus the six-row unexpected-value table for condition 1, driving scenarios 2–5 and 9–11 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Platform-order fixture | A resolved list declaring `codex-github` first, an already-correct list, and a two-bucket list with `codex-github` on draft and `bugbot` on ready — driving scenarios 6, 6b and 7 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Peer-evidence fixture | One peer per row of scenario 8's table: `clean`, the four accepted skip reasons, the three rejected skip reasons, an unknown skip reason, an empty skip reason, `needs_fixes` and `escalate` | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Unreadable-input mocks | Mock `gh` commands that exit non-zero for the threads query and for the check rollup, plus a rollup that returns an empty array and one containing only reviewer-owned checks — driving scenarios 10 and 12 and proofs P3 and P16 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
