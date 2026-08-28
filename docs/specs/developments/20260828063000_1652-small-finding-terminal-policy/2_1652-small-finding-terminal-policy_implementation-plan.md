@@ -214,11 +214,19 @@ Not applicable — this repository ships workflow tooling, not a service.
       are never collected, so "take the finding bodies alongside the paths" is
       not implementable without a stated representation. The concrete change:
 
-      1. Add `reviewer_loop_blocking_findings_from_output <output> <count>`,
+      1. Add `reviewer_loop_blocking_findings_from_output <output> <count> <platform>`,
          emitting **one compact JSON object per line**:
          `{"path":…,"platform":…,"body":…}`, built with
          `jq -c -n --arg path … --arg platform … --arg body …`. Consumers read
          the fields back with `jq -r`.
+
+         The platform is a **third argument**, not read from the output: the
+         reviewer output carries no per-finding platform key, and
+         `platform_name` exists only in the caller's loop. The call site is the
+         per-platform block that already computes it, alongside the existing
+         `reviewer_loop_blocking_paths_from_output "$platform_output"
+         "$platform_blocking_count"` call, which keeps its two-argument
+         signature unchanged.
 
          **Not a delimiter-separated record.** An earlier revision proposed
          `<path><TAB><platform><TAB><body>` on the reasoning that a path cannot
@@ -859,10 +867,15 @@ reviewer_loop_finding_touches_contract_surface() {
    scenario 4, scenario 6a's seven cosmetic bodies, scenario 10b's identity and
    determinism assertions, and every row of the parser-risk edge-case list
    including the `delegates`/`gate` and `failXclosed` negatives.
-3. Add `reviewer_loop_blocking_findings_from_output` emitting one compact JSON
-   object per finding via `jq -c -n --arg`, accumulate them
-   **without deduplication** into `aggregate_blocking_findings`, decode the
-   `\n` sequence to a space for matching only, and replace
+3. Add `reviewer_loop_blocking_findings_from_output <output> <count> <platform>`
+   emitting one compact JSON object per finding via `jq -c -n --arg`, taking the
+   platform as its third argument from the caller's `platform_name`, and
+   accumulate the records **without deduplication** into
+   `aggregate_blocking_findings`. Before matching, **replace** each occurrence
+   of the two-character sequence `\n` with a single space — a normalisation
+   applied only to the string handed to the matcher. Do **not** decode it: the
+   producer's encoding is lossy and not reversible, and the stored and
+   summarised body must remain the value as received. Then replace
    `reviewer_loop_all_paths_non_shipped` with
    `reviewer_loop_all_findings_are_small`. **Verify**: scenarios 5, 6, 7, 7a,
    7b, 7b-i, 7c and 7d — in particular that two findings on one path both
