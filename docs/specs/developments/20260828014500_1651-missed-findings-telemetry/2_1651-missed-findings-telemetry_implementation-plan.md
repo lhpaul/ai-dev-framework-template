@@ -743,6 +743,13 @@ Not applicable — this repository ships workflow tooling, not a service.
   — the `missed_findings` array, the ten states, and the summary line format.
 - The `--help` block of `pr-review-loop.sh`, where the ledger is described.
 - No `REVIEW.md` change: this item adds telemetry, not a review rule.
+- `changelog.d/1651.added.missed-finding-telemetry.md` — the release-note
+  fragment Protocol 03 Step 6 requires of feature work. `<kind>` is `added`
+  rather than `changed`: the reviewer-loop history gains a record type that did
+  not exist, and no existing behavior changes for anyone not reading it. The
+  body is written from the reader's perspective — what a pull request now
+  records and what it does not claim — rather than as a description of the
+  code.
 
 ---
 
@@ -948,8 +955,11 @@ object exposes it.
    and computing the remainder from the paths actually named. **Verify**:
    scenarios 13, 13a, 13c and 15 — the zero-path line, the
    eight-findings-over-three-files case, and the three remainder forms.
-8. Update Protocol 93 and the `--help` block. **Verify**: runbook **Step 12a**,
-   which reads both surfaces against the implementation.
+8. Update Protocol 93 and the `--help` block, and add
+   `changelog.d/1651.added.missed-finding-telemetry.md`. **Verify**: runbook
+   **Step 12a**, which reads both documentation surfaces against the
+   implementation, and confirm the fragment's name matches
+   `<item>.<kind>.<slug>.md` with a bare `1651`.
 10. Produce the nineteen planted-violation proofs (P1-P19) and record them in the PR
    with the command, file, line and both outcomes for each.
 

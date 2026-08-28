@@ -442,6 +442,7 @@ status. The records change what is *known*, never what happens.
    `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`.
 2. Run `scripts/development-workflow/pr-review-loop.sh --help` and read the
    ledger description.
+3. Read `changelog.d/1651.added.missed-finding-telemetry.md`.
 
 **Expected result**: both describe the same two added fields
 (`platform_results`, `missed_findings`), the same ten local evidence states, and
@@ -449,6 +450,12 @@ the same summary-line format including the remainder text. Neither may describe
 `classification` as depending on anything but the local evidence state, and
 neither may mention a dispatched-head fallback. Reading them against Steps 0
 through 11 must surface no contradiction.
+
+The fragment exists, is named `<item>.<kind>.<slug>.md` with a bare `1651`, and
+its body reads as a finished changelog bullet from the reader's perspective —
+what a pull request now records, and what it does not claim. A fragment that
+describes the implementation rather than the change is the common failure and is
+not what Protocol 03 Step 6 asks for.
 
 ## Step 13: Static checks
 
