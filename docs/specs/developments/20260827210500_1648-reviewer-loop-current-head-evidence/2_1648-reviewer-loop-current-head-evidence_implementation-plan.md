@@ -371,6 +371,31 @@ declare or imply coverage of the changed scripts and need no edit.
 `test-pr-review-loop.sh` currently relies on the naming convention, which is why
 it needs both lines above rather than one — see the note there.
 
+### Planted-violation proofs (mandatory before `ready-for-human-review`)
+
+This plan adds a new automated readiness check — the Check 0.6 local-reviewer
+condition — so `REVIEW.md` § Planted-violation proof and
+`docs/best-practices/3-testing.md` § Planted-Violation Proofs apply. The
+negative unit cases above are necessary but not sufficient: they prove the
+classifier's return values, not that the *gate* refuses a PR. The implementation
+PR must include two demonstrated runs per proof, each citing a concrete file and
+line, showing the check failing with the violation planted and passing once it
+is removed. The exemption for pure refactors of already-proven logic does not
+apply — this is a new control.
+
+| # | Violation to plant | Where | Check that must fail, then pass |
+| --- | --- | --- | --- |
+| P1 | A stale local clean result: ledger's newest `reviewed_heads` entry for `local-ai-reviewer` records a 40-character OID that is not the live `headRefOid`, with `LOCAL_AI_CONFIGURED=1` | the `pull_request.local_reviewer_head` fixture in `scripts/development-workflow/tests/test-item-completion-self-check.sh` | the self-check reports `discrepancy` and the section is non-terminal; removing the violation (matching OIDs) reports `verified` |
+| P2 | Missing head evidence: `LOCAL_AI_CONFIGURED=1` with `LOCAL_AI_HEAD_CURRENT` present and empty | the Check 0.6 fixture in `scripts/development-workflow/tests/test-pr-review-loop.sh` | Check 0.6 exits 12 and refuses `ready-for-human-review`; setting `LOCAL_AI_HEAD_CURRENT=1` exits 0 |
+| P3 | Telemetry loss: `LOCAL_AI_CONFIGURED` unset in the checklist environment while the loop reported `clean` | same fixture as P2 | Check 0.6 exits 12 with the carry-forward message; exporting the key restores exit 0 — this is the proof that an absent key is not silently treated as "not applicable" |
+| P4 | Carry-forward regression: revert the unset loop's `grep -oE` to `grep -o` in a scratch copy of the Protocol 91 snippet | the snippet fixture used by scenario 12 in `scripts/development-workflow/tests/test-pr-review-loop.sh` | the clearing assertion fails because stale keys survive; restoring `-E` passes — this is the proof for the Bugbot finding that motivated the `-E` |
+| P5 | Coverage regression: remove the `# covers: scripts/development-workflow/pr-review-loop.sh` line from `test-pr-review-loop.sh` in a scratch copy | run `scripts/development-workflow/select-test-suites.sh` against a change set touching only `pr-review-loop.sh` | the suite is **not** selected; restoring the line selects it — the proof for the `declared=1` fallback risk |
+
+Record all five in the implementation PR description under a
+`Planted-Violation Proofs` heading, each with the command run, the file and line
+of the planted violation, and the two outcomes. A proof that shows only the
+passing direction does not satisfy the rule.
+
 **Smoke test runbook**:
 `docs/testing/workflow/1648-reviewer-loop-current-head-evidence.smoke-test.md`
 
@@ -570,10 +595,14 @@ the verdict without resolving an abbreviation.
 9. Run `bash scripts/development-workflow/select-test-suites.sh` against the
    change set and confirm the three suites are selected. **Verify**: read the
    selection output and confirm it names them.
-10. Run `shellcheck` on both changed scripts and `markdownlint-cli2` on both
+10. Produce the five planted-violation proofs (P1–P5) from **Testing Strategy**
+    and record them in the PR description under a `Planted-Violation Proofs`
+    heading. **Verify**: each proof shows two runs at a concrete file and line —
+    failing with the violation planted, passing once removed.
+11. Run `shellcheck` on both changed scripts and `markdownlint-cli2` on both
     changed protocol documents, the plan, and the runbook. **Verify**: both
     tools exit 0.
-11. Add a changelog fragment
+12. Add a changelog fragment
     `changelog.d/1648.changed.reviewer-loop-current-head-evidence.md` containing
     exactly:
 
@@ -581,5 +610,5 @@ the verdict without resolving an abbreviation.
     - **Reviewer-loop current-head evidence** (#1648): the reviewer-loop summary and history now record which commit each reviewer actually reviewed, and a stale local-ai-reviewer clean result no longer satisfies `ready-for-human-review`.
     ```
 
-12. Update project docs per **Documentation Updates** above (steps 7 covers the
+13. Update project docs per **Documentation Updates** above (step 7 covers the
     two protocol files; no other project doc is affected).

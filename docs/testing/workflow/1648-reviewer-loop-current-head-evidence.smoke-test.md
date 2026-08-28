@@ -262,6 +262,23 @@ suite's first `# covers:` line disables the naming-convention fallback, so if
 only the protocol line were present, step 2 would not select the suite and a
 change to the loop script would ship with its own tests unrun.
 
+### Step 7d: Planted-violation proofs are present and two-directional
+
+**Maps to**: `REVIEW.md` § Planted-violation proof and
+`docs/best-practices/3-testing.md` § Planted-Violation Proofs.
+
+1. Read the implementation PR description's `Planted-Violation Proofs` heading.
+2. For each of P1–P5 in the plan's Testing Strategy, confirm the PR records the
+   command run, the file and line where the violation was planted, and **both**
+   outcomes.
+
+**Expected result**: five proofs, each showing the check failing with the
+violation present and passing once removed. A proof that records only the
+passing direction does not satisfy the rule, and neither do the negative unit
+cases on their own — those pin the classifier's return values, not the gate's
+refusal. P3 in particular must show that an unset `LOCAL_AI_CONFIGURED` is
+refused rather than silently treated as "not applicable".
+
 ### Step 8: Static checks
 
 1. Run `shellcheck` on the two changed scripts.
