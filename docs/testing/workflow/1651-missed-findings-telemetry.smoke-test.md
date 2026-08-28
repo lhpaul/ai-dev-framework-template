@@ -383,15 +383,24 @@ introduced to handle them: no head, no record, reason reported.
 5. Run one case per adapter from the plan's ten-row table, each against a
    fixture of its own artifact shape.
 
-**Expected result**: nine emit a head; `claude-code-action` emits **none**.
+**Expected result**: eight emit a head; `claude-code-action` and `pr-agent`
+emit **none**.
 
 GitHub attaches a commit to *review* comments and to *reviews*, never to issue
 comments — so an adapter whose only artifact is an issue comment has no evidence
-to offer. `claude-code-action` is that adapter today, and `pr-agent` escapes it
-only because it also produces a check run. The no-head row is the one most
-likely to be implemented wrong, because "every adapter emits a head" is the
-natural reading of the requirement, so it is asserted per adapter rather than
-described once. Proof P18.
+to offer. Two adapters are in that position.
+
+`pr-agent` looks like it escapes because it also touches a check run, and it
+does not: `run_pr_agent_review` locates that run **by the pull request's current
+head** and uses it only to detect an active run, while the result it reports
+comes from an issue comment. Taking the run's `head_sha` would be circular — the
+loop looking up a commit it already chose and calling it the reviewer's
+statement — and could attribute a finding to a commit the comment never
+established.
+
+The no-head rows are the ones most likely to be implemented wrong, because
+"every adapter emits a head" is the natural reading of the requirement, so they
+are asserted per adapter rather than described once. Proof P18.
 
 ## Step 8: An unwritable history reports only what was owed
 

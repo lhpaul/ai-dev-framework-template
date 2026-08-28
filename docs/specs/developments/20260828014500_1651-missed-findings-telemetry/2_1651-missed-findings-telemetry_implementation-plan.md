@@ -234,16 +234,28 @@ Not applicable — this repository ships workflow tooling, not a service.
       | `haystack` | 2540 | a local companion script | `haystack-reviewer.sh:202` already resolves `head.sha` and fetches the check run **for that commit**; the script emits that value |
       | `coderabbit-cli` | 2711 | a local companion script | `coderabbit-cli-reviewer.sh:186-194` already resolves `HEAD_SHA` from `headRefOid` and requires the checkout to match it; the script emits that value |
       | `devin` | 2970 | review comments and reviews | `commit_id` |
-      | `pr-agent` | 3418 | a check run and issue comments | `head_sha` on the check run |
+      | `pr-agent` | 3418 | an issue comment; its check-run query only detects an active run | **none** — see below |
       | `coderabbit` | 4979 | review comments and reviews | `commit_id` |
 
       **Issue comments carry no commit, and that is the load-bearing row.**
       GitHub attaches a commit to *review* comments and to *reviews*, not to
       issue comments — so an adapter whose only artifact is an issue comment has
-      no evidence, emits no head, and its rounds produce no record. Today that
-      is `claude-code-action`; `pr-agent` avoids it only because it also
-      produces a check run. Neither is a defect to work around: it is the
-      attribution rule applying to a platform that never says what it read.
+      no evidence, emits no head, and its rounds produce no record. **Two**
+      adapters are in that position, `claude-code-action` and `pr-agent`.
+
+      `pr-agent` looks like it escapes because it also touches a check run, and
+      it does not. `run_pr_agent_review` locates that run **by the pull
+      request's current head**, and uses it only to detect whether a run is
+      active; the result it reports comes from an issue comment. Taking the
+      run's `head_sha` would therefore be circular — the loop would look up a
+      commit it already chose and call it the reviewer's statement — and it
+      could attribute a finding to a commit the comment never established.
+      An earlier revision of this plan did exactly that. It is withdrawn:
+      `pr-agent` emits no head until it names a commit in its own output.
+
+      Neither is a defect to work around. It is the attribution rule applying to
+      a platform that never says what it read, and inventing a head for it is
+      the failure the rule exists to prevent.
 
       **The two local companion scripts already hold the evidence**, which is
       why "as `local-ai-reviewer.sh` does" is a statement about output format
@@ -921,9 +933,10 @@ Not applicable — this repository ships workflow tooling, not a service.
     check run — its `head_sha` is emitted; and one where the platform produced a
     comment with no `commit_id` at all — no head.
 13f. One case **per adapter** from the adapter table — ten — asserting the head
-    each emits from a fixture of its own artifact shape, and that
-    `claude-code-action` emits **none** because an issue comment carries no
-    commit. Written per adapter rather than as one generic case: the four
+    each emits from a fixture of its own artifact shape. **Eight** emit one;
+    `claude-code-action` and `pr-agent` emit **none**, because an issue comment
+    carries no commit and `pr-agent`'s check run is located by the head the loop
+    already chose. Written per adapter rather than as one generic case: the four
     artifact shapes are not interchangeable, and the row most likely to be
     implemented wrong is the one whose correct answer is "no head".
 13b. An external round whose reviewed commit **cannot be established** produces
@@ -1172,7 +1185,7 @@ three groups:
 | P14 | Select from persisted entries only, omitting the current round's records | a scratch copy of the call site | scenarios 1a and 1b fail: a round where the local reviewer was clean and an external reviewer found blockers is classified from the previous round's verdict, or as `not_yet_run` when there is no previous round — so the confirmed miss the feature exists to record is the one case it cannot see. Every other scenario still passes, because they all supply the verdict as prior history; restoring the composition passes |
 | P16 | Fall back to the entry's `head_sha` when a local verdict has no `reviewed_head` | a scratch copy of the selector | scenario 6a fails: the local reviewer's verdict is compared against the live head at write time rather than the commit it examined, so two unrelated facts can produce `clean_same_commit` and a confirmed miss. The plant is invisible whenever the two happen to coincide, which is most rounds; restoring the empty head — and with it an undecidable ancestry and `unknown` — passes |
 | P19 | Test configured-platform membership with a comma-delimited `case` | a scratch copy of the selector's guard | scenario 2b's first case fails: a repository configuring three platforms, `local-ai-reviewer` among them, is reported `not_configured` — the state meaning the reviewer will never run — so every round on it is excluded from the denominator and the effectiveness rate is computed over the wrong population. The plant passes whenever the reviewer is the only configured platform, which is the shape every single-platform fixture has; restoring `grep -Fxq` passes |
-| P18 | Give `claude-code-action` a head by falling back to the pull request's current head | a scratch copy of that adapter | scenario 13f's `claude-code-action` case fails: an adapter whose only artifact is an issue comment gains a head it never stated, and its rounds start producing records — and confirmed misses — against a commit nobody claimed to have reviewed. The plant is the natural reading of "every adapter emits a head", which is why the table's one no-head row is tested rather than described; restoring the no-head result passes |
+| P18 | Give `claude-code-action` or `pr-agent` a head from the pull request's current head — directly, or via the check run `run_pr_agent_review` locates with it | a scratch copy of either adapter | scenario 13f's two no-head cases fail: an adapter whose only artifact is an issue comment gains a head it never stated, and its rounds start producing records — and confirmed misses — against a commit nobody claimed to have reviewed. The `pr-agent` half is the subtler plant, because the head arrives through a real artifact and still originates from the loop's own choice; restoring the no-head result passes |
 | P22 | Feed the membership check with `printf '%s\\n' "$configured" \| grep -Fxq` | a scratch copy of the guard | scenario 2c fails under `set -o pipefail`: `grep -q` closes its input on the first match, the producer takes SIGPIPE on the remaining 499 lines, the pipeline reports non-zero, and a configured reviewer is classified `not_configured` — removing every round on that repository from the denominator. Scenario 2b still passes on its short lists, which is why 2c specifies both the early match and the length; restoring the here-string passes |
 | P21 | Compose the current round's `platform_results` without its `reviewed_heads[]` | a scratch copy of the call site | scenarios 1a and 1b fail: the same-round local-clean verdict is found, its head is empty, the ancestry is undecidable and the state is `unknown` — so the confirmed miss this feature exists to record becomes an unknown, and the half-move looks correct because the outcome half of the composition works; restoring both arrays passes |
 | P30 | Render the classification with spaces (`confirmed miss`) instead of the stored enum | a scratch copy of the renderer | scenario 13c-iii fails against its exact expected string. The length arithmetic counts the enum's width, so a different rendering makes the 200-character proof describe a line the code does not produce — and the drift is invisible on short records, which is every other scenario; restoring the enum passes |
@@ -1278,13 +1291,13 @@ Revert the implementation PR. What it removes:
 - three derivation functions — the ancestry classifier, the verdict selector,
   and the evidence-state mapping — plus the record builder;
 - the summary renderer and its remainder logic;
-- the `REVIEWED_HEAD` emission added to **nine** of the ten external platforms
-  in the adapter table. Seven are adapter changes inside `pr-review-loop.sh`
-  (`greptile`, `codex-github`, `copilot`, `bugbot`, `devin`, `pr-agent`,
-  `coderabbit`); two are changes to the companion scripts the table already
-  counts, `haystack-reviewer.sh` and `coderabbit-cli-reviewer.sh`. The tenth,
-  `claude-code-action`, is **not** modified: its only artifact is an issue
-  comment, which carries no commit, so it deliberately emits no head;
+- the `REVIEWED_HEAD` emission added to **eight** of the ten external platforms
+  in the adapter table. Six are adapter changes inside `pr-review-loop.sh`
+  (`greptile`, `codex-github`, `copilot`, `bugbot`, `devin`, `coderabbit`); two
+  are changes to the companion scripts the table already counts,
+  `haystack-reviewer.sh` and `coderabbit-cli-reviewer.sh`. The other two,
+  `claude-code-action` and `pr-agent`, are **not** modified: neither names a
+  commit in its own output, so both deliberately emit no head;
 - the render-path change that preserves an unappendable history, which
   **reverts to overwriting it with an empty stub** — the one part of the revert
   that restores a defect rather than removing a feature, and the reason a
