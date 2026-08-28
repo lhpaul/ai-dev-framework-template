@@ -479,7 +479,7 @@ point. No listeners, timers, or shared mutable state are introduced.
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
 | Path classification fixture | The five paths that change disposition and the four that must not, driving scenarios 1-3 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
-| Contract-surface body fixture | One body per row of the contract-surface table; three cosmetic bodies; the **seven bare-common-word cosmetic bodies** of scenario 6a, one per removed term; the three qualified-phrase controls that must still match; and the ten parser edge cases including the two substring negatives | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Contract-surface body fixture | One body per row of the contract-surface table; three cosmetic bodies; the **seven bare-common-word cosmetic bodies** of scenario 6a, one per removed term; the three qualified-phrase controls that must still match; and the eleven parser edge cases, including the two substring negatives, the `failXclosed` wildcard negative and the unhyphenated `allow list` negative | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Multi-contributor round fixture | A single round with counted findings from two platforms, in four combinations — both on the current head, one stale, one reporting no head, and both stale — driving scenario 8a | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Co-occurring-cause fixtures | Three rounds driving scenario 10a: one carrying both a shipped-path and a contract-surface finding; one whose findings are all small with one stale contributor and one reporting no head; and one carrying a contract-surface finding together with a contributor on a stale head, to prove the currency check is never reached | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Head-comparison ledger fixture | Ledger payloads with prior small rounds on an older head, on the current head, and with absent, empty and placeholder heads — driving scenarios 8, 9, 10 and 14 | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
@@ -618,11 +618,15 @@ reviewer_loop_finding_touches_contract_surface() {
    entries via the counter, and for the deciding round via the per-reviewer
    reviewed head from #1648, requiring **every** contributing reviewer to report
    `loop_head_sha`. **Verify**: scenarios 8a, 10 and 11.
-5a. Implement the four-level `SMALL_FINDINGS_BLOCKED_BY` precedence
-   (`shipped_path` > `contract_surface` > `stale_head` > `head_unknown`) and
-   collect **every** cause present rather than only the reported one, since the
-   summary line names them all. **Verify**: scenarios 10a and 11 — the key
-   carries the first cause by precedence and the collected set carries the rest.
+5a. Implement `SMALL_FINDINGS_BLOCKED_BY` as **two within-group precedences**,
+   not a four-level global one: `shipped_path` over `contract_surface` in the
+   content group, and `stale_head` over `head_unknown` in the currency group.
+   The groups are mutually exclusive, so exactly one group is ever populated:
+   collect every cause **within the reached group** for the summary line, and
+   never evaluate the currency causes when a content cause exists. **Verify**:
+   scenarios 10a and 11 — the key carries the first cause of the reached group,
+   the collected set carries the rest of that group only, and 10a's third row
+   records no currency cause at all.
 6. Extend the summary's small-findings line to name every collected cause: the
    shipped paths, the matched contract-surface identities as printed by the
    predicate, and the platform responsible for any stale or unknown head.

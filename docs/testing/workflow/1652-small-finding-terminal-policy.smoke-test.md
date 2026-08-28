@@ -181,10 +181,13 @@ cannot demonstrate anything.
 2. Run it once where the terminal rule fires.
 3. Read `SMALL_FINDINGS_BLOCKED_BY` and the summary's small-findings line.
 
-4. Run it three more times: a round carrying both a shipped-path and a
-   contract-surface finding; a round whose findings are all small but which has
-   one stale contributor and one reporting no head; and a round carrying a
-   contract-surface finding **together with** a contributor on a stale head.
+4. Run it three more times. Two carry genuinely co-occurring causes: a round
+   with both a shipped-path and a contract-surface finding, and a round whose
+   findings are all small but which has one stale contributor and one reporting
+   no head. The third is a **mutual-exclusivity** case rather than a
+   co-occurrence: a round carrying a contract-surface finding **together with** a
+   contributor on a stale head, where the two inputs are present but only one
+   becomes a recorded cause.
 
 **Expected result**: the four situations report `shipped_path`,
 `contract_surface`, `stale_head` and `head_unknown` respectively; the firing run
@@ -192,10 +195,11 @@ reports an **empty** value, as does a run whose consecutive count was simply
 short — `exhausted` and `not_small` describe an ordinary short run and are not
 blocking reasons.
 
-The three co-occurring runs report `shipped_path`, `stale_head` and
-`contract_surface` respectively.
+The three runs report `shipped_path`, `stale_head` and `contract_surface`
+respectively.
 
-The first two test the two **within-group** precedences: `shipped_path` outranks
+The first two are the co-occurrence cases, and they test the two **within-group**
+precedences: `shipped_path` outranks
 `contract_surface` because a shipped path is a property of the artifact and
 needs no reading of the finding text to act on, and `stale_head` outranks
 `head_unknown` because a known-different head is the more specific statement.
@@ -273,9 +277,11 @@ rows and Step 7 to fail. A tightening that disables the mechanism would pass
 every permissive proof while introducing a different defect, and it is the more
 likely mistake because it looks like success.
 
-**One** — **P9** — is neither, and forms the third group: it inverts the
-`SMALL_FINDINGS_BLOCKED_BY` precedence so currency reasons outrank content
-reasons. It requires Step 5's **first two** co-occurring runs to fail — the
+**One** — **P9** — is neither, and forms the third group: it inverts both
+**within-group** `SMALL_FINDINGS_BLOCKED_BY` precedences, reporting
+`contract_surface` over `shipped_path` and `head_unknown` over `stale_head`.
+There is no cross-group ordering to invert, because content and currency causes
+are mutually exclusive. It requires Step 5's **first two** co-occurring runs to fail — the
 content-group pair reporting `contract_surface` where a shipped path is present,
 and the currency-group pair reporting `head_unknown` where a known-different
 head is present. Both are genuine co-occurrences within a group, so both can
