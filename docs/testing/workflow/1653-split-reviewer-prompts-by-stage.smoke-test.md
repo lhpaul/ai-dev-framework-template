@@ -13,19 +13,38 @@ resolvers directly; steps 6 through 9 exercise the assembled behavior.
 
 **Maps to**: the structural prerequisite for Steps 1 through 3.
 
+**Order matters here.** Check direct execution **first**, then source. Sourcing
+the script runs its `set -euo pipefail` in your shell, after which a command
+that exits non-zero aborts the shell before the next one runs — so a direct run
+placed after the source would never reach its own status check, and would take
+the sourced functions down with it.
+
 <!-- workflow-shell-contract: bash -->
 
 ```bash
+# 1. Direct execution, before anything is sourced.
+HARNESS_MODE=1 scripts/development-workflow/local-ai-reviewer.sh >/dev/null 2>&1
+status=$?
+[ "$status" -eq 2 ] || { echo "expected exit 2, got $status"; exit 1; }
+
+# 2. Now source. This turns on `set -euo pipefail` in this shell for the
+#    remaining steps.
 HARNESS_MODE=1 source scripts/development-workflow/local-ai-reviewer.sh
 declare -F reviewer_stage_for_branch \
   reviewer_changed_files_touch_workflow_policy \
   reviewer_resolve_review_stage
-HARNESS_MODE=1 scripts/development-workflow/local-ai-reviewer.sh; echo "exit=$?"
 ```
 
-**Expected result**: the source defines all three functions and returns without
-exiting; `declare -F` lists three names. The direct run still prints usage and
-reports `exit=2`.
+**Expected result**: the direct run exits 2 without printing a status error; the
+source defines all three functions and returns without exiting; `declare -F`
+lists three names.
+
+**Carry this forward through Steps 1 to 3.** `set -e` is on in your shell from
+the source onward, and two of the three functions return non-zero as a normal
+answer — `reviewer_changed_files_touch_workflow_policy` returns 1 for "no
+policy file". Call them inside an `if`, or suffix with `|| echo 'no match'`;
+calling one bare on a non-matching input ends the shell and looks like a test
+failure when it is the expected result.
 
 The second half is the safety property, and it is why the guard tests
 `BASH_SOURCE[0] != $0` as well as the variable. A guard keyed on `HARNESS_MODE`
