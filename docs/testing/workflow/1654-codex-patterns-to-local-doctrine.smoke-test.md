@@ -20,10 +20,15 @@ in this shell; call anything that returns non-zero as a normal answer inside an
 3. Call it with a catalogue of 12,001 bytes.
 4. Call it with a well-formed catalogue of three patterns.
 
-5. Call it four more times, each with a **different** file operation failing
-   while the others succeed: the size probe, the digest, the pattern count, and
-   the `jq --rawfile` read — for instance by removing the file between the probe
-   and the read, or by putting a failing stub first on `PATH`.
+5. Call it five more times, each with a **different** file operation failing
+   while the others succeed: the snapshot copy, the size probe, the digest, the
+   pattern count, and the `jq --rawfile` read — for instance by removing the
+   file between the probe and the read, or by putting a failing stub first on
+   `PATH`. For the pattern count, fail it two ways: `grep` exiting **1** (no
+   matches) and `grep` exiting **>1** (an error).
+6. Call it once with the catalogue **replaced** immediately after the snapshot
+   is taken, and compare the returned `version` to a hash of the returned
+   `text`.
 
 **Expected result**:
 
@@ -40,7 +45,18 @@ the catalogue, a broken environment, and a maintainer's edit that needs undoing
 — and only the third is actionable by someone reading the pull request.
 Collapsing them into one "not supplied" is the tempting simplification. Proof P1.
 
-Case 5's four runs all return `unreadable` **and the reviewer keeps running**.
+Case 6's `version` is the hash of its own `text`, never of the replacement.
+All four returned values come from **one snapshot**, because reading the live
+file four times lets an edit land between the hash and the text — producing a
+`supplied` record that is internally false and looks entirely normal, after
+which every report grouping reviews by version groups that one wrongly. Proof
+P11.
+
+Case 5's runs return `unreadable` **and the reviewer keeps running** — except
+for the `grep` exit-1 run, which is a real count of zero and stays `supplied`.
+That distinction is the point of failing the count two ways: `grep -c … || true`
+flattens "no matches" and "error" into 0, so an unreadable snapshot would report
+`supplied` with zero patterns. Proof P12.
 This step runs in a shell that has sourced the script, so `set -euo pipefail` is
 active — which is how it runs in production, and the reason a permission-bit
 test is not enough: an ACL, an I/O error, or a file removed between the test and
@@ -288,11 +304,11 @@ changelog bullet from the reader's perspective.
 ## Step 12: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P10 each record the command, the file and line of the
+2. Confirm P1 through P12 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: ten proofs in three groups — **four** silent, **five**
-contract, **one** fail-open, per the plan's proof-group table.
+**Expected result**: twelve proofs in three groups — **four** silent, **five**
+contract, **three** fail-open, per the plan's proof-group table.
 
 The silent group carries the weight, because a review that used less doctrine
 than it reports leaves no trace anywhere. P5 is the one to read twice: its

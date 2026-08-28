@@ -174,6 +174,15 @@ Not applicable — this repository ships workflow tooling, not a service.
       {"state": "...", "text": "...", "pattern_count": N, "version": "..."}
       ```
 
+      **All four values come from one snapshot.** The function copies the
+      catalogue once and derives the size, the hash, the pattern count and the
+      supplied text from that copy. Reading the live file four times would let
+      an edit land between the hash and the text, producing a `supplied` bundle
+      whose `version` identifies different bytes than its `review_doctrine` — a
+      record that is internally false and looks entirely normal. The window is
+      small and the consequence is permanent: every later report grouping
+      reviews by version would group that one wrongly.
+
       **Every read is attempted, and every read's failure is `unreadable`.** A
       permission-bit test is not a read: an ACL, an I/O error, or a file removed
       between the test and the use all pass `[ -r … ]`, and under `set -euo
@@ -269,8 +278,16 @@ catalogue and the reviewer's recorded output.
    of its table, asserting **all four** returned values and not the state
    alone.
 1a. Every file operation's failure yields `unreadable` and the reviewer keeps
-   running: the size probe, the digest, the pattern count and the `jq --rawfile`
-   read, each failed in turn while the others succeed. Exercised under
+   running: the snapshot copy, the size probe, the digest, the pattern count and
+   the `jq --rawfile` read, each failed in turn while the others succeed. The
+   pattern-count case distinguishes **exit 1** — no matches, a real count of
+   zero, still `supplied` — from **exit >1**, an error, which is `unreadable`.
+   `grep -c … || true` flattens the two and reports `supplied` with a wrong
+   count.
+1b. The four values describe **the same bytes**: with the catalogue rewritten
+   during collection, the returned `version` is the hash of the returned `text`,
+   never of a different revision. Exercised by replacing the file immediately
+   after the snapshot is taken. Exercised under
    `set -euo pipefail`, which is how the script runs — a handler that is merely
    present but reached after `set -e` has already aborted is not a handler.
 2. The `oversized` row returns empty `text` **and** a non-empty `version`. Both
@@ -457,6 +474,7 @@ the document.
 | The doctrine is supplied truncated when over the bound | **High** — truncating is the obvious thing to do with a too-large string | **High** — partial doctrine looks complete, and it drops the newest patterns, which are the ones nobody has internalised | `text` is empty in the `oversized` row, asserted by scenario 2; proof **P2** supplies the first 12,000 bytes instead |
 | The bound is duplicated between the linter and the reviewer | **High** if the linter is written in Python like its neighbours | Med — the two drift, and the reviewer accepts a catalogue CI rejects or the reverse | One constant in `workflow-lib.sh`, sourced by both; the linter is Bash for that reason. Scenario 15 moves the constant and requires both to follow; proof **P3** gives the linter its own copy |
 | The incident-reference check is applied to the whole file | Med | Med — contribution guidance legitimately cites repository paths, so the check would reject a valid catalogue and be switched off | Entry-scoped, with the preamble excluded by the same parse that finds the entries. Scenario 13 and proof **P4** |
+| The version and the text describe different revisions | Low per review, **certain** across many | **High** — a `supplied` record that is internally false, and every later report grouping by version groups it wrongly | One snapshot, all four values derived from it. Scenario 1b and proof **P11** |
 | A file operation fails after a permission-bit test and aborts the reviewer | Med | **High** — under `set -e` the round produces no result at all, which is worse than a review without the doctrine | Every read is attempted with its own handler; `wc -c` is the open probe. Scenario 1a and proof **P10** |
 | The digest command is missing and the version is silently empty | Low | Med — two reviews that saw different catalogues become indistinguishable, on one machine, invisibly | No digest means state `unreadable`, not `supplied`. Scenario 6 and proof **P5** |
 | The doctrine's text lands in the `key=value` output | Med | Med — a multi-line value is re-emitted as fabricated keys by the loop | Only the three scalars are printed. Scenario 8 runs the loop's real function; proof **P6** prints the text |
@@ -473,45 +491,53 @@ The supply reader, with the two rows that are easy to get wrong:
 ```bash
 reviewer_doctrine_supply() {
   local path="docs/workflow/development-workflow/review-doctrine.md"
-  local bytes version count
+  local snapshot bytes version count status
+  local unreadable='{"state":"unreadable","text":"","pattern_count":0,"version":""}'
 
   [ -f "$path" ] || { printf '{"state":"absent","text":"","pattern_count":0,"version":""}\n'; return 0; }
-  # Every read is attempted and its failure handled. `[ -r … ]` alone is a
-  # permission-bit test, not a read: an ACL, an I/O error, or a file removed
-  # between the check and the use all pass it, and under `set -e` the failure
-  # that follows would terminate the reviewer instead of reporting
-  # `unreadable` — which AC-8 forbids, since the review must still run.
-  #
-  # `wc -c` is the open probe *and* the size measurement, so no separate
-  # existence-then-read race is introduced; the digest and `jq --rawfile`
-  # below each carry their own `||` handler for the same reason.
-  bytes="$(wc -c <"$path" 2>/dev/null)" || {
-    printf '{"state":"unreadable","text":"","pattern_count":0,"version":""}\n'; return 0; }
+
+  # ONE snapshot, and every value below derived from it. Reading the file four
+  # times would let an edit land between the hash and the text, producing a
+  # `supplied` bundle whose version identifies different bytes than its
+  # doctrine — a record that is internally false and looks fine.
+  snapshot="$(mktemp)" || { printf '%s\n' "$unreadable"; return 0; }
+  cp "$path" "$snapshot" 2>/dev/null || { rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0; }
+
+  bytes="$(wc -c <"$snapshot" 2>/dev/null)" || { rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0; }
   bytes="${bytes//[[:space:]]/}"
-  [ -n "$bytes" ] || {
-    printf '{"state":"unreadable","text":"","pattern_count":0,"version":""}\n'; return 0; }
+  [ -n "$bytes" ] || { rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0; }
 
   # No digest command is `unreadable`, never `supplied` with an empty version:
   # the version's only job is to tell two reviews apart, and an empty one fails
   # that silently.
-  version="$(reviewer_doctrine_version "$path")" || {
-    printf '{"state":"unreadable","text":"","pattern_count":0,"version":""}\n'; return 0; }
+  version="$(reviewer_doctrine_version "$snapshot")" || {
+    rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0; }
 
   if [ "$bytes" -gt "$REVIEW_DOCTRINE_MAX_BYTES" ]; then
+    rm -f "$snapshot"
     # text empty (AC-9: never truncated), version present (which catalogue is
     # too big is what the maintainer needs), count 0 (patterns *supplied*).
-    jq -n --arg v "$version" \
-      '{state:"oversized", text:"", pattern_count:0, version:$v}'
+    jq -n --arg v "$version" '{state:"oversized", text:"", pattern_count:0, version:$v}'
     return 0
   fi
 
-  count="$(grep -c '^### ' "$path" 2>/dev/null || true)"
+  # grep exits 1 for "no matches", which is a real count of zero, and >1 for an
+  # error. `|| true` would flatten both into 0 and report `supplied` with a
+  # wrong count — the contract says a failed read is `unreadable`.
+  status=0
+  count="$(grep -c '^### ' "$snapshot" 2>/dev/null)" || status=$?
+  if [ "$status" -eq 1 ]; then
+    count=0
+  elif [ "$status" -ne 0 ]; then
+    rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0
+  fi
+
   # --rawfile, never --arg with a command substitution: it reads the file's
-  # bytes verbatim, trailing newlines included. Its own failure is `unreadable`
-  # too — the file can disappear between the size probe and this call.
-  jq -n --rawfile t "$path" --arg v "$version" --argjson c "${count:-0}" \
+  # bytes verbatim, trailing newlines included.
+  jq -n --rawfile t "$snapshot" --arg v "$version" --argjson c "${count:-0}" \
     '{state:"supplied", text:$t, pattern_count:$c, version:$v}' 2>/dev/null || {
-    printf '{"state":"unreadable","text":"","pattern_count":0,"version":""}\n'; return 0; }
+    rm -f "$snapshot"; printf '%s\n' "$unreadable"; return 0; }
+  rm -f "$snapshot"
 }
 ```
 
@@ -520,20 +546,22 @@ reviewer_doctrine_supply() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The ten proofs fall into
+runs per proof, each citing a concrete file and line. The twelve proofs fall into
 three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Silent | **4** | P1, P2, P5, P7 | a review that used less doctrine than it reports, with nothing to show it |
 | Contract | **5** | P3, P4, P6, P8, P9 |
-| Fail-open | **1** | P10 | an error path that aborts the reviewer instead of reporting a state | a check or an output that breaks its own stated rule |
+| Fail-open | **3** | P10, P11, P12 | an error or a race reported as a successful supply | a check or an output that breaks its own stated rule |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
 | P1 | Collapse `absent`, `unreadable` and `oversized` into one `not_supplied` state | a scratch copy of `reviewer_doctrine_supply` | scenario 1 fails: the three states have different owners — a repository that never adopted the catalogue, a broken environment, and a maintainer's edit that needs undoing — and only the third is actionable by anyone reading the pull request; restoring the four states passes |
 | P2 | Supply the first `REVIEW_DOCTRINE_MAX_BYTES` of an oversized catalogue | same scratch copy | scenario 2 fails: `text` is non-empty in the `oversized` row, so the reviewer receives a catalogue that looks complete and is missing its most recent patterns. This is AC-9, and the plant is the obvious thing to do with a too-large string; restoring the empty text passes |
 | P8 | Declare the bound with a bare `REVIEW_DOCTRINE_MAX_BYTES=12000` instead of `:-` | a scratch copy of `workflow-lib.sh` | scenario 15 fails on its overridden-value assertion. Without that assertion the plant would be invisible — the override is ignored, both consumers keep 12,000, and "the two agree" is still true — which is why the scenario checks the value took effect rather than only that they match; restoring `:-` passes |
+| P11 | Derive each value from a fresh read of the live file instead of one snapshot | a scratch copy of `reviewer_doctrine_supply` | scenario 1b fails: with the catalogue rewritten mid-collection, the bundle's `version` is the hash of bytes its `text` does not contain, and every later report that groups reviews by version groups that one wrongly. The plant is invisible whenever nobody edits the file during a review, which is nearly always; restoring the single snapshot passes |
+| P12 | Count patterns with `grep -c … \|\| true` | same scratch copy | scenario 1a's pattern-count case fails: `grep`'s exit 1 (no matches) and its exit >1 (error) are flattened into count 0, so an unreadable snapshot reports `supplied` with zero patterns instead of `unreadable`. An empty catalogue — the legitimate zero — still passes, which is why the scenario separates the two exits; restoring the status check passes |
 | P10 | Replace the read handlers with a single `[ -r "$path" ]` test | a scratch copy of `reviewer_doctrine_supply` | scenario 1a fails: with the file removed after the test, the reviewer aborts under `set -e` instead of reporting `unreadable`, so the round produces no result at all rather than a review that ran without the doctrine. Scenario 1's ordinary unreadable case — a permission bit — still passes, because there the test itself catches it; restoring the per-operation handlers passes both |
 | P9 | Read the text with `text="$(cat "$path")"` and pass it as `--arg` | a scratch copy of `reviewer_doctrine_supply` | scenario 7a fails: the bundle's copy loses the file's trailing newlines, so what the reviewer receives is not what the repository stores. Scenario 5's interior-sentence match still passes, which is why 7a compares bytes; restoring `--rawfile` passes |
 | P3 | Give `review-doctrine-lint.sh` its own copy of the bound instead of sourcing `workflow-lib.sh` | a scratch copy of the linter | scenario 15 fails: with the constant overridden, the linter and the reviewer disagree about the same catalogue — CI rejects what the reviewer supplies, or the reverse. Scenarios 11, 12 and 14 all pass, because they never move the constant; restoring the source passes |
@@ -566,8 +594,9 @@ everywhere it is tested.
    scenarios 16 and 16a — the catalogue passes its own linter, has five
    patterns, its preamble carries the AC-3 statement and the AC-3a request, and
    the obligation appears in **both** places AC-5a names.
-4. Add `reviewer_doctrine_supply` and its version helper, with a handler on
-   every file operation. **Verify**: scenarios 1, 1a and 2 through 6 — all four states with all four values, the `oversized` row's
+4. Add `reviewer_doctrine_supply` and its version helper: one snapshot, a
+   handler on every file operation, and `grep`'s exit 1 kept distinct from its
+   exit >1. **Verify**: scenarios 1, 1a, 1b and 2 through 6 — all four states with all four values, the `oversized` row's
    empty text and present version, and the missing-digest case.
 5. Add the four bundle fields and the three `print_kv` lines, plus the evidence
    object. **Verify**: scenarios 7, 7a, 8 and 10 — the enumerated field list,
@@ -577,7 +606,7 @@ everywhere it is tested.
    deliberately malformed catalogue.
 7. Update the `--help` block, the integration document, Protocol 93, and add
    `changelog.d/1654.added.review-doctrine.md`. **Verify**: runbook Step 8.
-8. Produce the ten planted-violation proofs (P1-P10) and record them in the PR
+8. Produce the twelve planted-violation proofs (P1-P12) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
