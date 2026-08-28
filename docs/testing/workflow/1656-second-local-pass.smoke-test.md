@@ -10,7 +10,7 @@ inside an `if` or with `|| true`.
 
 ---
 
-## Step 1: The condition's four values
+## Step 1: The condition's five values
 
 **Maps to**: brief scope bullets 1 and 2.
 

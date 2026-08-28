@@ -137,8 +137,7 @@ Not applicable — this repository ships workflow tooling, not a service.
 
 - [ ] **Decide whether a second pass is owed.** Add
       `reviewer_loop_local_pass_required <history_payload> <loop_head_sha> <configured_platforms>`,
-      printing one of four values — three that owe a pass and one that does
-      not:
+      printing one of five values — three that owe a pass and two that do not:
 
       | Local reviewer's most recent verdict | Value | Owes a pass |
       | --- | --- | --- |
@@ -525,8 +524,8 @@ three groups:
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Fail-open | **4** | P2, P4, P6, P10 | the gate reached, or the pull request converted, without the evidence |
-| Loop and cost | **3** | P1, P3, P5 |
-| Integration | **3** | P7, P8, P9 | a guard wired in beside the pipeline rather than into it | a guard that repeats, shortens the run, or runs where there is nothing to guard |
+| Loop and cost | **3** | P1, P3, P5 | a guard that repeats, shortens the run, or runs where there is nothing to guard |
+| Integration | **3** | P7, P8, P9 | a guard wired in beside the pipeline rather than into it |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
