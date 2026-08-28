@@ -143,12 +143,13 @@ of the weight:
   `reviewer_failed_label_required_for_result` returns false would be a deny-list:
   that helper returns false for any reason it does not recognise, so a future
   reviewer's new skip reason would silently become acceptable evidence. The
-  membership test decides; the helper call confirms. Accepting every skip would let
-  `codex-github` dispatch when a configured peer was unavailable, timed out, or
-  was refused for credentials — no cheap pre-filter actually ran, which is the
-  state the item exists to prevent. Acceptance must be decided by calling
-  `reviewer_failed_label_required_for_result`, not by a duplicated list, so a
-  future change to that helper carries this gate with it.
+  membership test decides; the helper call confirms. Accepting every skip would
+  let `codex-github` dispatch when a configured peer was unavailable, timed out,
+  or was refused for credentials — no cheap pre-filter actually ran, which is
+  the state the item exists to prevent. The helper is kept as a second gate so a
+  reason cannot be accepted here while the loop elsewhere treats it as a
+  reviewer failure, but it must never be the sole decider: it returns false for
+  any reason it does not recognise, which is what P19 plants.
 - The **reviewer-owned pending check** row must dispatch: a reviewer's own check
   must never gate that reviewer, or `codex-github` would wait on a check it is
   responsible for producing.
