@@ -91,10 +91,10 @@ Drive the fixture with exactly one condition unmet at a time and read
 
 | Fixture state | Required result |
 | --- | --- |
-| `LOCAL_AI_HEAD_CURRENT=0` | `deferred` / `local_evidence_stale` |
-| `LOCAL_AI_CONFIGURED` unset, empty, `2`, or `true` | `deferred` / `local_evidence_missing` |
-| `LOCAL_AI_CONFIGURED=1`, `LOCAL_AI_HEAD_CURRENT` unset, empty, `2`, or `yes` | `deferred` / `local_evidence_missing` |
-| `LOCAL_AI_CONFIGURED=0` | `deferred` / `local_reviewer_not_configured` |
+| `local-ai-reviewer` entry of `platform_reviewed_heads` records a head that is not `loop_head_sha` | `deferred` / `local_evidence_stale` |
+| That entry is absent while `local-ai-reviewer` is in the resolved list | `deferred` / `local_evidence_missing` |
+| The derivation helper returns any value other than `0` or `1` | `deferred` / `local_evidence_missing` |
+| `local-ai-reviewer` is not in the resolved platform list | `deferred` / `local_reviewer_not_configured` |
 | Reorder suppressed, so a same-bucket peer has not run yet | `deferred` / `peer_reviewer_not_run` |
 | A peer ran and returned `needs_fixes` or `escalate` | `deferred` / `peer_reviewer_not_clean` |
 | A peer ran and returned `skipped` / `unavailable`, `timeout`, or `unauthorized` | `deferred` / `peer_reviewer_not_clean` |
@@ -112,11 +112,16 @@ Drive the fixture with exactly one condition unmet at a time and read
 `run_platform_review` is not called on any `deferred` row. Three rows carry most
 of the weight:
 
-- The **unexpected-value** rows are the ones a deny-list implementation fails.
-  Condition 1 must be an exact-match allow-list requiring the literal `1` on
-  both keys; testing only for `0` and empty would let a `2` or a stray `true`
-  fall through and dispatch the expensive reviewer with no valid evidence, which
-  is the opposite of fail-closed.
+- Every row here is driven through the **in-loop state** — the resolved platform
+  list and `platform_reviewed_heads` — never by exporting
+  `LOCAL_AI_CONFIGURED` or `LOCAL_AI_HEAD_CURRENT`. Those are stdout keys the
+  gate must ignore (Step 3e), so a fixture that set them would be testing an
+  interface the implementation is required not to have.
+- The **unexpected-value** row is the one a deny-list implementation fails.
+  Condition 1 must be an exact-match allow-list requiring the literal `1` from
+  each derivation helper; testing only for `0` and empty would let any other
+  value fall through and dispatch with no valid evidence, the opposite of
+  fail-closed.
 - The **`LOCAL_AI_CONFIGURED=0`** row must defer, not dispatch. The brief
   requires the expensive reviewer to run only after current-head local clean
   evidence and to fail closed when it is absent, and it permits an explicit

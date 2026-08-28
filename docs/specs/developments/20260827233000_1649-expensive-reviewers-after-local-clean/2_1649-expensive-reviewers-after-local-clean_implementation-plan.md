@@ -650,8 +650,8 @@ concrete file and line:
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
-| P1 | Stale local evidence: `LOCAL_AI_HEAD_CURRENT=0` with all other conditions met | the gate fixture in `scripts/development-workflow/tests/test-pr-review-loop.sh` | the gate defers, `run_platform_review` is not called, and the aggregate is `needs_fixes` / `expensive_gate_deferred`; setting it to `1` dispatches |
-| P2 | Missing local evidence: `LOCAL_AI_CONFIGURED` unset | same fixture | the gate defers with `local_evidence_missing`; exporting `LOCAL_AI_CONFIGURED=1` dispatches — the proof that an unknown is refused rather than assumed clean |
+| P1 | Stale local evidence: populate `platform_reviewed_heads` so the `local-ai-reviewer` entry records a 40-character OID that is **not** `loop_head_sha`, with all other conditions met | the gate fixture in `scripts/development-workflow/tests/test-pr-review-loop.sh` | the gate defers with `local_evidence_stale`, `run_platform_review` is not called, and the aggregate is `needs_fixes` / `expensive_gate_deferred`; setting that entry to `loop_head_sha` dispatches |
+| P2 | Missing local evidence: leave the `local-ai-reviewer` entry of `platform_reviewed_heads` absent while `local-ai-reviewer` **is** in the resolved platform list | same fixture | the gate defers with `local_evidence_missing`; adding the entry with the current head dispatches — the proof that an unknown is refused rather than assumed clean |
 | P3 | Unreadable evidence: make the review-threads query fail | same fixture | the gate defers with `evidence_unavailable_review_threads` **and** the aggregate becomes `needs_fixes` / `expensive_gate_deferred`, so readiness is withheld; restoring the query dispatches and leaves the aggregate clean |
 | P4 | Gate-not-wired regression: **delete the `expensive_reviewer_gate` call** from the per-platform block, leaving the function defined but unreachable | a scratch copy of the per-platform block in `scripts/development-workflow/pr-review-loop.sh` | scenario 3 fails, because `codex-github` is dispatched with stale local evidence and no `EXPENSIVE_GATE_*` telemetry is emitted; restoring the call passes. Deleting the call is the correct mutation: removing the `is_expensive_reviewer_platform` guard instead would consult the gate for *every* platform, which is a different defect and would not leave the gate unreachable |
 | P5 | Ordering regression: **delete the `reorder_expensive_reviewers_last` call**, leaving a platform list that declares `codex-github` before `pr-agent` | a scratch copy of the platform-resolution block | scenario 6 fails and scenario 7's suppressed-reorder case shows the gate deferring on every invocation with `peer_reviewer_not_run` — a deferral that can never resolve; restoring the call passes |
@@ -671,6 +671,12 @@ concrete file and line:
 Record all seventeen in the implementation PR under a `Planted-Violation Proofs`
 heading, each with the command, the file and line of the planted violation, and
 both outcomes.
+
+Every proof that touches the local evidence manipulates the **in-loop state** —
+the resolved platform list and `platform_reviewed_heads` — and never exports
+`LOCAL_AI_CONFIGURED` or `LOCAL_AI_HEAD_CURRENT`. Those names are stdout keys
+the gate is required to ignore, so a proof that set them would validate an
+interface the implementation must not have, and would contradict P17.
 
 ### Parser-risk addendum
 
