@@ -376,7 +376,8 @@ and requires Step 3's reviewer-owned-pending row to fail.
 fail-closed rule, the same `dispatched` / `deferred` / `forced` /
 `deferral_cap` outcomes, the same statement that a defer sets the aggregate to
 `needs_fixes` rather than passing as a clean skip, the same reordering of
-expensive reviewers to the end of the platform list, the same
+expensive reviewers last within their own phase bucket, never across the
+draft/ready boundary, the same
 `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS` bound and its escalation, and the same
 override variable. Reading them against the Step 3, 3b, 3c and 4b expectations
 must surface no contradiction.

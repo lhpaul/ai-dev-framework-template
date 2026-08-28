@@ -350,8 +350,8 @@ Not applicable — this repository ships workflow tooling, not a service.
       (`expensive_gate_deferral_cap` and
       `expensive_gate_deferral_budget_unreadable`) and the fact that
       `EXPENSIVE_GATE_ESCALATION` appears only on a `deferral_cap` result, the
-      reordering of expensive reviewers to the end of the platform list, and
-      the override variable.
+      reordering of expensive reviewers last **within their own phase bucket**
+      (never across the draft/ready boundary), and the override variable.
 
 ### Frontend / UI
 
@@ -378,7 +378,8 @@ reads them against each other and fails on any divergence.
       the fail-closed rule, the fact that a `deferred` outcome sets the
       aggregate to `needs_fixes` (so readiness is withheld and Step 7 re-runs)
       rather than passing as a clean skip, the reordering of expensive reviewers
-      to the end of the platform list, the override variable with the
+      last **within their own phase bucket** — never across the draft/ready
+      boundary — the override variable with the
       expectation that its use is justified in the PR, and the bounded deferral
       counter with **both** escalation causes —
       `expensive_gate_deferral_cap` when the budget is exhausted and
@@ -647,8 +648,8 @@ with mock `gh` commands and require no network access.
       `needs_fixes` so readiness is withheld and Step 7 re-runs, the bounded
       deferral counter with both of its escalation values and the
       `deferral_cap`-only emission of `EXPENSIVE_GATE_ESCALATION`, the
-      reordering of expensive reviewers to the end of the platform list, and the
-      override variable.
+      reordering of expensive reviewers last **within their own phase bucket**
+      (never across the draft/ready boundary), and the override variable.
 - [ ] `docs/workflow/development-workflow/integrations/codex-github.md` — add a
       section describing the gate, its conditions, the override, and the same
       two-value `EXPENSIVE_GATE_ESCALATION` contract (`expensive_gate_deferral_cap`,
