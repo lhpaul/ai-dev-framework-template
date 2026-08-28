@@ -87,7 +87,7 @@ Drive the fixture with exactly one condition unmet at a time and read
 | `LOCAL_AI_CONFIGURED` unset, empty, `2`, or `true` | `deferred` / `local_evidence_missing` |
 | `LOCAL_AI_CONFIGURED=1`, `LOCAL_AI_HEAD_CURRENT` unset, empty, `2`, or `yes` | `deferred` / `local_evidence_missing` |
 | `LOCAL_AI_CONFIGURED=0` | `deferred` / `local_reviewer_not_configured` |
-| Reorder suppressed, so `pr-agent` has not run yet | `deferred` / `peer_reviewer_not_run` |
+| Reorder suppressed, so a same-bucket peer has not run yet | `deferred` / `peer_reviewer_not_run` |
 | A peer ran and returned `needs_fixes` or `escalate` | `deferred` / `peer_reviewer_not_clean` |
 | A peer ran and returned `skipped` / `unavailable`, `timeout`, or `unauthorized` | `deferred` / `peer_reviewer_not_clean` |
 | A peer ran and returned `skipped` / `not_configured` or `explicit-skip` | contributes to `dispatched` |
@@ -115,8 +115,10 @@ of the weight:
   override in Step 5, both explicit.
 - The **suppressed-reorder** row must fire `peer_reviewer_not_run`. That reason
   is a defensive assertion: after `reorder_expensive_reviewers_last` runs, every
-  non-expensive platform has already executed, so seeing it in a normal run
-  means the reorder did not happen.
+  platform in the reviewer's peer set has already executed, so seeing it in a
+  normal run means the reorder did not happen. Note the peer set is scoped by
+  phase — Step 3d covers it — so a draft-phase `codex-github` must **not** wait
+  on a ready-phase `bugbot`.
 - The two **`skipped`** rows must split. Accepting every skip would let
   `codex-github` dispatch when a configured peer was unavailable, timed out, or
   was refused for credentials — no cheap pre-filter actually ran, which is the
@@ -167,6 +169,27 @@ order.
 Protocol 91 re-runs Step 7. A defer that left the aggregate `clean` or `skipped`
 would satisfy Protocol 92 and let the PR reach human review having never run the
 expensive reviewer, with nothing guaranteeing the retry the gate depends on.
+
+### Step 3d: The peer set is scoped by phase, not the whole list
+
+**Maps to**: the "peer set and phase-bucket reorder contradict each other" risk.
+
+1. Configure `codex-github` and `pr-agent` on draft and `bugbot` on ready. Run
+   the loop with `pr-agent` clean and `bugbot` not yet run.
+2. Configure `codex-github` on ready with `pr-agent` and `local-ai-reviewer` on
+   draft, all draft platforms clean. Run the loop.
+3. Suppress the reorder so a same-bucket peer has not run. Run the loop.
+
+**Expected result**: run 1 **dispatches** — `codex-github`'s peer set is
+`pr-agent` only, not `bugbot`, because a draft-phase reviewer necessarily runs
+before a ready-phase one. Run 2 dispatches, with the whole draft bucket in the
+peer set. Run 3 defers with `peer_reviewer_not_run`.
+
+Run 1 is the one a whole-list peer set fails: it would wait on a `bugbot` that
+cannot have run yet and defer on every invocation until the cap, deadlocking the
+exact configuration Step 3c exists to support. The peer set is well-defined only
+because of the reorder — after it, "precedes this reviewer" and "should have
+produced evidence before this reviewer" are the same set.
 
 ### Step 4: Unreadable evidence defers, and does not escalate
 
@@ -295,10 +318,10 @@ so it would run only when the test file itself changed.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR description's `Planted-Violation Proofs` heading.
-2. Confirm P1–P12 from the plan each record the command, the file and line of
+2. Confirm P1–P13 from the plan each record the command, the file and line of
    the planted violation, and both outcomes.
 
-**Expected result**: twelve proofs, each showing the check failing with the
+**Expected result**: thirteen proofs, each showing the check failing with the
 violation present and passing once removed. Four carry the most weight: P4
 deletes the `expensive_reviewer_gate` call so the function is defined but
 unreachable, and requires Step 3's stale-evidence row to fail — that is what
@@ -312,7 +335,9 @@ fail. P9 replaces the per-bucket partition with a global one and requires
 Step 3c's two-bucket run to fail. P10 accepts any `skipped` peer and requires
 Step 3's three rejected-skip rows to fail. P11 makes an absent ledger return
 `-1` and requires Step 4b's sixth run to fail. P12 rewrites condition 1 as a
-deny-list and requires Step 3's unexpected-value rows to fail.
+deny-list and requires Step 3's unexpected-value rows to fail. P13 widens the
+peer set back to the whole resolved list and requires Step 3d's first run to
+fail.
 
 ### Step 10: Documentation states one contract
 
