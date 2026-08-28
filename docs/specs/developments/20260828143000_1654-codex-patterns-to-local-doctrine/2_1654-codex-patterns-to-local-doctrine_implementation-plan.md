@@ -112,17 +112,22 @@ Not applicable — this repository ships workflow tooling, not a service.
       ```bash
       # The review doctrine's maximum size, in bytes as `wc -c` measures them.
       # AC-12: one source of truth, read by both the linter and the reviewer.
-      # `:-` and not a bare assignment: an unconditional one would overwrite an
-      # environment value, and scenario 15 — the only check that the two
-      # consumers share a bound — works by setting one. Validation follows
-      # PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS: warn and fall back rather
-      # than trust an unusable value.
-      REVIEW_DOCTRINE_MAX_BYTES="${REVIEW_DOCTRINE_MAX_BYTES:-12000}"
-      if ! [[ "$REVIEW_DOCTRINE_MAX_BYTES" =~ ^[1-9][0-9]*$ ]]; then
-        echo "WARN: REVIEW_DOCTRINE_MAX_BYTES must be a positive integer; defaulting to 12000" >&2
-        REVIEW_DOCTRINE_MAX_BYTES=12000
-      fi
+      readonly REVIEW_DOCTRINE_MAX_BYTES=12000
       ```
+
+      **Fixed, and deliberately not overridable.** An earlier revision of this
+      plan wrote `"${REVIEW_DOCTRINE_MAX_BYTES:-12000}"` so a test could move
+      the bound. That is withdrawn: the spec fixes 12,000 as the contract, and
+      an environment value above it would make **both** CI and the reviewer
+      accept an oversized catalogue — defeating AC-11 and the rule the bound
+      exists for, that a catalogue which no longer fits is edited rather than
+      excused. `readonly` states the intent and makes an accidental
+      reassignment fail loudly.
+
+      Proving the two consumers share it therefore cannot work by moving it.
+      Scenario 15 proves it structurally instead — neither consumer contains a
+      literal bound of its own — and scenario 15b proves it behaviourally, at
+      the boundary, with one fixture and both consumers.
 
       **This is why the linter is a shell script.** AC-12 asks for one value the
       checker and the reviewer both read. Its neighbours in `scripts/lint/` are
@@ -331,16 +336,16 @@ catalogue and the reviewer's recorded output.
     file-scoped.
 14. It fails at 12,001 bytes and passes at 12,000 — the boundary, not a value
     near it.
-15. The linter and the reviewer agree about the bound: with
-    `REVIEW_DOCTRINE_MAX_BYTES` exported to a small value, both the linter's
-    failure and the reviewer's `oversized` state move together, **and the test
-    asserts the overridden value took effect** rather than only that the two
-    agree — two consumers ignoring the override agree too. The override is the
-    scenario's mechanism, which is why the constant uses `:-`.
-15a. An **invalid** override — `0`, `-1`, `abc`, empty — warns and falls back to
-    12,000 in both consumers, rather than being trusted. Following
-    `PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS`'s convention, and asserted in
-    both so they cannot diverge on the fallback either. This is AC-12, and it is the scenario that fails if either
+15. The bound has exactly one definition, checked **structurally**: the literal
+    `12000` appears once in `workflow-lib.sh` and **nowhere** in
+    `review-doctrine-lint.sh` or `local-ai-reviewer.sh`, and both name
+    `REVIEW_DOCTRINE_MAX_BYTES`. This is the assertion the withdrawn
+    environment override was reaching for, and it needs no production hook to
+    make it.
+15b. The two consumers agree **behaviourally at the boundary**, on one fixture:
+    a 12,000-byte catalogue passes the linter and is `supplied`; a 12,001-byte
+    one fails the linter and is `oversized`. Two copies of the bound that happen
+    to agree today pass this and fail scenario 15, which is why both exist. This is AC-12, and it is the scenario that fails if either
     grows its own copy of the number.
 16. The catalogue in the repository passes its own linter, contains exactly the
     five seeded patterns, and its preamble contains the AC-3 statement and the
@@ -472,7 +477,8 @@ the document.
 | --- | --- | --- | --- |
 | A review runs without the doctrine and says nothing | Med | **High** — indistinguishable from a review that used it, so the effectiveness data is silently wrong | Four states, one reported on every run, three of them error states with different owners. Scenario 1 asserts all four values in every state; proof **P1** collapses the three error states into one |
 | The doctrine is supplied truncated when over the bound | **High** — truncating is the obvious thing to do with a too-large string | **High** — partial doctrine looks complete, and it drops the newest patterns, which are the ones nobody has internalised | `text` is empty in the `oversized` row, asserted by scenario 2; proof **P2** supplies the first 12,000 bytes instead |
-| The bound is duplicated between the linter and the reviewer | **High** if the linter is written in Python like its neighbours | Med — the two drift, and the reviewer accepts a catalogue CI rejects or the reverse | One constant in `workflow-lib.sh`, sourced by both; the linter is Bash for that reason. Scenario 15 moves the constant and requires both to follow; proof **P3** gives the linter its own copy |
+| The bound is duplicated between the linter and the reviewer | **High** if the linter is written in Python like its neighbours | Med — the two drift, and the reviewer accepts a catalogue CI rejects or the reverse | One `readonly` constant in `workflow-lib.sh`, sourced by both; the linter is Bash for that reason. Scenario 15 checks structurally that no second literal exists, 15b checks the boundary in both, and proof **P3** gives the linter its own copy |
+| The bound is made overridable so a test can move it | Med — it is the obvious way to test a shared constant | **High** — an environment value above 12,000 makes CI and the reviewer both accept an oversized catalogue, defeating AC-11 | Fixed and `readonly`; the shared-source property is proved structurally instead. Proof **P8** restores the override |
 | The incident-reference check is applied to the whole file | Med | Med — contribution guidance legitimately cites repository paths, so the check would reject a valid catalogue and be switched off | Entry-scoped, with the preamble excluded by the same parse that finds the entries. Scenario 13 and proof **P4** |
 | The version and the text describe different revisions | Low per review, **certain** across many | **High** — a `supplied` record that is internally false, and every later report grouping by version groups it wrongly | One snapshot, all four values derived from it. Scenario 1b and proof **P11** |
 | A file operation fails after a permission-bit test and aborts the reviewer | Med | **High** — under `set -e` the round produces no result at all, which is worse than a review without the doctrine | Every read is attempted with its own handler; `wc -c` is the open probe. Scenario 1a and proof **P10** |
@@ -559,12 +565,12 @@ three groups:
 | --- | --- | --- | --- |
 | P1 | Collapse `absent`, `unreadable` and `oversized` into one `not_supplied` state | a scratch copy of `reviewer_doctrine_supply` | scenario 1 fails: the three states have different owners — a repository that never adopted the catalogue, a broken environment, and a maintainer's edit that needs undoing — and only the third is actionable by anyone reading the pull request; restoring the four states passes |
 | P2 | Supply the first `REVIEW_DOCTRINE_MAX_BYTES` of an oversized catalogue | same scratch copy | scenario 2 fails: `text` is non-empty in the `oversized` row, so the reviewer receives a catalogue that looks complete and is missing its most recent patterns. This is AC-9, and the plant is the obvious thing to do with a too-large string; restoring the empty text passes |
-| P8 | Declare the bound with a bare `REVIEW_DOCTRINE_MAX_BYTES=12000` instead of `:-` | a scratch copy of `workflow-lib.sh` | scenario 15 fails on its overridden-value assertion. Without that assertion the plant would be invisible — the override is ignored, both consumers keep 12,000, and "the two agree" is still true — which is why the scenario checks the value took effect rather than only that they match; restoring `:-` passes |
+| P8 | Make the bound overridable with `"${REVIEW_DOCTRINE_MAX_BYTES:-12000}"` | a scratch copy of `workflow-lib.sh` | scenario 14 fails when the environment carries a larger value: a 12,001-byte catalogue passes the linter and is `supplied`, so an oversized doctrine reaches the reviewer and CI accepts it — the bound exists precisely so a catalogue that no longer fits is edited rather than excused; restoring the fixed `readonly` passes |
 | P11 | Derive each value from a fresh read of the live file instead of one snapshot | a scratch copy of `reviewer_doctrine_supply` | scenario 1b fails: with the catalogue rewritten mid-collection, the bundle's `version` is the hash of bytes its `text` does not contain, and every later report that groups reviews by version groups that one wrongly. The plant is invisible whenever nobody edits the file during a review, which is nearly always; restoring the single snapshot passes |
 | P12 | Count patterns with `grep -c … \|\| true` | same scratch copy | scenario 1a's pattern-count case fails: `grep`'s exit 1 (no matches) and its exit >1 (error) are flattened into count 0, so an unreadable snapshot reports `supplied` with zero patterns instead of `unreadable`. An empty catalogue — the legitimate zero — still passes, which is why the scenario separates the two exits; restoring the status check passes |
 | P10 | Replace the read handlers with a single `[ -r "$path" ]` test | a scratch copy of `reviewer_doctrine_supply` | scenario 1a fails: with the file removed after the test, the reviewer aborts under `set -e` instead of reporting `unreadable`, so the round produces no result at all rather than a review that ran without the doctrine. Scenario 1's ordinary unreadable case — a permission bit — still passes, because there the test itself catches it; restoring the per-operation handlers passes both |
 | P9 | Read the text with `text="$(cat "$path")"` and pass it as `--arg` | a scratch copy of `reviewer_doctrine_supply` | scenario 7a fails: the bundle's copy loses the file's trailing newlines, so what the reviewer receives is not what the repository stores. Scenario 5's interior-sentence match still passes, which is why 7a compares bytes; restoring `--rawfile` passes |
-| P3 | Give `review-doctrine-lint.sh` its own copy of the bound instead of sourcing `workflow-lib.sh` | a scratch copy of the linter | scenario 15 fails: with the constant overridden, the linter and the reviewer disagree about the same catalogue — CI rejects what the reviewer supplies, or the reverse. Scenarios 11, 12 and 14 all pass, because they never move the constant; restoring the source passes |
+| P3 | Give `review-doctrine-lint.sh` its own `12000` instead of sourcing `workflow-lib.sh` | a scratch copy of the linter | scenario 15 fails on the structural check — the literal appears in a second file. Scenario 15b still passes, because two copies agree until one is edited, which is exactly the drift the structural check exists to catch before it happens; restoring the source passes |
 | P4 | Apply the incident-reference check to the whole file rather than to entries | same scratch copy | scenario 13 fails: a catalogue whose preamble cites `docs/specs/developments/` — which is what contribution guidance does — is rejected, so the check must be either weakened or switched off; restoring the entry scope passes |
 | P5 | Return `supplied` with an empty version when no digest command exists | a scratch copy of the version helper | scenario 6 fails: two reviews that saw different catalogues become indistinguishable, and the failure is confined to machines without `sha256sum` or `shasum` — so it would ship green everywhere it was tested; restoring the `unreadable` state passes |
 | P6 | Print the doctrine's text as a fourth `key=value` line | a scratch copy of the print block | scenario 8 fails: the loop's `emit_prefixed_platform_output` reads line by line, so every line of the catalogue after the first is re-emitted as a fabricated `PLATFORM_1_<text>` key. The plant looks like completeness — the same value the bundle carries; restoring the three scalars passes |
@@ -582,10 +588,9 @@ everywhere it is tested.
 0. **Hard stop**: confirm #1653 is implemented and merged, and re-read the
    `jq -n` bundle object and the `print_kv` block against the merged code rather
    than against #1653's plan. **Verify**: the field list in both places.
-1. Declare `REVIEW_DOCTRINE_MAX_BYTES` in `workflow-lib.sh` with the `:-`
-   override form and its validation. **Verify**: scenarios 15 and 15a — the
-   override reaches both consumers, and an invalid one warns and falls back in
-   both.
+1. Declare `readonly REVIEW_DOCTRINE_MAX_BYTES=12000` in `workflow-lib.sh`.
+   **Verify**: scenarios 15 and 15b — one literal definition and none in either
+   consumer, and the same boundary behaviour in both.
 2. Add `scripts/lint/review-doctrine-lint.sh` with its three checks and the
    0/1 exit contract. **Verify**: scenarios 11 through 15, including the
    12,000/12,001 boundary and the shared-constant case.

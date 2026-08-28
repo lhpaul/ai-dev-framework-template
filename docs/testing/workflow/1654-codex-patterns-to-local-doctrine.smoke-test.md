@@ -209,15 +209,23 @@ bash scripts/lint/review-doctrine-lint.sh; echo "exit=$?"
 5. Run it on a catalogue whose **preamble** cites a
    `docs/specs/developments/…` path and whose entries are clean.
 6. Run it at exactly **12,000** bytes and at **12,001**.
-7. Export `REVIEW_DOCTRINE_MAX_BYTES` as a small value and run both the linter
-   and the reviewer against the same catalogue. Assert the **overridden** value
-   took effect, not only that the two agree.
-8. Export it as `0`, then `-1`, then `abc`, then empty, and run both.
+7. Check the bound structurally:
+
+   <!-- workflow-shell-contract: bash -->
+
+   ```bash
+   grep -c '12000' scripts/development-workflow/workflow-lib.sh
+   grep -c '12000' scripts/lint/review-doctrine-lint.sh
+   grep -c '12000' scripts/development-workflow/local-ai-reviewer.sh
+   ```
+
+8. Run **both** consumers against the same 12,000-byte catalogue, then against
+   the same 12,001-byte one.
 
 **Expected result**: 1 exits 0; 2 and 3 exit 1; 4 exits 0; 5 exits **0**; 6
-exits 0 then 1; 7 shows both the linter's failure and the reviewer's `oversized`
-state moving together at the overridden value; 8 warns and falls back to 12,000
-in **both**.
+exits 0 then 1; 7 prints `1`, `0`, `0` — one definition, no second copy; 8 shows
+the linter passing and the reviewer `supplied` at 12,000, and the linter failing
+and the reviewer `oversized` at 12,001.
 
 Case 5 is the scope rule. Contribution guidance legitimately cites repository
 documents by path — that is what guidance is — so a file-scoped check would
@@ -228,12 +236,14 @@ neighbours: both it and the reviewer source `workflow-lib.sh`, so the bound is
 literally the same value in both rather than two copies that agree today.
 Nothing else in this runbook would notice them drifting. Proof P3.
 
-Its assertion has to be that the **overridden** value took effect. A constant
-declared with a bare `=` ignores the export, both consumers keep 12,000, and
-"the two agree" is still true — the case would pass while proving nothing. That
-is why the constant uses `:-`, and why case 8 checks the fallback too: an
-invalid override must be refused identically in both, or they diverge on the
-one path nobody exercises. Proofs P8 and P3.
+It is proved **structurally**, not by moving the bound. An earlier revision of
+this plan made the constant overridable so a test could change it — which would
+also let an environment value above 12,000 make CI and the reviewer both accept
+an oversized catalogue, defeating AC-11 and the rule the bound exists for. The
+constant is fixed and `readonly`; case 7 asserts no second copy of the literal
+exists, and case 8 asserts the same boundary behaviour in both. Two copies that
+agree today pass case 8 and fail case 7, which is why both run. Proofs P3
+and P8.
 
 Case 6 tests the boundary, not a value near it. A catalogue "about the right
 size" passes whatever the comparison operator is.
