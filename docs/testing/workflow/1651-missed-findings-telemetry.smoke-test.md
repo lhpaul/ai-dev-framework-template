@@ -194,22 +194,31 @@ from an undecidable ancestry and once from an unrecognised outcome.
 
 5. Run a round with external blocking findings whose **reviewed commit cannot
    be established** from either source.
-6. Run two rounds with identical evidence but different head provenance: one
-   external platform that emits `REVIEWED_HEAD`, one that emits nothing.
+6. Run two rounds with identical evidence: one external platform that emits
+   `REVIEWED_HEAD`, one that emits nothing — **with `loop_head_sha` set**, so a
+   plausible substitute is available.
 
 **Expected result**: no record for 1, 2 or 5; a record for 3; **two** records
 for 4, neither replacing the other. Case 5's output states the attribution
 failure and its reason.
 
-Case 6's two rounds produce the **same** local evidence state and the **same**
-classification — a confirmed miss — with different `head_source` values. AC-17
-fixes classification as a function of the state alone, so provenance is
-recorded, not applied: a `dispatch` head is the loop's knowledge of what it
-sent, and the record says so rather than quietly discounting itself. #1657
-stratifies the confirmed count by provenance, which is worth having from the
-first report because today every external record will read `dispatch`. Proof P15
-plants the provenance-dependent classification, which is the tempting error
-because it looks more careful.
+Case 6's first round produces a record; the second produces **none** and an
+attribution-failure report. `loop_head_sha` is deliberately available during the
+second, because it is what an implementer reaches for: it is right there, and
+substituting it turns an empty telemetry into one that produces data.
+
+It is the wrong data. The dispatched head is what the loop *sent*, not what the
+reviewer *read* — a reviewer that started late read a newer commit — and
+`clean_same_commit` is defined against the commit the external reviewer
+reviewed. Substituting would put unearned entries into the confirmed count,
+invisibly. AC-11 requires no record when the commit cannot be established, and
+that is what this case asserts. Proof P15.
+
+**Today this means no external round produces a record**, because only
+`local-ai-reviewer` emits `REVIEWED_HEAD`. That is the honest state of the
+feature until an adapter is extended, and the attribution-failure report makes
+it visible on every pull request rather than leaving an empty telemetry to be
+read as a clean bill of health.
 
 Case 5 is the third of the spec's three no-record paths, and the only one that
 reaches attribution before failing — the other two are excluded before the
