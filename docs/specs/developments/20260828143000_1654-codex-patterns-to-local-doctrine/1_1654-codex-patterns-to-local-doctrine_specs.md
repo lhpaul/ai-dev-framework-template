@@ -33,7 +33,7 @@ The objectives below are the discrete requirements stated in issue #1654. Every 
 ### Use Case 1: A review runs with the doctrine supplied
 
 **Actor**: The reviewer loop, running on behalf of the agent or maintainer advancing a pull request.
-**Preconditions**: The doctrine catalogue exists and is within its size bound.
+**Preconditions**: The doctrine catalogue exists, can be read, and is within its size bound — all three of the decision matrix's inputs, in its order. Any one of them failing is Use Case 2, not this one.
 
 **Steps**:
 
@@ -150,7 +150,16 @@ The objectives below are the discrete requirements stated in issue #1654. Every 
 - The doctrine is **supplementary**. Every review that runs today still runs, with or without it. It adds patterns to look for; it removes nothing and blocks nothing.
 - The doctrine is supplied to **every** local review, at every stage.
 - A review that runs without the doctrine must **say so**, with the reason. Silence is not permitted.
-- Every entry is **general**: no pull request number, no issue number, no person, no title, no path from the incident that produced it.
+- Every entry is **general**: no pull request number, no issue number, no person, no title, no path from the incident that produced it. The rule is one rule; its **enforcement is split**, and the split is by what a machine can recognise, not by what matters:
+
+  | Part of the rule | Enforced by | Criterion |
+  | --- | --- | --- |
+  | The four exact forms in AC-4 — hash-number, forge URL, spelled-out reference, development-folder path | an automated check | AC-5 |
+  | Everything else — a person's name, a document title, **any other incident path such as a source file the incident touched**, and wording that only makes sense to someone who saw the incident | human review, in the pull request | AC-5a |
+
+  No part of the rule is unassigned. A path like `scripts/foo.sh` is prohibited
+  by the rule and belongs to the second row: it is indistinguishable, to a
+  check, from a path used as a legitimate generic example.
 - Every entry has the same four parts, in the same order: name, shape, minimal example, detection question — and the catalogue's structure is **machine-recognisable**, because three separate checks have to find entry boundaries without guessing:
 
   | Element | How it is written | How it is recognised |
@@ -281,7 +290,7 @@ The count is *patterns supplied*, never *patterns present*. An `oversized` catal
 
    **Form 2's host is fixed to `github.com`, not derived.** Deriving it from the repository's remote would make the check's behavior depend on where the checkout was cloned from, so the same catalogue would pass in one clone and fail in another. A repository on a different forge adds its host to this list in the same way any other pattern is added — by editing this criterion.
 5. **AC-5**: A repository check fails when an **entry** violates AC-4, and passes when it does not. The check's authoritative prohibited set is exactly the four forms listed in AC-4 — no more, so the check is implementable, and no fewer, so it is worth running. It is applied to entries only; the preamble is excluded, per Business Rules.
-5a. **AC-5a**: The remaining half of the generality rule — no person's name, no document title, no wording that only makes sense to someone who saw the original incident — is a **human review** obligation, listed in the catalogue's own contribution guidance and in the `Workflow Policy Review Checklist`. No automated check is claimed for it. A person's name and a document title have no reliable machine representation, and a check that pretended to catch them would report clean on the cases it cannot see, which is worse than having no check at all.
+5a. **AC-5a**: The remaining half of the generality rule — no person's name, no document title, **no incident-derived path other than the development-folder form AC-4 already catches**, and no wording that only makes sense to someone who saw the original incident — is a **human review** obligation, listed in the catalogue's own contribution guidance and in the `Workflow Policy Review Checklist`. No automated check is claimed for it. A person's name and a document title have no reliable machine representation, and a check that pretended to catch them would report clean on the cases it cannot see, which is worse than having no check at all.
 6. **AC-6**: When the catalogue is present, readable and within bound, its full text is present in the review context supplied to the local reviewer.
 7. **AC-7**: When AC-6 holds, the reviewer reports the supply state `supplied`, the number of patterns, and the catalogue's version.
 8. **AC-8**: When the catalogue is absent, unreadable, or over the bound, the reviewer reports the corresponding state from the four-state list and the review still runs.
