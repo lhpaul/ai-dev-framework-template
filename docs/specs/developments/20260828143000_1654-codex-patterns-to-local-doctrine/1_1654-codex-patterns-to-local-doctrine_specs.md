@@ -270,7 +270,16 @@ The count is *patterns supplied*, never *patterns present*. An `oversized` catal
 2b. **AC-2b**: The reported pattern count equals the number of level-3 headings in the catalogue.
 3. **AC-3**: The catalogue's preamble states that it lists shapes worth looking for and is not the set of things worth reporting.
 3a. **AC-3a**: The catalogue's preamble asks a reviewer that matches a pattern to name it in the finding. The criterion is satisfied by the request being present; whether a reviewer complies is not claimed — see Out of Scope item 5.
-4. **AC-4**: No catalogue entry contains any of these **mechanically detectable** references to a specific incident: a `#` followed by digits; a URL whose host is the repository's forge; the word `PR` or `issue` followed by digits, case-insensitively; or a path beginning `docs/specs/developments/`.
+4. **AC-4**: No catalogue entry contains any of these **mechanically detectable** references to a specific incident. The four forms are given as exact patterns, because "a reference to an incident" is not a thing a check can recognise and four literal shapes are:
+
+   | # | Form | Pattern | Matches | Does not match |
+   | --- | --- | --- | --- | --- |
+   | 1 | Hash-number reference | `#` immediately followed by one or more digits | `#1646` | `#heading`, `# Title` |
+   | 2 | Forge URL | `github.com/` followed by any non-space text | `https://github.com/o/r/pull/1` | `example.com/pull/1` |
+   | 3 | Spelled-out reference | the word `PR`, `pull request` or `issue`, case-insensitively, at a word boundary, followed by optional spaces, an optional `#`, and one or more digits | `PR 1646`, `issue #12`, `pull request 7` | `PR review`, `issues arise` |
+   | 4 | Development-folder path | the literal `docs/specs/developments/` | `docs/specs/developments/x/1_x_specs.md` | `docs/specs/` |
+
+   **Form 2's host is fixed to `github.com`, not derived.** Deriving it from the repository's remote would make the check's behavior depend on where the checkout was cloned from, so the same catalogue would pass in one clone and fail in another. A repository on a different forge adds its host to this list in the same way any other pattern is added — by editing this criterion.
 5. **AC-5**: A repository check fails when an **entry** violates AC-4, and passes when it does not. The check's authoritative prohibited set is exactly the four forms listed in AC-4 — no more, so the check is implementable, and no fewer, so it is worth running. It is applied to entries only; the preamble is excluded, per Business Rules.
 5a. **AC-5a**: The remaining half of the generality rule — no person's name, no document title, no wording that only makes sense to someone who saw the original incident — is a **human review** obligation, listed in the catalogue's own contribution guidance and in the `Workflow Policy Review Checklist`. No automated check is claimed for it. A person's name and a document title have no reliable machine representation, and a check that pretended to catch them would report clean on the cases it cannot see, which is worse than having no check at all.
 6. **AC-6**: When the catalogue is present, readable and within bound, its full text is present in the review context supplied to the local reviewer.
