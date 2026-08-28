@@ -61,7 +61,8 @@ implementation is ordered.
 | Baseline vs reviewer checks | `grep -n "REVIEWER_CHECKS\|REVIEWER_CHECK_COUNT" scripts/development-workflow/pr-ci-loop.sh` | `pr-ci-loop.sh` already separates reviewer-owned checks from baseline checks and emits `REVIEWER_CHECKS` / `REVIEWER_CHECKS_JSON`, so the gate can reuse that classification rather than inventing one |
 | `codex-github` integration doc exists | `ls docs/workflow/development-workflow/integrations/` | `codex-github.md` is present alongside `local-ai-reviewer.md`, `pr-agent.md`, and `bugbot.md`, so the gate's documentation target already exists and no new file is created |
 | Reviewer-loop protocol target | `grep -c "" docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` | 1142 lines; this is the protocol that documents loop behavior, and is the right home for the gate's normative description |
-| Cycle caps | `grep -n "MAX_CYCLES\|MAX_TOTAL_CYCLES" scripts/development-workflow/pr-review-loop.sh` | Dual caps (`max_cycles` per run, `max_total_cycles` per PR lifetime) already bound retries; the gate must not add a retry path outside them |
+| Cycle caps exist | `grep -n "MAX_CYCLES\|MAX_TOTAL_CYCLES" scripts/development-workflow/pr-review-loop.sh` | Dual caps are present: `max_cycles` per run and `max_total_cycles` per PR lifetime |
+| Cycle caps cannot bound deferrals | `sed -n '7371,7390p' scripts/development-workflow/pr-review-loop.sh` | `reviewer_loop_history_entries_count` reduces qualifying entries with `unique` over `(.head_sha) + "\|" + (.result)` before counting, on both the lifetime and per-run axes. Repeated `needs_fixes` results on one unchanged head — the exact shape of a deferral loop — therefore collapse to a single count and advance neither cap. This is why the gate needs its own occurrence-counted, head-scoped deferral counter rather than reusing these |
 
 ---
 
@@ -176,6 +177,19 @@ Not applicable — this repository ships workflow tooling, not a service.
       failing, so a stuck gate reaches a human instead of cycling silently. The
       counter resets naturally when the head moves, because it is scoped to
       `loop_head_sha`.
+- [ ] **The deferral counter is itself fail-closed.** If the ledger cannot be
+      read or does not parse — the same `unavailable` state
+      `reviewer_loop_history_entries_count` already reports as `-1` — the
+      counter cannot prove the sequence is bounded, so the gate must not defer
+      again on an unproven budget. It escalates immediately with
+      `EXPENSIVE_GATE_RESULT=deferral_cap` and
+      `REASON=expensive_gate_deferral_budget_unreadable`, carrying the
+      condition that triggered the gate, and emits
+      `EXPENSIVE_GATE_DEFERRALS=-1` so the unreadable state is distinguishable
+      from a count of zero. Escalating on an unreadable budget is the
+      conservative choice: a human sees the gate immediately, whereas deferring
+      on an unknown budget is precisely the unbounded loop this counter exists
+      to prevent.
 - [ ] **A repository with no local reviewer defers, it does not dispatch.**
       When `LOCAL_AI_CONFIGURED` is `0` there is no current-head local clean
       evidence, and the brief requires `codex-github` to run *only after* that
@@ -291,7 +305,7 @@ Not applicable — no user interface in this repository.
    defer: the brief requires the expensive reviewer to run only after
    current-head local clean evidence and to fail closed when it is absent. The
    consumer that never configures a local reviewer is released by the deferral
-   cap in scenario 16 or by the override in scenario 12, both explicit.
+   cap in scenario 13 or by the override in scenario 15, both explicit.
 6. `reorder_expensive_reviewers_last` moves `codex-github` to the end of a
    platform list that declared it first, preserves the relative order of the
    remaining platforms, emits `EXPENSIVE_REVIEWERS_REORDERED=1`, and leaves an
@@ -346,10 +360,17 @@ Not applicable — no user interface in this repository.
     `reviewer_loop_history_payload_from_existing` — `v1` backward compatibility,
     same contract as #1648's added fields.
 
+19. The deferral budget is unreadable (the ledger is absent, unparseable, or
+    reports the `unavailable` state) → `EXPENSIVE_GATE_RESULT=deferral_cap`,
+    `REASON=expensive_gate_deferral_budget_unreadable`,
+    `EXPENSIVE_GATE_DEFERRALS=-1`, and the loop escalates. Without this the
+    bounded-deferral guarantee would hold only when the ledger happens to be
+    readable, which is not a guarantee.
+
 **Files**:
 
-- `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenarios 1–14
-  and 18, as new cases in the existing `HARNESS_MODE=1` harness.
+- `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenarios 1–14,
+  18 and 19, as new cases in the existing `HARNESS_MODE=1` harness.
 - `scripts/development-workflow/tests/test-expensive-reviewer-gate.sh` — a new
   suite for scenarios 15–17, the override and composition cases, which need
   their own mock scaffolding for the phase and filter paths. It must declare:
@@ -389,8 +410,9 @@ concrete file and line:
 | P5 | Ordering regression: **delete the `reorder_expensive_reviewers_last` call**, leaving a platform list that declares `codex-github` before `pr-agent` | a scratch copy of the platform-resolution block | scenario 6 fails and scenario 7's suppressed-reorder case shows the gate deferring on every invocation with `peer_reviewer_not_run` — a deferral that can never resolve; restoring the call passes |
 | P6 | Readiness regression: make a defer leave the aggregate result unchanged instead of setting `needs_fixes` | a scratch copy of the gate call site | scenario 3's aggregate assertion fails, and a run in which `codex-github` never executed would satisfy Protocol 92's readiness conditions; restoring the `needs_fixes` aggregate passes |
 | P7 | Unbounded-deferral regression: replace the head-scoped deferral counter with the existing `reviewer_loop_history_entries_count` caps | a scratch copy of the cap check | scenario 13 fails, because repeated `needs_fixes` results on one unchanged head collapse under that function's `unique` bucketing by `head_sha` + `result` and neither cap ever trips; restoring the dedicated counter escalates with `expensive_gate_deferral_cap` |
+| P8 | Unreadable-budget regression: make the ledger read fail, and change the counter to treat the failure as a count of zero | the deferral-budget fixture in `scripts/development-workflow/tests/test-pr-review-loop.sh` | scenario 19 fails, because the gate defers on an unproven budget instead of escalating; restoring the fail-closed branch escalates with `expensive_gate_deferral_budget_unreadable` |
 
-Record all seven in the implementation PR under a `Planted-Violation Proofs`
+Record all eight in the implementation PR under a `Planted-Violation Proofs`
 heading, each with the command, the file and line of the planted violation, and
 both outcomes.
 
@@ -416,10 +438,12 @@ by the same sequential block that already writes `platform_result_tokens`.
 
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
-| Gate condition fixture | A table-driven set of the conditions with each one independently unmet, plus a reordered platform list for the order-independence case, driving scenarios 2–10 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
-| Unreadable-input mocks | Mock `gh` commands that exit non-zero for the threads query and for the check rollup, driving scenario 11 and proof P3 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
-| Composition fixture | A platform list where `codex-github` is both a phase platform and an expensive reviewer, driving scenarios 13 and 14 | inline in `scripts/development-workflow/tests/test-expensive-reviewer-gate.sh` |
-| Legacy ledger payload | A `reviewer_loop_history.v1` entry with no `expensive_gate` object, driving scenario 15 | inline heredoc in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Gate condition fixture | A table-driven set of the conditions with each one independently unmet, driving scenarios 2–5 and 8–11 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Platform-order fixture | A resolved list declaring `codex-github` first, and an already-correct list, driving scenarios 6 and 7 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Unreadable-input mocks | Mock `gh` commands that exit non-zero for the threads query and for the check rollup, driving scenario 12 and proof P3 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Deferral-budget fixtures | Ledger payloads carrying `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS` `expensive_gate.result=deferred` entries at the current head, one fewer, the same count at a different head, and an unparseable payload — driving scenarios 13, 14 and 19 and proof P7 | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Composition fixture | A platform list where `codex-github` is both a phase platform and an expensive reviewer, driving scenarios 16 and 17 | inline in `scripts/development-workflow/tests/test-expensive-reviewer-gate.sh` |
+| Legacy ledger payload | A `reviewer_loop_history.v1` entry with no `expensive_gate` object, driving scenario 18 | inline heredoc in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 
 No repository fixture files are added; both suites build their fixtures inline
 with mock `gh` commands and require no network access.
@@ -453,7 +477,7 @@ with mock `gh` commands and require no network access.
 | A deferral loop is invisible to the existing cycle caps | Med | High — the gate could cycle indefinitely on one unchanged head with neither cap advancing | `reviewer_loop_history_entries_count` buckets qualifying entries `unique` over `head_sha + "\|" + result`, so repeated `needs_fixes` on one head counts once; the plan therefore adds its own occurrence-counted, head-scoped deferral counter rather than relying on those caps, and proof P7 plants the reliance to demonstrate that it does not bound anything |
 | A consumer that never configures a local reviewer is blocked forever | Med | High — downstream template consumers would stall | The brief requires fail-closed on missing local evidence, so the gate defers rather than inventing an implicit dispatch. The release valves are explicit: the deferral cap escalates to a human after a bounded number of tries, and `PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS` covers a one-off run. Scenario 5 pins the defer and scenario 13 the escalation |
 | The gate is defined but never consulted, leaving behavior unchanged | Med | High — the item would appear complete while changing nothing | The call site is in the per-platform block immediately before `run_platform_review`, and proof P4 deletes that call outright and requires scenario 3 to fail — a gate that is not wired in cannot pass its own proof |
-| Fail-closed on unreadable evidence turns a transient API blip into a permanent defer | Med | Med | A defer is per-invocation, not sticky: the `needs_fixes` aggregate makes Protocol 91 re-run Step 7, which re-evaluates from scratch, and the existing dual cycle caps bound how many invocations happen. The gate adds no retry path of its own, so it cannot loop |
+| Fail-closed on unreadable evidence turns a transient API blip into a permanent defer | Med | Med | A defer is per-invocation, not sticky: the `needs_fixes` aggregate makes Protocol 91 re-run Step 7, which re-evaluates from scratch. The bound is the gate's own head-scoped deferral counter, not the existing dual cycle caps — those cannot see a deferral loop, as the Verification Log records — and an unreadable budget escalates rather than deferring again. The gate adds no retry path of its own, so it cannot loop |
 | The gate contradicts the existing phase mechanism | Med | High — two gates disagreeing on whether a platform runs is worse than either alone | Composition is specified explicitly (phase gate first, then this gate; `--pre-after-clean-only` filters before both) and pinned by scenarios 13 and 14, including the no-phantom-telemetry case |
 | Implementation starts before #1648 lands and wires the gate to keys that do not exist | Med | High — the gate would read unset variables and hold everything, or be written against a guessed contract | Recorded as a Conflict in the Cross-Cutting check and as Implementation Order step 0, which is a hard stop that verifies #1648 is merged into the approved base before any edit |
 | A reviewer's own check gates that reviewer | Low | Med — `codex-github` would wait on a check it is responsible for producing | Condition 4 evaluates non-reviewer checks only, reusing the reviewer/baseline classification `pr-ci-loop.sh` already emits rather than a new one; scenario 9's third case pins it |
@@ -555,8 +579,10 @@ Summary-comment line, illustrative:
    preserved, and an already-correct list is untouched with the flag unset.
 3. Add `expensive_gate_deferral_count`, reading occurrences of
    `expensive_gate.result == "deferred"` scoped to `expensive_gate.head` from
-   the ledger. **Verify**: scenarios 13 and 14 — the count reflects only the
-   current head.
+   the ledger, and returning `-1` when the ledger is absent, unparseable, or
+   reports the `unavailable` state. **Verify**: scenarios 13, 14 and 19 — the
+   count reflects only the current head, and an unreadable ledger yields `-1`
+   rather than `0`.
 4. Add `expensive_reviewer_gate` with the conditions in the documented order,
    the full-platform-list comparison for condition 2, the live-head comparison
    for conditions 3 and 4, the fail-closed branch for every unreadable input,
@@ -567,9 +593,10 @@ Summary-comment line, illustrative:
    `run_platform_review`, guarded by `is_expensive_reviewer_platform`. A
    `deferred` result sets the aggregate to `needs_fixes` with
    `REASON=expensive_gate_deferred`; a `deferral_cap` result sets it to
-   `escalate` with `REASON=expensive_gate_deferral_cap`. **Verify**: scenario 3
-   shows `run_platform_review` is not called and the aggregate is `needs_fixes`;
-   scenario 13 shows the escalation.
+   `escalate` with `REASON=expensive_gate_deferral_cap`, or
+   `REASON=expensive_gate_deferral_budget_unreadable` when the counter returned
+   `-1`. **Verify**: scenario 3 shows `run_platform_review` is not called and
+   the aggregate is `needs_fixes`; scenarios 13 and 19 show both escalations.
 6. Add the override branch, confirm the reason survives it, and confirm a
    `forced` result does **not** set the `needs_fixes` aggregate. **Verify**:
    scenario 15.
@@ -595,7 +622,7 @@ Summary-comment line, illustrative:
     **Verify**: both suites exit 0, and
     `scripts/development-workflow/select-test-suites.sh` selects the new suite
     for a change touching only `pr-review-loop.sh`.
-11. Produce the seven planted-violation proofs (P1–P7) and record them in the PR
+11. Produce the eight planted-violation proofs (P1–P8) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed.

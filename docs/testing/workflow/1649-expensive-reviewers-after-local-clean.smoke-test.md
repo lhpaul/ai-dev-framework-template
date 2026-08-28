@@ -170,11 +170,18 @@ aggregate.
 3. Re-seed the entries against a *different* `expensive_gate.head` and run again.
 4. Read `EXPENSIVE_GATE_DEFERRALS` in each run.
 
+5. Make the ledger read fail, or seed an unparseable payload, and run again.
+
 **Expected result**: step 1 gives `EXPENSIVE_GATE_RESULT=deferral_cap` with the
 loop aggregate `escalate` / `expensive_gate_deferral_cap`, still naming the
 condition that kept failing. Step 2 defers normally. Step 3 defers normally,
 because the counter is head-scoped and a new push starts the budget over.
-`EXPENSIVE_GATE_DEFERRALS` shows the distance to the cap in every run.
+Step 5 also escalates, with
+`REASON=expensive_gate_deferral_budget_unreadable` and
+`EXPENSIVE_GATE_DEFERRALS=-1` — an unreadable budget cannot prove the sequence
+is bounded, so deferring again would reopen the unbounded loop the counter
+exists to close, and `-1` keeps that state distinguishable from a count of zero.
+`EXPENSIVE_GATE_DEFERRALS` shows the distance to the cap in every other run.
 
 This bound cannot be delegated to the existing dual cycle caps:
 `reviewer_loop_history_entries_count` buckets qualifying entries `unique` over
@@ -249,10 +256,10 @@ so it would run only when the test file itself changed.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR description's `Planted-Violation Proofs` heading.
-2. Confirm P1–P7 from the plan each record the command, the file and line of the
+2. Confirm P1–P8 from the plan each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: seven proofs, each showing the check failing with the
+**Expected result**: eight proofs, each showing the check failing with the
 violation present and passing once removed. Four carry the most weight: P4
 deletes the `expensive_reviewer_gate` call so the function is defined but
 unreachable, and requires Step 3's stale-evidence row to fail — that is what
@@ -260,7 +267,9 @@ proves the gate is wired into the dispatch path. P5 deletes the
 `reorder_expensive_reviewers_last` call and requires Step 3c to fail. P6 makes a
 defer leave the aggregate unchanged and requires Step 3b to fail. P7 replaces
 the dedicated deferral counter with the existing cycle caps and requires
-Step 4b to fail, demonstrating that those caps do not bound a deferral loop.
+Step 4b to fail, demonstrating that those caps do not bound a deferral loop, and
+P8 makes an unreadable ledger count as zero and requires Step 4b's fifth run to
+fail.
 
 ### Step 10: Documentation states one contract
 
