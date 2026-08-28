@@ -245,7 +245,8 @@ bash scripts/lint/review-doctrine-lint.sh; echo "exit=$?"
    <!-- workflow-shell-contract: bash -->
 
    ```bash
-   grep -rl 'REVIEW_DOCTRINE_MAX_BYTES=' scripts | wc -l
+   grep -rl 'REVIEW_DOCTRINE_MAX_BYTES=' scripts \
+     --exclude-dir=tests | wc -l
    grep -cE '\-gt[[:space:]]+[0-9]+' scripts/lint/review-doctrine-lint.sh
    grep -c 'REVIEW_DOCTRINE_MAX_BYTES' scripts/lint/review-doctrine-lint.sh
    ```
@@ -256,7 +257,9 @@ bash scripts/lint/review-doctrine-lint.sh; echo "exit=$?"
 **Expected result**: 1 exits 0; 2 and 3 exit 1; 4 exits 0; 5 exits **0**; 6
 exits 0 then 1; 7 prints `1`, `0`, and a non-zero count — one assignment
 repository-wide, no numeric-literal size comparison in the linter, and the
-constant named there; 8 shows
+constant named there — with `scripts/**/tests/` excluded, because the suite
+implementing this very scenario may assign the name to build a fixture, and
+counting those would fail a correct implementation; 8 shows
 the linter passing and the reviewer `supplied` at 12,000, and the linter failing
 and the reviewer `oversized` at 12,001.
 

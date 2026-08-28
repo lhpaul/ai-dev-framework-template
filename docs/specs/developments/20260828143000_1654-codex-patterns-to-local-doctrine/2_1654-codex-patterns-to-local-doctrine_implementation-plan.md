@@ -380,8 +380,12 @@ catalogue and the reviewer's recorded output.
     bare-literal check would fail on correct code and could not tell P3's plant
     from the baseline. Two assertions instead:
 
-    - `REVIEW_DOCTRINE_MAX_BYTES=` is assigned in **exactly one** file
-      repository-wide, `workflow-lib.sh`;
+    - `REVIEW_DOCTRINE_MAX_BYTES=` is assigned in **exactly one** file among the
+      **shipped** scripts — `workflow-lib.sh` — with `scripts/**/tests/`
+      excluded from the search. The suites are excluded deliberately and not as
+      a convenience: a test may legitimately assign the name to build a
+      fixture, and a check that counted those would fail on a correct
+      implementation of its own scenario;
     - neither consumer compares a size against a numeric literal — no
       `-gt <digits>` in `review-doctrine-lint.sh` or in
       `reviewer_doctrine_supply` — and both name the constant.
