@@ -160,7 +160,7 @@ P4.
 
 **Expected result**: case 1 dispatches the guard's pass **once**; case 2
 dispatches it twice. Cases 3 and 3a both **refuse** — the cycle ends with `needs_fixes`,
-reason `local_pass_failed_for_head`, no dispatch, no conversion. Case 4 takes
+reason `failed_for_head`, no dispatch, no conversion. Case 4 takes
 the `not_required` path: no dispatch, no refusal.
 
 Case 3a is the hole an in-memory flag leaves, and it is the ordinary case rather

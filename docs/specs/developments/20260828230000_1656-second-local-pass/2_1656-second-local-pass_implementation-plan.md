@@ -262,7 +262,7 @@ Not applicable — this repository ships workflow tooling, not a service.
       | --- | --- | --- |
       | `not_required` | — | proceed to the gate; no dispatch |
       | owes a pass | no | **dispatch once**; clean → proceed, otherwise end the cycle and record the head |
-      | owes a pass | yes | **refuse**: end the cycle with `needs_fixes`, reason `local_pass_failed_for_head`, no dispatch and no conversion |
+      | owes a pass | yes | **refuse**: end the cycle with `needs_fixes`, reason `failed_for_head`, no dispatch and no conversion |
 
       **The third row is the one a two-way guard gets wrong**, and it is not a
       corner case — it is the next cycle after any failed pass. A flag that only
@@ -440,7 +440,7 @@ Order step 0.
    hypothetical — the loop is re-invoked after every blocking result, which is
    what a failed pass produces.
 8a. After a **failed** pass, the next cycle at the same head **refuses**: the
-   cycle ends with `needs_fixes` and reason `local_pass_failed_for_head`, no
+   cycle ends with `needs_fixes` and reason `failed_for_head`, no
    local reviewer is dispatched, and the pull request is not converted. A guard
    that only suppressed the dispatch would let this cycle reach the gate with no
    current clean evidence — the fail-open the anti-loop flag would otherwise
