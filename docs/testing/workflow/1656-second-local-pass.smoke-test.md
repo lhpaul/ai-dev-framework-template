@@ -63,7 +63,7 @@ Cases 2 and 3 both owe a pass. An ancestor is the ordinary fix-was-pushed case;
 an unrelated commit is a force-push. Neither is evidence about the commit the
 ready-phase reviewers are about to read.
 
-## Step 2: Four values, not a boolean
+## Step 2: Six reasons, not a boolean
 
 **Maps to**: the reporting contract.
 
