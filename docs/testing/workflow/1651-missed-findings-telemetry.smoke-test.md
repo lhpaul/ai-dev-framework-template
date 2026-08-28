@@ -226,11 +226,12 @@ reviewed. Substituting would put unearned entries into the confirmed count,
 invisibly. AC-11 requires no record when the commit cannot be established, and
 that is what this case asserts. Proof P15.
 
-**Today this means no external round produces a record**, because only
-`local-ai-reviewer` emits `REVIEWED_HEAD`. That is the honest state of the
-feature until an adapter is extended, and the attribution-failure report makes
-it visible on every pull request rather than leaving an empty telemetry to be
-read as a clean bill of health.
+Which is why the external adapters are extended **in this item** to emit
+`REVIEWED_HEAD` from their own artifacts — a review comment's `commit_id`, a
+check run's `head_sha`. Deferring that would have left every external round
+rejected here and every acceptance criterion unreachable in operation, which is
+not a shippable state. Step 7a covers the extraction and its two fail-closed
+rules.
 
 Case 5 is the third of the spec's three no-record paths, and the only one that
 reaches attribution before failing — the other two are excluded before the
@@ -244,6 +245,31 @@ always 100%, because the numerator is the only thing counted. Proof P2.
 Case 4 asserts that no de-duplication occurs even on identical records — the
 loop genuinely ran twice, and two rounds finding the same thing is a real
 observation about the reviewer, not a duplicate row.
+
+## Step 7a: Each adapter emits the head from its own artifact
+
+**Maps to**: AC-11, and the attribution rule.
+
+1. A round whose review comments all carry the **same** `commit_id`.
+2. A round whose review comments carry **two different** `commit_id` values —
+   a reviewer that posted across a push.
+3. A platform that produced only a **check run**, no comments.
+4. A platform that produced a comment with **no** `commit_id`.
+
+**Expected result**: cases 1 and 3 emit `REVIEWED_HEAD` — the comments'
+`commit_id` and the check run's `head_sha` respectively — and produce records.
+Cases 2 and 4 emit **no** head, produce no record, and report the attribution
+failure.
+
+Case 2 is the one that looks like ordinary defaulting. Taking the first
+`commit_id` of two is the obvious implementation, and it names a commit that
+some of the round's findings do not belong to — after which a
+`clean_same_commit` can follow from a comparison against the wrong commit. A
+reviewer whose findings straddle a push did not review one commit, and the
+honest answer is that there is no head. Proof P17.
+
+Both fail-closed rules land on AC-11's existing path, so nothing new is
+introduced to handle them: no head, no record, reason reported.
 
 ## Step 8: An unwritable history reports only what was owed
 
@@ -389,10 +415,10 @@ status. The records change what is *known*, never what happens.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P16 each record the command, the file and line of the
+2. Confirm P1 through P17 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: sixteen proofs in two groups — **ten** overclaiming,
+**Expected result**: seventeen proofs in two groups — **eleven** overclaiming,
 **six** contract, per the plan's proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:

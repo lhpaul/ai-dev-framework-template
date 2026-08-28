@@ -63,6 +63,8 @@ sequencing constraint on implementation only — the two plan PRs are independen
 | Writability is already a decided state — and today it **destroys** the history | `sed -n '6960,7030p' scripts/development-workflow/pr-review-loop.sh` | `append_safe`, `history_status` and `history_unavailable_reason` already exist. On malformed history, unknown schema, or a prior unavailable payload the loop builds a **replacement** payload with `entries: []` and renders it over the previous block. The spec's row 4 is this branch, but AC-7a's byte-for-byte preservation is **not** current behavior and needs the change described in Layer-by-Layer |
 | The reason vocabulary that already exists | Same range | `malformed_history`, `unknown_schema`, and a pass-through `prior_unavailable`. Row 4's "report why" is satisfied by surfacing these, not by adding new ones |
 | Blocking paths are already extracted per platform | `sed -n '6786,6800p' scripts/development-workflow/pr-review-loop.sh` | `reviewer_loop_blocking_paths_from_output` reads `BLOCKING_<n>_PATH` from a platform's output. The record's path list and total come from here; nothing new parses reviewer output |
+| Review comments carry the commit they were written against | `gh api repos/lhpaul/ai-dev-framework-template/pulls/1663/comments --jq '.[0] \| {user, commit_id}'` | Returns `commit_id` `613bc33b…` for a `cursor[bot]` comment — the reviewer's own statement of which commit its finding is attached to. This is the evidence the external adapters emit as `REVIEWED_HEAD`; nothing is inferred from what the loop dispatched |
+| Check runs carry theirs | `gh api repos/lhpaul/ai-dev-framework-template/commits/2c37d0ba/check-runs --jq '.check_runs[0] \| {name, head_sha}'` | Returns `head_sha` `2c37d0ba…`. Platforms that post a check rather than comments have the same evidence under a different field |
 | Ancestry has a precedent in this repository | `grep -rn "merge-base --is-ancestor" scripts/development-workflow/` | Two call sites — `validate-branch-reuse.sh:408` and `prepare-release-post-merge-cleanup.sh:532` — both using `git merge-base --is-ancestor A B` with output discarded and the **exit status** read. This plan uses the same form and, unlike both, distinguishes the third exit status |
 | The local reviewer's platform name is a fixed string | `grep -n "local-ai-reviewer" .ai-dev-workflow.yaml` | The platform is named `local-ai-reviewer` in configuration, and the loop reports it under that name. The record's "is this the local reviewer" test compares against that name |
 
@@ -155,6 +157,51 @@ Not applicable — this repository ships workflow tooling, not a service.
       derivation, a future report — reads `result` and never re-derives it. The
       raw pair is kept beside it because a normalization that discards its input
       cannot be audited when a reader disagrees with it.
+
+      `reason` is carried because two spec states are distinguished by it and
+      by nothing else.
+
+      **`reviewed_head` is the reviewer's own statement, and there is no
+      fallback.** It comes from the companion script's `REVIEWED_HEAD` — #1648's
+      per-reviewer evidence. When a platform does not emit one, the reviewed
+      commit **cannot be established**, and the spec is unambiguous about what
+      follows: AC-11 and Decision Matrix row 3 require no record and a reported
+      reason. The record is withheld.
+
+      **Each external adapter emits `REVIEWED_HEAD` from its own artifact.**
+      Only `local-ai-reviewer` does today, and an earlier revision of this plan
+      deferred the rest to a follow-up item — which would have left every
+      external round rejected at the attribution gate and made AC-1 through
+      AC-7, AC-10 and AC-13 through AC-17a unreachable in operation. A feature
+      whose acceptance criteria cannot be exercised is not shipped, so the
+      adapters are in scope here.
+
+      The evidence exists and it is the reviewer's own, not the loop's:
+
+      | Platform artifact | Field | Command |
+      | --- | --- | --- |
+      | A pull-request review comment | `commit_id` — the commit the finding is attached to | `gh api repos/<o>/<r>/pulls/<n>/comments` |
+      | A check run | `head_sha` — the commit the run executed against | `gh api repos/<o>/<r>/commits/<sha>/check-runs` |
+
+      Each adapter reads the artifact it already consumes to decide its result,
+      takes that commit, and emits it as `REVIEWED_HEAD`. Nothing is inferred
+      from what the loop dispatched.
+
+      **Two rules keep the evidence honest**, and both fail closed to AC-11's
+      no-record path:
+
+      1. If the artifacts a platform produced for this round name **more than
+         one** commit, no head is emitted. A reviewer whose findings straddle
+         two commits did not review one commit, and picking either would be a
+         guess wearing evidence's clothes.
+      2. If a platform produced no artifact carrying a commit — a bare status,
+         a summary comment with no `commit_id` — no head is emitted.
+
+      An earlier revision substituted `loop_head_sha`, the head the loop
+      *dispatched* against, in both cases. It is withdrawn: the dispatched head
+      is what the loop sent, not what the reviewer read, and
+      `clean_same_commit` is defined against the commit the external reviewer
+      *reviewed*.
 
       `reason` is carried because two spec states are distinguished by it and
       by nothing else.
@@ -404,11 +451,10 @@ Not applicable — this repository ships workflow tooling, not a service.
          own findings;
       2. the platform reported no **blocking** findings — advisory findings do
          not qualify;
-      3. the platform did not emit `REVIEWED_HEAD` — the reviewed commit
-         cannot be established, so no record. There is **no** fallback:
-         `loop_head_sha` is not substituted, and with today's adapters this
-         exclusion fires on every external round, which is the honest state of
-         the feature rather than a defect in it;
+      3. the platform emitted no `REVIEWED_HEAD` — its artifacts named no
+         commit, or named more than one. The reviewed commit cannot be
+         established, so no record and a reported reason. There is **no**
+         fallback: `loop_head_sha` is not substituted;
       4. the round is not eligible at all, which rows 1 and 2 of the spec's
          matrix already cover.
 
@@ -605,6 +651,12 @@ Not applicable — this repository ships workflow tooling, not a service.
     is available and would have been a plausible substitute. Asserted with
     `loop_head_sha` present in the environment, so the scenario fails if an
     implementer reaches for it.
+13e. Each external adapter emits `REVIEWED_HEAD` from its own artifact, and
+    fails closed: one case where the round's review comments all carry the same
+    `commit_id` — a head is emitted; one where they carry **two different**
+    `commit_id` values — **no** head; one where the platform produced only a
+    check run — its `head_sha` is emitted; and one where the platform produced a
+    comment with no `commit_id` at all — no head.
 13b. An external round whose reviewed commit **cannot be established** produces
     no record, and the round's output states the attribution failure and its
     reason. This is AC-11, and it is the third of the spec's three no-record
@@ -674,8 +726,9 @@ Not applicable — this repository ships workflow tooling, not a service.
 | A `git` exit status of 1 is read from a bare call under `set -e` | **High** — it is the shorter and more obvious way to write it | **High** — three of the five results become unreachable and the round aborts instead of classifying | Every status is captured with `\|\| status=$?`, which is exempt from errexit. Scenario 5a and proof **P9** |
 | The summary line's bound is enforced by truncating the finished string | Med | Med — truncation removes the tail, which is where the state and the classification sit | The line is built with the total and the state **before** the paths, and paths stop at the first one that would exceed the bound. Scenario 13's zero-path case and proof **P6** |
 | The additive fields break a ledger reader | Low | Med | The schema string is unchanged and every existing field keeps its name and type; scenario 14 asserts them individually |
-| External reviewers report no head, so the feature collects nothing until they do | **High** — only `local-ai-reviewer` emits `REVIEWED_HEAD` today | **High** — the telemetry stays empty, and an empty telemetry can be misread as "no misses" | Not mitigated by substituting the dispatched head, which the spec forbids and which would put unearned entries into the confirmed count invisibly. Instead: the loop reports the attribution failure per AC-11 on **every** external round, so the gap is visible on every pull request; and the plan recommends a follow-up item to extend the adapters. Scenario 13b, and proof **P15** plants the substitution |
-| An empty telemetry is read as "no misses" | Med | Med — a report over zero records looks like a clean bill of health | The attribution-failure report fires on every external round, so "nothing was recorded and here is why" is on the pull request. #1657 must distinguish *no misses* from *no records*, which is noted as an input to that item rather than left for it to discover |
+| External reviewers report no head, so the feature collects nothing | **High** if the adapters are left alone | **High** — every acceptance criterion becomes unreachable in operation and the telemetry is empty while looking like "no misses" | The adapters are extended in this item to emit `REVIEWED_HEAD` from their own artifacts — a review comment's `commit_id` or a check run's `head_sha`. Not from `loop_head_sha`, which the spec forbids. Scenarios 13d and 13e; proof **P15** plants the dispatch substitution |
+| An adapter's artifacts name two commits and one is picked | Med — a slow reviewer posting across a push | **High** — the record would name a commit the finding does not belong to, and a confirmed miss would follow from it | Multiple commits means no head and no record, fail-closed to AC-11. Scenario 13e and proof **P17** |
+| An empty telemetry is read as "no misses" | Low, once the adapters report | Med — a report over zero records looks like a clean bill of health | The attribution-failure report fires whenever a head cannot be established, so "nothing was recorded and here is why" is on the pull request. #1657 must distinguish *no misses* from *no records*, which is noted as an input to that item rather than left for it to discover |
 | The current round's verdict is not composed in before selection | **High** — the selector's input is naturally the persisted payload | **High** — the confirmed-miss case in AC-1 is exactly a same-round local clean, so the feature would miss the thing it exists to record while passing every other test | The call site composes the round's `platform_result_records` as a synthetic entry before selecting. Scenarios 1a and 1b, proof **P14** |
 | A pre-change entry's aggregate result is read as the local reviewer's verdict | **High** — it is the only outcome those entries carry | **High** — rounds the local reviewer never ran become confirmed misses, in the historical half of the data where nobody checks | Entries without `platform_results` yield `unknown`, never the aggregate. Scenario 3a and proof **P8** |
 | An unappendable history is replaced by an empty stub | **High** — it is the current behavior | **High** — every entry the pull request held is lost, and the stub looks like a well-formed report rather than a deletion | The render path leaves the prior block untouched; the stub is written only when there is no prior block. Scenario 11 and proof **P7** |
@@ -768,12 +821,12 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The sixteen proofs fall into
+runs per proof, each citing a concrete file and line. The seventeen proofs fall into
 two groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Overclaiming | **10** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16 | a number asserted on evidence that does not support it |
+| Overclaiming | **11** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16, P17 | a number asserted on evidence that does not support it |
 | Contract | **6** | P5, P6, P7, P9, P11, P13 | a report, a line, or a stored history that breaks its own stated contract |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
@@ -792,10 +845,11 @@ two groups:
 | P13 | Compute the remainder as `path_total - 3` instead of from the paths actually named | a scratch copy of the renderer | scenario 13c fails at every truncation point: the zero-path line reads `+9 more` for twelve files, and a record with two files fitting reads `-1 more`. The plant is invisible whenever exactly three paths fit, which is the common case; restoring the count-what-was-named rule passes |
 | P14 | Select from persisted entries only, omitting the current round's records | a scratch copy of the call site | scenarios 1a and 1b fail: a round where the local reviewer was clean and an external reviewer found blockers is classified from the previous round's verdict, or as `not_yet_run` when there is no previous round — so the confirmed miss the feature exists to record is the one case it cannot see. Every other scenario still passes, because they all supply the verdict as prior history; restoring the composition passes |
 | P16 | Fall back to the entry's `head_sha` when a local verdict has no `reviewed_head` | a scratch copy of the selector | scenario 6a fails: the local reviewer's verdict is compared against the live head at write time rather than the commit it examined, so two unrelated facts can produce `clean_same_commit` and a confirmed miss. The plant is invisible whenever the two happen to coincide, which is most rounds; restoring the empty head — and with it an undecidable ancestry and `unknown` — passes |
+| P17 | Emit the first `commit_id` when a round's artifacts name two | a scratch copy of an adapter's head extraction | scenario 13e's two-commit case fails: a head is emitted for a round whose findings straddle a push, so the record names a commit some of the findings do not belong to and a `clean_same_commit` can follow from it. The plant looks like ordinary defaulting and only a fixture that straddles a push exposes it; restoring the no-head rule passes |
 | P15 | Substitute `loop_head_sha` for a missing `REVIEWED_HEAD` | a scratch copy of the attribution gate | scenario 13d fails: a round whose external reviewer never stated its head produces a record, and a `clean_same_commit` in it enters the **confirmed** count on the loop's inference about what the reviewer read. AC-11 requires no record when the commit cannot be established, and `clean_same_commit` is defined against the commit the external reviewer *reviewed*. The plant is the tempting one — it makes an empty telemetry produce data — which is why it is planted rather than argued about; restoring the no-fallback rule passes |
 | P6 | Enforce the 200-character bound by truncating the finished line | a scratch copy of the renderer | scenario 13's long-path case fails: truncation removes the tail, which is where the local evidence state and the classification sit, so the line that survives is the one carrying paths and no verdict — exactly inverted from what a reader needs; restoring build-order enforcement passes |
 
-Ten proofs plant the overclaiming direction because that is the direction with
+Eleven proofs plant the overclaiming direction because that is the direction with
 no symptom: every one of them produces a plausible number, and a number is
 believed. P3 is the one to read twice — its plant passes every test written
 against a healthy repository, and only a fixture with a deliberately deleted
@@ -828,6 +882,10 @@ object exposes it.
 3. Add `reviewer_loop_local_evidence_state`. **Verify**: scenarios 6 and 6a —
    one case per row, both routes to `unknown`, and a local verdict with no
    reviewer-supplied head.
+3a. Extend each external adapter to emit `REVIEWED_HEAD` from the artifact it
+   already consumes — a review comment's `commit_id`, or a check run's
+   `head_sha` — with no head emitted when the artifacts name more than one
+   commit or none. **Verify**: scenario 13e, all four cases.
 4. Add `reviewer_loop_missed_finding_records` with its four exclusions as early
    `continue`s. Attribution uses the reviewer's own `REVIEWED_HEAD` and has
    **no fallback**; `loop_head_sha` must not be substituted. **Verify**:
@@ -846,7 +904,7 @@ object exposes it.
    eight-findings-over-three-files case, and the three remainder forms.
 8. Update Protocol 93 and the `--help` block. **Verify**: runbook Step 9 reads
    both against the code.
-10. Produce the sixteen planted-violation proofs (P1-P16) and record them in the PR
+10. Produce the seventeen planted-violation proofs (P1-P17) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
