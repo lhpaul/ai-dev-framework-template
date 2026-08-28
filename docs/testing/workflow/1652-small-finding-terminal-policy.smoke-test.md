@@ -191,10 +191,12 @@ and classify a blocker against the wrong text. The record is JSON built with
 1. Seed a ledger with two prior small-findings rounds whose
    `classification_head` is an **older** commit and one whose
    `classification_head` is the **current** head. Run the counter.
-1a. Seed a prior entry whose `classification_head` equals the current head but
-   whose `reviewed_heads[]` contains one platform on an older commit; then one
-   where both contributors name the `classification_head`. Run the counter for
-   each.
+1a. Seed four prior entries whose `classification_head` equals the current head
+   and run the counter for each: two contributing platforms both naming that
+   head; two contributing platforms with one on an older commit; one
+   contributing platform naming it while a **non-contributing** platform
+   reports no head at all; and a pre-change entry carrying no
+   `contributing_platforms[]`.
 1b. Seed a prior entry whose `head_sha` equals the current head while its
    `classification_head` is an older commit; then the two swapped. Run the
    counter for each.
@@ -215,11 +217,22 @@ and classify a blocker against the wrong text. The record is JSON built with
 **Expected result**: step 1 returns **1**, not 3 — a round classified against an
 older commit ends the consecutive run rather than extending it.
 
-Step 1a's first seed ends the run and its second counts: a round *classified*
-against the current head is not evidence that every *contributor* reviewed it,
-and accepting it would count evidence nobody produced for this commit. This is
-the same per-contributor rule the deciding round is held to in step 5, applied
-to the prior entries so both halves of `prior + 1` are checked identically.
+Step 1a's four seeds give: counts, run ends (`stale_head`), **counts**, run
+ends. The first two show that a round *classified* against the current head is
+not evidence that every *contributor* reviewed it — the same per-contributor
+rule the deciding round is held to in step 5, so both halves of `prior + 1` are
+checked identically.
+
+The **third** is the one that keeps the rule usable. `reviewed_heads[]` lists
+every configured platform, including ones that returned clean, were skipped, or
+never report a head. Requiring a current head from all of them would break the
+count permanently on any repository where a reviewer legitimately does not
+report — disabling the terminal rule from the restrictive side. Only the
+platforms in `contributing_platforms[]` are checked; the rest are ignored.
+
+The fourth is backward compatibility in the fail-closed direction: an entry
+written before this change has no `contributing_platforms[]`, so it cannot
+demonstrate contributor currency and ends the run.
 
 Step 1b's first seed ends the run with `stale_head` and its second counts. The
 counter must read `classification_head` and never `head_sha`: #1648's ledger
@@ -364,11 +377,11 @@ tier 1 makes those findings non-small whatever the body says.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P18 each record the command, the file and line of the
+2. Confirm P1 through P19 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: eighteen proofs in four groups — **thirteen** permissive,
-**three** restrictive, **one** observability, **one** fidelity, per the plan's
+**Expected result**: nineteen proofs in four groups — **thirteen** permissive,
+**four** restrictive, **one** observability, **one** fidelity, per the plan's
 proof-group table.
 The permissive group is P1 through P5, P8, P10, P11, P12, P14, P15, P16 and P17,
 reproducing the original bug in each of the ways it can return; P8 skips the current round's head check and requires Step 4's
@@ -382,8 +395,10 @@ normalised body instead of the raw one, requiring Step 3f's fidelity check to
 fail while its matching checks still pass; P11 checks only a
 prior entry's
 `classification_head` and skips its `reviewed_heads[]`, requiring step 1a to
-fail; **P12** drops tier 1 and leaves the vocabulary test as the only guard, requiring Step 1's third case — a contract finding containing no listed term — to fail. **Three** plant the
-**restrictive** direction, and none is optional: **P13** replaces the portable
+fail; **P12** drops tier 1 and leaves the vocabulary test as the only guard, requiring Step 1's third case — a contract finding containing no listed term — to fail. **Four** plant the
+**restrictive** direction, and none is optional: **P19** requires a current head
+from every `reviewed_heads[]` entry rather than only the contributing ones, and
+requires Step 4's step 1a third seed to fail; **P13** replaces the portable
 boundary with `\b` and requires Step 3's BSD row to fail; **P6** widens the
 normative list and requires Steps 1, 2 and 7 to fail; **P7** restores the bare
 common words to the contract-surface list and requires Step 3's seven bare-word

@@ -300,18 +300,33 @@ Not applicable — this repository ships workflow tooling, not a service.
          | --- | --- | --- |
          | `head_sha` | the live head at ledger **write** time | **not used** — it is the identity key the #1502 cap counters bucket on, and it can differ from what was reviewed |
          | `classification_head` | the `loop_head_sha` that round's states were classified against | the round's subject: must equal the current `loop_head_sha` |
-         | `reviewed_heads[]` | per-platform reviewed head and state | the round's evidence: every contributor must name the same commit |
+         | `reviewed_heads[]` | per-platform reviewed head and state, for **every configured platform** | the round's evidence — but only the entries for platforms that actually contributed a counted finding |
 
-         A prior round counts only when **both** hold: its
-         `classification_head` equals the current `loop_head_sha`, **and** every
-         entry in its `reviewed_heads[]` records a valid head equal to that
-         `classification_head`. The second condition is what the first cannot
-         supply — a round can be classified against the current head while one
-         of its contributing platforms actually reviewed an older one, and
-         accepting it would count evidence nobody produced for this commit. This
-         is the same per-contributor rule the current round is held to, applied
-         to the prior entries so the two halves of `prior + 1` are checked
-         identically.
+         **Only contributing platforms are checked.** `reviewed_heads[]` lists
+         every configured platform, including ones that returned clean, were
+         skipped, or reported no head at all. Requiring a current head from all
+         of them would break the count permanently on any repository where a
+         reviewer is legitimately not reporting — disabling the terminal rule
+         from the restrictive side, and inconsistently with the current-round
+         rule, which is already scoped to contributors.
+
+         The ledger does not record that mapping today, so this item adds it:
+         each small-findings entry gains **`contributing_platforms[]`**, the set
+         of platforms that produced a counted finding in that round. It is
+         derived from the `platform` field of the `aggregate_blocking_findings`
+         records this item already introduces, so no new source of truth is
+         created.
+
+         A prior round counts only when **all three** hold: its
+         `classification_head` equals the current `loop_head_sha`; it records a
+         non-empty `contributing_platforms[]`; and every platform named there
+         has a `reviewed_heads[]` entry whose head is valid and equal to that
+         `classification_head`. Entries for non-contributing platforms are
+         ignored entirely.
+
+         An entry written before this change carries no
+         `contributing_platforms[]` and therefore ends the run — the same
+         fail-closed direction as a missing head, and the same as scenario 14.
 
          Any entry whose `classification_head` is absent, empty or a synthetic
          placeholder ends the run with `head_unknown`; any entry with a
@@ -512,11 +527,20 @@ Not applicable — no user interface in this repository.
 9. The consecutive count stops at an entry whose head is absent, empty, or a
    synthetic `unknown-…` placeholder — three cases, each ending the run rather
    than being skipped, each with stop reason `head_unknown`.
-8b. The prior-round check is per contributor too. With a prior entry whose
-    `classification_head` equals the current head but whose `reviewed_heads[]`
-    contains one platform on an older commit, the run ends — a round classified
-    against the current head is not evidence that every contributor reviewed it.
-    With both contributors naming the `classification_head`, the entry counts.
+8b. The prior-round check is per **contributing** platform. Four cases on an
+    entry whose `classification_head` equals the current head:
+
+    | `contributing_platforms[]` | `reviewed_heads[]` state | Result |
+    | --- | --- | --- |
+    | two platforms, both named | both on `classification_head` | counts |
+    | two platforms, both named | one on an older commit | run ends, `stale_head` |
+    | one platform named | that one current; a **non-contributing** platform reports no head | counts — non-contributors are ignored |
+    | absent (pre-change entry) | any | run ends |
+
+    The third row is the one that keeps the rule usable: `reviewed_heads[]`
+    lists every configured platform, including ones that returned clean or were
+    skipped, so requiring a current head from all of them would break the count
+    permanently wherever a reviewer legitimately does not report.
 8c. The counter reads `classification_head`, never `head_sha`. With an entry
     whose `head_sha` equals the current head but whose `classification_head`
     is an older commit, the run ends with `stale_head`; with the two swapped, it
@@ -584,9 +608,10 @@ Not applicable — no user interface in this repository.
     the contract-surface test exactly. Pairing it with scenario 12 would be
     meaningless, since tier 1 makes those findings non-small whatever the body
     says.
-14. A ledger entry written before this change, carrying no head on its
-    small-findings entries, ends the consecutive run rather than being counted —
-    backward compatibility in the fail-closed direction.
+14. A ledger entry written before this change — carrying no head on its
+    small-findings entries, or no `contributing_platforms[]` — ends the
+    consecutive run rather than being counted. Backward compatibility in the
+    fail-closed direction, for both missing fields.
 
 **Files**:
 
@@ -622,13 +647,13 @@ above are the regression coverage for this change.
 
 This plan materially modifies an automated guard, so `REVIEW.md` §
 Planted-violation proof applies and the pure-refactor exemption does not. Two
-demonstrated runs per proof, each citing a concrete file and line. The eighteen proofs fall into four groups:
+demonstrated runs per proof, each citing a concrete file and line. The nineteen proofs fall into four groups:
 
 | Group | Count | Proofs | What they plant |
 | --- | --- | --- | --- |
 | Permissive | **13** | P1-P5, P8, P10, P11, P12, P14, P15, P16, P17 | the original bug, in each of the ways it can return |
 | Fidelity | **1** | P18 | storing the matching-time normalisation instead of the body as received |
-| Restrictive | **3** | P6, P7, P13 | a tightening that disables the mechanism instead of sharpening it |
+| Restrictive | **4** | P6, P7, P13, P19 | a tightening that disables the mechanism instead of sharpening it |
 | Observability | **1** | P9 | an inverted within-group reporting precedence, which hides the more actionable cause without changing whether the rule fires |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
@@ -649,7 +674,8 @@ demonstrated runs per proof, each citing a concrete file and line. The eighteen 
 | P7 | Over-tighten by term: restore the bare common words `gate`, `scope`, `state`, `status`, `proof`, `parse` and `contract` to the contract-surface list | same scratch copy | scenario 6a fails on all seven cosmetic bodies and scenario 13 stops firing, because ordinary prose now reads as contract-bearing; restoring the phrase-only list passes |
 | P9 | Invert both within-group precedences: report `contract_surface` over `shipped_path`, and `head_unknown` over `stale_head` | a scratch copy of the blocked-by mapping | scenario 10a's first two rows fail — the content row reports `contract_surface` where a shipped path is present, and the currency row reports `head_unknown` where a known-different head is present. Both are detectable because both are genuine co-occurrences within a group; restoring the order passes |
 | P10 | Make the counter read `head_sha` instead of `classification_head` | a scratch copy of the counter | scenario 8c fails, because a round whose write-time head happens to match counts even though it described an older commit; restoring `classification_head` passes |
-| P11 | Check only a prior entry's `classification_head` and skip its `reviewed_heads[]` | same scratch copy | scenario 8b fails, because a round classified against the current head counts while one of its contributors reviewed an older commit; restoring the per-contributor check passes |
+| P11 | Check only a prior entry's `classification_head` and skip its `reviewed_heads[]` | same scratch copy | scenario 8b's second row fails, because a round classified against the current head counts while one of its contributors reviewed an older commit; restoring the per-contributor check passes |
+| P19 | Require a current head from **every** `reviewed_heads[]` entry rather than only the contributing platforms | same scratch copy | scenario 8b's third row fails: a non-contributing reviewer that returned clean or was skipped breaks the count, and on a repository where one reviewer never reports the terminal rule can never fire again. Restoring the contributor scoping passes |
 | P8 | Skip the current round's head check, verifying only the prior ledger entries | a scratch copy of the terminal decision | scenario 8a fails, because the rule terminates on a deciding round whose findings describe a commit that is no longer the head; restoring the check passes |
 
 P6, P7 and P13 are the three restrictive-direction proofs and none is optional.
@@ -708,6 +734,7 @@ point. No listeners, timers, or shared mutable state are introduced.
 | Contract-surface body fixture | One body per row of the contract-surface table; three cosmetic bodies; the **seven bare-common-word cosmetic bodies** of scenario 6a, one per removed term; the three qualified-phrase controls that must still match; and **twelve** parser edge cases — the ten enumerated in the parser-risk addendum, plus the `failXclosed` wildcard negative and the unhyphenated `allow list` negative that the runbook's Step 3 table adds | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Multi-contributor round fixture | A single round with counted findings from two platforms, in four combinations — both on the current head, one stale, one reporting no head, and both stale — driving scenario 8a | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Co-occurring-cause fixtures | Three rounds driving scenario 10a: one carrying both a shipped-path and a contract-surface finding; one whose findings are all small with one stale contributor and one reporting no head; and one carrying a contract-surface finding together with a contributor on a stale head, to prove the currency check is never reached | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Contributing-platform ledger fixture | Entries with two contributors both current, two with one stale, one contributor current alongside a non-contributing platform reporting no head, and a pre-change entry with no `contributing_platforms[]` — driving scenario 8b's four rows | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Head-comparison ledger fixture | Ledger payloads with prior small rounds on an older head, on the current head, and with absent, empty and placeholder heads — driving scenarios 8, 9, 10 and 14 | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | #1661 replay ledger | A `reviewer_loop_history.v1` payload reproducing PR #1661's consecutive small-findings rounds, with the real finding bodies naming fail-closed semantics, matrix rows and acceptance criteria | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
 | Tier-2 replay ledger | The #1661 replay's ledger shape and bodies on `docs/project/1-business-domain.md`, a non-normative non-shipped path, driving scenario 12a — the only replay that exercises the contract-surface test end to end | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
@@ -755,6 +782,7 @@ and neither may claim that *every* finding on a normative document is non-small
 | The contract-surface test over-matches ordinary prose | **High** | High — matching bare common words like `state`, `scope` or `gate` would make almost every finding non-small, disabling the terminal rule from the restrictive side while appearing to tighten it | Every matched term is a phrase or a qualified form; no bare common word is on the list, and the plan records that an earlier draft's bare terms were removed for this reason. Scenario 6a tests one cosmetic body per removed word, and the parser-risk addendum adds word-boundary negatives (`delegates`/`gate`, `microscope`/`scope`) |
 | The current round is decided without checking its own head | Med | High — the rule could terminate on a round whose findings describe a commit that is no longer the head, which is the staleness the brief names | The run is `prior + 1` and both halves are verified: the counter checks prior entries, and **every** reviewer contributing a counted finding to the current round must report `loop_head_sha` before it contributes. Scenario 8a's four combinations pin the `+ 1` half, including the two-platform case where only one contributor is stale; proof P8 plants the omission |
 | An old ledger without head data silently counts as current | Med | High — the current-head requirement would be inert on exactly the PRs that predate it | An absent, empty or placeholder head ends the consecutive run; scenarios 9 and 14 and proof P5 pin all three forms |
+| Requiring evidence from non-contributing reviewers breaks the count permanently | Med | High — `reviewed_heads[]` lists every configured platform including ones that returned clean or were skipped, so an all-platforms rule disables the terminal rule wherever a reviewer legitimately does not report | The check is scoped to `contributing_platforms[]`, a new ledger field derived from the finding records this item already collects; non-contributors are ignored. Scenario 8b's third row and proof P19 pin it, and the current-round rule is scoped the same way so the two halves agree |
 | The counter reads the wrong head field, or trusts a round's classification without its evidence | Med | High — a round could count although a contributing platform reviewed an older commit, which is the staleness the item exists to close | The plan names all three of #1648's head fields and their roles: `classification_head` is the subject and must equal the current head, every `reviewed_heads[]` member is the evidence and must equal that `classification_head`, and `head_sha` is never read because it is the #1502 cap identity key. Scenarios 8b and 8c and proofs P10 and P11 pin both halves |
 | A maintainer cannot tell a correctly-refusing loop from a still-failing one, or is shown the less actionable cause | Med | Med | `SMALL_FINDINGS_BLOCKED_BY` names one cause by a documented within-group precedence, and the summary line names **every** cause present — the shipped paths, the matched contract-surface identities, and the platform responsible for any stale or unknown head. Scenario 11 pins all four values and both empty cases, scenario 9a pins the counter's stop reasons that feed the currency pair, scenario 10a pins both within-group boundaries and the groups' mutual exclusivity, and proof P9 plants the inverted precedence |
 | The rename of `reviewer_loop_all_paths_non_shipped` breaks an unseen caller | Low | Med | The PR records whether any caller outside this change set exists; a thin wrapper is kept only if one does |
@@ -883,12 +911,16 @@ reviewer_loop_finding_touches_contract_surface() {
    intact fields, and that a real newline and a literal `\n` give the same
    answer. Record in the PR whether any caller outside this
    change set required the old name.
-4. Extend `reviewer_loop_small_findings_prior_consecutive_count` to take the
-   current head and stop at the first entry that fails either half of the
-   check — `classification_head` equal to the current head, and every
-   `reviewed_heads[]` member equal to that `classification_head` — reporting a
-   stop reason from the closed set. Read `classification_head`, never
-   `head_sha`. **Verify**: scenarios 8, 8b, 8c, 9, 9a and 14.
+4. Write `contributing_platforms[]` into each small-findings ledger entry,
+   derived from the `platform` field of the `aggregate_blocking_findings`
+   records, and extend `reviewer_loop_small_findings_prior_consecutive_count` to
+   take the current head and stop at the first entry failing any of:
+   `classification_head` equal to the current head; a non-empty
+   `contributing_platforms[]`; and every platform named there having a valid
+   `reviewed_heads[]` head equal to that `classification_head`. Ignore
+   non-contributing platforms. Read `classification_head`, never `head_sha`.
+   Report a stop reason from the closed set. **Verify**: scenarios 8, 8b's four
+   rows, 8c, 9, 9a and 14.
 5. Wire the current-head requirement into the terminal decision — for the prior
    entries via the counter, and for the deciding round via the per-reviewer
    reviewed head from #1648, requiring **every** contributing reviewer to report
@@ -926,7 +958,7 @@ reviewer_loop_finding_touches_contract_surface() {
 9. Document the new behavior in the `--help` usage block. **Verify**: run
    `pr-review-loop.sh --help` and confirm the predicate, the contract-surface
    list, the current-head requirement and `SMALL_FINDINGS_BLOCKED_BY` appear.
-10. Produce the eighteen planted-violation proofs (P1-P18) and record them in the PR
+10. Produce the nineteen planted-violation proofs (P1-P19) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed. P6, P7 and P13 are the three restrictive-direction proofs and
