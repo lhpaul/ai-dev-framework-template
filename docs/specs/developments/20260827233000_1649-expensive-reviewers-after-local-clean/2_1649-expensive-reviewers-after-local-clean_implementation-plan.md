@@ -544,9 +544,15 @@ reads them against each other and fails on any divergence.
     draft reviewers run before `gh pr ready`.
 7. The peer set is scoped by phase, not the whole list:
 
+   Every row also configures `local-ai-reviewer` on draft with a current-head
+   `platform_reviewed_heads` entry, so condition 1 is satisfied and the row
+   isolates condition 2. Without that, a row expecting `dispatched` would be
+   internally impossible — condition 1 is evaluated first and would defer with
+   `local_reviewer_not_configured`.
+
    | Configuration | Peer set for `codex-github` | Outcome with all peers clean |
    | --- | --- | --- |
-   | `codex-github` and `pr-agent` both draft; `bugbot` ready | `pr-agent` only — **not** `bugbot` | `dispatched` |
+   | `codex-github`, `pr-agent` and `local-ai-reviewer` all draft; `bugbot` ready | `pr-agent` and `local-ai-reviewer` — **not** `bugbot` | `dispatched` |
    | `codex-github` ready; `pr-agent` and `local-ai-reviewer` draft | the whole draft bucket | `dispatched` |
    | Reorder suppressed so a same-bucket peer has not run | that peer | `deferred` / `peer_reviewer_not_run` |
 

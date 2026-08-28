@@ -211,14 +211,21 @@ expensive reviewer, with nothing guaranteeing the retry the gate depends on.
 
 **Maps to**: the "peer set and phase-bucket reorder contradict each other" risk.
 
-1. Configure `codex-github` and `pr-agent` on draft and `bugbot` on ready. Run
-   the loop with `pr-agent` clean and `bugbot` not yet run.
+Every run below also configures `local-ai-reviewer` on draft with a current-head
+`platform_reviewed_heads` entry, so condition 1 is satisfied and each run
+isolates condition 2. Condition 1 is evaluated first, so a run expecting
+dispatch without it would defer with `local_reviewer_not_configured` regardless
+of the peer set.
+
+1. Configure `codex-github`, `pr-agent` and `local-ai-reviewer` on draft and
+   `bugbot` on ready. Run the loop with both draft peers clean and `bugbot` not
+   yet run.
 2. Configure `codex-github` on ready with `pr-agent` and `local-ai-reviewer` on
    draft, all draft platforms clean. Run the loop.
 3. Suppress the reorder so a same-bucket peer has not run. Run the loop.
 
-**Expected result**: run 1 **dispatches** — `codex-github`'s peer set is
-`pr-agent` only, not `bugbot`, because a draft-phase reviewer necessarily runs
+**Expected result**: run 1 **dispatches** — `codex-github`'s peer set is the two
+draft platforms, not `bugbot`, because a draft-phase reviewer necessarily runs
 before a ready-phase one. Run 2 dispatches, with the whole draft bucket in the
 peer set. Run 3 defers with `peer_reviewer_not_run`.
 
