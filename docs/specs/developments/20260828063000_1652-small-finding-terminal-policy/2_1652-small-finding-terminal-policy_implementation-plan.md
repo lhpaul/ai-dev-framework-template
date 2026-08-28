@@ -798,7 +798,7 @@ point. No listeners, timers, or shared mutable state are introduced.
 
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
-| Path classification fixture | The ten normative patterns of scenario 1 and the four non-matching controls, plus the three bodies of scenario 2 on one normative path and the two bodies of scenario 3 on `CHANGELOG.md` | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Path classification fixture | The eleven normative patterns of scenario 1 and the four non-matching controls, plus the three bodies of scenario 2 on one normative path and the two bodies of scenario 3 on `CHANGELOG.md` | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Path/body pair fixture | Two findings on one identical path — one cosmetic, one naming a decision matrix — a body containing an escaped `\n` sequence, a two-platform record set, and four hostile-character cases (a tab in the path, a tab in the body, a double quote, a backslash), driving scenarios 7a through 7d | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Contract-surface body fixture | One body per row of the contract-surface table; three cosmetic bodies; the **seven bare-common-word cosmetic bodies** of scenario 6a, one per removed term; the three qualified-phrase controls that must still match; and **twelve** parser edge cases — the ten enumerated in the parser-risk addendum, plus the `failXclosed` wildcard negative and the unhyphenated `allow list` negative that the runbook's Step 3 table adds | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Multi-contributor round fixture | A single round with counted findings from two platforms, in four combinations — both on the current head, one stale, one reporting no head, and both stale — driving scenario 8a | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
@@ -947,7 +947,7 @@ reviewer_loop_finding_touches_contract_surface() {
    `gh pr view 1660 --json state,baseRefName` returns `MERGED` with the
    integration branch as base. If not, stop and report — do not implement the
    current-head requirement against a guessed contract.
-1. Add `reviewer_loop_path_is_normative_document` covering the ten first-tier
+1. Add `reviewer_loop_path_is_normative_document` covering the eleven first-tier
    patterns and consult it from `reviewer_loop_path_is_non_shipped_artifact`
    before the existing patterns. **Verify**: scenarios 1-3 — the eleven patterns
    match and the four controls do not; a blocking finding on a normative
