@@ -84,8 +84,8 @@ Drive the fixture with exactly one condition unmet at a time and read
 | Fixture state | Required result |
 | --- | --- |
 | `LOCAL_AI_HEAD_CURRENT=0` | `deferred` / `local_evidence_stale` |
-| `LOCAL_AI_CONFIGURED` unset | `deferred` / `local_evidence_missing` |
-| `LOCAL_AI_CONFIGURED=1`, `LOCAL_AI_HEAD_CURRENT` empty | `deferred` / `local_evidence_missing` |
+| `LOCAL_AI_CONFIGURED` unset, empty, `2`, or `true` | `deferred` / `local_evidence_missing` |
+| `LOCAL_AI_CONFIGURED=1`, `LOCAL_AI_HEAD_CURRENT` unset, empty, `2`, or `yes` | `deferred` / `local_evidence_missing` |
 | `LOCAL_AI_CONFIGURED=0` | `deferred` / `local_reviewer_not_configured` |
 | Reorder suppressed, so `pr-agent` has not run yet | `deferred` / `peer_reviewer_not_run` |
 | A peer ran and returned `needs_fixes` or `escalate` | `deferred` / `peer_reviewer_not_clean` |
@@ -102,6 +102,11 @@ Drive the fixture with exactly one condition unmet at a time and read
 `run_platform_review` is not called on any `deferred` row. Three rows carry most
 of the weight:
 
+- The **unexpected-value** rows are the ones a deny-list implementation fails.
+  Condition 1 must be an exact-match allow-list requiring the literal `1` on
+  both keys; testing only for `0` and empty would let a `2` or a stray `true`
+  fall through and dispatch the expensive reviewer with no valid evidence, which
+  is the opposite of fail-closed.
 - The **`LOCAL_AI_CONFIGURED=0`** row must defer, not dispatch. The brief
   requires the expensive reviewer to run only after current-head local clean
   evidence and to fail closed when it is absent, and it permits an explicit
@@ -290,10 +295,10 @@ so it would run only when the test file itself changed.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR description's `Planted-Violation Proofs` heading.
-2. Confirm P1–P11 from the plan each record the command, the file and line of
+2. Confirm P1–P12 from the plan each record the command, the file and line of
    the planted violation, and both outcomes.
 
-**Expected result**: eleven proofs, each showing the check failing with the
+**Expected result**: twelve proofs, each showing the check failing with the
 violation present and passing once removed. Four carry the most weight: P4
 deletes the `expensive_reviewer_gate` call so the function is defined but
 unreachable, and requires Step 3's stale-evidence row to fail — that is what
@@ -306,7 +311,8 @@ P8 makes an unreadable ledger count as zero and requires Step 4b's fifth run to
 fail. P9 replaces the per-bucket partition with a global one and requires
 Step 3c's two-bucket run to fail. P10 accepts any `skipped` peer and requires
 Step 3's three rejected-skip rows to fail. P11 makes an absent ledger return
-`-1` and requires Step 4b's sixth run to fail.
+`-1` and requires Step 4b's sixth run to fail. P12 rewrites condition 1 as a
+deny-list and requires Step 3's unexpected-value rows to fail.
 
 ### Step 10: Documentation states one contract
 

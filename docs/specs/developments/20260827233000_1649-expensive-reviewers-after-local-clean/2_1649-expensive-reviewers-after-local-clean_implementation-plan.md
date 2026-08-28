@@ -118,7 +118,7 @@ Not applicable — this repository ships workflow tooling, not a service.
 
       | # | Condition | Unmet reason |
       | --- | --- | --- |
-      | 1 | `LOCAL_AI_CONFIGURED` is `1` and `LOCAL_AI_HEAD_CURRENT` is `1` | `local_evidence_stale` when `LOCAL_AI_HEAD_CURRENT` is `0`; `local_evidence_missing` when it is empty or `LOCAL_AI_CONFIGURED` is unset; `local_reviewer_not_configured` when `LOCAL_AI_CONFIGURED` is `0` |
+      | 1 | `LOCAL_AI_CONFIGURED` is exactly `1` **and** `LOCAL_AI_HEAD_CURRENT` is exactly `1` | `local_reviewer_not_configured` when `LOCAL_AI_CONFIGURED` is `0`; `local_evidence_stale` when `LOCAL_AI_HEAD_CURRENT` is `0`; `local_evidence_missing` when either is empty, unset, or any value other than `0` or `1` |
       | 2 | **Every** non-expensive platform in the resolved platform list has already run in this invocation **and** produced acceptable peer evidence (see below) | `peer_reviewer_not_run` when one has not run yet; `peer_reviewer_not_clean` when one ran without producing acceptable evidence |
       | 3 | Zero unresolved, non-outdated review threads | `unresolved_threads` |
       | 4 | Every non-reviewer check is `SUCCESS`, `SKIPPED`, or `NEUTRAL` | `baseline_checks_not_green` when one failed; `baseline_checks_pending` when one is still running |
@@ -234,6 +234,17 @@ Not applicable — this repository ships workflow tooling, not a service.
       bounded number of deferrals rather than blocking forever, and by
       `PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS` for a one-off run. Both are
       explicit; neither silently relaxes the gate.
+- [ ] **Condition 1 is an allow-list, not a deny-list.** Both keys are matched
+      against their exact expected value: the condition passes only when
+      `LOCAL_AI_CONFIGURED` is the literal `1` and `LOCAL_AI_HEAD_CURRENT` is
+      the literal `1`. Testing only for `0` and empty would let any unexpected
+      value — a `2` from a future contract change, a stray `true`, a value with
+      trailing whitespace — fall through and authorize the expensive reviewer
+      with no valid local-clean evidence, which is the opposite of fail-closed.
+      Any value that is neither `0` nor `1` is reported as
+      `local_evidence_missing`: it carries no more information than an absent
+      key, and treating it as its own reason would imply the gate understood it.
+      The same exact-match discipline applies to every token the gate reads.
 - [ ] **Fail closed on every unknown.** If any input cannot be read, the gate
       defers with one of exactly three reasons — there is no generic unknown
       state:
@@ -348,9 +359,24 @@ reads them against each other and fails on any divergence.
    `run_platform_review` is **not** called, and the loop's aggregate becomes
    `needs_fixes` / `expensive_gate_deferred` — the core of brief scope bullet 1,
    and the proof that a defer withholds readiness instead of passing as a skip.
-4. `LOCAL_AI_CONFIGURED` unset → `deferred` / `local_evidence_missing`. The
-   fail-closed case for brief scope bullet 2, pairing with #1648's rule that an
-   absent key is telemetry loss rather than non-applicability.
+4. Unexpected and absent values are equally refused, one case per row — the
+   allow-list check for brief scope bullet 2, pairing with #1648's rule that an
+   absent key is telemetry loss rather than non-applicability:
+
+   | `LOCAL_AI_CONFIGURED` | `LOCAL_AI_HEAD_CURRENT` | Required result |
+   | --- | --- | --- |
+   | unset | `1` | `deferred` / `local_evidence_missing` |
+   | empty | `1` | `deferred` / `local_evidence_missing` |
+   | `2` | `1` | `deferred` / `local_evidence_missing` |
+   | `true` | `1` | `deferred` / `local_evidence_missing` |
+   | `1` | unset | `deferred` / `local_evidence_missing` |
+   | `1` | empty | `deferred` / `local_evidence_missing` |
+   | `1` | `2` | `deferred` / `local_evidence_missing` |
+   | `1` | `yes` | `deferred` / `local_evidence_missing` |
+
+   The `2` and `true` rows are the ones a deny-list implementation fails: they
+   are neither `0` nor empty, so testing only for those would let them through
+   and dispatch the expensive reviewer with no valid evidence.
 5. `LOCAL_AI_CONFIGURED=0` → `deferred` / `local_reviewer_not_configured`.
    Distinct from scenario 4 (`missing` means the telemetry never arrived; this
    means the platform is genuinely not configured), and deliberately still a
@@ -496,8 +522,9 @@ concrete file and line:
 | P7 | Unbounded-deferral regression: replace the head-scoped deferral counter with the existing `reviewer_loop_history_entries_count` caps | a scratch copy of the cap check | scenario 13 fails, because repeated `needs_fixes` results on one unchanged head collapse under that function's `unique` bucketing by `head_sha` + `result` and neither cap ever trips; restoring the dedicated counter escalates with `expensive_gate_deferral_cap` |
 | P8 | Unreadable-budget regression: seed a malformed ledger and change the counter to treat it as a count of zero | the deferral-budget fixture in `scripts/development-workflow/tests/test-pr-review-loop.sh` | scenario 19 fails, because the gate defers on an unproven budget instead of escalating; restoring the fail-closed branch escalates with `expensive_gate_deferral_budget_unreadable` |
 | P11 | Absent-ledger regression: change the counter to return `-1` for an absent ledger as well as a malformed one | same fixture | scenario 19b fails, because a PR with no prior reviewer-loop history escalates on its first run and the bound is never exercised; restoring the three-state mapping passes |
+| P12 | Deny-list regression: rewrite condition 1 to reject only `0` and empty rather than requiring exactly `1` | a scratch copy of condition 1 | scenario 4's `2` and `true` rows fail, because the gate dispatches with an unrecognized evidence value; restoring the exact-match allow-list passes |
 
-Record all eleven in the implementation PR under a `Planted-Violation Proofs`
+Record all twelve in the implementation PR under a `Planted-Violation Proofs`
 heading, each with the command, the file and line of the planted violation, and
 both outcomes.
 
@@ -523,7 +550,7 @@ by the same sequential block that already writes `platform_result_tokens`.
 
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
-| Gate condition fixture | A table-driven set of the conditions with each one independently unmet, driving scenarios 2–5 and 9–11 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Gate condition fixture | A table-driven set of the conditions with each one independently unmet, plus the eight-row unexpected-value table for condition 1, driving scenarios 2–5 and 9–11 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Platform-order fixture | A resolved list declaring `codex-github` first, an already-correct list, and a two-bucket list with `codex-github` on draft and `bugbot` on ready — driving scenarios 6, 6b and 7 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Peer-evidence fixture | One peer per row of scenario 8's table, covering `clean`, the three accepted skip reasons, the three rejected skip reasons, `needs_fixes` and `escalate` | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Unreadable-input mocks | Mock `gh` commands that exit non-zero for the threads query and for the check rollup, driving scenario 12 and proof P3 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
@@ -573,6 +600,7 @@ with mock `gh` commands and require no network access.
 | A reviewer's own check gates that reviewer | Low | Med — `codex-github` would wait on a check it is responsible for producing | Condition 4 evaluates non-reviewer checks only, reusing the reviewer/baseline classification `pr-ci-loop.sh` already emits rather than a new one; scenario 10's third case pins it |
 | Platform ordering decides whether the gate is effective | Med | High — a config listing `codex-github` first would either dispatch it before the cheap reviewers ran, or defer at the same point forever | Detection is not enough, so the loop reorders: `reorder_expensive_reviewers_last` moves expensive platforms to the end before iteration, making the gate's precondition reachable; condition 2 still compares against the full resolved list, so `peer_reviewer_not_run` fires as a defensive assertion if the reorder did not happen. Scenarios 6 and 7 and proof P5 pin both halves |
 | The reorder silently moves a reviewer across the draft/ready boundary | Med | High — a draft-configured expensive reviewer would run only after `gh pr ready`, inverting the configuration contract | The partition is per phase bucket, assigned with the existing `is_phase_after_clean_platform` predicate, and the buckets are concatenated in their original order; scenario 6b and proof P9 pin it |
+| An unrecognized evidence value falls through condition 1 | Med | High — a `2` or a stray `true` would authorize the expensive reviewer with no valid local-clean evidence, the exact opposite of fail-closed | Condition 1 is an exact-match allow-list requiring the literal `1` on both keys, not a deny-list on `0` and empty; anything else reports `local_evidence_missing`. Scenario 4's eight-row table and proof P12 pin it |
 | A peer that never produced a verdict is accepted as evidence | Med | High — `codex-github` would dispatch with no cheap pre-filter having actually run, which is the state the item exists to prevent | Acceptance delegates to `reviewer_failed_label_required_for_result`, which already classifies `unavailable`, `timeout`, `thread-check-failed`, `pending_timeout`, `forbidden` and `unauthorized` skips as reviewer failures, so only `clean` and deliberate policy skips count; scenario 8's table and proof P10 pin it, and reusing the helper keeps the two definitions from drifting |
 | Thread and CI evidence describes a newer commit than the reviewer verdicts | Med | High — dispatch would be authorized on an inconsistent mix of two heads | Conditions 3 and 4 require the live head returned with their queries to equal `loop_head_sha`, and defer with `evidence_head_moved` otherwise; scenario 11 pins it |
 
@@ -601,15 +629,17 @@ expensive_reviewer_gate() {
 
   if [ -z "$head_sha" ]; then
     reason="evidence_unavailable_head"
-  elif [ -z "${LOCAL_AI_CONFIGURED:-}" ]; then
-    reason="local_evidence_missing"
-  elif [ "$LOCAL_AI_CONFIGURED" = "0" ]; then
+  elif [ "${LOCAL_AI_CONFIGURED:-}" = "0" ]; then
     # No current-head local evidence exists. The brief requires fail-closed
     # here; the deferral cap and the explicit override are the release valves.
     reason="local_reviewer_not_configured"
+  elif [ "${LOCAL_AI_CONFIGURED:-}" != "1" ]; then
+    # Allow-list, not deny-list: anything that is not exactly 0 or 1 is as
+    # uninformative as an absent key, so it must not fall through.
+    reason="local_evidence_missing"
   elif [ "${LOCAL_AI_HEAD_CURRENT:-}" = "0" ]; then
     reason="local_evidence_stale"
-  elif [ -z "${LOCAL_AI_HEAD_CURRENT:-}" ]; then
+  elif [ "${LOCAL_AI_HEAD_CURRENT:-}" != "1" ]; then
     reason="local_evidence_missing"
   fi
   # Conditions 2-4 follow, each appending its own reason and each comparing the
@@ -730,7 +760,7 @@ Summary-comment line, illustrative:
     **Verify**: both suites exit 0, and
     `scripts/development-workflow/select-test-suites.sh` selects the new suite
     for a change touching only `pr-review-loop.sh`.
-11. Produce the eleven planted-violation proofs (P1–P11) and record them in the PR
+11. Produce the twelve planted-violation proofs (P1–P12) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed.
