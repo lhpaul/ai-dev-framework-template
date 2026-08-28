@@ -108,9 +108,9 @@ Drive the fixture with exactly one condition unmet at a time and read
 | A peer ran and returned `skipped` with an unknown or empty reason | `deferred` / `peer_reviewer_not_clean` |
 | One unresolved, non-outdated review thread | `deferred` / `unresolved_threads` |
 | The same thread marked outdated | `dispatched` |
-| A non-reviewer check failed | `deferred` / `baseline_checks_not_green` |
-| A non-reviewer check still running | `deferred` / `baseline_checks_pending` |
-| A reviewer-owned check still running | `dispatched` |
+| A non-reviewer check failed, plus a green one | `deferred` / `baseline_checks_not_green` |
+| A non-reviewer check still running, plus a green one | `deferred` / `baseline_checks_pending` |
+| A reviewer-owned check still running, **plus a green non-reviewer check** | `dispatched` |
 | The check rollup is empty | `deferred` / `baseline_checks_unobserved` |
 | The rollup contains only reviewer-owned checks | `deferred` / `baseline_checks_unobserved` |
 | The threads or checks query returns a live head different from `loop_head_sha` | `deferred` / `evidence_head_moved` |
@@ -157,7 +157,10 @@ of the weight:
   any reason it does not recognise, which is what P19 plants.
 - The **reviewer-owned pending check** row must dispatch: a reviewer's own check
   must never gate that reviewer, or `codex-github` would wait on a check it is
-  responsible for producing.
+  responsible for producing. Its fixture must carry a green non-reviewer check
+  as well — otherwise filtering empties the set and the row returns
+  `baseline_checks_unobserved`, becoming indistinguishable from the last row and
+  unable to tell a correct exclusion from a vacuous-green miss.
 - The two **empty-set** rows are the vacuous-green guard. "Every member is
   green" is trivially true of an empty set, so an unguarded implementation would
   dispatch on a head whose CI has not registered yet. The gate does not try to

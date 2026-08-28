@@ -588,15 +588,26 @@ reads them against each other and fails on any divergence.
    asserted, in that order.
 9. One unresolved non-outdated review thread → `deferred` /
    `unresolved_threads`; the same thread marked outdated → `dispatched`.
-10. Baseline-check states, one case each: a failing check → `deferred` /
-    `baseline_checks_not_green`; a pending one → `deferred` /
-    `baseline_checks_pending`; a reviewer-owned check that is pending →
-    `dispatched`, because a reviewer's own check must not gate the reviewer; an
-    **empty** non-reviewer set → `deferred` / `baseline_checks_unobserved`, and
-    a set containing only reviewer-owned checks → the same, since filtering
-    leaves it empty. The two empty cases are the vacuous-green guard: "every
-    member is green" is trivially true of an empty set, so an unguarded
-    implementation would dispatch with no baseline evidence.
+10. Baseline-check states, one case each. Every row that expects `dispatched`
+    must include **at least one green non-reviewer check**, or filtering leaves
+    the set empty and the row hits the empty-set rule instead of the behavior it
+    is meant to test:
+
+    | Rollup contents | Required result |
+    | --- | --- |
+    | A failing non-reviewer check, plus a green one | `deferred` / `baseline_checks_not_green` |
+    | A pending non-reviewer check, plus a green one | `deferred` / `baseline_checks_pending` |
+    | A **pending reviewer-owned** check **plus a green non-reviewer check** | `dispatched` — the reviewer's own check was correctly excluded |
+    | An empty rollup | `deferred` / `baseline_checks_unobserved` |
+    | Only reviewer-owned checks | `deferred` / `baseline_checks_unobserved` |
+
+    The third row is the reviewer-exclusion test and the fifth is the
+    vacuous-green guard; they are only distinguishable because the third
+    carries a green non-reviewer check. Without it both rows would return
+    `baseline_checks_unobserved` and neither the row nor proof P14 could tell a
+    correct exclusion from a vacuous-green miss. The last two rows are the guard
+    itself: "every member is green" is trivially true of an empty set, so an
+    unguarded implementation would dispatch with no baseline evidence.
 11. The threads or checks query returns a live head different from
     `loop_head_sha` → `deferred` / `evidence_head_moved`. Without this, evidence
     from a newer commit could authorize dispatch against reviewer verdicts taken
