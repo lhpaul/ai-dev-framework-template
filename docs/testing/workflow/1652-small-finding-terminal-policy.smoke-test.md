@@ -321,7 +321,7 @@ original bug; P8 skips the current round's head check and requires Step 4's
 fifth run to fail; P10 reads `head_sha` instead of `classification_head` and
 requires Step 4's step 1b to fail; P11 checks only a prior entry's
 `classification_head` and skips its `reviewed_heads[]`, requiring step 1a to
-fail. **Two** plant the
+fail; **P12** drops tier 1 and leaves the vocabulary test as the only guard, requiring Step 1's third case — a contract finding containing no listed term — to fail. **Two** plant the
 **restrictive** direction, and neither is optional: **P6** makes every `docs/`
 path shipped and requires Steps 1, 2 and 7 to fail; **P7** restores the bare
 common words to the contract-surface list and requires Step 3's seven bare-word
