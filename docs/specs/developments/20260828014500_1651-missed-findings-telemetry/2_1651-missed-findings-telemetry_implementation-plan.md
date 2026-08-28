@@ -989,7 +989,7 @@ Not applicable — this repository ships workflow tooling, not a service.
 | Absent-reviewer histories | One payload where the local reviewer appears in no entry, and one where it is absent from the configured platform list | inline in the same file |
 | Ancestry repository | A temporary git repository: a root commit, a branch of two commits, a second branch of two commits from the same root, and one commit created then deleted with `git prune` to produce the absent-object case | created and torn down by `test-reviewer-loop-commit-ancestry.sh` |
 | `git` stub for the error-status case | A shell script named `git`, first on `PATH`, that `exec`s the real binary for every invocation **except** `merge-base --is-ancestor`, where it exits 128. Both commits exist, so `git cat-file -e` succeeds and execution reaches the branch under test | created and torn down by the same suite; the real `git` is resolved once, before the stub is installed, so the forward cannot recurse |
-| Long-path record | A record whose three paths each exceed 60 characters, so no path fits within the 200-character bound | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Long-path record | A twelve-file record whose paths are each **90 characters** — derived from the budget: fixed parts 116, this record's counts and remainder 13, leaving about 71, so no path fits | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Twenty-record entry | Twenty records with long paths and large finding counts, for AC-15 | inline in the same file |
 
 ---
