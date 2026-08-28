@@ -159,8 +159,8 @@ P4.
 4. After a **clean** pass, run another cycle at the same head.
 
 **Expected result**: case 1 dispatches the guard's pass **once**; case 2
-dispatches it twice. Cases 3 and 3a both **refuse** — the cycle ends with `needs_fixes`,
-reason `failed_for_head`, no dispatch, no conversion. Case 4 takes
+dispatches it twice. Cases 3 and 3a both **refuse with `escalate`** — the run
+ends with reason `failed_for_head`, no dispatch, no conversion. Case 4 takes
 the `not_required` path: no dispatch, no refusal.
 
 Case 3a is the hole an in-memory flag leaves, and it is the ordinary case rather
@@ -194,12 +194,22 @@ loop cannot manufacture a commit. Proof P1.
 
 1. Run two identical inputs, one needing a pass and one not, and compare
    `CYCLE_COUNT` and `TOTAL_CYCLE_COUNT`.
-2. Run a pull request whose local reviewer never goes clean to
-   `max_cycles_exceeded` and note the cycle count at escalation.
+2. Run a pull request whose local reviewer never goes clean, **with the head
+   moving each time**, to `max_cycles_exceeded`, and note the cycle count.
+3. With the head **unchanged**, run a second invocation after a failed pass.
 
 **Expected result**: case 1's counts are equal. Case 2 escalates at the same
-count as before this change, having dispatched the pass **once** and refused on
-every later cycle at that head.
+count as before this change. Case 3 escalates immediately with
+`failed_for_head`.
+
+Case 3 is why the refusal is `escalate` and not `needs_fixes`. The lifetime cap
+counts `unique` `head_sha|result` pairs, so repeated identical `needs_fixes`
+entries at one head count **once**, and `CYCLE_COUNT` resets every invocation —
+a refusal reported as `needs_fixes` would repeat forever with **both caps
+standing still**, and the boundedness this item claims would be asserted and
+untrue. `escalate` is terminal for the run, and it is the honest signal: nothing
+changed since the last failure, so another automated attempt is one the loop
+already knows is futile. Proof P12.
 
 The pass is a dispatch inside a cycle that is already counted. Incrementing a
 cap would make `max_cycles_exceeded` mean two different things — cycles for
@@ -287,11 +297,11 @@ ready-phase gate already existed and this alters when it fires.
 ## Step 12: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P11 each record the command, the file and line of the
+2. Confirm P1 through P12 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: eleven proofs in three groups — **five** fail-open,
-**three** loop and cost, **three** integration, per the plan's proof-group
+**Expected result**: twelve proofs in three groups — **five** fail-open,
+**four** loop and cost, **three** integration, per the plan's proof-group
 table.
 
 P2 is the one to read twice: returning `not_required` for a history with no
