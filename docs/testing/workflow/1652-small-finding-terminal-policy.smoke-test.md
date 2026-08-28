@@ -132,8 +132,16 @@ which is the more likely of the two mistakes because it appears to succeed.
 
 **Maps to**: brief scope bullet 2.
 
-1. Seed a ledger with two prior small-findings rounds recorded on an **older**
-   head and one on the **current** head. Run the counter.
+1. Seed a ledger with two prior small-findings rounds whose
+   `classification_head` is an **older** commit and one whose
+   `classification_head` is the **current** head. Run the counter.
+1a. Seed a prior entry whose `classification_head` equals the current head but
+   whose `reviewed_heads[]` contains one platform on an older commit; then one
+   where both contributors name the `classification_head`. Run the counter for
+   each.
+1b. Seed a prior entry whose `head_sha` equals the current head while its
+   `classification_head` is an older commit; then the two swapped. Run the
+   counter for each.
 2. Seed a ledger whose prior round has an **absent** head; then an **empty**
    head; then a synthetic `unknown-<epoch>-<pid>-<rand>` placeholder. Run the
    counter for each.
@@ -148,8 +156,19 @@ which is the more likely of the two mistakes because it appears to succeed.
    reporting `loop_head_sha`; one reporting a different head; one reporting no
    head; both stale.
 
-**Expected result**: step 1 returns **1**, not 3 — a round on an older head ends
-the consecutive run rather than extending it. All three cases in step 2 also end
+**Expected result**: step 1 returns **1**, not 3 — a round classified against an
+older commit ends the consecutive run rather than extending it.
+
+Step 1a's first seed ends the run and its second counts: a round *classified*
+against the current head is not evidence that every *contributor* reviewed it,
+and accepting it would count evidence nobody produced for this commit. This is
+the same per-contributor rule the deciding round is held to in step 5, applied
+to the prior entries so both halves of `prior + 1` are checked identically.
+
+Step 1b's first seed ends the run with `stale_head` and its second counts. The
+counter must read `classification_head` and never `head_sha`: #1648's ledger
+uses `head_sha` as the identity key the #1502 cap counters bucket on, and it can
+legitimately differ from the commit the round actually described. All three cases in step 2 also end
 the run. Step 3 returns `stale_head`, `head_unknown` (three times), `exhausted`
 and `not_small` respectively; a bare count could not distinguish the first two,
 which `SMALL_FINDINGS_BLOCKED_BY` must. Step 4 does **not** fire the terminal
@@ -274,13 +293,16 @@ never being able to demonstrate anything.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P9 each record the command, the file and line of the
+2. Confirm P1 through P11 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: nine proofs in three groups. **Six** plant the
-**permissive** direction —
-P1 through P5 and P8, reproducing the original bug; P8 skips the current round's
-head check and requires Step 4's fifth run to fail. **Two** plant the
+**Expected result**: eleven proofs in three groups. **Eight** plant the
+**permissive** direction — P1 through P5, P8, P10 and P11, reproducing the
+original bug; P8 skips the current round's head check and requires Step 4's
+fifth run to fail; P10 reads `head_sha` instead of `classification_head` and
+requires Step 4's step 1b to fail; P11 checks only a prior entry's
+`classification_head` and skips its `reviewed_heads[]`, requiring step 1a to
+fail. **Two** plant the
 **restrictive** direction, and neither is optional: **P6** makes every `docs/`
 path shipped and requires Steps 1, 2 and 7 to fail; **P7** restores the bare
 common words to the contract-surface list and requires Step 3's seven bare-word
