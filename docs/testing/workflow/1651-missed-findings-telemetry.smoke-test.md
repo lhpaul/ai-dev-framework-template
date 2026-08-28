@@ -378,8 +378,10 @@ described once. Proof P18.
 
 1. With the history unwritable (`append_safe` at 0) and an external round
    reporting blocking findings on an establishable commit: run it.
-2. With the history unwritable and **no** record owed — findings from the local
-   reviewer, or advisory only: run it.
+2. With the history unwritable and **no** record owed: run it three times, once
+   per ineligible row — findings from the local reviewer, advisory-only
+   findings, and external blocking findings whose reviewed commit cannot be
+   established.
 
 3. With the history unwritable and **no prior history block at all**: run it.
 
@@ -412,6 +414,13 @@ is the natural one: writability is a property of the loop and eligibility a
 property of the round, so a programmer checks the cheap global first. It then
 reports a failure nobody was waiting for, on rounds this feature had nothing to
 do with. Proof P5.
+
+Its **third** run is the one that separates two plausible orderings rather than
+one. An implementation that checks writability after finding blockers but before
+attributing the commit passes the first two runs — both are excluded before any
+head is consulted — and reports a telemetry failure on the third, where AC-7b
+says nothing was owed. Writability is tested last, after all three eligibility
+rows. Proof P29.
 
 ## Step 9: The summary line and its bound
 
@@ -611,11 +620,11 @@ not what Protocol 03 Step 6 asks for.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P28 each record the command, the file and line of the
+2. Confirm P1 through P29 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: twenty-eight proofs in three groups — **seventeen**
-overclaiming, **ten** contract, **one** under-recording, per the plan's
+**Expected result**: twenty-nine proofs in three groups — **seventeen**
+overclaiming, **eleven** contract, **one** under-recording, per the plan's
 proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:

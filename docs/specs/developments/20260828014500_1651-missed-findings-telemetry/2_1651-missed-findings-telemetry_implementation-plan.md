@@ -841,9 +841,19 @@ Not applicable — this repository ships workflow tooling, not a service.
     saved copy of the prior body, not against a re-render — and the summary body
     names the reason. A separate case with **no** prior block writes the
     unavailable stub, which is what the stub is for.
-12. With `append_safe` at 0 **and** no record owed — local-reviewer findings, or
-    advisory only — the output contains **no** telemetry-failure report. AC-7b,
-    and the scenario that fails if the two tests are ordered the other way.
+12. With `append_safe` at 0 **and** no record owed, the output contains **no**
+    telemetry-failure report. AC-7b, and the scenario that fails if the two
+    tests are ordered the other way. **Three** cases, because the spec's matrix
+    has three ineligible rows and they are excluded at different points:
+    findings from the local reviewer (row 1), advisory-only findings (row 2),
+    and **external blocking findings whose commit cannot be established**
+    (row 3).
+12a. The third case is the one that separates two plausible orderings. An
+    implementation that tests writability *after* finding blockers but *before*
+    attributing the commit passes cases 1 and 2 — both are excluded before any
+    head is consulted — and reports a telemetry failure on case 3, where AC-7b
+    says nothing was owed. Writability is tested **last**, after all three
+    eligibility rows.
 13. The summary line: one line per record; at most 200 characters; at most three
     paths; the total always stated; and a case with paths long enough that zero
     fit, which must still state the total and the state.
@@ -1112,14 +1122,14 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The twenty-eight proofs fall into
+runs per proof, each citing a concrete file and line. The twenty-nine proofs fall into
 three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Overclaiming | **17** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16, P17, P18, P19, P21, P22, P25, P28 |
 | Under-recording | **1** | P20 | evidence discarded at write time that cannot be recovered later | a number asserted on evidence that does not support it |
-| Contract | **10** | P5, P6, P7, P9, P11, P13, P23, P24, P26, P27 | a report, a line, or a stored history that breaks its own stated contract |
+| Contract | **11** | P5, P6, P7, P9, P11, P13, P23, P24, P26, P27, P29 | a report, a line, or a stored history that breaks its own stated contract |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
@@ -1141,6 +1151,7 @@ three groups:
 | P18 | Give `claude-code-action` a head by falling back to the pull request's current head | a scratch copy of that adapter | scenario 13f's `claude-code-action` case fails: an adapter whose only artifact is an issue comment gains a head it never stated, and its rounds start producing records — and confirmed misses — against a commit nobody claimed to have reviewed. The plant is the natural reading of "every adapter emits a head", which is why the table's one no-head row is tested rather than described; restoring the no-head result passes |
 | P22 | Feed the membership check with `printf '%s\\n' "$configured" \| grep -Fxq` | a scratch copy of the guard | scenario 2c fails under `set -o pipefail`: `grep -q` closes its input on the first match, the producer takes SIGPIPE on the remaining 499 lines, the pipeline reports non-zero, and a configured reviewer is classified `not_configured` — removing every round on that repository from the denominator. Scenario 2b still passes on its short lists, which is why 2c specifies both the early match and the length; restoring the here-string passes |
 | P21 | Compose the current round's `platform_results` without its `reviewed_heads[]` | a scratch copy of the call site | scenarios 1a and 1b fail: the same-round local-clean verdict is found, its head is empty, the ancestry is undecidable and the state is `unknown` — so the confirmed miss this feature exists to record becomes an unknown, and the half-move looks correct because the outcome half of the composition works; restoring both arrays passes |
+| P29 | Test history writability after the blocking check but before commit attribution | a scratch copy of the record entry point | scenario 12's third case fails: an external round whose commit cannot be established reports a telemetry failure though AC-7b says nothing was owed. Cases 1 and 2 pass, because the local-reviewer and advisory exclusions both fire before any head is consulted — so the ordering defect is invisible to two of the three ineligible rows; restoring the writability-last order passes all three |
 | P28 | Return `same` on string equality before checking that either commit exists | a scratch copy of `reviewer_loop_commit_ancestry` | scenario 5b fails: two identical SHAs naming no object return `same`, so a confirmed miss is recorded against a commit the repository does not have. Scenario 4's healthy cases and scenario 5's mismatched-missing cases both still pass — equality and existence only disagree when the *same* absent SHA appears on both sides; restoring the existence-first order passes |
 | P25 | Take one `reviewed_head` for the whole round instead of joining per platform | a scratch copy of the record builder | scenario 16b fails: two platforms that reviewed different commits are both attributed to one, so one record names a commit its reviewer never read and a `clean_same_commit` can follow from it. Every single-platform scenario passes, which is all of the others; restoring the per-platform join passes |
 | P27 | Key the evidence-state rows on the raw outcomes `escalate` and `timeout` instead of the normalized `unavailable` | a scratch copy of the mapping | scenario 6's `unavailable` case fails: nothing the selector emits matches those rows, the verdict falls through to `unknown`, and an outage becomes indistinguishable from missing evidence — the distinction AC-6 exists for. Every other row still passes, because only this one was renamed by normalization; restoring the normalized key passes |
@@ -1213,8 +1224,10 @@ object exposes it.
    string unchanged. **Verify**: scenario 14, field by field.
 6. Change the render path so an unappendable history is **not** re-rendered,
    and add the eligibility-then-writability ordering and the row-4 report.
-   **Verify**: scenarios 11 and 12, including the byte-for-byte comparison
-   against a saved prior body.
+   **Verify**: scenarios 11, 11a, 12 and 12a — the byte-for-byte comparison
+   against a saved prior body, the four unavailable reasons, and all three
+   ineligible rows, including the unattributable one that only a
+   writability-last ordering passes.
 7. Add the summary renderer: de-duplicate paths before counting and naming,
    reserve `remainder_max` in the budget before appending any path, and compute
    the actual remainder from the paths named. **Verify**: scenarios 13, 13a,
@@ -1227,7 +1240,7 @@ object exposes it.
    **Step 12a**, which reads both documentation surfaces against the
    implementation, and confirm the fragment's name matches
    `<item>.<kind>.<slug>.md` with a bare `1651`.
-10. Produce the twenty-eight planted-violation proofs (P1-P28) and record them in the PR
+10. Produce the twenty-nine planted-violation proofs (P1-P29) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
