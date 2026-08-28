@@ -18,9 +18,11 @@ the `reviewer_loop_history.v1` ledger entry records only one loop-level
 without checking which commit it described. This plan threads the value through
 those three surfaces: capture reviewed heads per platform in the loop, render a
 `Head evidence` block plus a `reviewed_heads[]` ledger field that marks each
-reviewer `current` or `not-current`, export an aggregate
-`LOCAL_AI_HEAD_CURRENT` / `LOCAL_AI_REVIEWED_HEAD` pair on the loop's key=value
-contract, and make a stale local clean result block `ready-for-human-review`
+reviewer `current`, `not-current`, or `not-reported`, export three aggregate
+keys — `LOCAL_AI_CONFIGURED`, `LOCAL_AI_REVIEWED_HEAD`, and
+`LOCAL_AI_HEAD_CURRENT` — on the loop's key=value contract and carry them into
+the readiness checklist, and make a stale local clean result block
+`ready-for-human-review`
 through the existing readiness checklist and ground-truth self-check.
 
 **Estimated complexity**: M
@@ -105,7 +107,7 @@ file declares `#!/usr/bin/env bash` and uses Bash arrays):
       (`pr-review-loop.sh`, the block introduced by issue #1574), and it is
       already the value the settle emits as `POST_CLEAN_HEAD_SHA`. Every
       consumer added by this plan — the summary block, the ledger field, and
-      the two stdout keys — classifies against `loop_head_sha` and nothing
+      the three stdout keys — classifies against `loop_head_sha` and nothing
       else. No new `gh` call is introduced, so there is no window in which two
       adjacent lookups could observe different commits and produce
       contradictory per-reviewer and aggregate evidence. Re-reading the live
@@ -197,7 +199,8 @@ file declares `#!/usr/bin/env bash` and uses Bash arrays):
       the `[A-Za-z0-9:_-]` token charset the Protocol 91 carry-forward snippet
       already admits — a 40-character hex OID included — so no pattern widening
       is needed for them.
-- [ ] Document both new keys in the `--help` usage block so the contract stays
+- [ ] Document all three new keys in the `--help` usage block, naming
+      `LOCAL_AI_CONFIGURED` as the applicability signal, so the contract stays
       discoverable from the script itself.
 
 `scripts/development-workflow/item-completion-self-check.sh` (shell contract:

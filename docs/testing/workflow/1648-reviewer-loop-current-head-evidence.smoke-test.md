@@ -251,8 +251,10 @@ gate is inert even though the loop emits them correctly.
 
 ## Rollback
 
-Revert the implementation PR. The change is additive — a new optional ledger
-field, two new stdout keys, one new self-check row, and two protocol bullets —
-so reverting restores the previous behavior without migration. Ledger entries
-already written with `reviewed_heads` remain parseable by the reverted reader,
-which dereferences unknown fields with defaults.
+Revert the implementation PR. The change is additive — two new optional ledger
+fields (`reviewed_heads`, `classification_head`), three new stdout keys
+(`LOCAL_AI_CONFIGURED`, `LOCAL_AI_REVIEWED_HEAD`, `LOCAL_AI_HEAD_CURRENT`), one
+new self-check row, and the Protocol 91 and 92 readiness edits — so reverting
+restores the previous behavior without migration. Ledger entries already written
+with the two new fields remain parseable by the reverted reader, which
+dereferences unknown fields with defaults.
