@@ -156,9 +156,40 @@ Not applicable — this repository ships workflow tooling, not a service.
       raw pair is kept beside it because a normalization that discards its input
       cannot be audited when a reader disagrees with it.
 
-      `reviewed_head` is #1648's per-reviewer evidence, carried here so one
-      array answers both questions the derivation asks. `reason` is carried
-      because two spec states are distinguished by it and by nothing else.
+      `reason` is carried because two spec states are distinguished by it and
+      by nothing else.
+
+      **`reviewed_head` has two sources, and the record says which.** #1648's
+      per-reviewer evidence comes from a companion script emitting
+      `REVIEWED_HEAD`, and today only `local-ai-reviewer` does. Every external
+      platform — the ones this feature exists to measure — reports nothing, so
+      a design that required a reported head would attribute nothing, exclude
+      every external round at the attribution gate, and produce an empty
+      telemetry that looked like "no misses".
+
+      Each record therefore carries `head_source` beside `reviewed_head`:
+
+      | `head_source` | `reviewed_head` is | When |
+      | --- | --- | --- |
+      | `reported` | what the reviewer said it reviewed | the platform emits `REVIEWED_HEAD` |
+      | `dispatch` | `loop_head_sha`, the head the loop dispatched the round against | the platform emits nothing |
+      | — | empty; the record is not written | neither is available |
+
+      **A `dispatch` head is an inference, and the classification is downgraded
+      accordingly.** The loop knows what it dispatched, not what the reviewer
+      read, and a reviewer that started late may have read a newer commit. So a
+      state of `clean_same_commit` derived against a `dispatch` head is recorded
+      as a **possible** miss, never a confirmed one — the confirmed count stays
+      reserved for rounds where the external reviewer stated its own head. This
+      keeps the narrow-numerator property intact instead of buying coverage with
+      it: without the downgrade, adding external coverage would have inflated
+      exactly the number this feature exists to make trustworthy.
+
+      Extending the external adapters to emit `REVIEWED_HEAD` would remove the
+      inference and is deliberately **out of scope**: it changes the companion
+      contract of every external platform, which is its own item. When an
+      adapter does start reporting, its records become `reported` and their
+      confirmed misses count, with no change here.
 
       The normalization applied at collection time:
 
@@ -372,7 +403,11 @@ Not applicable — this repository ships workflow tooling, not a service.
          own findings;
       2. the platform reported no **blocking** findings — advisory findings do
          not qualify;
-      3. the reviewed commit cannot be established — no unattributable record;
+      3. the reviewed commit cannot be established from **either** source —
+         no unattributable record. With `loop_head_sha` as the fallback this is
+         now rare, which is the point: the exclusion should fire on genuine
+         ignorance, not on the ordinary case of an external reviewer that does
+         not report its head;
       4. the round is not eligible at all, which rows 1 and 2 of the spec's
          matrix already cover.
 
@@ -557,6 +592,13 @@ Not applicable — this repository ships workflow tooling, not a service.
     naming three of twelve files reads `+9 more`; the zero-path line of
     scenario 13 reads `+12 more`; and a record whose files all fit omits the
     remainder rather than printing `+0 more`.
+13d. Head attribution and its consequence: an external platform that emits
+    `REVIEWED_HEAD` produces a record with `head_source: "reported"`, and a
+    `clean_same_commit` state there is a **confirmed** miss. An external
+    platform that emits nothing produces `head_source: "dispatch"` with
+    `loop_head_sha`, and the same state there is a **possible** miss. Asserted
+    as different classifications from identical evidence but different head
+    provenance.
 13b. An external round whose reviewed commit **cannot be established** produces
     no record, and the round's output states the attribution failure and its
     reason. This is AC-11, and it is the third of the spec's three no-record
@@ -626,6 +668,7 @@ Not applicable — this repository ships workflow tooling, not a service.
 | A `git` exit status of 1 is read from a bare call under `set -e` | **High** — it is the shorter and more obvious way to write it | **High** — three of the five results become unreachable and the round aborts instead of classifying | Every status is captured with `\|\| status=$?`, which is exempt from errexit. Scenario 5a and proof **P9** |
 | The summary line's bound is enforced by truncating the finished string | Med | Med — truncation removes the tail, which is where the state and the classification sit | The line is built with the total and the state **before** the paths, and paths stop at the first one that would exceed the bound. Scenario 13's zero-path case and proof **P6** |
 | The additive fields break a ledger reader | Low | Med | The schema string is unchanged and every existing field keeps its name and type; scenario 14 asserts them individually |
+| External reviewers report no head, so nothing is attributable | **High** — only `local-ai-reviewer` emits `REVIEWED_HEAD` today | **High** — every external round would be excluded at the attribution gate and the telemetry would be empty while looking like "no misses" | `head_source` records `reported` or `dispatch`, with `loop_head_sha` as the fallback; a `dispatch` head downgrades a confirmed miss to possible, so coverage is not bought with the numerator's credibility. Scenario 13d and proof **P15** |
 | The current round's verdict is not composed in before selection | **High** — the selector's input is naturally the persisted payload | **High** — the confirmed-miss case in AC-1 is exactly a same-round local clean, so the feature would miss the thing it exists to record while passing every other test | The call site composes the round's `platform_result_records` as a synthetic entry before selecting. Scenarios 1a and 1b, proof **P14** |
 | A pre-change entry's aggregate result is read as the local reviewer's verdict | **High** — it is the only outcome those entries carry | **High** — rounds the local reviewer never ran become confirmed misses, in the historical half of the data where nobody checks | Entries without `platform_results` yield `unknown`, never the aggregate. Scenario 3a and proof **P8** |
 | An unappendable history is replaced by an empty stub | **High** — it is the current behavior | **High** — every entry the pull request held is lost, and the stub looks like a well-formed report rather than a deletion | The render path leaves the prior block untouched; the stub is written only when there is no prior block. Scenario 11 and proof **P7** |
@@ -687,7 +730,9 @@ reviewer_loop_local_latest_verdict() {
         | . as $entry
         | ((.platform_results // [])[]
            | select(.platform == "local-ai-reviewer")
-           | {outcome: (.result // "unknown"),   # normalized at collection time
+           | {outcome: (.result // "unknown"),   # normalized at collection time; the
+                                         # reconciliation below is the only
+                                         # transformation applied after
               head_sha: (.reviewed_head // $entry.head_sha // ""),
               iteration: $entry.iteration})
       ]
@@ -698,7 +743,12 @@ reviewer_loop_local_latest_verdict() {
     // (if ($entries | length) == 0
         then {outcome: "not_yet_run", head_sha: "", iteration: 0}
         else {outcome: "unknown",     head_sha: "", iteration: 0}
-        end)'
+        end)
+    # The single post-collection reconciliation: the list says the reviewer is
+    # configured, so "will never run" is false; a configured reviewer that did
+    # not run is `unavailable`. Reached only when the list contains the
+    # reviewer, since otherwise the guard above already returned.
+    | if .outcome == "not_configured" then .outcome = "unavailable" else . end'
 }
 ```
 
@@ -707,12 +757,12 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The fourteen proofs fall into
+runs per proof, each citing a concrete file and line. The fifteen proofs fall into
 two groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Overclaiming | **8** | P1, P2, P3, P4, P8, P10, P12, P14 | a number asserted on evidence that does not support it |
+| Overclaiming | **9** | P1, P2, P3, P4, P8, P10, P12, P14, P15 | a number asserted on evidence that does not support it |
 | Contract | **6** | P5, P6, P7, P9, P11, P13 | a report, a line, or a stored history that breaks its own stated contract |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
@@ -730,9 +780,10 @@ two groups:
 | P12 | Count `path_total` without de-duplicating | a scratch copy of the record builder | scenario 13a fails: eight findings across three files report twelve files and name one file three times, overstating the blast radius of every record and wasting the line's three path slots; restoring the de-duplication passes |
 | P13 | Compute the remainder as `path_total - 3` instead of from the paths actually named | a scratch copy of the renderer | scenario 13c fails at every truncation point: the zero-path line reads `+9 more` for twelve files, and a record with two files fitting reads `-1 more`. The plant is invisible whenever exactly three paths fit, which is the common case; restoring the count-what-was-named rule passes |
 | P14 | Select from persisted entries only, omitting the current round's records | a scratch copy of the call site | scenarios 1a and 1b fail: a round where the local reviewer was clean and an external reviewer found blockers is classified from the previous round's verdict, or as `not_yet_run` when there is no previous round — so the confirmed miss the feature exists to record is the one case it cannot see. Every other scenario still passes, because they all supply the verdict as prior history; restoring the composition passes |
+| P15 | Count a `clean_same_commit` state as a confirmed miss when `head_source` is `dispatch` | a scratch copy of the classifier | scenario 13d fails: a round whose external reviewer never stated its head is counted as a confirmed miss on the loop's inference about what it read, so the confirmed count — the one number this feature exists to make trustworthy — is inflated by every external reviewer that does not report a head, which today is all of them; restoring the downgrade passes |
 | P6 | Enforce the 200-character bound by truncating the finished line | a scratch copy of the renderer | scenario 13's long-path case fails: truncation removes the tail, which is where the local evidence state and the classification sit, so the line that survives is the one carrying paths and no verdict — exactly inverted from what a reader needs; restoring build-order enforcement passes |
 
-Eight proofs plant the overclaiming direction because that is the direction with
+Nine proofs plant the overclaiming direction because that is the direction with
 no symptom: every one of them produces a plausible number, and a number is
 believed. P3 is the one to read twice — its plant passes every test written
 against a healthy repository, and only a fixture with a deliberately deleted
@@ -765,7 +816,8 @@ object exposes it.
 3. Add `reviewer_loop_local_evidence_state`. **Verify**: scenario 6 — one case
    per row, including both routes to `unknown`.
 4. Add `reviewer_loop_missed_finding_records` with its four exclusions as early
-   `continue`s. **Verify**: scenarios 7, 8, 9, 10, 13b and 16 — including the
+   `continue`s, and the two head sources with the downgrade. **Verify**:
+   scenarios 7, 8, 9, 10, 13b, 13d and 16 — including the
    unattributable-commit case, which must produce no record **and** report the
    attribution reason.
 5. Extend `reviewer_loop_history_build_entry` with `missed_findings`, schema
@@ -780,7 +832,7 @@ object exposes it.
    eight-findings-over-three-files case, and the three remainder forms.
 8. Update Protocol 93 and the `--help` block. **Verify**: runbook Step 9 reads
    both against the code.
-10. Produce the fourteen planted-violation proofs (P1-P14) and record them in the PR
+10. Produce the fifteen planted-violation proofs (P1-P15) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---

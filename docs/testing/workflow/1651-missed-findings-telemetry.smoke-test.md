@@ -193,11 +193,21 @@ from an undecidable ancestry and once from an unrecognised outcome.
 4. Run two qualifying rounds with identical reviewer, commit and finding count.
 
 5. Run a round with external blocking findings whose **reviewed commit cannot
-   be established**.
+   be established** from either source.
+6. Run two rounds with identical evidence but different head provenance: one
+   external platform that emits `REVIEWED_HEAD`, one that emits nothing.
 
 **Expected result**: no record for 1, 2 or 5; a record for 3; **two** records
 for 4, neither replacing the other. Case 5's output states the attribution
 failure and its reason.
+
+Case 6's two rounds produce the **same** local evidence state and **different**
+classifications: `reported` head plus `clean_same_commit` is a confirmed miss;
+`dispatch` head plus `clean_same_commit` is a possible miss. The loop knows what
+it dispatched, not what the reviewer read, so a confirmed claim resting on that
+inference would inflate the one number the feature exists to make trustworthy —
+and today no external platform reports its head, so every confirmed miss would
+rest on it. Proof P15.
 
 Case 5 is the third of the spec's three no-record paths, and the only one that
 reaches attribution before failing — the other two are excluded before the
@@ -356,10 +366,10 @@ status. The records change what is *known*, never what happens.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P14 each record the command, the file and line of the
+2. Confirm P1 through P15 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: fourteen proofs in two groups — **eight** overclaiming,
+**Expected result**: fifteen proofs in two groups — **nine** overclaiming,
 **six** contract, per the plan's proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:
