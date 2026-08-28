@@ -211,9 +211,16 @@ Not applicable — this repository ships workflow tooling, not a service.
 - [ ] **Run the pass, immediately before the ready-phase gate.** At
       `pr-review-loop.sh:8580`, before `ensure_pr_ready_for_ready_phase`:
 
-      1. If `reviewer_loop_local_pass_required` returns `not_required`, do
-         nothing and proceed exactly as today.
-      2. Otherwise dispatch the local reviewer once and process its output
+      1. If `reviewer_loop_local_pass_required` returns `not_required` **or**
+         `no_local_reviewer`, do nothing and proceed exactly as today. Both are
+         the table's non-owing rows, and they exempt for different reasons: the
+         first has current evidence, the second has no reviewer to produce any.
+         Listing only `not_required` here would have `no_local_reviewer` fall
+         through to a dispatch of a reviewer that does not exist — which is the
+         contradiction the table exists to prevent, reintroduced by an "and
+         otherwise" that predates the fifth value.
+      2. Otherwise — `head_changed`, `prior_findings` or `no_evidence` —
+         dispatch the local reviewer once and process its output
          through the **same code the platform loop uses**. That needs a small
          extraction first: `run_platform_review` only dispatches — the parsing,
          the aggregation, the `print_kv` forwarding, the
