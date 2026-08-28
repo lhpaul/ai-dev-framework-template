@@ -145,16 +145,36 @@ Not applicable — this repository ships workflow tooling, not a service.
       | clean, on `loop_head_sha` | `not_required` | no |
       | clean, on any other commit | `head_changed` | yes |
       | not clean — findings, skipped, unavailable | `prior_findings` | yes |
-      | no verdict in this pull request's history | `no_evidence` | yes |
+      | no verdict, and the reviewer **is** configured | `no_evidence` | yes |
+      | the reviewer is **not configured** for this repository | `no_local_reviewer` | no — see below |
 
-      **Absence owes a pass.** The fourth row is the one a permissive reading
-      gets wrong: a pull request whose history says nothing about the local
-      reviewer has not been locally reviewed, and treating silence as
-      satisfaction is the same fail-open this epic exists to close. It is also
-      the ordinary state of an invocation whose `--platform` list omits the
-      local reviewer.
+      **Absence owes a pass — but only where a pass is possible.** The fourth
+      row is the one a permissive reading gets wrong: a pull request whose
+      history says nothing about a *configured* local reviewer has not been
+      locally reviewed, and treating silence as satisfaction is the same
+      fail-open this epic exists to close. It is the ordinary state of an
+      invocation whose `--platform` list omits the reviewer, and the reviewer is
+      there to be dispatched.
 
-      The four values are distinct rather than a boolean because they are
+      **The fifth row is a different fact and must not be folded into it.**
+      #1651's selector returns `not_configured` when the repository has no local
+      reviewer configured at all — not omitted from this invocation, but absent
+      from `review.on_draft.runner`. There is nothing to dispatch, so a pass is
+      not merely unowed, it is impossible.
+
+      That row **proceeds**, and the choice is deliberate. Refusing would block
+      the ready-phase gate on every pull request in every repository that has
+      not adopted a local reviewer — which this template must keep working for,
+      and which no amount of retrying could clear. Proceeding is not a silent
+      pass either: `LOCAL_SECOND_PASS_REASON` carries `no_local_reviewer`, so a
+      reader can tell *the gate was satisfied* from *there was nothing to
+      satisfy it with*, and #1657 can exclude those repositories from any
+      effectiveness rate rather than counting them as clean.
+
+      Conflating the two rows is what an implementer would otherwise have to
+      invent behavior for: a dispatch of a reviewer that does not exist.
+
+      The five values are distinct rather than a boolean because they are
       reported, and a reader wanting to know *why* a pass ran cannot recover it
       from `1`.
 
@@ -263,7 +283,7 @@ Not applicable — this repository ships workflow tooling, not a service.
 
       ```text
       LOCAL_SECOND_PASS=0|1
-      LOCAL_SECOND_PASS_REASON=not_required|head_changed|prior_findings|no_evidence|failed_for_head
+      LOCAL_SECOND_PASS_REASON=not_required|head_changed|prior_findings|no_evidence|no_local_reviewer|failed_for_head
       ```
 
       `failed_for_head` is the refusal row — the pass did not run **and** the
@@ -290,10 +310,11 @@ Not applicable — this repository ships workflow tooling, not a service.
 
 ### Infrastructure / Configuration
 
-- [ ] Document both keys and **all five** reasons — the four conditions plus
-      `failed_for_head` — in the `--help` block and in Protocol 93. Four would
-      omit the refusal, which is the only reason that reports a *blocked* gate
-      rather than a satisfied or a repaired one.
+- [ ] Document both keys and **all six** reasons — the five conditions plus
+      `failed_for_head` — in the `--help` block and in Protocol 93. The two
+      easiest to omit are the ones that report neither a satisfied nor a
+      repaired gate: `failed_for_head`, a **blocked** one, and
+      `no_local_reviewer`, one with nothing to satisfy it.
 
 ---
 
@@ -329,11 +350,19 @@ Order step 0.
 
 **Key scenarios to test**:
 
-1. `reviewer_loop_local_pass_required` returns each of its four values, one case
+1. `reviewer_loop_local_pass_required` returns each of its five values, one case
    per row of its table.
 2. `no_evidence` is returned for a history with entries that never name the
-   local reviewer — not `not_required`. Silence is not satisfaction, and this is
-   the value an invocation without the local reviewer produces.
+   local reviewer **while the reviewer is configured** — not `not_required`.
+   Silence is not satisfaction, and this is the value an invocation whose
+   `--platform` list omits a configured reviewer produces.
+2a. `no_local_reviewer` is returned when the reviewer is **not configured for
+   the repository**, and the guard **proceeds** without dispatching. Asserted as
+   a distinct value from both `no_evidence` and `not_required`: the first would
+   dispatch a reviewer that does not exist, the second would report a satisfied
+   gate where there was nothing to satisfy it with. The two inputs differ only
+   in the configured-platform list passed to #1651's selector, which is why that
+   argument is not optional.
 3. `head_changed` is returned when the local reviewer's clean verdict names a
    commit that is an **ancestor** of `loop_head_sha` — the ordinary
    fix-was-pushed case — and also when it names an unrelated commit. Both owe a
@@ -420,7 +449,8 @@ Order step 0.
 ## Documentation Updates
 
 - `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
-  — the guard, all **five** reasons including `failed_for_head`, the two keys,
+  — the guard, all **six** reasons including `no_local_reviewer` and
+  `failed_for_head`, the two keys,
   and the `local_second_pass_failed_head` ledger field.
 - The `--help` block of `pr-review-loop.sh`.
 - `changelog.d/1656.changed.second-local-pass.md` — `changed` rather than
@@ -467,7 +497,11 @@ reviewer_loop_local_pass_required() {
   # has not been locally reviewed, and `not_required` here would let an
   # invocation that omits the reviewer walk straight through the gate.
   case "$outcome" in
-    not_yet_run|not_configured|unknown) printf 'no_evidence\n'; return 0 ;;
+    # Not configured is not the same as configured-and-silent: there is nothing
+    # to dispatch, so the guard proceeds and says so rather than owing a pass it
+    # could never discharge.
+    not_configured) printf 'no_local_reviewer\n'; return 0 ;;
+    not_yet_run|unknown) printf 'no_evidence\n'; return 0 ;;
     clean) ;;
     *) printf 'prior_findings\n'; return 0 ;;
   esac
@@ -485,12 +519,12 @@ reviewer_loop_local_pass_required() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The nine proofs fall into
+runs per proof, each citing a concrete file and line. The ten proofs fall into
 three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Fail-open | **3** | P2, P4, P6 | the gate reached, or the pull request converted, without the evidence |
+| Fail-open | **4** | P2, P4, P6, P10 | the gate reached, or the pull request converted, without the evidence |
 | Loop and cost | **3** | P1, P3, P5 |
 | Integration | **3** | P7, P8, P9 | a guard wired in beside the pipeline rather than into it | a guard that repeats, shortens the run, or runs where there is nothing to guard |
 
@@ -502,11 +536,12 @@ three groups:
 | P8 | Call `run_platform_review` from the guard without processing its output | a scratch copy of the dispatch block | scenario 5's ledger assertion fails: the pass runs, its verdict decides the gate, and it appears in no ledger entry and no `key=value` output — so the telemetry says the gate opened with no evidence of what opened it. The gate behaviour is still correct, which is what makes this the plant a hurried extraction invites; restoring the shared processor passes |
 | P6 | Make the flag suppress the dispatch without refusing the gate | same scratch copy | scenario 8a fails: the cycle after a failed pass reaches the gate with no current clean evidence, because the condition still owes a pass and nothing runs — a fail-open created by the anti-loop mechanism itself. Scenario 8's dispatch count still passes, which is what makes this the plant a two-way guard invites; restoring the refusal passes both |
 | P2 | Return `not_required` when the history names no local verdict | same scratch copy | scenario 2 fails: a pull request the local reviewer never examined reaches the gate and its ready-phase reviewers run, which is the fail-open this item exists to close. Every other scenario passes, because they all supply a verdict; restoring `no_evidence` passes |
+| P10 | Fold `not_configured` into `no_evidence` | same scratch copy | scenario 2a fails: a repository with no local reviewer configured owes a pass that cannot be dispatched, so either the guard blocks its ready-phase gate forever or an implementer invents a fallback the plan never specified. Scenario 2 passes, because a configured-but-silent reviewer is a different input; restoring the fifth value passes both |
 | P3 | Increment `CYCLE_COUNT` when the pass runs | a scratch copy of the dispatch block | scenarios 9 and 10 fail: a run needing a pass reports a different count than an identical run that does not, and `max_cycles_exceeded` arrives earlier — so the guard silently shortens every run it helps; restoring the no-op passes |
 | P4 | Call `ensure_pr_ready_for_ready_phase` before checking the pass's result | same scratch copy | scenario 7 fails on its conversion assertion: a failed pass leaves the pull request converted to ready with no reviewer dispatched — a state the loop never intended and a human has to undo. The `needs_fixes` result is still reported, so a test asserting only the result passes; restoring the order passes |
 | P5 | Run the guard even when no ready-phase platform is configured | same scratch copy | scenario 13 fails: every draft-only run dispatches the local reviewer twice, doubling the cost of the cheapest gate for no benefit — the pass exists to protect a gate that is not there; restoring the no-op passes |
 
-Three proofs plant the fail-open direction, and P2 is the one to read twice: it is
+Four proofs plant the fail-open direction, and P2 is the one to read twice: it is
 the natural default, it passes every scenario that supplies a verdict, and the
 pull requests it lets through are exactly the ones nobody reviewed locally.
 
@@ -520,8 +555,9 @@ pull requests it lets through are exactly the ones nobody reviewed locally.
    or in flight — to confirm it is a *check* and not a combined gate. If either
    check fails, stop and revise this plan.
 1. Add `reviewer_loop_local_pass_required`, calling #1651's selector with both
-   of its arguments. **Verify**: scenarios 1, 2 and 3 — all four values,
-   `no_evidence` for silence, and both head-mismatch shapes.
+   of its arguments. **Verify**: scenarios 1, 2, 2a and 3 — all five values,
+   `no_evidence` for a silent but configured reviewer, `no_local_reviewer` for
+   an unconfigured one, and both head-mismatch shapes.
 1a. Extract the platform loop's inline post-dispatch block into
    `reviewer_loop_process_platform_output`, changing nothing else. **Verify**:
    scenario 5a — byte-identical `key=value` output for a run that needs no pass.
@@ -542,7 +578,7 @@ pull requests it lets through are exactly the ones nobody reviewed locally.
    `changelog.d/1656.changed.second-local-pass.md`. **Verify**: runbook **Step
    10**, which reads both surfaces and the fragment against each other — Step 8
    is the no-gate/no-guard case.
-7. Produce the nine planted-violation proofs (P1-P9) and record them in the PR
+7. Produce the ten planted-violation proofs (P1-P10) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---

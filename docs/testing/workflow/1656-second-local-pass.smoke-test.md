@@ -19,10 +19,26 @@ inside an `if` or with `|| true`.
 2. Call it with a local clean verdict on an **ancestor** of `loop_head_sha`.
 3. Call it with a local clean verdict on an **unrelated** commit.
 4. Call it with a local **needs_fixes** verdict.
-5. Call it with entries that **never name** the local reviewer.
+5. Call it with entries that **never name** the local reviewer, and a
+   configured-platform list that **contains** it.
+6. Call it with the same history and a configured-platform list that **does
+   not** contain it.
 
 **Expected result**: `not_required`, `head_changed`, `head_changed`,
-`prior_findings`, `no_evidence`.
+`prior_findings`, `no_evidence`, `no_local_reviewer`.
+
+Cases 5 and 6 differ **only** in the configured-platform list, and they must not
+collapse. Case 5 is a configured reviewer that has not spoken — dispatchable, so
+a pass is owed. Case 6 is a repository with no local reviewer at all: there is
+nothing to dispatch, so the guard **proceeds** and reports
+`no_local_reviewer` rather than owing a pass it could never discharge.
+
+Proceeding there is deliberate. Refusing would block the ready-phase gate on
+every pull request in every repository that has not adopted a local reviewer,
+which no amount of retrying could clear. It is not a silent pass either: the
+reason distinguishes *the gate was satisfied* from *there was nothing to satisfy
+it with*, which is what lets #1657 exclude those repositories from a rate rather
+than count them as clean. Proof P10.
 
 Case 5 is the one a permissive reading gets wrong. A history that says nothing
 about the local reviewer has not been locally reviewed, and `not_required` there
@@ -213,7 +229,7 @@ pass: head_changed → clean`.
 2. Run `scripts/development-workflow/pr-review-loop.sh --help`.
 3. Read `changelog.d/1656.changed.second-local-pass.md`.
 
-**Expected result**: both surfaces describe the same **five** reasons — the four
+**Expected result**: both surfaces describe the same **six** reasons — the five
 conditions plus `failed_for_head` — and the same two keys, and neither describes the pass as consuming a cycle or as running
 without a ready-phase platform. The fragment is `changed`, not `added` — the
 ready-phase gate already existed and this alters when it fires.
@@ -237,12 +253,11 @@ ready-phase gate already existed and this alters when it fires.
 ## Step 12: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P9 each record the command, the file and line of the
+2. Confirm P1 through P10 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: nine proofs in three groups — **three** fail-open,
-**three** loop and cost, **three** integration, per the plan's proof-group
-table.
+**Expected result**: ten proofs in three groups — **four** fail-open, **three**
+loop and cost, **three** integration, per the plan's proof-group table.
 
 P2 is the one to read twice: returning `not_required` for a history with no
 local verdict is the natural default, it passes every scenario that supplies a
