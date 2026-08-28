@@ -99,7 +99,8 @@ Call the contract-surface predicate with each case and read match / no-match:
 | `parse is misspelled here` | no match — bare `parse` is not a matched term |
 | `the contract section has a trailing space` | no match — bare `contract` is not a matched term |
 | `the decision gate is inconsistent` | match — the qualified phrase |
-| `failXclosed is wrong` | no match — separators are an explicit `[ -]` class, never the regex wildcard `.` |
+| `failXclosed is wrong` | no match — each spelling is listed literally, never via a wildcard `.` separator |
+| `the allow list is incomplete` | no match — only the hyphenated `allow-list` is a listed spelling |
 | `this row is out of scope` | match — the qualified phrase |
 | `the evidence state table is wrong` | match — the qualified phrase |
 | `Acceptance Criteria are inconsistent` | match — case-insensitive |
@@ -180,11 +181,10 @@ cannot demonstrate anything.
 2. Run it once where the terminal rule fires.
 3. Read `SMALL_FINDINGS_BLOCKED_BY` and the summary's small-findings line.
 
-4. Run it three more times with **co-occurring** causes, one per adjacent
-   boundary in the precedence order: a round carrying both a shipped-path and a
-   contract-surface finding; a round carrying a contract-surface finding **and**
-   a stale contributor; and a round whose findings are all small but which has
-   one stale contributor and one reporting no head.
+4. Run it three more times: a round carrying both a shipped-path and a
+   contract-surface finding; a round whose findings are all small but which has
+   one stale contributor and one reporting no head; and a round carrying a
+   contract-surface finding **together with** a contributor on a stale head.
 
 **Expected result**: the four situations report `shipped_path`,
 `contract_surface`, `stale_head` and `head_unknown` respectively; the firing run
@@ -192,16 +192,25 @@ reports an **empty** value, as does a run whose consecutive count was simply
 short — `exhausted` and `not_small` describe an ordinary short run and are not
 blocking reasons.
 
-The three co-occurring runs report `shipped_path`, `contract_surface` and
-`stale_head` respectively, following the fixed precedence: content reasons
-outrank currency reasons because they must be fixed regardless of which commit
-they were found on, and `stale_head` outranks `head_unknown` as the more
-specific statement. The **second** run is the one that verifies the
-content-versus-currency boundary, and it is the case proof P9 inverts — the
-first has no currency cause and the third has no content cause, so neither could
-detect an inversion. In both
-runs the **summary line still names every cause present** — precedence reduces
-only the single-valued key, and nothing is hidden by it.
+The three co-occurring runs report `shipped_path`, `stale_head` and
+`contract_surface` respectively.
+
+The first two test the two **within-group** precedences: `shipped_path` outranks
+`contract_surface` because a shipped path is a property of the artifact and
+needs no reading of the finding text to act on, and `stale_head` outranks
+`head_unknown` because a known-different head is the more specific statement.
+Both are the cases proof P9 inverts.
+
+The third run tests something else: it carries a contract-surface finding *and*
+a contributor on a stale head, and must report `contract_surface` with **no
+currency cause recorded at all**. Content and currency causes are mutually
+exclusive by construction — the head of a counted round is only asked about once
+the round qualifies as a small-findings round, so a non-small finding means the
+head check is never reached. There is no content-versus-currency ordering to
+test, and this run is the guard against re-introducing one.
+
+In the first two runs the **summary line still names every cause present** —
+precedence reduces only the single-valued key, and nothing is hidden by it.
 
 The summary line names the matched contract-surface identity, not just that some
 surface matched: `reviewer_loop_finding_touches_contract_surface` prints the
@@ -266,10 +275,11 @@ likely mistake because it looks like success.
 
 **One** — **P9** — is neither, and forms the third group: it inverts the
 `SMALL_FINDINGS_BLOCKED_BY` precedence so currency reasons outrank content
-reasons. It requires Step 5's **contract-surface-plus-stale-contributor** run to
-fail, which is the only co-occurring case that crosses the content-versus-
-currency boundary; the shipped-path pair has no currency cause and the two-head
-pair has no content cause, so neither can detect the inversion. P9 changes no
+reasons. It requires Step 5's **first two** co-occurring runs to fail — the
+content-group pair reporting `contract_surface` where a shipped path is present,
+and the currency-group pair reporting `head_unknown` where a known-different
+head is present. Both are genuine co-occurrences within a group, so both can
+detect the inversion. P9 changes no
 firing decision at all — the rule still terminates or refuses exactly as before
 — and only changes which cause a maintainer is shown first. It is its own group
 because a precedence defect is an **observability** defect, invisible to any

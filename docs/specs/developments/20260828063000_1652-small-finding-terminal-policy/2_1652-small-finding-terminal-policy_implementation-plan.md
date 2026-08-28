@@ -226,22 +226,34 @@ Not applicable — this repository ships workflow tooling, not a service.
       (`exhausted` or `not_small`), since neither is a blocking reason. Without
       it, a maintainer cannot tell a loop that is correctly refusing to
       terminate from one that is simply still finding things.
-- [ ] **Define precedence — the causes can co-occur.** One round can carry a
-      shipped-path finding *and* a contract-surface finding; one round can have
-      one stale contributor *and* another with no head at all. The key is
-      single-valued, so it reports the **first** cause in this fixed order:
+- [ ] **Define precedence — some causes can co-occur, and two of them never
+      can.** The four causes fall into two groups that are **mutually exclusive
+      by construction**, because they are decided at different stages:
 
-      | Precedence | Value | Chosen when |
-      | --- | --- | --- |
-      | 1 | `shipped_path` | any counted finding has a shipped path |
-      | 2 | `contract_surface` | no shipped path, but any counted finding touches a contract surface |
-      | 3 | `stale_head` | the findings are all small, but a counted round or contributor reports a head other than `loop_head_sha` |
-      | 4 | `head_unknown` | as above, but the head is absent, empty, or a synthetic placeholder |
+      - **Content causes** — `shipped_path` and `contract_surface` — say the
+        round's findings are *not small*. They are evaluated first.
+      - **Currency causes** — `stale_head` and `head_unknown` — are only
+        reachable when the findings *are* all small, since the head of a counted
+        round is only asked about once the round qualifies as a small-findings
+        round at all.
 
-      Content reasons outrank currency reasons because they are the more
-      actionable: a shipped-path or contract-surface finding must be fixed
-      regardless of which commit it was found on, whereas a stale head resolves
-      itself on the next run. Between the two currency reasons, `stale_head`
+      A content cause and a currency cause therefore cannot both be present:
+      if any finding is non-small the round never reaches the head check, and if
+      the round reaches the head check no finding was non-small. There is no
+      content-versus-currency boundary to order, and the plan does not invent
+      one. Precedence is needed **within** each group, where co-occurrence is
+      real:
+
+      | Group | Precedence | Value | Chosen when |
+      | --- | --- | --- | --- |
+      | Content | 1 | `shipped_path` | any counted finding has a shipped path |
+      | Content | 2 | `contract_surface` | no shipped path, but any counted finding touches a contract surface |
+      | Currency | 1 | `stale_head` | a counted round or contributor reports a head other than `loop_head_sha` |
+      | Currency | 2 | `head_unknown` | as above, but the head is absent, empty, or a synthetic placeholder |
+
+      Within the content group, `shipped_path` outranks `contract_surface`
+      because a shipped path is a property of the artifact and needs no reading
+      of the finding text to act on. Within the currency group, `stale_head`
       outranks `head_unknown` because a known-different head is the more
       specific statement. The **summary line lists every cause present**, so
       nothing is hidden by the precedence; only the single-valued key is
@@ -335,20 +347,20 @@ Not applicable — no user interface in this repository.
 10. With the required rounds reached but the most recent counted round on a
     stale head, the terminal rule does **not** fire and
     `SMALL_FINDINGS_BLOCKED_BY=stale_head`.
-10a. Precedence when causes co-occur, one case per adjacent boundary in the
-    four-level order:
+10a. Precedence within each group, one case per boundary — and a third case
+    proving the two groups cannot co-occur:
 
-    | Co-occurring causes | Reported value | Boundary tested |
+    | Situation | Reported value | What it tests |
     | --- | --- | --- |
-    | shipped-path finding **and** contract-surface finding | `shipped_path` | 1 over 2 |
-    | contract-surface finding **and** a stale contributor | `contract_surface` | 2 over 3 — the content-versus-currency boundary |
-    | one stale contributor **and** one reporting no head | `stale_head` | 3 over 4 |
+    | A shipped-path finding **and** a contract-surface finding | `shipped_path` | the content-group boundary |
+    | All findings small, one stale contributor **and** one reporting no head | `stale_head` | the currency-group boundary |
+    | A contract-surface finding **and** a contributor reporting a stale head | `contract_surface`, and **no** currency cause is recorded at all | that the groups are mutually exclusive: a non-small finding means the head check is never reached |
 
-    The **second row is the one that verifies content outranks currency**, and
-    it is the case proof P9 inverts: the first row contains no currency cause at
-    all, so inverting the content-versus-currency order could not change its
-    result. In every row the **summary line still names both causes**, so
-    precedence reduces only the single-valued key.
+    In the first two rows the **summary line still names both causes**, so
+    precedence reduces only the single-valued key. The third row is the guard
+    against re-introducing a content-versus-currency ordering: there is nothing
+    to order, because the currency causes are unreachable whenever a content
+    cause exists.
 10b. `reviewer_loop_finding_touches_contract_surface` prints the matched surface
     identity — `acceptance_criteria`, `fail_closed_semantics` and so on — and
     prints nothing on no match. A body matching two surfaces prints the first in
@@ -419,7 +431,7 @@ sharpening it.
 | P5 | Treat an entry with an absent or placeholder head as matching the current head | same scratch copy | scenario 9 fails in all three cases, because an unprovable head extends the run; restoring the fail-closed branch passes |
 | P6 | Over-tighten by path: make every `docs/` path shipped, dropping the non-shipped patterns entirely | a scratch copy of the predicate | scenarios 3, 6 and 13 fail, because the loop can no longer terminate on a genuinely cosmetic documentation tail; restoring the narrowed list passes |
 | P7 | Over-tighten by term: restore the bare common words `gate`, `scope`, `state`, `status`, `proof`, `parse` and `contract` to the contract-surface list | same scratch copy | scenario 6a fails on all seven cosmetic bodies and scenario 13 stops firing, because ordinary prose now reads as contract-bearing; restoring the phrase-only list passes |
-| P9 | Invert the precedence so currency reasons outrank content reasons | a scratch copy of the blocked-by mapping | scenario 10a's **second** row fails, reporting `stale_head` where a contract-surface finding is present and must be reported first. That row is the only one that crosses the content-versus-currency boundary — the first row has no currency cause and the third has no content cause, so neither can detect the inversion. Restoring the order passes |
+| P9 | Invert both within-group precedences: report `contract_surface` over `shipped_path`, and `head_unknown` over `stale_head` | a scratch copy of the blocked-by mapping | scenario 10a's first two rows fail — the content row reports `contract_surface` where a shipped path is present, and the currency row reports `head_unknown` where a known-different head is present. Both are detectable because both are genuine co-occurrences within a group; restoring the order passes |
 | P8 | Skip the current round's head check, verifying only the prior ledger entries | a scratch copy of the terminal decision | scenario 8a fails, because the rule terminates on a deciding round whose findings describe a commit that is no longer the head; restoring the check passes |
 
 P6 and P7 are the two restrictive-direction proofs and neither is optional. A
@@ -469,6 +481,7 @@ point. No listeners, timers, or shared mutable state are introduced.
 | Path classification fixture | The five paths that change disposition and the four that must not, driving scenarios 1-3 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Contract-surface body fixture | One body per row of the contract-surface table; three cosmetic bodies; the **seven bare-common-word cosmetic bodies** of scenario 6a, one per removed term; the three qualified-phrase controls that must still match; and the ten parser edge cases including the two substring negatives | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Multi-contributor round fixture | A single round with counted findings from two platforms, in four combinations — both on the current head, one stale, one reporting no head, and both stale — driving scenario 8a | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Co-occurring-cause fixtures | Three rounds driving scenario 10a: one carrying both a shipped-path and a contract-surface finding; one whose findings are all small with one stale contributor and one reporting no head; and one carrying a contract-surface finding together with a contributor on a stale head, to prove the currency check is never reached | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Head-comparison ledger fixture | Ledger payloads with prior small rounds on an older head, on the current head, and with absent, empty and placeholder heads — driving scenarios 8, 9, 10 and 14 | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | #1661 replay ledger | A `reviewer_loop_history.v1` payload reproducing PR #1661's consecutive small-findings rounds, with the real finding bodies naming fail-closed semantics, matrix rows and acceptance criteria | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
 | Cosmetic replay ledger | The same ledger shape with cosmetic bodies only, driving scenario 13 | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
@@ -498,7 +511,7 @@ and require no network access.
 | The contract-surface test over-matches ordinary prose | **High** | High — matching bare common words like `state`, `scope` or `gate` would make almost every finding non-small, disabling the terminal rule from the restrictive side while appearing to tighten it | Every matched term is a phrase or a qualified form; no bare common word is on the list, and the plan records that an earlier draft's bare terms were removed for this reason. Scenario 6a tests one cosmetic body per removed word, and the parser-risk addendum adds word-boundary negatives (`delegates`/`gate`, `microscope`/`scope`) |
 | The current round is decided without checking its own head | Med | High — the rule could terminate on a round whose findings describe a commit that is no longer the head, which is the staleness the brief names | The run is `prior + 1` and both halves are verified: the counter checks prior entries, and **every** reviewer contributing a counted finding to the current round must report `loop_head_sha` before it contributes. Scenario 8a's four combinations pin the `+ 1` half, including the two-platform case where only one contributor is stale; proof P8 plants the omission |
 | An old ledger without head data silently counts as current | Med | High — the current-head requirement would be inert on exactly the PRs that predate it | An absent, empty or placeholder head ends the consecutive run; scenarios 9 and 14 and proof P5 pin all three forms |
-| A maintainer cannot tell a correctly-refusing loop from a still-failing one | Med | Med | `SMALL_FINDINGS_BLOCKED_BY` names the cause, and the summary line names the contract surface or shipped path; scenario 11 pins all four values and both empty cases, and scenario 9a pins the counter's stop reasons that feed two of them |
+| A maintainer cannot tell a correctly-refusing loop from a still-failing one, or is shown the less actionable cause | Med | Med | `SMALL_FINDINGS_BLOCKED_BY` names one cause by a documented within-group precedence, and the summary line names **every** cause present — the shipped paths, the matched contract-surface identities, and the platform responsible for any stale or unknown head. Scenario 11 pins all four values and both empty cases, scenario 9a pins the counter's stop reasons that feed the currency pair, scenario 10a pins both within-group boundaries and the groups' mutual exclusivity, and proof P9 plants the inverted precedence |
 | The rename of `reviewer_loop_all_paths_non_shipped` breaks an unseen caller | Low | Med | The PR records whether any caller outside this change set exists; a thin wrapper is kept only if one does |
 
 ---
