@@ -469,8 +469,8 @@ test that asserts only whether the rule fired.
 2. Read the added line in `REVIEW.md`.
 3. Run `pr-review-loop.sh --help`.
 
-**Expected result**: all three describe the same rule — normative documents are
-a **blocking** finding on a normative document is never small whatever it says,
+**Expected result**: all three describe the same rule — a **blocking** finding
+on a normative document is never small whatever it says,
 a contract-surface finding is escalated on other documentation paths while a
 cosmetic one there is not, **both** the prior counted rounds and the round being decided must be on
 the current head, and an unknown head ends the run — and all three name the same
@@ -483,6 +483,8 @@ them against Steps 1 through 5 must surface no contradiction.
 
 1. Run `shellcheck` on `scripts/development-workflow/pr-review-loop.sh`.
 2. Run
+
+   <!-- workflow-shell-contract: bash -->
 
    ```bash
    python3 scripts/lint/workflow-shell-guard-lint.py \
