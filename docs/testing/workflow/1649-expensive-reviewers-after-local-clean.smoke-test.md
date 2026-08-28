@@ -66,8 +66,9 @@ the item's intent.
 
 The four conditions are: the local reviewer clean and current; every reviewer
 that **precedes** this one having produced acceptable evidence — a `clean`
-result, or a `skipped` one whose reason is not a reviewer failure, deliberately
-**not** every `skipped`; zero unresolved non-outdated review threads; and green
+result, or a `skipped` one whose reason is a member of
+`EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS`, deliberately **not** every `skipped` and
+deliberately not "any reason that is not a known failure"; zero unresolved non-outdated review threads; and green
 non-reviewer baseline checks. Steps 3 and 3d pin the second condition's two
 halves.
 

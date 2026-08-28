@@ -20,11 +20,13 @@ never review threads, never baseline CI, and it has no notion of a stale local
 clean result. This plan adds a dedicated pre-dispatch gate for `codex-github`
 that requires four current-head conditions — the local reviewer clean and
 current; every reviewer that **precedes** it having produced acceptable evidence
-(a `clean` result, or a `skipped` one whose reason is not a reviewer failure —
-deliberately **not** every `skipped`); zero unresolved non-outdated review
-threads; and green non-reviewer baseline checks — evaluated immediately before
-the platform is dispatched, fail-closed when any input is missing or stale, with
-one explicit documented override for manual escalation.
+(a `clean` result, or a `skipped` one whose reason is a member of a fixed
+allow-list of deliberate policy skips — deliberately **not** every `skipped`,
+and deliberately not "any reason that is not a known failure", which would
+accept unknown and future reasons); zero unresolved non-outdated review threads;
+and a non-empty set of non-reviewer baseline checks, all green — evaluated
+immediately before the platform is dispatched, fail-closed when any input is
+missing or stale, with one explicit documented override for manual escalation.
 A gate that holds the reviewer back **defers** rather than skipping: it sets the
 loop's aggregate to `needs_fixes` so readiness is withheld and Step 7 re-runs,
 which is what makes the deferral guaranteed rather than merely hoped for.
