@@ -851,6 +851,13 @@ with mock `gh` commands and require no network access.
 
 ## Code Samples
 
+The snippet below uses Bash arrays (`EXPENSIVE_REVIEWER_PLATFORMS`,
+`EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS`) and `local` declarations, matching
+`pr-review-loop.sh`'s own `#!/usr/bin/env bash` shebang. It is not portable to
+POSIX `sh`, so its contract is `bash` rather than `bash-zsh`.
+
+<!-- workflow-shell-contract: bash -->
+
 ```bash
 # Illustrative — adapt during implementation.
 EXPENSIVE_REVIEWER_PLATFORMS=(codex-github)
