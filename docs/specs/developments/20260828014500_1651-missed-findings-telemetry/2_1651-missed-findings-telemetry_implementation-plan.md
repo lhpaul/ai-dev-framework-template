@@ -201,8 +201,8 @@ Not applicable — this repository ships workflow tooling, not a service.
       | `claude-code-action` | 1228 | issue comments from a bot login | **none** — issue comments carry no commit; see below |
       | `copilot` | 1352 | `pulls/<n>/reviews/<id>/comments` | `commit_id` on the review comment |
       | `bugbot` | 1794 | review comments and reviews | `commit_id` |
-      | `haystack` | 2540 | a local companion script | the script emits `REVIEWED_HEAD`, as `local-ai-reviewer.sh` does |
-      | `coderabbit-cli` | 2711 | a local companion script | the script emits `REVIEWED_HEAD` |
+      | `haystack` | 2540 | a local companion script | `haystack-reviewer.sh:202` already resolves `head.sha` and fetches the check run **for that commit**; the script emits that value |
+      | `coderabbit-cli` | 2711 | a local companion script | `coderabbit-cli-reviewer.sh:186-194` already resolves `HEAD_SHA` from `headRefOid` and requires the checkout to match it; the script emits that value |
       | `devin` | 2970 | review comments and reviews | `commit_id` |
       | `pr-agent` | 3418 | a check run and issue comments | `head_sha` on the check run |
       | `coderabbit` | 4979 | review comments and reviews | `commit_id` |
@@ -215,10 +215,24 @@ Not applicable — this repository ships workflow tooling, not a service.
       produces a check run. Neither is a defect to work around: it is the
       attribution rule applying to a platform that never says what it read.
 
-      The two local companion scripts, `haystack` and `coderabbit-cli`, are
-      extended the way `local-ai-reviewer.sh` already is — they print
-      `REVIEWED_HEAD` in their `key=value` output — rather than having the loop
-      infer anything on their behalf.
+      **The two local companion scripts already hold the evidence**, which is
+      why "as `local-ai-reviewer.sh` does" is a statement about output format
+      and not an assumption about availability:
+
+      - `coderabbit-cli-reviewer.sh:186-194` resolves `HEAD_SHA` from the pull
+        request's `headRefOid`, and `--repo-root` requires the checkout's HEAD
+        to match it before the CLI runs. The commit it reviewed is therefore
+        the commit it already holds.
+      - `haystack-reviewer.sh:198-207` resolves `head.sha` and then fetches the
+        check runs **for that commit**, so the finding it reports is attached to
+        a commit it named.
+
+      Both are extended to print that value as `REVIEWED_HEAD` in their existing
+      `key=value` output — a new line, not a new derivation. If either check
+      returns no head, the script prints none and the round produces no record,
+      which is the same AC-11 path as any other platform. Scenario 13f covers
+      both, and the implementer must confirm the two line references before
+      writing the change, as with every other row of the table.
 
       **Two rules keep the evidence honest**, and both fail closed to AC-11's
       no-record path:
@@ -934,8 +948,8 @@ object exposes it.
    and computing the remainder from the paths actually named. **Verify**:
    scenarios 13, 13a, 13c and 15 — the zero-path line, the
    eight-findings-over-three-files case, and the three remainder forms.
-8. Update Protocol 93 and the `--help` block. **Verify**: runbook Step 9 reads
-   both against the code.
+8. Update Protocol 93 and the `--help` block. **Verify**: runbook **Step 12a**,
+   which reads both surfaces against the implementation.
 10. Produce the nineteen planted-violation proofs (P1-P19) and record them in the PR
    with the command, file, line and both outcomes for each.
 

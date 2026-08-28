@@ -432,6 +432,22 @@ drifts.
 **Expected result**: identical review outcome, readiness label and tracker
 status. The records change what is *known*, never what happens.
 
+## Step 12a: Documentation agrees with the implementation
+
+**Maps to**: the documentation-drift risk.
+
+1. Read the reviewer-loop history section of
+   `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`.
+2. Run `scripts/development-workflow/pr-review-loop.sh --help` and read the
+   ledger description.
+
+**Expected result**: both describe the same two added fields
+(`platform_results`, `missed_findings`), the same ten local evidence states, and
+the same summary-line format including the remainder text. Neither may describe
+`classification` as depending on anything but the local evidence state, and
+neither may mention a dispatched-head fallback. Reading them against Steps 0
+through 11 must surface no contradiction.
+
 ## Step 13: Static checks
 
 1. Run `shellcheck` on `scripts/development-workflow/pr-review-loop.sh`.
