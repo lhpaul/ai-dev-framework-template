@@ -265,7 +265,7 @@ two surfaces prints the first in table order. The summary line names the specifi
 or shipped path that kept the round non-small, so the reason is legible on the
 PR without reading loop output.
 
-### Step 6: The #1661 regression does not fire
+### Step 6: The #1661 regression does not fire (tier 1)
 
 **Maps to**: brief scope bullet 3, and the incidence recorded in the plan's
 Verification Log.
@@ -283,7 +283,25 @@ Verification Log.
    fail-closed semantics, decision-matrix rows and acceptance criteria.
 
 **Expected result**: the terminal rule does **not** fire, where on the
-unmodified loop it fires on round two. This is the exact sequence that produced
+unmodified loop it fires on round two.
+
+This is **tier-1 coverage**. Those findings are on `docs/specs/developments/**`,
+so their bodies are irrelevant to the outcome and this case would pass even if
+the contract-surface test were completely broken. It proves the epic's actual
+regression is closed; Step 6b is what proves tier 2 works.
+
+### Step 6b: Tier 2 in isolation
+
+**Maps to**: brief scope bullet 1, the content half.
+
+1. In the same suite, inspect the case replaying the #1661 ledger shape and
+   bodies on `docs/project/1-business-domain.md` — a non-normative, non-shipped
+   path.
+
+**Expected result**: the terminal rule does **not** fire. Here the path alone
+would make the findings small, so only the contract-surface test can produce
+that result. This is the only replay that exercises tier 2 end to end, and it
+fails if the vocabulary matching is broken — which Step 6's case would not. This is the exact sequence that produced
 24 `RESULT=clean` outcomes carrying live blocking findings across PRs #1660,
 #1661 and #1662; the findings involved were contract defects — a deny-list where
 the contract claimed fail-closed, an empty set treated as passing, an
@@ -293,38 +311,39 @@ unvalidated bound that defeated its own cap — not typographical ones.
 
 **Maps to**: the "tightening removes the mechanism" risk.
 
-1. In the same suite, inspect the case replaying Step 6's ledger *shape* — same
-   round count, adjacency and head — on **non-normative** non-shipped paths
-   (`docs/project/1-business-domain.md`, `tests/fixtures/x.json`,
-   `CHANGELOG.md`) with cosmetic bodies.
-2. Confirm those paths are not on the tier-1 list.
+1. In the same suite, inspect the case replaying **Step 6b's** ledger exactly —
+   same round count, adjacency, head and the same
+   `docs/project/1-business-domain.md` path — with only the bodies changed to
+   cosmetic ones.
 
-**Expected result**: the terminal rule **does** fire. If Step 6 passes and this
-fails, the change did not tighten the rule — it deleted it.
+**Expected result**: the terminal rule **does** fire. If Step 6b passes and this
+fails, the change did not tighten tier 2 — it made it match everything.
 
-The paths must differ from Step 6's. Step 6's findings are on normative
-documents, where tier 1 makes a blocking finding non-small whatever its body
-says — so no cosmetic body could let the rule fire there, and it is not meant
-to. What the two cases share is the ledger shape; what they must not share is
-the tier.
+Pairing with Step 6b rather than Step 6 is what makes this the strong form: the
+two differ in **body alone** on a tier-2 path, so opposite outcomes isolate the
+contract-surface test exactly. Pairing it with Step 6 would prove nothing, since
+tier 1 makes those findings non-small whatever the body says.
 
 ### Step 8: Planted-violation proofs are present and two-directional
 
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P12 each record the command, the file and line of the
+2. Confirm P1 through P14 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: twelve proofs in three groups. **Nine** plant the
-**permissive** direction — P1 through P5, P8, P10, P11 and P12, reproducing the
+**Expected result**: fourteen proofs in three groups. **Ten** plant the
+**permissive** direction — P1 through P5, P8, P10, P11, P12 and P14, reproducing the
 original bug; P8 skips the current round's head check and requires Step 4's
 fifth run to fail; P10 reads `head_sha` instead of `classification_head` and
-requires Step 4's step 1b to fail; P11 checks only a prior entry's
+requires Step 4's step 1b to fail; P14 breaks the contract-surface
+matching entirely and requires Step 6b to fail while Step 6 still passes, which
+is precisely why Step 6b exists; P11 checks only a prior entry's
 `classification_head` and skips its `reviewed_heads[]`, requiring step 1a to
-fail; **P12** drops tier 1 and leaves the vocabulary test as the only guard, requiring Step 1's third case — a contract finding containing no listed term — to fail. **Two** plant the
-**restrictive** direction, and neither is optional: **P6** makes every `docs/`
-path shipped and requires Steps 1, 2 and 7 to fail; **P7** restores the bare
+fail; **P12** drops tier 1 and leaves the vocabulary test as the only guard, requiring Step 1's third case — a contract finding containing no listed term — to fail. **Three** plant the
+**restrictive** direction, and none is optional: **P13** replaces the portable
+boundary with `\b` and requires Step 3's BSD row to fail; **P6** widens the
+normative list and requires Steps 1, 2 and 7 to fail; **P7** restores the bare
 common words to the contract-surface list and requires Step 3's seven bare-word
 rows and Step 7 to fail. A tightening that disables the mechanism would pass
 every permissive proof while introducing a different defect, and it is the more

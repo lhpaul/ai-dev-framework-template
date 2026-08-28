@@ -469,24 +469,32 @@ Not applicable — no user interface in this repository.
     `head_unknown` — and is **empty** both when the rule fired and when the run
     was simply short (`exhausted` or `not_small`), since neither is a blocking
     reason.
-12. **The #1661 regression.** Replay a ledger built from PR #1661's actual
-    history — consecutive rounds whose only findings were on
-    `docs/specs/developments/**` with bodies naming fail-closed semantics,
-    decision-matrix rows, and acceptance criteria — and assert the terminal rule
-    does **not** fire, where today it fires on round two. The paths are
-    non-shipped and stay that way; it is the **bodies** that make these findings
-    non-small, which is what the brief asks for.
-13. **The cosmetic counter-case.** Replay scenario 12's ledger *shape* — same
-    round count, adjacency and head — on **non-normative, non-shipped paths**
-    (`docs/project/1-business-domain.md`, `tests/fixtures/x.json`,
-    `CHANGELOG.md`) with cosmetic bodies. Assert the terminal rule **does**
-    fire.
+12. **The #1661 regression — tier 1.** Replay a ledger built from PR #1661's
+    actual history: consecutive rounds whose only findings were on
+    `docs/specs/developments/**`. Assert the terminal rule does **not** fire,
+    where today it fires on round two. This is **tier-1 coverage**: those paths
+    are normative documents, so the finding bodies are irrelevant to the
+    outcome, and the scenario would pass even if the contract-surface test were
+    completely broken. It proves the epic's actual regression is closed; it does
+    not prove tier 2 works.
+12a. **Tier-2 isolation.** Replay the same ledger shape on
+    `docs/project/1-business-domain.md` — a non-normative, non-shipped path —
+    with the same #1661 bodies naming fail-closed semantics, decision-matrix
+    rows and acceptance criteria. Assert the terminal rule does **not** fire.
+    Here the path alone would make the findings small, so only the
+    contract-surface test can produce the result: this is the scenario that
+    actually exercises tier 2 end to end, and it fails if the vocabulary
+    matching is broken.
+13. **The cosmetic counter-case.** Replay scenario 12a's ledger exactly — same
+    round count, adjacency, head **and the same
+    `docs/project/1-business-domain.md` path** — changing only the bodies to
+    cosmetic ones. Assert the terminal rule **does** fire.
 
-    The paths must differ from scenario 12's. Scenario 12's findings are on
-    normative documents, where the first tier makes a blocking finding non-small
-    whatever its body says, so no cosmetic body could let the rule fire there —
-    and it is not meant to. What the two scenarios share is the ledger shape;
-    what they must not share is the tier.
+    Pairing with 12a rather than 12 is what makes this the strong form: the two
+    differ in **body alone** on a tier-2 path, so the opposite outcomes isolate
+    the contract-surface test exactly. Pairing it with scenario 12 would be
+    meaningless, since tier 1 makes those findings non-small whatever the body
+    says.
 14. A ledger entry written before this change, carrying no head on its
     small-findings entries, ends the consecutive run rather than being counted —
     backward compatibility in the fail-closed direction.
@@ -524,9 +532,9 @@ above are the regression coverage for this change.
 
 This plan materially modifies an automated guard, so `REVIEW.md` §
 Planted-violation proof applies and the pure-refactor exemption does not. Two
-demonstrated runs per proof, each citing a concrete file and line. Of the thirteen
-proofs, **nine** plant the **permissive** direction — P1 through P5, P8, P10,
-P11 and P12,
+demonstrated runs per proof, each citing a concrete file and line. Of the fourteen
+proofs, **ten** plant the **permissive** direction — P1 through P5, P8, P10,
+P11, P12 and P14,
 reproducing the original bug; **two** plant the **restrictive** direction —
 P6 and P7, where the tightening would disable the mechanism instead of
 sharpening it.
@@ -534,6 +542,7 @@ sharpening it.
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
 | P1 | Remove `docs/specs/developments/**` from the normative-document list | a scratch copy of `reviewer_loop_path_is_normative_document` | scenario 2's second and third cases fail — a trailing-whitespace body and a body with no listed contract term both become small on a spec — and scenario 12 fires the terminal rule; restoring the pattern passes |
+| P14 | Break the contract-surface matching entirely, returning failure for every body | a scratch copy of the tier-2 predicate | scenario 12a fails, because a #1661-shaped ledger on a non-normative path terminates; scenario 12 still passes, which is exactly why 12a exists. Restoring the predicate passes both |
 | P13 | Replace the character-class boundary with `\b` | a scratch copy of the predicate | scenario 4a fails under BSD grep — `decision gate` no longer matches at all, so tier 2 silently stops escalating anything; restoring the POSIX form passes under both greps |
 | P12 | Make the contract-surface test the only guard, dropping the normative-path tier | a scratch copy of the classifier | scenario 2's third case fails: *"required error handling is missing"* contains no listed term, falls through to the path rule, and is cleared as small. This is the vocabulary-dependence failure the two-tier design exists to prevent; restoring the tier passes |
 | P2 | Make the contract-surface test consult the path as well, so a non-shipped path short-circuits it | a scratch copy of the predicate | scenario 5 fails, because a contract finding on a `docs/` path becomes small again; restoring the path-independent test passes |
@@ -603,7 +612,8 @@ point. No listeners, timers, or shared mutable state are introduced.
 | Co-occurring-cause fixtures | Three rounds driving scenario 10a: one carrying both a shipped-path and a contract-surface finding; one whose findings are all small with one stale contributor and one reporting no head; and one carrying a contract-surface finding together with a contributor on a stale head, to prove the currency check is never reached | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Head-comparison ledger fixture | Ledger payloads with prior small rounds on an older head, on the current head, and with absent, empty and placeholder heads — driving scenarios 8, 9, 10 and 14 | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | #1661 replay ledger | A `reviewer_loop_history.v1` payload reproducing PR #1661's consecutive small-findings rounds, with the real finding bodies naming fail-closed semantics, matrix rows and acceptance criteria | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
-| Cosmetic replay ledger | The #1661 replay's ledger *shape* — same round count, adjacency and head — on **non-normative** non-shipped paths (`docs/project/1-business-domain.md`, `tests/fixtures/x.json`, `CHANGELOG.md`) with cosmetic bodies, driving scenario 13. The paths must differ from the #1661 replay's, which are normative and therefore never small whatever their bodies say | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
+| Tier-2 replay ledger | The #1661 replay's ledger shape and bodies on `docs/project/1-business-domain.md`, a non-normative non-shipped path, driving scenario 12a — the only replay that exercises the contract-surface test end to end | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
+| Cosmetic replay ledger | Scenario 12a's ledger with **only the bodies changed** to cosmetic ones — same shape, head and path — driving scenario 13, so the pair differs in body alone on a tier-2 path | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
 
 No repository fixture files are added; both suites build their fixtures inline
 and require no network access.
@@ -785,25 +795,29 @@ reviewer_loop_finding_touches_contract_surface() {
    **Verify**: read the rendered line for a `contract_surface` case, a
    `shipped_path` case, and one of scenario 10a's co-occurring cases, confirming
    the last names both causes even though the key reports one.
-7. Add the two replay suites and their ledger fixtures, including both
-   `# covers:` lines on the new suite. **Verify**: scenarios 12 and 13, and that
+7. Add the replay suite and its three ledger fixtures, including both
+   `# covers:` lines on the new suite. **Verify**: scenarios 12, 12a and 13, and that
    `select-test-suites.sh` selects the new suite for a change touching only
    `pr-review-loop.sh`.
 8. Update
    `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
-   and `REVIEW.md` per **Documentation Updates**. **Verify**: both state that
-   the *content* rule decides and that the path classifier is unchanged, both
-   describe the same current-head requirement, and both name the same four
-   `SMALL_FINDINGS_BLOCKED_BY` values. Neither may say that findings on
-   the classification depends on vocabulary alone.
+   and `REVIEW.md` per **Documentation Updates**. **Verify**: both state the
+   same **two-tier** rule — a blocking finding on a normative document is never
+   small whatever it says, and on other non-shipped paths a contract-surface
+   finding is escalated while a cosmetic one is not — both describe the same
+   current-head requirement covering the prior rounds and the round being
+   decided, and both name the same four `SMALL_FINDINGS_BLOCKED_BY` values with
+   their two within-group precedences. Neither may describe the classification
+   as vocabulary-only, and neither may claim that *every* finding on a normative
+   document is non-small, since only blocking findings reach this rule.
 9. Document the new behavior in the `--help` usage block. **Verify**: run
    `pr-review-loop.sh --help` and confirm the predicate, the contract-surface
    list, the current-head requirement and `SMALL_FINDINGS_BLOCKED_BY` appear.
-10. Produce the thirteen planted-violation proofs (P1-P13) and record them in the PR
+10. Produce the fourteen planted-violation proofs (P1-P14) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
-    once removed. P6 and P7 are the two restrictive-direction proofs and
-    neither is optional.
+    once removed. P6, P7 and P13 are the three restrictive-direction proofs and
+    none is optional.
 11. Run `shellcheck` on `scripts/development-workflow/pr-review-loop.sh` and
     `markdownlint-cli2` on the two changed documentation files, this plan and
     the runbook. **Verify**: both tools exit 0 on every file named here.
