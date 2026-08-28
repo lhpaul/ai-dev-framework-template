@@ -230,7 +230,8 @@ observation about the reviewer, not a duplicate row.
 history block **byte-for-byte unchanged** — compared against a saved copy of the
 prior body, never against a re-render — and states in the summary body that
 telemetry could not be recorded and why, naming the reason the loop already
-computed (`malformed_history`, `unknown_schema`, or `prior_unavailable`). Case 2
+computed — one of the four: `malformed_history`, `unknown_schema`,
+`missing_history_json`, or `prior_unavailable`. Case 2
 produces **no** telemetry-failure report. Case 3 writes the unavailable stub,
 which is what the stub is for.
 
