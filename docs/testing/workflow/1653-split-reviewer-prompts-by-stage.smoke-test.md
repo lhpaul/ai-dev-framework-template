@@ -45,9 +45,19 @@ checklist on a branch that is not a spec branch. Proof P2 plants exactly that.
    `src/app/main.ts`.
 3. Call it with a mixed list — `REVIEW.md` and `src/app/main.ts` together.
 4. Call it with an **empty** list.
+5. Call `reviewer_resolve_review_stage 'feature/x' '["REVIEW.md","src/app/main.ts"]'`,
+   then again with `[]` and with `""` as the second argument.
 
 **Expected result**: all nine entries match; none of the four controls does;
-step 3 matches; step 4 does **not**.
+step 3 matches; step 4 does **not**. Step 5's first call names both Code and
+Workflow Policy; the other two name Code alone.
+
+Step 5 is the one that catches the seam. The predicate reads newline-delimited
+paths; `changed_files_json` is a compact JSON array, so the caller must decode
+it with `jq -r '.[]?'` first. Hand the array straight to the predicate and it
+arrives as a single line matching no `case` arm — the Workflow Policy checklist
+is then never added on any PR, while the predicate's own tests and every
+stubbed merge test still pass. Proof P9.
 
 Steps 3 and 4 are the two directions the predicate can be got wrong. `all`
 instead of `any` breaks step 3 — the mixed change, which is the one most likely
@@ -220,10 +230,10 @@ contradiction.
 **Maps to**: `REVIEW.md` → Core Rules → Verification Discipline.
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P8 each record the command, the file and line of the
+2. Confirm P1 through P9 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: eight proofs in three groups — **four** narrowing, **three**
+**Expected result**: nine proofs in three groups — **four** narrowing, **four**
 misclassification, **one** contract, per the plan's proof-group table.
 
 The narrowing group carries the weight, because narrowing is the failure mode

@@ -36,8 +36,8 @@ behavior that is at worst identical to today's and never narrower.
 
 **Estimated complexity**: M
 
-**Rationale**: The code is small — one resolver, two new bundle fields, three
-new evidence keys, one prompt sentence — and concentrated in two scripts that
+**Rationale**: The code is small — one resolver, three new bundle fields,
+three new evidence keys, one prompt sentence — and concentrated in two scripts that
 this epic already touches. What makes it more than small is that it changes what
 a reviewer is *told to look for*, and the failure mode is silent: a stage
 selection that narrows attention produces a confident `clean` on a PR whose
@@ -152,9 +152,21 @@ Not applicable — this repository ships workflow tooling, not a service.
          expression, so a branch named `specification/foo` does not match
          `spec/*` by accident.
 
-      2. `reviewer_changed_files_touch_workflow_policy <changed_files_json>` —
-         the file tier. Returns success when **any** changed path matches the
-         workflow-policy set:
+      2. `reviewer_changed_files_touch_workflow_policy` — the file tier. It
+         reads **newline-delimited paths on stdin**, one per line, and returns
+         success when **any** of them matches the workflow-policy set.
+
+         **The input is not the JSON array.** `changed_files_json` is a compact
+         JSON array — the value `jq -R -s -c` produces and the bundle embeds —
+         so a path never appears as a bare string in it. The caller decodes it
+         with `jq -r '.[]?'` before piping; the predicate itself never parses
+         JSON. Two reasons for the split: the predicate stays testable from a
+         heredoc without `jq`, and the decode happens exactly once, at the one
+         call site, rather than being re-derived by every future caller.
+         Scenario 5a exercises the decode through the caller with a real
+         `changed_files_json` value, because a predicate that is correct on
+         newlines and a caller that feeds it JSON is a defect no test of either
+         one alone can see. The matched set:
 
          | Pattern | Why it is workflow policy |
          | --- | --- |
@@ -303,6 +315,15 @@ Not applicable.
    does. The predicate is `any`, not `all`.
 5. It returns failure for an **empty** changed-file list, so an unreadable or
    empty diff degrades to the branch-implied checklist rather than adding one.
+5a. The **decode** is exercised through `reviewer_resolve_review_stage` with a
+    real `changed_files_json` value — the compact JSON array `jq -R -s -c`
+    produces, such as `["REVIEW.md","src/app/main.ts"]` — and with the two
+    degenerate values `[]` and `""`. The first must add the Workflow Policy
+    checklist; the other two must not. A predicate that is correct on
+    newline-delimited input and a caller that hands it the raw array is a
+    defect neither a predicate test nor a merge test can see on its own, and
+    the raw array matches no `case` arm, so the checklist would simply never be
+    added.
 6. The merge produces each of the eight rows of the decision table, one case
    per row, asserting stage, source and checklist list together — not stage
    alone, because the stage is the value least able to reveal a wrong merge.
@@ -337,7 +358,8 @@ Not applicable.
 **Files**:
 
 - `scripts/development-workflow/tests/test-local-ai-reviewer.sh` — scenarios 1
-  through 9 and 11 through 15, as new cases in the existing harness.
+  through 9, including 5a, and 11 through 15, as new cases in the existing
+  harness.
 - `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenario 10 and
   scenario 13, which need the loop's own harness.
 
@@ -410,7 +432,8 @@ reviewer_stage_for_branch() {
   esac
 }
 
-# File tier. `any`, not `all`: one policy file is enough to add the checklist.
+# File tier. Reads newline-delimited paths on stdin — NOT the JSON array.
+# `any`, not `all`: one policy file is enough to add the checklist.
 # NOTE: this list is not #1652's reviewer_loop_path_is_normative_document and
 # must not be merged with it — that one decides whether a finding may be
 # cleared as cosmetic, this one decides which checklist applies. The overlap is
@@ -431,7 +454,8 @@ reviewer_changed_files_touch_workflow_policy() {
 
 # The merge. The file tier only ever appends, and never runs for `default`.
 reviewer_resolve_review_stage() {
-  local head_branch="$1" changed_files="$2"
+  # $2 is changed_files_json, the compact JSON array the bundle embeds.
+  local head_branch="$1" changed_files_json="$2"
   local stage checklists source
 
   stage="$(reviewer_stage_for_branch "$head_branch")"
@@ -445,7 +469,8 @@ reviewer_resolve_review_stage() {
   source="branch"
   if [ -z "$checklists" ]; then
     source="none"
-  elif printf '%s\n' "$changed_files" \
+  elif printf '%s' "$changed_files_json" \
+    | jq -r '.[]?' \
     | reviewer_changed_files_touch_workflow_policy; then
     checklists="${checklists},Workflow Policy Review Checklist"
     source="branch+files"
@@ -474,13 +499,13 @@ fi
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The eight proofs fall into
+runs per proof, each citing a concrete file and line. The nine proofs fall into
 three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Narrowing | **4** | P1, P3, P4, P8 | attention removed from something the reviewer reads today |
-| Misclassification | **3** | P2, P5, P6 | the wrong checklist named, or the right one missed |
+| Misclassification | **4** | P2, P5, P6, P9 | the wrong checklist named, or the right one missed |
 | Contract | **1** | P7 | the evidence or bundle contract broken |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
@@ -492,6 +517,7 @@ three groups:
 | P5 | Change the file tier from `any` to `all` | a scratch copy of the predicate | scenario 4 fails: a PR changing `REVIEW.md` **and** one source file no longer gets the Workflow Policy checklist, which is precisely the mixed change most likely to break a workflow contract; restoring `any` passes |
 | P6 | Treat an empty changed-file list as matching | same scratch copy | scenario 5 fails: an unreadable or empty diff adds the policy checklist to every PR, so the signal stops distinguishing anything. Note the direction — this plant is *additive*, and it is still wrong, because a checklist named on every PR is a checklist named on none; restoring the empty-list failure passes |
 | P7 | Emit `REVIEW_CHECKLISTS` as a JSON array instead of a comma-separated list | a scratch copy of the `print_kv` block | scenario 13 fails: the `key=value` contract splits on the first `=` and the array's quoting survives into the loop summary as `PLATFORM_1_REVIEW_CHECKLISTS=["Spec Review Checklist"...`, which no consumer parses; restoring the comma form passes |
+| P9 | Drop the `jq -r '.[]?'` decode and pipe `changed_files_json` straight into the predicate | a scratch copy of the merge | scenario 5a fails: the compact array `["REVIEW.md","src/app/main.ts"]` arrives as one line matching no `case` arm, so the Workflow Policy checklist is never added on any PR. The predicate's own tests still pass, and so does every merge test that stubs the file tier — this is only visible where the two meet; restoring the decode passes |
 | P8 | Rename `## Code Review Checklist` in `REVIEW.md` without touching the resolver | a scratch copy of the contract | scenario 9 fails, because the resolver emits a heading that no longer exists. Without this proof the feature degrades silently — the prompt names a missing section and the reviewer falls back to reading everything, which looks like success; restoring the heading passes |
 
 Four proofs plant the **narrowing** direction, which is the one with no
@@ -512,11 +538,12 @@ Workflow Policy checklist named on every PR carries no information.
 2. Add `reviewer_stage_for_branch` and
    `reviewer_changed_files_touch_workflow_policy` to `local-ai-reviewer.sh`.
    **Verify**: scenarios 1 through 5, including the `specification/foo` control
-   and the empty-list case.
+   and the empty-list case. The predicate's contract is newline-delimited stdin;
+   the JSON decode belongs to step 3.
 3. Add `reviewer_resolve_review_stage` and call it after `changed_files_json` is
-   built and before the bundle is written. **Verify**: scenarios 6, 7 and 8 —
-   all eight rows of the decision table, both `default` rows empty, and the
-   Code-before-Workflow-Policy order.
+   built and before the bundle is written. **Verify**: scenarios 5a, 6, 7 and 8 — the `jq -r '.[]?'` decode against a
+   real `changed_files_json` value, all eight rows of the decision table, both
+   `default` rows empty, and the Code-before-Workflow-Policy order.
 4. Add the three fields to the context bundle, leaving `schema_version` at
    `local_ai_reviewer_context.v1`. **Verify**: scenario 12, field by field
    against the enumerated thirteen.
@@ -528,7 +555,7 @@ Workflow Policy checklist named on every PR carries no information.
    sentence's wording, the byte-identical `default` prompt, and the override.
 7. Update the `--help` block, the integration document and Protocol 93.
    **Verify**: runbook Step 8 reads all four surfaces against each other.
-8. Produce the eight planted-violation proofs (P1-P8) and record them in the PR
+8. Produce the nine planted-violation proofs (P1-P9) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
