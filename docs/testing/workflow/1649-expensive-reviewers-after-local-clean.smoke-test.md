@@ -88,7 +88,9 @@ Drive the fixture with exactly one condition unmet at a time and read
 | `LOCAL_AI_CONFIGURED=1`, `LOCAL_AI_HEAD_CURRENT` empty | `deferred` / `local_evidence_missing` |
 | `LOCAL_AI_CONFIGURED=0` | `deferred` / `local_reviewer_not_configured` |
 | Reorder suppressed, so `pr-agent` has not run yet | `deferred` / `peer_reviewer_not_run` |
-| A peer reviewer ran and returned `needs_fixes` | `deferred` / `peer_reviewer_not_clean` |
+| A peer ran and returned `needs_fixes` or `escalate` | `deferred` / `peer_reviewer_not_clean` |
+| A peer ran and returned `skipped` / `unavailable`, `timeout`, or `unauthorized` | `deferred` / `peer_reviewer_not_clean` |
+| A peer ran and returned `skipped` / `not_configured` or `explicit-skip` | contributes to `dispatched` |
 | One unresolved, non-outdated review thread | `deferred` / `unresolved_threads` |
 | The same thread marked outdated | `dispatched` |
 | A non-reviewer check failed | `deferred` / `baseline_checks_not_green` |
@@ -110,6 +112,12 @@ of the weight:
   is a defensive assertion: after `reorder_expensive_reviewers_last` runs, every
   non-expensive platform has already executed, so seeing it in a normal run
   means the reorder did not happen.
+- The two **`skipped`** rows must split. Accepting every skip would let
+  `codex-github` dispatch when a configured peer was unavailable, timed out, or
+  was refused for credentials — no cheap pre-filter actually ran, which is the
+  state the item exists to prevent. Acceptance must be decided by calling
+  `reviewer_failed_label_required_for_result`, not by a duplicated list, so a
+  future change to that helper carries this gate with it.
 - The **reviewer-owned pending check** row must dispatch: a reviewer's own check
   must never gate that reviewer, or `codex-github` would wait on a check it is
   responsible for producing.
@@ -124,12 +132,22 @@ of the weight:
    and `EXPENSIVE_REVIEWERS_REORDERED`.
 3. Repeat with a list that is already in the correct order.
 
+4. Resolve a two-bucket list with `codex-github` in `review.on_draft.github`
+   and `bugbot` in `review.on_ready.github`, and run the reorder.
+
 **Expected result**: `codex-github` ends last, the relative order of the
 remaining platforms is unchanged, and `EXPENSIVE_REVIEWERS_REORDERED=1` is
 emitted. The already-correct list is untouched and the flag is unset. Detection
 without reordering is not sufficient: the loop would never reach the cheap
 reviewers before the gate, so it would defer at the same point on every
 invocation and the deferral could never resolve.
+
+In the two-bucket run, `codex-github` must end last **among the draft
+platforms** and still precede `bugbot`. A single global partition would place it
+after `bugbot` and therefore after the ready-phase transition, silently
+inverting the configuration contract that `review.on_draft.github` reviewers run
+before `gh pr ready`. Confirm the buckets themselves are still in their original
+order.
 
 ### Step 3b: A defer withholds readiness
 
@@ -261,10 +279,10 @@ so it would run only when the test file itself changed.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR description's `Planted-Violation Proofs` heading.
-2. Confirm P1–P8 from the plan each record the command, the file and line of the
-   planted violation, and both outcomes.
+2. Confirm P1–P10 from the plan each record the command, the file and line of
+   the planted violation, and both outcomes.
 
-**Expected result**: eight proofs, each showing the check failing with the
+**Expected result**: ten proofs, each showing the check failing with the
 violation present and passing once removed. Four carry the most weight: P4
 deletes the `expensive_reviewer_gate` call so the function is defined but
 unreachable, and requires Step 3's stale-evidence row to fail — that is what
@@ -274,7 +292,9 @@ defer leave the aggregate unchanged and requires Step 3b to fail. P7 replaces
 the dedicated deferral counter with the existing cycle caps and requires
 Step 4b to fail, demonstrating that those caps do not bound a deferral loop, and
 P8 makes an unreadable ledger count as zero and requires Step 4b's fifth run to
-fail.
+fail. P9 replaces the per-bucket partition with a global one and requires
+Step 3c's two-bucket run to fail. P10 accepts any `skipped` peer and requires
+Step 3's three rejected-skip rows to fail.
 
 ### Step 10: Documentation states one contract
 

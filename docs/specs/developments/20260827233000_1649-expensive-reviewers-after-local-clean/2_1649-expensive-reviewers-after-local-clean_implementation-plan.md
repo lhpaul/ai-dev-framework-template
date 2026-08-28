@@ -119,22 +119,51 @@ Not applicable — this repository ships workflow tooling, not a service.
       | # | Condition | Unmet reason |
       | --- | --- | --- |
       | 1 | `LOCAL_AI_CONFIGURED` is `1` and `LOCAL_AI_HEAD_CURRENT` is `1` | `local_evidence_stale` when `LOCAL_AI_HEAD_CURRENT` is `0`; `local_evidence_missing` when it is empty or `LOCAL_AI_CONFIGURED` is unset; `local_reviewer_not_configured` when `LOCAL_AI_CONFIGURED` is `0` |
-      | 2 | **Every** non-expensive platform in the resolved platform list has already run in this invocation **and** returned `clean` or `skipped` | `peer_reviewer_not_run` when one has not run yet; `peer_reviewer_not_clean` when one ran and did not return clean or skipped |
+      | 2 | **Every** non-expensive platform in the resolved platform list has already run in this invocation **and** produced acceptable peer evidence (see below) | `peer_reviewer_not_run` when one has not run yet; `peer_reviewer_not_clean` when one ran without producing acceptable evidence |
       | 3 | Zero unresolved, non-outdated review threads | `unresolved_threads` |
       | 4 | Every non-reviewer check is `SUCCESS`, `SKIPPED`, or `NEUTRAL` | `baseline_checks_not_green` when one failed; `baseline_checks_pending` when one is still running |
 
-- [ ] **Reorder expensive reviewers to the end of the platform list.** Add
+- [ ] **Reorder expensive reviewers last *within their own phase bucket*.** Add
       `reorder_expensive_reviewers_last`, called once after the platform list is
-      resolved and before the iteration begins: it partitions `platforms` into
-      non-expensive followed by expensive, preserving relative order within each
-      partition. Detection alone is not enough — a configuration listing
-      `codex-github` before `pr-agent` would otherwise defer at the same point on
-      every invocation, because the loop would never reach `pr-agent` before the
-      gate, and the deferral would never resolve. Reordering makes the gate's
-      precondition reachable rather than merely checked. Emit
-      `EXPENSIVE_REVIEWERS_REORDERED=1` and the reordered `PLATFORM_LIST` when
-      the partition changed the order, so the behavior is visible rather than a
-      silent rewrite of the caller's configuration.
+      resolved and before the iteration begins. Detection alone is not enough —
+      a configuration listing `codex-github` before `pr-agent` would otherwise
+      defer at the same point on every invocation, because the loop would never
+      reach `pr-agent` before the gate, and the deferral would never resolve.
+      Reordering makes the gate's precondition reachable rather than merely
+      checked.
+- [ ] **The reorder must not cross the draft/ready boundary.** A single global
+      partition would move every expensive reviewer behind every non-expensive
+      one, including behind the ready-phase platforms: `codex-github` configured
+      in `review.on_draft.github` alongside `bugbot` in `review.on_ready.github`
+      would end up running only after `bugbot` triggered the ready-phase
+      transition, silently inverting the configuration contract that draft
+      reviewers run before `gh pr ready`. The function therefore partitions
+      **within each bucket independently** — the non-phase platforms among
+      themselves, the `phase_after_clean_platforms` among themselves — using
+      the existing `is_phase_after_clean_platform` predicate to assign buckets,
+      and concatenates the buckets in their original order. Relative order is
+      preserved within each partition. An expensive reviewer therefore runs last
+      among its own phase peers and never changes phase.
+- [ ] Emit `EXPENSIVE_REVIEWERS_REORDERED=1` and the reordered `PLATFORM_LIST`
+      when the partition changed the order, so the behavior is visible rather
+      than a silent rewrite of the caller's configuration.
+- [ ] **Define acceptable peer evidence — not every `skipped` counts.**
+      Accepting any `skipped` peer would let `codex-github` dispatch when a
+      configured peer was unavailable, timed out, or was rejected for
+      credentials, which is precisely the "no cheap pre-filter actually ran"
+      state this item exists to prevent, and it contradicts the summary's claim
+      that peers are clean. The rule reuses the classification the loop already
+      owns rather than inventing a second one: a peer's evidence is acceptable
+      when its result is `clean`, or when its result is `skipped` **and**
+      `reviewer_failed_label_required_for_result` returns false for that
+      `(result, reason)` pair. That function already treats
+      `unavailable`, `timeout`, `thread-check-failed`, `pending_timeout`,
+      `forbidden` and `unauthorized` skips as reviewer failures, so those defer;
+      deliberate policy skips such as `not_configured`, `explicit-skip` and
+      `release_pr` are accepted. Any `needs_fixes`, `needs_rerun` or `escalate`
+      peer defers. Reusing the existing helper means a future change to what
+      counts as a reviewer failure updates this gate automatically instead of
+      drifting from it.
 - [ ] **Condition 2 compares against the full resolved list**
       (`platforms[@]` minus the expensive ones), not the results collected up to
       this index. After reordering, every non-expensive platform has run by the
@@ -331,12 +360,34 @@ reads them against each other and fails on any divergence.
    already-correct list untouched with the flag unset. This is what makes the
    gate's precondition reachable: without it the loop would defer at the same
    point on every invocation and the deferral would never resolve.
+6b. The reorder respects phase buckets: with `codex-github` in
+    `review.on_draft.github` and `bugbot` in `review.on_ready.github`,
+    `codex-github` ends last **among the draft platforms** and still precedes
+    `bugbot`. A global partition would place it after `bugbot` and therefore
+    after the ready-phase transition, inverting the configuration contract that
+    draft reviewers run before `gh pr ready`.
 7. Condition 2 after reordering: with every non-expensive platform run and
    `clean`, → `dispatched`. With the reorder suppressed so a peer has not run,
    → `deferred` / `peer_reviewer_not_run` — the defensive assertion firing
-   rather than the gate silently dispatching.
-8. A peer reviewer that ran and returned `needs_fixes` → `deferred` /
-   `peer_reviewer_not_clean` — distinct from scenario 7's `peer_reviewer_not_run`.
+   rather than the gate silently dispatching. Scenario 8 covers what happens
+   once a peer *has* run.
+8. Peer evidence acceptance, one case per class — distinct from scenario 7's
+   `peer_reviewer_not_run`, which is about a peer that has not run at all:
+
+   | Peer result and reason | Gate outcome |
+   | --- | --- |
+   | `clean` | contributes to `dispatched` |
+   | `skipped` / `not_configured` | contributes to `dispatched` |
+   | `skipped` / `explicit-skip` | contributes to `dispatched` |
+   | `skipped` / `unavailable` | `deferred` / `peer_reviewer_not_clean` |
+   | `skipped` / `timeout` | `deferred` / `peer_reviewer_not_clean` |
+   | `skipped` / `unauthorized` | `deferred` / `peer_reviewer_not_clean` |
+   | `needs_fixes` | `deferred` / `peer_reviewer_not_clean` |
+   | `escalate` | `deferred` / `peer_reviewer_not_clean` |
+
+   The three accepted-skip rows and the three rejected-skip rows must be
+   asserted against `reviewer_failed_label_required_for_result` rather than a
+   duplicated list, so a future change to that helper moves this gate with it.
 9. One unresolved non-outdated review thread → `deferred` /
    `unresolved_threads`; the same thread marked outdated → `dispatched`.
 10. A failing baseline check → `deferred` / `baseline_checks_not_green`; a
@@ -388,8 +439,9 @@ reads them against each other and fails on any divergence.
 
 **Files**:
 
-- `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenarios 1–14,
-  18 and 19, as new cases in the existing `HARNESS_MODE=1` harness.
+- `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenarios 1–14
+  (including 6b), 18 and 19, as new cases in the existing `HARNESS_MODE=1`
+  harness.
 - `scripts/development-workflow/tests/test-expensive-reviewer-gate.sh` — a new
   suite for scenarios 15–17, the override and composition cases, which need
   their own mock scaffolding for the phase and filter paths. It must declare:
@@ -427,11 +479,13 @@ concrete file and line:
 | P3 | Unreadable evidence: make the review-threads query fail | same fixture | the gate defers with `evidence_unavailable_review_threads` **and** the aggregate becomes `needs_fixes` / `expensive_gate_deferred`, so readiness is withheld; restoring the query dispatches and leaves the aggregate clean |
 | P4 | Gate-not-wired regression: **delete the `expensive_reviewer_gate` call** from the per-platform block, leaving the function defined but unreachable | a scratch copy of the per-platform block in `scripts/development-workflow/pr-review-loop.sh` | scenario 3 fails, because `codex-github` is dispatched with stale local evidence and no `EXPENSIVE_GATE_*` telemetry is emitted; restoring the call passes. Deleting the call is the correct mutation: removing the `is_expensive_reviewer_platform` guard instead would consult the gate for *every* platform, which is a different defect and would not leave the gate unreachable |
 | P5 | Ordering regression: **delete the `reorder_expensive_reviewers_last` call**, leaving a platform list that declares `codex-github` before `pr-agent` | a scratch copy of the platform-resolution block | scenario 6 fails and scenario 7's suppressed-reorder case shows the gate deferring on every invocation with `peer_reviewer_not_run` — a deferral that can never resolve; restoring the call passes |
+| P9 | Phase-bucket regression: replace the per-bucket partition with a single global one | a scratch copy of `reorder_expensive_reviewers_last` | scenario 6b fails, because a draft-configured `codex-github` is placed after the ready-phase `bugbot` and therefore runs only after `gh pr ready`; restoring the per-bucket partition passes |
+| P10 | Peer-evidence regression: accept any `skipped` peer instead of consulting `reviewer_failed_label_required_for_result` | a scratch copy of condition 2 | scenario 8's `unavailable`, `timeout` and `unauthorized` rows fail, because the gate dispatches with a peer that never produced a verdict; restoring the helper call passes |
 | P6 | Readiness regression: make a defer leave the aggregate result unchanged instead of setting `needs_fixes` | a scratch copy of the gate call site | scenario 3's aggregate assertion fails, and a run in which `codex-github` never executed would satisfy Protocol 92's readiness conditions; restoring the `needs_fixes` aggregate passes |
 | P7 | Unbounded-deferral regression: replace the head-scoped deferral counter with the existing `reviewer_loop_history_entries_count` caps | a scratch copy of the cap check | scenario 13 fails, because repeated `needs_fixes` results on one unchanged head collapse under that function's `unique` bucketing by `head_sha` + `result` and neither cap ever trips; restoring the dedicated counter escalates with `expensive_gate_deferral_cap` |
 | P8 | Unreadable-budget regression: make the ledger read fail, and change the counter to treat the failure as a count of zero | the deferral-budget fixture in `scripts/development-workflow/tests/test-pr-review-loop.sh` | scenario 19 fails, because the gate defers on an unproven budget instead of escalating; restoring the fail-closed branch escalates with `expensive_gate_deferral_budget_unreadable` |
 
-Record all eight in the implementation PR under a `Planted-Violation Proofs`
+Record all ten in the implementation PR under a `Planted-Violation Proofs`
 heading, each with the command, the file and line of the planted violation, and
 both outcomes.
 
@@ -457,8 +511,9 @@ by the same sequential block that already writes `platform_result_tokens`.
 
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
-| Gate condition fixture | A table-driven set of the conditions with each one independently unmet, driving scenarios 2–5 and 8–11 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
-| Platform-order fixture | A resolved list declaring `codex-github` first, and an already-correct list, driving scenarios 6 and 7 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Gate condition fixture | A table-driven set of the conditions with each one independently unmet, driving scenarios 2–5 and 9–11 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Platform-order fixture | A resolved list declaring `codex-github` first, an already-correct list, and a two-bucket list with `codex-github` on draft and `bugbot` on ready — driving scenarios 6, 6b and 7 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Peer-evidence fixture | One peer per row of scenario 8's table, covering `clean`, the three accepted skip reasons, the three rejected skip reasons, `needs_fixes` and `escalate` | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Unreadable-input mocks | Mock `gh` commands that exit non-zero for the threads query and for the check rollup, driving scenario 12 and proof P3 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Deferral-budget fixtures | Ledger payloads carrying `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS` `expensive_gate.result=deferred` entries at the current head, one fewer, the same count at a different head, and an unparseable payload — driving scenarios 13, 14 and 19 and proofs P7 and P8 | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Composition fixture | A platform list where `codex-github` is both a phase platform and an expensive reviewer, driving scenarios 16 and 17 | inline in `scripts/development-workflow/tests/test-expensive-reviewer-gate.sh` |
@@ -505,6 +560,8 @@ with mock `gh` commands and require no network access.
 | Implementation starts before #1648 lands and wires the gate to keys that do not exist | Med | High — the gate would read unset variables and hold everything, or be written against a guessed contract | Recorded as a Conflict in the Cross-Cutting check and as Implementation Order step 0, which is a hard stop that verifies #1648 is merged into the approved base before any edit |
 | A reviewer's own check gates that reviewer | Low | Med — `codex-github` would wait on a check it is responsible for producing | Condition 4 evaluates non-reviewer checks only, reusing the reviewer/baseline classification `pr-ci-loop.sh` already emits rather than a new one; scenario 10's third case pins it |
 | Platform ordering decides whether the gate is effective | Med | High — a config listing `codex-github` first would either dispatch it before the cheap reviewers ran, or defer at the same point forever | Detection is not enough, so the loop reorders: `reorder_expensive_reviewers_last` moves expensive platforms to the end before iteration, making the gate's precondition reachable; condition 2 still compares against the full resolved list, so `peer_reviewer_not_run` fires as a defensive assertion if the reorder did not happen. Scenarios 6 and 7 and proof P5 pin both halves |
+| The reorder silently moves a reviewer across the draft/ready boundary | Med | High — a draft-configured expensive reviewer would run only after `gh pr ready`, inverting the configuration contract | The partition is per phase bucket, assigned with the existing `is_phase_after_clean_platform` predicate, and the buckets are concatenated in their original order; scenario 6b and proof P9 pin it |
+| A peer that never produced a verdict is accepted as evidence | Med | High — `codex-github` would dispatch with no cheap pre-filter having actually run, which is the state the item exists to prevent | Acceptance delegates to `reviewer_failed_label_required_for_result`, which already classifies `unavailable`, `timeout`, `thread-check-failed`, `pending_timeout`, `forbidden` and `unauthorized` skips as reviewer failures, so only `clean` and deliberate policy skips count; scenario 8's table and proof P10 pin it, and reusing the helper keeps the two definitions from drifting |
 | Thread and CI evidence describes a newer commit than the reviewer verdicts | Med | High — dispatch would be authorized on an inconsistent mix of two heads | Conditions 3 and 4 require the live head returned with their queries to equal `loop_head_sha`, and defer with `evidence_head_moved` otherwise; scenario 11 pins it |
 
 ---
@@ -604,10 +661,13 @@ Summary-comment line, illustrative:
    the existing `is_phase_after_clean_platform` helper. **Verify**: source with
    `HARNESS_MODE=1` and confirm scenario 1's matches and non-matches.
 2. Add `reorder_expensive_reviewers_last`, called once after the platform list
-   is resolved and before iteration, and emit `EXPENSIVE_REVIEWERS_REORDERED`
-   when it changed the order. **Verify**: scenario 6 — a list declaring
-   `codex-github` first ends with it last, relative order is otherwise
-   preserved, and an already-correct list is untouched with the flag unset.
+   is resolved and before iteration, partitioning **within each phase bucket**
+   using `is_phase_after_clean_platform`, and emit
+   `EXPENSIVE_REVIEWERS_REORDERED` when it changed the order. **Verify**:
+   scenario 6 — a list declaring `codex-github` first ends with it last,
+   relative order is otherwise preserved, and an already-correct list is
+   untouched with the flag unset; scenario 6b — a draft-configured expensive
+   reviewer still precedes every ready-phase platform.
 3. Add `expensive_gate_deferral_count`, reading occurrences of
    `expensive_gate.result == "deferred"` scoped to `expensive_gate.head` from
    the ledger, and returning `-1` when the ledger is absent, unparseable, or
@@ -615,7 +675,8 @@ Summary-comment line, illustrative:
    count reflects only the current head, and an unreadable ledger yields `-1`
    rather than `0`.
 4. Add `expensive_reviewer_gate` with the conditions in the documented order,
-   the full-platform-list comparison for condition 2, the live-head comparison
+   the full-platform-list comparison for condition 2 delegating acceptance to
+   `reviewer_failed_label_required_for_result`, the live-head comparison
    for conditions 3 and 4, the fail-closed branch for every unreadable input,
    and the deferral-cap branch. **Verify**: drive the condition fixture and
    confirm each unmet condition yields its single named reason, and that the
@@ -655,7 +716,7 @@ Summary-comment line, illustrative:
     **Verify**: both suites exit 0, and
     `scripts/development-workflow/select-test-suites.sh` selects the new suite
     for a change touching only `pr-review-loop.sh`.
-11. Produce the eight planted-violation proofs (P1–P8) and record them in the PR
+11. Produce the ten planted-violation proofs (P1–P10) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed.
