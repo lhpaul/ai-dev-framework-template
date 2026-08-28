@@ -52,18 +52,23 @@
 2. Call `reviewer_loop_head_evidence_classify` once per row of the plan's
    parser-risk edge-case table, in table order.
 
-**Expected result**: each call returns the token in that row's "Required
-result" column. In particular, a 1-char and a 6-char value that both prefix the
-current head return `not-current` rather than `current`, a non-hex or 41-char
-value returns `not-current`, an empty reviewed head returns `not-reported`, and
-the synthetic `unknown-…` placeholder never classifies as `current`.
+**Expected result**: each call returns the state — and, where the table names
+one, the reason — in that row's "Required result" column. In particular a
+7-character abbreviation that prefixes the current head returns
+`not-current|unverifiable_reviewed_head` rather than `current`; a 39- or
+41-character value and a 40-character value with a non-hex character do the
+same; an empty reviewed head returns `not-reported`; and an empty current head
+or the synthetic `unknown-…` placeholder returns
+`not-current|unverifiable_current_head`. Nothing but exact case-insensitive
+equality of two full OIDs returns `current`.
 
-3. Call `reviewer_loop_head_evidence_valid_sha` with a 7-char hex value, a
-   40-char hex value, a 6-char hex value, a 41-char hex value, a non-hex value,
-   and the empty string.
+3. Call `reviewer_loop_head_evidence_full_sha` with a 40-char hex value, a
+   39-char hex value, a 41-char hex value, a 7-char abbreviation, a 40-char
+   value containing one non-hex character, and the empty string.
 
-**Expected result**: success for the first two, failure for the rest —
-`REVIEWER_LOOP_HEAD_MIN_ABBREV` is enforced, not merely documented.
+**Expected result**: success only for the 40-char hex value; failure for all
+five others. Full-OID equality is enforced, not merely documented, and no
+abbreviation or prefix path exists to fall back to.
 
 ### Step 2: Head evidence in the reviewer-loop summary comment
 
@@ -151,6 +156,18 @@ SHA and `LOCAL_AI_HEAD_CURRENT=0`. The suite exits 0.
 **Expected result**: The stale fixture produces a
 `pull_request.local_reviewer_head` row with status `discrepancy`; the matching
 fixture produces `verified`. The suite exits 0.
+
+3. Read the section emitted for a **pre-field ledger** fixture — an entry with
+   no `reviewed_heads` field — with `local-ai-reviewer` configured and
+   `--require-review-summary true`.
+4. Read it again with `local-ai-reviewer` absent from the resolved platform
+   list.
+
+**Expected result**: `unavailable_required` in step 3 and
+`unavailable_optional` in step 4. A pre-field ledger for a configured reviewer
+must not pass as optional — that is the stale-verdict hole this item closes, and
+`unavailable_required` keeps the item non-terminal until Step 7 is re-run on the
+live head.
 
 ### Step 6: Protocol conditions are stated, not just implemented
 

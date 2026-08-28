@@ -50,6 +50,8 @@ item's PR is merged. Later siblings (#1649, #1651, #1652, #1656) consume the
 | Summary comment sections | `sed -n '9013,9022p' scripts/development-workflow/pr-review-loop.sh` | Body interpolates `small_findings_section`, `phase_section`, `compare_section`, `advisory_section`, `advisory_checks_section`, `regression_label_section` — no head-evidence section exists |
 | Self-check review row | `grep -n "pull_request.review_summary" scripts/development-workflow/item-completion-self-check.sh` | Rows added at lines 701–716; the verified branch only tests the summary text for `Result: clean\|skipped`, never a SHA |
 | Existing head conditions in Protocol 92 | `grep -n "POST_CLEAN_HEAD_SHA" docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md` | Present for the aggregate post-clean settle only; no condition names a per-reviewer reviewed head |
+| Reviewed head is a full OID | `grep -n 'HEAD_SHA=' scripts/development-workflow/local-ai-reviewer.sh` and `grep -n 'print_kv REVIEWED_HEAD' scripts/development-workflow/local-ai-reviewer.sh` | `HEAD_SHA` is set from `gh pr view --json headRefOid` (line 237) and printed verbatim as `REVIEWED_HEAD` (line 369) — the reviewer emits the full 40-character OID, never an abbreviation |
+| Current head is the same field | `sed -n '8515,8521p' scripts/development-workflow/pr-review-loop.sh` | `loop_head_sha` is read from `gh pr view --json headRefOid` before any reviewer is dispatched, so both sides of the comparison come from the same GitHub field |
 | Harness entry point | `grep -n "HARNESS_MODE=1 source" scripts/development-workflow/tests/*.sh` | `test-pr-review-loop.sh` and `test-local-ai-reviewer-pr-review-loop-dispatch.sh` both source the loop with `HARNESS_MODE=1`, so new pure functions are unit-testable without network access |
 | Suite selection | `head -40 scripts/development-workflow/select-test-suites.sh` | Suites declare coverage with `# covers:` headers; no `.github/workflows` edit is needed to wire a new or edited suite |
 
@@ -123,7 +125,7 @@ file declares `#!/usr/bin/env bash` and uses Bash arrays):
       (its existing documented behavior — the loop already warns that
       `POST_CLEAN_HEAD_SHA` will be empty and Protocol 91 Check 0.6 will refuse
       the verdict). An empty current head fails
-      `reviewer_loop_head_evidence_valid_sha`, so every platform classifies
+      `reviewer_loop_head_evidence_full_sha`, so every platform classifies
       `not-current` and `LOCAL_AI_HEAD_CURRENT` is `0` — fail-closed, aligned
       with the refusal Check 0.6 already performs for the same cause. The
       synthetic `unknown-<epoch>-<pid>-<rand>` placeholder never reaches this
@@ -131,29 +133,38 @@ file declares `#!/usr/bin/env bash` and uses Bash arrays):
       for the ledger's `head_sha`, not by the pre-dispatch capture; it is still
       covered as an edge case so the predicate rejects it if a future caller
       passes it in.
-- [ ] Add pure predicate `reviewer_loop_head_evidence_valid_sha <value>`
-      returning success only when the value matches `^[0-9a-fA-F]+$` and its
-      length is between `REVIEWER_LOOP_HEAD_MIN_ABBREV` (a new constant, value
-      `7`, matching Git's default `core.abbrev` floor) and `40` inclusive.
-      Anything shorter, longer, non-hex, or empty is not a usable SHA.
+- [ ] Add pure predicate `reviewer_loop_head_evidence_full_sha <value>`
+      returning success only when the value matches `^[0-9a-fA-F]{40}$`.
+      **No prefix or abbreviation matching is performed anywhere in this
+      feature.** A shared 7-character prefix does not prove two values name the
+      same commit — abbreviation uniqueness is a repository-scoped property that
+      a fixed minimum length does not establish — and the reviewer this gate
+      exists for already emits the full OID: `local-ai-reviewer.sh` sets
+      `HEAD_SHA` from `gh pr view --json headRefOid` and prints it verbatim as
+      `REVIEWED_HEAD`, and the loop's own `loop_head_sha` comes from the same
+      field. Full equality is therefore both the safe rule and the one that
+      matches the data actually produced.
 - [ ] Add pure function `reviewer_loop_head_evidence_classify <reviewed_head>
-      <current_head>` returning one of `current`, `not-current`, or
-      `not-reported`, in this deterministic order:
+      <current_head>` printing `<state>` or `<state>|<reason>`, where state is
+      one of `current`, `not-current`, or `not-reported`, in this deterministic
+      order:
       1. Reviewed head empty → `not-reported`.
-      2. Reviewed head fails `reviewer_loop_head_evidence_valid_sha` →
-         `not-current` (a malformed or too-short value is never evidence of
-         currency).
-      3. Current head fails `reviewer_loop_head_evidence_valid_sha` →
-         `not-current` (this is the synthetic-placeholder path above).
-      4. Both valid → compare case-insensitively over the shorter of the two
-         lengths and require the shorter value to be a prefix of the longer;
-         `current` on a prefix match, `not-current` otherwise.
-      Length normalization is therefore bounded on both ends: the minimum is
-      enforced by step 2, so a 1-character value can no longer prefix-match a
-      full SHA, and the maximum is enforced by the same predicate, so a value
-      longer than a SHA is rejected rather than truncated. Case-insensitive
-      comparison is deliberate — `headRefOid` is lowercase, and a reviewer that
-      echoes an uppercase abbreviation is reporting the same commit.
+      2. Reviewed head fails `reviewer_loop_head_evidence_full_sha` →
+         `not-current|unverifiable_reviewed_head`. A truncated, abbreviated,
+         non-hex, or over-length value is not evidence of currency, and the
+         reason distinguishes it from a genuine mismatch so the summary does not
+         imply the reviewer read a different commit.
+      3. Current head fails `reviewer_loop_head_evidence_full_sha` →
+         `not-current|unverifiable_current_head`. This is the empty
+         `loop_head_sha` path (failed pre-dispatch read) and the synthetic
+         placeholder path.
+      4. Both are full SHAs → compare for **exact case-insensitive equality**;
+         `current` when equal, `not-current|head_mismatch` otherwise.
+      Case-insensitive comparison is deliberate — `headRefOid` is lowercase, and
+      a reviewer that echoes an uppercase OID is naming the same commit. Every
+      non-`current` outcome is fail-closed: `LOCAL_AI_HEAD_CURRENT` is `0` for
+      all three reasons, so no unverifiable value can produce a passing
+      readiness signal.
 - [ ] Add pure function `reviewer_loop_head_evidence_render <current_head>
       <entries…>` producing the Markdown `**Head evidence:**` block, and
       interpolate it into the summary comment body immediately before
@@ -178,12 +189,24 @@ file declares `#!/usr/bin/env bash` and uses Bash arrays):
 `bash`):
 
 - [ ] Add a `pull_request.local_reviewer_head` row derived from the newest
-      reviewer-loop summary comment. `verified` when the ledger's newest entry
-      records the `local-ai-reviewer` reviewed head equal to the live
-      `headRefOid`; `discrepancy` when it records a different SHA;
-      `unavailable_optional` when the platform is not configured or the ledger
-      predates this field; `unavailable_required` when
-      `--require-review-summary true` is set and the ledger is unreadable.
+      reviewer-loop summary comment. The configured/unconfigured split is what
+      decides optional vs. required — a pre-field ledger entry must **not** be
+      treated as optional, because that is exactly the stale-verdict hole this
+      item closes:
+
+      | Condition | Status |
+      | --- | --- |
+      | Ledger's newest entry records the `local-ai-reviewer` reviewed head equal to the live `headRefOid` | `verified` |
+      | It records a different SHA | `discrepancy` |
+      | Platform is configured and review evidence is required, but the entry has no `reviewed_heads` field (pre-field ledger) | `unavailable_required` |
+      | Platform is configured and review evidence is required, but the ledger is unreadable | `unavailable_required` |
+      | `local-ai-reviewer` is not in the resolved platform list | `unavailable_optional` |
+      | Review evidence is not required for this terminal claim (`--require-review-summary` not set) | `unavailable_optional` |
+
+      An `unavailable_required` result keeps the item non-terminal, which is the
+      existing contract stated in Protocol 92 § Readiness Labels and Report
+      Evidence. Re-running Step 7 on the live head writes a ledger entry with
+      the field and clears the row.
 - [ ] Keep the existing `pull_request.review_summary` row unchanged so the new
       row is additive evidence rather than a redefinition of an existing one.
 
@@ -226,10 +249,10 @@ Not applicable — no user interface in this repository.
 1. `reviewer_loop_head_evidence_classify` returns the required token for every
    row of the parser-risk edge-case table — maps to brief scope bullets 1 and 2,
    and is the regression coverage for both bounds of the length normalization.
-2. `reviewer_loop_head_evidence_valid_sha` accepts a 7-char and a 40-char hex
-   value and rejects a 6-char value, a 41-char value, a non-hex value, and the
-   empty string — pins `REVIEWER_LOOP_HEAD_MIN_ABBREV` as a real boundary rather
-   than an unenforced comment.
+2. `reviewer_loop_head_evidence_full_sha` accepts a 40-char hex value and
+   rejects a 39-char value, a 41-char value, a 7-char abbreviation, a 40-char
+   value containing a non-hex character, and the empty string — pins full-OID
+   equality as an enforced rule rather than a comment.
 3. All consumers classify against the single pre-dispatch `loop_head_sha`
    snapshot: with `gh pr view --json headRefOid` mocked to return a *different*
    SHA on every call, one loop iteration still produces the same current head
@@ -296,23 +319,22 @@ externally-supplied strings and normalizes length.
 
   | Reviewed head | Current head | Required result | Why |
   | --- | --- | --- | --- |
-  | 40-char SHA | same 40-char SHA | `current` | exact match |
-  | 7-char abbreviation | 40-char SHA sharing the prefix | `current` | abbreviation is the documented reviewer format |
-  | 7-char abbreviation | 40-char SHA with a differing prefix | `not-current` | genuine mismatch at minimum abbreviation length |
-  | `a` (1 char, valid hex) | 40-char SHA starting with `a` | `not-current` | below `REVIEWER_LOOP_HEAD_MIN_ABBREV`; the negative case for finding 1 |
-  | `abcdef` (6 chars) | 40-char SHA sharing the prefix | `not-current` | one below the floor — pins the boundary, not just a value far from it |
-  | `abcdefg` (7 chars, `g` non-hex) | 40-char SHA | `not-current` | correct length but not hex |
-  | 41-char hex string | 40-char SHA sharing the prefix | `not-current` | longer than a SHA; rejected rather than truncated |
+  | 40-char SHA | same 40-char SHA | `current` | exact match — the only passing case |
+  | uppercase 40-char SHA | same SHA lowercase | `current` | same commit, different casing |
+  | 40-char SHA | different 40-char SHA | `not-current` / `head_mismatch` | genuine mismatch |
+  | 7-char abbreviation | 40-char SHA sharing the prefix | `not-current` / `unverifiable_reviewed_head` | a shared prefix does not prove identity; this is the negative case for the abbreviation-uniqueness finding |
+  | 39-char hex string | 40-char SHA sharing the prefix | `not-current` / `unverifiable_reviewed_head` | one below full length — pins the boundary, not just a value far from it |
+  | 41-char hex string | 40-char SHA sharing the prefix | `not-current` / `unverifiable_reviewed_head` | longer than an OID; rejected rather than truncated |
+  | 40 chars with one non-hex character | 40-char SHA | `not-current` / `unverifiable_reviewed_head` | correct length but not hex |
   | `""` (empty) | 40-char SHA | `not-reported` | reviewer reported nothing; distinct from a mismatch |
-  | 40-char SHA | `""` (empty) | `not-current` | no usable current head to compare against |
-  | 40-char SHA | `unknown-1756330000-4821-19342` | `not-current` | synthetic placeholder from a failed live-head lookup |
-  | uppercase 7-char abbreviation | lowercase 40-char SHA sharing the prefix | `current` | same commit, different casing |
+  | 40-char SHA | `""` (empty) | `not-current` / `unverifiable_current_head` | failed pre-dispatch read of `loop_head_sha` |
+  | 40-char SHA | `unknown-1756330000-4821-19342` | `not-current` / `unverifiable_current_head` | synthetic placeholder is non-hex and not 40 chars |
 
 - **Unit test mapping**: each row above gets one case in
-  `test-pr-review-loop.sh`, asserting the exact token in the "Required result"
-  column. The 1-char, 6-char, non-hex, over-length, and synthetic-placeholder
-  rows are the negative tests that keep a malformed or truncated value from
-  manufacturing a passing readiness signal.
+  `test-pr-review-loop.sh`, asserting the exact state and reason in the
+  "Required result" column. The abbreviation, 39-char, 41-char, non-hex, empty
+  and placeholder rows are the negative tests that keep an unverifiable value
+  from manufacturing a passing readiness signal.
 - **Suppression semantics**: not applicable — no suppression directives.
 
 ### Concurrent-event-source addendum
@@ -355,7 +377,7 @@ inline with mock `gh` commands and require no network access.
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| SHA-length normalization turns a genuine mismatch into a false `current` | Med | High — it would defeat the gate this item exists to build | `reviewer_loop_head_evidence_valid_sha` bounds the comparison on both ends (hex-only, 7–40 chars) before any prefix match runs, so a 1-char or over-length value is rejected rather than normalized; the 1-char, 6-char, non-hex, and 41-char rows of the edge-case table are the negative tests |
+| A partial match is mistaken for proof that two values name the same commit | Med | High — it would defeat the gate this item exists to build | No prefix or abbreviation matching exists anywhere in the feature: `reviewer_loop_head_evidence_full_sha` requires a full 40-character hex OID on both sides and the comparison is exact case-insensitive equality. Both producers already emit `headRefOid` in full, so nothing legitimate is rejected; the abbreviation, 39-char, 41-char, and non-hex rows of the edge-case table are the negative tests |
 | A failed live-head lookup yields the synthetic `unknown-…` placeholder and is compared against a real SHA | Med | Med — could produce a confusing `not-current` or, if mishandled, a false `current` | The placeholder is non-hex, so it fails the validity predicate and every platform classifies `not-current` for that iteration — fail-closed by construction, pinned by its own edge-case row |
 | The summary block, the ledger entry, and the stdout keys classify against different snapshots of the live head | Med | High — the three surfaces would contradict each other, and per-reviewer evidence could disagree with `POST_CLEAN_HEAD_SHA` | No new lookup is added: all consumers read the existing pre-dispatch `loop_head_sha`, the same value the settle emits as `POST_CLEAN_HEAD_SHA`; scenario 3 fails if any renderer issues its own lookup, and scenario 4 pins `classification_head` equal to `POST_CLEAN_HEAD_SHA` |
 | Adding a field to `reviewer_loop_history.v1` breaks a reader that validates the entry shape | Low | High — a broken ledger read is fail-closed and would stall every reviewer loop | Field is additive and optional; scenario 6 asserts an entry without it still parses through `reviewer_loop_history_payload_from_existing` |
@@ -368,52 +390,46 @@ inline with mock `gh` commands and require no network access.
 
 ```bash
 # Illustrative — adapt during implementation.
-REVIEWER_LOOP_HEAD_MIN_ABBREV=7
 
-# A value is a usable SHA only when it is hex and of plausible SHA length.
-# This bounds the prefix comparison below on both ends.
-reviewer_loop_head_evidence_valid_sha() {
+# A value is usable head evidence only when it is a full 40-character hex OID.
+# No abbreviation or prefix matching: a shared prefix does not prove two values
+# name the same commit, and both producers already emit the full headRefOid.
+reviewer_loop_head_evidence_full_sha() {
   local value="$1"
   case "$value" in
     ''|*[!0-9a-fA-F]*) return 1 ;;
   esac
-  [ "${#value}" -ge "$REVIEWER_LOOP_HEAD_MIN_ABBREV" ] || return 1
-  [ "${#value}" -le 40 ] || return 1
-  return 0
+  [ "${#value}" -eq 40 ]
 }
 
-# Classify one reviewer's reviewed head against the iteration's captured head.
+# Classify one reviewer's reviewed head against the pre-dispatch loop_head_sha.
+# Prints "<state>" or "<state>|<reason>". Every non-current outcome is
+# fail-closed: LOCAL_AI_HEAD_CURRENT is 0 for all of them.
 reviewer_loop_head_evidence_classify() {
   local reviewed="$1"
   local current="$2"
-  local short long
 
   if [ -z "$reviewed" ]; then
     printf 'not-reported\n'
     return 0
   fi
-  # A malformed, too-short, or synthetic-placeholder value on either side is
-  # never evidence of currency. Fail closed.
-  if ! reviewer_loop_head_evidence_valid_sha "$reviewed" \
-    || ! reviewer_loop_head_evidence_valid_sha "$current"; then
-    printf 'not-current\n'
+  if ! reviewer_loop_head_evidence_full_sha "$reviewed"; then
+    printf 'not-current|unverifiable_reviewed_head\n'
+    return 0
+  fi
+  if ! reviewer_loop_head_evidence_full_sha "$current"; then
+    printf 'not-current|unverifiable_current_head\n'
     return 0
   fi
 
   reviewed="$(printf '%s' "$reviewed" | tr 'A-F' 'a-f')"
   current="$(printf '%s' "$current" | tr 'A-F' 'a-f')"
 
-  short="$reviewed"
-  long="$current"
-  if [ "${#short}" -gt "${#long}" ]; then
-    short="$current"
-    long="$reviewed"
+  if [ "$reviewed" = "$current" ]; then
+    printf 'current\n'
+  else
+    printf 'not-current|head_mismatch\n'
   fi
-
-  case "$long" in
-    "$short"*) printf 'current\n' ;;
-    *)         printf 'not-current\n' ;;
-  esac
 }
 ```
 
@@ -431,12 +447,12 @@ Rendered summary block, illustrative:
 
 ## Implementation Order
 
-1. Add `REVIEWER_LOOP_HEAD_MIN_ABBREV` and the four pure helpers
-   (`reviewer_loop_head_evidence_valid_sha`, `…_classify`, `…_render`,
-   `…_json`) to `scripts/development-workflow/pr-review-loop.sh` near the
-   existing `reviewer_loop_history_*` helpers. **Verify**: source the script
-   with `HARNESS_MODE=1` and call each function directly; confirm every row of
-   the parser-risk edge-case table returns its required token.
+1. Add the four pure helpers (`reviewer_loop_head_evidence_full_sha`,
+   `…_classify`, `…_render`, `…_json`) to
+   `scripts/development-workflow/pr-review-loop.sh` near the existing
+   `reviewer_loop_history_*` helpers. **Verify**: source the script with
+   `HARNESS_MODE=1` and call each function directly; confirm every row of the
+   parser-risk edge-case table returns its required state and reason.
 2. Populate `platform_reviewed_heads` in the per-platform result block next to
    the existing `platform_result_tokens+=(...)` line, and classify each entry
    against the existing pre-dispatch `loop_head_sha` — do not add a lookup.
