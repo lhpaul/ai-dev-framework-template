@@ -351,16 +351,25 @@ Not applicable — no user interface in this repository.
 - `scripts/development-workflow/tests/test-item-completion-self-check.sh` —
   scenario 11, one case per row of the six-condition table.
 - `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenario 12,
-  which needs a `# covers:` header line for
-  `docs/workflow/development-workflow/protocols/91-*.md` so a later edit to the
-  carry-forward snippet re-runs this suite. This is the one `# covers:` edit
-  this plan requires.
+  which requires **two** `# covers:` header lines on that suite:
 
-Coverage declarations: the three suites already cover the two changed scripts —
-`test-pr-review-loop.sh` covers `pr-review-loop.sh` by naming convention, and
-the dispatch suite declares both scripts explicitly. The single addition is the
-`# covers:` line for the Protocol 91 document noted above, without which an edit
-to the carry-forward snippet would not select scenario 12's suite.
+  ```text
+  # covers: scripts/development-workflow/pr-review-loop.sh
+  # covers: docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md
+  ```
+
+  Both are mandatory. In `select-test-suites.sh`, the naming-convention
+  fallback runs only when a suite declares nothing (`declared=0`); the first
+  `# covers:` line sets `declared=1` and disables it. Adding the protocol line
+  alone would therefore *drop* this suite's implicit coverage of
+  `pr-review-loop.sh` — the primary loop suite would stop running when the loop
+  script changes, which is strictly worse than the gap it was meant to close.
+  The script line restores explicitly what the convention supplied implicitly.
+
+Coverage declarations: the dispatch suite and the self-check suite already
+declare or imply coverage of the changed scripts and need no edit.
+`test-pr-review-loop.sh` currently relies on the naming convention, which is why
+it needs both lines above rather than one — see the note there.
 
 **Smoke test runbook**:
 `docs/testing/workflow/1648-reviewer-loop-current-head-evidence.smoke-test.md`
@@ -443,7 +452,8 @@ inline with mock `gh` commands and require no network access.
 | The summary block, the ledger entry, and the stdout keys classify against different snapshots of the live head | Med | High — the three surfaces would contradict each other, and per-reviewer evidence could disagree with `POST_CLEAN_HEAD_SHA` | No new lookup is added: all consumers read the existing pre-dispatch `loop_head_sha`, the same value the settle emits as `POST_CLEAN_HEAD_SHA`; scenario 3 fails if any renderer issues its own lookup, and scenario 4 pins `classification_head` equal to `POST_CLEAN_HEAD_SHA` |
 | Adding fields to `reviewer_loop_history.v1` breaks a reader that validates the entry shape | Low | High — a broken ledger read is fail-closed and would stall every reviewer loop | `reviewed_heads` and `classification_head` are additive and optional; scenario 7 asserts an entry without either still parses through `reviewer_loop_history_payload_from_existing` |
 | The new readiness condition blocks PRs in repositories that do not configure `local-ai-reviewer` | Low | High — it would stall downstream consumers of this template | Applicability is read from `LOCAL_AI_CONFIGURED`, which the loop emits on every run: `0` means the platform is not in the resolved list and Check 0.6 continues without evaluating the head condition. Scenario 10 asserts `LOCAL_AI_CONFIGURED=0` for a non-configuring repository, and scenario 9 pins the separate configured-but-no-head state that *does* block |
-| The keys are emitted but never reach Check 0.6, leaving the gate inert | Med | High — the item would appear complete while changing nothing about readiness | The Protocol 91 carry-forward snippet is widened to `^(POST_CLEAN\|LOCAL_AI)_` in the same edit that adds the Check 0.6 condition; scenario 12 exports a captured loop output through the snippet and asserts all three keys arrive, and the new `# covers:` line makes a later snippet edit re-run that suite |
+| The keys are emitted but never reach Check 0.6, leaving the gate inert | Med | High — the item would appear complete while changing nothing about readiness | The carry-forward snippet is widened in the same edit that adds the Check 0.6 condition, with `grep -oE` on the unset loop so the alternation actually matches; scenario 12 exports a captured loop output through the snippet and asserts all three keys arrive and are cleared, and the two `# covers:` lines make a later snippet edit re-run that suite |
+| Adding a `# covers:` line silently drops the suite's naming-convention coverage | Med | High — the primary loop suite would stop running when `pr-review-loop.sh` changes, and CI would still be green | `select-test-suites.sh` applies the fallback only when `declared=0`, so the plan requires **both** `# covers:` lines on `test-pr-review-loop.sh` and records why |
 | The summary comment grows past what reviewers read | Low | Low | The head-evidence block is one line per configured platform plus one current-head line, in the same style as the existing compare-mode block |
 
 ---

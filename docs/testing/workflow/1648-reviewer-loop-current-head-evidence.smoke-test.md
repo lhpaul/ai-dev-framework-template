@@ -229,15 +229,38 @@ rather than as "not applicable".
 
 **Maps to**: the inert-gate risk in the plan.
 
-1. Capture a loop output that contains all three `LOCAL_AI_*` keys.
-2. Run the Protocol 91 § "Carry the settle verdict forward" snippet against it.
-3. Print the three keys from the resulting environment.
-4. Re-run the snippet against a second capture that omits them.
+1. Read the snippet's unset loop and confirm it uses `grep -oE`, not `grep -o`.
+2. Capture a loop output that contains all three `LOCAL_AI_*` keys.
+3. Run the Protocol 91 § "Carry the settle verdict forward" snippet against it.
+4. Print the three keys from the resulting environment.
+5. With those keys still set, re-run the snippet against a second capture that
+   omits them.
 
-**Expected result**: after step 3 all three keys are set to the values from the
-capture; after step 4 all three are unset, exactly as `POST_CLEAN_*` behaves.
-If the keys are missing after step 3, Check 0.6 never sees them and the whole
-gate is inert even though the loop emits them correctly.
+**Expected result**: step 1 finds `-E`; without it the alternation
+`^(POST_CLEAN|LOCAL_AI)_[A-Z_]*` is basic regex, where `(`, `)` and `|` are
+literal characters, so the loop matches nothing and clears no variables. Step 4
+shows all three keys set to the captured values. Step 5 leaves all three unset,
+exactly as `POST_CLEAN_*` behaves — this is the assertion that catches a `-E`
+regression, because a non-clearing loop would leave the previous HEAD's values
+in place and Check 0.6 would validate a stale verdict. If the keys are missing
+after step 4, Check 0.6 never sees them and the gate is inert even though the
+loop emits them correctly.
+
+### Step 7c: The loop suite still runs when the loop script changes
+
+**Maps to**: the `# covers:` risk in the plan.
+
+1. Confirm `test-pr-review-loop.sh` declares **both** `# covers:` lines — the
+   one for `scripts/development-workflow/pr-review-loop.sh` and the one for the
+   Protocol 91 document.
+2. Run `scripts/development-workflow/select-test-suites.sh` against a change set
+   touching only `scripts/development-workflow/pr-review-loop.sh`.
+3. Run it again against a change set touching only the Protocol 91 document.
+
+**Expected result**: `test-pr-review-loop.sh` is selected in both runs. A
+suite's first `# covers:` line disables the naming-convention fallback, so if
+only the protocol line were present, step 2 would not select the suite and a
+change to the loop script would ship with its own tests unrun.
 
 ### Step 8: Static checks
 
