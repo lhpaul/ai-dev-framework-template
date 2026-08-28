@@ -383,9 +383,19 @@ Not applicable — no user interface in this repository.
     `docs/specs/developments/**` with bodies naming fail-closed semantics,
     decision-matrix rows, and acceptance criteria — and assert the terminal rule
     does **not** fire, where today it fires on round two.
-13. **The cosmetic counter-case.** Replay the same ledger shape with bodies
-    naming only a trailing space and a heading capitalisation, and assert the
-    terminal rule **does** fire, so the tightening did not disable the mechanism.
+13. **The cosmetic counter-case.** Replay the same *ledger shape* — same round
+    count, same adjacency, same head — but on **genuinely non-shipped paths**
+    (`docs/project/1-business-domain.md`, `tests/fixtures/x.json`,
+    `CHANGELOG.md`) with bodies naming only a trailing space and a heading
+    capitalisation. Assert the terminal rule **does** fire.
+
+    The paths must differ from scenario 12's. Scenario 12 uses
+    `docs/specs/developments/**`, which scenarios 1-3 require to be classified
+    as *shipped*, so no body — however cosmetic — could make those findings
+    small and the rule could never fire on them. Reusing scenario 12's paths
+    here would make the counter-case unsatisfiable and give false confidence
+    that the mechanism survives. What the two scenarios share is the ledger
+    shape; what they must not share is the path set.
 14. A ledger entry written before this change, carrying no head on its
     small-findings entries, ends the consecutive run rather than being counted —
     backward compatibility in the fail-closed direction.
@@ -436,7 +446,7 @@ sharpening it.
 | P3 | Turn the contract-surface allow-list into a deny-list of cosmetic terms | same scratch copy | scenario 4's three cosmetic bodies still pass, but a contract body using none of the listed cosmetic terms is classified small — the failure mode the allow-list exists to prevent; restoring the allow-list passes |
 | P4 | Drop the current-head comparison from the consecutive count | a scratch copy of the counter | scenario 8 fails, because rounds on an older head extend the run; restoring the comparison passes |
 | P5 | Treat an entry with an absent or placeholder head as matching the current head | same scratch copy | scenario 9 fails in all three cases, because an unprovable head extends the run; restoring the fail-closed branch passes |
-| P6 | Over-tighten by path: make every `docs/` path shipped, dropping the non-shipped patterns entirely | a scratch copy of the predicate | scenarios 3, 6 and 13 fail, because the loop can no longer terminate on a genuinely cosmetic documentation tail; restoring the narrowed list passes |
+| P6 | Over-tighten by path: make every `docs/` path shipped, dropping the non-shipped patterns entirely | a scratch copy of the predicate | scenarios 3, 6 and 13 fail — 13 in particular, because `docs/project/1-business-domain.md` becomes shipped and the cosmetic tail can no longer terminate; restoring the narrowed list passes |
 | P7 | Over-tighten by term: restore the bare common words `gate`, `scope`, `state`, `status`, `proof`, `parse` and `contract` to the contract-surface list | same scratch copy | scenario 6a fails on all seven cosmetic bodies and scenario 13 stops firing, because ordinary prose now reads as contract-bearing; restoring the phrase-only list passes |
 | P9 | Invert both within-group precedences: report `contract_surface` over `shipped_path`, and `head_unknown` over `stale_head` | a scratch copy of the blocked-by mapping | scenario 10a's first two rows fail — the content row reports `contract_surface` where a shipped path is present, and the currency row reports `head_unknown` where a known-different head is present. Both are detectable because both are genuine co-occurrences within a group; restoring the order passes |
 | P8 | Skip the current round's head check, verifying only the prior ledger entries | a scratch copy of the terminal decision | scenario 8a fails, because the rule terminates on a deciding round whose findings describe a commit that is no longer the head; restoring the check passes |
@@ -492,7 +502,7 @@ point. No listeners, timers, or shared mutable state are introduced.
 | Co-occurring-cause fixtures | Three rounds driving scenario 10a: one carrying both a shipped-path and a contract-surface finding; one whose findings are all small with one stale contributor and one reporting no head; and one carrying a contract-surface finding together with a contributor on a stale head, to prove the currency check is never reached | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Head-comparison ledger fixture | Ledger payloads with prior small rounds on an older head, on the current head, and with absent, empty and placeholder heads — driving scenarios 8, 9, 10 and 14 | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | #1661 replay ledger | A `reviewer_loop_history.v1` payload reproducing PR #1661's consecutive small-findings rounds, with the real finding bodies naming fail-closed semantics, matrix rows and acceptance criteria | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
-| Cosmetic replay ledger | The same ledger shape with cosmetic bodies only, driving scenario 13 | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
+| Cosmetic replay ledger | The same ledger *shape* as the #1661 replay — same round count, adjacency and head — but on genuinely non-shipped paths (`docs/project/1-business-domain.md`, `tests/fixtures/x.json`, `CHANGELOG.md`) with cosmetic bodies only, driving scenario 13. The path set must differ from the #1661 replay's, or the counter-case is unsatisfiable | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
 
 No repository fixture files are added; both suites build their fixtures inline
 and require no network access.

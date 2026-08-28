@@ -253,11 +253,21 @@ unvalidated bound that defeated its own cap — not typographical ones.
 
 **Maps to**: the "tightening removes the mechanism" risk.
 
-1. In the same suite, inspect the case replaying the identical ledger shape with
-   bodies naming only a trailing space and a heading capitalisation.
+1. In the same suite, inspect the case replaying the identical ledger *shape* —
+   same round count, adjacency and head — on **genuinely non-shipped paths**
+   (`docs/project/1-business-domain.md`, `tests/fixtures/x.json`,
+   `CHANGELOG.md`) with bodies naming only a trailing space and a heading
+   capitalisation.
+2. Confirm those paths differ from the ones Step 6's case uses.
 
 **Expected result**: the terminal rule **does** fire. If Step 6 passes and this
 fails, the change did not tighten the rule — it deleted it.
+
+Step 2 is not a formality. Step 6's case uses `docs/specs/developments/**`,
+which Step 1 requires to be classified as shipped, so no body — however cosmetic
+— could make those findings small and the rule could never fire on them. A
+counter-case reusing those paths would be unsatisfiable, and would pass only by
+never being able to demonstrate anything.
 
 ### Step 8: Planted-violation proofs are present and two-directional
 
