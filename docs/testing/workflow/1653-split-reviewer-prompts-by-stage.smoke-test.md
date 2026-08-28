@@ -71,8 +71,17 @@ checklist on a branch that is not a spec branch. Proof P2 plants exactly that.
 4. Call it with an **empty** list.
 5. Call `reviewer_resolve_review_stage 'feature/x' '["REVIEW.md","src/app/main.ts"]'`,
    then again with `[]` and with `""` as the second argument.
-6. Call it once more with a 501-entry array whose **first** element is
-   `REVIEW.md`, generated with `jq -n '["REVIEW.md"] + [range(500)|"src/f\(.).ts"]' -c`.
+6. Call it once more with an array whose **first** element is `REVIEW.md` and
+   whose decoded form exceeds **2 MiB**. Generate it, and assert the size
+   before using it:
+
+   <!-- workflow-shell-contract: bash -->
+
+   ```bash
+   big="$(jq -n -c '["REVIEW.md"] + [range(40000)
+     | "src/generated/deeply/nested/module/segment/path/file\(.).ts"]')"
+   [ "$(printf '%s' "$big" | jq -r '.[]' | wc -c)" -gt 2097152 ] || exit 1
+   ```
 
 **Expected result**: all nine entries match; none of the four controls does;
 step 3 matches; step 4 does **not**. Step 5's first call names both Code and
@@ -91,9 +100,19 @@ with `jq -r '.[]?' | reviewer_changed_files_touch_workflow_policy` and, on a
 list long enough to exceed the pipe buffer, `jq` is still writing when the
 reader exits, takes SIGPIPE, and reports 141 — the pipeline fails, the `elif` is
 not taken, and the checklist is dropped. On Step 5's two-path list the same code
-passes, so the 501 entries are the point of the step, not decoration. Buffering
-the decode into a variable and feeding the predicate from a here-string removes
-the pipeline entirely. Proof P10.
+passes, which is what makes this step necessary rather than redundant.
+
+The **2 MiB assertion is the step**, not the path count. A pipe holds 64 KiB by
+default on Linux and macOS; macOS caps there and Linux allows up to
+`fs.pipe-max-size`, 1 MiB on a default kernel. A fixture below that ceiling
+makes P10 pass or fail depending on the machine, which is not a proof. Assert
+the byte count rather than the number of paths — path length is the variable
+that silently shrinks the fixture when someone shortens the generated names.
+The generator above measures 2,428,900 bytes; 20,000 paths of the same shape
+measure 1,208,900 and would **not** clear a raised Linux pipe buffer.
+
+Buffering the decode into a variable and feeding the predicate from a
+here-string removes the pipeline entirely. Proof P10.
 
 Steps 3 and 4 are the two directions the predicate can be got wrong. `all`
 instead of `any` breaks step 3 — the mixed change, which is the one most likely
