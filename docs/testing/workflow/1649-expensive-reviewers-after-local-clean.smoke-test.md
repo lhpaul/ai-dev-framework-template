@@ -36,7 +36,8 @@
 | Reviewer-loop protocol | `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md` |
 | Reviewer integration doc | `docs/workflow/development-workflow/integrations/codex-github.md` |
 | Override variable | `PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS` |
-| Deferral bound | `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS` (default `3`) |
+| Deferral bound | `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS` (default `3`, valid `1`-`999999`) |
+| Bound resolver | `expensive_gate_resolve_max_deferrals`, mirroring `reviewer_loop_resolve_max_cycles` |
 
 ---
 
@@ -293,6 +294,27 @@ This bound cannot be delegated to the existing dual cycle caps:
 `head_sha` + `result`, so repeated `needs_fixes` on one unchanged head — exactly
 the shape of a deferral loop — counts once and advances neither cap.
 
+### Step 4c: The deferral bound is validated
+
+**Maps to**: the "misconfigured deferral bound" risk.
+
+1. Call `expensive_gate_resolve_max_deferrals` with
+   `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS` unset, empty, `1`, `999999`, `0`,
+   `-1`, `1000000`, `abc`, `2.5`, and a value with surrounding whitespace.
+2. Read `EXPENSIVE_GATE_MAX_DEFERRALS` in a gate run for each.
+
+**Expected result**: `3` for unset and empty; the configured value for `1` and
+`999999`; `3` with a `WARN` on stderr naming the rejected value for the rest.
+`EXPENSIVE_GATE_MAX_DEFERRALS` reports the effective value every time.
+
+Both failure directions matter. An unvalidated non-integer reaches
+`[ "$deferrals" -ge "$max" ]`, which raises `integer expression expected` and
+evaluates false — the cap never trips and the deferral loop is unbounded again.
+An unvalidated `0` or negative trips the cap before the first deferral, so every
+gated PR escalates immediately. The resolver mirrors
+`reviewer_loop_resolve_max_cycles` on purpose: two bounds resolvers in one
+script that disagree about what a bad value means would be its own defect.
+
 ### Step 5: The override dispatches without hiding the reason
 
 **Maps to**: brief scope bullet 3.
@@ -396,10 +418,10 @@ so it would run only when the test file itself changed.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR description's `Planted-Violation Proofs` heading.
-2. Confirm P1–P17 from the plan each record the command, the file and line of
+2. Confirm P1–P18 from the plan each record the command, the file and line of
    the planted violation, and both outcomes.
 
-**Expected result**: seventeen proofs, each showing the check failing with the
+**Expected result**: eighteen proofs, each showing the check failing with the
 violation present and passing once removed. Four carry the most weight: P4
 deletes the `expensive_reviewer_gate` call so the function is defined but
 unreachable, and requires Step 3's stale-evidence row to fail — that is what
@@ -419,7 +441,8 @@ fail. P14 makes the baseline-check helper treat every check as a baseline check
 and requires Step 3's reviewer-owned-pending row to fail. P15 removes the
 short-circuit on a defer and requires Step 6b to fail. P16 makes an empty
 check set read as green and requires Step 3's two empty-set rows to fail. P17
-reads the local evidence from the environment and requires Step 3e to fail.
+reads the local evidence from the environment and requires Step 3e to fail. P18
+removes the bound validation and requires Step 4c to fail in both directions.
 
 ### Step 10: Documentation states one contract
 
