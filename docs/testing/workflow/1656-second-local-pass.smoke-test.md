@@ -60,8 +60,25 @@ look alike — and this is telemetry #1657 will read.
    `loop_head_sha`.
 2. Compare the platform dispatch sequence to the same run before this change.
 
-**Expected result**: byte-for-byte identical. The guard adds nothing to the path
-it does not need to protect.
+3. Compare the loop's entire `key=value` output to the same run before this
+   change.
+
+**Expected result**: the dispatch sequence and the whole `key=value` output are
+byte-for-byte identical. The guard adds nothing to the path it does not need to
+protect.
+
+Two different things are being checked. The **dispatch** comparison depends on
+the condition seeing the current round: by the time the guard runs, the local
+reviewer has usually already reported in this cycle, and its verdict lives only
+in memory — the ledger entry carrying it is written at the end of the cycle.
+Reading the persisted payload alone makes every ordinary run owe a pass it does
+not need. Proof P7.
+
+The **output** comparison is about the extraction. The parsing, aggregation,
+forwarding and ledger accumulation live inline in the platform loop after
+`run_platform_review`, so the guard cannot reuse them without extracting them
+into a shared function first. That extraction touches the busiest block in the
+script, and this is the only check that it changed nothing. Proof P8.
 
 ## Step 4: A clean second pass opens the gate
 
@@ -72,9 +89,15 @@ it does not need to protect.
 2. Let the loop reach the ready-phase gate.
 
 **Expected result**: the local reviewer is dispatched **once** before
-`ensure_pr_ready_for_ready_phase`, through `run_platform_review` like any
-platform; it reports clean; the pull request is converted; ready-phase reviewers
-run. `LOCAL_SECOND_PASS=1`, `LOCAL_SECOND_PASS_REASON=head_changed`.
+`ensure_pr_ready_for_ready_phase`; it reports clean; the pull request is
+converted; ready-phase reviewers run. `LOCAL_SECOND_PASS=1`,
+`LOCAL_SECOND_PASS_REASON=head_changed`.
+
+Assert the pass appears in the **ledger entry** and the `key=value` output, not
+only that the gate opened. A guard that calls `run_platform_review` and skips
+the shared processor still decides the gate correctly and records nothing — the
+telemetry would then say the gate opened with no evidence of what opened it.
+Proof P8.
 
 ## Step 5: A failed second pass closes it, and changes nothing else
 
@@ -203,11 +226,12 @@ ready-phase gate already existed and this alters when it fires.
 ## Step 12: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P6 each record the command, the file and line of the
+2. Confirm P1 through P8 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: six proofs in two groups — **three** fail-open, **three**
-loop and cost, per the plan's proof-group table.
+**Expected result**: eight proofs in three groups — **three** fail-open,
+**three** loop and cost, **two** integration, per the plan's proof-group
+table.
 
 P2 is the one to read twice: returning `not_required` for a history with no
 local verdict is the natural default, it passes every scenario that supplies a

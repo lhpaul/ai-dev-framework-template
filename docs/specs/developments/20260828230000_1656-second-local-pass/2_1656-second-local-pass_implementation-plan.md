@@ -158,14 +158,40 @@ Not applicable — this repository ships workflow tooling, not a service.
       reported, and a reader wanting to know *why* a pass ran cannot recover it
       from `1`.
 
+      **The payload it reads must include the current round.** #1651's selector
+      is a pure query over one payload, and its caller composes the round's
+      in-memory `platform_results` and `reviewed_heads[]` into `entries[]` as a
+      synthetic entry before selecting. This condition inherits that
+      requirement, and it is not optional here: by the time the guard runs, the
+      local reviewer has usually already reported **in this cycle**, and its
+      verdict lives only in memory — the ledger entry carrying it is written at
+      the end of the cycle. Reading the persisted payload alone would make every
+      ordinary run owe a pass it does not need, which is scenario 4's case and
+      the opposite of the item's purpose. The composition is the same helper
+      #1651's call site uses; this is a second caller of it, not a second copy.
+
 - [ ] **Run the pass, immediately before the ready-phase gate.** At
       `pr-review-loop.sh:8580`, before `ensure_pr_ready_for_ready_phase`:
 
       1. If `reviewer_loop_local_pass_required` returns `not_required`, do
          nothing and proceed exactly as today.
-      2. Otherwise dispatch `run_local_ai_reviewer_review` once, through the
-         same `run_platform_review` path every platform uses, so its output is
-         parsed, recorded and forwarded identically.
+      2. Otherwise dispatch the local reviewer once and process its output
+         through the **same code the platform loop uses**. That needs a small
+         extraction first: `run_platform_review` only dispatches — the parsing,
+         the aggregation, the `print_kv` forwarding, the
+         `platform_result_records` accumulation and the reviewed-head collection
+         all live inline in the platform loop, *after* its call. A guard-side
+         call to `run_platform_review` alone would produce output nobody parsed
+         and a pass that appears in no ledger entry.
+
+         So the plan extracts that inline block into
+         `reviewer_loop_process_platform_output <platform_name> <platform_index> <output> <status>`,
+         called from both the platform loop and the guard. The extraction is
+         **behaviour-preserving by requirement, not by intention**: scenario 5a
+         runs a pull request that needs no pass and asserts the loop's entire
+         `key=value` output is byte-identical to the same run before this
+         change. An extraction that quietly reorders or drops a key would pass
+         every other scenario in this plan.
       3. If that pass is **clean**, proceed to the gate.
       4. If it is anything else, end the cycle with that result — the same
          `needs_fixes` / `escalate` path a first-pass finding takes — and do
@@ -296,8 +322,18 @@ Order step 0.
 4. With `not_required`, the gate is reached with **no** extra dispatch: the
    platform sequence is byte-for-byte what it is today.
 5. With any other value, the local reviewer is dispatched exactly once before
-   the gate, through `run_platform_review`, and its output is parsed and
-   forwarded like any platform's.
+   the gate, and its output is processed by
+   `reviewer_loop_process_platform_output` — the same function the platform loop
+   calls — so the pass is parsed, aggregated, forwarded and recorded in the
+   ledger entry like any platform's.
+5a. The extraction is behaviour-preserving: for a pull request that needs **no**
+   pass, the loop's entire `key=value` output is byte-identical to the same run
+   before this change. This is the scenario that fails if the extraction drops
+   or reorders a key, and every other scenario here would pass with that defect.
+5b. The condition sees the **current round**: a cycle in which the local
+   reviewer already reported clean, whose ledger entry is not yet written,
+   returns `not_required`. Reading the persisted payload alone returns
+   `head_changed` or `no_evidence` and makes every ordinary run owe a pass.
 6. A **clean** second pass proceeds to the gate and the pull request is
    converted to ready.
 7. A **needs_fixes** second pass ends the cycle with `needs_fixes`, does **not**
@@ -375,6 +411,8 @@ Order step 0.
 | Silence is read as satisfaction | **High** — `not_required` is the natural default for "nothing to compare" | **High** — a pull request the local reviewer never examined passes the gate, which is the exact fail-open this epic exists to close | `no_evidence` owes a pass. Scenario 2 and proof **P2** |
 | The pass increments a cycle cap | Med | Med — every run needing a pass gets a shorter budget, and `max_cycles_exceeded` starts meaning two different things | The pass is a dispatch inside an already-counted cycle. Scenarios 9 and 10; proof **P3** increments |
 | A failed pass converts the pull request anyway | Med | Med — the pull request is left ready with no reviewer dispatched, a state the loop never intended | The cycle ends before the gate. Scenario 7 asserts all three consequences; proof **P4** converts first |
+| The extraction changes the ordinary path | Med — it touches the busiest block in the script | **High** — every run's output shifts, and the cause is a refactor nobody was reviewing for behaviour | Byte-identical output required for a run needing no pass, in its own commit so the diff is readable. Scenario 5a and proof **P8** |
+| The condition ignores the current round | **High** — the persisted payload is the obvious input | Med — every ordinary run dispatches the local reviewer twice, and the guard becomes a tax on the path it was meant to leave alone | The round's in-memory results are composed in first, using #1651's helper. Scenarios 4 and 5b, proof **P7** |
 | The guard runs when there is no gate to protect | Med | Low — doubles the local reviewer's cost on every draft-only run | No-op when `phase_after_clean_enabled` is 0. Scenario 13 and proof **P5** |
 | This item and #1649 are implemented as one refusal | Med | **High** — the loop can never advance past a local finding, because the evidence that would clear the refusal is the dispatch the refusal prevents | The order is stated in **Interaction with #1649** and enforced by Implementation Order step 0 |
 
@@ -420,17 +458,20 @@ reviewer_loop_local_pass_required() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The six proofs fall into
-two groups:
+runs per proof, each citing a concrete file and line. The eight proofs fall into
+three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Fail-open | **3** | P2, P4, P6 | the gate reached, or the pull request converted, without the evidence |
-| Loop and cost | **3** | P1, P3, P5 | a guard that repeats, shortens the run, or runs where there is nothing to guard |
+| Loop and cost | **3** | P1, P3, P5 |
+| Integration | **2** | P7, P8 | a guard wired in beside the pipeline rather than into it | a guard that repeats, shortens the run, or runs where there is nothing to guard |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
 | P1 | Key the flag on a per-cycle boolean instead of the head | a scratch copy of the guard | scenario 8 fails: two cycles with no new commit dispatch the local reviewer twice, and a pull request whose reviewer never goes clean burns its whole budget on repeated local reviews. The plant looks equivalent — one pass per cycle reads as "at most once" — and only counting dispatches across cycles separates them; restoring the head key passes |
+| P7 | Read the persisted payload without composing the current round | a scratch copy of the condition | scenario 5b fails: a cycle whose local reviewer has already reported clean owes a pass anyway, so every ordinary run dispatches the reviewer twice — the guard becomes a tax on the path it was meant to leave alone. Scenario 4's no-dispatch case fails with it, which is the visible symptom; restoring the composition passes both |
+| P8 | Call `run_platform_review` from the guard without processing its output | a scratch copy of the dispatch block | scenario 5's ledger assertion fails: the pass runs, its verdict decides the gate, and it appears in no ledger entry and no `key=value` output — so the telemetry says the gate opened with no evidence of what opened it. The gate behaviour is still correct, which is what makes this the plant a hurried extraction invites; restoring the shared processor passes |
 | P6 | Make the flag suppress the dispatch without refusing the gate | same scratch copy | scenario 8a fails: the cycle after a failed pass reaches the gate with no current clean evidence, because the condition still owes a pass and nothing runs — a fail-open created by the anti-loop mechanism itself. Scenario 8's dispatch count still passes, which is what makes this the plant a two-way guard invites; restoring the refusal passes both |
 | P2 | Return `not_required` when the history names no local verdict | same scratch copy | scenario 2 fails: a pull request the local reviewer never examined reaches the gate and its ready-phase reviewers run, which is the fail-open this item exists to close. Every other scenario passes, because they all supply a verdict; restoring `no_evidence` passes |
 | P3 | Increment `CYCLE_COUNT` when the pass runs | a scratch copy of the dispatch block | scenarios 9 and 10 fail: a run needing a pass reports a different count than an identical run that does not, and `max_cycles_exceeded` arrives earlier — so the guard silently shortens every run it helps; restoring the no-op passes |
@@ -453,10 +494,15 @@ pull requests it lets through are exactly the ones nobody reviewed locally.
 1. Add `reviewer_loop_local_pass_required`, calling #1651's selector with both
    of its arguments. **Verify**: scenarios 1, 2 and 3 — all four values,
    `no_evidence` for silence, and both head-mismatch shapes.
+1a. Extract the platform loop's inline post-dispatch block into
+   `reviewer_loop_process_platform_output`, changing nothing else. **Verify**:
+   scenario 5a — byte-identical `key=value` output for a run that needs no pass.
+   Do this as its own commit, so the extraction's diff can be read on its own.
 2. Add the three-way guard — dispatch, refuse, or proceed — with the flag
    holding the head a pass **failed** on, before
-   `ensure_pr_ready_for_ready_phase`. **Verify**: scenarios 4, 5, 6, 7, 8, 8a
-   and 8b — the dispatch count across cycles, all three consequences of a failed
+   `ensure_pr_ready_for_ready_phase`, and compose the current round into the
+   payload before evaluating the condition. **Verify**: scenarios 4, 5, 5b, 6,
+   7, 8, 8a and 8b — the dispatch count across cycles, all three consequences of a failed
    pass, the refusal on the next cycle at the same head, and the `not_required`
    path after a clean pass.
 3. Confirm the caps are untouched. **Verify**: scenarios 9 and 10.
@@ -466,7 +512,7 @@ pull requests it lets through are exactly the ones nobody reviewed locally.
    **Verify**: scenarios 11 and 12.
 6. Update Protocol 93, the `--help` block, and add
    `changelog.d/1656.changed.second-local-pass.md`. **Verify**: runbook Step 8.
-7. Produce the six planted-violation proofs (P1-P6) and record them in the PR
+7. Produce the eight planted-violation proofs (P1-P8) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
