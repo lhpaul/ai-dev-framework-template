@@ -190,7 +190,9 @@ aggregate.
 3. Re-seed the entries against a *different* `expensive_gate.head` and run again.
 4. Read `EXPENSIVE_GATE_DEFERRALS` in each run.
 
-5. Make the ledger read fail, or seed an unparseable payload, and run again.
+5. Seed a ledger whose history marker is present but whose JSON block is
+   unparseable, and run again.
+6. Remove the summary comment entirely — an absent ledger — and run again.
 
 **Expected result**: step 1 gives `EXPENSIVE_GATE_RESULT=deferral_cap` with
 `EXPENSIVE_GATE_ESCALATION=expensive_gate_deferral_cap` and the loop aggregate
@@ -204,6 +206,15 @@ Step 5 also escalates, with `EXPENSIVE_GATE_RESULT=deferral_cap`,
 `EXPENSIVE_GATE_DEFERRALS=-1` — an unreadable budget cannot prove the sequence
 is bounded, so deferring again would reopen the unbounded loop the counter
 exists to close, and `-1` keeps that state distinguishable from a count of zero.
+
+Step 6 must **not** escalate: `EXPENSIVE_GATE_DEFERRALS=0` and the gate defers
+or dispatches normally. An absent ledger is every PR's first reviewer-loop run,
+not a failure; escalating there would bypass the bounded deferrals on every PR
+without prior history and the bound would never be exercised. The counter must
+mirror the three states `reviewer_loop_history_entries_count` already
+distinguishes — absent, readable, unreadable — rather than collapsing the first
+into the third.
+
 `EXPENSIVE_GATE_DEFERRALS` shows the distance to the cap in every other run.
 
 This bound cannot be delegated to the existing dual cycle caps:
@@ -279,10 +290,10 @@ so it would run only when the test file itself changed.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR description's `Planted-Violation Proofs` heading.
-2. Confirm P1–P10 from the plan each record the command, the file and line of
+2. Confirm P1–P11 from the plan each record the command, the file and line of
    the planted violation, and both outcomes.
 
-**Expected result**: ten proofs, each showing the check failing with the
+**Expected result**: eleven proofs, each showing the check failing with the
 violation present and passing once removed. Four carry the most weight: P4
 deletes the `expensive_reviewer_gate` call so the function is defined but
 unreachable, and requires Step 3's stale-evidence row to fail — that is what
@@ -294,7 +305,8 @@ Step 4b to fail, demonstrating that those caps do not bound a deferral loop, and
 P8 makes an unreadable ledger count as zero and requires Step 4b's fifth run to
 fail. P9 replaces the per-bucket partition with a global one and requires
 Step 3c's two-bucket run to fail. P10 accepts any `skipped` peer and requires
-Step 3's three rejected-skip rows to fail.
+Step 3's three rejected-skip rows to fail. P11 makes an absent ledger return
+`-1` and requires Step 4b's sixth run to fail.
 
 ### Step 10: Documentation states one contract
 

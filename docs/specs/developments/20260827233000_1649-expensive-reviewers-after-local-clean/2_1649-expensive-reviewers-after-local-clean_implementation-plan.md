@@ -206,19 +206,23 @@ Not applicable — this repository ships workflow tooling, not a service.
       failing, so a stuck gate reaches a human instead of cycling silently. The
       counter resets naturally when the head moves, because it is scoped to
       `loop_head_sha`.
-- [ ] **The deferral counter is itself fail-closed.** If the ledger cannot be
-      read or does not parse — the same `unavailable` state
-      `reviewer_loop_history_entries_count` already reports as `-1` — the
-      counter cannot prove the sequence is bounded, so the gate must not defer
-      again on an unproven budget. It escalates immediately with
-      `EXPENSIVE_GATE_RESULT=deferral_cap` and
-      `REASON=expensive_gate_deferral_budget_unreadable`, carrying the
-      condition that triggered the gate, and emits
-      `EXPENSIVE_GATE_DEFERRALS=-1` so the unreadable state is distinguishable
-      from a count of zero. Escalating on an unreadable budget is the
-      conservative choice: a human sees the gate immediately, whereas deferring
-      on an unknown budget is precisely the unbounded loop this counter exists
-      to prevent.
+- [ ] **The deferral counter is fail-closed only on a genuinely unreadable
+      ledger — an absent one is the normal first run.** The counter mirrors the
+      three states `reviewer_loop_history_entries_count` already distinguishes,
+      and must not collapse them:
+
+      | Ledger state | Counter | Gate behavior |
+      | --- | --- | --- |
+      | No summary comment, or a body with no history marker at all | `0` | normal — this is every PR's first reviewer-loop run, and escalating here would bypass the bounded deferrals on every PR without prior history |
+      | Marker present and parseable | the occurrence count for this head | normal |
+      | Marker present but no parseable JSON block, schema mismatch, or a persisted `history_status` other than `available` | `-1` | escalate with `EXPENSIVE_GATE_RESULT=deferral_cap` and `EXPENSIVE_GATE_ESCALATION=expensive_gate_deferral_budget_unreadable` |
+
+      Escalating on a genuinely unreadable budget is the conservative choice: a
+      human sees the gate immediately, whereas deferring on an unknown budget is
+      precisely the unbounded loop this counter exists to prevent. Treating an
+      *absent* ledger the same way would invert that, escalating the common case
+      and never exercising the bound. `EXPENSIVE_GATE_DEFERRALS=-1` keeps the
+      unreadable state distinguishable from a count of zero.
 - [ ] **A repository with no local reviewer defers, it does not dispatch.**
       When `LOCAL_AI_CONFIGURED` is `0` there is no current-head local clean
       evidence, and the brief requires `codex-github` to run *only after* that
@@ -430,12 +434,19 @@ reads them against each other and fails on any divergence.
     `reviewer_loop_history_payload_from_existing` — `v1` backward compatibility,
     same contract as #1648's added fields.
 
-19. The deferral budget is unreadable (the ledger is absent, unparseable, or
-    reports the `unavailable` state) → `EXPENSIVE_GATE_RESULT=deferral_cap`,
+19. The deferral budget is genuinely unreadable — the history marker is present
+    but its JSON block is unparseable, its schema does not match, or its
+    persisted `history_status` is not `available` →
+    `EXPENSIVE_GATE_RESULT=deferral_cap`,
     `REASON=expensive_gate_deferral_budget_unreadable`,
     `EXPENSIVE_GATE_DEFERRALS=-1`, and the loop escalates. Without this the
     bounded-deferral guarantee would hold only when the ledger happens to be
     readable, which is not a guarantee.
+19b. The ledger is **absent** — no summary comment yet, or a body with no
+    history marker — → `EXPENSIVE_GATE_DEFERRALS=0` and the gate defers or
+    dispatches normally. This is every PR's first reviewer-loop run; escalating
+    here would bypass the bounded deferrals on every PR without prior history
+    and the bound would never be exercised.
 
 **Files**:
 
@@ -483,9 +494,10 @@ concrete file and line:
 | P10 | Peer-evidence regression: accept any `skipped` peer instead of consulting `reviewer_failed_label_required_for_result` | a scratch copy of condition 2 | scenario 8's `unavailable`, `timeout` and `unauthorized` rows fail, because the gate dispatches with a peer that never produced a verdict; restoring the helper call passes |
 | P6 | Readiness regression: make a defer leave the aggregate result unchanged instead of setting `needs_fixes` | a scratch copy of the gate call site | scenario 3's aggregate assertion fails, and a run in which `codex-github` never executed would satisfy Protocol 92's readiness conditions; restoring the `needs_fixes` aggregate passes |
 | P7 | Unbounded-deferral regression: replace the head-scoped deferral counter with the existing `reviewer_loop_history_entries_count` caps | a scratch copy of the cap check | scenario 13 fails, because repeated `needs_fixes` results on one unchanged head collapse under that function's `unique` bucketing by `head_sha` + `result` and neither cap ever trips; restoring the dedicated counter escalates with `expensive_gate_deferral_cap` |
-| P8 | Unreadable-budget regression: make the ledger read fail, and change the counter to treat the failure as a count of zero | the deferral-budget fixture in `scripts/development-workflow/tests/test-pr-review-loop.sh` | scenario 19 fails, because the gate defers on an unproven budget instead of escalating; restoring the fail-closed branch escalates with `expensive_gate_deferral_budget_unreadable` |
+| P8 | Unreadable-budget regression: seed a malformed ledger and change the counter to treat it as a count of zero | the deferral-budget fixture in `scripts/development-workflow/tests/test-pr-review-loop.sh` | scenario 19 fails, because the gate defers on an unproven budget instead of escalating; restoring the fail-closed branch escalates with `expensive_gate_deferral_budget_unreadable` |
+| P11 | Absent-ledger regression: change the counter to return `-1` for an absent ledger as well as a malformed one | same fixture | scenario 19b fails, because a PR with no prior reviewer-loop history escalates on its first run and the bound is never exercised; restoring the three-state mapping passes |
 
-Record all ten in the implementation PR under a `Planted-Violation Proofs`
+Record all eleven in the implementation PR under a `Planted-Violation Proofs`
 heading, each with the command, the file and line of the planted violation, and
 both outcomes.
 
@@ -515,7 +527,7 @@ by the same sequential block that already writes `platform_result_tokens`.
 | Platform-order fixture | A resolved list declaring `codex-github` first, an already-correct list, and a two-bucket list with `codex-github` on draft and `bugbot` on ready — driving scenarios 6, 6b and 7 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Peer-evidence fixture | One peer per row of scenario 8's table, covering `clean`, the three accepted skip reasons, the three rejected skip reasons, `needs_fixes` and `escalate` | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Unreadable-input mocks | Mock `gh` commands that exit non-zero for the threads query and for the check rollup, driving scenario 12 and proof P3 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
-| Deferral-budget fixtures | Ledger payloads carrying `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS` `expensive_gate.result=deferred` entries at the current head, one fewer, the same count at a different head, and an unparseable payload — driving scenarios 13, 14 and 19 and proofs P7 and P8 | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Deferral-budget fixtures | Ledger payloads carrying `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS` `expensive_gate.result=deferred` entries at the current head, one fewer, the same count at a different head, and an unparseable payload — driving scenarios 13, 14, 19 and 19b and proofs P7, P8 and P11 — including an absent ledger, a malformed one, and a well-formed one | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Composition fixture | A platform list where `codex-github` is both a phase platform and an expensive reviewer, driving scenarios 16 and 17 | inline in `scripts/development-workflow/tests/test-expensive-reviewer-gate.sh` |
 | Legacy ledger payload | A `reviewer_loop_history.v1` entry with no `expensive_gate` object, driving scenario 18 | inline heredoc in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 
@@ -670,10 +682,12 @@ Summary-comment line, illustrative:
    reviewer still precedes every ready-phase platform.
 3. Add `expensive_gate_deferral_count`, reading occurrences of
    `expensive_gate.result == "deferred"` scoped to `expensive_gate.head` from
-   the ledger, and returning `-1` when the ledger is absent, unparseable, or
-   reports the `unavailable` state. **Verify**: scenarios 13, 14 and 19 — the
-   count reflects only the current head, and an unreadable ledger yields `-1`
-   rather than `0`.
+   the ledger, returning `0` for an absent ledger or a body with no history
+   marker, and `-1` only for a marker whose JSON is unparseable, whose schema
+   does not match, or whose persisted `history_status` is not `available` —
+   mirroring `reviewer_loop_history_entries_count`'s own three states.
+   **Verify**: scenarios 13, 14, 19 and 19b — the count reflects only the
+   current head, an absent ledger yields `0`, and a malformed one yields `-1`.
 4. Add `expensive_reviewer_gate` with the conditions in the documented order,
    the full-platform-list comparison for condition 2 delegating acceptance to
    `reviewer_failed_label_required_for_result`, the live-head comparison
@@ -716,7 +730,7 @@ Summary-comment line, illustrative:
     **Verify**: both suites exit 0, and
     `scripts/development-workflow/select-test-suites.sh` selects the new suite
     for a change touching only `pr-review-loop.sh`.
-11. Produce the ten planted-violation proofs (P1–P10) and record them in the PR
+11. Produce the eleven planted-violation proofs (P1–P11) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed.
