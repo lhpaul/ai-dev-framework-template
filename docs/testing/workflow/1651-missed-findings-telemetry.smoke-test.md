@@ -228,9 +228,19 @@ rests on.
 2. Call it in a repository state where `git merge-base --is-ancestor` exits with
    something other than 0 or 1.
 3. Call it with an empty commit argument.
+4. Call it with the **same** 40-character SHA on both sides, naming no object in
+   the repository.
 
-**Expected result**: `undecidable` in all three, mapping to local evidence state
+**Expected result**: `undecidable` in all four, mapping to local evidence state
 `unknown`.
+
+Case 4 is the one where the two obvious orderings disagree. Comparing the
+strings before checking that either commit exists returns `same` — and a
+`clean_same_commit` confirmed miss then rests on a commit nobody has, which is
+the strongest claim this feature makes resting on the weakest evidence it can
+have. Existence is checked first. Step 4's healthy cases and this step's
+mismatched-missing cases pass either way; only the *same* absent SHA on both
+sides separates them. Proof P28.
 
 **Asserted as `undecidable` specifically.** `git merge-base --is-ancestor` exits
 0 for yes, 1 for no, and something else for an error. Folding "not 0" into "no"
@@ -601,10 +611,10 @@ not what Protocol 03 Step 6 asks for.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P27 each record the command, the file and line of the
+2. Confirm P1 through P28 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: twenty-seven proofs in three groups — **sixteen**
+**Expected result**: twenty-eight proofs in three groups — **seventeen**
 overclaiming, **ten** contract, **one** under-recording, per the plan's
 proof-group table.
 

@@ -702,11 +702,26 @@ Not applicable — this repository ships workflow tooling, not a service.
       The longest label carries the *shortest* classification, so the true
       worst case is the middle row, not the pairing of the two field maxima.
 
-      Worst case: `prefix` 78, `suffix` 48, `remainder_max` 13 — 139 of 200,
-      leaving at least **61** characters for paths. The count clamp is the only
-      one of these bounds this plan introduces, and it exists precisely so this
-      sum is closed; without it a pathological count could consume the line.
-      Scenario 13c-ii asserts the clamp and the worst-case line together.
+      The counts are the only fields without a fixed width, and the budget is
+      computed from their **actual** rendered length rather than a reserved
+      guess — over-reserving drops a path that fits, under-reserving overflows
+      the line. Nothing is clamped: AC-14 requires the total and the omitted
+      count to be exact.
+
+      With the fixed parts at 102 characters — literals 42, reviewer 18, short
+      SHA 8, label and classification 34 — what remains for the two counts, the
+      remainder's own copy of the total, and at least zero paths is:
+
+      ```text
+      blocking_digits + 2 × total_digits ≤ 98
+      ```
+
+      A pull request with 9,999,999 findings across 9,999,999 files spends 21
+      of those 98. Exhausting the budget needs a **46-digit** file count, which
+      is not a number a diff can produce and not one the ledger's JSON could
+      hold as an exact integer. So `budget ≥ 0` holds for every reachable
+      record with nothing abbreviated, and AC-13 and AC-14 hold together.
+      Scenario 13c-ii asserts the worst realistic line and the exact rendering.
 
       AC-15 follows from the same bound: twenty records at 200 characters is
       exactly 4,000.
@@ -779,6 +794,11 @@ Not applicable — this repository ships workflow tooling, not a service.
    repository, a `--is-ancestor` exit status other than 0 or 1, and an empty
    commit argument. Asserted as `undecidable` specifically, never as
    `unrelated`.
+5b. **Two identical but missing SHAs** — the same 40-character string, naming no
+    object in the repository — return `undecidable`, not `same`. A shortcut that
+    compares before checking existence produces `clean_same_commit` and a
+    confirmed miss from a commit nobody has, and it is the one input where the
+    two obvious orderings disagree.
 5a. Every branch runs under `set -euo pipefail` without terminating the shell,
     exercised by sourcing the loop with `HARNESS_MODE=1` — which is how the
     script itself runs — and calling the function for each of the five results.
@@ -992,10 +1012,17 @@ reviewer_loop_commit_ancestry() {
   local clean="${1:-}" reviewed="${2:-}" status
 
   [ -n "$clean" ] && [ -n "$reviewed" ] || { printf 'undecidable\n'; return 0; }
-  [ "$clean" = "$reviewed" ] && { printf 'same\n'; return 0; }
 
+  # Existence is checked BEFORE the equality shortcut. Two identical SHAs that
+  # name no object in this repository are not "the same commit" — they are two
+  # copies of a commit nobody has. Shortcutting on equality first would return
+  # `same`, and a `clean_same_commit` confirmed miss would follow from a commit
+  # that does not exist: the strongest claim this feature can make, resting on
+  # the weakest evidence it can have.
   git cat-file -e "${clean}^{commit}" 2>/dev/null || { printf 'undecidable\n'; return 0; }
   git cat-file -e "${reviewed}^{commit}" 2>/dev/null || { printf 'undecidable\n'; return 0; }
+
+  [ "$clean" = "$reviewed" ] && { printf 'same\n'; return 0; }
 
   # `|| status=$?` and not a bare call: the script runs under `set -e`, and the
   # expected status 1 — "not an ancestor", the answer this function exists to
@@ -1085,12 +1112,12 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The twenty-seven proofs fall into
+runs per proof, each citing a concrete file and line. The twenty-eight proofs fall into
 three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Overclaiming | **16** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16, P17, P18, P19, P21, P22, P25 |
+| Overclaiming | **17** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16, P17, P18, P19, P21, P22, P25, P28 |
 | Under-recording | **1** | P20 | evidence discarded at write time that cannot be recovered later | a number asserted on evidence that does not support it |
 | Contract | **10** | P5, P6, P7, P9, P11, P13, P23, P24, P26, P27 | a report, a line, or a stored history that breaks its own stated contract |
 
@@ -1114,6 +1141,7 @@ three groups:
 | P18 | Give `claude-code-action` a head by falling back to the pull request's current head | a scratch copy of that adapter | scenario 13f's `claude-code-action` case fails: an adapter whose only artifact is an issue comment gains a head it never stated, and its rounds start producing records — and confirmed misses — against a commit nobody claimed to have reviewed. The plant is the natural reading of "every adapter emits a head", which is why the table's one no-head row is tested rather than described; restoring the no-head result passes |
 | P22 | Feed the membership check with `printf '%s\\n' "$configured" \| grep -Fxq` | a scratch copy of the guard | scenario 2c fails under `set -o pipefail`: `grep -q` closes its input on the first match, the producer takes SIGPIPE on the remaining 499 lines, the pipeline reports non-zero, and a configured reviewer is classified `not_configured` — removing every round on that repository from the denominator. Scenario 2b still passes on its short lists, which is why 2c specifies both the early match and the length; restoring the here-string passes |
 | P21 | Compose the current round's `platform_results` without its `reviewed_heads[]` | a scratch copy of the call site | scenarios 1a and 1b fail: the same-round local-clean verdict is found, its head is empty, the ancestry is undecidable and the state is `unknown` — so the confirmed miss this feature exists to record becomes an unknown, and the half-move looks correct because the outcome half of the composition works; restoring both arrays passes |
+| P28 | Return `same` on string equality before checking that either commit exists | a scratch copy of `reviewer_loop_commit_ancestry` | scenario 5b fails: two identical SHAs naming no object return `same`, so a confirmed miss is recorded against a commit the repository does not have. Scenario 4's healthy cases and scenario 5's mismatched-missing cases both still pass — equality and existence only disagree when the *same* absent SHA appears on both sides; restoring the existence-first order passes |
 | P25 | Take one `reviewed_head` for the whole round instead of joining per platform | a scratch copy of the record builder | scenario 16b fails: two platforms that reviewed different commits are both attributed to one, so one record names a commit its reviewer never read and a `clean_same_commit` can follow from it. Every single-platform scenario passes, which is all of the others; restoring the per-platform join passes |
 | P27 | Key the evidence-state rows on the raw outcomes `escalate` and `timeout` instead of the normalized `unavailable` | a scratch copy of the mapping | scenario 6's `unavailable` case fails: nothing the selector emits matches those rows, the verdict falls through to `unknown`, and an outage becomes indistinguishable from missing evidence — the distinction AC-6 exists for. Every other row still passes, because only this one was renamed by normalization; restoring the normalized key passes |
 | P26 | Omit `classification` for the eight non-miss states | a scratch copy of the classifier | scenario 16a fails on eight of its ten cases: a record with no key is indistinguishable from one written before the field existed, so a later report cannot tell *judged and not a miss* from *not judged*; restoring `not_a_miss` passes |
@@ -1124,7 +1152,7 @@ three groups:
 | P15 | Substitute `loop_head_sha` for a missing `REVIEWED_HEAD` | a scratch copy of the attribution gate | scenario 13d fails: a round whose external reviewer never stated its head produces a record, and a `clean_same_commit` in it enters the **confirmed** count on the loop's inference about what the reviewer read. AC-11 requires no record when the commit cannot be established, and `clean_same_commit` is defined against the commit the external reviewer *reviewed*. The plant is the tempting one — it makes an empty telemetry produce data — which is why it is planted rather than argued about; restoring the no-fallback rule passes |
 | P6 | Enforce the 200-character bound by truncating the finished line | a scratch copy of the renderer | scenario 13's long-path case fails: truncation removes the tail, which is where the local evidence state and the classification sit, so the line that survives is the one carrying paths and no verdict — exactly inverted from what a reader needs; restoring build-order enforcement passes |
 
-Sixteen proofs plant the overclaiming direction because that is the direction with
+Seventeen proofs plant the overclaiming direction because that is the direction with
 no symptom: every one of them produces a plausible number, and a number is
 believed. P3 is the one to read twice — its plant passes every test written
 against a healthy repository, and only a fixture with a deliberately deleted
@@ -1139,7 +1167,7 @@ object exposes it.
    evidence matches what its plan describes. If it does not, stop and revise
    this plan. **Verify**: the merged commit and the field names it introduced.
 1. Add `reviewer_loop_commit_ancestry`, capturing every `git` status with
-   `|| status=$?`. **Verify**: scenarios 4, 5 and 5a in the new suite,
+   `|| status=$?`. **Verify**: scenarios 4, 5, 5a and 5b in the new suite,
    including the deleted-object fixture and the errexit check.
 1a. Collect `platform_result_records` from the raw `platform_result` and
    `platform_reason` at the per-platform call site, and write it into the entry
@@ -1193,13 +1221,13 @@ object exposes it.
    13a-i, 13c, 13c-i, 13c-ii, 16a, 16b and 15 — the zero-path line, the
    eight-findings-over-three-files case, the three remainder forms, the
    complete stored path list, the boundary case that exposes an unreserved
-   budget, and the worst-case line with both counts clamped.
+   budget, and the worst realistic line with both counts rendered in full.
 8. Update Protocol 93 and the `--help` block, and add
    `changelog.d/1651.added.missed-finding-telemetry.md`. **Verify**: runbook
    **Step 12a**, which reads both documentation surfaces against the
    implementation, and confirm the fragment's name matches
    `<item>.<kind>.<slug>.md` with a bare `1651`.
-10. Produce the twenty-seven planted-violation proofs (P1-P27) and record them in the PR
+10. Produce the twenty-eight planted-violation proofs (P1-P28) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
