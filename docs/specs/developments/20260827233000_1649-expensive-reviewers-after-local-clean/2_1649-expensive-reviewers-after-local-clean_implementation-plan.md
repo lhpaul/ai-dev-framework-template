@@ -862,17 +862,30 @@ Summary-comment line, illustrative:
    **Documentation Updates**. **Verify**: both files describe the same four
    conditions, the same fail-closed rule, and the same override variable name.
 10. Add the unit cases to `test-pr-review-loop.sh` and create
-    `test-expensive-reviewer-gate.sh` with both `# covers:` lines.
-    **Verify**: both suites exit 0, and
+    `test-expensive-reviewer-gate.sh` with both `# covers:` lines, and add the
+    `workflow-lib.sh` `# covers:` line to `test-pr-ci-loop.sh`.
+    **Verify**: all **three** suites exit 0 —
+    `test-pr-review-loop.sh`, `test-expensive-reviewer-gate.sh` and
+    `test-pr-ci-loop.sh`, the last of which carries scenario 20 and is the only
+    check that the classification relocation preserved behavior — and
     `scripts/development-workflow/select-test-suites.sh` selects the new suite
-    for a change touching only `pr-review-loop.sh`.
+    for a change touching only `pr-review-loop.sh` and selects
+    `test-pr-ci-loop.sh` for a change touching only `workflow-lib.sh`.
 11. Produce the fifteen planted-violation proofs (P1–P15) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed.
-12. Run `shellcheck` on the changed script and `markdownlint-cli2` on the
-    changed protocol document, this plan, and the runbook. **Verify**: both
-    tools exit 0.
+12. Run `shellcheck` on **all three** changed shell files —
+    `scripts/development-workflow/pr-review-loop.sh`,
+    `scripts/development-workflow/pr-ci-loop.sh` (the relocation removes a
+    function from it) and `scripts/development-workflow/workflow-lib.sh` (it
+    gains that function) — and `markdownlint-cli2` on **both** changed
+    documentation targets,
+    `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
+    and `docs/workflow/development-workflow/integrations/codex-github.md`, plus
+    this plan and the runbook. **Verify**: both tools exit 0 on every file
+    named here; the enumeration is explicit so a changed file cannot be omitted
+    by reading "the changed script" narrowly.
 13. Add a changelog fragment
     `changelog.d/1649.changed.expensive-reviewers-after-local-clean.md`
     containing exactly:
