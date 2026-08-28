@@ -142,24 +142,32 @@ Not applicable — this repository ships workflow tooling, not a service.
 
       ```text
       "platform_results": [
-        {"platform": "local-ai-reviewer", "result": "clean",       "reviewed_head": "<40-hex>"},
-        {"platform": "codex-github",      "result": "needs_fixes", "reviewed_head": "<40-hex>"}
+        {"platform": "local-ai-reviewer", "result": "clean",
+         "raw_result": "clean",   "raw_reason": "",            "reviewed_head": "<40-hex>"},
+        {"platform": "codex-github",      "result": "unavailable",
+         "raw_result": "skipped", "raw_reason": "unavailable",  "reviewed_head": "<40-hex>"}
       ]
       ```
+
+      **`result` is the normalized outcome; `raw_result` and `raw_reason` are
+      what the companion script said.** Normalization happens **once**, here at
+      collection time, and every later reader — the selector, the state
+      derivation, a future report — reads `result` and never re-derives it. The
+      raw pair is kept beside it because a normalization that discards its input
+      cannot be audited when a reader disagrees with it.
 
       `reviewed_head` is #1648's per-reviewer evidence, carried here so one
       array answers both questions the derivation asks. `reason` is carried
       because two spec states are distinguished by it and by nothing else.
 
-      The raw pair maps to the spec's outcomes:
+      The normalization applied at collection time:
 
       | `result` | `reason` | Outcome recorded |
       | --- | --- | --- |
       | `clean` | — | `clean` |
       | `needs_fixes` | — | `needs_fixes` |
       | `skipped` | `unavailable` | `unavailable` |
-      | `skipped` | `not_configured`, and the configured list **omits** the reviewer | `not_configured` |
-      | `skipped` | `not_configured`, and the configured list **contains** it | `unavailable` — configured, did not run |
+      | `skipped` | `not_configured` | `not_configured` |
       | `skipped` | anything else | `skipped` |
       | `escalate` | — | `unavailable` — a reviewer that could not complete |
       | anything else | — | `unknown` |
@@ -168,6 +176,13 @@ Not applicable — this repository ships workflow tooling, not a service.
       stored rather than dropped: a reviewer that was deliberately skipped and
       one that timed out both arrive as `RESULT=skipped`, and the spec keeps
       them apart.
+
+      **One reconciliation happens later, and only one.** Collection cannot see
+      the configured-platform list, so a round reporting
+      `skipped/not_configured` normalizes to `not_configured` here and the
+      selector — which does have the list — upgrades it. That is the single
+      exception to "normalize once", and it exists because the two values answer
+      different questions and only the selector holds both.
 
       **When the round says `skipped/not_configured` but the configured list
       contains the reviewer, the state is `unavailable`, not `not_configured`.**
@@ -204,7 +219,11 @@ Not applicable — this repository ships workflow tooling, not a service.
 
       It scans `entries[]` in **descending iteration order** and returns the
       first entry whose `platform_results` names the local reviewer, taking
-      **that platform's** `result` — never the entry's aggregate `result`.
+      **that platform's** normalized `result` — never the entry's aggregate
+      `result`, and never re-deriving the outcome from `raw_result` and
+      `raw_reason`, which are there for audit rather than for reading. Its only
+      transformation is the single reconciliation above: `not_configured`
+      becomes `unavailable` when the configured list contains the reviewer.
 
       **The current round is part of that scan, and it is the case AC-1 is
       about.** A local reviewer that reports clean and an external reviewer that
@@ -668,7 +687,7 @@ reviewer_loop_local_latest_verdict() {
         | . as $entry
         | ((.platform_results // [])[]
            | select(.platform == "local-ai-reviewer")
-           | {outcome: (.result // "unknown"),
+           | {outcome: (.result // "unknown"),   # normalized at collection time
               head_sha: (.reviewed_head // $entry.head_sha // ""),
               iteration: $entry.iteration})
       ]
