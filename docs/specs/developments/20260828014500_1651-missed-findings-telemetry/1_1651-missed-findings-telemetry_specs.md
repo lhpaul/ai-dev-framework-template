@@ -21,14 +21,14 @@ under **Out of Scope (MVP)** with a deferral note. No objective is dropped.
 
 | # | Objective (from #1651) | Where it is satisfied |
 | --- | --- | --- |
-| 1 | *Problem* — quantify whether the local reviewer reduces external rounds, by tracking what external reviewers found after a local clean result | Use Cases 1-4; the counting rule and the record-every-qualifying-round rule in Business Rules; the Decision Matrix rows 4-7; AC-1 through AC-7 |
+| 1 | *Problem* — quantify whether the local reviewer reduces external rounds, by tracking what external reviewers found after a local clean result | Use Cases 1-5; the counting rule and the record-every-qualifying-round rule in Business Rules; the Decision Matrix rows 4-7; AC-1 through AC-7 |
 | 2 | *Outcome* — the reviewer-loop history records missed-by-local findings when an external reviewer reports blockers after a local clean result | Use Case 1; AC-1 through AC-3; Operational Visibility, reviewer-loop history |
 | 3 | *Scope* — capture the reviewer | AC-1; Use Case 1, Information shown |
 | 4 | *Scope* — capture the head commit | AC-1; the attribution rule in Business Rules; AC-11 for the case where it cannot be established |
 | 5 | *Scope* — capture the finding count | AC-1 |
 | 6 | *Scope* — capture the paths | AC-1; AC-14 bounds how many are shown |
-| 7 | *Scope* — capture whether the local reviewer was clean on the same head or an ancestor | AC-1 through AC-4; the four clean-ancestry states, which Business Rules forbid merging |
-| 8 | *Scope* — keep the record compact enough for PR comments | AC-13 through AC-15, with character and path bounds rather than an adjective; Use Case 4, Considerations |
+| 7 | *Scope* — capture whether the local reviewer was clean on the same head or an ancestor | AC-1 through AC-4 and AC-17; Use Case 3; the four clean-verdict states — same, ancestor, descendant, and unrelated — which Business Rules forbid merging |
+| 8 | *Scope* — keep the record compact enough for PR comments | AC-13, AC-14, AC-14a and AC-15, with character and path bounds rather than an adjective, and an explicit precedence rule between them; Use Case 5, Considerations |
 | 9 | *Scope* — support later effectiveness reporting | AC-16 (records readable in full without re-running a reviewer); the report itself is **deferred** to Out of Scope item 1 (#1657) |
 
 ---
@@ -94,7 +94,34 @@ under **Out of Scope (MVP)** with a deferral note. No objective is dropped.
 
 ---
 
-### Use Case 3: The local evidence cannot be established
+### Use Case 3: The local reviewer was clean, but not on the code that was reviewed
+
+**Actor**: The reviewer loop.
+**Preconditions**: An external reviewer has reported blocking findings, and the local reviewer's most recent verdict was clean — but on a commit that is a descendant of, or has no ancestry relationship to, the commit the external reviewer reviewed.
+
+**Steps**:
+
+1. The external reviewer returns a result carrying blocking findings.
+2. The loop looks back at the local reviewer's most recent verdict and finds it clean.
+3. It compares that verdict's commit with the one the external reviewer reviewed, and finds the local verdict describes newer code, or code on a different line of history.
+4. It writes a record naming the relationship, and does not count the findings as missed.
+
+**Postconditions**: The history records that an external reviewer found something and that the local clean verdict did not cover the reviewed code. The effectiveness numbers are unaffected.
+
+**Information shown**:
+
+- The same reviewer, commit, count and paths as Use Case 1.
+- The relationship between the two commits, stated as `clean_later_commit` or `clean_unrelated_commit` rather than collapsed into a generic "clean".
+
+**Considerations**:
+
+- The descendant case is ordinary: the local reviewer runs on each new push, so it routinely holds a clean verdict on newer code than a slower external reviewer is still reporting on. Counting it would attribute a miss to a reviewer that never saw the code in question.
+- The unrelated case arises after a force-push rewrites history. It is rarer, and it is separated rather than folded into the descendant case because the two say different things about what happened to the branch.
+- Both states are recorded rather than skipped, because they belong in the denominator. A pull request where the local reviewer is simply running ahead of the external one is not evidence of a miss, but it is evidence the loop ran.
+
+---
+
+### Use Case 4: The local evidence cannot be established
 
 **Actor**: The reviewer loop.
 **Preconditions**: An external reviewer has reported blocking findings, and the loop cannot determine what the local reviewer's most recent verdict was — the history is unreadable, or it predates the point where the loop began recording the evidence this feature reads.
@@ -119,7 +146,7 @@ under **Out of Scope (MVP)** with a deferral note. No objective is dropped.
 
 ---
 
-### Use Case 4: A human or a later report reads the accumulated records
+### Use Case 5: A human or a later report reads the accumulated records
 
 **Actor**: A maintainer reading the pull request, or the reviewer-effectiveness report built on this data.
 **Preconditions**: The pull request has one or more missed-finding records in its reviewer-loop history.
@@ -145,7 +172,7 @@ under **Out of Scope (MVP)** with a deferral note. No objective is dropped.
 ## Business Rules
 
 - A finding counts as **missed by the local reviewer** only when the local reviewer's most recent verdict was clean **and** covered the commit the external reviewer reviewed or one of its ancestors — states `clean_same_commit` and `clean_earlier_commit`. Every other state does not count. The counting rule enumerates the states that *do* count rather than the states that do not, so a state introduced later is excluded until someone deliberately includes it.
-- The local evidence state is recorded on every external round that reports blocking findings, whether or not it counts as a miss. A record that only appeared for confirmed misses would make the denominator unknowable, and a rate needs both halves.
+- The local evidence state is recorded on every external round that reports blocking findings **and whose reviewed commit can be established**, whether or not it counts as a miss. A record that only appeared for confirmed misses would make the denominator unknowable, and a rate needs both halves. The single exception is the unattributable-commit case below, which produces no record at all — a record that cannot name the commit it describes would corrupt the denominator rather than complete it.
 - A clean local verdict is classified by its ancestry relationship to the commit the external reviewer reviewed — same, ancestor, descendant, or unrelated — and the four are recorded as distinct states that are never merged. Only same and ancestor count. A descendant clean means the local reviewer cleared newer code than the external reviewer looked at, and an unrelated clean means a force-push severed the relationship; neither is evidence that the local reviewer saw what was found.
 - A local reviewer that is **configured but has not yet produced a verdict** is recorded distinctly from one that is **not configured at all**. The first describes a pull request early in its life, the second a repository that will never produce local evidence, and summing them would make the two indistinguishable in the numbers.
 - Only **blocking** external findings qualify. Advisory or suggestion-level findings do not create a record, because the local reviewer is not expected to surface them and counting them would inflate the miss rate.
@@ -225,12 +252,12 @@ and a rate needs both halves.
 
 ## Acceptance Criteria
 
-- [ ] **AC-1.** When an external reviewer reports blocking findings on a commit for which the local reviewer's most recent verdict was clean on that same commit, the reviewer-loop history gains a record naming that reviewer, that commit, the number of blocking findings, the files they touch, and the local evidence state `clean_same_commit`.
-- [ ] **AC-2.** When the local reviewer's most recent clean verdict was on an ancestor of the commit the external reviewer reviewed, the record's local evidence state is `clean_earlier_commit`, and it is distinguishable from `clean_same_commit` without inspecting commits by hand.
+- [ ] **AC-1.** When an external reviewer reports blocking findings on a commit for which the local reviewer's most recent verdict was clean on that same commit, the reviewer-loop history gains a record naming that reviewer, that commit, the number of blocking findings, the files they touch, and the local evidence state `clean_same_commit`, **and that record counts as missed**.
+- [ ] **AC-2.** When the local reviewer's most recent clean verdict was on an ancestor of the commit the external reviewer reviewed, the record's local evidence state is `clean_earlier_commit`, it is distinguishable from `clean_same_commit` without inspecting commits by hand, **and it counts as missed**.
 - [ ] **AC-3.** When the local reviewer's most recent clean verdict was on a descendant of the commit the external reviewer reviewed, the state is `clean_later_commit` and it does not count as missed.
 - [ ] **AC-4.** When the local reviewer's most recent clean verdict was on a commit with no ancestry relationship to the one the external reviewer reviewed, the state is `clean_unrelated_commit` and it does not count as missed.
 - [ ] **AC-5.** When the local reviewer's most recent verdict reported findings, the record is still written and its local evidence state is `not_clean`, and it does not count as missed.
-- [ ] **AC-6.** When the local reviewer was skipped, was unavailable, is configured but has not yet produced a verdict, or is not configured at all, the record is written with the corresponding state, and the four are distinguishable from one another and from `not_clean`.
+- [ ] **AC-6.** When the local reviewer was skipped, was unavailable, is configured but has not yet produced a verdict, or is not configured at all, the record is written with the corresponding state, the four are distinguishable from one another and from `not_clean`, **and none of the four counts as missed**.
 - [ ] **AC-7.** When the local reviewer's verdict cannot be established from the history, the record is written with state `unknown` and does not count as missed.
 - [ ] **AC-8.** Advisory or suggestion-level external findings produce no missed-finding record.
 - [ ] **AC-9.** Findings reported by the local reviewer itself produce no missed-finding record.
@@ -238,9 +265,11 @@ and a rate needs both halves.
 - [ ] **AC-11.** When the commit an external reviewer reviewed cannot be established, no record is written and the loop reports the reason.
 - [ ] **AC-12.** A pull request carrying missed-finding records reaches exactly the same review outcome, readiness label, and tracker status it would reach without them.
 - [ ] **AC-13.** Each record adds exactly one line to the reviewer-loop summary, and that line is at most 200 characters.
-- [ ] **AC-14.** A record's summary line names at most three file paths; when the findings touch more than three files, the line names three and states how many more there are.
+- [ ] **AC-14.** A record's summary line names **at most three** file paths and **always states the total number of files** the findings touch. When the findings touch more than the number of paths named, the line says how many more there are.
+- [ ] **AC-14a.** The 200-character bound in AC-13 takes precedence over the path count in AC-14. When naming three paths would exceed it, the line names as many as fit — down to none — and the total file count is still stated. A line that reaches the bound with zero paths named is a valid line, not a failure.
 - [ ] **AC-15.** A pull request carrying twenty records adds at most twenty lines and 4,000 characters to the reviewer-loop summary, whatever the number of findings or the length of their paths.
 - [ ] **AC-16.** The records for a pull request can be read back in full by a later report without re-running any reviewer.
+- [ ] **AC-17.** Exactly two of the ten local evidence states count as missed. A record in any of the other eight states, including `unknown`, is excluded from the missed count while remaining present in the history.
 
 ---
 
