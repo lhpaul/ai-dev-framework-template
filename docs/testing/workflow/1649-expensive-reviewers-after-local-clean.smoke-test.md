@@ -172,11 +172,14 @@ aggregate.
 
 5. Make the ledger read fail, or seed an unparseable payload, and run again.
 
-**Expected result**: step 1 gives `EXPENSIVE_GATE_RESULT=deferral_cap` with the
-loop aggregate `escalate` / `expensive_gate_deferral_cap`, still naming the
-condition that kept failing. Step 2 defers normally. Step 3 defers normally,
+**Expected result**: step 1 gives `EXPENSIVE_GATE_RESULT=deferral_cap` with
+`EXPENSIVE_GATE_ESCALATION=expensive_gate_deferral_cap` and the loop aggregate
+`escalate` / `expensive_gate_deferral_cap`, still naming the condition that kept
+failing. `EXPENSIVE_GATE_ESCALATION` is what distinguishes the two escalation
+causes without re-deriving them from the count. Step 2 defers normally. Step 3 defers normally,
 because the counter is head-scoped and a new push starts the budget over.
-Step 5 also escalates, with
+Step 5 also escalates, with `EXPENSIVE_GATE_RESULT=deferral_cap`,
+`EXPENSIVE_GATE_ESCALATION=expensive_gate_deferral_budget_unreadable`,
 `REASON=expensive_gate_deferral_budget_unreadable` and
 `EXPENSIVE_GATE_DEFERRALS=-1` — an unreadable budget cannot prove the sequence
 is bounded, so deferring again would reopen the unbounded loop the counter

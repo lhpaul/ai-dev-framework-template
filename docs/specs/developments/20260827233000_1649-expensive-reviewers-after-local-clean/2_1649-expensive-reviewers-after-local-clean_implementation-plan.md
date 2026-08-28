@@ -441,7 +441,7 @@ by the same sequential block that already writes `platform_result_tokens`.
 | Gate condition fixture | A table-driven set of the conditions with each one independently unmet, driving scenarios 2–5 and 8–11 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Platform-order fixture | A resolved list declaring `codex-github` first, and an already-correct list, driving scenarios 6 and 7 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Unreadable-input mocks | Mock `gh` commands that exit non-zero for the threads query and for the check rollup, driving scenario 12 and proof P3 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
-| Deferral-budget fixtures | Ledger payloads carrying `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS` `expensive_gate.result=deferred` entries at the current head, one fewer, the same count at a different head, and an unparseable payload — driving scenarios 13, 14 and 19 and proof P7 | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Deferral-budget fixtures | Ledger payloads carrying `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS` `expensive_gate.result=deferred` entries at the current head, one fewer, the same count at a different head, and an unparseable payload — driving scenarios 13, 14 and 19 and proofs P7 and P8 | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Composition fixture | A platform list where `codex-github` is both a phase platform and an expensive reviewer, driving scenarios 16 and 17 | inline in `scripts/development-workflow/tests/test-expensive-reviewer-gate.sh` |
 | Legacy ledger payload | A `reviewer_loop_history.v1` entry with no `expensive_gate` object, driving scenario 18 | inline heredoc in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 
@@ -478,11 +478,11 @@ with mock `gh` commands and require no network access.
 | A consumer that never configures a local reviewer is blocked forever | Med | High — downstream template consumers would stall | The brief requires fail-closed on missing local evidence, so the gate defers rather than inventing an implicit dispatch. The release valves are explicit: the deferral cap escalates to a human after a bounded number of tries, and `PR_REVIEW_LOOP_FORCE_EXPENSIVE_REVIEWERS` covers a one-off run. Scenario 5 pins the defer and scenario 13 the escalation |
 | The gate is defined but never consulted, leaving behavior unchanged | Med | High — the item would appear complete while changing nothing | The call site is in the per-platform block immediately before `run_platform_review`, and proof P4 deletes that call outright and requires scenario 3 to fail — a gate that is not wired in cannot pass its own proof |
 | Fail-closed on unreadable evidence turns a transient API blip into a permanent defer | Med | Med | A defer is per-invocation, not sticky: the `needs_fixes` aggregate makes Protocol 91 re-run Step 7, which re-evaluates from scratch. The bound is the gate's own head-scoped deferral counter, not the existing dual cycle caps — those cannot see a deferral loop, as the Verification Log records — and an unreadable budget escalates rather than deferring again. The gate adds no retry path of its own, so it cannot loop |
-| The gate contradicts the existing phase mechanism | Med | High — two gates disagreeing on whether a platform runs is worse than either alone | Composition is specified explicitly (phase gate first, then this gate; `--pre-after-clean-only` filters before both) and pinned by scenarios 13 and 14, including the no-phantom-telemetry case |
+| The gate contradicts the existing phase mechanism | Med | High — two gates disagreeing on whether a platform runs is worse than either alone | Composition is specified explicitly (phase gate first, then this gate; `--pre-after-clean-only` filters before both) and pinned by scenarios 16 and 17, including the no-phantom-telemetry case |
 | Implementation starts before #1648 lands and wires the gate to keys that do not exist | Med | High — the gate would read unset variables and hold everything, or be written against a guessed contract | Recorded as a Conflict in the Cross-Cutting check and as Implementation Order step 0, which is a hard stop that verifies #1648 is merged into the approved base before any edit |
-| A reviewer's own check gates that reviewer | Low | Med — `codex-github` would wait on a check it is responsible for producing | Condition 4 evaluates non-reviewer checks only, reusing the reviewer/baseline classification `pr-ci-loop.sh` already emits rather than a new one; scenario 9's third case pins it |
+| A reviewer's own check gates that reviewer | Low | Med — `codex-github` would wait on a check it is responsible for producing | Condition 4 evaluates non-reviewer checks only, reusing the reviewer/baseline classification `pr-ci-loop.sh` already emits rather than a new one; scenario 10's third case pins it |
 | Platform ordering decides whether the gate is effective | Med | High — a config listing `codex-github` first would either dispatch it before the cheap reviewers ran, or defer at the same point forever | Detection is not enough, so the loop reorders: `reorder_expensive_reviewers_last` moves expensive platforms to the end before iteration, making the gate's precondition reachable; condition 2 still compares against the full resolved list, so `peer_reviewer_not_run` fires as a defensive assertion if the reorder did not happen. Scenarios 6 and 7 and proof P5 pin both halves |
-| Thread and CI evidence describes a newer commit than the reviewer verdicts | Med | High — dispatch would be authorized on an inconsistent mix of two heads | Conditions 3 and 4 require the live head returned with their queries to equal `loop_head_sha`, and defer with `evidence_head_moved` otherwise; scenario 10 pins it |
+| Thread and CI evidence describes a newer commit than the reviewer verdicts | Med | High — dispatch would be authorized on an inconsistent mix of two heads | Conditions 3 and 4 require the live head returned with their queries to equal `loop_head_sha`, and defer with `evidence_head_moved` otherwise; scenario 11 pins it |
 
 ---
 
@@ -537,9 +537,17 @@ expensive_reviewer_gate() {
       print_kv EXPENSIVE_GATE_RESULT forced
       return 0
     fi
+    if [ "$deferrals" -eq -1 ]; then
+      # The budget is unreadable, so the sequence cannot be proven bounded.
+      # Escalate rather than defer on an unknown budget.
+      print_kv EXPENSIVE_GATE_RESULT deferral_cap
+      print_kv EXPENSIVE_GATE_ESCALATION expensive_gate_deferral_budget_unreadable
+      return 1
+    fi
     if [ "$deferrals" -ge "${PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS:-3}" ]; then
       # Stop cycling; escalate so a human sees which condition kept failing.
       print_kv EXPENSIVE_GATE_RESULT deferral_cap
+      print_kv EXPENSIVE_GATE_ESCALATION expensive_gate_deferral_cap
       return 1
     fi
     print_kv EXPENSIVE_GATE_RESULT deferred
