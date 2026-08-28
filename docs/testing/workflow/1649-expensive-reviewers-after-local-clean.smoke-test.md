@@ -70,7 +70,9 @@ the item's intent.
 
 **Expected result**: `EXPENSIVE_GATE_RESULT=dispatched`, an empty
 `EXPENSIVE_GATE_REASON`, `EXPENSIVE_GATE_HEAD` equal to the run's
-`loop_head_sha`, and `run_platform_review` called once for `codex-github`.
+`loop_head_sha`, **no** `EXPENSIVE_GATE_ESCALATION` key at all — it appears only
+on a `deferral_cap` result — and `run_platform_review` called once for
+`codex-github`.
 
 ### Step 3: Each unmet condition defers with one named reason
 

@@ -228,16 +228,21 @@ Not applicable — this repository ships workflow tooling, not a service.
       deferred — a forced run that later wastes reviewer cycles must be
       traceable to the condition that was overridden. A forced run does not set
       the `needs_fixes` aggregate: the human took the decision explicitly.
-- [ ] Emit gate telemetry on the loop's stdout contract, per expensive platform:
-      `EXPENSIVE_GATE_PLATFORM`, `EXPENSIVE_GATE_RESULT`
-      (`dispatched` | `deferred` | `forced` | `deferral_cap`),
-      `EXPENSIVE_GATE_REASON` (the unmet-condition reason; empty when
-      `dispatched`), `EXPENSIVE_GATE_HEAD` (the `loop_head_sha` the gate
-      evaluated), and `EXPENSIVE_GATE_DEFERRALS` (how many deferrals the ledger
-      already records for this head, so the distance to the cap is visible
-      before it trips). `EXPENSIVE_REVIEWERS_REORDERED` is emitted once per run,
-      not per platform. All values stay inside the `[A-Za-z0-9:_-]` token charset the
-      Protocol 91 carry-forward snippet admits.
+- [ ] Emit gate telemetry on the loop's stdout contract, per expensive
+      platform:
+
+      | Key | Values | Emitted |
+      | --- | --- | --- |
+      | `EXPENSIVE_GATE_PLATFORM` | the platform name | always |
+      | `EXPENSIVE_GATE_RESULT` | `dispatched` \| `deferred` \| `forced` \| `deferral_cap` | always |
+      | `EXPENSIVE_GATE_REASON` | the unmet-condition reason; empty when `dispatched` | always |
+      | `EXPENSIVE_GATE_HEAD` | the `loop_head_sha` the gate evaluated | always |
+      | `EXPENSIVE_GATE_DEFERRALS` | deferrals the ledger records for this head, so the distance to the cap is visible before it trips; `-1` when the ledger could not be read, matching the existing `reviewer_loop_history_entries_count` convention | always |
+      | `EXPENSIVE_GATE_ESCALATION` | `expensive_gate_deferral_cap` \| `expensive_gate_deferral_budget_unreadable` | **only** when `EXPENSIVE_GATE_RESULT` is `deferral_cap`; absent otherwise, so its presence is itself the escalation signal and the two causes never have to be re-derived from the count |
+
+      `EXPENSIVE_REVIEWERS_REORDERED` is emitted once per run, not per platform.
+      All values stay inside the `[A-Za-z0-9:_-]` token charset the Protocol 91
+      carry-forward snippet admits.
 - [ ] Record the gate outcome in the reviewer-loop summary comment as an
       `**Expensive reviewer gate:**` line, and in the `reviewer_loop_history.v1`
       entry as an `expensive_gate` object (`platform`, `result`, `reason`,
@@ -246,7 +251,10 @@ Not applicable — this repository ships workflow tooling, not a service.
       `reviewed_heads`.
 - [ ] Document the gate in the `--help` usage block: its conditions and their
       evaluation order, its fail-closed rule, the `deferred` aggregate
-      behavior, the bounded deferral counter and its escalation, the
+      behavior, the bounded deferral counter with both of its escalation values
+      (`expensive_gate_deferral_cap` and
+      `expensive_gate_deferral_budget_unreadable`) and the fact that
+      `EXPENSIVE_GATE_ESCALATION` appears only on a `deferral_cap` result, the
       reordering of expensive reviewers to the end of the platform list, and
       the override variable.
 
@@ -456,9 +464,11 @@ with mock `gh` commands and require no network access.
       — document the gate: its conditions and evaluation order, the
       order-independence of condition 2, the head binding of conditions 3 and 4,
       the fail-closed rule, the `deferred` outcome setting the aggregate to
-      `needs_fixes` so readiness is withheld and Step 7 re-runs, the
-      bounded deferral counter and its escalation, the reordering of expensive
-      reviewers to the end of the platform list, and the override variable.
+      `needs_fixes` so readiness is withheld and Step 7 re-runs, the bounded
+      deferral counter with both of its escalation values and the
+      `deferral_cap`-only emission of `EXPENSIVE_GATE_ESCALATION`, the
+      reordering of expensive reviewers to the end of the platform list, and the
+      override variable.
 - [ ] `docs/workflow/development-workflow/integrations/codex-github.md` — add a
       section describing the gate, its conditions, and the override, so the
       gate is discoverable from the reviewer's own integration page rather than
@@ -608,12 +618,14 @@ Summary-comment line, illustrative:
 6. Add the override branch, confirm the reason survives it, and confirm a
    `forced` result does **not** set the `needs_fixes` aggregate. **Verify**:
    scenario 15.
-7. Emit the `EXPENSIVE_GATE_*` keys and `EXPENSIVE_REVIEWERS_REORDERED`, and
-   document them in `--help`.
+7. Emit the `EXPENSIVE_GATE_*` keys — including `EXPENSIVE_GATE_ESCALATION`,
+   which is emitted only on a `deferral_cap` result — and
+   `EXPENSIVE_REVIEWERS_REORDERED`, and document them in `--help`.
    **Verify**: run `pr-review-loop.sh --help` and confirm the gate, its
    conditions, the fail-closed rule, the `deferred` aggregate behavior, the
-   reordering, `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS`, and the override
-   variable are described.
+   reordering, `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS`,
+   `EXPENSIVE_GATE_ESCALATION` with both of its values and its
+   `deferral_cap`-only emission, and the override variable are described.
 8. Add the summary-comment line and the `expensive_gate` ledger object
    (`platform`, `result`, `reason`, `head`). **Verify**: build an entry in the
    harness and confirm the object shape, that `expensive_gate_deferral_count`
