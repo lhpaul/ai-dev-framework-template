@@ -21,14 +21,14 @@ under **Out of Scope (MVP)** with a deferral note. No objective is dropped.
 
 | # | Objective (from #1651) | Where it is satisfied |
 | --- | --- | --- |
-| 1 | *Problem* — quantify whether the local reviewer reduces external rounds, by tracking what external reviewers found after a local clean result | Use Cases 1-5; the counting rule and the record-every-qualifying-round rule in Business Rules; the Decision Matrix rows 4-7; AC-1 through AC-7 |
+| 1 | *Problem* — quantify whether the local reviewer reduces external rounds, by tracking what external reviewers found after a local clean result | Use Cases 1-6; the counting rule and the record-every-qualifying-round rule in Business Rules; the Decision Matrix rows 4-7; AC-1 through AC-7 |
 | 2 | *Outcome* — the reviewer-loop history records missed-by-local findings when an external reviewer reports blockers after a local clean result | Use Case 1; AC-1 through AC-3; Operational Visibility, reviewer-loop history |
 | 3 | *Scope* — capture the reviewer | AC-1; Use Case 1, Information shown |
 | 4 | *Scope* — capture the head commit | AC-1; the attribution rule in Business Rules; AC-11 for the case where it cannot be established |
 | 5 | *Scope* — capture the finding count | AC-1 |
 | 6 | *Scope* — capture the paths | AC-1; AC-14 bounds how many are shown |
 | 7 | *Scope* — capture whether the local reviewer was clean on the same head or an ancestor | AC-1 through AC-4 and AC-17; Use Case 3; the four clean-verdict states — same, ancestor, descendant, and unrelated — which Business Rules forbid merging |
-| 8 | *Scope* — keep the record compact enough for PR comments | AC-13, AC-14, AC-14a and AC-15, with character and path bounds rather than an adjective, and an explicit precedence rule between them; Use Case 5, Considerations |
+| 8 | *Scope* — keep the record compact enough for PR comments | AC-13, AC-14, AC-14a and AC-15, with character and path bounds rather than an adjective, and an explicit precedence rule between them; Use Case 6, Considerations |
 | 9 | *Scope* — support later effectiveness reporting | AC-16 (records readable in full without re-running a reviewer); the report itself is **deferred** to Out of Scope item 1 (#1657) |
 
 ---
@@ -124,12 +124,12 @@ under **Out of Scope (MVP)** with a deferral note. No objective is dropped.
 ### Use Case 4: The local evidence cannot be established
 
 **Actor**: The reviewer loop.
-**Preconditions**: An external reviewer has reported blocking findings, and the loop cannot determine what the local reviewer's most recent verdict was — the history is unreadable, or it predates the point where the loop began recording the evidence this feature reads.
+**Preconditions**: An external reviewer has reported blocking findings. The reviewer-loop history is readable and can be appended to, but it does not establish what the local reviewer's most recent verdict was — it predates the point where the loop began recording the evidence this feature reads, or the relevant entries are absent.
 
 **Steps**:
 
 1. The external reviewer returns a result carrying blocking findings.
-2. The loop attempts to establish the local reviewer's most recent verdict and fails.
+2. The loop reads the history successfully but finds nothing that establishes the local reviewer's most recent verdict.
 3. It writes a record whose local evidence state is `unknown`.
 
 **Postconditions**: The history records the external findings and records that the local evidence could not be established. The findings are **not** counted as missed.
@@ -143,10 +143,41 @@ under **Out of Scope (MVP)** with a deferral note. No objective is dropped.
 
 - Not counting is the conservative direction here, and it is deliberate. A miss recorded on absent evidence would overstate the local reviewer's failures, and the entire value of this record is that its numbers can be trusted.
 - `unknown` must be distinguishable from "the local reviewer ran and found nothing" and from "the record is missing". A reader who cannot tell those apart cannot use the data.
+- `unknown` describes **missing evidence inside a healthy history**. It is not the state for a history that could not be read or written at all — that case cannot produce a record of any kind, and is Use Case 5.
 
 ---
 
-### Use Case 5: A human or a later report reads the accumulated records
+### Use Case 5: The history itself cannot be read or written
+
+**Actor**: The reviewer loop.
+**Preconditions**: An external reviewer has reported blocking findings, and the reviewer-loop history surface on the pull request is unavailable — it cannot be read, it does not parse, or it cannot be appended to.
+
+**Steps**:
+
+1. The external reviewer returns a result carrying blocking findings.
+2. The loop attempts to read or append to the reviewer-loop history and fails.
+3. It writes **no** missed-finding record, and does not attempt to reconstruct or replace the history.
+4. It reports that telemetry could not be recorded for this round, and why.
+
+**Postconditions**: No record exists for this round. The existing history, whatever state it is in, is left exactly as it was. The review outcome is unchanged — the external findings are handled exactly as they are today.
+
+**Information shown**:
+
+- That missed-finding telemetry was not recorded for this round, and the reason.
+
+**Actions available**:
+
+- None from the loop. A human may repair the history surface; the loop does not.
+
+**Considerations**:
+
+- This is deliberately distinct from Use Case 4. There, the history is healthy and simply does not say what the local reviewer concluded, so an `unknown` record is both possible and useful. Here nothing can be written at all, so `unknown` is not available as an outcome — a state that describes evidence cannot be recorded when the place it would be recorded is the thing that failed.
+- The loop must not append to, rebuild, or overwrite a history it could not read. A partial or reconstructed history would silently discard prior evidence, which is worse than a gap: a gap is visible, and a rewritten history looks authoritative.
+- The omission must be visible in the round's output rather than silent. Telemetry that can disappear without anyone noticing cannot be trusted later, which is the same reason the `unknown` state exists at all.
+
+---
+
+### Use Case 6: A human or a later report reads the accumulated records
 
 **Actor**: A maintainer reading the pull request, or the reviewer-effectiveness report built on this data.
 **Preconditions**: The pull request has one or more missed-finding records in its reviewer-loop history.
@@ -200,7 +231,7 @@ recorded as `unknown`.
 | `unavailable` | Unavailable | The local reviewer was configured but could not run — a timeout, an outage, or a credentials failure. | No |
 | `not_yet_run` | Not yet run | The local reviewer is configured and has not yet produced any verdict on this pull request. | No |
 | `not_configured` | Not configured | The local reviewer is not configured for this repository, so it will never run. | No |
-| `unknown` | Unknown | The local reviewer's verdict could not be established from the available history. | No |
+| `unknown` | Unknown | The history is readable but does not establish the local reviewer's most recent verdict. | No |
 
 Exactly two of the ten states count as missed: `clean_same_commit` and
 `clean_earlier_commit`. Every other state, including `unknown` and any situation
@@ -228,6 +259,7 @@ existing or not. Rows are evaluated in order and the first match decides.
 
 | # | External result | Commit attributable | Local evidence state | Record written | Counts as missed | Next action |
 | --- | --- | --- | --- | --- | --- | --- |
+| 0 | Any — the history surface cannot be read, parsed, or appended to | — | — | No | No | Report that telemetry could not be recorded, and why; leave the existing history untouched |
 | 1 | Reported by the local reviewer itself | — | — | No | No | Nothing; a reviewer cannot miss its own findings |
 | 2 | No blocking findings — clean, skipped, or advisory only | — | — | No | No | Nothing; only blocking external findings qualify |
 | 3 | Blocking findings | **No** | — | No | No | Report why the commit could not be established; write no unattributable record |
@@ -239,6 +271,12 @@ existing or not. Rows are evaluated in order and the first match decides.
 Rows 4 through 7 are the reason a record is written on every qualifying external
 round rather than only on confirmed misses: rows 6 and 7 are the denominator,
 and a rate needs both halves.
+
+Row 0 is evaluated first and is the only row that can produce no record while an
+external reviewer reported blocking findings on an establishable commit. It is
+separated from row 7 deliberately: row 7 records `unknown` because the history
+is healthy and silent about the local verdict, whereas row 0 cannot record
+anything because the history is the thing that failed.
 
 ---
 
@@ -258,7 +296,8 @@ and a rate needs both halves.
 - [ ] **AC-4.** When the local reviewer's most recent clean verdict was on a commit with no ancestry relationship to the one the external reviewer reviewed, the state is `clean_unrelated_commit` and it does not count as missed.
 - [ ] **AC-5.** When the local reviewer's most recent verdict reported findings, the record is still written and its local evidence state is `not_clean`, and it does not count as missed.
 - [ ] **AC-6.** When the local reviewer was skipped, was unavailable, is configured but has not yet produced a verdict, or is not configured at all, the record is written with the corresponding state, the four are distinguishable from one another and from `not_clean`, **and none of the four counts as missed**.
-- [ ] **AC-7.** When the local reviewer's verdict cannot be established from the history, the record is written with state `unknown` and does not count as missed.
+- [ ] **AC-7.** When the history is readable but does not establish the local reviewer's most recent verdict, the record is written with state `unknown` and does not count as missed.
+- [ ] **AC-7a.** When the reviewer-loop history cannot be read, parsed, or appended to, no missed-finding record is written, the existing history is left byte-for-byte unchanged, and the round's output states that telemetry could not be recorded and why.
 - [ ] **AC-8.** Advisory or suggestion-level external findings produce no missed-finding record.
 - [ ] **AC-9.** Findings reported by the local reviewer itself produce no missed-finding record.
 - [ ] **AC-10.** Two qualifying external rounds on the same pull request produce two records; neither replaces the other.
