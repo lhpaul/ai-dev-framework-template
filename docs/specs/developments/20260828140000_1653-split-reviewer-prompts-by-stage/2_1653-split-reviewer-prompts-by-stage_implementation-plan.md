@@ -223,9 +223,19 @@ Not applicable — this repository ships workflow tooling, not a service.
          | `docs/workflow/*` | the protocols |
          | `docs/best-practices/*` | the implementer-facing rules the protocols cite |
          | `scripts/development-workflow/*` | the scripts that enforce all of the above |
+         | `.claude/*`, `.cursor/*`, `.codex/*`, `.agents/*` | the per-tool agent, command, skill and rule files — the same instructions as the root agent surfaces, mirrored per tool |
 
-         Six rows, written as **nine `case` entries** — six literal filenames
-         and three directory prefixes. `.github/workflows/*` is deliberately **excluded**: CI
+         Seven rows, written as **thirteen `case` entries** — six literal
+         filenames and seven directory prefixes.
+
+         The four per-tool trees were missing from an earlier revision, and
+         **this plan is the proof they belong**: it edits
+         `.claude/agents/code-reviewer.md`, `.cursor/agents/code-reviewer.md`
+         and `.codex/skills/workflow-code-reviewer/SKILL.md`, and a pull request
+         changing only those three would not have selected the Workflow Policy
+         checklist. An instruction file that tells a reviewer what to check is
+         workflow policy whether it sits at the repository root or under a
+         tool's directory. `.github/workflows/*` is deliberately **excluded**: CI
          configuration is ordinary code, reviewed by the Code checklist, and
          including it would pull every dependency bump into the policy stage.
 
@@ -375,8 +385,9 @@ Not applicable.
    `specification/foo` — the last because a prefix `case` must not match a
    longer word that merely starts with it.
 3. `reviewer_changed_files_touch_workflow_policy` returns success for one path
-   per `case` entry — **nine** cases, six literal filenames and three directory
-   prefixes — and failure for four controls:
+   per `case` entry — **thirteen** cases, six literal filenames and seven
+   directory prefixes, including `.claude/agents/code-reviewer.md` and
+   `.agents/skills/x/SKILL.md` — and failure for four controls:
    `docs/specs/developments/x/1_x_specs.md`, `docs/project/1-business-domain.md`,
    `.github/workflows/ci.yml` and `src/app/main.ts`.
 4. It returns success when **one** path of many matches, and failure when none
@@ -481,7 +492,7 @@ is the shell harnesses named above; all **three** are extended in this item —
 | Fixture | Contents | Location |
 | --- | --- | --- |
 | Branch fixture | The six recognised prefixes of scenario 1 and the five controls of scenario 2 | inline in `scripts/development-workflow/tests/test-local-ai-reviewer.sh` |
-| Changed-file fixture | One path per `case` entry — nine — the four non-matching controls of scenario 3, a mixed list for scenario 4, the empty list of scenario 5, and scenario 5b's list beginning with `REVIEW.md`, grown in a loop until `wc -c` measures past twice the host's `fs.pipe-max-size` (floor 2 MiB where `/proc` is absent) | inline in `scripts/development-workflow/tests/test-local-ai-reviewer.sh` |
+| Changed-file fixture | One path per `case` entry — thirteen — the four non-matching controls of scenario 3, a mixed list for scenario 4, the empty list of scenario 5, and scenario 5b's list beginning with `REVIEW.md`, grown in a loop until `wc -c` measures past twice the host's `fs.pipe-max-size` (floor 2 MiB where `/proc` is absent) | inline in `scripts/development-workflow/tests/test-local-ai-reviewer.sh` |
 | Prompt fixture | A verbatim copy of the current default prompt string, for scenario 11's byte-comparison | inline in `scripts/development-workflow/tests/test-local-codex-review-command.sh`, the suite that owns scenarios 10, 11 and 15, as a single-quoted heredoc so no expansion occurs |
 | Bundle field fixture | The thirteen `local_ai_reviewer_context.v1` field names, enumerated | inline in `scripts/development-workflow/tests/test-local-ai-reviewer.sh` |
 
@@ -558,9 +569,10 @@ Add one sentence to each of the three, worded identically so the mirrors stay
 byte-comparable:
 
 > When the change under review touches workflow-policy surfaces — `REVIEW.md`,
-> the agent instruction files, `.ai-dev-workflow.yaml`, `docs/workflow/**`,
-> `docs/best-practices/**`, or `scripts/development-workflow/**` — also
-> evaluate the `## Workflow Policy Review Checklist`, in addition to the
+> the root agent instruction files, `.ai-dev-workflow.yaml`, `docs/workflow/**`,
+> `docs/best-practices/**`, `scripts/development-workflow/**`, or the per-tool
+> instruction trees `.claude/**`, `.cursor/**`, `.codex/**` and `.agents/**` —
+> also evaluate the `## Workflow Policy Review Checklist`, in addition to the
 > dispatched pass.
 
 "In addition to" keeps the change monotone in the same direction as the rest of
@@ -644,6 +656,8 @@ reviewer_changed_files_touch_workflow_policy() {
       REVIEW.md|AGENTS.md|CLAUDE.md|GEMINI.md|LLM_RULES.md|.ai-dev-workflow.yaml)
         return 0 ;;
       docs/workflow/*|docs/best-practices/*|scripts/development-workflow/*)
+        return 0 ;;
+      .claude/*|.cursor/*|.codex/*|.agents/*)
         return 0 ;;
     esac
   done

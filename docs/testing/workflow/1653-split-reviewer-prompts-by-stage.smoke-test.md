@@ -80,9 +80,11 @@ checklist on a branch that is not a spec branch. Proof P2 plants exactly that.
 **Maps to**: brief scope bullet 1, the changed-files half.
 
 1. Call `reviewer_changed_files_touch_workflow_policy` with one path per `case`
-   entry — nine: `REVIEW.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
+   entry — thirteen: `REVIEW.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
    `LLM_RULES.md`, `.ai-dev-workflow.yaml`, `docs/workflow/x.md`,
-   `docs/best-practices/x.md`, `scripts/development-workflow/x.sh`.
+   `docs/best-practices/x.md`, `scripts/development-workflow/x.sh`,
+   `.claude/agents/code-reviewer.md`, `.cursor/agents/code-reviewer.md`,
+   `.codex/skills/x/SKILL.md`, `.agents/skills/x/SKILL.md`.
 2. Call it with four controls: `docs/specs/developments/x/1_x_specs.md`,
    `docs/project/1-business-domain.md`, `.github/workflows/ci.yml`, and
    `src/app/main.ts`.
@@ -114,7 +116,7 @@ checklist on a branch that is not a spec branch. Proof P2 plants exactly that.
    done
    ```
 
-**Expected result**: all nine entries match; none of the four controls does;
+**Expected result**: all thirteen entries match; none of the four controls does;
 step 3 matches; step 4 does **not**. Step 5's first call names both Code and
 Workflow Policy; the other two name Code alone. Step 6 also names both.
 
@@ -165,6 +167,12 @@ Proofs P5 and P6.
 
 `.github/workflows/ci.yml` is a deliberate control, not an oversight: CI
 configuration is ordinary code and belongs to the Code checklist.
+
+The four per-tool trees — `.claude/**`, `.cursor/**`, `.codex/**`, `.agents/**`
+— are in the set because an instruction file that tells a reviewer what to check
+is workflow policy wherever it lives. This item's own change set is the
+demonstration: it edits three of them, and without these entries a pull request
+touching only those three would not have selected the checklist it adds.
 
 ## Step 3: The merge produces all eight rows
 
