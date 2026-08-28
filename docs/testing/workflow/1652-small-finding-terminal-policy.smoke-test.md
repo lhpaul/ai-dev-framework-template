@@ -91,6 +91,16 @@ Call the contract-surface predicate with each case and read match / no-match:
 | --- | --- |
 | `the delegates list is wrong` | no match — `delegates` must not match `gate` |
 | `use a microscope analogy` | no match — `microscope` must not match `scope` |
+| `the heading state is inconsistent` | no match — bare `state` is not a matched term |
+| `a typo in the scope section` | no match — bare `scope` is not a matched term |
+| `the status column is misaligned` | no match — bare `status` is not a matched term |
+| `the gate heading needs a capital` | no match — bare `gate` is not a matched term |
+| `fix the proof reading typo` | no match — bare `proof` is not a matched term |
+| `parse is misspelled here` | no match — bare `parse` is not a matched term |
+| `the contract section has a trailing space` | no match — bare `contract` is not a matched term |
+| `the decision gate is inconsistent` | match — the qualified phrase |
+| `this row is out of scope` | match — the qualified phrase |
+| `the evidence state table is wrong` | match — the qualified phrase |
 | `Acceptance Criteria are inconsistent` | match — case-insensitive |
 | `FAIL-CLOSED contract is violated` | match — case-insensitive |
 | a body quoting `decision gate` inside a fenced code block | match |
@@ -100,10 +110,20 @@ Call the contract-surface predicate with each case and read match / no-match:
 | `this is not a decision gate` | match — the classifier does not read intent |
 | a multi-line body whose only term is on the last line | match |
 
-**Expected result**: exactly as tabulated. The two substring rows are the
-negative tests: without word-boundary matching, `delegates` matches `gate` and
-nearly every finding becomes non-small, disabling the terminal rule by accident
-in the opposite direction.
+**Expected result**: exactly as tabulated. Two groups carry the weight, and both
+guard the **restrictive** direction:
+
+- The two **substring** rows. Without word-boundary matching, `delegates`
+  matches `gate` and nearly every finding becomes non-small.
+- The seven **bare common word** rows. Every matched term is a phrase or a
+  qualified form precisely so that ordinary prose — "the heading state is
+  inconsistent", "a typo in the scope section" — does not read as
+  contract-bearing. An earlier draft listed these words bare; they were removed
+  for this reason, and the three qualified rows at the end confirm the phrases
+  still match.
+
+Over-matching here disables the terminal rule while looking like a tightening,
+which is the more likely of the two mistakes because it appears to succeed.
 
 ### Step 4: Counted rounds must be on the current head
 
@@ -114,13 +134,27 @@ in the opposite direction.
 2. Seed a ledger whose prior round has an **absent** head; then an **empty**
    head; then a synthetic `unknown-<epoch>-<pid>-<rand>` placeholder. Run the
    counter for each.
-3. With `PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS` at its default `2`, seed two
+3. Read the counter's **stop reason** in each run above, plus one run where the
+   walk reaches the end of the ledger and one where it stops at a non-small
+   round.
+4. With `PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS` at its default `2`, seed two
    prior small rounds on a stale head and run the terminal decision.
+5. Seed two prior small rounds **on the current head**, so the prior count is
+   sufficient, but make the reviewer that produced *this* round's findings
+   report a reviewed head other than `loop_head_sha` — then again reporting
+   none. Run the terminal decision for each.
 
 **Expected result**: step 1 returns **1**, not 3 — a round on an older head ends
 the consecutive run rather than extending it. All three cases in step 2 also end
-the run. Step 3 does **not** fire the terminal rule, and reports
-`SMALL_FINDINGS_BLOCKED_BY=stale_head`.
+the run. Step 3 returns `stale_head`, `head_unknown` (three times), `exhausted`
+and `not_small` respectively; a bare count could not distinguish the first two,
+which `SMALL_FINDINGS_BLOCKED_BY` must. Step 4 does **not** fire the terminal
+rule and reports `SMALL_FINDINGS_BLOCKED_BY=stale_head`.
+
+**Step 5 must also not fire.** The consecutive run is `prior entries + 1`, and
+the `+ 1` is the round being decided; verifying only the prior entries would
+leave it unchecked and let the rule terminate on findings that describe a commit
+which is no longer the head — the exact staleness the brief names.
 
 An unprovable head must end the run rather than be skipped over: the terminal
 rule exists to be demonstrated, and a round whose head cannot be established
@@ -138,7 +172,9 @@ cannot demonstrate anything.
 
 **Expected result**: the four situations report `shipped_path`,
 `contract_surface`, `stale_head` and `head_unknown` respectively; the firing run
-reports an **empty** value. The summary line names the specific contract surface
+reports an **empty** value, as does a run whose consecutive count was simply
+short — `exhausted` and `not_small` describe an ordinary short run and are not
+blocking reasons. The summary line names the specific contract surface
 or shipped path that kept the round non-small, so the reason is legible on the
 PR without reading loop output.
 
@@ -181,14 +217,18 @@ fails, the change did not tighten the rule — it deleted it.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P6 each record the command, the file and line of the
+2. Confirm P1 through P8 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: six proofs. Four plant the **permissive** direction,
-reproducing the original bug. **P6 plants the restrictive direction** — making
-every `docs/` path shipped — and requires Steps 1, 2 and 7 to fail; it is not
-optional, because a tightening that removes the mechanism would pass all five
-others while introducing a different defect.
+**Expected result**: eight proofs. Five plant the **permissive** direction,
+reproducing the original bug. Three plant the **restrictive** direction and none
+is optional: **P6** makes every `docs/` path shipped and requires Steps 1, 2 and
+7 to fail; **P7** restores the bare common words to the contract-surface list
+and requires Step 3's seven bare-word rows and Step 7 to fail; **P8** skips the
+current round's head check and requires Step 4's fifth run to fail. A tightening
+that disables the mechanism would pass every permissive proof while introducing
+a different defect, and it is the more likely mistake because it looks like
+success.
 
 ### Step 9: Documentation agrees across all three surfaces
 
@@ -199,8 +239,9 @@ others while introducing a different defect.
 
 **Expected result**: all three describe the same rule — normative documents are
 shipped artifacts, a contract-surface finding is never small wherever it lives,
-counted rounds must be on the current head, and an unknown head ends the run —
-and all three name the same four `SMALL_FINDINGS_BLOCKED_BY` values. Reading
+**both** the prior counted rounds and the round being decided must be on the
+current head, and an unknown head ends the run — and all three name the same four
+`SMALL_FINDINGS_BLOCKED_BY` values. Reading
 them against Steps 1 through 5 must surface no contradiction.
 
 ### Step 10: Static checks
