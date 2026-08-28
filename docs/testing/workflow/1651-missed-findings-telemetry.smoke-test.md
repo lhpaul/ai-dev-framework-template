@@ -19,6 +19,27 @@ return non-zero as a normal answer; call them inside an `if` or suffix with
 
 ---
 
+## Step 0: The current round is part of the evidence
+
+**Maps to**: AC-1.
+
+1. Run a round in which the **local reviewer reports clean** and an external
+   reviewer reports blocking findings, on a pull request with a prior round
+   whose local verdict was `needs_fixes`.
+2. Run the same shape on a pull request with **no** prior round at all.
+
+**Expected result**: both produce `clean_same_commit` and a **confirmed miss**.
+Neither is classified from the prior round's verdict, and neither reports
+`not_yet_run`.
+
+This is the case the feature exists for, and it is the one a natural
+implementation cannot see. At the moment the records are built, the round's own
+verdicts live only in the freshly collected `platform_result_records` — the
+ledger entry that will carry them has not been written. A selector reading
+persisted entries alone classifies the round from the *previous* one, or from
+nothing, and every other step in this runbook still passes, because they all
+supply the local verdict as prior history. Proof P14.
+
 ## Step 1: The most recent verdict wins, not the most recent clean one
 
 **Maps to**: AC-4a.
@@ -202,6 +223,9 @@ observation about the reviewer, not a duplicate row.
 
 3. With the history unwritable and **no prior history block at all**: run it.
 
+3a. Repeat case 1 once per unavailable reason: `malformed_history`,
+   `unknown_schema`, `missing_history_json` and `prior_unavailable`.
+
 **Expected result**: case 1 writes no record, leaves the previously posted
 history block **byte-for-byte unchanged** — compared against a saved copy of the
 prior body, never against a re-render — and states in the summary body that
@@ -209,6 +233,12 @@ telemetry could not be recorded and why, naming the reason the loop already
 computed (`malformed_history`, `unknown_schema`, or `prior_unavailable`). Case 2
 produces **no** telemetry-failure report. Case 3 writes the unavailable stub,
 which is what the stub is for.
+
+Case 3a's four reasons are the complete set the loop produces, read from the
+code rather than remembered: `missing_history_json` (`pr-review-loop.sh:6992`)
+fires when the history marker is present but its JSON block is gone, which is
+what a hand-edited comment produces and is the likeliest of the four in
+practice.
 
 Case 1 is a **change**, not a confirmation. Today the loop builds a replacement
 payload with empty entries and renders it over the previous block, so a history
@@ -325,10 +355,10 @@ status. The records change what is *known*, never what happens.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P13 each record the command, the file and line of the
+2. Confirm P1 through P14 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: thirteen proofs in two groups — **seven** overclaiming,
+**Expected result**: fourteen proofs in two groups — **eight** overclaiming,
 **six** contract, per the plan's proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:

@@ -204,7 +204,27 @@ Not applicable — this repository ships workflow tooling, not a service.
 
       It scans `entries[]` in **descending iteration order** and returns the
       first entry whose `platform_results` names the local reviewer, taking
-      **that platform's** `result` — never the entry's aggregate `result`. Selection by recency, then
+      **that platform's** `result` — never the entry's aggregate `result`.
+
+      **The current round is part of that scan, and it is the case AC-1 is
+      about.** A local reviewer that reports clean and an external reviewer that
+      reports blocking findings **in the same round** is the confirmed miss the
+      whole feature exists to record, and at the moment the records are built
+      the round's verdicts live only in the freshly collected
+      `platform_result_records` — the entry that will carry them has not been
+      written yet. A selector reading persisted entries alone would classify
+      that round from the *previous* round's verdict, or from nothing at all,
+      and would report `unknown` or a stale state on the single most important
+      case.
+
+      So the caller composes before it selects: the current round's records are
+      appended to `entries[]` as a synthetic entry carrying the current
+      iteration number, and the composed value is what the selector receives.
+      The composition happens at the call site rather than inside the selector,
+      so the function stays a pure query over one payload and the tests can
+      supply either shape. Scenarios 1a and 1b pin both halves — the current
+      round winning over a prior one, and the current round being used when
+      there is no prior one at all. Selection by recency, then
       classification — never "the most recent clean verdict", which is the same
       sentence with the search order and the filter swapped, and which AC-4a
       exists to forbid: a reviewer that cleared one commit and then reported
@@ -374,8 +394,14 @@ Not applicable — this repository ships workflow tooling, not a service.
          including a malformed one — a block that failed to parse is the
          evidence of the failure, and overwriting it destroys the only copy.
       2. Report the failure in the summary body instead, naming the reason the
-         loop already computed: `malformed_history`, `unknown_schema`, or the
-         passed-through `prior_unavailable`. No new reason vocabulary.
+         loop already computed. The vocabulary is **four** values, not three,
+         and the list is taken from the code rather than remembered:
+         `malformed_history`, `unknown_schema`, `missing_history_json`
+         (`pr-review-loop.sh:6992` — the marker is present but its JSON block
+         is absent), and the passed-through `prior_unavailable`. No new reason
+         is introduced. An earlier revision of this plan listed three and
+         omitted `missing_history_json`, which is the one produced by a comment
+         someone edited by hand — the likeliest of the four in practice.
       3. Keep `reviewer_loop_history_unavailable_stub_body` for the case it is
          genuinely for — a pull request with **no** prior history block at all,
          where there is nothing to preserve and the stub is the first thing
@@ -433,6 +459,13 @@ Not applicable — this repository ships workflow tooling, not a service.
 
 **Key scenarios to test**:
 
+1a. The **current round** supplies the verdict when it has one: a round in which
+    the local reviewer reported clean and an external reviewer reported blocking
+    findings yields `clean_same_commit` and a confirmed miss — not a state
+    derived from the previous round. This is AC-1's case and the one the feature
+    exists for.
+1b. The current round supplies the verdict when there is **no** prior entry at
+    all, rather than falling back to `not_yet_run`.
 1. `reviewer_loop_local_latest_verdict` returns the **most recent** verdict, not
    the most recent clean one: a history with a clean local verdict at iteration
    2 and a `needs_fixes` local verdict at iteration 5 returns the iteration-5
@@ -484,6 +517,9 @@ Not applicable — this repository ships workflow tooling, not a service.
 10. Two qualifying rounds produce two records; the second does not replace the
     first, and no de-duplication occurs even when reviewer, commit and finding
     count are identical.
+11a. Each of the four unavailable reasons — `malformed_history`,
+    `unknown_schema`, `missing_history_json` and `prior_unavailable` — is named
+    in the telemetry-failure report, one case per reason.
 11. With `append_safe` at 0 and a prior history block present, no record is
     written, the prior block is **byte-for-byte unchanged** — asserted against a
     saved copy of the prior body, not against a re-render — and the summary body
@@ -571,6 +607,7 @@ Not applicable — this repository ships workflow tooling, not a service.
 | A `git` exit status of 1 is read from a bare call under `set -e` | **High** — it is the shorter and more obvious way to write it | **High** — three of the five results become unreachable and the round aborts instead of classifying | Every status is captured with `\|\| status=$?`, which is exempt from errexit. Scenario 5a and proof **P9** |
 | The summary line's bound is enforced by truncating the finished string | Med | Med — truncation removes the tail, which is where the state and the classification sit | The line is built with the total and the state **before** the paths, and paths stop at the first one that would exceed the bound. Scenario 13's zero-path case and proof **P6** |
 | The additive fields break a ledger reader | Low | Med | The schema string is unchanged and every existing field keeps its name and type; scenario 14 asserts them individually |
+| The current round's verdict is not composed in before selection | **High** — the selector's input is naturally the persisted payload | **High** — the confirmed-miss case in AC-1 is exactly a same-round local clean, so the feature would miss the thing it exists to record while passing every other test | The call site composes the round's `platform_result_records` as a synthetic entry before selecting. Scenarios 1a and 1b, proof **P14** |
 | A pre-change entry's aggregate result is read as the local reviewer's verdict | **High** — it is the only outcome those entries carry | **High** — rounds the local reviewer never ran become confirmed misses, in the historical half of the data where nobody checks | Entries without `platform_results` yield `unknown`, never the aggregate. Scenario 3a and proof **P8** |
 | An unappendable history is replaced by an empty stub | **High** — it is the current behavior | **High** — every entry the pull request held is lost, and the stub looks like a well-formed report rather than a deletion | The render path leaves the prior block untouched; the stub is written only when there is no prior block. Scenario 11 and proof **P7** |
 
@@ -651,12 +688,12 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The thirteen proofs fall into
+runs per proof, each citing a concrete file and line. The fourteen proofs fall into
 two groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Overclaiming | **7** | P1, P2, P3, P4, P8, P10, P12 | a number asserted on evidence that does not support it |
+| Overclaiming | **8** | P1, P2, P3, P4, P8, P10, P12, P14 | a number asserted on evidence that does not support it |
 | Contract | **6** | P5, P6, P7, P9, P11, P13 | a report, a line, or a stored history that breaks its own stated contract |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
@@ -673,9 +710,10 @@ two groups:
 | P11 | Build `platform_results` from `platform_result_tokens` instead of the raw pair | a scratch copy of the collection step | the raw-to-outcome scenarios in step 1a fail: every `escalate` becomes the unparseable `escalated (<reason>)`, every `DISPLAY_RESULT` override becomes whatever the platform chose, and both `skipped` reasons collapse into `unavailable` — so `skipped` and `not_configured` become unreachable and escalations record as `unknown`. Restoring the raw pair passes |
 | P12 | Count `path_total` without de-duplicating | a scratch copy of the record builder | scenario 13a fails: eight findings across three files report twelve files and name one file three times, overstating the blast radius of every record and wasting the line's three path slots; restoring the de-duplication passes |
 | P13 | Compute the remainder as `path_total - 3` instead of from the paths actually named | a scratch copy of the renderer | scenario 13c fails at every truncation point: the zero-path line reads `+9 more` for twelve files, and a record with two files fitting reads `-1 more`. The plant is invisible whenever exactly three paths fit, which is the common case; restoring the count-what-was-named rule passes |
+| P14 | Select from persisted entries only, omitting the current round's records | a scratch copy of the call site | scenarios 1a and 1b fail: a round where the local reviewer was clean and an external reviewer found blockers is classified from the previous round's verdict, or as `not_yet_run` when there is no previous round — so the confirmed miss the feature exists to record is the one case it cannot see. Every other scenario still passes, because they all supply the verdict as prior history; restoring the composition passes |
 | P6 | Enforce the 200-character bound by truncating the finished line | a scratch copy of the renderer | scenario 13's long-path case fails: truncation removes the tail, which is where the local evidence state and the classification sit, so the line that survives is the one carrying paths and no verdict — exactly inverted from what a reader needs; restoring build-order enforcement passes |
 
-Seven proofs plant the overclaiming direction because that is the direction with
+Eight proofs plant the overclaiming direction because that is the direction with
 no symptom: every one of them produces a plausible number, and a number is
 believed. P3 is the one to read twice — its plant passes every test written
 against a healthy repository, and only a fixture with a deliberately deleted
@@ -698,7 +736,10 @@ object exposes it.
    row of the raw-to-outcome table — in particular the two `skipped` reasons and
    `escalate`, which `platform_result_tokens` cannot distinguish.
 2. Add `reviewer_loop_local_latest_verdict`, taking the history payload and the
-   configured-platform list. **Verify**: scenarios 1, 2, 3, 3a and 3b — recency
+   configured-platform list, and compose the current round's
+   `platform_result_records` into the payload at the call site before selecting.
+   **Verify**: scenarios 1a and 1b first — a selector that reads only persisted
+   entries passes every other scenario in this list. **Verify**: scenarios 1, 2, 3, 3a and 3b — recency
    over cleanliness, the two absent-reviewer values kept apart by the
    configuration argument alone, and the `unknown` fallback for pre-change
    entries.
@@ -720,7 +761,7 @@ object exposes it.
    eight-findings-over-three-files case, and the three remainder forms.
 8. Update Protocol 93 and the `--help` block. **Verify**: runbook Step 9 reads
    both against the code.
-10. Produce the thirteen planted-violation proofs (P1-P13) and record them in the PR
+10. Produce the fourteen planted-violation proofs (P1-P14) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
