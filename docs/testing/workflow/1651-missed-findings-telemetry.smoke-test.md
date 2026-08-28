@@ -271,6 +271,19 @@ honest answer is that there is no head. Proof P17.
 Both fail-closed rules land on AC-11's existing path, so nothing new is
 introduced to handle them: no head, no record, reason reported.
 
+5. Run one case per adapter from the plan's ten-row table, each against a
+   fixture of its own artifact shape.
+
+**Expected result**: nine emit a head; `claude-code-action` emits **none**.
+
+GitHub attaches a commit to *review* comments and to *reviews*, never to issue
+comments — so an adapter whose only artifact is an issue comment has no evidence
+to offer. `claude-code-action` is that adapter today, and `pr-agent` escapes it
+only because it also produces a check run. The no-head row is the one most
+likely to be implemented wrong, because "every adapter emits a head" is the
+natural reading of the requirement, so it is asserted per adapter rather than
+described once. Proof P18.
+
 ## Step 8: An unwritable history reports only what was owed
 
 **Maps to**: AC-7a, AC-7b.
@@ -415,10 +428,10 @@ status. The records change what is *known*, never what happens.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P17 each record the command, the file and line of the
+2. Confirm P1 through P18 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: seventeen proofs in two groups — **eleven** overclaiming,
+**Expected result**: eighteen proofs in two groups — **twelve** overclaiming,
 **six** contract, per the plan's proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:
