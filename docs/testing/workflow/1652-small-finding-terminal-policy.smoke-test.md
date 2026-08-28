@@ -99,6 +99,7 @@ Call the contract-surface predicate with each case and read match / no-match:
 | `parse is misspelled here` | no match — bare `parse` is not a matched term |
 | `the contract section has a trailing space` | no match — bare `contract` is not a matched term |
 | `the decision gate is inconsistent` | match — the qualified phrase |
+| `failXclosed is wrong` | no match — separators are an explicit `[ -]` class, never the regex wildcard `.` |
 | `this row is out of scope` | match — the qualified phrase |
 | `the evidence state table is wrong` | match — the qualified phrase |
 | `Acceptance Criteria are inconsistent` | match — case-insensitive |
@@ -179,11 +180,28 @@ cannot demonstrate anything.
 2. Run it once where the terminal rule fires.
 3. Read `SMALL_FINDINGS_BLOCKED_BY` and the summary's small-findings line.
 
+4. Run it twice more with **co-occurring** causes: a round carrying both a
+   shipped-path and a contract-surface finding, and a round whose findings are
+   all small but which has one stale contributor and one reporting no head.
+
 **Expected result**: the four situations report `shipped_path`,
 `contract_surface`, `stale_head` and `head_unknown` respectively; the firing run
 reports an **empty** value, as does a run whose consecutive count was simply
 short — `exhausted` and `not_small` describe an ordinary short run and are not
-blocking reasons. The summary line names the specific contract surface
+blocking reasons.
+
+The co-occurring runs report `shipped_path` and `stale_head` respectively,
+following the fixed precedence: content reasons outrank currency reasons because
+they must be fixed regardless of which commit they were found on, and
+`stale_head` outranks `head_unknown` as the more specific statement. In both
+runs the **summary line still names every cause present** — precedence reduces
+only the single-valued key, and nothing is hidden by it.
+
+The summary line names the matched contract-surface identity, not just that some
+surface matched: `reviewer_loop_finding_touches_contract_surface` prints the
+identity (`acceptance_criteria`, `fail_closed_semantics`, and so on) rather than
+returning a bare boolean, so the renderer has a defined input. A body matching
+two surfaces prints the first in table order. The summary line names the specific contract surface
 or shipped path that kept the round non-small, so the reason is legible on the
 PR without reading loop output.
 
@@ -226,10 +244,10 @@ fails, the change did not tighten the rule — it deleted it.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P8 each record the command, the file and line of the
+2. Confirm P1 through P9 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: eight proofs. **Six** plant the **permissive** direction —
+**Expected result**: nine proofs. **Six** plant the **permissive** direction —
 P1 through P5 and P8, reproducing the original bug; P8 skips the current round's
 head check and requires Step 4's fifth run to fail. **Two** plant the
 **restrictive** direction, and neither is optional: **P6** makes every `docs/`

@@ -124,9 +124,19 @@ Not applicable — this repository ships workflow tooling, not a service.
       and returns non-shipped only when it does not match. A path that is both
       `docs/*` and normative is shipped: the normative test wins.
 - [ ] **Add a contract-surface test that is independent of path.** Add
-      `reviewer_loop_finding_touches_contract_surface <body>`, returning success
-      when the finding's text names a contract-bearing surface. The match set is
-      an explicit allow-list of surfaces, not an exclusion list of cosmetic ones:
+      `reviewer_loop_finding_touches_contract_surface <body>`. It returns
+      success when the finding's text names a contract-bearing surface, **and
+      prints the identity of the surface it matched** — the `Surface` value from
+      the table below, in lowercase with spaces replaced by underscores, such as
+      `acceptance_criteria` or `fail_closed_semantics`. On no match it prints
+      nothing and returns failure. The printed identity is what the summary
+      renderer needs to name *which* surface kept the round non-small; a bare
+      boolean would leave it with nothing to render. When a body matches more
+      than one surface, the identity printed is the first matching row in table
+      order, so the output is deterministic.
+
+      The match set is an explicit allow-list of surfaces, not an exclusion list
+      of cosmetic ones:
 
       | Surface | Matched terms |
       | --- | --- |
@@ -208,12 +218,35 @@ Not applicable — this repository ships workflow tooling, not a service.
 - [ ] Emit `SMALL_FINDINGS_BLOCKED_BY` naming why a terminal stop did **not**
       happen when the rule would otherwise have fired: one of
       `shipped_path`, `contract_surface`, `stale_head`, or `head_unknown`. Empty
-      when the rule fired or was never close to firing. Without it, a maintainer
-      cannot tell a loop that is correctly refusing to terminate from one that is
-      simply still finding things.
-- [ ] Extend the reviewer-loop summary's small-findings line to name the
-      contract surface or shipped path that kept the round non-small, so the
-      reason is visible on the PR rather than only in the loop's stdout.
+      when the rule fired, and empty when the run was simply short
+      (`exhausted` or `not_small`), since neither is a blocking reason. Without
+      it, a maintainer cannot tell a loop that is correctly refusing to
+      terminate from one that is simply still finding things.
+- [ ] **Define precedence — the causes can co-occur.** One round can carry a
+      shipped-path finding *and* a contract-surface finding; one round can have
+      one stale contributor *and* another with no head at all. The key is
+      single-valued, so it reports the **first** cause in this fixed order:
+
+      | Precedence | Value | Chosen when |
+      | --- | --- | --- |
+      | 1 | `shipped_path` | any counted finding has a shipped path |
+      | 2 | `contract_surface` | no shipped path, but any counted finding touches a contract surface |
+      | 3 | `stale_head` | the findings are all small, but a counted round or contributor reports a head other than `loop_head_sha` |
+      | 4 | `head_unknown` | as above, but the head is absent, empty, or a synthetic placeholder |
+
+      Content reasons outrank currency reasons because they are the more
+      actionable: a shipped-path or contract-surface finding must be fixed
+      regardless of which commit it was found on, whereas a stale head resolves
+      itself on the next run. Between the two currency reasons, `stale_head`
+      outranks `head_unknown` because a known-different head is the more
+      specific statement. The **summary line lists every cause present**, so
+      nothing is hidden by the precedence; only the single-valued key is
+      reduced.
+- [ ] Extend the reviewer-loop summary's small-findings line to name **every**
+      cause present — the shipped paths, the matched contract-surface identities
+      as printed by the predicate, and the platform responsible for any stale or
+      unknown head — so the full picture is visible on the PR rather than only
+      the single value the key can carry.
 - [ ] Document the new predicate, the contract-surface list, the current-head
       requirement, and `SMALL_FINDINGS_BLOCKED_BY` in the `--help` usage block.
 
@@ -298,6 +331,16 @@ Not applicable — no user interface in this repository.
 10. With the required rounds reached but the most recent counted round on a
     stale head, the terminal rule does **not** fire and
     `SMALL_FINDINGS_BLOCKED_BY=stale_head`.
+10a. Precedence when causes co-occur, one case per pair: a round with both a
+    shipped-path and a contract-surface finding reports `shipped_path`; a round
+    whose findings are all small but has one stale contributor and one with no
+    head reports `stale_head`. In both cases the **summary line still names both
+    causes**, so precedence reduces only the single-valued key.
+10b. `reviewer_loop_finding_touches_contract_surface` prints the matched surface
+    identity — `acceptance_criteria`, `fail_closed_semantics` and so on — and
+    prints nothing on no match. A body matching two surfaces prints the first in
+    table order, so the output is deterministic and the summary renderer has a
+    defined input.
 11. `SMALL_FINDINGS_BLOCKED_BY` reports each of its four values for the
     corresponding cause — `shipped_path`, `contract_surface`, `stale_head` and
     `head_unknown` — and is **empty** both when the rule fired and when the run
@@ -318,8 +361,8 @@ Not applicable — no user interface in this repository.
 **Files**:
 
 - `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenarios 1, 2,
-  3, 4, 5, 6, 6a, 7, 8, 8a, 9, 9a, 10, 11 and 14, as new cases in the existing
-  `HARNESS_MODE=1` harness. Listed individually rather than as a range: the
+  3, 4, 5, 6, 6a, 7, 8, 8a, 9, 9a, 10, 10a, 10b, 11 and 14, as new cases in the
+  existing `HARNESS_MODE=1` harness. Listed individually rather than as a range: the
   sub-lettered scenarios are the ones a range drops, and all three of them
   (6a, 8a, 9a) guard a failure direction the others do not.
 - `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` —
@@ -348,9 +391,9 @@ above are the regression coverage for this change.
 
 This plan materially modifies an automated guard, so `REVIEW.md` §
 Planted-violation proof applies and the pure-refactor exemption does not. Two
-demonstrated runs per proof, each citing a concrete file and line. Of the eight
+demonstrated runs per proof, each citing a concrete file and line. Of the nine
 proofs, **six** plant the **permissive** direction — P1 through P5 and P8,
-reproducing the original bug — and **two** plant the **restrictive** direction —
+reproducing the original bug; **two** plant the **restrictive** direction —
 P6 and P7, where the tightening would disable the mechanism instead of
 sharpening it.
 
@@ -363,6 +406,7 @@ sharpening it.
 | P5 | Treat an entry with an absent or placeholder head as matching the current head | same scratch copy | scenario 9 fails in all three cases, because an unprovable head extends the run; restoring the fail-closed branch passes |
 | P6 | Over-tighten by path: make every `docs/` path shipped, dropping the non-shipped patterns entirely | a scratch copy of the predicate | scenarios 3, 6 and 13 fail, because the loop can no longer terminate on a genuinely cosmetic documentation tail; restoring the narrowed list passes |
 | P7 | Over-tighten by term: restore the bare common words `gate`, `scope`, `state`, `status`, `proof`, `parse` and `contract` to the contract-surface list | same scratch copy | scenario 6a fails on all seven cosmetic bodies and scenario 13 stops firing, because ordinary prose now reads as contract-bearing; restoring the phrase-only list passes |
+| P9 | Invert the precedence so currency reasons outrank content reasons | a scratch copy of the blocked-by mapping | scenario 10a's first case fails, reporting `stale_head` where a shipped-path finding is present and must be reported first; restoring the order passes |
 | P8 | Skip the current round's head check, verifying only the prior ledger entries | a scratch copy of the terminal decision | scenario 8a fails, because the rule terminates on a deciding round whose findings describe a commit that is no longer the head; restoring the check passes |
 
 P6 and P7 are the two restrictive-direction proofs and neither is optional. A
@@ -474,12 +518,14 @@ reviewer_loop_finding_touches_contract_surface() {
   local body="$1"
   [ -n "${body//[[:space:]]/}" ] || return 1
   # Word-boundary, case-insensitive: "delegates" must not match "gate".
+  # Separators are an explicit [ -] class, never the regex wildcard ".":
+  # "fail.closed" would match "failXclosed" and reintroduce over-matching.
   # Phrases and qualified forms only. Bare common words such as "gate",
   # "scope", "state", "status", "proof", "parse" and "contract" are
   # deliberately absent: they appear in ordinary cosmetic findings and would
   # make almost everything non-small, disabling the terminal rule from the
   # restrictive side. See scenario 6a and proof P7.
-  printf '%s' "$body" | grep -Eqi '\b(acceptance criteri[ao]n?|AC-[0-9]|decision gate|decision matrix|matrix row|readiness gate|gate condition|gating|parser|regex|input surface|word boundary|out of scope|in scope|scope creep|coverage matrix|brief objective|fail.closed|allow.list|deny.list|vacuous|state machine|state table|evidence state|valid transition|status label|status transition|telemetry|stdout key|key=value contract|output contract|planted.violation|proof obligation)\b'
+  printf '%s' "$body" | grep -Eqi '\b(acceptance criteri[ao]n?|AC-[0-9]|decision gate|decision matrix|matrix row|readiness gate|gate condition|gating|parser|regex|input surface|word boundary|out of scope|in scope|scope creep|coverage matrix|brief objective|fail[ -]closed|allow[ -]list|deny[ -]list|vacuous|state machine|state table|evidence state|valid transition|status label|status transition|telemetry|stdout key|key=value contract|output contract|planted[ -]violation|proof obligation)\b'
 }
 ```
 
@@ -527,7 +573,7 @@ reviewer_loop_finding_touches_contract_surface() {
 9. Document the new behavior in the `--help` usage block. **Verify**: run
    `pr-review-loop.sh --help` and confirm the predicate, the contract-surface
    list, the current-head requirement and `SMALL_FINDINGS_BLOCKED_BY` appear.
-10. Produce the eight planted-violation proofs (P1-P8) and record them in the PR
+10. Produce the nine planted-violation proofs (P1-P9) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed. P6 and P7 are the two restrictive-direction proofs and
