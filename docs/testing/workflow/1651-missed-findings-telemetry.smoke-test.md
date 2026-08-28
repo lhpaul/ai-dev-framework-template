@@ -453,7 +453,8 @@ rows. Proof P29.
 3. Render a record built from **eight** blocking findings spread over three
    files.
 4. Render an entry carrying twenty records with long paths.
-5. Render a record whose findings touch **two** files, both short.
+5. Render a record whose findings touch **two** files, both short, and compare
+   the whole line to an exact expected string.
 6. Render a record whose path names are sized so the list would fill the line to
    exactly 200 characters **without** the remainder text.
 7. Render the worst realistic case: reviewer `claude-code-action`, state
@@ -464,9 +465,18 @@ rows. Proof P29.
 most three paths and **always** the total file count. Case 1 names three of its
 twelve files. Case 2 names **zero** paths — the bound stops the list before the
 first one fits — and still states the total, the state and the classification: a
-valid line, not a failure. Case 3 reports `path_total` **3**, not 8, and names
-three distinct files. Case 4 adds at most twenty lines and 4,000 characters.
-Case 5 names both of its two files.
+valid line, not a failure — its path length is computed from the budget rather
+than picked, since "longer than 60 characters" still fits in an 87-character
+budget and would name one path, proving the opposite of what the case is for.
+Case 3 reports `path_total` **3**, not 8, and names three distinct files. Case 4
+adds at most twenty lines and 4,000 characters.
+Case 5 names both of its two files, and its exact-string comparison pins the
+rendering of the suffix: the state uses the spec's **display label**
+(`Clean, same commit`) and the classification uses the **stored enum value**
+(`confirmed_miss`), never a prettified `confirmed miss`. The length arithmetic
+counts the enum, so a different rendering would make the 200-character proof
+describe a line the code does not produce — invisibly, on every short record.
+Proof P30.
 
 Read case 1's **record** as well as its line: the record holds all twelve
 paths, de-duplicated and in first-appearance order, while the line names three.
@@ -641,12 +651,12 @@ not what Protocol 03 Step 6 asks for.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P29 each record the command, the file and line of the
+2. Confirm P1 through P30 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: twenty-nine proofs in three groups — **seventeen**
-overclaiming, **eleven** contract, **one** under-recording, per the plan's
-proof-group table.
+**Expected result**: thirty proofs in three groups — **seventeen** overclaiming,
+**twelve** contract, **one** under-recording, per the plan's proof-group
+table.
 
 The overclaiming group carries the weight because that direction has no symptom:
 each of its plants produces a plausible number, and a number is believed. P3 is
