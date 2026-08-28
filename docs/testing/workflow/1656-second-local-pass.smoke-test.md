@@ -128,6 +128,32 @@ the shared processor still decides the gate correctly and records nothing — th
 telemetry would then say the gate opened with no evidence of what opened it.
 Proof P8.
 
+## Step 4a: A head that moves during the pass closes the gate
+
+**Maps to**: the current-head guarantee.
+
+1. Run the loop so the guard dispatches a pass, and push a commit **while the
+   pass is running**.
+2. Let the pass return clean.
+
+**Expected result**: the gate does **not** open. The cycle ends with
+`needs_fixes` and reason `head_moved_during_pass`, and no ready-phase platform
+is dispatched.
+
+Without the re-read, a clean verdict for the *old* commit opens the gate and
+expensive reviewers read code the local reviewer never saw — the guarantee this
+item exists to provide, broken on its own success path. Every scenario with a
+stable head passes without it, which is all of the others.
+
+The loop's existing end-of-run head-move check cannot substitute: it fires
+*after* the dispatch it would need to prevent. Detecting the race requires
+looking at the moment before the gate opens.
+
+The re-read is the plan's only second head snapshot, and it classifies nothing —
+its sole use is the equality test, and its sole outcome a refusal. The pass's
+recorded evidence stays attributed to `loop_head_sha`, as #1648 requires.
+Proof P13.
+
 ## Step 5: A failed second pass closes it, and changes nothing else
 
 **Maps to**: the brief's outcome, the failure half.
@@ -273,8 +299,9 @@ isolation, and the failure is only visible where they meet.
 2. Run `scripts/development-workflow/pr-review-loop.sh --help`.
 3. Read `changelog.d/1656.changed.second-local-pass.md`.
 
-**Expected result**: both surfaces describe the same **six** reasons — the five
-conditions plus `failed_for_head` — and the same two keys, and neither describes the pass as consuming a cycle or as running
+**Expected result**: both surfaces describe the same **seven** reasons — the
+five conditions plus `failed_for_head` and `head_moved_during_pass` — and the
+same two keys, and neither describes the pass as consuming a cycle or as running
 without a ready-phase platform. The fragment is `changed`, not `added` — the
 ready-phase gate already existed and this alters when it fires.
 
@@ -297,10 +324,10 @@ ready-phase gate already existed and this alters when it fires.
 ## Step 12: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P12 each record the command, the file and line of the
+2. Confirm P1 through P13 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: twelve proofs in three groups — **five** fail-open,
+**Expected result**: thirteen proofs in three groups — **six** fail-open,
 **four** loop and cost, **three** integration, per the plan's proof-group
 table.
 
