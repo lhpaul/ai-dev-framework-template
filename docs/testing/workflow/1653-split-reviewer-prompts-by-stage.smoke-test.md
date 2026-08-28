@@ -322,6 +322,35 @@ fourth section therefore invalidates nothing. If this search ever returns a
 file, the table is wrong and that file needs the same edit — which is why the
 check is a runbook step rather than a sentence in the plan.
 
+## Step 8b: The new checklist is reachable from the native review paths
+
+**Maps to**: the cross-cutting enumeration, the three Pass-restricted surfaces.
+
+<!-- workflow-shell-contract: bash -->
+
+```bash
+for f in .claude/agents/code-reviewer.md .cursor/agents/code-reviewer.md \
+         .codex/skills/workflow-code-reviewer/SKILL.md; do
+  grep -c "Workflow Policy Review Checklist" "$f"
+done
+grep -h "Workflow Policy Review Checklist" .claude/agents/code-reviewer.md \
+  .cursor/agents/code-reviewer.md \
+  .codex/skills/workflow-code-reviewer/SKILL.md | sort -u | wc -l
+```
+
+**Expected result**: `1` from each of the three files, and `1` unique line
+across all three — the sentence is present everywhere and identical everywhere.
+
+The presence half closes a real hole: all three restrict a dispatched review to
+a `Pass` **inside** the Code checklist, and the restriction is exclusive
+("evaluate **only**", "restrict evaluation to"). Without the added sentence the
+new sibling section is not merely unmentioned but excluded, and a checklist the
+main code-review path cannot reach is a declared-but-unwired control.
+
+The identity half is the one that decays. Three hand-maintained copies of one
+sentence is exactly where mirrored guidance starts to drift, which is why the
+step compares them rather than checking each in isolation.
+
 ## Step 9: Static checks
 
 1. Run `shellcheck` on `scripts/development-workflow/local-ai-reviewer.sh` and
