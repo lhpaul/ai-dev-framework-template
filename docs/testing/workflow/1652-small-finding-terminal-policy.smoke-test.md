@@ -94,13 +94,16 @@ so they belong in the first tier.
    the plan's contract-surface table.
 2. Call it with three cosmetic bodies: a typo report, a trailing-whitespace
    report, and a heading-capitalisation report.
-3. Call `reviewer_loop_all_findings_are_small` with a finding whose **path is
-   non-shipped** and whose **body names a decision matrix**.
+3. Call `reviewer_loop_all_findings_are_small` with a finding on
+   `CHANGELOG.md` — non-shipped and **non-normative** — whose **body names a
+   decision matrix**.
 
 **Expected result**: every contract-surface row matches; all three cosmetic
 bodies do not; and step 3 reports the finding as **not** small. Step 3 is the
 core of this item — the original rule would have called that finding small
-because of its path alone.
+because of its path alone. The path must be non-normative: on a normative path
+tier 1 returns non-small on its own, so the escalation could be broken outright
+and this step would still pass.
 
 ### Step 3: The parser does not over-match or under-match
 

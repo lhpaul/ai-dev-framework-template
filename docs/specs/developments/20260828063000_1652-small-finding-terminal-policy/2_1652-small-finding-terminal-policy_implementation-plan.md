@@ -519,10 +519,14 @@ Not applicable — no user interface in this repository.
 4. `reviewer_loop_finding_touches_contract_surface` matches one case per row of
    the contract-surface table, and rejects three cosmetic bodies: a typo report,
    a trailing-whitespace report, and a heading-capitalisation report.
-5. A finding on a non-shipped path whose body touches a contract surface is
-   **not** small — this is the path-independent half of the rule.
-6. A finding on a non-shipped path with a cosmetic body **is** small, so the
-   loop can still terminate on genuinely cosmetic tails.
+5. A finding on a **non-normative**, non-shipped path — `CHANGELOG.md` — whose
+   body touches a contract surface is **not** small. This is the
+   path-independent half of the rule, and the path must be non-normative for
+   the scenario to test anything: on a normative path tier 1 already returns
+   non-small, so the contract-surface test could be broken outright and the
+   scenario would still pass. Proof P2 depends on this.
+6. A finding on that same non-normative, non-shipped path with a cosmetic body
+   **is** small, so the loop can still terminate on genuinely cosmetic tails.
 6a. Cosmetic bodies containing a **bare common word** that an earlier draft
     would have matched are still small, one case per word: "the heading **state**
     is inconsistent", "a typo in the **scope** section", "the **status** column
@@ -734,7 +738,7 @@ demonstrated runs per proof, each citing a concrete file and line. The twenty-tw
 | P20 | Narrow the acceptance-criteria pattern to a single digit | a scratch copy of the surface list | scenario 4b fails on `AC-10` and `AC-147`, so contract findings citing any criterion past nine are classified small on tier-2 paths; restoring `AC-[0-9]+` passes |
 | P13 | Replace the character-class boundary with `\b` | a scratch copy of the predicate | scenario 4a fails under BSD grep — `decision gate` no longer matches at all, so tier 2 silently stops escalating anything; restoring the POSIX form passes under both greps |
 | P12 | Make the contract-surface test the only guard, dropping the normative-path tier | a scratch copy of the classifier | scenario 2's third case fails: *"required error handling is missing"* contains no listed term, falls through to the path rule, and is cleared as small. This is the vocabulary-dependence failure the two-tier design exists to prevent; restoring the tier passes |
-| P2 | Make the contract-surface test consult the path as well, so a non-shipped path short-circuits it | a scratch copy of the predicate | scenario 5 fails, because a contract finding on a `docs/` path becomes small again; restoring the path-independent test passes |
+| P2 | Make the contract-surface test consult the path as well, so a non-shipped path short-circuits it | a scratch copy of the predicate | scenario 5 fails, because a contract finding on `CHANGELOG.md` becomes small again. The scenario's path must be non-normative for this plant to be detectable at all — on a normative path tier 1 returns non-small whatever the escalation does; restoring the path-independent test passes |
 | P3 | Turn the contract-surface allow-list into a deny-list of cosmetic terms | same scratch copy | scenario 4's three cosmetic bodies still pass, but a contract body using none of the listed cosmetic terms is classified small — the failure mode the allow-list exists to prevent; restoring the allow-list passes |
 | P4 | Drop the current-head comparison from the consecutive count | a scratch copy of the counter | scenario 8 fails, because rounds on an older head extend the run; restoring the comparison passes |
 | P5 | Treat an entry with an absent or placeholder head as matching the current head | same scratch copy | scenario 9 fails in all three cases, because an unprovable head extends the run; restoring the fail-closed branch passes |
