@@ -17,8 +17,11 @@ reviewer's most recent verdict was, and on which commit.
 
 This plan adds a `missed_findings` array to each history entry — one element per
 external platform that reported blocking findings in that round — carrying the
-reviewer, the reviewed commit, the finding count, up to three paths with the
-total, and the local evidence state. It adds the derivation that produces that
+reviewer, the reviewed commit, the finding count, **every** distinct file the
+findings touch with the total, and the local evidence state. The three-path
+limit belongs to the rendered summary line, never to the stored record: the
+record is what a later report reads, and a report cannot recover a path that was
+discarded at write time. It adds the derivation that produces that
 state: select the local reviewer's most recent verdict first, classify it
 second, and when the verdict is clean, decide the ancestry relationship between
 its commit and the reviewed one.
