@@ -203,7 +203,7 @@ under **Out of Scope (MVP)** with a deferral note. No objective is dropped.
 ## Business Rules
 
 - A finding counts as **missed by the local reviewer** only when the local reviewer's most recent verdict was clean **and** covered the commit the external reviewer reviewed or one of its ancestors — states `clean_same_commit` and `clean_earlier_commit`. Every other state does not count. The counting rule enumerates the states that *do* count rather than the states that do not, so a state introduced later is excluded until someone deliberately includes it.
-- The local evidence state is recorded on every external round that reports blocking findings **and whose reviewed commit can be established**, whether or not it counts as a miss. A record that only appeared for confirmed misses would make the denominator unknowable, and a rate needs both halves. The single exception is the unattributable-commit case below, which produces no record at all — a record that cannot name the commit it describes would corrupt the denominator rather than complete it.
+- The local evidence state is recorded on every external round that reports blocking findings **and whose reviewed commit can be established**, whether or not it counts as a miss. A record that only appeared for confirmed misses would make the denominator unknowable, and a rate needs both halves. Two cases are exceptions and produce no record at all. First, an unattributable commit: a record that cannot name the commit it describes would corrupt the denominator rather than complete it. Second, a history that cannot be read, parsed, or appended to: there is nowhere to write the record, and the loop must not reconstruct or overwrite the history to make room for one. Both are enumerated here and in the Decision Matrix, and there are no others.
 - A clean local verdict is classified by its ancestry relationship to the commit the external reviewer reviewed — same, ancestor, descendant, or unrelated — and the four are recorded as distinct states that are never merged. Only same and ancestor count. A descendant clean means the local reviewer cleared newer code than the external reviewer looked at, and an unrelated clean means a force-push severed the relationship; neither is evidence that the local reviewer saw what was found.
 - A local reviewer that is **configured but has not yet produced a verdict** is recorded distinctly from one that is **not configured at all**. The first describes a pull request early in its life, the second a repository that will never produce local evidence, and summing them would make the two indistinguishable in the numbers.
 - Only **blocking** external findings qualify. Advisory or suggestion-level findings do not create a record, because the local reviewer is not expected to surface them and counting them would inflate the miss rate.
@@ -257,26 +257,29 @@ historical observation rather than a current status.
 The complete gate, from an external reviewer returning a result to a record
 existing or not. Rows are evaluated in order and the first match decides.
 
-| # | External result | Commit attributable | Local evidence state | Record written | Counts as missed | Next action |
-| --- | --- | --- | --- | --- | --- | --- |
-| 0 | Any — the history surface cannot be read, parsed, or appended to | — | — | No | No | Report that telemetry could not be recorded, and why; leave the existing history untouched |
-| 1 | Reported by the local reviewer itself | — | — | No | No | Nothing; a reviewer cannot miss its own findings |
-| 2 | No blocking findings — clean, skipped, or advisory only | — | — | No | No | Nothing; only blocking external findings qualify |
-| 3 | Blocking findings | **No** | — | No | No | Report why the commit could not be established; write no unattributable record |
-| 4 | Blocking findings | Yes | `clean_same_commit` | Yes | **Yes** | Show in the summary; include in the effectiveness numbers |
-| 5 | Blocking findings | Yes | `clean_earlier_commit` | Yes | **Yes** | Show in the summary; include in the effectiveness numbers |
-| 6 | Blocking findings | Yes | Any other state in the Statuses table | Yes | No | Show in the summary; include in the denominator only |
-| 7 | Blocking findings | Yes | Not describable by any row of the Statuses table | Yes, as `unknown` | No | Show in the summary; include in the denominator only |
+| # | External result | Commit attributable | History writable | Local evidence state | Record written | Counts as missed | Next action |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | Reported by the local reviewer itself | — | — | — | No | No | Nothing; a reviewer cannot miss its own findings |
+| 2 | No blocking findings — clean, skipped, or advisory only | — | — | — | No | No | Nothing; only blocking external findings qualify |
+| 3 | Blocking findings | **No** | — | — | No | No | Report why the commit could not be established; write no unattributable record |
+| 4 | Blocking findings | Yes | **No** | — | No | No | Report that telemetry could not be recorded, and why; leave the existing history untouched and attempt no reconstruction |
+| 5 | Blocking findings | Yes | Yes | `clean_same_commit` | Yes | **Yes** | Show in the summary; include in the effectiveness numbers |
+| 6 | Blocking findings | Yes | Yes | `clean_earlier_commit` | Yes | **Yes** | Show in the summary; include in the effectiveness numbers |
+| 7 | Blocking findings | Yes | Yes | Any other state in the Statuses table | Yes | No | Show in the summary; include in the denominator only |
+| 8 | Blocking findings | Yes | Yes | Not describable by any row of the Statuses table | Yes, as `unknown` | No | Show in the summary; include in the denominator only |
 
-Rows 4 through 7 are the reason a record is written on every qualifying external
-round rather than only on confirmed misses: rows 6 and 7 are the denominator,
+Rows 5 through 8 are the reason a record is written on every qualifying external
+round rather than only on confirmed misses: rows 7 and 8 are the denominator,
 and a rate needs both halves.
 
-Row 0 is evaluated first and is the only row that can produce no record while an
-external reviewer reported blocking findings on an establishable commit. It is
-separated from row 7 deliberately: row 7 records `unknown` because the history
-is healthy and silent about the local verdict, whereas row 0 cannot record
-anything because the history is the thing that failed.
+The ordering matters. History writability is checked at row 4 — **after**
+eligibility and commit attribution, not before. A round that was never going to
+produce a record, because the findings came from the local reviewer or were
+advisory, must not report a telemetry failure just because the history happens
+to be unwritable; nothing was owed. Row 4 is also distinct from row 8: row 8
+records `unknown` because the history is healthy and silent about the local
+verdict, whereas row 4 cannot record anything because the history is the thing
+that failed.
 
 ---
 
