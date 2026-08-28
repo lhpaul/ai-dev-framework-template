@@ -175,6 +175,33 @@ by whether the search found anything — both searches come back empty-handed. A
 pull request with forty rounds of history that says nothing about the local
 reviewer is `unknown`, not "has not run yet". Proof P10.
 
+## Step 3a: Normalization, one case per row
+
+**Maps to**: AC-6, and the collection-time normalization table.
+
+Run the collection step once per row of the plan's seven-row table and read the
+stored record:
+
+| Companion output | Stored `result` | `raw_result` / `raw_reason` |
+| --- | --- | --- |
+| `RESULT=clean` | `clean` | `clean` / `` |
+| `RESULT=needs_fixes` | `needs_fixes` | `needs_fixes` / `` |
+| `RESULT=skipped`, `REASON=unavailable` | `unavailable` | `skipped` / `unavailable` |
+| `RESULT=skipped`, `REASON=not_configured` | `not_configured` | `skipped` / `not_configured` |
+| `RESULT=skipped`, `REASON=by_policy` | `skipped` | `skipped` / `by_policy` |
+| `RESULT=escalate`, `REASON=timeout` | `unavailable` | `escalate` / `timeout` |
+| `RESULT=weird` | `unknown` | `weird` / `` |
+
+**Expected result**: exactly as tabulated, with the raw pair asserted on every
+row and not only the normalized value.
+
+This runs against **collection**, not the selector: normalization happens once,
+at collection time, and the selector only reads `result`. Four of these rows are
+what a display-derived source cannot produce — `escalate` arrives as
+`escalated (<reason>)`, a `DISPLAY_RESULT` override arrives as whatever the
+platform chose, and both `skipped` reasons collapse into one word — so this step
+is what makes P11's plant fail.
+
 ## Step 4: Ancestry answers four ways on a healthy repository
 
 **Maps to**: AC-1 through AC-4.

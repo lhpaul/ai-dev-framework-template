@@ -694,6 +694,13 @@ Not applicable — this repository ships workflow tooling, not a service.
     a classification.
 6. `reviewer_loop_local_evidence_state` produces each of the ten states, one
    case per row of its eleven-row table, including both routes to `unknown`.
+6b. **Normalization, one case per row of the collection table** — seven: `clean`;
+    `needs_fixes`; `skipped` with reason `unavailable`; `skipped` with reason
+    `not_configured`; `skipped` with any other reason; `escalate`; and an
+    unrecognised result. Each asserts the stored `result` **and** that
+    `raw_result` and `raw_reason` retain what the companion script emitted.
+    These run against the collection step, not the selector, because
+    normalization happens once at collection and the selector only reads it.
 6a. A **local** verdict whose `reviewed_heads[]` entry is empty yields
     `unknown`, not a
     state derived from the entry's `head_sha`. The entry's head is the live head
@@ -969,8 +976,8 @@ three groups:
 | P5 | Test writability before eligibility | a scratch copy of the record entry point | scenario 12 fails: a round whose only findings came from the local reviewer reports a telemetry failure on an unwritable history, though no record was owed. Scenario 11 still passes; restoring the spec's row order passes both |
 | P7 | Keep the current behavior: re-render the history section with the unavailable stub when `append_safe` is 0 | a scratch copy of the render path | scenario 11 fails: the prior block is replaced by an empty stub, so a history that failed to parse once loses every entry it held — and the loss is invisible, because the stub looks like a well-formed report of a problem; restoring the do-not-re-render rule passes |
 | P8 | Fall back to the entry's aggregate `result` when `platform_results` is absent | a scratch copy of the selector | scenario 3a fails: a pre-change entry whose round was aggregate-clean is read as a clean **local** verdict, so rounds the local reviewer never ran are recorded as confirmed misses. The plant only affects historical entries, which is where nobody looks; restoring the `unknown` fallback passes |
-| P11 | Build `platform_results` from `platform_result_tokens` instead of the raw pair | a scratch copy of the collection step | the raw-to-outcome scenarios in step 1a fail: every `escalate` becomes the unparseable `escalated (<reason>)`, every `DISPLAY_RESULT` override becomes whatever the platform chose, and both `skipped` reasons collapse into `unavailable` — so `skipped` and `not_configured` become unreachable and escalations record as `unknown`. Restoring the raw pair passes |
-| P12 | Count `path_total` without de-duplicating | a scratch copy of the record builder | scenario 13a fails: eight findings across three files report twelve files and name one file three times, overstating the blast radius of every record and wasting the line's three path slots; restoring the de-duplication passes |
+| P11 | Build `platform_results` from `platform_result_tokens` instead of the raw pair | a scratch copy of the collection step | scenario 6b fails on four of its seven rows: `escalate` becomes the unparseable `escalated (<reason>)`, a `DISPLAY_RESULT` override becomes whatever the platform chose, and both `skipped` reasons collapse into `unavailable` — so `skipped` and `not_configured` become unreachable and escalations record as `unknown`. `raw_result` and `raw_reason` cannot be recovered at all. Restoring the raw pair passes all seven |
+| P12 | Count `path_total` without de-duplicating | a scratch copy of the record builder | scenario 13a fails: eight findings across three files report **eight** files rather than three, and the named paths become repeats of one file — overstating the blast radius of every record and wasting the line's three path slots; restoring the de-duplication passes |
 | P13 | Compute the remainder as `path_total - 3` instead of from the paths actually named | a scratch copy of the renderer | scenario 13c fails at every truncation point: the zero-path line reads `+9 more` for twelve files, and a record with two files fitting reads `-1 more`. The plant is invisible whenever exactly three paths fit, which is the common case; restoring the count-what-was-named rule passes |
 | P14 | Select from persisted entries only, omitting the current round's records | a scratch copy of the call site | scenarios 1a and 1b fail: a round where the local reviewer was clean and an external reviewer found blockers is classified from the previous round's verdict, or as `not_yet_run` when there is no previous round — so the confirmed miss the feature exists to record is the one case it cannot see. Every other scenario still passes, because they all supply the verdict as prior history; restoring the composition passes |
 | P16 | Fall back to the entry's `head_sha` when a local verdict has no `reviewed_head` | a scratch copy of the selector | scenario 6a fails: the local reviewer's verdict is compared against the live head at write time rather than the commit it examined, so two unrelated facts can produce `clean_same_commit` and a confirmed miss. The plant is invisible whenever the two happen to coincide, which is most rounds; restoring the empty head — and with it an undecidable ancestry and `unknown` — passes |
@@ -1003,8 +1010,8 @@ object exposes it.
 1a. Collect `platform_result_records` from the raw `platform_result` and
    `platform_reason` at the per-platform call site, and write it into the entry
    as `platform_results` — outcome fields only, **no** head; heads stay in
-   #1648's `reviewed_heads[]`. **Verify**: scenario 14, scenario 3b, and one case per
-   row of the raw-to-outcome table — in particular the two `skipped` reasons and
+   #1648's `reviewed_heads[]`. **Verify**: scenarios 6b, 14 and 3b — all seven
+   rows of the normalization table, in particular the two `skipped` reasons and
    `escalate`, which `platform_result_tokens` cannot distinguish.
 2. Add `reviewer_loop_local_latest_verdict`, taking the history payload and the
    newline-delimited configured-platform list tested with `grep -Fxq`, and
