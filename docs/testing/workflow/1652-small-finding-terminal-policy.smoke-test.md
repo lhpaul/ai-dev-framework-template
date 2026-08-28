@@ -482,10 +482,21 @@ them against Steps 1 through 5 must surface no contradiction.
 ### Step 10: Static checks
 
 1. Run `shellcheck` on `scripts/development-workflow/pr-review-loop.sh`.
-2. Run `markdownlint-cli2` on the two changed documentation files, this runbook
+2. Run
+
+   ```bash
+   python3 scripts/lint/workflow-shell-guard-lint.py \
+     --base-ref origin/develop-internal-reviewer-effectiveness
+   ```
+
+   The implementation materially rewrites `pr-review-loop.sh`, whose path
+   matches the guard's `scripts/development-workflow/*.sh` filter, and the
+   guard runs on **added** diff lines — so it applies to this change and to no
+   part of the repository's existing debt.
+3. Run `markdownlint-cli2` on the two changed documentation files, this runbook
    and the implementation plan.
 
-**Expected result**: both tools exit 0.
+**Expected result**: all three tools exit 0.
 
 ---
 
