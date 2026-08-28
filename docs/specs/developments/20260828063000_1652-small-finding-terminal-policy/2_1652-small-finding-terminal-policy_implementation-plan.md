@@ -267,9 +267,11 @@ Not applicable — this repository ships workflow tooling, not a service.
            literal `\n` — are word separators or noise for this purpose, so
            collapsing them to a space gives the same, correct answer either way.
            The ambiguity is real but immaterial to the question being asked.
-         - It is **never** used to reconstruct or store the body. The record and
-           the summary carry the raw value as received; only the string handed
-           to the matcher is normalised.
+         - It is **never** used to reconstruct or store the body. The
+           **record** carries the raw value as received; only the string handed
+           to the matcher is normalised. The summary line does not carry
+           bodies at all — it carries the derived causes listed below — so the
+           raw body survives in exactly one place, the record.
 
          Fixing the encoding at the producer would be the more complete answer
          and is deliberately out of scope: it changes a key=value contract other

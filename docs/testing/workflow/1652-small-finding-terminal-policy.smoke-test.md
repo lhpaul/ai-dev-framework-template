@@ -177,8 +177,10 @@ construction: `local-ai-reviewer.sh` does not escape pre-existing backslashes
 before encoding newlines, so the two originals produce identical bytes and no
 downstream step can tell them apart. The plan does not claim to — it normalises
 rather than decodes, and the classification is correct either way. Confirm the
-**stored** record and the summary still carry the body as received; the
-normalisation is applied only to the string handed to the matcher. Run 3's summary names the platform that produced the deciding finding.
+**stored record** still carries the body as received; the
+normalisation is applied only to the string handed to the matcher. The summary
+line carries no bodies — only the derived causes — so the record is the only
+place the fidelity check can read. Run 3's summary names the platform that produced the deciding finding.
 
 All four of run 4's cases are classified from **intact fields** and the contract
 term is still found. These are the cases a delimiter-separated record would
