@@ -532,12 +532,13 @@ above are the regression coverage for this change.
 
 This plan materially modifies an automated guard, so `REVIEW.md` §
 Planted-violation proof applies and the pure-refactor exemption does not. Two
-demonstrated runs per proof, each citing a concrete file and line. Of the fourteen
-proofs, **ten** plant the **permissive** direction — P1 through P5, P8, P10,
-P11, P12 and P14,
-reproducing the original bug; **two** plant the **restrictive** direction —
-P6 and P7, where the tightening would disable the mechanism instead of
-sharpening it.
+demonstrated runs per proof, each citing a concrete file and line. The fourteen proofs fall into three groups:
+
+| Group | Count | Proofs | What they plant |
+| --- | --- | --- | --- |
+| Permissive | **10** | P1-P5, P8, P10, P11, P12, P14 | the original bug, in each of the ways it can return |
+| Restrictive | **3** | P6, P7, P13 | a tightening that disables the mechanism instead of sharpening it |
+| Observability | **1** | P9 | an inverted within-group reporting precedence, which hides the more actionable cause without changing whether the rule fires |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
