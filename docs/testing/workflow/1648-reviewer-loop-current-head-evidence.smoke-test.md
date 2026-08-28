@@ -85,8 +85,11 @@ abbreviation or prefix path exists to fall back to.
 2. Read the rendered summary body produced by the head-evidence cases.
 
 **Expected result**: The body contains a single `**Head evidence:**` block that
-names the current PR head once and lists one row per configured platform, each
-row ending in `current`, `not-current`, or `not-reported`. The suite exits 0.
+names the current PR head once and lists one row per configured platform. Each
+row ends in `current`, `not-reported`, or `not-current` followed by its reason
+in parentheses (`head_mismatch`, `unverifiable_reviewed_head`, or
+`unverifiable_current_head`). Heads are printed as full 40-character OIDs, so
+the values shown are exactly the values compared. The suite exits 0.
 
 ### Step 2b: One head snapshot, shared with the aggregate evidence
 

@@ -124,10 +124,16 @@ file declares `#!/usr/bin/env bash` and uses Bash arrays):
 - [ ] When the pre-dispatch lookup fails, `loop_head_sha` is the empty string
       (its existing documented behavior — the loop already warns that
       `POST_CLEAN_HEAD_SHA` will be empty and Protocol 91 Check 0.6 will refuse
-      the verdict). An empty current head fails
-      `reviewer_loop_head_evidence_full_sha`, so every platform classifies
-      `not-current` and `LOCAL_AI_HEAD_CURRENT` is `0` — fail-closed, aligned
-      with the refusal Check 0.6 already performs for the same cause. The
+      the verdict). **Precedence is the classifier's step order, which is
+      authoritative wherever this plan describes an outcome**: the reviewed head
+      is examined first, so a platform that reported *no* head stays
+      `not-reported` even when the current head is also empty, and only a
+      platform that *did* report a head classifies
+      `not-current|unverifiable_current_head`. Both outcomes are blocking —
+      `LOCAL_AI_HEAD_CURRENT` is `0` in the second case and empty in the first,
+      and the fail-closed readiness rule refuses both — so the empty
+      `loop_head_sha` path is fail-closed either way, aligned with the refusal
+      Check 0.6 already performs for the same cause. The
       synthetic `unknown-<epoch>-<pid>-<rand>` placeholder never reaches this
       path, because it is produced by `reviewer_loop_history_current_head_sha`
       for the ledger's `head_sha`, not by the pre-dispatch capture; it is still
@@ -166,11 +172,13 @@ file declares `#!/usr/bin/env bash` and uses Bash arrays):
       all three reasons, so no unverifiable value can produce a passing
       readiness signal.
 - [ ] Add pure function `reviewer_loop_head_evidence_render <current_head>
-      <entries…>` producing the Markdown `**Head evidence:**` block, and
+      <entries…>` producing the Markdown `**Head evidence:**` block, one row per
+      platform carrying its state and, for `not-current`, its reason, and
       interpolate it into the summary comment body immediately before
       `${phase_section}`.
 - [ ] Add pure function `reviewer_loop_head_evidence_json <current_head>
-      <entries…>` producing the `reviewed_heads` array, and thread it into
+      <entries…>` producing the `reviewed_heads` array, whose elements carry
+      `platform`, `reviewed_head`, `state`, and `reason`, and thread it into
       `reviewer_loop_history_build_entry` as a new `--argjson reviewedHeads`
       parameter following the existing `current_run_id` convention (set by the
       caller in a global, not appended to the positional list).
@@ -246,9 +254,10 @@ Not applicable — no user interface in this repository.
 
 **Key scenarios to test**:
 
-1. `reviewer_loop_head_evidence_classify` returns the required token for every
-   row of the parser-risk edge-case table — maps to brief scope bullets 1 and 2,
-   and is the regression coverage for both bounds of the length normalization.
+1. `reviewer_loop_head_evidence_classify` returns the required state — and
+   reason where the table names one — for every row of the parser-risk
+   edge-case table. Maps to brief scope bullets 1 and 2, and is the regression
+   coverage for the full-OID equality rule and its three failure reasons.
 2. `reviewer_loop_head_evidence_full_sha` accepts a 40-char hex value and
    rejects a 39-char value, a 41-char value, a 7-char abbreviation, a 40-char
    value containing a non-hex character, and the empty string — pins full-OID
@@ -263,11 +272,13 @@ Not applicable — no user interface in this repository.
    emitted by the same run — pins the reconciliation between the new per-reviewer
    evidence and the existing aggregate head evidence, so the two cannot drift
    apart silently.
-5. `reviewer_loop_head_evidence_render` prints one row per platform with the
-   classification token, and prints the current PR head once — scope bullet 1.
+5. `reviewer_loop_head_evidence_render` prints one row per platform carrying
+   that platform's state, and its reason when the state is `not-current`, and
+   prints the current PR head exactly once — scope bullet 1.
 6. `reviewer_loop_head_evidence_json` emits a `reviewed_heads` array whose
-   entries carry `platform`, `reviewed_head`, and `state`, and an empty array
-   when no platform reported a head — supports #1651 and #1657 downstream.
+   entries carry `platform`, `reviewed_head`, `state`, and `reason` (empty
+   string when the state is `current` or `not-reported`), and an empty array
+   when no platform is configured — supports #1651 and #1657 downstream.
 7. A ledger entry written without `reviewed_heads` or `classification_head`
    still parses through `reviewer_loop_history_payload_from_existing` —
    backward compatibility of the `v1` schema.
@@ -283,10 +294,13 @@ Not applicable — no user interface in this repository.
     list — this is the "condition not applicable" state, and it is the automated
     coverage for the downstream-consumer compatibility mitigation in the risk
     table.
-11. `item-completion-self-check.sh` reports `discrepancy` for
-    `pull_request.local_reviewer_head` when the ledger's newest local reviewed
-    head is an ancestor of the live head, and `verified` when they match — scope
-    bullet 3 at the report-evidence layer.
+11. `item-completion-self-check.sh` fills `pull_request.local_reviewer_head`
+    per its six-condition table: `discrepancy` when the ledger's newest local
+    reviewed head differs from the live `headRefOid`, `verified` when they are
+    equal, `unavailable_required` for a pre-field ledger with the platform
+    configured and review evidence required, and `unavailable_optional` when the
+    platform is not in the resolved list — scope bullet 3 at the report-evidence
+    layer.
 
 **Files**:
 
@@ -350,8 +364,9 @@ per-platform block that already writes `platform_result_tokens`.
 
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
-| Ledger fixture without `reviewed_heads` | A `reviewer_loop_history.v1` payload with one entry that predates this change, to prove backward compatibility (scenario 6) | inline heredoc in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
-| Ledger fixture with a stale local head | Newest entry recording `local-ai-reviewer` reviewed head `aaaaaaa…` while the mocked `gh pr view` returns `bbbbbbb…` (scenario 8) | inline mock in `scripts/development-workflow/tests/test-item-completion-self-check.sh` |
+| Ledger fixture without `reviewed_heads` or `classification_head` | A `reviewer_loop_history.v1` payload with one entry that predates this change, to prove backward compatibility (scenario 7) | inline heredoc in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Ledger fixture with a stale local head | Newest entry recording a `local-ai-reviewer` reviewed head that differs from the 40-character OID the mocked `gh pr view` returns (scenario 11) | inline mock in `scripts/development-workflow/tests/test-item-completion-self-check.sh` |
+| Ledger fixture with no `reviewed_heads` field, platform configured | Same payload as the first row, evaluated with `--require-review-summary true` and `local-ai-reviewer` in the resolved list, to pin `unavailable_required` (scenario 11) | inline mock in `scripts/development-workflow/tests/test-item-completion-self-check.sh` |
 
 No repository fixture files are added; both suites already build their fixtures
 inline with mock `gh` commands and require no network access.
@@ -380,8 +395,8 @@ inline with mock `gh` commands and require no network access.
 | A partial match is mistaken for proof that two values name the same commit | Med | High — it would defeat the gate this item exists to build | No prefix or abbreviation matching exists anywhere in the feature: `reviewer_loop_head_evidence_full_sha` requires a full 40-character hex OID on both sides and the comparison is exact case-insensitive equality. Both producers already emit `headRefOid` in full, so nothing legitimate is rejected; the abbreviation, 39-char, 41-char, and non-hex rows of the edge-case table are the negative tests |
 | A failed live-head lookup yields the synthetic `unknown-…` placeholder and is compared against a real SHA | Med | Med — could produce a confusing `not-current` or, if mishandled, a false `current` | The placeholder is non-hex, so it fails the validity predicate and every platform classifies `not-current` for that iteration — fail-closed by construction, pinned by its own edge-case row |
 | The summary block, the ledger entry, and the stdout keys classify against different snapshots of the live head | Med | High — the three surfaces would contradict each other, and per-reviewer evidence could disagree with `POST_CLEAN_HEAD_SHA` | No new lookup is added: all consumers read the existing pre-dispatch `loop_head_sha`, the same value the settle emits as `POST_CLEAN_HEAD_SHA`; scenario 3 fails if any renderer issues its own lookup, and scenario 4 pins `classification_head` equal to `POST_CLEAN_HEAD_SHA` |
-| Adding a field to `reviewer_loop_history.v1` breaks a reader that validates the entry shape | Low | High — a broken ledger read is fail-closed and would stall every reviewer loop | Field is additive and optional; scenario 6 asserts an entry without it still parses through `reviewer_loop_history_payload_from_existing` |
-| The new readiness condition blocks PRs in repositories that do not configure `local-ai-reviewer` | Low | High — it would stall downstream consumers of this template | The condition applies only when the platform is in the resolved list, and in that case neither key is emitted at all; scenario 10 asserts the keys are absent for a non-configuring repository, and scenario 9 pins the separate configured-but-no-head state that *does* block |
+| Adding fields to `reviewer_loop_history.v1` breaks a reader that validates the entry shape | Low | High — a broken ledger read is fail-closed and would stall every reviewer loop | `reviewed_heads` and `classification_head` are additive and optional; scenario 7 asserts an entry without either still parses through `reviewer_loop_history_payload_from_existing` |
+| The new readiness condition blocks PRs in repositories that do not configure `local-ai-reviewer` | Low | High — it would stall downstream consumers of this template | The condition applies only when the platform **is** in the resolved list; when it is **not**, neither key is emitted at all and there is nothing to evaluate. Scenario 10 asserts the keys are absent for a non-configuring repository, and scenario 9 pins the separate configured-but-no-head state that *does* block |
 | The summary comment grows past what reviewers read | Low | Low | The head-evidence block is one line per configured platform plus one current-head line, in the same style as the existing compare-mode block |
 
 ---
@@ -436,12 +451,16 @@ reviewer_loop_head_evidence_classify() {
 Rendered summary block, illustrative:
 
 ```markdown
-**Head evidence:** current PR head `b3f19c2e`
+**Head evidence:** current PR head `82d2f3a844a6c0c417f5c55e8a01eebdf343de45`
 
-- local-ai-reviewer: reviewed `b3f19c2e` — current
-- pr-agent: reviewed `9a41d0b7` — not-current
+- local-ai-reviewer: reviewed `82d2f3a844a6c0c417f5c55e8a01eebdf343de45` — current
+- pr-agent: reviewed `29c0e9d2541a85c0e335052de42599f485d51a67` — not-current (head_mismatch)
 - codex-github: not-reported
 ```
+
+Full OIDs are printed rather than abbreviations, matching the comparison rule:
+the block shows exactly the values that were compared, so a reader can verify
+the verdict without resolving an abbreviation.
 
 ---
 
