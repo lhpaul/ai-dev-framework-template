@@ -356,8 +356,22 @@ Not applicable — this repository ships workflow tooling, not a service.
       shown, not assumed.
 - [ ] **The counter reports why it stopped, not only how far it counted.**
       `SMALL_FINDINGS_BLOCKED_BY` has to distinguish `stale_head` from
-      `head_unknown`, and a bare count cannot. The counter emits two values —
-      the count, and a stop reason from a closed set:
+      `head_unknown`, and a bare count cannot. The counter emits **one compact
+      JSON object** on stdout — `{"count":<integer>,"stop_reason":"<value>"}`,
+      built with `jq -c -n --argjson count … --arg stop_reason …` — and the
+      caller reads both fields with `jq -r`. A single object keeps the two
+      values associated; two lines or a space-separated pair could be
+      misassociated by a caller that reads only one, and the count alone is what
+      the current signature returns, so a partially-updated caller would
+      silently keep working with the wrong semantics.
+
+      **Malformed or absent output is fail-closed.** If the object does not
+      parse, or either field is missing or outside its domain, the caller treats
+      the result as count `0` with stop reason `head_unknown` and the terminal
+      rule does not fire. An unreadable counter cannot demonstrate a bounded
+      consecutive run, and the rule exists to be demonstrated.
+
+      The stop reason is one of:
 
       | Stop reason | Meaning |
       | --- | --- |
@@ -556,6 +570,11 @@ Not applicable — no user interface in this repository.
     implementation passes the first under GNU and fails it under BSD, so this
     case is what distinguishes a portable implementation from one that only
     works on the CI runner.
+9b. The counter's output contract: it emits one compact JSON object carrying
+    both `count` and `stop_reason`, and the caller reads both with `jq -r`. A
+    malformed object, a missing field, or a `stop_reason` outside the closed set
+    is treated as count `0` with `head_unknown`, and the terminal rule does not
+    fire.
 9a. The counter reports its stop reason from the closed set, one case each:
     `exhausted` when the walk reaches the end of the ledger, `not_small` when it
     stops at a non-small round, `stale_head`, and `head_unknown`. A bare count
@@ -621,11 +640,12 @@ Not applicable — no user interface in this repository.
 **Files**:
 
 - `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenarios 1, 2,
-  3, 4, 4a, 4b, 5, 6, 6a, 7, 7a, 7b, 7b-i, 7c, 7d, 8, 8a, 8b, 8c, 9, 9a, 10,
-  10a, 10b, 11 and 14, as new cases in the existing `HARNESS_MODE=1` harness. Listed individually rather than as a range: the
-  sub-lettered scenarios are the ones a range drops, and all fourteen of them
-  (4a, 4b, 6a, 7a, 7b, 7b-i, 7c, 7d, 8a, 8b, 8c, 9a, 10a, 10b) guard a behavior
-  the others do not.
+  3, 4, 4a, 4b, 5, 6, 6a, 7, 7a, 7b, 7b-i, 7c, 7d, 8, 8a, 8b, 8c, 9, 9a, 9b,
+  10, 10a, 10b, 11 and 14, as new cases in the existing `HARNESS_MODE=1`
+  harness. Listed individually rather than as a range: the
+  sub-lettered scenarios are the ones a range drops, and all fifteen of them
+  (4a, 4b, 6a, 7a, 7b, 7b-i, 7c, 7d, 8a, 8b, 8c, 9a, 9b, 10a, 10b) guard a
+  behavior the others do not.
 - `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` —
   a new suite for scenarios 12 and 13, the two replay regressions, which need
   their own ledger fixtures. It must declare:
@@ -652,11 +672,11 @@ above are the regression coverage for this change.
 
 This plan materially modifies an automated guard, so `REVIEW.md` §
 Planted-violation proof applies and the pure-refactor exemption does not. Two
-demonstrated runs per proof, each citing a concrete file and line. The twenty proofs fall into four groups:
+demonstrated runs per proof, each citing a concrete file and line. The twenty-one proofs fall into four groups:
 
 | Group | Count | Proofs | What they plant |
 | --- | --- | --- | --- |
-| Permissive | **14** | P1-P5, P8, P10, P11, P12, P14, P15, P16, P17, P20 | the original bug, in each of the ways it can return |
+| Permissive | **15** | P1-P5, P8, P10, P11, P12, P14, P15, P16, P17, P20, P21 | the original bug, in each of the ways it can return |
 | Fidelity | **1** | P18 | storing the matching-time normalisation instead of the body as received |
 | Restrictive | **4** | P6, P7, P13, P19 | a tightening that disables the mechanism instead of sharpening it |
 | Observability | **1** | P9 | an inverted within-group reporting precedence, which hides the more actionable cause without changing whether the rule fires |
@@ -681,6 +701,7 @@ demonstrated runs per proof, each citing a concrete file and line. The twenty pr
 | P9 | Invert both within-group precedences: report `contract_surface` over `shipped_path`, and `head_unknown` over `stale_head` | a scratch copy of the blocked-by mapping | scenario 10a's first two rows fail — the content row reports `contract_surface` where a shipped path is present, and the currency row reports `head_unknown` where a known-different head is present. Both are detectable because both are genuine co-occurrences within a group; restoring the order passes |
 | P10 | Make the counter read `head_sha` instead of `classification_head` | a scratch copy of the counter | scenario 8c fails, because a round whose write-time head happens to match counts even though it described an older commit; restoring `classification_head` passes |
 | P11 | Check only a prior entry's `classification_head` and skip its `reviewed_heads[]` | same scratch copy | scenario 8b's second row fails, because a round classified against the current head counts while one of its contributors reviewed an older commit; restoring the per-contributor check passes |
+| P21 | Have the counter emit the count alone, dropping the stop reason | a scratch copy of the counter and its caller | scenario 9b fails and scenario 11 can no longer distinguish `stale_head` from `head_unknown`; restoring the JSON object passes |
 | P19 | Require a current head from **every** `reviewed_heads[]` entry rather than only the contributing platforms | same scratch copy | scenario 8b's third row fails: a non-contributing reviewer that returned clean or was skipped breaks the count, and on a repository where one reviewer never reports the terminal rule can never fire again. Restoring the contributor scoping passes |
 | P8 | Skip the current round's head check, verifying only the prior ledger entries | a scratch copy of the terminal decision | scenario 8a fails, because the rule terminates on a deciding round whose findings describe a commit that is no longer the head; restoring the check passes |
 
@@ -925,8 +946,10 @@ reviewer_loop_finding_touches_contract_surface() {
    `contributing_platforms[]`; and every platform named there having a valid
    `reviewed_heads[]` head equal to that `classification_head`. Ignore
    non-contributing platforms. Read `classification_head`, never `head_sha`.
-   Report a stop reason from the closed set. **Verify**: scenarios 8, 8b's four
-   rows, 8c, 9, 9a and 14.
+   Emit `{"count":…,"stop_reason":…}` as one compact JSON object and read both
+   fields in the caller, treating malformed or missing output as count `0` with
+   `head_unknown`. **Verify**: scenarios 8, 8b's four rows, 8c, 9, 9a, 9b and
+   14.
 5. Wire the current-head requirement into the terminal decision — for the prior
    entries via the counter, and for the deciding round via the per-reviewer
    reviewed head from #1648, requiring **every** contributing reviewer to report
@@ -964,7 +987,7 @@ reviewer_loop_finding_touches_contract_surface() {
 9. Document the new behavior in the `--help` usage block. **Verify**: run
    `pr-review-loop.sh --help` and confirm the predicate, the contract-surface
    list, the current-head requirement and `SMALL_FINDINGS_BLOCKED_BY` appear.
-10. Produce the twenty planted-violation proofs (P1-P20) and record them in the PR
+10. Produce the twenty-one planted-violation proofs (P1-P21) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed. Every proof is mandatory, including the whole restrictive

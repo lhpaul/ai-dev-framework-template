@@ -28,7 +28,6 @@
 | Reviewer loop | `scripts/development-workflow/pr-review-loop.sh` |
 | Tier-1 normative-document predicate | `reviewer_loop_path_is_normative_document` |
 | Tier-2 contract-surface predicate | `reviewer_loop_finding_touches_contract_surface` |
-| Contract-surface predicate | `reviewer_loop_finding_touches_contract_surface` |
 | Smallness aggregate | `reviewer_loop_all_findings_are_small` |
 | Consecutive counter | `reviewer_loop_small_findings_prior_consecutive_count` |
 | Loop harness suite | `scripts/development-workflow/tests/test-pr-review-loop.sh` |
@@ -209,7 +208,10 @@ and classify a blocker against the wrong text. The record is JSON built with
    counter for each.
 3. Read the counter's **stop reason** in each run above, plus one run where the
    walk reaches the end of the ledger and one where it stops at a non-small
-   round.
+   round. Confirm the counter emits one compact JSON object carrying both
+   `count` and `stop_reason`, and that the caller reads both from it.
+3a. Run it with the counter emitting a malformed object, then with
+   `stop_reason` missing, then with a `stop_reason` outside the closed set.
 4. With `PR_REVIEW_LOOP_SMALL_FINDINGS_STOP_ROUNDS` at its default `2`, seed two
    prior small rounds on a stale head and run the terminal decision.
 5. Seed two prior small rounds **on the current head**, so the prior count is
@@ -244,7 +246,12 @@ uses `head_sha` as the identity key the #1502 cap counters bucket on, and it can
 legitimately differ from the commit the round actually described. All three cases in step 2 also end
 the run. Step 3 returns `stale_head`, `head_unknown` (three times), `exhausted`
 and `not_small` respectively; a bare count could not distinguish the first two,
-which `SMALL_FINDINGS_BLOCKED_BY` must. Step 4 does **not** fire the terminal
+which `SMALL_FINDINGS_BLOCKED_BY` must. Both values arrive in one JSON object,
+so a caller cannot associate a count with the wrong reason.
+
+All three of step 3a's cases are treated as count `0` with `head_unknown`, and
+the terminal rule does **not** fire. An unreadable counter cannot demonstrate a
+bounded consecutive run, and the rule exists to be demonstrated. Step 4 does **not** fire the terminal
 rule and reports `SMALL_FINDINGS_BLOCKED_BY=stale_head`.
 
 **Step 5**: only the first combination may fire. The other three must not —
@@ -381,10 +388,10 @@ tier 1 makes those findings non-small whatever the body says.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P20 each record the command, the file and line of the
+2. Confirm P1 through P21 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: twenty proofs in four groups — **fourteen** permissive,
+**Expected result**: twenty-one proofs in four groups — **fifteen** permissive,
 **four** restrictive, **one** observability, **one** fidelity, per the plan's
 proof-group table.
 The permissive group is P1 through P5, P8, P10, P11, P12, P14, P15, P16 and P17,
@@ -392,7 +399,8 @@ reproducing the original bug in each of the ways it can return; P8 skips the cur
 fifth run to fail; P10 reads `head_sha` instead of `classification_head` and
 requires Step 4's step 1b to fail; P14 breaks the contract-surface
 matching entirely and requires Step 6b to fail while Step 6 still passes, which
-is precisely why Step 6b exists; P20 narrows the acceptance-criteria pattern to a single digit and requires
+is precisely why Step 6b exists; P21 has the counter emit the count alone and requires Step 4's step 3a to fail;
+P20 narrows the acceptance-criteria pattern to a single digit and requires
 Step 3's `AC-10` and `AC-147` rows to fail; P15 deduplicates the findings
 array, P16
 matches the raw body without normalising, and P17 replaces the JSON record with
