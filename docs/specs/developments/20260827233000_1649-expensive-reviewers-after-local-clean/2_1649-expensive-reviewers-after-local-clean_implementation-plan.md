@@ -122,7 +122,7 @@ Not applicable — this repository ships workflow tooling, not a service.
 
       | # | Condition | Unmet reason |
       | --- | --- | --- |
-      | 1 | `LOCAL_AI_CONFIGURED` is exactly `1` **and** `LOCAL_AI_HEAD_CURRENT` is exactly `1` | `local_reviewer_not_configured` when `LOCAL_AI_CONFIGURED` is `0`; `local_evidence_stale` when `LOCAL_AI_HEAD_CURRENT` is `0`; `local_evidence_missing` when either is empty, unset, or any value other than `0` or `1` |
+      | 1 | `expensive_gate_local_ai_configured` returns exactly `1` **and** `expensive_gate_local_ai_head_current` returns exactly `1` | `local_reviewer_not_configured` when the first returns `0`; `local_evidence_stale` when the second returns `0`; `local_evidence_missing` when either returns an empty string or any value other than `0` or `1` |
       | 2 | Every platform in this reviewer's **peer set** (defined below) has already run in this invocation **and** produced acceptable peer evidence | `peer_reviewer_not_run` when one has not run yet; `peer_reviewer_not_clean` when one ran without producing acceptable evidence |
       | 3 | Zero unresolved, non-outdated review threads | `unresolved_threads` |
       | 4 | The non-reviewer check set on `loop_head_sha` is **non-empty** and every member is `SUCCESS`, `SKIPPED`, or `NEUTRAL` | `baseline_checks_not_green` when one failed; `baseline_checks_pending` when one is still running; `baseline_checks_unobserved` when the set is empty |
@@ -329,8 +329,8 @@ Not applicable — this repository ships workflow tooling, not a service.
       and never exercising the bound. `EXPENSIVE_GATE_DEFERRALS=-1` keeps the
       unreadable state distinguishable from a count of zero.
 - [ ] **A repository with no local reviewer defers, it does not dispatch.**
-      When `LOCAL_AI_CONFIGURED` is `0` there is no current-head local clean
-      evidence, and the brief requires `codex-github` to run *only after* that
+      When `expensive_gate_local_ai_configured` returns `0` there is no
+      current-head local clean evidence, and the brief requires `codex-github` to run *only after* that
       evidence exists and to fail closed when it is missing — it permits an
       explicit manual override, not an implicit automatic one. The gate
       therefore defers with `local_reviewer_not_configured`. The consequence for
@@ -359,15 +359,16 @@ Not applicable — this repository ships workflow tooling, not a service.
       variables, the run prints them, and they cannot disagree.
 - [ ] **Condition 1 is an allow-list, not a deny-list.** Both keys are matched
       against their exact expected value: the condition passes only when
-      `LOCAL_AI_CONFIGURED` is the literal `1` and `LOCAL_AI_HEAD_CURRENT` is
-      the literal `1`. Testing only for `0` and empty would let any unexpected
+      `expensive_gate_local_ai_configured` returns the literal `1` and
+      `expensive_gate_local_ai_head_current` returns the literal `1`. Testing only for `0` and empty would let any unexpected
       value — a `2` from a future contract change, a stray `true`, a value with
       trailing whitespace — fall through and authorize the expensive reviewer
       with no valid local-clean evidence, which is the opposite of fail-closed.
       Any value that is neither `0` nor `1` is reported as
-      `local_evidence_missing`: it carries no more information than an absent
-      key, and treating it as its own reason would imply the gate understood it.
-      The same exact-match discipline applies to every token the gate reads.
+      `local_evidence_missing`: it carries no more information than absent
+      evidence, and treating it as its own reason would imply the gate
+      understood it. The same exact-match discipline applies to every token the
+      gate reads.
 - [ ] **Fail closed on every unknown.** If any input cannot be read, the gate
       defers with one of exactly three reasons — there is no generic unknown
       state:
@@ -491,29 +492,32 @@ reads them against each other and fails on any divergence.
    accidentally hold back a cheap reviewer.
 2. All conditions met → `EXPENSIVE_GATE_RESULT=dispatched`,
    `EXPENSIVE_GATE_REASON` empty, and `run_platform_review` is called.
-3. `LOCAL_AI_HEAD_CURRENT=0` → `deferred` / `local_evidence_stale`,
+3. The `local-ai-reviewer` entry of `platform_reviewed_heads` records a head
+   that is not `loop_head_sha`, so the derivation yields `0` → `deferred` /
+   `local_evidence_stale`,
    `run_platform_review` is **not** called, and the loop's aggregate becomes
    `needs_fixes` / `expensive_gate_deferred` — the core of brief scope bullet 1,
    and the proof that a defer withholds readiness instead of passing as a skip.
-4. Unexpected and absent values are equally refused, one case per row — the
-   allow-list check for brief scope bullet 2, pairing with #1648's rule that an
-   absent key is telemetry loss rather than non-applicability:
+4. Unexpected and absent derived values are equally refused, one case per row —
+   the allow-list check for brief scope bullet 2, pairing with #1648's rule that
+   absent evidence is telemetry loss rather than non-applicability. Each row
+   stubs the return of `expensive_gate_local_ai_configured` and
+   `expensive_gate_local_ai_head_current`; nothing is exported:
 
-   | `LOCAL_AI_CONFIGURED` | `LOCAL_AI_HEAD_CURRENT` | Required result |
+   | `configured` | `head_current` | Required result |
    | --- | --- | --- |
-   | unset | `1` | `deferred` / `local_evidence_missing` |
    | empty | `1` | `deferred` / `local_evidence_missing` |
    | `2` | `1` | `deferred` / `local_evidence_missing` |
    | `true` | `1` | `deferred` / `local_evidence_missing` |
-   | `1` | unset | `deferred` / `local_evidence_missing` |
    | `1` | empty | `deferred` / `local_evidence_missing` |
    | `1` | `2` | `deferred` / `local_evidence_missing` |
    | `1` | `yes` | `deferred` / `local_evidence_missing` |
 
-   The `2` and `true` rows are the ones a deny-list implementation fails: they
-   are neither `0` nor empty, so testing only for those would let them through
-   and dispatch the expensive reviewer with no valid evidence.
-5. `LOCAL_AI_CONFIGURED=0` → `deferred` / `local_reviewer_not_configured`.
+   The `2`, `true` and `yes` rows are the ones a deny-list implementation fails:
+   they are neither `0` nor empty, so testing only for those would let them
+   through and dispatch the expensive reviewer with no valid evidence.
+5. `local-ai-reviewer` is absent from the resolved platform list, so the
+   derivation yields `0` → `deferred` / `local_reviewer_not_configured`.
    Distinct from scenario 4 (`missing` means the telemetry never arrived; this
    means the platform is genuinely not configured), and deliberately still a
    defer: the brief requires the expensive reviewer to run only after
