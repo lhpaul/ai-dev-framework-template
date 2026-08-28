@@ -76,7 +76,8 @@ code but not the same lines, and this plan records the boundary in
 | The ready-phase gate does not consult the local reviewer | `sed -n '8580,8616p' scripts/development-workflow/pr-review-loop.sh` | The gate is `ensure_pr_ready_for_ready_phase "$pr_number"`, whose only job is converting the PR to ready; on success it sets `phase_after_clean_started=1` and dispatch proceeds. Nothing between the two reads any reviewer's result |
 | A blocking result ends the cycle | `sed -n '8736,8750p' scripts/development-workflow/pr-review-loop.sh` | On `needs_fixes` or `escalate` the loop `break`s out of the platform iteration in normal mode, so within a run a later cycle re-dispatches from the top — which is why the gap is not "every run" but the cases enumerated in the Summary |
 | The pre-dispatch head snapshot exists | `sed -n '8515,8519p' scripts/development-workflow/pr-review-loop.sh` | `loop_head_sha` is captured from `gh pr view --json headRefOid` before any reviewer runs, and is the value #1648 classifies against. The guard compares to it and takes no new snapshot |
-| Two caps already bound the run | `sed -n '7174,7195p' scripts/development-workflow/pr-review-loop.sh` | A per-run cap (`CYCLE_COUNT` / `MAX_CYCLES`, default 10) and a lifetime cap (`TOTAL_CYCLE_COUNT` / `MAX_TOTAL_CYCLES`) from the #1502 dual-cap work. The guard is bounded by them and adds no third counter |
+| Two caps already bound the run | `sed -n '7174,7195p' scripts/development-workflow/pr-review-loop.sh` | A per-run cap (`CYCLE_COUNT` / `MAX_CYCLES`, default 10) and a lifetime cap (`TOTAL_CYCLE_COUNT` / `MAX_TOTAL_CYCLES`) from the #1502 dual-cap work. The guard adds no third counter |
+| …but neither bounds a repeated identical entry | `sed -n '/^reviewer_loop_history_entries_count()/,/^}/p' scripts/development-workflow/pr-review-loop.sh` | The lifetime count is `unique` over `head_sha \| result`, so repeated `needs_fixes` entries at one head count **once**, and `CYCLE_COUNT` resets each invocation. A refusal reported as `needs_fixes` would therefore repeat indefinitely — which is why the refusal is `escalate` |
 | The platform list is filtered before the loop | `sed -n '674,704p' scripts/development-workflow/pr-review-loop.sh` | `filter_phase_after_clean_platforms` removes configured ready-phase platforms absent from this invocation. An invocation can therefore contain ready-phase platforms and **no** local reviewer, which is the first of the Summary's three cases |
 | The configuration is not read when `--platform` is given | `sed -n '8330,8342p' scripts/development-workflow/pr-review-loop.sh` | `workflow_config_review_platforms` is consulted only when the platform list is otherwise empty. So the invocation's `platforms` array cannot answer *is this reviewer configured for the repository* — the guard resolves that separately |
 
@@ -269,7 +270,7 @@ Not applicable — this repository ships workflow tooling, not a service.
       | --- | --- | --- |
       | `not_required` | — | proceed to the gate; no dispatch |
       | owes a pass | no | **dispatch once**; clean → proceed, otherwise end the cycle and record the head |
-      | owes a pass | yes | **refuse**: end the cycle with `needs_fixes`, reason `failed_for_head`, no dispatch and no conversion |
+      | owes a pass | yes | **refuse**: end the run with **`escalate`**, reason `failed_for_head`, no dispatch and no conversion |
 
       **The third row is the one a two-way guard gets wrong**, and it is not a
       corner case — it is the next cycle after any failed pass. A flag that only
@@ -278,6 +279,20 @@ Not applicable — this repository ships workflow tooling, not a service.
       created by the anti-loop mechanism itself. Refusing instead is
       deterministic, costs no dispatch, and keeps the guarantee the item exists
       for.
+
+      **It refuses with `escalate`, not `needs_fixes`, and that is what makes
+      the refusal bounded.** The lifetime cap counts `unique` entries keyed on
+      `head_sha|result` (`reviewer_loop_history_entries_count`), so repeated
+      `needs_fixes` entries at one head count **once** — and `CYCLE_COUNT`
+      resets every invocation. A refusal that reported `needs_fixes` could
+      therefore repeat across invocations forever without either cap advancing:
+      the boundedness would be asserted and untrue.
+
+      `escalate` is terminal for the run and routes to a human, which is also
+      the honest signal. Nothing has changed since the last failure — same head,
+      same verdict, no dispatch — so a result that invites another automated
+      attempt invites one the loop already knows is futile. Scenario 10a pins
+      that the refusal does not depend on a cap to terminate.
 
       A **clean** pass records nothing and needs to record nothing: the verdict
       it produced is clean on `loop_head_sha`, so the condition itself returns
@@ -442,13 +457,13 @@ Order step 0.
    commit dispatch it once; a cycle after a new commit dispatches it again.
    Asserted by counting dispatches, not by reading the field.
 8c. The guarantee survives **re-invocation**: after a failed pass ends a run, a
-   **new** invocation of the loop at the same head refuses rather than
-   dispatching again. This is the case an in-memory flag loses, and it is not
+   **new** invocation of the loop at the same head refuses with `escalate`
+   rather than dispatching again. This is the case an in-memory flag loses, and it is not
    hypothetical — the loop is re-invoked after every blocking result, which is
    what a failed pass produces.
 8a. After a **failed** pass, the next cycle at the same head **refuses**: the
-   cycle ends with `needs_fixes` and reason `failed_for_head`, no
-   local reviewer is dispatched, and the pull request is not converted. A guard
+   run ends with `escalate` and reason `failed_for_head`, no local reviewer is
+   dispatched, and the pull request is not converted. A guard
    that only suppressed the dispatch would let this cycle reach the gate with no
    current clean evidence — the fail-open the anti-loop flag would otherwise
    create.
@@ -458,10 +473,15 @@ Order step 0.
 9. Neither `CYCLE_COUNT` nor `TOTAL_CYCLE_COUNT` changes because a pass ran: two
    runs over identical input, one needing a pass and one not, report the same
    counts.
-10. A pull request whose local reviewer never goes clean escalates with
-    `max_cycles_exceeded` at the same cycle count as today, having dispatched
-    the pass **once** and refused on every later cycle at that head — the guard
-    adds no cycles, and after the first head it adds no dispatches either.
+10. A pull request whose local reviewer never goes clean reaches
+    `max_cycles_exceeded` at the same cycle count as today when the head keeps
+    moving — the guard adds no cycles, and one dispatch per head.
+10a. When the head does **not** move, the refusal terminates without relying on
+    a cap: the second invocation at that head escalates with `failed_for_head`.
+    Asserted directly, because the lifetime cap counts `unique`
+    `head_sha|result` pairs and would never advance on repeated identical
+    entries — a refusal reported as `needs_fixes` would repeat forever with both
+    caps standing still.
 11. `LOCAL_SECOND_PASS_REASON` is emitted on **every** run, including
     `not_required`, and `LOCAL_SECOND_PASS` is `0` there.
 12. Both values reach the ledger entry and the loop summary, and the summary
@@ -517,6 +537,7 @@ Order step 0.
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
 | The guard loops — a pass that keeps triggering itself | Med | **High** — a run that never terminates, or one that burns its cycle budget on repeated local reviews | Keyed on the **head**, so a second dispatch requires a new commit, which the loop cannot manufacture. Scenario 8 counts dispatches across cycles; proof **P1** replaces the key with a per-cycle boolean |
+| The refusal repeats forever because no cap counts it | **High** — `needs_fixes` is the natural result for a blocked gate | **High** — the boundedness the plan claims is asserted and untrue, and the run never terminates on an unchanged head | The refusal is `escalate`, terminal for the run. Scenario 10a runs a second invocation; proof **P12** reports `needs_fixes` |
 | The anti-loop state is lost between invocations | **High** — the loop is re-invoked after every blocking result, which is what a failed pass produces | **High** — one dispatch per invocation forever, the same loop arrived at from outside the run | The failed head lives in the ledger, the loop's existing cross-invocation memory. Scenario 8c and proof **P9** |
 | The anti-loop flag creates a fail-open | **High** — a two-way guard is the obvious shape | **High** — the cycle after a failed pass reaches the gate with no current clean evidence, and the mechanism meant to bound the guard is what lets it through | Three-way guard: dispatch, refuse, or proceed. Scenario 8a and proof **P6** |
 | Silence is read as satisfaction | **High** — `not_required` is the natural default for "nothing to compare" | **High** — a pull request the local reviewer never examined passes the gate, which is the exact fail-open this epic exists to close | `no_evidence` owes a pass. Scenario 2 and proof **P2** |
@@ -575,13 +596,13 @@ reviewer_loop_local_pass_required() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The eleven proofs fall into
+runs per proof, each citing a concrete file and line. The twelve proofs fall into
 three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Fail-open | **5** | P2, P4, P6, P10, P11 | the gate reached, or the pull request converted, without the evidence |
-| Loop and cost | **3** | P1, P3, P5 | a guard that repeats, shortens the run, or runs where there is nothing to guard |
+| Loop and cost | **4** | P1, P3, P5, P12 | a guard that repeats, shortens the run, or runs where there is nothing to guard |
 | Integration | **3** | P7, P8, P9 | a guard wired in beside the pipeline rather than into it |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
@@ -591,6 +612,7 @@ three groups:
 | P9 | Hold the failed head in a shell variable instead of the ledger | a scratch copy of the guard | scenario 8c fails: the invocation after a failed pass starts with an empty variable, sees the same non-clean verdict, and dispatches again — one dispatch per invocation forever on a pull request whose reviewer never goes clean. Scenario 8's within-run count still passes, because a variable survives a run; only crossing an invocation separates them; restoring the ledger field passes |
 | P8 | Call `run_platform_review` from the guard without processing its output | a scratch copy of the dispatch block | scenario 5's ledger assertion fails: the pass runs, its verdict decides the gate, and it appears in no ledger entry and no `key=value` output — so the telemetry says the gate opened with no evidence of what opened it. The gate behaviour is still correct, which is what makes this the plant a hurried extraction invites; restoring the shared processor passes |
 | P6 | Make the flag suppress the dispatch without refusing the gate | same scratch copy | scenario 8a fails: the cycle after a failed pass reaches the gate with no current clean evidence, because the condition still owes a pass and nothing runs — a fail-open created by the anti-loop mechanism itself. Scenario 8's dispatch count still passes, which is what makes this the plant a two-way guard invites; restoring the refusal passes both |
+| P12 | Refuse with `needs_fixes` instead of `escalate` | same scratch copy | scenario 10a fails: the lifetime cap counts `unique` `head_sha\|result` pairs and `CYCLE_COUNT` resets each invocation, so an unchanged head refuses forever with neither cap advancing — the boundedness the plan claims would be asserted and untrue. Scenario 8a's single-refusal assertion still passes, which is why 10a runs a **second** invocation; restoring `escalate` passes both |
 | P2 | Return `not_required` when the history names no local verdict | same scratch copy | scenario 2 fails: a pull request the local reviewer never examined reaches the gate and its ready-phase reviewers run, which is the fail-open this item exists to close. Every other scenario passes, because they all supply a verdict; restoring `no_evidence` passes |
 | P11 | Pass the invocation's `platforms` array to the condition instead of the repository's configured list | a scratch copy of the guard's call site | scenario 2b fails: an explicit `--platform` run that omits a configured local reviewer reports `no_local_reviewer` and proceeds without a pass — the item's motivating case, turned into a fail-open by the argument added to prevent one. Every scenario that runs without `--platform` passes, because there the two lists coincide; restoring the independent resolution passes |
 | P10 | Fold `not_configured` into `no_evidence` | same scratch copy | scenario 2a fails: a repository with no local reviewer configured owes a pass that cannot be dispatched, so either the guard blocks its ready-phase gate forever or an implementer invents a fallback the plan never specified. Scenario 2 passes, because a configured-but-silent reviewer is a different input; restoring the fifth value passes both |
@@ -631,7 +653,8 @@ pull requests it lets through are exactly the ones nobody reviewed locally.
    7, 8, 8a, 8b and 8c — the dispatch count across cycles, all three consequences of a failed
    pass, the refusal on the next cycle at the same head, and the `not_required`
    path after a clean pass.
-3. Confirm the caps are untouched. **Verify**: scenarios 9 and 10.
+3. Confirm the caps are untouched and that the refusal terminates without one.
+   **Verify**: scenarios 9, 10 and 10a.
 4. Add the no-op when no ready-phase platform is configured. **Verify**:
    scenario 13.
 5. Add both `print_kv` lines, the ledger fields and the summary line.
@@ -640,7 +663,7 @@ pull requests it lets through are exactly the ones nobody reviewed locally.
    `changelog.d/1656.changed.second-local-pass.md`. **Verify**: runbook **Step
    10**, which reads both surfaces and the fragment against each other — Step 8
    is the no-gate/no-guard case.
-7. Produce the eleven planted-violation proofs (P1-P11) and record them in the PR
+7. Produce the twelve planted-violation proofs (P1-P12) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
