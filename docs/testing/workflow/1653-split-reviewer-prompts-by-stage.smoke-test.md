@@ -289,9 +289,17 @@ Step 2 runs the **real** function rather than reading its source. The plan
 claims no change is needed in `pr-review-loop.sh`, and that claim is exactly the
 kind that holds until a key collides with the skip list.
 
-`REVIEW_CHECKLISTS` is comma-separated, not JSON. The `key=value` contract is
-line-oriented and its consumers split on the first `=`; a JSON array's quoting
-survives into the summary as an unparsed literal. Proof P7 plants the array.
+`REVIEW_CHECKLISTS` carries its list on **one line**, and that is the contract's
+only hard requirement: the value must contain no newline.
+`emit_prefixed_platform_output` reads its input line by line, so a
+newline-separated value's second entry becomes its own line and is re-emitted as
+the key `PLATFORM_1_Workflow Policy Review Checklist` with an empty value — a
+fabricated key in the summary and the real value truncated to one entry. Proof
+P7 plants the newline form, and step 2 must show the fabricated key.
+
+Comma versus JSON is not a correctness question — a compact JSON array contains
+no newline either, and the loop forwards the value opaquely without parsing it.
+Comma is chosen for readability in a summary a human reads.
 
 ## Step 8: All four documentation surfaces agree
 
