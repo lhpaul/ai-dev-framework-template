@@ -78,6 +78,7 @@ code but not the same lines, and this plan records the boundary in
 | The pre-dispatch head snapshot exists | `sed -n '8515,8519p' scripts/development-workflow/pr-review-loop.sh` | `loop_head_sha` is captured from `gh pr view --json headRefOid` before any reviewer runs, and is the value #1648 classifies against. The guard compares to it and takes no new snapshot |
 | Two caps already bound the run | `sed -n '7174,7195p' scripts/development-workflow/pr-review-loop.sh` | A per-run cap (`CYCLE_COUNT` / `MAX_CYCLES`, default 10) and a lifetime cap (`TOTAL_CYCLE_COUNT` / `MAX_TOTAL_CYCLES`) from the #1502 dual-cap work. The guard is bounded by them and adds no third counter |
 | The platform list is filtered before the loop | `sed -n '674,704p' scripts/development-workflow/pr-review-loop.sh` | `filter_phase_after_clean_platforms` removes configured ready-phase platforms absent from this invocation. An invocation can therefore contain ready-phase platforms and **no** local reviewer, which is the first of the Summary's three cases |
+| The configuration is not read when `--platform` is given | `sed -n '8330,8342p' scripts/development-workflow/pr-review-loop.sh` | `workflow_config_review_platforms` is consulted only when the platform list is otherwise empty. So the invocation's `platforms` array cannot answer *is this reviewer configured for the repository* — the guard resolves that separately |
 
 **What this log does not establish.** It does not show how often a ready-phase
 reviewer has run on a head the local reviewer never saw. The loop does not
@@ -172,6 +173,24 @@ Not applicable — this repository ships workflow tooling, not a service.
 
       Conflating the two rows is what an implementer would otherwise have to
       invent behavior for: a dispatch of a reviewer that does not exist.
+
+      **The list the condition receives must be the repository's, not the
+      invocation's**, and this is the part most easily got wrong. The loop's
+      `platforms` array is invocation-filtered, and `pr-review-loop.sh` skips
+      `workflow_config_review_platforms` entirely when explicit `--platform`
+      arguments are supplied — so passing `platforms` would report
+      `not_configured` for a reviewer that **is** configured and merely omitted
+      from this run. That is the motivating case of this whole item, and it
+      would proceed without a pass: a fail-open produced by the very argument
+      added to prevent one.
+
+      So the guard resolves its own input. Add
+      `reviewer_loop_repo_configured_platforms`, which reads
+      `workflow_config_review_platforms` from the configuration file
+      **unconditionally**, independent of `--platform`, and caches the result
+      for the run. The condition receives that value and never the `platforms`
+      array. Scenario 2b pins it with an explicit `--platform` invocation that
+      omits a configured local reviewer.
 
       The five values are distinct rather than a boolean because they are
       reported, and a reader wanting to know *why* a pass ran cannot recover it
@@ -355,6 +374,12 @@ Order step 0.
    local reviewer **while the reviewer is configured** — not `not_required`.
    Silence is not satisfaction, and this is the value an invocation whose
    `--platform` list omits a configured reviewer produces.
+2b. An explicit `--platform` invocation that **omits** a configured local
+   reviewer returns `no_evidence` and owes a pass — not `no_local_reviewer`.
+   The condition reads the repository's configured list, resolved
+   independently, and never the invocation-filtered `platforms` array, which is
+   empty of the reviewer in exactly this case. This is the item's motivating
+   scenario, and passing the wrong list turns it into a fail-open.
 2a. `no_local_reviewer` is returned when the reviewer is **not configured for
    the repository**, and the guard **proceeds** without dispatching. Asserted as
    a distinct value from both `no_evidence` and `not_required`: the first would
@@ -468,6 +493,7 @@ Order step 0.
 | The pass increments a cycle cap | Med | Med — every run needing a pass gets a shorter budget, and `max_cycles_exceeded` starts meaning two different things | The pass is a dispatch inside an already-counted cycle. Scenarios 9 and 10; proof **P3** increments |
 | A failed pass converts the pull request anyway | Med | Med — the pull request is left ready with no reviewer dispatched, a state the loop never intended | The cycle ends before the gate. Scenario 7 asserts all three consequences; proof **P4** converts first |
 | The extraction changes the ordinary path | Med — it touches the busiest block in the script | **High** — every run's output shifts, and the cause is a refactor nobody was reviewing for behaviour | Byte-identical output required for a run needing no pass, in its own commit so the diff is readable. Scenario 5a and proof **P8** |
+| The condition receives the invocation's platform list | **High** — `platforms` is in scope and looks right | **High** — an explicit `--platform` run omitting a configured reviewer reports `no_local_reviewer` and proceeds, which is the item's motivating case turned into a fail-open | The repository's configured list is resolved independently of `--platform`, by its own helper. Scenario 2b and proof **P11** |
 | The condition ignores the current round | **High** — the persisted payload is the obvious input | Med — every ordinary run dispatches the local reviewer twice, and the guard becomes a tax on the path it was meant to leave alone | The round's in-memory results are composed in first, using #1651's helper. Scenarios 4 and 5b, proof **P7** |
 | The guard runs when there is no gate to protect | Med | Low — doubles the local reviewer's cost on every draft-only run | No-op when `phase_after_clean_enabled` is 0. Scenario 13 and proof **P5** |
 | This item and #1649 are implemented as one refusal | Med | **High** — the loop can never advance past a local finding, because the evidence that would clear the refusal is the dispatch the refusal prevents | The order is stated in **Interaction with #1649** and enforced by Implementation Order step 0 |
@@ -518,12 +544,12 @@ reviewer_loop_local_pass_required() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The ten proofs fall into
+runs per proof, each citing a concrete file and line. The eleven proofs fall into
 three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Fail-open | **4** | P2, P4, P6, P10 | the gate reached, or the pull request converted, without the evidence |
+| Fail-open | **5** | P2, P4, P6, P10, P11 | the gate reached, or the pull request converted, without the evidence |
 | Loop and cost | **3** | P1, P3, P5 | a guard that repeats, shortens the run, or runs where there is nothing to guard |
 | Integration | **3** | P7, P8, P9 | a guard wired in beside the pipeline rather than into it |
 
@@ -535,12 +561,13 @@ three groups:
 | P8 | Call `run_platform_review` from the guard without processing its output | a scratch copy of the dispatch block | scenario 5's ledger assertion fails: the pass runs, its verdict decides the gate, and it appears in no ledger entry and no `key=value` output — so the telemetry says the gate opened with no evidence of what opened it. The gate behaviour is still correct, which is what makes this the plant a hurried extraction invites; restoring the shared processor passes |
 | P6 | Make the flag suppress the dispatch without refusing the gate | same scratch copy | scenario 8a fails: the cycle after a failed pass reaches the gate with no current clean evidence, because the condition still owes a pass and nothing runs — a fail-open created by the anti-loop mechanism itself. Scenario 8's dispatch count still passes, which is what makes this the plant a two-way guard invites; restoring the refusal passes both |
 | P2 | Return `not_required` when the history names no local verdict | same scratch copy | scenario 2 fails: a pull request the local reviewer never examined reaches the gate and its ready-phase reviewers run, which is the fail-open this item exists to close. Every other scenario passes, because they all supply a verdict; restoring `no_evidence` passes |
+| P11 | Pass the invocation's `platforms` array to the condition instead of the repository's configured list | a scratch copy of the guard's call site | scenario 2b fails: an explicit `--platform` run that omits a configured local reviewer reports `no_local_reviewer` and proceeds without a pass — the item's motivating case, turned into a fail-open by the argument added to prevent one. Every scenario that runs without `--platform` passes, because there the two lists coincide; restoring the independent resolution passes |
 | P10 | Fold `not_configured` into `no_evidence` | same scratch copy | scenario 2a fails: a repository with no local reviewer configured owes a pass that cannot be dispatched, so either the guard blocks its ready-phase gate forever or an implementer invents a fallback the plan never specified. Scenario 2 passes, because a configured-but-silent reviewer is a different input; restoring the fifth value passes both |
 | P3 | Increment `CYCLE_COUNT` when the pass runs | a scratch copy of the dispatch block | scenarios 9 and 10 fail: a run needing a pass reports a different count than an identical run that does not, and `max_cycles_exceeded` arrives earlier — so the guard silently shortens every run it helps; restoring the no-op passes |
 | P4 | Call `ensure_pr_ready_for_ready_phase` before checking the pass's result | same scratch copy | scenario 7 fails on its conversion assertion: a failed pass leaves the pull request converted to ready with no reviewer dispatched — a state the loop never intended and a human has to undo. The `needs_fixes` result is still reported, so a test asserting only the result passes; restoring the order passes |
 | P5 | Run the guard even when no ready-phase platform is configured | same scratch copy | scenario 13 fails: every draft-only run dispatches the local reviewer twice, doubling the cost of the cheapest gate for no benefit — the pass exists to protect a gate that is not there; restoring the no-op passes |
 
-Four proofs plant the fail-open direction, and P2 is the one to read twice: it is
+Five proofs plant the fail-open direction, and P2 is the one to read twice: it is
 the natural default, it passes every scenario that supplies a verdict, and the
 pull requests it lets through are exactly the ones nobody reviewed locally.
 
@@ -553,8 +580,10 @@ pull requests it lets through are exactly the ones nobody reviewed locally.
    signature #1651's plan specifies. Then read #1649's implementation — merged
    or in flight — to confirm it is a *check* and not a combined gate. If either
    check fails, stop and revise this plan.
-1. Add `reviewer_loop_local_pass_required`, calling #1651's selector with both
-   of its arguments. **Verify**: scenarios 1, 2, 2a and 3 — all five values,
+1. Add `reviewer_loop_repo_configured_platforms`, reading the configuration
+   unconditionally, and `reviewer_loop_local_pass_required`, calling #1651's
+   selector with both of its arguments and never with the `platforms` array.
+   **Verify**: scenarios 1, 2, 2a, 2b and 3 — all five values,
    `no_evidence` for a silent but configured reviewer, `no_local_reviewer` for
    an unconfigured one, and both head-mismatch shapes.
 1a. Extract the platform loop's inline post-dispatch block into
@@ -577,7 +606,7 @@ pull requests it lets through are exactly the ones nobody reviewed locally.
    `changelog.d/1656.changed.second-local-pass.md`. **Verify**: runbook **Step
    10**, which reads both surfaces and the fragment against each other — Step 8
    is the no-gate/no-guard case.
-7. Produce the ten planted-violation proofs (P1-P10) and record them in the PR
+7. Produce the eleven planted-violation proofs (P1-P11) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---

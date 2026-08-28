@@ -23,9 +23,21 @@ inside an `if` or with `|| true`.
    configured-platform list that **contains** it.
 6. Call it with the same history and a configured-platform list that **does
    not** contain it.
+7. Run the loop with an explicit `--platform` list that **omits** a local
+   reviewer the repository *does* configure, and read the condition's value.
 
 **Expected result**: `not_required`, `head_changed`, `head_changed`,
-`prior_findings`, `no_evidence`, `no_local_reviewer`.
+`prior_findings`, `no_evidence`, `no_local_reviewer`; and case 7 returns
+`no_evidence`, owing a pass.
+
+Case 7 is where the list comes from, and it is the item's motivating scenario.
+`pr-review-loop.sh` skips `workflow_config_review_platforms` entirely when
+explicit `--platform` arguments are supplied, and the `platforms` array is
+invocation-filtered — so handing that array to the condition would report
+`no_local_reviewer` for a reviewer that **is** configured and merely omitted,
+and the run would proceed without a pass. A fail-open produced by the argument
+added to prevent one. The guard resolves the repository's configured list
+independently of `--platform`. Proof P11.
 
 Cases 5 and 6 differ **only** in the configured-platform list, and they must not
 collapse. Case 5 is a configured reviewer that has not spoken — dispatchable, so
@@ -253,11 +265,12 @@ ready-phase gate already existed and this alters when it fires.
 ## Step 12: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P10 each record the command, the file and line of the
+2. Confirm P1 through P11 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: ten proofs in three groups — **four** fail-open, **three**
-loop and cost, **three** integration, per the plan's proof-group table.
+**Expected result**: eleven proofs in three groups — **five** fail-open,
+**three** loop and cost, **three** integration, per the plan's proof-group
+table.
 
 P2 is the one to read twice: returning `not_required` for a history with no
 local verdict is the natural default, it passes every scenario that supplies a
