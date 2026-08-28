@@ -433,6 +433,11 @@ Not applicable — no user interface in this repository.
     is an older commit, the run ends with `stale_head`; with the two swapped, it
     counts. `head_sha` is the #1502 cap identity key and can legitimately differ
     from the commit the round described.
+4a. The boundary expression is portable: the predicate matches `decision gate`
+    and rejects `delegates` under **both** GNU grep and BSD grep. A `\b`-based
+    implementation passes the first under GNU and fails it under BSD, so this
+    case is what distinguishes a portable implementation from one that only
+    works on the CI runner.
 9a. The counter reports its stop reason from the closed set, one case each:
     `exhausted` when the walk reaches the end of the ledger, `not_small` when it
     stops at a non-small round, `stale_head`, and `head_unknown`. A bare count
@@ -489,10 +494,10 @@ Not applicable — no user interface in this repository.
 **Files**:
 
 - `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenarios 1, 2,
-  3, 4, 5, 6, 6a, 7, 8, 8a, 8b, 8c, 9, 9a, 10, 10a, 10b, 11 and 14, as new
+  3, 4, 4a, 5, 6, 6a, 7, 8, 8a, 8b, 8c, 9, 9a, 10, 10a, 10b, 11 and 14, as new
   cases in the existing `HARNESS_MODE=1` harness. Listed individually rather than as a range: the
-  sub-lettered scenarios are the ones a range drops, and all seven of them
-  (6a, 8a, 8b, 8c, 9a, 10a, 10b) guard a behavior the others do not.
+  sub-lettered scenarios are the ones a range drops, and all eight of them
+  (4a, 6a, 8a, 8b, 8c, 9a, 10a, 10b) guard a behavior the others do not.
 - `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` —
   a new suite for scenarios 12 and 13, the two replay regressions, which need
   their own ledger fixtures. It must declare:
@@ -519,7 +524,7 @@ above are the regression coverage for this change.
 
 This plan materially modifies an automated guard, so `REVIEW.md` §
 Planted-violation proof applies and the pure-refactor exemption does not. Two
-demonstrated runs per proof, each citing a concrete file and line. Of the twelve
+demonstrated runs per proof, each citing a concrete file and line. Of the thirteen
 proofs, **nine** plant the **permissive** direction — P1 through P5, P8, P10,
 P11 and P12,
 reproducing the original bug; **two** plant the **restrictive** direction —
@@ -529,6 +534,7 @@ sharpening it.
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
 | P1 | Remove `docs/specs/developments/**` from the normative-document list | a scratch copy of `reviewer_loop_path_is_normative_document` | scenario 2's second and third cases fail — a trailing-whitespace body and a body with no listed contract term both become small on a spec — and scenario 12 fires the terminal rule; restoring the pattern passes |
+| P13 | Replace the character-class boundary with `\b` | a scratch copy of the predicate | scenario 4a fails under BSD grep — `decision gate` no longer matches at all, so tier 2 silently stops escalating anything; restoring the POSIX form passes under both greps |
 | P12 | Make the contract-surface test the only guard, dropping the normative-path tier | a scratch copy of the classifier | scenario 2's third case fails: *"required error handling is missing"* contains no listed term, falls through to the path rule, and is cleared as small. This is the vocabulary-dependence failure the two-tier design exists to prevent; restoring the tier passes |
 | P2 | Make the contract-surface test consult the path as well, so a non-shipped path short-circuits it | a scratch copy of the predicate | scenario 5 fails, because a contract finding on a `docs/` path becomes small again; restoring the path-independent test passes |
 | P3 | Turn the contract-surface allow-list into a deny-list of cosmetic terms | same scratch copy | scenario 4's three cosmetic bodies still pass, but a contract body using none of the listed cosmetic terms is classified small — the failure mode the allow-list exists to prevent; restoring the allow-list passes |
@@ -561,8 +567,13 @@ externally-supplied finding text.
   a body containing a listed term in a quoted *negation* (\"this is not a
   decision gate\"); a multi-line body where the term appears only on the last
   line.
-- **Required behavior**: matching is case-insensitive and on word boundaries, so
-  `delegates` does not match `gate` and `microscope` does not match `scope`. A
+- **Required behavior**: matching is case-insensitive and on word boundaries,
+  expressed as `(^|[^[:alnum:]_])(…)([^[:alnum:]_]|$)` rather than `\b`. `\b`
+  is a GNU and PCRE extension that BSD grep on stock macOS does not recognise,
+  where it would fail even the positive cases; the character-class form is POSIX
+  ERE and is the convention this repository already uses for the 401/403
+  boundary in `local-ai-reviewer.sh`. With it, `delegates` does not match `gate`
+  and `microscope` does not match `scope`. A
   term inside a code fence or URL still matches — a finding that quotes the
   contract it is about is still about the contract, and the failure direction of
   matching too readily here is a round that stays non-small, which is safe. An
@@ -628,6 +639,7 @@ and neither may claim that *every* finding on a normative document is non-small
 | The tightening removes the terminal mechanism entirely | Med | High — every PR with a cosmetic documentation tail would loop to its cycle cap | The normative-document list is narrow and enumerated: `docs/project/**`, fixtures, snapshots and `CHANGELOG.md` stay in the second tier, where a cosmetic blocking finding is still small. Scenarios 3, 6 and 13 assert the mechanism still fires there, and proof P6 plants the widening |
 | The classification depends on reviewers using particular vocabulary | **High** | High — a contract finding worded as *"required error handling is missing"* contains no listed term and would be cleared as small, which is the original bug for ordinary wording | The vocabulary test is never the only guard: tier 1 makes a blocking finding on a normative document non-small whatever it says, and tier 2's escalation applies only where a cosmetic tail is still wanted. Scenario 2's third case uses a contract finding with no listed term, and proof P12 drops tier 1 and requires it to fail |
 | The contract-surface test is written as a deny-list of cosmetic terms | Med | High — an unrecognised contract finding would be classified small, reproducing the bug | The test is an explicit allow-list of surfaces, and a body it does not recognise falls through to the path rule rather than being declared cosmetic; proof P3 plants the inversion |
+| The boundary expression is not portable | Med | High — `\b` works on GNU grep and on the CI runner but not on BSD grep, so tier 2 would silently match nothing on a developer's macOS machine while passing CI | The boundary is `(^|[^[:alnum:]_])…([^[:alnum:]_]|$)`, POSIX ERE and the convention this repository already uses in `local-ai-reviewer.sh`; scenario 4a runs the positive and negative cases under both greps and proof P13 plants the `\b` form |
 | The contract-surface test over-matches ordinary prose | **High** | High — matching bare common words like `state`, `scope` or `gate` would make almost every finding non-small, disabling the terminal rule from the restrictive side while appearing to tighten it | Every matched term is a phrase or a qualified form; no bare common word is on the list, and the plan records that an earlier draft's bare terms were removed for this reason. Scenario 6a tests one cosmetic body per removed word, and the parser-risk addendum adds word-boundary negatives (`delegates`/`gate`, `microscope`/`scope`) |
 | The current round is decided without checking its own head | Med | High — the rule could terminate on a round whose findings describe a commit that is no longer the head, which is the staleness the brief names | The run is `prior + 1` and both halves are verified: the counter checks prior entries, and **every** reviewer contributing a counted finding to the current round must report `loop_head_sha` before it contributes. Scenario 8a's four combinations pin the `+ 1` half, including the two-platform case where only one contributor is stale; proof P8 plants the omission |
 | An old ledger without head data silently counts as current | Med | High — the current-head requirement would be inert on exactly the PRs that predate it | An absent, empty or placeholder head ends the consecutive run; scenarios 9 and 14 and proof P5 pin all three forms |
@@ -700,8 +712,14 @@ reviewer_loop_finding_touches_contract_surface() {
   for entry in "${REVIEWER_LOOP_CONTRACT_SURFACES[@]}"; do
     identity="${entry%%|*}"
     pattern="${entry#*|}"
-    # Case-insensitive, word-boundary: "delegates" must not match "gate".
-    if printf '%s' "$body" | grep -Eqi "\\b(${pattern})\\b"; then
+    # Case-insensitive, word-boundary. NOT "\b": that is a GNU/PCRE
+    # extension and BSD grep on stock macOS does not recognise it, so even
+    # "decision gate" would fail to match there. The explicit character-class
+    # form below is POSIX ERE and portable, and it is the convention this
+    # repository already uses — see the 401/403 boundary in
+    # local-ai-reviewer.sh line 406.
+    if printf '%s' "$body" \
+      | grep -Eqi "(^|[^[:alnum:]_])(${pattern})([^[:alnum:]_]|\$)"; then
       printf '%s\n' "$identity"
       return 0
     fi
@@ -728,8 +746,9 @@ reviewer_loop_finding_touches_contract_surface() {
    contract term; and a cosmetic blocking finding on `docs/project/**` is still
    small.
 2. Add `reviewer_loop_finding_touches_contract_surface` with case-insensitive
-   word-boundary matching over **exactly the spellings the normative table
-   lists** — no bare common words, no wildcard separators, and no additional
+   word-boundary matching — via `(^|[^[:alnum:]_])…([^[:alnum:]_]|$)`, never
+   `\b`, which BSD grep does not support — over **exactly the spellings the
+   normative table lists** — no bare common words, no wildcard separators, and no additional
    variants such as an unhyphenated `allow list`. It **prints the
    matched surface identity** and returns success, printing nothing on no
    match, and resolves ties by first match in table order. **Verify**:
@@ -780,7 +799,7 @@ reviewer_loop_finding_touches_contract_surface() {
 9. Document the new behavior in the `--help` usage block. **Verify**: run
    `pr-review-loop.sh --help` and confirm the predicate, the contract-surface
    list, the current-head requirement and `SMALL_FINDINGS_BLOCKED_BY` appear.
-10. Produce the twelve planted-violation proofs (P1-P12) and record them in the PR
+10. Produce the thirteen planted-violation proofs (P1-P13) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed. P6 and P7 are the two restrictive-direction proofs and

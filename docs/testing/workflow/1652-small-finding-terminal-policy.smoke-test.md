@@ -110,6 +110,7 @@ Call the contract-surface predicate with each case and read match / no-match:
 | Body | Required result |
 | --- | --- |
 | `the delegates list is wrong` | no match — `delegates` must not match `gate` |
+| `the decision gate is inconsistent`, run under **BSD grep** | match — the boundary uses `(^\|[^[:alnum:]_])…([^[:alnum:]_]\|$)`, not `\b`, which BSD grep does not recognise |
 | `use a microscope analogy` | no match — `microscope` must not match `scope` |
 | `the heading state is inconsistent` | no match — bare `state` is not a matched term |
 | `a typo in the scope section` | no match — bare `scope` is not a matched term |
