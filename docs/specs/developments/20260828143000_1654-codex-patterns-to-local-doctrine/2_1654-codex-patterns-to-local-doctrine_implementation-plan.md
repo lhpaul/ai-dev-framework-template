@@ -577,8 +577,8 @@ three groups:
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Silent | **4** | P1, P2, P5, P7 | a review that used less doctrine than it reports, with nothing to show it |
-| Contract | **6** | P3, P4, P6, P8, P9, P13 |
-| Fail-open | **3** | P10, P11, P12 | an error or a race reported as a successful supply | a check or an output that breaks its own stated rule |
+| Contract | **6** | P3, P4, P6, P8, P9, P13 | a check or an output that breaks its own stated rule |
+| Fail-open | **3** | P10, P11, P12 | an error or a race reported as a successful supply |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
@@ -631,7 +631,8 @@ everywhere it is tested.
 6. Add the CI step. **Verify**: the linter runs and fails the build on a
    deliberately malformed catalogue.
 7. Update the `--help` block, the integration document, Protocol 93, and add
-   `changelog.d/1654.added.review-doctrine.md`. **Verify**: runbook Step 8.
+   `changelog.d/1654.added.review-doctrine.md`. **Verify**: runbook **Step 10**,
+   which reads all four surfaces against each other — Step 8 tests the linter.
 8. Produce the thirteen planted-violation proofs (P1-P13) and record them in the PR
    with the command, file, line and both outcomes for each.
 
