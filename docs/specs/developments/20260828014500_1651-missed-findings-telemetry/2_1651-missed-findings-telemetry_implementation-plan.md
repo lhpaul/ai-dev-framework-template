@@ -790,10 +790,16 @@ Not applicable — this repository ships workflow tooling, not a service.
 4. `reviewer_loop_commit_ancestry` returns each of `same`, `ancestor`,
    `descendant` and `unrelated` against a purpose-built fixture repository with
    two branches and a common root.
-5. It returns `undecidable` in three cases: a commit absent from the local
-   repository, a `--is-ancestor` exit status other than 0 or 1, and an empty
-   commit argument. Asserted as `undecidable` specifically, never as
-   `unrelated`.
+5. It returns `undecidable` in three cases, each needing its **own** fixture
+   because the function's own ordering makes them unreachable from one another:
+
+   | Case | Fixture | Why the other fixtures cannot reach it |
+   | --- | --- | --- |
+   | A commit absent from the repository | an object created then removed with `git prune` | — |
+   | A `--is-ancestor` exit status other than 0 or 1 | a **`git` stub** first on `PATH` that forwards every subcommand to the real binary **except** `merge-base --is-ancestor`, for which it exits 128 | the deleted-object fixture is intercepted by the preceding `git cat-file -e`, so `merge-base` never runs and the >1 branch is never entered |
+   | An empty commit argument | the empty string | — |
+
+   Asserted as `undecidable` specifically, never as `unrelated`.
 5b. **Two identical but missing SHAs** — the same 40-character string, naming no
     object in the repository — return `undecidable`, not `same`. A shortcut that
     compares before checking existence produces `clean_same_commit` and a
@@ -965,6 +971,7 @@ Not applicable — this repository ships workflow tooling, not a service.
 | Verdict-order history | A `reviewer_loop_history.v1` payload with a clean local verdict at iteration 2 and a `needs_fixes` local verdict at iteration 5 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Absent-reviewer histories | One payload where the local reviewer appears in no entry, and one where it is absent from the configured platform list | inline in the same file |
 | Ancestry repository | A temporary git repository: a root commit, a branch of two commits, a second branch of two commits from the same root, and one commit created then deleted with `git prune` to produce the absent-object case | created and torn down by `test-reviewer-loop-commit-ancestry.sh` |
+| `git` stub for the error-status case | A shell script named `git`, first on `PATH`, that `exec`s the real binary for every invocation **except** `merge-base --is-ancestor`, where it exits 128. Both commits exist, so `git cat-file -e` succeeds and execution reaches the branch under test | created and torn down by the same suite; the real `git` is resolved once, before the stub is installed, so the forward cannot recurse |
 | Long-path record | A record whose three paths each exceed 60 characters, so no path fits within the 200-character bound | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Twenty-record entry | Twenty records with long paths and large finding counts, for AC-15 | inline in the same file |
 
@@ -1137,7 +1144,7 @@ three groups:
 | P2 | Write records only when the state is a confirmed or possible miss | a scratch copy of the record builder | scenario 9 fails: the denominator disappears, and every report built on these records reads 100% missed. This is the failure that makes the whole feature worse than nothing, because it produces a confident wrong number rather than no number; restoring the every-qualifying-round rule passes |
 | P9 | Read `--is-ancestor` with a bare call instead of `\|\| status=$?` | a scratch copy of `reviewer_loop_commit_ancestry` | scenario 5a fails: under `set -e` the expected status 1 terminates the shell, so `ancestor`, `descendant` and `unrelated` become unreachable and every clean verdict on a different commit aborts the round instead of being classified. Scenario 4's `same` case still passes, because it returns before any `git` call; restoring the `\|\| status=$?` capture passes all five |
 | P10 | Return `not_yet_run` whenever the local-reviewer search finds nothing | a scratch copy of the selector | scenario 3 fails: a pull request with forty rounds of history that says nothing about the local reviewer is reported as "has not run yet", so a repository whose local reviewer silently stopped appearing looks like a young pull request forever; restoring the empty-entries test passes |
-| P3 | Treat any non-zero `--is-ancestor` status as "not an ancestor" | a scratch copy of `reviewer_loop_commit_ancestry` | scenario 5 fails in all three cases: an absent commit, a non-0/1 exit, and an empty argument are all recorded as `clean_unrelated_commit`, asserting a severed relationship the repository never established. Scenario 4 still passes, which is the point — the plant is invisible to every test with a healthy repository; restoring the five-way return passes |
+| P3 | Treat any non-zero `--is-ancestor` status as "not an ancestor" | a scratch copy of `reviewer_loop_commit_ancestry` | scenario 5's **stub** case fails — it is the only one that reaches the `merge-base` call with both commits present, which is why the stub exists and the deleted-object fixture cannot substitute for it. Of scenario 5's three cases: an absent commit, a non-0/1 exit, and an empty argument are all recorded as `clean_unrelated_commit`, asserting a severed relationship the repository never established. Scenario 4 still passes, which is the point — the plant is invisible to every test with a healthy repository; restoring the five-way return passes |
 | P4 | Merge `not_yet_run` into `not_configured` | a scratch copy of the verdict selector | scenario 2 fails: a pull request early in its life and a repository with no local reviewer become the same value, and the report can no longer tell "has not run yet" from "will never run"; restoring the two values passes |
 | P5 | Test writability before eligibility | a scratch copy of the record entry point | scenario 12 fails: a round whose only findings came from the local reviewer reports a telemetry failure on an unwritable history, though no record was owed. Scenario 11 still passes; restoring the spec's row order passes both |
 | P7 | Keep the current behavior: re-render the history section with the unavailable stub when `append_safe` is 0 | a scratch copy of the render path | scenario 11 fails: the prior block is replaced by an empty stub, so a history that failed to parse once loses every entry it held — and the loss is invisible, because the stub looks like a well-formed report of a problem; restoring the do-not-re-render rule passes |

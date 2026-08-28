@@ -225,8 +225,23 @@ be captured with `|| status=$?`, which is exempt from errexit. Proof P9.
 rests on.
 
 1. Call the function with a commit SHA that does not exist in the repository.
-2. Call it in a repository state where `git merge-base --is-ancestor` exits with
-   something other than 0 or 1.
+2. Call it with a **`git` stub** first on `PATH` that forwards every subcommand
+   to the real binary except `merge-base --is-ancestor`, for which it exits 128,
+   and with two commits that both exist:
+
+   <!-- workflow-shell-contract: bash -->
+
+   ```bash
+   real_git="$(command -v git)"
+   stub_dir="$(mktemp -d)"
+   cat >"$stub_dir/git" <<EOF
+   #!/usr/bin/env bash
+   if [ "\$1" = "merge-base" ] && [ "\$2" = "--is-ancestor" ]; then exit 128; fi
+   exec "$real_git" "\$@"
+   EOF
+   chmod +x "$stub_dir/git"
+   PATH="$stub_dir:$PATH" reviewer_loop_commit_ancestry "$a" "$b"
+   ```
 3. Call it with an empty commit argument.
 4. Call it with the **same** 40-character SHA on both sides, naming no object in
    the repository.
@@ -241,6 +256,12 @@ the strongest claim this feature makes resting on the weakest evidence it can
 have. Existence is checked first. Step 4's healthy cases and this step's
 mismatched-missing cases pass either way; only the *same* absent SHA on both
 sides separates them. Proof P28.
+
+The stub is not a convenience. The deleted-object fixture of case 1 cannot
+reach this branch: `git cat-file -e` runs first and returns `undecidable`
+before `merge-base` is ever called, so a test built on it would report the right
+answer for the wrong reason and P3's plant would still pass. Resolving the real
+`git` **before** installing the stub is what stops the forward recursing.
 
 **Asserted as `undecidable` specifically.** `git merge-base --is-ancestor` exits
 0 for yes, 1 for no, and something else for an error. Folding "not 0" into "no"
