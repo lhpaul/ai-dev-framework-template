@@ -1051,10 +1051,13 @@ object exposes it.
    and add the eligibility-then-writability ordering and the row-4 report.
    **Verify**: scenarios 11 and 12, including the byte-for-byte comparison
    against a saved prior body.
-7. Add the summary renderer, de-duplicating paths before counting and naming,
-   and computing the remainder from the paths actually named. **Verify**:
-   scenarios 13, 13a, 13c and 15 — the zero-path line, the
-   eight-findings-over-three-files case, and the three remainder forms.
+7. Add the summary renderer: de-duplicate paths before counting and naming,
+   reserve `remainder_max` in the budget before appending any path, and compute
+   the actual remainder from the paths named. **Verify**: scenarios 13, 13a,
+   13a-i, 13c, 13c-i and 15 — the zero-path line, the
+   eight-findings-over-three-files case, the three remainder forms, the
+   complete stored path list, and the boundary case that exposes an unreserved
+   budget.
 8. Update Protocol 93 and the `--help` block, and add
    `changelog.d/1651.added.missed-finding-telemetry.md`. **Verify**: runbook
    **Step 12a**, which reads both documentation surfaces against the

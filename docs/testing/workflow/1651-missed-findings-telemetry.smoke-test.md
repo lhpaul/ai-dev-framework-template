@@ -406,6 +406,8 @@ do with. Proof P5.
    files.
 4. Render an entry carrying twenty records with long paths.
 5. Render a record whose findings touch **two** files, both short.
+6. Render a record whose path names are sized so the list would fill the line to
+   exactly 200 characters **without** the remainder text.
 
 **Expected result**: one line per record, each at most 200 characters, naming at
 most three paths and **always** the total file count. Case 1 names three of its
@@ -421,6 +423,19 @@ The three-path bound is AC-14 and governs the line; AC-1 asks the record to
 capture the files the findings touch and AC-16 requires it to be readable in
 full later. A builder that stored three would pass every other step here,
 because they all read the rendered line. Proof P20.
+
+Case 6 is the boundary. The bound is met by **reservation**, not by writing
+order: the renderer computes `budget = 200 − prefix − suffix − remainder_max`
+*before* appending any path, where `remainder_max` is the longest `, +N more`
+this record could produce. Appending until full and adding the remainder
+afterwards overflows by exactly the text that announces the omission — so the
+one line guaranteed to be short is the one that says it left something out.
+Cases 1 through 5 pass with that defect in place, because none is near the
+boundary. Proof P23.
+
+Reserving the *maximum* rather than the actual remainder is deliberate: the
+actual value is not known until the list stops, and a budget that depends on the
+answer cannot be used to compute it.
 
 Every line that omits files states **how many more**, computed from the paths
 actually named rather than from a fixed three: case 1 reads `+9 more`, case 2's
@@ -530,11 +545,11 @@ not what Protocol 03 Step 6 asks for.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P22 each record the command, the file and line of the
+2. Confirm P1 through P23 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: twenty-two proofs in three groups — **fifteen**
-overclaiming, **six** contract, **one** under-recording, per the plan's
+**Expected result**: twenty-three proofs in three groups — **fifteen**
+overclaiming, **seven** contract, **one** under-recording, per the plan's
 proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:
