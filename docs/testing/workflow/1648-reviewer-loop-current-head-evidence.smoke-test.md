@@ -160,15 +160,16 @@ SHA and `LOCAL_AI_HEAD_CURRENT=0`. The suite exits 0.
 `pull_request.local_reviewer_head` row with status `discrepancy`; the matching
 fixture produces `verified`. The suite exits 0.
 
-3. Read the section emitted for a **pre-field ledger** fixture — an entry with
-   no `reviewed_heads` field — with `local-ai-reviewer` configured and
-   `--require-review-summary true`.
-4. Read it again with `local-ai-reviewer` absent from the resolved platform
-   list.
+3. Read the section emitted for each remaining row of the row-condition table:
+   a pre-field ledger (no `reviewed_heads`) with the platform configured and
+   `--require-review-summary true`; an unreadable ledger under the same
+   conditions; the platform absent from the resolved platform list; and
+   `--require-review-summary` not set.
 
-**Expected result**: `unavailable_required` in step 3 and
-`unavailable_optional` in step 4. A pre-field ledger for a configured reviewer
-must not pass as optional — that is the stale-verdict hole this item closes, and
+**Expected result**: `unavailable_required` for the first two,
+`unavailable_optional` for the last two — six cases in total across this step,
+one per row of the table. A pre-field ledger for a configured reviewer must not
+pass as optional: that is the stale-verdict hole this item closes, and
 `unavailable_required` keeps the item non-terminal until Step 7 is re-run on the
 live head.
 
@@ -204,15 +205,30 @@ plan.
 
 **Expected result**:
 
-| Run | `LOCAL_AI_HEAD_CURRENT` | Readiness |
-| --- | --- | --- |
-| Platform not in the resolved list | key absent from the output | condition does not apply; not blocked |
-| Platform ran, reported no head | present and empty | **blocked** — missing evidence is not a pass |
-| Platform ran, head matches | `1` | not blocked |
+| Run | `LOCAL_AI_CONFIGURED` | `LOCAL_AI_HEAD_CURRENT` | Readiness |
+| --- | --- | --- | --- |
+| Platform not in the resolved list | `0` | empty | condition does not apply; not blocked |
+| Platform ran, reported no head | `1` | present and empty | **blocked** — missing evidence is not a pass |
+| Platform ran, head matches | `1` | `1` | not blocked |
 
-An absent key and an empty value must be distinguishable in the output; if the
-loop emits an empty key in the not-configured run, the fail-closed rule would
-stall every repository that does not configure the platform.
+All three keys must appear in every run. Applicability is carried by
+`LOCAL_AI_CONFIGURED`, never by a key being absent — an absent key means the
+telemetry never reached the checklist, which Check 0.6 must treat as blocking
+rather than as "not applicable".
+
+### Step 7b: The keys survive the Protocol 91 carry-forward
+
+**Maps to**: the inert-gate risk in the plan.
+
+1. Capture a loop output that contains all three `LOCAL_AI_*` keys.
+2. Run the Protocol 91 § "Carry the settle verdict forward" snippet against it.
+3. Print the three keys from the resulting environment.
+4. Re-run the snippet against a second capture that omits them.
+
+**Expected result**: after step 3 all three keys are set to the values from the
+capture; after step 4 all three are unset, exactly as `POST_CLEAN_*` behaves.
+If the keys are missing after step 3, Check 0.6 never sees them and the whole
+gate is inert even though the loop emits them correctly.
 
 ### Step 8: Static checks
 

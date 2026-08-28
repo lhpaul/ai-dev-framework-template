@@ -182,14 +182,21 @@ file declares `#!/usr/bin/env bash` and uses Bash arrays):
       `reviewer_loop_history_build_entry` as a new `--argjson reviewedHeads`
       parameter following the existing `current_run_id` convention (set by the
       caller in a global, not appended to the positional list).
-- [ ] Emit two new top-level key=value pairs on the loop's stdout contract next
-      to the existing aggregate keys: `LOCAL_AI_REVIEWED_HEAD` (the reviewed
-      head reported by the `local-ai-reviewer` platform, empty when the platform
-      did not run) and `LOCAL_AI_HEAD_CURRENT` (`1` when the classification is
-      `current`, `0` when `not-current`, empty when `not-reported`). Both keys
-      are emitted only when `local-ai-reviewer` is in the resolved platform
-      list; absence of the keys and an empty value are therefore distinct
-      states, and only the first means "condition not applicable".
+- [ ] Emit three new top-level key=value pairs on the loop's stdout contract
+      next to the existing aggregate keys, **always, on every run**:
+      - `LOCAL_AI_CONFIGURED` — `1` when `local-ai-reviewer` is in the resolved
+        platform list, `0` when it is not. This is the applicability signal.
+      - `LOCAL_AI_REVIEWED_HEAD` — the reviewed head reported by that platform;
+        empty when it is not configured or reported none.
+      - `LOCAL_AI_HEAD_CURRENT` — `1` when the classification is `current`, `0`
+        when `not-current`, empty when `not-reported` or not configured.
+
+      Applicability is carried by `LOCAL_AI_CONFIGURED`, **never by the absence
+      of a key**. An absent key means the telemetry did not reach the consumer,
+      which is a fail-closed condition, not a pass. All three values stay within
+      the `[A-Za-z0-9:_-]` token charset the Protocol 91 carry-forward snippet
+      already admits — a 40-character hex OID included — so no pattern widening
+      is needed for them.
 - [ ] Document both new keys in the `--help` usage block so the contract stays
       discoverable from the script itself.
 
@@ -238,13 +245,35 @@ Not applicable — no user interface in this repository.
       not-current evidence, and an empty value means the reviewer ran but
       reported no head at all, which is missing evidence — and missing evidence
       is not a pass. Either way the label waits until Step 7 is re-run on the
-      live head. The condition applies only when the platform is in the
-      resolved list; when it is not, neither key is emitted and the condition
-      does not apply at all.
+      live head. Applicability is read from `LOCAL_AI_CONFIGURED`: `0` means the
+      platform is not in the resolved list and the condition does not apply;
+      an unset `LOCAL_AI_CONFIGURED` means the loop's telemetry never reached
+      the checklist and is itself blocking, so an absent key is never a pass.
 - [ ] `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
-      — extend the readiness checklist so the same condition is enforced where
-      Check 0.6 already enforces `POST_CLEAN_HEAD_SHA`, and add the reviewed-head
-      row to the Work Item Runner summary fields.
+      — three coordinated edits, because emitting the keys is not enough on its
+      own: the Step 7 carry-forward snippet currently unsets and greps only
+      `POST_CLEAN_*`, so without the first edit the new keys never reach the
+      checklist and the gate would silently never fire.
+      1. **Carry-forward snippet** (§ "Carry the settle verdict forward"):
+         widen the unset loop and the grep to
+         `^(POST_CLEAN|LOCAL_AI)_[A-Z_]*` and
+         `^(POST_CLEAN|LOCAL_AI)_[A-Z_]+=[A-Za-z0-9:_-]*$` respectively, so the
+         three new keys are cleared and re-exported on exactly the same
+         lifecycle as the settle fields. The surrounding contract is unchanged:
+         cleared before the run, exported only on a zero exit, belonging to the
+         latest HEAD only.
+      2. **Check 0.6** (exit 12): add the local-reviewer condition next to the
+         existing `POST_CLEAN_HEAD_SHA` one, evaluated in this order —
+         `LOCAL_AI_CONFIGURED` unset → fail closed with "reviewer-loop telemetry
+         was not carried forward; re-run Step 7 and export its `POST_CLEAN_*`
+         and `LOCAL_AI_*` fields"; `LOCAL_AI_CONFIGURED=0` → condition not
+         applicable, continue; `LOCAL_AI_CONFIGURED=1` and
+         `LOCAL_AI_HEAD_CURRENT` not exactly `1` → refuse the label and re-run
+         Step 7 on the live head. Extend the exit-12 row of the exit-code table
+         to name the new cause.
+      3. **Work Item Runner summary**: add a reviewed-head row reporting
+         `LOCAL_AI_CONFIGURED`, `LOCAL_AI_REVIEWED_HEAD`, and
+         `LOCAL_AI_HEAD_CURRENT`.
 
 ---
 
@@ -285,22 +314,30 @@ Not applicable — no user interface in this repository.
 8. `LOCAL_AI_HEAD_CURRENT=0` is emitted when the local reviewer's reviewed head
    differs from `loop_head_sha` — scope bullet 3 (block readiness claims on a
    stale local clean result).
-9. `LOCAL_AI_HEAD_CURRENT` is emitted as the empty string, not omitted, when
-   `local-ai-reviewer` is in the resolved platform list but reports no reviewed
-   head — this is the fail-closed "missing evidence" state that must block
-   readiness, and it is distinct from scenario 10.
-10. Neither `LOCAL_AI_REVIEWED_HEAD` nor `LOCAL_AI_HEAD_CURRENT` appears in the
-    loop output when `local-ai-reviewer` is absent from the resolved platform
-    list — this is the "condition not applicable" state, and it is the automated
-    coverage for the downstream-consumer compatibility mitigation in the risk
-    table.
+9. With `local-ai-reviewer` configured but reporting no reviewed head, the loop
+   emits `LOCAL_AI_CONFIGURED=1` and `LOCAL_AI_HEAD_CURRENT=` (present, empty) —
+   the fail-closed "missing evidence" state that must block readiness, distinct
+   from scenario 10.
+10. With `local-ai-reviewer` absent from the resolved platform list, the loop
+    emits `LOCAL_AI_CONFIGURED=0` — the "condition not applicable" state, and
+    the automated coverage for the downstream-consumer compatibility mitigation
+    in the risk table. All three keys are emitted on every run, so applicability
+    never depends on a key being absent.
 11. `item-completion-self-check.sh` fills `pull_request.local_reviewer_head`
-    per its six-condition table: `discrepancy` when the ledger's newest local
-    reviewed head differs from the live `headRefOid`, `verified` when they are
-    equal, `unavailable_required` for a pre-field ledger with the platform
-    configured and review evidence required, and `unavailable_optional` when the
-    platform is not in the resolved list — scope bullet 3 at the report-evidence
-    layer.
+    with the expected status for **each of the six rows** of its condition
+    table, one case per row: `verified` (ledger head equals the live
+    `headRefOid`); `discrepancy` (ledger head differs); `unavailable_required`
+    for a pre-field ledger with the platform configured and review evidence
+    required; `unavailable_required` for an unreadable ledger under the same
+    conditions; `unavailable_optional` when `local-ai-reviewer` is not in the
+    resolved platform list; and `unavailable_optional` when
+    `--require-review-summary` is not set — scope bullet 3 at the
+    report-evidence layer.
+12. The Protocol 91 carry-forward snippet, run against a captured loop output,
+    exports all three `LOCAL_AI_*` keys into the environment, and clears them
+    before the next invocation exactly as it clears `POST_CLEAN_*` — this is the
+    regression test for the gap where the keys are emitted but never reach
+    Check 0.6, which would make the whole gate silently inert.
 
 **Files**:
 
@@ -309,12 +346,18 @@ Not applicable — no user interface in this repository.
 - `scripts/development-workflow/tests/test-local-ai-reviewer-pr-review-loop-dispatch.sh`
   — scenarios 8, 9, and 10, next to the existing dispatch assertions.
 - `scripts/development-workflow/tests/test-item-completion-self-check.sh` —
-  scenario 11.
+  scenario 11, one case per row of the six-condition table.
+- `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenario 12,
+  which needs a `# covers:` header line for
+  `docs/workflow/development-workflow/protocols/91-*.md` so a later edit to the
+  carry-forward snippet re-runs this suite. This is the one `# covers:` edit
+  this plan requires.
 
-No `# covers:` header edits are needed: all three suites already declare or
-imply coverage of the two scripts this plan changes. `test-pr-review-loop.sh`
-covers `pr-review-loop.sh` by naming convention, and the dispatch suite declares
-both scripts explicitly.
+Coverage declarations: the three suites already cover the two changed scripts —
+`test-pr-review-loop.sh` covers `pr-review-loop.sh` by naming convention, and
+the dispatch suite declares both scripts explicitly. The single addition is the
+`# covers:` line for the Protocol 91 document noted above, without which an edit
+to the carry-forward snippet would not select scenario 12's suite.
 
 **Smoke test runbook**:
 `docs/testing/workflow/1648-reviewer-loop-current-head-evidence.smoke-test.md`
@@ -396,7 +439,8 @@ inline with mock `gh` commands and require no network access.
 | A failed live-head lookup yields the synthetic `unknown-…` placeholder and is compared against a real SHA | Med | Med — could produce a confusing `not-current` or, if mishandled, a false `current` | The placeholder is non-hex, so it fails the validity predicate and every platform classifies `not-current` for that iteration — fail-closed by construction, pinned by its own edge-case row |
 | The summary block, the ledger entry, and the stdout keys classify against different snapshots of the live head | Med | High — the three surfaces would contradict each other, and per-reviewer evidence could disagree with `POST_CLEAN_HEAD_SHA` | No new lookup is added: all consumers read the existing pre-dispatch `loop_head_sha`, the same value the settle emits as `POST_CLEAN_HEAD_SHA`; scenario 3 fails if any renderer issues its own lookup, and scenario 4 pins `classification_head` equal to `POST_CLEAN_HEAD_SHA` |
 | Adding fields to `reviewer_loop_history.v1` breaks a reader that validates the entry shape | Low | High — a broken ledger read is fail-closed and would stall every reviewer loop | `reviewed_heads` and `classification_head` are additive and optional; scenario 7 asserts an entry without either still parses through `reviewer_loop_history_payload_from_existing` |
-| The new readiness condition blocks PRs in repositories that do not configure `local-ai-reviewer` | Low | High — it would stall downstream consumers of this template | The condition applies only when the platform **is** in the resolved list; when it is **not**, neither key is emitted at all and there is nothing to evaluate. Scenario 10 asserts the keys are absent for a non-configuring repository, and scenario 9 pins the separate configured-but-no-head state that *does* block |
+| The new readiness condition blocks PRs in repositories that do not configure `local-ai-reviewer` | Low | High — it would stall downstream consumers of this template | Applicability is read from `LOCAL_AI_CONFIGURED`, which the loop emits on every run: `0` means the platform is not in the resolved list and Check 0.6 continues without evaluating the head condition. Scenario 10 asserts `LOCAL_AI_CONFIGURED=0` for a non-configuring repository, and scenario 9 pins the separate configured-but-no-head state that *does* block |
+| The keys are emitted but never reach Check 0.6, leaving the gate inert | Med | High — the item would appear complete while changing nothing about readiness | The Protocol 91 carry-forward snippet is widened to `^(POST_CLEAN\|LOCAL_AI)_` in the same edit that adds the Check 0.6 condition; scenario 12 exports a captured loop output through the snippet and asserts all three keys arrive, and the new `# covers:` line makes a later snippet edit re-run that suite |
 | The summary comment grows past what reviewers read | Low | Low | The head-evidence block is one line per configured platform plus one current-head line, in the same style as the existing compare-mode block |
 
 ---
@@ -488,11 +532,11 @@ the verdict without resolving an abbreviation.
    existing `head_sha` field and its source untouched. **Verify**: build an
    entry in the harness and pipe it through `jq` to confirm the array shape and
    that `classification_head` equals the run's `POST_CLEAN_HEAD_SHA`.
-5. Emit `LOCAL_AI_REVIEWED_HEAD` and `LOCAL_AI_HEAD_CURRENT` on the loop's
-   stdout contract, only when `local-ai-reviewer` is in the resolved platform
-   list, and document both in `--help` including the three-state contract
-   (`1` / `0` / empty) and the absent-key case. **Verify**: run
-   `pr-review-loop.sh --help` and confirm both keys and all four states are
+5. Emit `LOCAL_AI_CONFIGURED`, `LOCAL_AI_REVIEWED_HEAD`, and
+   `LOCAL_AI_HEAD_CURRENT` on the loop's stdout contract on every run, and
+   document all three in `--help` including which key carries applicability and
+   the `1` / `0` / empty contract for `LOCAL_AI_HEAD_CURRENT`. **Verify**: run
+   `pr-review-loop.sh --help` and confirm all three keys and their states are
    described.
 6. Add the `pull_request.local_reviewer_head` row to
    `scripts/development-workflow/item-completion-self-check.sh`. **Verify**: run
@@ -502,7 +546,12 @@ the verdict without resolving an abbreviation.
    `docs/workflow/development-workflow/protocols/92-pr-readiness-signal-protocol.md`
    and
    `docs/workflow/development-workflow/protocols/91-orchestrate-work-protocol.md`
-   per **Documentation Updates**.
+   per **Documentation Updates** — the carry-forward snippet widening, the
+   Check 0.6 condition, the exit-12 table row, and the runner-summary row must
+   land together; the Check 0.6 condition without the snippet widening is an
+   inert gate. **Verify**: run the carry-forward snippet against a captured loop
+   output and confirm all three `LOCAL_AI_*` keys are present in the
+   environment afterwards.
 8. Add the unit cases to the three suites named in **Testing Strategy**.
    **Verify**: run each suite and confirm it exits 0.
 9. Run `bash scripts/development-workflow/select-test-suites.sh` against the
