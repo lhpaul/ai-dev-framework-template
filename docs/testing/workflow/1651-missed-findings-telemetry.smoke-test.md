@@ -91,6 +91,20 @@ reverse disagreement cannot arise: the list is consulted first.
 **Expected result for call 4**: the three-platform list is recognised — not
 `not_configured` — and the `-v2` list is not.
 
+5. Call it with a list of **500** platforms whose **first** entry is
+   `local-ai-reviewer`.
+
+**Expected result for call 5**: recognised — not `not_configured`.
+
+Call 5 is the SIGPIPE case. `grep -q` closes its input on the first match, so
+under `set -o pipefail` a `printf | grep -Fxq` spelling lets the producer take
+SIGPIPE on the remaining 499 lines and the failed pipeline reports a configured
+reviewer as `not_configured`, removing every round on that repository from the
+denominator. Both properties of the fixture are load-bearing: the **early**
+match makes `grep` close early, and the **length** makes the producer still be
+writing when it does. A here-string has no pipeline for `pipefail` to act on.
+Proof P22, and the same hazard as the changed-files decode in #1653.
+
 The configured list is newline-delimited, one platform per line
 (`pr-review-loop.sh:8336-8339`), so membership must be a whole-line literal
 comparison. A comma-split `case` matches only when the reviewer is the sole
@@ -489,10 +503,10 @@ not what Protocol 03 Step 6 asks for.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P21 each record the command, the file and line of the
+2. Confirm P1 through P22 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: twenty-one proofs in three groups — **fourteen**
+**Expected result**: twenty-two proofs in three groups — **fifteen**
 overclaiming, **six** contract, **one** under-recording, per the plan's
 proof-group table.
 

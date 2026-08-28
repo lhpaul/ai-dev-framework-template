@@ -334,7 +334,11 @@ Not applicable — this repository ships workflow tooling, not a service.
       stays testable without a configuration file. It is **newline-delimited,
       one platform per line** — the loop reads it with a
       `while IFS= read -r line` loop at lines 8336-8339 — and membership is
-      tested with `grep -Fxq`, a whole-line literal comparison. A comma-split
+      tested with `grep -Fxq` fed from a **here-string**, a whole-line literal
+      comparison with no pipeline. `printf | grep -q` would be the obvious
+      spelling and is wrong here: `grep -q` closes its input on the first match,
+      so under `set -o pipefail` a long list lets the producer take SIGPIPE and
+      the failed pipeline reports a configured reviewer as `not_configured`. A comma-split
       would match only when the reviewer is the single configured platform, and
       a substring test would accept a platform named `local-ai-reviewer-v2`;
       both report the wrong state in the direction that says a configured
@@ -642,6 +646,11 @@ Not applicable — this repository ships workflow tooling, not a service.
    2 and a `needs_fixes` local verdict at iteration 5 returns the iteration-5
    verdict. This is AC-4a, and it is the single most likely implementation
    error in the item.
+2c. Membership survives a **long** configured list: a list of 500 platforms
+    with `local-ai-reviewer` as the **first** entry is recognised. The early
+    match is what makes `grep -q` close its input, and the length is what makes
+    the producer still be writing when it does; either alone leaves the SIGPIPE
+    path unexercised.
 2b. Membership is by **whole line**: a configured list of three platforms with
     `local-ai-reviewer` among them is recognised, one where it is the sole entry
     is recognised, one containing only `local-ai-reviewer-v2` is **not**, and an
@@ -823,6 +832,7 @@ Not applicable — this repository ships workflow tooling, not a service.
 | The derivation reaches for the most recent **clean** verdict | **High** — it is the more natural sentence, and it reads as more helpful | **High** — a reviewer that cleared one commit and then reported findings on a later one would be recorded as having missed something it had already caught | Selection is by recency and classification is second, stated in that order in the plan and in the function's name. Scenario 1 and proof **P1** |
 | Records are written only for misses | Med | **High** — the denominator becomes unknowable and the reported rate is always 100% | A record is written on every qualifying external round, including `not_clean` and `unknown`. Scenario 9 and proof **P2** |
 | A telemetry failure is reported when nothing was owed | Med | Low — noise on pull requests where the feature had nothing to do, which erodes trust in the signal | The eligibility test runs before the writability test, matching the spec's row order. Scenario 12 and proof **P5** |
+| A `grep -q` membership check is fed by a pipeline under `set -o pipefail` | **High** — `printf \| grep -q` is the obvious spelling | **High** — a configured reviewer is reported `not_configured` on any list long enough for the producer to still be writing, removing every round on that repository from the denominator | A here-string, so no pipeline status exists. Scenario 2c uses an early match in a 500-entry list, and proof **P22** restores the pipeline |
 | A `git` exit status of 1 is read from a bare call under `set -e` | **High** — it is the shorter and more obvious way to write it | **High** — three of the five results become unreachable and the round aborts instead of classifying | Every status is captured with `\|\| status=$?`, which is exempt from errexit. Scenario 5a and proof **P9** |
 | The summary line's bound is enforced by truncating the finished string | Med | Med — truncation removes the tail, which is where the state and the classification sit | The line is built with the total and the state **before** the paths, and paths stop at the first one that would exceed the bound. Scenario 13's zero-path case and proof **P6** |
 | The additive fields break a ledger reader | Low | Med | The schema string is unchanged and every existing field keeps its name and type; scenario 14 asserts them individually |
@@ -885,7 +895,12 @@ reviewer_loop_local_latest_verdict() {
   # repository as `not_configured`, the state that means "will never run".
   # `grep -Fxq` compares whole lines and takes the pattern literally, so a
   # platform named `local-ai-reviewer-v2` cannot satisfy it either.
-  if ! printf '%s\n' "$configured" | grep -Fxq 'local-ai-reviewer'; then
+  # A here-string, not `printf | grep -q`: the script runs under
+  # `set -o pipefail` and `grep -q` closes its input on the first match, so the
+  # producer can take SIGPIPE on a long list and the failed pipeline would
+  # report a configured reviewer as `not_configured`. Same hazard, same fix, as
+  # the changed-files decode in #1653.
+  if ! grep -Fxq -- 'local-ai-reviewer' <<<"$configured"; then
     printf '{"outcome":"not_configured","head_sha":"","iteration":0}\n'
     return 0
   fi
@@ -934,12 +949,12 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The twenty-one proofs fall into
+runs per proof, each citing a concrete file and line. The twenty-two proofs fall into
 three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Overclaiming | **14** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16, P17, P18, P19, P21 |
+| Overclaiming | **15** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16, P17, P18, P19, P21, P22 |
 | Under-recording | **1** | P20 | evidence discarded at write time that cannot be recovered later | a number asserted on evidence that does not support it |
 | Contract | **6** | P5, P6, P7, P9, P11, P13 | a report, a line, or a stored history that breaks its own stated contract |
 
@@ -961,13 +976,14 @@ three groups:
 | P16 | Fall back to the entry's `head_sha` when a local verdict has no `reviewed_head` | a scratch copy of the selector | scenario 6a fails: the local reviewer's verdict is compared against the live head at write time rather than the commit it examined, so two unrelated facts can produce `clean_same_commit` and a confirmed miss. The plant is invisible whenever the two happen to coincide, which is most rounds; restoring the empty head — and with it an undecidable ancestry and `unknown` — passes |
 | P19 | Test configured-platform membership with a comma-delimited `case` | a scratch copy of the selector's guard | scenario 2b's first case fails: a repository configuring three platforms, `local-ai-reviewer` among them, is reported `not_configured` — the state meaning the reviewer will never run — so every round on it is excluded from the denominator and the effectiveness rate is computed over the wrong population. The plant passes whenever the reviewer is the only configured platform, which is the shape every single-platform fixture has; restoring `grep -Fxq` passes |
 | P18 | Give `claude-code-action` a head by falling back to the pull request's current head | a scratch copy of that adapter | scenario 13f's `claude-code-action` case fails: an adapter whose only artifact is an issue comment gains a head it never stated, and its rounds start producing records — and confirmed misses — against a commit nobody claimed to have reviewed. The plant is the natural reading of "every adapter emits a head", which is why the table's one no-head row is tested rather than described; restoring the no-head result passes |
+| P22 | Feed the membership check with `printf '%s\\n' "$configured" \| grep -Fxq` | a scratch copy of the guard | scenario 2c fails under `set -o pipefail`: `grep -q` closes its input on the first match, the producer takes SIGPIPE on the remaining 499 lines, the pipeline reports non-zero, and a configured reviewer is classified `not_configured` — removing every round on that repository from the denominator. Scenario 2b still passes on its short lists, which is why 2c specifies both the early match and the length; restoring the here-string passes |
 | P21 | Compose the current round's `platform_results` without its `reviewed_heads[]` | a scratch copy of the call site | scenarios 1a and 1b fail: the same-round local-clean verdict is found, its head is empty, the ancestry is undecidable and the state is `unknown` — so the confirmed miss this feature exists to record becomes an unknown, and the half-move looks correct because the outcome half of the composition works; restoring both arrays passes |
 | P20 | Store only the three paths the summary line will name | a scratch copy of the record builder | scenario 13a-i fails: a twelve-file round's record holds three paths and the other nine are unrecoverable, so AC-16's read-back is incomplete and #1657 cannot answer which files external reviewers find things in. Every other scenario passes, because they all read the rendered line rather than the record; restoring the complete list passes |
 | P17 | Emit the first `commit_id` when a round's artifacts name two | a scratch copy of an adapter's head extraction | scenario 13e's two-commit case fails: a head is emitted for a round whose findings straddle a push, so the record names a commit some of the findings do not belong to and a `clean_same_commit` can follow from it. The plant looks like ordinary defaulting and only a fixture that straddles a push exposes it; restoring the no-head rule passes |
 | P15 | Substitute `loop_head_sha` for a missing `REVIEWED_HEAD` | a scratch copy of the attribution gate | scenario 13d fails: a round whose external reviewer never stated its head produces a record, and a `clean_same_commit` in it enters the **confirmed** count on the loop's inference about what the reviewer read. AC-11 requires no record when the commit cannot be established, and `clean_same_commit` is defined against the commit the external reviewer *reviewed*. The plant is the tempting one — it makes an empty telemetry produce data — which is why it is planted rather than argued about; restoring the no-fallback rule passes |
 | P6 | Enforce the 200-character bound by truncating the finished line | a scratch copy of the renderer | scenario 13's long-path case fails: truncation removes the tail, which is where the local evidence state and the classification sit, so the line that survives is the one carrying paths and no verdict — exactly inverted from what a reader needs; restoring build-order enforcement passes |
 
-Fourteen proofs plant the overclaiming direction because that is the direction with
+Fifteen proofs plant the overclaiming direction because that is the direction with
 no symptom: every one of them produces a plausible number, and a number is
 believed. P3 is the one to read twice — its plant passes every test written
 against a healthy repository, and only a fixture with a deliberately deleted
@@ -995,7 +1011,7 @@ object exposes it.
    compose the current round's
    `platform_result_records` **and** its `reviewed_heads[]` into the payload at
    the call site before selecting.
-   **Verify**: scenarios 1a, 1b and 2b first — a selector that reads only
+   **Verify**: scenarios 1a, 1b, 2b and 2c first — a selector that reads only
    persisted entries passes every other scenario in this list, and a
    comma-delimited membership test passes every one that configures a single
    platform. **Verify**: scenarios 1, 2, 3, 3a and 3b — recency
@@ -1037,7 +1053,7 @@ object exposes it.
    **Step 12a**, which reads both documentation surfaces against the
    implementation, and confirm the fragment's name matches
    `<item>.<kind>.<slug>.md` with a bare `1651`.
-10. Produce the twenty-one planted-violation proofs (P1-P21) and record them in the PR
+10. Produce the twenty-two planted-violation proofs (P1-P22) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
