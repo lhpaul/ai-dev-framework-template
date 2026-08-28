@@ -331,6 +331,14 @@ catalogue and the reviewer's recorded output.
    and passing that output through the loop's real
    `emit_prefixed_platform_output` yields three `PLATFORM_1_REVIEW_DOCTRINE_*`
    keys and no fabricated ones.
+8a. With `LOCAL_AI_REVIEWER_EVIDENCE_FILE` set, the evidence JSON carries a
+   `review_doctrine` object with all three values — the state as a string, the
+   pattern count as a **number**, the version as a string — and remains valid
+   `local_ai_reviewer_evidence.v1`. Asserted in a `supplied` run and in an
+   `oversized` one, so the evidence's copy of the count is checked where it
+   differs from the catalogue's own. This is AC-15, and it is a different
+   surface from the `key=value` output: the evidence file is what a later
+   report reads, and nothing else in this plan touches it.
 9. The doctrine is supplied at **every** stage the reviewer recognises,
    including the default stage — one case per stage, since the natural
    implementation of a stage-aware reviewer is to make things stage-conditional.
@@ -563,13 +571,13 @@ reviewer_doctrine_supply() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The twelve proofs fall into
+runs per proof, each citing a concrete file and line. The thirteen proofs fall into
 three groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Silent | **4** | P1, P2, P5, P7 | a review that used less doctrine than it reports, with nothing to show it |
-| Contract | **5** | P3, P4, P6, P8, P9 |
+| Contract | **6** | P3, P4, P6, P8, P9, P13 |
 | Fail-open | **3** | P10, P11, P12 | an error or a race reported as a successful supply | a check or an output that breaks its own stated rule |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
@@ -578,6 +586,7 @@ three groups:
 | P2 | Supply the first `REVIEW_DOCTRINE_MAX_BYTES` of an oversized catalogue | same scratch copy | scenario 2 fails: `text` is non-empty in the `oversized` row, so the reviewer receives a catalogue that looks complete and is missing its most recent patterns. This is AC-9, and the plant is the obvious thing to do with a too-large string; restoring the empty text passes |
 | P8 | Make the bound overridable with `"${REVIEW_DOCTRINE_MAX_BYTES:-12000}"` | a scratch copy of `workflow-lib.sh` | scenario 14 fails when the environment carries a larger value: a 12,001-byte catalogue passes the linter and is `supplied`, so an oversized doctrine reaches the reviewer and CI accepts it — the bound exists precisely so a catalogue that no longer fits is edited rather than excused; restoring the fixed `readonly` passes |
 | P11 | Derive each value from a fresh read of the live file instead of one snapshot | a scratch copy of `reviewer_doctrine_supply` | scenario 1b fails: with the catalogue rewritten mid-collection, the bundle's `version` is the hash of bytes its `text` does not contain, and every later report that groups reviews by version groups that one wrongly. The plant is invisible whenever nobody edits the file during a review, which is nearly always; restoring the single snapshot passes |
+| P13 | Write the evidence file without the `review_doctrine` object | a scratch copy of `write_evidence_file` | scenario 8a fails: the `key=value` output still carries all three values and the loop summary still shows them, so every other check passes — and the artifact a later report actually reads has nothing. AC-15 names the evidence file separately for that reason; restoring the object passes |
 | P12 | Count patterns with `grep -c … \|\| true` | same scratch copy | scenario 1a's pattern-count case fails: `grep`'s exit 1 (no matches) and its exit >1 (error) are flattened into count 0, so an unreadable snapshot reports `supplied` with zero patterns instead of `unreadable`. An empty catalogue — the legitimate zero — still passes, which is why the scenario separates the two exits; restoring the status check passes |
 | P10 | Replace the read handlers with a single `[ -r "$path" ]` test | a scratch copy of `reviewer_doctrine_supply` | scenario 1a fails: with the file removed after the test, the reviewer aborts under `set -e` instead of reporting `unreadable`, so the round produces no result at all rather than a review that ran without the doctrine. Scenario 1's ordinary unreadable case — a permission bit — still passes, because there the test itself catches it; restoring the per-operation handlers passes both |
 | P9 | Read the text with `text="$(cat "$path")"` and pass it as `--arg` | a scratch copy of `reviewer_doctrine_supply` | scenario 7a fails: the bundle's copy loses the file's trailing newlines, so what the reviewer receives is not what the repository stores. Scenario 5's interior-sentence match still passes, which is why 7a compares bytes; restoring `--rawfile` passes |
@@ -615,14 +624,15 @@ everywhere it is tested.
    exit >1. **Verify**: scenarios 1, 1a, 1b and 2 through 6 — all four states with all four values, the `oversized` row's
    empty text and present version, and the missing-digest case.
 5. Add the four bundle fields and the three `print_kv` lines, plus the evidence
-   object. **Verify**: scenarios 7, 7a, 8 and 10 — the enumerated field list,
-   the byte-for-byte text comparison, the
-   real `emit_prefixed_platform_output`, and the unchanged existing context.
+   object. **Verify**: scenarios 7, 7a, 8, 8a and 10 — the enumerated field
+   list, the byte-for-byte text comparison, the evidence artifact's three
+   values, the real `emit_prefixed_platform_output`, and the unchanged existing
+   context.
 6. Add the CI step. **Verify**: the linter runs and fails the build on a
    deliberately malformed catalogue.
 7. Update the `--help` block, the integration document, Protocol 93, and add
    `changelog.d/1654.added.review-doctrine.md`. **Verify**: runbook Step 8.
-8. Produce the twelve planted-violation proofs (P1-P12) and record them in the PR
+8. Produce the thirteen planted-violation proofs (P1-P13) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
