@@ -110,6 +110,10 @@ Call the contract-surface predicate with each case and read match / no-match:
 | Body | Required result |
 | --- | --- |
 | `the delegates list is wrong` | no match — `delegates` must not match `gate` |
+| `AC-1 is untestable` | match |
+| `AC-10 is untestable` | match — the pattern is `AC-[0-9]+`; a single-digit form would fail here, and this repository's specs run to `AC-17` |
+| `AC-147 is untestable` | match |
+| `see AC- for details` | no match — a bare `AC-` with no digits |
 | `the decision gate is inconsistent`, run under **BSD grep** | match — the boundary uses `(^\|[^[:alnum:]_])…([^[:alnum:]_]\|$)`, not `\b`, which BSD grep does not recognise |
 | `use a microscope analogy` | no match — `microscope` must not match `scope` |
 | `the heading state is inconsistent` | no match — bare `state` is not a matched term |
@@ -377,10 +381,10 @@ tier 1 makes those findings non-small whatever the body says.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P19 each record the command, the file and line of the
+2. Confirm P1 through P20 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: nineteen proofs in four groups — **thirteen** permissive,
+**Expected result**: twenty proofs in four groups — **fourteen** permissive,
 **four** restrictive, **one** observability, **one** fidelity, per the plan's
 proof-group table.
 The permissive group is P1 through P5, P8, P10, P11, P12, P14, P15, P16 and P17,
@@ -388,7 +392,9 @@ reproducing the original bug in each of the ways it can return; P8 skips the cur
 fifth run to fail; P10 reads `head_sha` instead of `classification_head` and
 requires Step 4's step 1b to fail; P14 breaks the contract-surface
 matching entirely and requires Step 6b to fail while Step 6 still passes, which
-is precisely why Step 6b exists; P15 deduplicates the findings array, P16
+is precisely why Step 6b exists; P20 narrows the acceptance-criteria pattern to a single digit and requires
+Step 3's `AC-10` and `AC-147` rows to fail; P15 deduplicates the findings
+array, P16
 matches the raw body without normalising, and P17 replaces the JSON record with
 a tab-separated one — all three requiring Step 3f to fail; **P18** stores the
 normalised body instead of the raw one, requiring Step 3f's fidelity check to

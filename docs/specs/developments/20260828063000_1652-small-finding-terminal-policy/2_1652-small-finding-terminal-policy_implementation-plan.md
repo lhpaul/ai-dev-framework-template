@@ -185,7 +185,7 @@ Not applicable — this repository ships workflow tooling, not a service.
 
       | Surface | Matched terms |
       | --- | --- |
-      | Acceptance criteria | `acceptance criterion`, `acceptance criteria`, `AC-<digit>` |
+      | Acceptance criteria | `acceptance criterion`, `acceptance criteria`, `AC-[0-9]+` — **one or more** digits, since a single-digit form followed by the required trailing boundary cannot match `AC-10`, and this repository routinely uses multi-digit identifiers |
       | Decision gates and matrices | `decision gate`, `decision matrix`, `matrix row`, `readiness gate`, `gate condition`, `gating` |
       | Parser and input behavior | `parser`, `regex`, `input surface`, `word boundary` |
       | Scope and coverage | `out of scope`, `in scope`, `scope creep`, `coverage matrix`, `brief objective` |
@@ -546,6 +546,11 @@ Not applicable — no user interface in this repository.
     is an older commit, the run ends with `stale_head`; with the two swapped, it
     counts. `head_sha` is the #1502 cap identity key and can legitimately differ
     from the commit the round described.
+4b. Multi-digit acceptance-criteria identifiers match: `AC-1`, `AC-9`, `AC-10`
+    and `AC-147` all match, and `AC-` alone does not. A single-digit pattern
+    would fail every identifier past nine, because the required trailing
+    boundary cannot be satisfied by the next digit — and this repository's own
+    specs run to `AC-17`.
 4a. The boundary expression is portable: the predicate matches `decision gate`
     and rejects `delegates` under **both** GNU grep and BSD grep. A `\b`-based
     implementation passes the first under GNU and fails it under BSD, so this
@@ -616,11 +621,11 @@ Not applicable — no user interface in this repository.
 **Files**:
 
 - `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenarios 1, 2,
-  3, 4, 4a, 5, 6, 6a, 7, 7a, 7b, 7b-i, 7c, 7d, 8, 8a, 8b, 8c, 9, 9a, 10, 10a,
-  10b, 11 and 14, as new cases in the existing `HARNESS_MODE=1` harness. Listed individually rather than as a range: the
-  sub-lettered scenarios are the ones a range drops, and all thirteen of them
-  (4a, 6a, 7a, 7b, 7b-i, 7c, 7d, 8a, 8b, 8c, 9a, 10a, 10b) guard a behavior the
-  others do not.
+  3, 4, 4a, 4b, 5, 6, 6a, 7, 7a, 7b, 7b-i, 7c, 7d, 8, 8a, 8b, 8c, 9, 9a, 10,
+  10a, 10b, 11 and 14, as new cases in the existing `HARNESS_MODE=1` harness. Listed individually rather than as a range: the
+  sub-lettered scenarios are the ones a range drops, and all fourteen of them
+  (4a, 4b, 6a, 7a, 7b, 7b-i, 7c, 7d, 8a, 8b, 8c, 9a, 10a, 10b) guard a behavior
+  the others do not.
 - `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` —
   a new suite for scenarios 12 and 13, the two replay regressions, which need
   their own ledger fixtures. It must declare:
@@ -647,11 +652,11 @@ above are the regression coverage for this change.
 
 This plan materially modifies an automated guard, so `REVIEW.md` §
 Planted-violation proof applies and the pure-refactor exemption does not. Two
-demonstrated runs per proof, each citing a concrete file and line. The nineteen proofs fall into four groups:
+demonstrated runs per proof, each citing a concrete file and line. The twenty proofs fall into four groups:
 
 | Group | Count | Proofs | What they plant |
 | --- | --- | --- | --- |
-| Permissive | **13** | P1-P5, P8, P10, P11, P12, P14, P15, P16, P17 | the original bug, in each of the ways it can return |
+| Permissive | **14** | P1-P5, P8, P10, P11, P12, P14, P15, P16, P17, P20 | the original bug, in each of the ways it can return |
 | Fidelity | **1** | P18 | storing the matching-time normalisation instead of the body as received |
 | Restrictive | **4** | P6, P7, P13, P19 | a tightening that disables the mechanism instead of sharpening it |
 | Observability | **1** | P9 | an inverted within-group reporting precedence, which hides the more actionable cause without changing whether the rule fires |
@@ -664,6 +669,7 @@ demonstrated runs per proof, each citing a concrete file and line. The nineteen 
 | P16 | Match the contract-surface test against the raw body without normalising `\n` | a scratch copy of the classifier | scenario 7b fails, because a term following a line break abuts the sequence and misses the word boundary; restoring the normalisation passes |
 | P18 | Use the normalised body as the stored record and summary value | a scratch copy of the collector | the record no longer carries the body as received, so the summary misreports what the reviewer wrote; restoring the raw value for storage passes while scenario 7b still passes |
 | P14 | Break the contract-surface matching entirely, returning failure for every body | a scratch copy of the tier-2 predicate | scenario 12a fails, because a #1661-shaped ledger on a non-normative path terminates; scenario 12 still passes, which is exactly why 12a exists. Restoring the predicate passes both |
+| P20 | Narrow the acceptance-criteria pattern to a single digit | a scratch copy of the surface list | scenario 4b fails on `AC-10` and `AC-147`, so contract findings citing any criterion past nine are classified small on tier-2 paths; restoring `AC-[0-9]+` passes |
 | P13 | Replace the character-class boundary with `\b` | a scratch copy of the predicate | scenario 4a fails under BSD grep — `decision gate` no longer matches at all, so tier 2 silently stops escalating anything; restoring the POSIX form passes under both greps |
 | P12 | Make the contract-surface test the only guard, dropping the normative-path tier | a scratch copy of the classifier | scenario 2's third case fails: *"required error handling is missing"* contains no listed term, falls through to the path rule, and is cleared as small. This is the vocabulary-dependence failure the two-tier design exists to prevent; restoring the tier passes |
 | P2 | Make the contract-surface test consult the path as well, so a non-shipped path short-circuits it | a scratch copy of the predicate | scenario 5 fails, because a contract finding on a `docs/` path becomes small again; restoring the path-independent test passes |
@@ -833,7 +839,7 @@ reviewer_loop_path_is_normative_document() {
 # match "failXclosed" and reintroduce over-matching. Each pattern lists exactly
 # the spellings the normative table names, and no others.
 REVIEWER_LOOP_CONTRACT_SURFACES=(
-  'acceptance_criteria|acceptance criterion|acceptance criteria|AC-[0-9]'
+  'acceptance_criteria|acceptance criterion|acceptance criteria|AC-[0-9]+'
   'decision_gates_and_matrices|decision gate|decision matrix|matrix row|readiness gate|gate condition|gating'
   'parser_and_input_behavior|parser|regex|input surface|word boundary'
   'scope_and_coverage|out of scope|in scope|scope creep|coverage matrix|brief objective'
@@ -958,7 +964,7 @@ reviewer_loop_finding_touches_contract_surface() {
 9. Document the new behavior in the `--help` usage block. **Verify**: run
    `pr-review-loop.sh --help` and confirm the predicate, the contract-surface
    list, the current-head requirement and `SMALL_FINDINGS_BLOCKED_BY` appear.
-10. Produce the nineteen planted-violation proofs (P1-P19) and record them in the PR
+10. Produce the twenty planted-violation proofs (P1-P20) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed. Every proof is mandatory, including the whole restrictive
