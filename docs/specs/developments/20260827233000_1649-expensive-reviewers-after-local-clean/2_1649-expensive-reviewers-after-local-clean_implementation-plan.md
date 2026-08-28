@@ -486,7 +486,8 @@ reads them against each other and fails on any divergence.
    | `needs_fixes` | `deferred` / `peer_reviewer_not_clean` |
    | `escalate` | `deferred` / `peer_reviewer_not_clean` |
 
-   The three accepted-skip rows and the three rejected-skip rows must be
+   The two accepted-skip rows (`not_configured`, `explicit-skip`) and the three
+   rejected-skip rows (`unavailable`, `timeout`, `unauthorized`) must be
    asserted against `reviewer_failed_label_required_for_result` rather than a
    duplicated list, so a future change to that helper moves this gate with it.
 9. One unresolved non-outdated review thread → `deferred` /

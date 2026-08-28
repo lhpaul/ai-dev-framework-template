@@ -127,7 +127,9 @@ of the weight:
   normal run means the reorder did not happen. Note the peer set is scoped by
   phase — Step 3d covers it — so a draft-phase `codex-github` must **not** wait
   on a ready-phase `bugbot`.
-- The two **`skipped`** rows must split. Accepting every skip would let
+- The **`skipped`** rows must split — two accepted (`not_configured`,
+  `explicit-skip`) and three rejected (`unavailable`, `timeout`,
+  `unauthorized`). Accepting every skip would let
   `codex-github` dispatch when a configured peer was unavailable, timed out, or
   was refused for credentials — no cheap pre-filter actually ran, which is the
   state the item exists to prevent. Acceptance must be decided by calling
