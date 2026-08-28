@@ -158,7 +158,8 @@ Not applicable — this repository ships workflow tooling, not a service.
       | `clean` | — | `clean` |
       | `needs_fixes` | — | `needs_fixes` |
       | `skipped` | `unavailable` | `unavailable` |
-      | `skipped` | `not_configured` | `not_configured` |
+      | `skipped` | `not_configured`, and the configured list **omits** the reviewer | `not_configured` |
+      | `skipped` | `not_configured`, and the configured list **contains** it | `unavailable` — configured, did not run |
       | `skipped` | anything else | `skipped` |
       | `escalate` | — | `unavailable` — a reviewer that could not complete |
       | anything else | — | `unknown` |
@@ -168,11 +169,16 @@ Not applicable — this repository ships workflow tooling, not a service.
       one that timed out both arrive as `RESULT=skipped`, and the spec keeps
       them apart.
 
-      When `skipped/not_configured` and the configured-platform list disagree,
-      the **list wins** and the state is `not_configured`: the list describes
-      the repository, the result describes one round, and a configuration that
-      lists the reviewer while a round reports it unconfigured is a round-level
-      anomaly rather than a fact about the repository.
+      **When the round says `skipped/not_configured` but the configured list
+      contains the reviewer, the state is `unavailable`, not `not_configured`.**
+      The two sources answer different questions and only one of them is about
+      the repository: the list says the reviewer *is* configured, so
+      `not_configured` — whose spec meaning is that it will never run — would
+      be false. What actually happened is that a configured reviewer did not
+      run this round, which is precisely `unavailable`. The reverse
+      disagreement cannot arise: the list is consulted first, and a reviewer
+      absent from it returns `not_configured` before any round is examined.
+      Scenario 2a pins the disagreement.
 
       **Entries written before this change carry no `platform_results`, and
       those entries yield `unknown` — never the aggregate `result`.** Reading
@@ -393,12 +399,22 @@ Not applicable — this repository ships workflow tooling, not a service.
       characters:
 
       ```text
-      missed-finding: codex-github on 6780c658 — 7 blocking, 12 files (a.ts, b.ts, c.ts) — local: clean, same commit [confirmed miss]
+      missed-finding: codex-github on 6780c658 — 7 blocking, 12 files (a.ts, b.ts, c.ts, +9 more) — local: clean, same commit [confirmed miss]
       ```
+
+      **`+9 more` is required, not decoration.** AC-14 asks the line to say how
+      many further files there are whenever the findings touch more than the
+      paths named, and the remainder is `path_total` minus the number actually
+      named — which is not always three, because the bound can stop the list
+      earlier. A line naming zero paths therefore reads `12 files (+12 more)`,
+      and a line naming all of them omits the remainder entirely rather than
+      printing `+0 more`.
 
       The bound is enforced by construction rather than by truncating the
       finished line: paths are appended one at a time and the first one that
-      would exceed the bound stops the list. **The total file count and the
+      would exceed the bound stops the list. The remainder is computed **after**
+      the list stops, from what was actually named, so it stays correct at every
+      truncation point. **The total file count and the
       state are written before the paths**, so the two values a reader needs
       most cannot be the ones the bound removes. A line that names zero paths
       is valid — AC-14a says so explicitly — and is what a pull request with
@@ -422,6 +438,10 @@ Not applicable — this repository ships workflow tooling, not a service.
    2 and a `needs_fixes` local verdict at iteration 5 returns the iteration-5
    verdict. This is AC-4a, and it is the single most likely implementation
    error in the item.
+2a. The two sources of `not_configured` disagreeing: a round recorded as
+    `skipped` with reason `not_configured` while the configured list **contains**
+    the reviewer yields `unavailable`, never `not_configured`. The list says the
+    reviewer will run; the round says it did not; "will never run" is false.
 2. It returns `not_yet_run` when the local reviewer is configured and the
    history has **no entries at all**, and `not_configured` when it is absent
    from the configured list — **with the same empty history in both calls**, so
@@ -478,6 +498,10 @@ Not applicable — this repository ships workflow tooling, not a service.
 13a. Paths are de-duplicated before counting and naming: eight blocking findings
     spread over three files produce `path_total` 3, not 8, and the named paths
     are three **distinct** files rather than repeats of one.
+13c. The remainder is stated and is correct at every truncation point: a record
+    naming three of twelve files reads `+9 more`; the zero-path line of
+    scenario 13 reads `+12 more`; and a record whose files all fit omits the
+    remainder rather than printing `+0 more`.
 13b. An external round whose reviewed commit **cannot be established** produces
     no record, and the round's output states the attribution failure and its
     reason. This is AC-11, and it is the third of the spec's three no-record
@@ -627,13 +651,13 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The twelve proofs fall into
+runs per proof, each citing a concrete file and line. The thirteen proofs fall into
 two groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
 | Overclaiming | **7** | P1, P2, P3, P4, P8, P10, P12 | a number asserted on evidence that does not support it |
-| Contract | **5** | P5, P6, P7, P9, P11 | a report, a line, or a stored history that breaks its own stated contract |
+| Contract | **6** | P5, P6, P7, P9, P11, P13 | a report, a line, or a stored history that breaks its own stated contract |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
 | --- | --- | --- | --- |
@@ -648,6 +672,7 @@ two groups:
 | P8 | Fall back to the entry's aggregate `result` when `platform_results` is absent | a scratch copy of the selector | scenario 3a fails: a pre-change entry whose round was aggregate-clean is read as a clean **local** verdict, so rounds the local reviewer never ran are recorded as confirmed misses. The plant only affects historical entries, which is where nobody looks; restoring the `unknown` fallback passes |
 | P11 | Build `platform_results` from `platform_result_tokens` instead of the raw pair | a scratch copy of the collection step | the raw-to-outcome scenarios in step 1a fail: every `escalate` becomes the unparseable `escalated (<reason>)`, every `DISPLAY_RESULT` override becomes whatever the platform chose, and both `skipped` reasons collapse into `unavailable` — so `skipped` and `not_configured` become unreachable and escalations record as `unknown`. Restoring the raw pair passes |
 | P12 | Count `path_total` without de-duplicating | a scratch copy of the record builder | scenario 13a fails: eight findings across three files report twelve files and name one file three times, overstating the blast radius of every record and wasting the line's three path slots; restoring the de-duplication passes |
+| P13 | Compute the remainder as `path_total - 3` instead of from the paths actually named | a scratch copy of the renderer | scenario 13c fails at every truncation point: the zero-path line reads `+9 more` for twelve files, and a record with two files fitting reads `-1 more`. The plant is invisible whenever exactly three paths fit, which is the common case; restoring the count-what-was-named rule passes |
 | P6 | Enforce the 200-character bound by truncating the finished line | a scratch copy of the renderer | scenario 13's long-path case fails: truncation removes the tail, which is where the local evidence state and the classification sit, so the line that survives is the one carrying paths and no verdict — exactly inverted from what a reader needs; restoring build-order enforcement passes |
 
 Seven proofs plant the overclaiming direction because that is the direction with
@@ -689,12 +714,13 @@ object exposes it.
    and add the eligibility-then-writability ordering and the row-4 report.
    **Verify**: scenarios 11 and 12, including the byte-for-byte comparison
    against a saved prior body.
-7. Add the summary renderer, de-duplicating paths before counting and naming.
-   **Verify**: scenarios 13, 13a and 15, including the zero-path line and the
-   eight-findings-over-three-files case.
+7. Add the summary renderer, de-duplicating paths before counting and naming,
+   and computing the remainder from the paths actually named. **Verify**:
+   scenarios 13, 13a, 13c and 15 — the zero-path line, the
+   eight-findings-over-three-files case, and the three remainder forms.
 8. Update Protocol 93 and the `--help` block. **Verify**: runbook Step 9 reads
    both against the code.
-10. Produce the twelve planted-violation proofs (P1-P12) and record them in the PR
+10. Produce the thirteen planted-violation proofs (P1-P13) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---

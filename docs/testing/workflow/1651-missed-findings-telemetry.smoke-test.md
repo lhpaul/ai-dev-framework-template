@@ -45,8 +45,18 @@ P1.
    configured list that contains `local-ai-reviewer`.
 2. Call it with the **same** empty history and a configured list that does not.
 
-**Expected result**: `not_yet_run` and `not_configured`, asserted as those two
-values — not merely as two non-clean results.
+3. Call it with a history whose local-reviewer record is `skipped` with reason
+   `not_configured`, and a configured list that **contains** the reviewer.
+
+**Expected result**: `not_yet_run` and `not_configured` for 1 and 2, asserted as
+those two values — not merely as two non-clean results. Call 3 returns
+**`unavailable`**, never `not_configured`.
+
+Call 3 is the disagreement between the two sources of `not_configured`. The list
+says the reviewer is configured and will run; the round says it did not run. The
+spec's `not_configured` means *will never run*, which the list contradicts, so
+the honest state is a configured reviewer that did not run — `unavailable`. The
+reverse disagreement cannot arise: the list is consulted first.
 
 The two calls differ only in the configured-platform argument, which is the
 point: an empty history looks identical for a repository that has not run the
@@ -222,11 +232,20 @@ do with. Proof P5.
    files.
 4. Render an entry carrying twenty records with long paths.
 
+5. Render a record whose files all fit within three names.
+
 **Expected result**: one line per record, each at most 200 characters, naming at
 most three paths and **always** the total file count. Case 2 names **zero**
 paths and still states the total, the state and the classification — a valid
 line, not a failure. Case 3 reports `path_total` **3**, not 8, and names three
 distinct files. Case 4 adds at most twenty lines and 4,000 characters.
+
+Every line that omits files states **how many more**, computed from the paths
+actually named rather than from a fixed three: case 1 reads `+9 more` for twelve
+files, case 2's zero-path line reads `+12 more`, and case 5 omits the remainder
+entirely rather than printing `+0 more`. A renderer that subtracts a constant
+three is correct only when exactly three paths fit — the common case, which is
+why the other two are the ones tested. Proof P13.
 
 Case 3 is the de-duplication check. `reviewer_loop_blocking_paths_from_output`
 emits one line per **finding**, so three blockers in one file yield that path
@@ -306,11 +325,11 @@ status. The records change what is *known*, never what happens.
 ## Step 14: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P12 each record the command, the file and line of the
+2. Confirm P1 through P13 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: twelve proofs in two groups — **seven** overclaiming,
-**five** contract, per the plan's proof-group table.
+**Expected result**: thirteen proofs in two groups — **seven** overclaiming,
+**six** contract, per the plan's proof-group table.
 
 The overclaiming group carries the weight because that direction has no symptom:
 each of its plants produces a plausible number, and a number is believed. P3 is
