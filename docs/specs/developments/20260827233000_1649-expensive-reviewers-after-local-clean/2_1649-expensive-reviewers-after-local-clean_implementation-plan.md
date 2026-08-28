@@ -272,20 +272,31 @@ Not applicable — no user interface in this repository.
 
 ### Documentation
 
+Both documents below must state the **same** contract, and both must include
+the full two-value `EXPENSIVE_GATE_ESCALATION` behavior — smoke test Step 10
+reads them against each other and fails on any divergence.
+
 - [ ] `docs/workflow/development-workflow/protocols/93-automated-reviewer-loop-protocol.md`
       — document the gate: the conditions and their evaluation order, the
       order-independence of condition 2, the head binding of conditions 3 and 4,
       the fail-closed rule, the fact that a `deferred` outcome sets the
       aggregate to `needs_fixes` (so readiness is withheld and Step 7 re-runs)
-      rather than passing as a clean skip, the bounded deferral counter and its
-      `expensive_gate_deferral_cap` escalation, the reordering of expensive
-      reviewers to the end of the platform list, and the override variable with the expectation that its use is
-      justified in the PR.
+      rather than passing as a clean skip, the reordering of expensive reviewers
+      to the end of the platform list, the override variable with the
+      expectation that its use is justified in the PR, and the bounded deferral
+      counter with **both** escalation causes —
+      `expensive_gate_deferral_cap` when the budget is exhausted and
+      `expensive_gate_deferral_budget_unreadable` when it cannot be read —
+      naming `EXPENSIVE_GATE_ESCALATION` as the key that carries them and
+      stating that it is emitted only on a `deferral_cap` result.
 - [ ] `docs/workflow/development-workflow/integrations/codex-github.md` — add a
       section describing the gate so a reader configuring the reviewer learns
       when it will actually run, when it will be deferred, and how to override.
-      The file exists (confirmed in the Verification Log); no new file is
-      created.
+      It must carry the same `EXPENSIVE_GATE_ESCALATION` contract as Protocol 93
+      — both values, and the `deferral_cap`-only emission — because a reader who
+      only ever opens the integration page must be able to tell an exhausted
+      budget from an unreadable one without consulting the protocol. The file
+      exists (confirmed in the Verification Log); no new file is created.
 
 ---
 
@@ -470,9 +481,11 @@ with mock `gh` commands and require no network access.
       reordering of expensive reviewers to the end of the platform list, and the
       override variable.
 - [ ] `docs/workflow/development-workflow/integrations/codex-github.md` — add a
-      section describing the gate, its conditions, and the override, so the
-      gate is discoverable from the reviewer's own integration page rather than
-      only from the loop protocol.
+      section describing the gate, its conditions, the override, and the same
+      two-value `EXPENSIVE_GATE_ESCALATION` contract (`expensive_gate_deferral_cap`,
+      `expensive_gate_deferral_budget_unreadable`, emitted only on a
+      `deferral_cap` result), so the gate is fully discoverable from the
+      reviewer's own integration page rather than only from the loop protocol.
 - [ ] `REVIEW.md` — no change. The gate decides when a reviewer runs, not what
       the review contract requires.
 - [ ] `AGENTS.md` — no change. It does not enumerate reviewer-loop gates.
