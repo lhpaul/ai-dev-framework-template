@@ -88,9 +88,15 @@ plumbing to carry and report a selection is already in place.
 
 ### Not applicable
 
-**Result**: `Not applicable` — no database, no runtime service, no user-facing
-surface, no scheduled job. The change is confined to two review scripts, one
-contract document and two workflow documents.
+**Overall result for this check**: `Applicable` — the three rows above are the
+assumption surfaces, all `Verified`, and the implementer must re-verify each at
+implementation start. This subsection scopes only the surfaces that carry **no**
+assumption for this plan; it does not soften the result above.
+
+**Surfaces with no assumption**: no database, no runtime service, no
+user-facing surface, no scheduled job, no external API and no deployment
+target. The change is confined to two review scripts, one contract document,
+three agent instruction files, two workflow documents and three test suites.
 
 ---
 
@@ -629,6 +635,8 @@ the pair that can drift silently.
 ## Code Samples
 
 The branch tier, and the merge that carries the monotonicity property:
+
+<!-- workflow-shell-contract: bash -->
 
 ```bash
 # Branch tier. Literal prefixes, never a regex: `specification/foo` must not
