@@ -150,9 +150,12 @@ The objectives below are the discrete requirements stated in issue #1654. Every 
 - A review that runs without the doctrine must **say so**, with the reason. Silence is not permitted.
 - Every entry is **general**: no pull request number, no issue number, no person, no title, no path from the incident that produced it.
 - Every entry has the same four parts, in the same order: name, shape, minimal example, detection question.
-- The catalogue has a **fixed size bound**, and the bound is part of this feature's contract. Exceeding it is a repository error to be fixed by editing the catalogue, never by silently truncating it and never by raising the bound in the same change that breaches it.
+- The catalogue has a **fixed size bound of 12,000 bytes**, measured on the document's stored text — what `wc -c` reports for the file. Bytes rather than characters, words or tokens: bytes are the only unit every check, script and reader measures identically, and a multi-byte character must not make two catalogues of the same apparent length disagree about whether they fit.
+- The bound is part of this feature's contract. Exceeding it is a repository error to be fixed by editing the catalogue, never by silently truncating it and never by raising the bound in the same change that breaches it.
+- The catalogue's **version is the first twelve hexadecimal characters of the SHA-256 of its stored bytes**. Derived rather than declared: a version a maintainer has to remember to bump is a version that silently stops changing, and the one question the version must answer — *did this review see the same catalogue as that one* — is exactly what a content hash answers.
 - A truncated doctrine is **never** supplied. Partial doctrine is worse than none: it looks complete to the reviewer, and the patterns it drops are the ones added most recently, which are the ones nobody has internalised yet.
 - The catalogue's version is recorded with every review that uses it, so a later report can tell which reviews saw which patterns.
+- Every entry is subject to two different kinds of generality rule, and the spec keeps them apart. One is **mechanically checkable** and is enforced (AC-5); the other is a **human review** obligation and is not claimed to be automated. Asserting a check for the unautomatable half would be a declared-but-unverifiable control.
 
 ---
 
@@ -193,7 +196,7 @@ Each ships with a minimal example and a detection question. None names PR #1646.
 
 ## Decision Matrix
 
-Every combination of the two inputs that decide the supply state. No combination is omitted, and no row is unreachable.
+Every combination of the **three** inputs that decide the supply state — presence, readability, and fit within the bound. No combination is omitted, and no row is unreachable.
 
 | # | Catalogue present? | Readable? | Within bound? | State | Doctrine in context? | Review runs? |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -204,7 +207,22 @@ Every combination of the two inputs that decide the supply state. No combination
 
 Rows 1 to 3 all end with the review running and the reason recorded. The distinction between them is not academic: row 1 is a repository that never adopted the doctrine, row 2 is a broken environment, and row 3 is a maintainer's edit that needs undoing. Collapsing them into one "no doctrine" state would make the only actionable case invisible.
 
-The fourth column has no state of its own for "read but empty". An empty catalogue is `supplied` with zero patterns, and the count reported alongside the state is what distinguishes it. Treating empty as a failure would make adopting the doctrine a two-step operation for no benefit.
+The matrix has no state of its own for "read but empty". An empty catalogue is `supplied` with zero patterns, and the count reported alongside the state is what distinguishes it. Treating empty as a failure would make adopting the doctrine a two-step operation for no benefit.
+
+Later rows are unreachable when an earlier input fails, which is why those cells read `—` rather than carrying a value: a catalogue that is absent has no readability to assess, and one that cannot be read has no size to compare. The dashes are "not evaluated", not "either value".
+
+### What is reported in each state
+
+The three reported values are defined for every state, so no implementer has to choose a sentinel:
+
+| State | Supply state reported | Pattern count | Catalogue version |
+| --- | --- | --- | --- |
+| `supplied` | `supplied` | the number of entries in the catalogue, `0` for an empty one | the twelve-character hash |
+| `oversized` | `oversized` | `0` — no pattern was supplied, whatever the file contains | the twelve-character hash: the file was read, and *which* version was too large is the first thing a maintainer needs |
+| `unreadable` | `unreadable` | `0` | empty — no bytes were obtained, so no hash exists |
+| `absent` | `absent` | `0` | empty — there is nothing to hash |
+
+The count is *patterns supplied*, never *patterns present*. An `oversized` catalogue with nine entries reports `0`, because zero reached the review. Reporting nine would make the effectiveness data claim coverage that never happened.
 
 ---
 
@@ -221,15 +239,18 @@ The fourth column has no state of its own for "read but empty". An empty catalog
 1. **AC-1**: A review-doctrine catalogue exists in the repository as a single document.
 2. **AC-2**: The catalogue contains the five seeded patterns named in Statuses / Enum Values, and each has a name, a shape, a minimal example and a detection question.
 3. **AC-3**: The catalogue's preamble states that it lists shapes worth looking for and is not the set of things worth reporting.
-4. **AC-4**: No catalogue entry contains a pull request number, an issue number, a person's name, or a document title from the incident that produced it.
-5. **AC-5**: A repository check fails when an entry violates AC-4, and passes when it does not.
+4. **AC-4**: No catalogue entry contains any of these **mechanically detectable** references to a specific incident: a `#` followed by digits; a URL whose host is the repository's forge; the word `PR` or `issue` followed by digits, case-insensitively; or a path beginning `docs/specs/developments/`.
+5. **AC-5**: A repository check fails when an entry violates AC-4, and passes when it does not. The check's authoritative prohibited set is exactly the four forms listed in AC-4 — no more, so the check is implementable, and no fewer, so it is worth running.
+5a. **AC-5a**: The remaining half of the generality rule — no person's name, no document title, no wording that only makes sense to someone who saw the original incident — is a **human review** obligation, listed in the catalogue's own contribution guidance and in the `Workflow Policy Review Checklist`. No automated check is claimed for it. A person's name and a document title have no reliable machine representation, and a check that pretended to catch them would report clean on the cases it cannot see, which is worse than having no check at all.
 6. **AC-6**: When the catalogue is present, readable and within bound, its full text is present in the review context supplied to the local reviewer.
 7. **AC-7**: When AC-6 holds, the reviewer reports the supply state `supplied`, the number of patterns, and the catalogue's version.
 8. **AC-8**: When the catalogue is absent, unreadable, or over the bound, the reviewer reports the corresponding state from the four-state list and the review still runs.
+8a. **AC-8a**: In every state, all three values are reported with exactly the values given in **What is reported in each state** — including the empty version for `absent` and `unreadable`, and the zero count for `oversized`.
 9. **AC-9**: The doctrine is never supplied in truncated form. If the full text does not fit the bound, the state is `oversized` and no part of the catalogue is supplied.
 10. **AC-10**: A test asserts that the doctrine's text is present in the review context, by matching text from the catalogue rather than by asserting that a field is non-empty.
-11. **AC-11**: A repository check fails when the catalogue exceeds its size bound, and passes when it does not.
-12. **AC-12**: The size bound is stated in one place, and the check and the reviewer both read it from there.
+11. **AC-11**: A repository check fails when the catalogue exceeds 12,000 bytes as `wc -c` measures them, and passes at or below it.
+12. **AC-12**: The size bound's value is stated in one place, and the check and the reviewer both read it from there rather than each carrying a copy.
+12a. **AC-12a**: The catalogue's version is the first twelve hexadecimal characters of the SHA-256 of its stored bytes, and the same derivation is used by every surface that reports it.
 13. **AC-13**: The doctrine is supplied for every stage the reviewer recognises, and for the default stage.
 14. **AC-14**: Supplying the doctrine does not remove or shorten any part of the review context that exists today.
 15. **AC-15**: The supply state, pattern count and version appear in the reviewer's evidence artifact as well as its immediate output.
