@@ -314,6 +314,11 @@ catalogue and the reviewer's recorded output.
 16. The catalogue in the repository passes its own linter, contains exactly the
     five seeded patterns, and its preamble contains the AC-3 statement and the
     AC-3a request.
+16a. `REVIEW.md`'s Workflow Policy checklist contains the generality question,
+    and the catalogue's contribution guidance contains the same obligation.
+    AC-5a names **both** places, and asserting only one would leave the other
+    to be dropped silently — which is what happened to this requirement in an
+    earlier revision of this plan.
 
 **Files**:
 
@@ -351,6 +356,13 @@ catalogue and the reviewer's recorded output.
 ## Documentation Updates
 
 - `docs/workflow/development-workflow/review-doctrine.md` — the catalogue.
+- `REVIEW.md` — one question added to the `## Workflow Policy Review Checklist`
+  that #1653 introduces, carrying AC-5a's human-review obligation: *does every
+  catalogue entry read generally — no person's name, no document title, no
+  wording that only makes sense to someone who saw the original incident?* The
+  spec places this obligation in two places, the catalogue's contribution
+  guidance **and** that checklist, because the guidance is read by whoever adds
+  a pattern and the checklist by whoever reviews the change.
 - `docs/workflow/development-workflow/integrations/local-ai-reviewer.md` — the
   four bundle fields, the three evidence keys, the four states, and the fact
   that a custom command may ignore the doctrine.
@@ -365,16 +377,61 @@ catalogue and the reviewer's recorded output.
 
 ## Cross-Cutting Checklist Classification
 
-**Classification**: `Not applicable`. Protocol 02's three signals are adding or
-renaming a checklist category in `REVIEW.md` or a planning document; imposing an
-acceptance criterion on every plan; and adding a conditional guidance block to a
-planning or implementation protocol. This item adds a **new document** that a
-script reads, changes no checklist, and requires nothing of any future plan.
+**Classification**: `Applicable`, on the conservative reading. Protocol 02's
+first signal is *adding or renaming a checklist category in `REVIEW.md`*. This
+item adds one **question inside** an existing category — the Workflow Policy
+checklist #1653 introduces — which is a narrower change than adding a category.
+An earlier revision of this plan called it `Not applicable` on that ground and
+also, wrongly, on the claim that the item changes no checklist at all; AC-5a
+requires the change, so the second half was simply false.
 
-The distinction from #1653 is worth stating, since the two look similar: #1653
-added a section to `REVIEW.md`, which is the first signal exactly. This item's
-catalogue is not a checklist and is not consulted by a human reviewer following
-`REVIEW.md`; it is an input to one script.
+The classification is taken as applicable anyway, because the cost of being
+wrong is asymmetric: the block's requirement is to enumerate files and say why
+each is or is not touched, and doing that on a change that did not need it costs
+a table, while skipping it on one that did is how a mirrored surface goes stale.
+
+**Live search**, run at `92247597`:
+
+<!-- workflow-shell-contract: bash -->
+
+```bash
+grep -rl "Workflow Policy Review Checklist" .claude .cursor .codex .agents docs
+grep -rl "review-doctrine" .claude .cursor .codex .agents
+```
+
+Both return **nothing** today — the first because #1653's section is planned and
+not yet merged, the second because the catalogue does not exist yet. Both must
+be re-run at implementation time, when #1653 has landed: the first will return
+the three code-reviewer surfaces #1653 edits, and if any of them enumerates the
+checklist's *questions* rather than naming the section, that file needs this
+item's question too.
+
+### Files to modify
+
+| File | Change | Why |
+| --- | --- | --- |
+| `REVIEW.md` | **Edit** | one question in the Workflow Policy checklist, per AC-5a |
+| `docs/workflow/development-workflow/review-doctrine.md` | **New** | the catalogue |
+| `scripts/lint/review-doctrine-lint.sh` | **New** | the three checks |
+| `scripts/development-workflow/workflow-lib.sh` | **Edit** | the shared bound |
+| `scripts/development-workflow/local-ai-reviewer.sh` | **Edit** | reader, bundle, evidence, `--help` |
+| `.github/workflows/markdown-lint.yml` | **Edit** | the linter's CI step |
+| The integration document and Protocol 93 | **Edit** | the fields, keys and states |
+| The two test suites and `changelog.d/` | **New** | scenarios and the fragment |
+
+### Enumerated not-applicable surfaces
+
+| File | Result | Rationale |
+| --- | --- | --- |
+| `docs/workflow/development-workflow/protocols/02-…` and `03-…` | `Not applicable` | neither the planning nor the implementation procedure changes; nothing is required of any future plan |
+| `.claude/agents/*`, `.cursor/agents/*`, `.codex/skills/*` | `Not applicable` **pending the re-run above** | none enumerates a checklist's questions today; #1653's three edits name the section, and naming survives a question being added to it |
+| `.cursor/commands/review-*.md`, `.cursor/rules/workflow.mdc` | `Not applicable` | each names `REVIEW.md` as the contract without listing sections or questions |
+| `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` | `Not applicable` | none enumerates `REVIEW.md`'s contents |
+
+The distinction from #1653 still holds for the catalogue itself: it is not a
+checklist and is not consulted by a human following `REVIEW.md`; it is an input
+to one script. What makes this item cross-cutting is the single question, not
+the document.
 
 ---
 
@@ -477,9 +534,11 @@ everywhere it is tested.
 2. Add `scripts/lint/review-doctrine-lint.sh` with its three checks and the
    0/1 exit contract. **Verify**: scenarios 11 through 15, including the
    12,000/12,001 boundary and the shared-constant case.
-3. Add the catalogue with its preamble and five seeded patterns. **Verify**:
-   scenario 16 — it passes its own linter, has five patterns, and its preamble
-   carries the AC-3 statement and the AC-3a request.
+3. Add the catalogue with its preamble and five seeded patterns, and add the
+   generality question to `REVIEW.md`'s Workflow Policy checklist. **Verify**:
+   scenarios 16 and 16a — the catalogue passes its own linter, has five
+   patterns, its preamble carries the AC-3 statement and the AC-3a request, and
+   the obligation appears in **both** places AC-5a names.
 4. Add `reviewer_doctrine_supply` and its version helper. **Verify**: scenarios
    1 through 6 — all four states with all four values, the `oversized` row's
    empty text and present version, and the missing-digest case.
@@ -498,7 +557,8 @@ everywhere it is tested.
 
 ## Rollback
 
-Revert the implementation PR. It removes the catalogue, the linter, its CI step,
+Revert the implementation PR. It removes the catalogue, the `REVIEW.md`
+question, the linter, its CI step,
 the supply reader and version helper, the four bundle fields, the three evidence
 keys, the `workflow-lib.sh` constant, the documentation updates and the two test
 suites. Reverting restores the stage-agnostic bundle exactly; no other script

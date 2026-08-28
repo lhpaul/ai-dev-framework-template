@@ -224,9 +224,14 @@ size" passes whatever the comparison operator is.
 5. Read each entry for incident-specific wording a linter cannot catch — a
    person's name, a document title, a sentence that only makes sense to someone
    who saw the original incident.
+6. Confirm that same obligation appears in **both** places AC-5a names: the
+   catalogue's contribution guidance, and `REVIEW.md`'s Workflow Policy
+   checklist.
 
-**Expected result**: all five present. Step 5 is a human judgement and the spec
-says so — AC-5a assigns it to review rather than to a check, because a person's
+**Expected result**: all six present. Step 6 checks both places because AC-5a
+names both — the guidance is read by whoever adds a pattern, the checklist by
+whoever reviews the change — and an obligation recorded in one place is one a
+reviewer never sees. Step 5 is a human judgement and the spec says so — AC-5a assigns it to review rather than to a check, because a person's
 name has no reliable machine representation and a check that pretended otherwise
 would report clean on the cases it cannot see.
 
