@@ -44,6 +44,10 @@ ready-phase reviewers are about to read.
 **Expected result**: the key is present and reads `not_required`; and
 `LOCAL_SECOND_PASS` is `0`.
 
+`not_required` and `failed_for_head` are both "the pass did not run" and must
+not be collapsed: one is a satisfied gate, the other a blocked one, and that is
+the distinction #1657 needs most.
+
 Emitting the reason only on the interesting path would make its absence
 ambiguous — an old script, a skipped guard and a satisfied condition would all
 look alike — and this is telemetry #1657 will read.
@@ -97,8 +101,24 @@ P4.
    dispatches.
 2. Run a cycle, land a commit, run another cycle, and count again.
 
+3. After a **failed** pass, run another cycle at the same head.
+4. After a **clean** pass, run another cycle at the same head.
+
 **Expected result**: case 1 dispatches the guard's pass **once**; case 2
-dispatches it twice.
+dispatches it twice. Case 3 **refuses** — the cycle ends with `needs_fixes`,
+reason `local_pass_failed_for_head`, no dispatch, no conversion. Case 4 takes
+the `not_required` path: no dispatch, no refusal.
+
+Case 3 is the hole a two-way guard leaves. Suppressing the dispatch without
+refusing means the condition still owes a pass, nothing runs, and the gate is
+reached with no current clean evidence — a fail-open created by the anti-loop
+mechanism itself, on the very next cycle after any failed pass. Case 1's
+dispatch count passes either way, which is what makes it worth its own case.
+Proof P6.
+
+Case 4 needs no flag: the verdict a clean pass produced is clean on
+`loop_head_sha`, so the condition returns `not_required` on its own. The flag
+exists only for the failed case.
 
 Count dispatches, not the flag. A per-cycle boolean reads as "at most once" and
 is not: it allows one pass per cycle forever, and on a pull request whose local
@@ -116,7 +136,8 @@ loop cannot manufacture a commit. Proof P1.
    `max_cycles_exceeded` and note the cycle count at escalation.
 
 **Expected result**: case 1's counts are equal. Case 2 escalates at the same
-count as before this change.
+count as before this change, having dispatched the pass **once** and refused on
+every later cycle at that head.
 
 The pass is a dispatch inside a cycle that is already counted. Incrementing a
 cap would make `max_cycles_exceeded` mean two different things — cycles for
@@ -158,8 +179,8 @@ pass: head_changed → clean`.
 2. Run `scripts/development-workflow/pr-review-loop.sh --help`.
 3. Read `changelog.d/1656.changed.second-local-pass.md`.
 
-**Expected result**: both surfaces describe the same four reasons and the same
-two keys, and neither describes the pass as consuming a cycle or as running
+**Expected result**: both surfaces describe the same **five** reasons — the four
+conditions plus `failed_for_head` — and the same two keys, and neither describes the pass as consuming a cycle or as running
 without a ready-phase platform. The fragment is `changed`, not `added` — the
 ready-phase gate already existed and this alters when it fires.
 
@@ -182,10 +203,10 @@ ready-phase gate already existed and this alters when it fires.
 ## Step 12: Planted-violation proofs
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P5 each record the command, the file and line of the
+2. Confirm P1 through P6 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: five proofs in two groups — **two** fail-open, **three**
+**Expected result**: six proofs in two groups — **three** fail-open, **three**
 loop and cost, per the plan's proof-group table.
 
 P2 is the one to read twice: returning `not_required` for a history with no
