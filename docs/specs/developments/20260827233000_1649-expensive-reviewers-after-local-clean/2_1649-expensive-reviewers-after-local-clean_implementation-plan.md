@@ -198,23 +198,38 @@ Not applicable — this repository ships workflow tooling, not a service.
          non-blocking snapshot, and would conflate "CI is not green yet" with
          "the gate says wait". The gate takes a snapshot; the CI loop remains
          Step 8's job.
-- [ ] **Define acceptable peer evidence — not every `skipped` counts.**
-      Accepting any `skipped` peer would let `codex-github` dispatch when a
-      configured peer was unavailable, timed out, or was rejected for
-      credentials, which is precisely the "no cheap pre-filter actually ran"
-      state this item exists to prevent, and it contradicts the summary's claim
-      that peers are clean. The rule reuses the classification the loop already
-      owns rather than inventing a second one: a peer's evidence is acceptable
-      when its result is `clean`, or when its result is `skipped` **and**
-      `reviewer_failed_label_required_for_result` returns false for that
-      `(result, reason)` pair. That function already treats
-      `unavailable`, `timeout`, `thread-check-failed`, `pending_timeout`,
-      `forbidden` and `unauthorized` skips as reviewer failures, so those defer;
-      deliberate policy skips such as `not_configured`, `explicit-skip` and
-      `release_pr` are accepted. Any `needs_fixes`, `needs_rerun` or `escalate`
-      peer defers. Reusing the existing helper means a future change to what
-      counts as a reviewer failure updates this gate automatically instead of
-      drifting from it.
+- [ ] **Define acceptable peer evidence with a positive allow-list.** Accepting
+      any `skipped` peer would let `codex-github` dispatch when a configured
+      peer was unavailable, timed out, or was rejected for credentials — the
+      "no cheap pre-filter actually ran" state this item exists to prevent. But
+      deciding acceptance by asking whether
+      `reviewer_failed_label_required_for_result` returns false is the same
+      deny-list mistake in another place: that helper enumerates a *known* set
+      of failure reasons and returns false for anything it does not recognise,
+      including the empty string and any reason a future reviewer integration
+      introduces. A new skip reason would silently become acceptable evidence.
+      Acceptance is therefore an explicit allow-list:
+
+      ```text
+      EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS=(not_configured explicit-skip release_pr unsupported-platform)
+      ```
+
+      A peer's evidence is acceptable when its result is `clean`, or when its
+      result is `skipped` **and** its reason is a member of that list **and**
+      `reviewer_failed_label_required_for_result` returns false for the pair.
+      The membership test is what makes it fail-closed; the helper call is a
+      second gate so a reason cannot be accepted here while the loop elsewhere
+      treats it as a reviewer failure. Every other result — `needs_fixes`,
+      `needs_rerun`, `escalate`, and every unlisted, unknown or empty skip
+      reason — defers with `peer_reviewer_not_clean`.
+
+      Each member is on the list for a stated reason: `not_configured` and
+      `unsupported-platform` mean the reviewer was never going to run in this
+      repository; `explicit-skip` is an operator's deliberate choice;
+      `release_pr` is the release-guard path, where review already happened on
+      the feature PRs. Adding a member is a deliberate act with a rationale, not
+      a side effect of a reviewer integration landing elsewhere.
+
 - [ ] **Define the peer set as the platforms that precede this reviewer under
       the reordered list.** It cannot be the whole resolved list: the reorder
       preserves phase buckets, so a draft-phase `codex-github` necessarily runs
@@ -544,10 +559,17 @@ reads them against each other and fails on any divergence.
    | `needs_fixes` | `deferred` / `peer_reviewer_not_clean` |
    | `escalate` | `deferred` / `peer_reviewer_not_clean` |
 
-   The two accepted-skip rows (`not_configured`, `explicit-skip`) and the three
-   rejected-skip rows (`unavailable`, `timeout`, `unauthorized`) must be
-   asserted against `reviewer_failed_label_required_for_result` rather than a
-   duplicated list, so a future change to that helper moves this gate with it.
+   | `skipped` / `release_pr` | contributes to `dispatched` |
+   | `skipped` / `unsupported-platform` | contributes to `dispatched` |
+   | `skipped` / `some_future_reason` (unknown) | `deferred` / `peer_reviewer_not_clean` |
+   | `skipped` / `""` (empty reason) | `deferred` / `peer_reviewer_not_clean` |
+
+   The four accepted rows are the members of
+   `EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS`; the unknown and empty rows are the
+   fail-closed cases that a helper-only rule would have accepted, since
+   `reviewer_failed_label_required_for_result` returns false for any reason it
+   does not recognise. Both the membership test and the helper call must be
+   asserted, in that order.
 9. One unresolved non-outdated review thread → `deferred` /
    `unresolved_threads`; the same thread marked outdated → `dispatched`.
 10. Baseline-check states, one case each: a failing check → `deferred` /
@@ -686,7 +708,8 @@ concrete file and line:
 | P4 | Gate-not-wired regression: **delete the `expensive_reviewer_gate` call** from the per-platform block, leaving the function defined but unreachable | a scratch copy of the per-platform block in `scripts/development-workflow/pr-review-loop.sh` | scenario 3 fails, because `codex-github` is dispatched with stale local evidence and no `EXPENSIVE_GATE_*` telemetry is emitted; restoring the call passes. Deleting the call is the correct mutation: removing the `is_expensive_reviewer_platform` guard instead would consult the gate for *every* platform, which is a different defect and would not leave the gate unreachable |
 | P5 | Ordering regression: **delete the `reorder_expensive_reviewers_last` call**, leaving a platform list that declares `codex-github` before `pr-agent` | a scratch copy of the platform-resolution block | scenario 6 fails and scenario 7's suppressed-reorder case shows the gate deferring on every invocation with `peer_reviewer_not_run` — a deferral that can never resolve; restoring the call passes |
 | P9 | Phase-bucket regression: replace the per-bucket partition with a single global one | a scratch copy of `reorder_expensive_reviewers_last` | scenario 6b fails, because a draft-configured `codex-github` is placed after the ready-phase `bugbot` and therefore runs only after `gh pr ready`; restoring the per-bucket partition passes |
-| P10 | Peer-evidence regression: accept any `skipped` peer instead of consulting `reviewer_failed_label_required_for_result` | a scratch copy of condition 2 | scenario 8's `unavailable`, `timeout` and `unauthorized` rows fail, because the gate dispatches with a peer that never produced a verdict; restoring the helper call passes |
+| P10 | Peer-evidence regression: accept any `skipped` peer instead of applying the allow-list | a scratch copy of condition 2 | scenario 8's `unavailable`, `timeout` and `unauthorized` rows fail, because the gate dispatches with a peer that never produced a verdict; restoring the allow-list passes |
+| P19 | Deny-list regression: decide acceptance solely by `reviewer_failed_label_required_for_result` returning false, dropping the `EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS` membership test | same scratch copy | scenario 8's unknown-reason and empty-reason rows fail, because that helper returns false for any reason it does not recognise and a future reviewer's new skip reason would silently become acceptable evidence; restoring the membership test passes |
 | P18 | Unvalidated-bound regression: pass `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS=abc` and then `=0` with the validation removed | the deferral-budget fixture in `scripts/development-workflow/tests/test-pr-review-loop.sh` | with `abc` the comparison errors and the cap never trips, so scenario 13's escalation fails; with `0` every gated PR escalates before its first deferral, so scenario 3's defer fails. Restoring `expensive_gate_resolve_max_deferrals` makes both pass with the documented fallback |
 | P17 | Environment-read regression: change the gate to read `LOCAL_AI_CONFIGURED` and `LOCAL_AI_HEAD_CURRENT` as environment variables instead of calling the two derivation helpers | a scratch copy of condition 1 | scenario 22 fails and every condition-1 case defers with `local_evidence_missing`, because those names are stdout keys printed at end of run and are unset during the platform iteration; restoring the helpers passes |
 | P16 | Vacuous-green regression: make `expensive_gate_baseline_checks_status` return `green` for an empty non-reviewer check set | a scratch copy of the helper | scenario 10's two empty cases fail, because the gate dispatches with no baseline evidence on a head whose CI has not registered; restoring the `empty` state defers with `baseline_checks_unobserved` |
@@ -699,7 +722,7 @@ concrete file and line:
 | P11 | Absent-ledger regression: change the counter to return `-1` for an absent ledger as well as a malformed one | same fixture | scenario 19b fails, because a PR with no prior reviewer-loop history escalates on its first run and the bound is never exercised; restoring the three-state mapping passes |
 | P12 | Deny-list regression: rewrite condition 1 to reject only `0` and empty rather than requiring exactly `1` | a scratch copy of condition 1 | scenario 4's `2` and `true` rows fail, because the gate dispatches with an unrecognized evidence value; restoring the exact-match allow-list passes |
 
-Record all eighteen in the implementation PR under a `Planted-Violation Proofs`
+Record all nineteen in the implementation PR under a `Planted-Violation Proofs`
 heading, each with the command, the file and line of the planted violation, and
 both outcomes.
 
@@ -733,7 +756,7 @@ by the same sequential block that already writes `platform_result_tokens`.
 | --- | --- | --- |
 | Gate condition fixture | A table-driven set of the conditions with each one independently unmet, plus the eight-row unexpected-value table for condition 1, driving scenarios 2–5 and 9–11 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Platform-order fixture | A resolved list declaring `codex-github` first, an already-correct list, and a two-bucket list with `codex-github` on draft and `bugbot` on ready — driving scenarios 6, 6b and 7 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
-| Peer-evidence fixture | One peer per row of scenario 8's table, covering `clean`, the three accepted skip reasons, the three rejected skip reasons, `needs_fixes` and `escalate` | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Peer-evidence fixture | One peer per row of scenario 8's table: `clean`, the four accepted skip reasons, the three rejected skip reasons, an unknown skip reason, an empty skip reason, `needs_fixes` and `escalate` | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Unreadable-input mocks | Mock `gh` commands that exit non-zero for the threads query and for the check rollup, plus a rollup that returns an empty array and one containing only reviewer-owned checks — driving scenarios 10 and 12 and proofs P3 and P16 | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Deferral-budget fixtures | Ledger payloads carrying `PR_REVIEW_LOOP_MAX_EXPENSIVE_DEFERRALS` `expensive_gate.result=deferred` entries at the current head, one fewer, the same count at a different head, and an unparseable payload — driving scenarios 13, 14, 19 and 19b and proofs P7, P8 and P11 — including an absent ledger, a malformed one, and a well-formed one | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Composition fixture | A platform list where `codex-github` is both a phase platform and an expensive reviewer, driving scenarios 16 and 17 | inline in `scripts/development-workflow/tests/test-expensive-reviewer-gate.sh` |
@@ -789,7 +812,7 @@ with mock `gh` commands and require no network access.
 | The reorder silently moves a reviewer across the draft/ready boundary | Med | High — a draft-configured expensive reviewer would run only after `gh pr ready`, inverting the configuration contract | The partition is per phase bucket, assigned with the existing `is_phase_after_clean_platform` predicate, and the buckets are concatenated in their original order; scenario 6b and proof P9 pin it |
 | The gate reads the local evidence from the environment and always defers | Med | High — #1648's `LOCAL_AI_*` are stdout keys printed at end of run, so an environment read is unset during the loop and the gate would refuse on every invocation | Both values are derived at gate time from the in-loop state #1648 already maintains — platform-list membership and `reviewer_loop_head_evidence_classify` over `platform_reviewed_heads` — with the stdout keys as the serialization of that same state rather than a second source. Scenario 22 composes with #1648's real producer instead of pre-seeding, and proof P17 plants the environment read |
 | An unrecognized evidence value falls through condition 1 | Med | High — a `2` or a stray `true` would authorize the expensive reviewer with no valid local-clean evidence, the exact opposite of fail-closed | Condition 1 is an exact-match allow-list requiring the literal `1` on both keys, not a deny-list on `0` and empty; anything else reports `local_evidence_missing`. Scenario 4's eight-row table and proof P12 pin it |
-| A peer that never produced a verdict is accepted as evidence | Med | High — `codex-github` would dispatch with no cheap pre-filter having actually run, which is the state the item exists to prevent | Acceptance delegates to `reviewer_failed_label_required_for_result`, which already classifies `unavailable`, `timeout`, `thread-check-failed`, `pending_timeout`, `forbidden` and `unauthorized` skips as reviewer failures, so only `clean` and deliberate policy skips count; scenario 8's table and proof P10 pin it, and reusing the helper keeps the two definitions from drifting |
+| A peer that never produced a verdict is accepted as evidence | Med | High — `codex-github` would dispatch with no cheap pre-filter having actually run, which is the state the item exists to prevent | Acceptance is a positive allow-list, `EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS`, plus a confirming `reviewer_failed_label_required_for_result` call. A helper-only rule would be a deny-list: that helper returns false for any reason it does not recognise, so an unknown, empty, or newly-introduced skip reason would silently become acceptable. Scenario 8's table and proofs P10 and P19 pin both halves |
 | Thread and CI evidence describes a newer commit than the reviewer verdicts | Med | High — dispatch would be authorized on an inconsistent mix of two heads | Conditions 3 and 4 require the live head returned with their queries to equal `loop_head_sha`, and defer with `evidence_head_moved` otherwise; scenario 11 pins it |
 
 ---
@@ -934,7 +957,8 @@ Summary-comment line, illustrative:
    from the gate.
 4. Add `expensive_reviewer_gate` with the conditions in the documented order,
    condition 2 computing the peer set from the reordered list and this
-   reviewer's index in it and delegating acceptance to
+   reviewer's index in it and deciding acceptance by
+   `EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS` membership confirmed by
    `reviewer_failed_label_required_for_result`, the live-head comparison
    for conditions 3 and 4, the fail-closed branch for every unreadable input,
    and the deferral-cap branch. **Verify**: drive the condition fixture and
@@ -983,7 +1007,7 @@ Summary-comment line, illustrative:
     `scripts/development-workflow/select-test-suites.sh` selects the new suite
     for a change touching only `pr-review-loop.sh` and selects
     `test-pr-ci-loop.sh` for a change touching only `workflow-lib.sh`.
-11. Produce the eighteen planted-violation proofs (P1–P18) and record them in the PR
+11. Produce the nineteen planted-violation proofs (P1–P19) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed.

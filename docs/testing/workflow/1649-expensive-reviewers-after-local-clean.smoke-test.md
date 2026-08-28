@@ -99,7 +99,8 @@ Drive the fixture with exactly one condition unmet at a time and read
 | Reorder suppressed, so a same-bucket peer has not run yet | `deferred` / `peer_reviewer_not_run` |
 | A peer ran and returned `needs_fixes` or `escalate` | `deferred` / `peer_reviewer_not_clean` |
 | A peer ran and returned `skipped` / `unavailable`, `timeout`, or `unauthorized` | `deferred` / `peer_reviewer_not_clean` |
-| A peer ran and returned `skipped` / `not_configured` or `explicit-skip` | contributes to `dispatched` |
+| A peer ran and returned `skipped` with a reason in `EXPENSIVE_GATE_ACCEPTED_SKIP_REASONS` (`not_configured`, `explicit-skip`, `release_pr`, `unsupported-platform`) | contributes to `dispatched` |
+| A peer ran and returned `skipped` with an unknown or empty reason | `deferred` / `peer_reviewer_not_clean` |
 | One unresolved, non-outdated review thread | `deferred` / `unresolved_threads` |
 | The same thread marked outdated | `dispatched` |
 | A non-reviewer check failed | `deferred` / `baseline_checks_not_green` |
@@ -135,9 +136,14 @@ of the weight:
   normal run means the reorder did not happen. Note the peer set is scoped by
   phase — Step 3d covers it — so a draft-phase `codex-github` must **not** wait
   on a ready-phase `bugbot`.
-- The **`skipped`** rows must split — two accepted (`not_configured`,
-  `explicit-skip`) and three rejected (`unavailable`, `timeout`,
-  `unauthorized`). Accepting every skip would let
+- The **`skipped`** rows must split by a positive allow-list: four accepted
+  (`not_configured`, `explicit-skip`, `release_pr`, `unsupported-platform`) and
+  everything else rejected, including `unavailable`, `timeout`, `unauthorized`,
+  an unknown reason, and an empty one. Deciding this by asking whether
+  `reviewer_failed_label_required_for_result` returns false would be a deny-list:
+  that helper returns false for any reason it does not recognise, so a future
+  reviewer's new skip reason would silently become acceptable evidence. The
+  membership test decides; the helper call confirms. Accepting every skip would let
   `codex-github` dispatch when a configured peer was unavailable, timed out, or
   was refused for credentials — no cheap pre-filter actually ran, which is the
   state the item exists to prevent. Acceptance must be decided by calling
@@ -418,10 +424,10 @@ so it would run only when the test file itself changed.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR description's `Planted-Violation Proofs` heading.
-2. Confirm P1–P18 from the plan each record the command, the file and line of
+2. Confirm P1–P19 from the plan each record the command, the file and line of
    the planted violation, and both outcomes.
 
-**Expected result**: eighteen proofs, each showing the check failing with the
+**Expected result**: nineteen proofs, each showing the check failing with the
 violation present and passing once removed. Four carry the most weight: P4
 deletes the `expensive_reviewer_gate` call so the function is defined but
 unreachable, and requires Step 3's stale-evidence row to fail — that is what
@@ -443,6 +449,8 @@ short-circuit on a defer and requires Step 6b to fail. P16 makes an empty
 check set read as green and requires Step 3's two empty-set rows to fail. P17
 reads the local evidence from the environment and requires Step 3e to fail. P18
 removes the bound validation and requires Step 4c to fail in both directions.
+P19 drops the allow-list membership test and requires Step 3's unknown-reason
+and empty-reason rows to fail.
 
 ### Step 10: Documentation states one contract
 
