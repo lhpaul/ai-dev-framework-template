@@ -290,6 +290,28 @@ Not applicable — this repository ships workflow tooling, not a service.
       document, has a shipped path, or touches a contract surface. Keep a thin
       wrapper under the old name only if a caller outside this change set needs
       it, and record in the PR whether one did.
+
+      **Carry over the two fail-closed guards the path collector had.**
+      `reviewer_loop_all_paths_non_shipped` skipped empty lines and then
+      required `saw_path` — so a round whose blockers all arrived without a
+      parseable path was **non-small**, and the terminal rule could not fire on
+      it. Neither guard survives the move by itself, and one of them inverts:
+      `reviewer_loop_path_is_non_shipped_artifact` has `""` in its non-shipped
+      case list, so a record with an empty path would read as non-shipped, and
+      a cosmetically worded pathless blocker would become small. The
+      replacement must therefore return failure when
+
+      1. the findings array is **empty** — nothing was collected, so nothing
+         can be shown to be small; and
+      2. **any** record has an empty or absent `path` field — an unlocatable
+         blocker cannot be classified, and the rule only ever clears findings
+         it can locate.
+
+      Both are checked before the per-record classification, so the empty-path
+      case never reaches `reviewer_loop_path_is_non_shipped_artifact`. This is
+      not new strictness: it is the behavior the round has today, restated
+      because the predicate it used to rest on no longer provides it. Scenario
+      7f and proof **P22** pin it.
 - [ ] **Require the counted rounds to be on the current head — including the
       round now being decided.** The consecutive run is `prior entries + 1`, and
       the `+ 1` is this round, so checking only the prior entries would leave
@@ -512,6 +534,12 @@ Not applicable — no user interface in this repository.
     while appearing to tighten it.
 7. `reviewer_loop_all_findings_are_small` returns failure when any one of three
    findings is non-small, and success only when all three are small.
+7f. The two carried-over fail-closed guards: an **empty** findings array returns
+    failure, and an array in which one record has an **empty path** returns
+    failure even when that record's body is plainly cosmetic and every other
+    record is small. Without the explicit guard the empty path reads as
+    non-shipped — `""` is in the existing predicate's case list — and the round
+    would become small, which is more permissive than today's behavior.
 7a. Pairing survives collection: with two findings **on the same path** — one
     cosmetic, one naming a decision matrix — the round is non-small. A
     deduplicating collector would keep one record and could keep the cosmetic
@@ -652,12 +680,13 @@ Not applicable — no user interface in this repository.
 **Files**:
 
 - `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenarios 1, 2,
-  3, 4, 4a, 4b, 5, 6, 6a, 7, 7a, 7b, 7b-i, 7c, 7d, 7e, 8, 8a, 8b, 8c, 9, 9a, 9b,
+  3, 4, 4a, 4b, 5, 6, 6a, 7, 7a, 7b, 7b-i, 7c, 7d, 7e, 7f, 8, 8a, 8b, 8c, 9, 9a,
+  9b,
   10, 10a, 10b, 11 and 14, as new cases in the existing `HARNESS_MODE=1`
   harness. Listed individually rather than as a range: the
-  sub-lettered scenarios are the ones a range drops, and all sixteen of them
-  (4a, 4b, 6a, 7a, 7b, 7b-i, 7c, 7d, 7e, 8a, 8b, 8c, 9a, 9b, 10a, 10b) guard a
-  behavior the others do not.
+  sub-lettered scenarios are the ones a range drops, and all seventeen of them
+  (4a, 4b, 6a, 7a, 7b, 7b-i, 7c, 7d, 7e, 7f, 8a, 8b, 8c, 9a, 9b, 10a, 10b) guard
+  a behavior the others do not.
 - `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` —
   a new suite for scenarios 12, 12a and 13, the three replay regressions, which
   need their own ledger fixtures. It must declare:
@@ -684,11 +713,11 @@ above are the regression coverage for this change.
 
 This plan materially modifies an automated guard, so `REVIEW.md` §
 Planted-violation proof applies and the pure-refactor exemption does not. Two
-demonstrated runs per proof, each citing a concrete file and line. The twenty-one proofs fall into four groups:
+demonstrated runs per proof, each citing a concrete file and line. The twenty-two proofs fall into four groups:
 
 | Group | Count | Proofs | What they plant |
 | --- | --- | --- | --- |
-| Permissive | **15** | P1-P5, P8, P10, P11, P12, P14, P15, P16, P17, P20, P21 | the original bug, in each of the ways it can return |
+| Permissive | **16** | P1-P5, P8, P10, P11, P12, P14, P15, P16, P17, P20, P21, P22 | the original bug, in each of the ways it can return |
 | Fidelity | **1** | P18 | storing the matching-time normalisation instead of the body as received |
 | Restrictive | **4** | P6, P7, P13, P19 | a tightening that disables the mechanism instead of sharpening it |
 | Observability | **1** | P9 | an inverted within-group reporting precedence, which hides the more actionable cause without changing whether the rule fires |
@@ -700,6 +729,7 @@ demonstrated runs per proof, each citing a concrete file and line. The twenty-on
 | P17 | Replace the JSON record with a tab-separated one | a scratch copy of the collector | scenario 7d fails: a path or body containing a tab shifts the columns, the platform and body fields are read from the wrong text, and a contract-bearing blocker is classified against corrupted data; restoring the JSON record passes |
 | P16 | Match the contract-surface test against the raw body without normalising `\n` | a scratch copy of the classifier | scenario 7b fails, because a term following a line break abuts the sequence and misses the word boundary; restoring the normalisation passes |
 | P18 | Store the normalised body in the finding record instead of the raw one | a scratch copy of the collector | scenario 7e fails: the stored record no longer carries the body as received, so the one place the raw reviewer text survives has been overwritten with the matcher's input; restoring the raw value for storage passes while scenario 7b still passes |
+| P22 | Drop the empty-array and empty-path guards, letting a record with an empty path fall through to the existing predicate | a scratch copy of `reviewer_loop_all_findings_are_small` | scenario 7f fails in both cases: a pathless cosmetic blocker is classified small because `""` is in the non-shipped case list, and an empty findings array vacuously satisfies "all are small". Both are rounds the path collector treated as non-small today, so the omission makes the gate more permissive than before the change; restoring the guards passes |
 | P14 | Break the contract-surface matching entirely, returning failure for every body | a scratch copy of the tier-2 predicate | scenario 12a fails, because a #1661-shaped ledger on a non-normative path terminates; scenario 12 still passes, which is exactly why 12a exists. Restoring the predicate passes both |
 | P20 | Narrow the acceptance-criteria pattern to a single digit | a scratch copy of the surface list | scenario 4b fails on `AC-10` and `AC-147`, so contract findings citing any criterion past nine are classified small on tier-2 paths; restoring `AC-[0-9]+` passes |
 | P13 | Replace the character-class boundary with `\b` | a scratch copy of the predicate | scenario 4a fails under BSD grep — `decision gate` no longer matches at all, so tier 2 silently stops escalating anything; restoring the POSIX form passes under both greps |
@@ -945,7 +975,7 @@ reviewer_loop_finding_touches_contract_surface() {
    must remain the value as received. Then replace
    `reviewer_loop_all_paths_non_shipped` with
    `reviewer_loop_all_findings_are_small`. **Verify**: scenarios 5, 6, 7, 7a,
-   7b, 7b-i, 7c, 7d and 7e — in particular that two findings on one path both
+   7b, 7b-i, 7c, 7d, 7e and 7f — in particular that two findings on one path both
    survive collection, that a path or body containing a tab is classified from
    intact fields, that a real newline and a literal `\n` give the same
    answer, and that the record holds the un-normalised body. Record in the PR whether any caller outside this
@@ -999,7 +1029,7 @@ reviewer_loop_finding_touches_contract_surface() {
 9. Document the new behavior in the `--help` usage block. **Verify**: run
    `pr-review-loop.sh --help` and confirm the predicate, the contract-surface
    list, the current-head requirement and `SMALL_FINDINGS_BLOCKED_BY` appear.
-10. Produce the twenty-one planted-violation proofs (P1-P21) and record them in the PR
+10. Produce the twenty-two planted-violation proofs (P1-P22) and record them in the PR
     under a `Planted-Violation Proofs` heading. **Verify**: each shows two runs
     at a concrete file and line — failing with the violation planted, passing
     once removed. Every proof is mandatory, including the whole restrictive

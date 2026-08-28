@@ -191,6 +191,28 @@ tabs in bodies, so a `<path><TAB><platform><TAB><body>` form would shift columns
 and classify a blocker against the wrong text. The record is JSON built with
 `jq --arg` and read with `jq -r`, which escapes and decodes every field.
 
+### Step 3g: Unclassifiable rounds stay non-small
+
+**Maps to**: the two fail-closed guards carried over from
+`reviewer_loop_all_paths_non_shipped`.
+
+1. Run the loop with an **empty** findings array — no blocking finding was
+   collected at all.
+2. Run it with two records where one is plainly cosmetic and carries an **empty
+   path**, and the other is cosmetic on `CHANGELOG.md`.
+
+**Expected result**: both rounds are **non-small**, and the terminal rule does
+not fire on either.
+
+Run 2 is the one that inverts without the guard. `reviewer_loop_path_is_non_shipped_artifact`
+lists `""` among its non-shipped cases, so an empty path reads as non-shipped
+and a cosmetically worded pathless blocker would be classified small. The old
+path collector never reached that branch — it skipped empty lines and then
+required `saw_path` — so today such a round is non-small. Both guards are
+therefore restatements of current behavior, not new strictness, and both are
+needed because the predicate they used to rest on is no longer the one being
+called.
+
 ### Step 4: Counted rounds must be on the current head
 
 **Maps to**: brief scope bullet 2.
@@ -392,15 +414,16 @@ tier 1 makes those findings non-small whatever the body says.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P21 each record the command, the file and line of the
+2. Confirm P1 through P22 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: twenty-one proofs in four groups — **fifteen** permissive,
+**Expected result**: twenty-two proofs in four groups — **sixteen** permissive,
 **four** restrictive, **one** observability, **one** fidelity, per the plan's
 proof-group table.
 The permissive group is P1 through P5, P8, P10, P11, P12, P14, P15, P16, P17,
-P20 and P21 — fifteen — reproducing the original bug in each of the ways it can
-return; P8 skips the current round's head check and requires Step 4's
+P20, P21 and P22 — sixteen — reproducing the original bug in each of the ways it
+can return; P22 drops the empty-array and empty-path guards and requires Step
+3g to fail; P8 skips the current round's head check and requires Step 4's
 fifth run to fail; P10 reads `head_sha` instead of `classification_head` and
 requires Step 4's step 1b to fail; P14 breaks the contract-surface
 matching entirely and requires Step 6b to fail while Step 6 still passes, which
