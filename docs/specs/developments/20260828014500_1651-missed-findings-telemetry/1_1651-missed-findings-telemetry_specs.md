@@ -38,7 +38,7 @@ under **Out of Scope (MVP)** with a deferral note. No objective is dropped.
 ### Use Case 1: An external reviewer finds something the local reviewer cleared
 
 **Actor**: The reviewer loop, running on behalf of the agent or maintainer advancing a pull request.
-**Preconditions**: The pull request has an existing reviewer-loop history. The local reviewer ran earlier in the pull request's life and reported clean. An external reviewer — any configured reviewer other than the local one — has now reported at least one blocking finding.
+**Preconditions**: The pull request has an existing reviewer-loop history. The local reviewer's **most recent** verdict on this pull request is clean. An external reviewer — any configured reviewer other than the local one — has now reported at least one blocking finding.
 
 **Steps**:
 
@@ -205,7 +205,8 @@ under **Out of Scope (MVP)** with a deferral note. No objective is dropped.
 
 - A finding counts as **missed by the local reviewer** only when the local reviewer's most recent verdict was clean **and** covered the commit the external reviewer reviewed or one of its ancestors — states `clean_same_commit` and `clean_earlier_commit`. Every other state does not count. The counting rule enumerates the states that *do* count rather than the states that do not, so a state introduced later is excluded until someone deliberately includes it.
 - The local evidence state is recorded on every external round that reports blocking findings **and whose reviewed commit can be established**, whether or not it counts as a miss. A record that only appeared for confirmed misses would make the denominator unknowable, and a rate needs both halves. Two cases are exceptions and produce no record at all. First, an unattributable commit: a record that cannot name the commit it describes would corrupt the denominator rather than complete it. Second, a history that cannot be read, parsed, or appended to: there is nowhere to write the record, and the loop must not reconstruct or overwrite the history to make room for one. Both are enumerated here and in the Decision Matrix, and there are no others.
-- A clean local verdict is classified by its ancestry relationship to the commit the external reviewer reviewed — same, ancestor, descendant, or unrelated — and the four are recorded as distinct states that are never merged. Only same and ancestor count. A descendant clean means the local reviewer cleared newer code than the external reviewer looked at, and an unrelated clean means a force-push severed the relationship; neither is evidence that the local reviewer saw what was found.
+- The state is always derived from the local reviewer's **most recent verdict**, never from its most recent *clean* verdict. Selection happens first, classification second.
+- When that most recent verdict is clean, it is classified by its commit's ancestry relationship to the commit the external reviewer reviewed — same, ancestor, descendant, or unrelated — and the four are recorded as distinct states that are never merged. Only same and ancestor count. A descendant clean means the local reviewer cleared newer code than the external reviewer looked at, and an unrelated clean means a force-push severed the relationship; neither is evidence that the local reviewer saw what was found.
 - A local reviewer that is **configured but has not yet produced a verdict** is recorded distinctly from one that is **not configured at all**. The first describes a pull request early in its life, the second a repository that will never produce local evidence, and summing them would make the two indistinguishable in the numbers.
 - Only **blocking** external findings qualify. Advisory or suggestion-level findings do not create a record, because the local reviewer is not expected to surface them and counting them would inflate the miss rate.
 - The **local** reviewer's own findings never create a missed-finding record. The record exists to compare an external reviewer against the local one; a reviewer cannot miss its own findings.
@@ -218,15 +219,27 @@ under **Out of Scope (MVP)** with a deferral note. No objective is dropped.
 ## Statuses / Enum Values
 
 The **local evidence state** recorded on each external round that reports
-blocking findings. The list is closed: any situation not described by a row is
-recorded as `unknown`.
+blocking findings.
+
+**One verdict is selected, then classified.** The state is derived from the
+local reviewer's **most recent verdict** on the pull request — not from its most
+recent *clean* verdict. If that most recent verdict is clean, its commit's
+ancestry relationship to the one the external reviewer reviewed selects among
+the four clean states. If it is anything else, that verdict's own outcome
+selects the state, and no earlier clean verdict is consulted. A local reviewer
+that cleared one commit and then reported findings on a later one is
+`not_clean`; reaching past that to the earlier clean verdict would count a round
+as missed on a verdict the reviewer itself had already superseded.
+
+The list is closed: any situation not described by a row is recorded as
+`unknown`.
 
 | Code value | Display label | Description | Counts as missed |
 | --- | --- | --- | --- |
 | `clean_same_commit` | Clean, same commit | The local reviewer reported clean on the exact commit the external reviewer reviewed. | Yes |
-| `clean_earlier_commit` | Clean, earlier commit | The local reviewer's most recent clean verdict was on an ancestor of the commit the external reviewer reviewed. | Yes |
-| `clean_later_commit` | Clean, later commit | The local reviewer's most recent clean verdict was on a descendant of the commit the external reviewer reviewed — it cleared newer code than the external reviewer looked at. | No |
-| `clean_unrelated_commit` | Clean, unrelated commit | The local reviewer's most recent clean verdict was on a commit with no ancestry relationship to the one the external reviewer reviewed, which a force-push can produce. | No |
+| `clean_earlier_commit` | Clean, earlier commit | The local reviewer's most recent verdict was clean, on an ancestor of the commit the external reviewer reviewed. | Yes |
+| `clean_later_commit` | Clean, later commit | The local reviewer's most recent verdict was clean, on a descendant of the commit the external reviewer reviewed — it cleared newer code than the external reviewer looked at. | No |
+| `clean_unrelated_commit` | Clean, unrelated commit | The local reviewer's most recent verdict was clean, on a commit with no ancestry relationship to the one the external reviewer reviewed, which a force-push can produce. | No |
 | `not_clean` | Reported findings | The local reviewer's most recent verdict reported findings of its own. | No |
 | `skipped` | Skipped | The local reviewer was configured and deliberately skipped this round. | No |
 | `unavailable` | Unavailable | The local reviewer was configured but could not run — a timeout, an outage, or a credentials failure. | No |
@@ -295,9 +308,10 @@ that failed.
 ## Acceptance Criteria
 
 - [ ] **AC-1.** When an external reviewer reports blocking findings on a commit for which the local reviewer's most recent verdict was clean on that same commit, the reviewer-loop history gains a record naming that reviewer, that commit, the number of blocking findings, the files they touch, and the local evidence state `clean_same_commit`, **and that record counts as missed**.
-- [ ] **AC-2.** When the local reviewer's most recent clean verdict was on an ancestor of the commit the external reviewer reviewed, the record's local evidence state is `clean_earlier_commit`, it is distinguishable from `clean_same_commit` without inspecting commits by hand, **and it counts as missed**.
-- [ ] **AC-3.** When the local reviewer's most recent clean verdict was on a descendant of the commit the external reviewer reviewed, the state is `clean_later_commit` and it does not count as missed.
-- [ ] **AC-4.** When the local reviewer's most recent clean verdict was on a commit with no ancestry relationship to the one the external reviewer reviewed, the state is `clean_unrelated_commit` and it does not count as missed.
+- [ ] **AC-2.** When the local reviewer's most recent verdict was clean and on an ancestor of the commit the external reviewer reviewed, the record's local evidence state is `clean_earlier_commit`, it is distinguishable from `clean_same_commit` without inspecting commits by hand, **and it counts as missed**.
+- [ ] **AC-3.** When the local reviewer's most recent verdict was clean and on a descendant of the commit the external reviewer reviewed, the state is `clean_later_commit` and it does not count as missed.
+- [ ] **AC-4.** When the local reviewer's most recent verdict was clean and on a commit with no ancestry relationship to the one the external reviewer reviewed, the state is `clean_unrelated_commit` and it does not count as missed.
+- [ ] **AC-4a.** When the local reviewer cleared one commit and then reported findings on a later commit, the state is `not_clean` and does not count as missed, even though an earlier clean verdict on an ancestor exists. The most recent verdict is the only one consulted.
 - [ ] **AC-5.** When the local reviewer's most recent verdict reported findings, the record is still written and its local evidence state is `not_clean`, and it does not count as missed.
 - [ ] **AC-6.** When the local reviewer was skipped, was unavailable, is configured but has not yet produced a verdict, or is not configured at all, the record is written with the corresponding state, the four are distinguishable from one another and from `not_clean`, **and none of the four counts as missed**.
 - [ ] **AC-7.** When the history is readable but does not establish the local reviewer's most recent verdict, the record is written with state `unknown` and does not count as missed.
