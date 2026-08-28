@@ -49,14 +49,21 @@
    HARNESS_MODE=1 source scripts/development-workflow/pr-review-loop.sh
    ```
 
-2. Call `reviewer_loop_head_evidence_classify` with: two identical 40-char
-   SHAs; a 7-char abbreviation and the matching 40-char SHA; a 7-char value that
-   does not prefix the 40-char SHA; an empty reviewed head; and a synthetic
-   `unknown-…` placeholder against a real SHA.
+2. Call `reviewer_loop_head_evidence_classify` once per row of the plan's
+   parser-risk edge-case table, in table order.
 
-**Expected result**: `current`, `current`, `not-current`, `not-reported`,
-`not-current`, in that order. The synthetic placeholder must never classify as
-`current`.
+**Expected result**: each call returns the token in that row's "Required
+result" column. In particular, a 1-char and a 6-char value that both prefix the
+current head return `not-current` rather than `current`, a non-hex or 41-char
+value returns `not-current`, an empty reviewed head returns `not-reported`, and
+the synthetic `unknown-…` placeholder never classifies as `current`.
+
+3. Call `reviewer_loop_head_evidence_valid_sha` with a 7-char hex value, a
+   40-char hex value, a 6-char hex value, a 41-char hex value, a non-hex value,
+   and the empty string.
+
+**Expected result**: success for the first two, failure for the rest —
+`REVIEWER_LOOP_HEAD_MIN_ABBREV` is enforced, not merely documented.
 
 ### Step 2: Head evidence in the reviewer-loop summary comment
 
@@ -75,6 +82,20 @@
 **Expected result**: The body contains a single `**Head evidence:**` block that
 names the current PR head once and lists one row per configured platform, each
 row ending in `current`, `not-current`, or `not-reported`. The suite exits 0.
+
+### Step 2b: One head snapshot per iteration
+
+**Maps to**: the single-capture rule in the plan's Layer-by-Layer changes.
+
+1. In the harness, mock `reviewer_loop_history_current_head_sha` so it returns a
+   different SHA on each call.
+2. Run one loop iteration and read the rendered summary block, the ledger entry,
+   and the emitted `LOCAL_AI_HEAD_CURRENT`.
+
+**Expected result**: all three report the same current head and the same
+classification for each platform. A differing value in any of the three means a
+renderer re-read the live head instead of using the iteration snapshot, which
+the plan places out of bounds.
 
 ### Step 3: Reviewed heads recorded in the reviewer-loop ledger
 

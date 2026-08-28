@@ -97,12 +97,44 @@ file declares `#!/usr/bin/env bash` and uses Bash arrays):
       `kv_value_default REVIEWED_HEAD "$platform_output" ""`. Reviewers that do
       not report a reviewed head record the empty string and are rendered as
       `not-reported`, which is distinct from `not-current`.
+- [ ] Add a run-scoped `reviewer_loop_current_head` variable, set **once per
+      loop iteration** from `reviewer_loop_history_current_head_sha` (the
+      existing helper that reads `gh pr view --json headRefOid`), immediately
+      after the iteration's platform list is resolved and before the first
+      platform runs. All three consumers below — the summary block, the ledger
+      field, and the stdout keys — read that one variable, so a single
+      iteration can never classify the same reviewer against two different
+      snapshots of the live head. Re-reading the live head inside any of the
+      three renderers is explicitly out of bounds.
+- [ ] When `reviewer_loop_history_current_head_sha` falls back to its synthetic
+      `unknown-<epoch>-<pid>-<rand>` placeholder (its documented behavior when
+      the `gh` lookup fails), `reviewer_loop_current_head` holds that
+      placeholder. It fails `reviewer_loop_head_evidence_valid_sha`, so every
+      platform classifies `not-current` for that iteration and
+      `LOCAL_AI_HEAD_CURRENT` is `0` — fail-closed, never a silent pass.
+- [ ] Add pure predicate `reviewer_loop_head_evidence_valid_sha <value>`
+      returning success only when the value matches `^[0-9a-fA-F]+$` and its
+      length is between `REVIEWER_LOOP_HEAD_MIN_ABBREV` (a new constant, value
+      `7`, matching Git's default `core.abbrev` floor) and `40` inclusive.
+      Anything shorter, longer, non-hex, or empty is not a usable SHA.
 - [ ] Add pure function `reviewer_loop_head_evidence_classify <reviewed_head>
       <current_head>` returning one of `current`, `not-current`, or
-      `not-reported`. `not-reported` when the reviewed head is empty;
-      `current` when the two SHAs are equal after normalizing to the shorter
-      of the two lengths (the loop compares a 40-char `headRefOid` against a
-      value that reviewers may emit abbreviated); `not-current` otherwise.
+      `not-reported`, in this deterministic order:
+      1. Reviewed head empty → `not-reported`.
+      2. Reviewed head fails `reviewer_loop_head_evidence_valid_sha` →
+         `not-current` (a malformed or too-short value is never evidence of
+         currency).
+      3. Current head fails `reviewer_loop_head_evidence_valid_sha` →
+         `not-current` (this is the synthetic-placeholder path above).
+      4. Both valid → compare case-insensitively over the shorter of the two
+         lengths and require the shorter value to be a prefix of the longer;
+         `current` on a prefix match, `not-current` otherwise.
+      Length normalization is therefore bounded on both ends: the minimum is
+      enforced by step 2, so a 1-character value can no longer prefix-match a
+      full SHA, and the maximum is enforced by the same predicate, so a value
+      longer than a SHA is rejected rather than truncated. Case-insensitive
+      comparison is deliberate — `headRefOid` is lowercase, and a reviewer that
+      echoes an uppercase abbreviation is reporting the same commit.
 - [ ] Add pure function `reviewer_loop_head_evidence_render <current_head>
       <entries…>` producing the Markdown `**Head evidence:**` block, and
       interpolate it into the summary comment body immediately before
@@ -165,14 +197,19 @@ Not applicable — no user interface in this repository.
 
 **Key scenarios to test**:
 
-1. `reviewer_loop_head_evidence_classify` returns `current` for identical SHAs —
-   maps to brief scope bullet 1 (show current PR head and reviewed head).
-2. It returns `current` when one side is an abbreviation of the other, and
-   `not-current` for a same-length-prefix mismatch — guards the normalization
-   from turning a real mismatch into a false pass.
-3. It returns `not-reported` for an empty reviewed head, distinct from
-   `not-current` — maps to scope bullet 2 (mismatch is marked, absence is not
-   silently treated as a mismatch).
+1. `reviewer_loop_head_evidence_classify` returns the required token for every
+   row of the parser-risk edge-case table — maps to brief scope bullets 1 and 2,
+   and is the regression coverage for both bounds of the length normalization.
+2. `reviewer_loop_head_evidence_valid_sha` accepts a 7-char and a 40-char hex
+   value and rejects a 6-char value, a 41-char value, a non-hex value, and the
+   empty string — pins `REVIEWER_LOOP_HEAD_MIN_ABBREV` as a real boundary rather
+   than an unenforced comment.
+3. The three consumers classify against one snapshot: with a mocked
+   `reviewer_loop_history_current_head_sha` that returns a different SHA on each
+   call, one loop iteration still produces the same classification in the
+   rendered block, the ledger entry, and `LOCAL_AI_HEAD_CURRENT` — maps to the
+   single-capture rule in Layer-by-Layer, and fails if any renderer re-reads the
+   live head.
 4. `reviewer_loop_head_evidence_render` prints one row per platform with the
    classification token, and prints the current PR head once — scope bullet 1.
 5. `reviewer_loop_head_evidence_json` emits a `reviewed_heads` array whose
@@ -216,16 +253,27 @@ to update.
 Applicable — `reviewer_loop_head_evidence_classify` compares two
 externally-supplied strings and normalizes length.
 
-- **Edge-case enumeration**: equal 40-char SHAs; 7-char abbreviation vs 40-char
-  full SHA with matching prefix; 7-char abbreviation vs 40-char full SHA with a
-  differing prefix; empty reviewed head; empty current head; a synthetic
-  `unknown-<epoch>-<pid>-<rand>` placeholder produced by
-  `reviewer_loop_history_current_head_sha` when the live head lookup fails;
-  mixed-case hex.
-- **Unit test mapping**: each edge case above gets one case in
-  `test-pr-review-loop.sh`. The synthetic-placeholder case must classify as
-  `not-current`, never `current`, so a failed head lookup can never manufacture
-  a passing readiness signal.
+- **Edge-case enumeration**, each with its required classification:
+
+  | Reviewed head | Current head | Required result | Why |
+  | --- | --- | --- | --- |
+  | 40-char SHA | same 40-char SHA | `current` | exact match |
+  | 7-char abbreviation | 40-char SHA sharing the prefix | `current` | abbreviation is the documented reviewer format |
+  | 7-char abbreviation | 40-char SHA with a differing prefix | `not-current` | genuine mismatch at minimum abbreviation length |
+  | `a` (1 char, valid hex) | 40-char SHA starting with `a` | `not-current` | below `REVIEWER_LOOP_HEAD_MIN_ABBREV`; the negative case for finding 1 |
+  | `abcdef` (6 chars) | 40-char SHA sharing the prefix | `not-current` | one below the floor — pins the boundary, not just a value far from it |
+  | `abcdefg` (7 chars, `g` non-hex) | 40-char SHA | `not-current` | correct length but not hex |
+  | 41-char hex string | 40-char SHA sharing the prefix | `not-current` | longer than a SHA; rejected rather than truncated |
+  | `""` (empty) | 40-char SHA | `not-reported` | reviewer reported nothing; distinct from a mismatch |
+  | 40-char SHA | `""` (empty) | `not-current` | no usable current head to compare against |
+  | 40-char SHA | `unknown-1756330000-4821-19342` | `not-current` | synthetic placeholder from a failed live-head lookup |
+  | uppercase 7-char abbreviation | lowercase 40-char SHA sharing the prefix | `current` | same commit, different casing |
+
+- **Unit test mapping**: each row above gets one case in
+  `test-pr-review-loop.sh`, asserting the exact token in the "Required result"
+  column. The 1-char, 6-char, non-hex, over-length, and synthetic-placeholder
+  rows are the negative tests that keep a malformed or truncated value from
+  manufacturing a passing readiness signal.
 - **Suppression semantics**: not applicable — no suppression directives.
 
 ### Concurrent-event-source addendum
@@ -268,8 +316,9 @@ inline with mock `gh` commands and require no network access.
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| SHA-length normalization turns a genuine mismatch into a false `current` | Med | High — it would defeat the gate this item exists to build | Compare only over the shorter length **and** require the shorter value to be a non-empty prefix of the longer; scenario 2 pins both the pass and the fail case |
-| A failed live-head lookup yields the synthetic `unknown-…` placeholder and is compared against a real SHA | Med | Med — could produce a confusing `not-current` or, if mishandled, a false `current` | The placeholder is never hex-equal to a SHA, so it classifies `not-current`; the parser-risk addendum pins this as an explicit test case |
+| SHA-length normalization turns a genuine mismatch into a false `current` | Med | High — it would defeat the gate this item exists to build | `reviewer_loop_head_evidence_valid_sha` bounds the comparison on both ends (hex-only, 7–40 chars) before any prefix match runs, so a 1-char or over-length value is rejected rather than normalized; the 1-char, 6-char, non-hex, and 41-char rows of the edge-case table are the negative tests |
+| A failed live-head lookup yields the synthetic `unknown-…` placeholder and is compared against a real SHA | Med | Med — could produce a confusing `not-current` or, if mishandled, a false `current` | The placeholder is non-hex, so it fails the validity predicate and every platform classifies `not-current` for that iteration — fail-closed by construction, pinned by its own edge-case row |
+| The summary block, the ledger entry, and the stdout keys classify against different snapshots of the live head | Med | High — the three surfaces would contradict each other and the gate would be unreliable | The live head is captured once per iteration into `reviewer_loop_current_head` before the first platform runs; all three consumers read that variable and re-reading inside a renderer is out of bounds; scenario 3 fails if any renderer re-reads |
 | Adding a field to `reviewer_loop_history.v1` breaks a reader that validates the entry shape | Low | High — a broken ledger read is fail-closed and would stall every reviewer loop | Field is additive and optional; scenario 6 asserts an entry without it still parses through `reviewer_loop_history_payload_from_existing` |
 | The new readiness condition blocks PRs in repositories that do not configure `local-ai-reviewer` | Low | High — it would stall downstream consumers of this template | The condition applies only when the platform is in the resolved list; an empty `LOCAL_AI_HEAD_CURRENT` never blocks, and scenario 7 covers the not-configured path |
 | The summary comment grows past what reviewers read | Low | Low | The head-evidence block is one line per configured platform plus one current-head line, in the same style as the existing compare-mode block |
@@ -280,7 +329,21 @@ inline with mock `gh` commands and require no network access.
 
 ```bash
 # Illustrative — adapt during implementation.
-# Classify one reviewer's reviewed head against the live PR head.
+REVIEWER_LOOP_HEAD_MIN_ABBREV=7
+
+# A value is a usable SHA only when it is hex and of plausible SHA length.
+# This bounds the prefix comparison below on both ends.
+reviewer_loop_head_evidence_valid_sha() {
+  local value="$1"
+  case "$value" in
+    ''|*[!0-9a-fA-F]*) return 1 ;;
+  esac
+  [ "${#value}" -ge "$REVIEWER_LOOP_HEAD_MIN_ABBREV" ] || return 1
+  [ "${#value}" -le 40 ] || return 1
+  return 0
+}
+
+# Classify one reviewer's reviewed head against the iteration's captured head.
 reviewer_loop_head_evidence_classify() {
   local reviewed="$1"
   local current="$2"
@@ -290,13 +353,17 @@ reviewer_loop_head_evidence_classify() {
     printf 'not-reported\n'
     return 0
   fi
-  if [ -z "$current" ]; then
+  # A malformed, too-short, or synthetic-placeholder value on either side is
+  # never evidence of currency. Fail closed.
+  if ! reviewer_loop_head_evidence_valid_sha "$reviewed" \
+    || ! reviewer_loop_head_evidence_valid_sha "$current"; then
     printf 'not-current\n'
     return 0
   fi
 
-  # Compare over the shorter length so an abbreviated SHA still matches, and
-  # require a genuine prefix so a same-length mismatch cannot pass.
+  reviewed="$(printf '%s' "$reviewed" | tr 'A-F' 'a-f')"
+  current="$(printf '%s' "$current" | tr 'A-F' 'a-f')"
+
   short="$reviewed"
   long="$current"
   if [ "${#short}" -gt "${#long}" ]; then
@@ -325,16 +392,19 @@ Rendered summary block, illustrative:
 
 ## Implementation Order
 
-1. Add the three pure functions
-   (`reviewer_loop_head_evidence_classify`, `…_render`, `…_json`) to
-   `scripts/development-workflow/pr-review-loop.sh` near the existing
-   `reviewer_loop_history_*` helpers. **Verify**: source the script with
-   `HARNESS_MODE=1` and call each function directly; confirm the returned tokens
-   match the enumerated edge cases.
-2. Populate `platform_reviewed_heads` in the per-platform result block, next to
-   the existing `platform_result_tokens+=(...)` line. **Verify**: run the
-   dispatch suite and confirm the array is populated for a mocked
-   `local-ai-reviewer` run.
+1. Add `REVIEWER_LOOP_HEAD_MIN_ABBREV` and the four pure helpers
+   (`reviewer_loop_head_evidence_valid_sha`, `…_classify`, `…_render`,
+   `…_json`) to `scripts/development-workflow/pr-review-loop.sh` near the
+   existing `reviewer_loop_history_*` helpers. **Verify**: source the script
+   with `HARNESS_MODE=1` and call each function directly; confirm every row of
+   the parser-risk edge-case table returns its required token.
+2. Capture `reviewer_loop_current_head` once per loop iteration from
+   `reviewer_loop_history_current_head_sha`, after the platform list is resolved
+   and before the first platform runs, then populate `platform_reviewed_heads`
+   in the per-platform result block next to the existing
+   `platform_result_tokens+=(...)` line. **Verify**: run the dispatch suite and
+   confirm the array is populated for a mocked `local-ai-reviewer` run and that
+   the captured head is read, not re-fetched, by the renderers.
 3. Interpolate the `**Head evidence:**` block into the summary comment body
    before `${phase_section}`. **Verify**: run the harness case that builds the
    comment body and read the output; confirm the block appears once, with one
