@@ -9,15 +9,39 @@ resolvers directly; steps 6 through 9 exercise the assembled behavior.
 
 ---
 
-## Step 1: The branch tier maps every recognised prefix
+## Step 0: The harness guard, in both directions
 
-**Maps to**: brief scope bullet 1, the branch half.
+**Maps to**: the structural prerequisite for Steps 1 through 3.
 
 <!-- workflow-shell-contract: bash -->
 
 ```bash
 HARNESS_MODE=1 source scripts/development-workflow/local-ai-reviewer.sh
+declare -F reviewer_stage_for_branch \
+  reviewer_changed_files_touch_workflow_policy \
+  reviewer_resolve_review_stage
+HARNESS_MODE=1 scripts/development-workflow/local-ai-reviewer.sh; echo "exit=$?"
 ```
+
+**Expected result**: the source defines all three functions and returns without
+exiting; `declare -F` lists three names. The direct run still prints usage and
+reports `exit=2`.
+
+The second half is the safety property, and it is why the guard tests
+`BASH_SOURCE[0] != $0` as well as the variable. A guard keyed on `HARNESS_MODE`
+alone would let a stray export in someone's shell skip argument validation on a
+real review. `pr-review-loop.sh` lines 12-19 already carry this exact pair; this
+item copies it rather than inventing a second convention.
+
+Before this item the script had no guard at all — line 145 validates argument
+count and exits — so sourcing it was impossible and Steps 1 through 3 had no
+test path.
+
+## Step 1: The branch tier maps every recognised prefix
+
+**Maps to**: brief scope bullet 1, the branch half.
+
+The functions are already loaded from Step 0.
 
 1. Call `reviewer_stage_for_branch` on the six recognised prefixes:
    `spec/x`, `implementation-plan/x`, `feature/x`, `refactor/x`, `fix/x`,

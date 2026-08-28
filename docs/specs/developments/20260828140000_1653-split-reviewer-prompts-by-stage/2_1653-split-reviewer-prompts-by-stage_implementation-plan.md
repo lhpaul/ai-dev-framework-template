@@ -134,8 +134,37 @@ Not applicable — this repository ships workflow tooling, not a service.
       including the Verification Discipline and Severity rules, continue to
       apply to workflow-policy changes exactly as they do to code.
 
-- [ ] **Resolve the review stage in `local-ai-reviewer.sh`.** Two functions and
-      one merge step, placed with the other pre-invocation helpers.
+- [ ] **Add a source-only harness guard to `local-ai-reviewer.sh`.** The script
+      has none today: line 145 is `if [ "$#" -lt 3 ]; then usage; exit 2; fi`,
+      so sourcing it exits before any function is callable, and the resolvers
+      below cannot be unit-tested at all. `pr-review-loop.sh` already solved
+      this at its lines 12-19, and the same guard is copied verbatim rather
+      than invented:
+
+      ```bash
+      _HARNESS_MODE_EFFECTIVE=0
+      if [ "${HARNESS_MODE:-0}" -eq 1 ] && [ "${BASH_SOURCE[0]}" != "$0" ]; then
+        _HARNESS_MODE_EFFECTIVE=1
+      fi
+      ```
+
+      Both conditions are required, and the second is the safety one:
+      `HARNESS_MODE=1` in the environment of a **direct** run must not skip
+      argument validation, or an exported variable in someone's shell would
+      turn a real review into a no-op. The guard wraps the argument block and
+      everything after it; the three resolver functions are defined **above**
+      it, beside the existing helpers, so a sourced script defines them and
+      stops.
+
+      This is a structural change to a script this item otherwise only adds to,
+      and it is the one part of the plan not implied by the brief. It is here
+      because the alternative — testing eleven branch inputs by running the
+      whole reviewer eleven times through its mock harness — buys nothing and
+      costs a slow suite. Scenario 0 tests the guard itself in both directions.
+
+- [ ] **Resolve the review stage in `local-ai-reviewer.sh`.** Three functions
+      and one merge step, placed with the other pre-invocation helpers, above
+      the harness guard.
 
       1. `reviewer_stage_for_branch <head_branch>` — the branch tier. Six
          recognised prefixes mapping to three stages, and `default` for
@@ -300,6 +329,14 @@ Not applicable.
 
 **Key scenarios to test**:
 
+0. The harness guard, in both directions. Sourcing the script with
+   `HARNESS_MODE=1` defines `reviewer_stage_for_branch`,
+   `reviewer_changed_files_touch_workflow_policy` and
+   `reviewer_resolve_review_stage`, and exits nothing. Executing it **directly**
+   with `HARNESS_MODE=1` in the environment and no arguments still prints usage
+   and exits 2. The second half is the safety property: a guard that keyed on
+   the variable alone would let a stray export disable argument validation on a
+   real run.
 1. `reviewer_stage_for_branch` returns the mapped stage for each of the six
    recognised prefixes, one case per prefix.
 2. It returns `default` for five controls: an empty branch name, `main`,
@@ -360,14 +397,19 @@ Not applicable.
 - `scripts/development-workflow/tests/test-local-ai-reviewer.sh` — scenarios 1
   through 9, including 5a, and 11 through 15, as new cases in the existing
   harness.
-- `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenario 10 and
-  scenario 13, which need the loop's own harness.
+- `scripts/development-workflow/tests/test-local-codex-review-command.sh` —
+  scenarios 10, 11 and 15, the prompt-construction cases. This suite already
+  exists and already declares
+  `# covers: scripts/development-workflow/local-codex-review-command.sh`, so
+  the preset's new behavior belongs here rather than in the reviewer suite.
+- `scripts/development-workflow/tests/test-pr-review-loop.sh` — scenario 13
+  only, which needs the loop's own harness to call
+  `emit_prefixed_platform_output` for real.
 
-  Both suites already declare `# covers:` headers; this item adds
-  `scripts/development-workflow/local-codex-review-command.sh` to the local
-  reviewer suite's list, because the preset is now under test and
-  `select-test-suites.sh` selects by declared coverage once any `# covers:`
-  line is present.
+  All three suites already declare `# covers:` headers, so no
+  `select-test-suites.sh` change is needed: the naming-convention fallback is
+  already disabled for each of them and each already declares the file this
+  item edits.
 
 **Smoke test runbook**:
 `docs/testing/workflow/1653-split-reviewer-prompts-by-stage.smoke-test.md`
@@ -535,6 +577,9 @@ Workflow Policy checklist named on every PR carries no information.
    `## Code Review Checklist`. **Verify**: the section exists, has six numbered
    questions, and the four heading strings the resolver will emit are all
    present as level-2 headings — the grep scenario 9 will run.
+1a. Add the harness guard, copied from `pr-review-loop.sh` lines 12-19, wrapping
+   the argument block. **Verify**: scenario 0 — sourced defines the functions,
+   direct execution with `HARNESS_MODE=1` still exits 2.
 2. Add `reviewer_stage_for_branch` and
    `reviewer_changed_files_touch_workflow_policy` to `local-ai-reviewer.sh`.
    **Verify**: scenarios 1 through 5, including the `specification/foo` control
