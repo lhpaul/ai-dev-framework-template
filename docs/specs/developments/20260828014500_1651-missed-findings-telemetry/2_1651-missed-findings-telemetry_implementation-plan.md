@@ -1106,8 +1106,13 @@ Revert the implementation PR. What it removes:
 - three derivation functions — the ancestry classifier, the verdict selector,
   and the evidence-state mapping — plus the record builder;
 - the summary renderer and its remainder logic;
-- the `REVIEWED_HEAD` emission added to ten external adapters and the two local
-  companion scripts;
+- the `REVIEWED_HEAD` emission added to **nine** of the ten external platforms
+  in the adapter table. Seven are adapter changes inside `pr-review-loop.sh`
+  (`greptile`, `codex-github`, `copilot`, `bugbot`, `devin`, `pr-agent`,
+  `coderabbit`); two are changes to the companion scripts the table already
+  counts, `haystack-reviewer.sh` and `coderabbit-cli-reviewer.sh`. The tenth,
+  `claude-code-action`, is **not** modified: its only artifact is an issue
+  comment, which carries no commit, so it deliberately emits no head;
 - the render-path change that preserves an unappendable history, which
   **reverts to overwriting it with an empty stub** — the one part of the revert
   that restores a defect rather than removing a feature, and the reason a
