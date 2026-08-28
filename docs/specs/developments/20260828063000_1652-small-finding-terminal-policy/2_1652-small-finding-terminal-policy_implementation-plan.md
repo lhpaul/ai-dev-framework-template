@@ -556,12 +556,13 @@ sharpening it.
 | P11 | Check only a prior entry's `classification_head` and skip its `reviewed_heads[]` | same scratch copy | scenario 8b fails, because a round classified against the current head counts while one of its contributors reviewed an older commit; restoring the per-contributor check passes |
 | P8 | Skip the current round's head check, verifying only the prior ledger entries | a scratch copy of the terminal decision | scenario 8a fails, because the rule terminates on a deciding round whose findings describe a commit that is no longer the head; restoring the check passes |
 
-P6 and P7 are the two restrictive-direction proofs and neither is optional. A
-tightening that removes the mechanism — whether by classifying every path as
-shipped, or by matching common words that appear in ordinary prose — would pass
-every permissive-direction proof here while leaving the loop unable to terminate
-on cosmetic findings. That is a different defect, not a fix, and it is the more
-likely of the two mistakes because it looks like success.
+P6, P7 and P13 are the three restrictive-direction proofs and none is optional.
+A tightening that removes the mechanism — by widening the normative list so no
+documentation finding can be small, by matching common words that appear in
+ordinary prose, or by using a `\b` boundary that matches nothing under BSD grep
+— would pass every permissive-direction proof here while leaving the loop unable
+to terminate on cosmetic findings. That is a different defect, not a fix, and it
+is the more likely of the two mistakes because it looks like success.
 
 ### Parser-risk addendum
 
