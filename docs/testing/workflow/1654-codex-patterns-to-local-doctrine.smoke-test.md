@@ -126,15 +126,22 @@ to answer. Proof P5.
    `LOCAL_AI_REVIEWER_COMMAND` set to a stub that copies `CONTEXT_BUNDLE_PATH`
    aside.
 2. Read the copied bundle. Assert the four added fields.
-3. Assert each of the thirteen `local_ai_reviewer_context.v1` field names is
-   present with its original type, and that `schema_version` still reads
-   `local_ai_reviewer_context.v1`.
+3. Assert each **pre-change** field name is present with its original type, and
+   that `schema_version` still reads `local_ai_reviewer_context.v1`. That set is
+   **sixteen** after #1653 merges — the original thirteen plus `review_stage`,
+   `review_stage_source` and `review_checklists` — and the list is built by
+   reading the merged `jq -n` object, not copied from the plan.
 4. Assert `review_doctrine` contains **text from the catalogue** — a sentence
    matched literally — not merely that the field is non-empty.
 5. Extract `review_doctrine` to a file and `cmp` it against the catalogue on
    disk: **byte-identical**, trailing newlines included.
 
 **Expected result**: all present and unchanged; four added; version unchanged.
+
+The list must be **derived, not frozen**. A fixture that enumerates thirteen
+fields is satisfied by an implementation that drops #1653's three, and the count
+still looks right — which is AC-14's failure exactly: the context that existed
+before this change must not be shortened by it.
 
 Step 4 is AC-10's requirement and the difference between testing the plumbing
 and testing the payload: a field that is non-empty proves a variable was set,
@@ -330,5 +337,5 @@ ships green everywhere it is tested.
 ## Rollback verification
 
 Revert the implementation PR and re-run Steps 1 and 5. The supply reader must be
-absent, and a freshly built bundle must carry none of the four fields and its
-original thirteen unchanged.
+absent, and a freshly built bundle must carry none of the four fields and every
+pre-change field unchanged — sixteen after #1653, not the original thirteen.
