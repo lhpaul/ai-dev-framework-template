@@ -57,18 +57,18 @@ fixed.
    HARNESS_MODE=1 source scripts/development-workflow/pr-review-loop.sh
    ```
 
-2. Call `reviewer_loop_path_is_normative_document` on the ten first-tier
-   patterns and on five controls: `docs/project/1-business-domain.md`,
-   `tests/fixtures/x.json`, `__snapshots__/x.snap`, `CHANGELOG.md` and
+2. Call `reviewer_loop_path_is_normative_document` on the eleven first-tier
+   patterns and on four controls: `tests/fixtures/x.json`,
+   `__snapshots__/x.snap`, `CHANGELOG.md` and
    `scripts/development-workflow/pr-review-loop.sh`.
 3. Run the loop three times with a blocking finding on
    `docs/specs/developments/x/1_x_specs.md`: a body naming a decision matrix; a
    body reading only "trailing whitespace"; and a body reading "required error
    handling is missing", which contains **no** listed contract term.
-4. Run it twice with a blocking finding on `docs/project/1-business-domain.md`:
+4. Run it twice with a blocking finding on `CHANGELOG.md`:
    once cosmetic, once naming a decision matrix.
 
-**Expected result**: step 2 matches all ten patterns and none of the five
+**Expected result**: step 2 matches all eleven patterns and none of the four
 controls. All three of step 3's findings are **non-small** — including the third,
 which no vocabulary list would have caught. Step 4's cosmetic finding is
 **small** and its contract finding is not.
@@ -81,8 +81,10 @@ the guard fail-closed, and the vocabulary tier only escalates where a cosmetic
 tail is still wanted.
 
 Step 4 is the counterweight: the normative list is deliberately narrow, so
-`docs/project/**`, fixtures, snapshots and `CHANGELOG.md` keep the cosmetic-tail
-escape.
+`CHANGELOG.md`, fixtures, snapshots and other non-shipped `*.md` outside the
+normative set keep the cosmetic-tail escape. `docs/project/**` is not among
+them — `AGENTS.md` designates those four documents as authoritative guidance,
+so they belong in the first tier.
 
 ### Step 2: A contract-surface finding is never small, wherever it lives
 
@@ -356,7 +358,7 @@ regression is closed; Step 6b is what proves tier 2 works.
 **Maps to**: brief scope bullet 1, the content half.
 
 1. In the same suite, inspect the case replaying the #1661 ledger shape and
-   bodies on `docs/project/1-business-domain.md` — a non-normative, non-shipped
+   bodies on `CHANGELOG.md` — a non-normative, non-shipped
    path.
 
 **Expected result**: the terminal rule does **not** fire. Here the path alone
@@ -374,7 +376,7 @@ unvalidated bound that defeated its own cap — not typographical ones.
 
 1. In the same suite, inspect the case replaying **Step 6b's** ledger exactly —
    same round count, adjacency, head and the same
-   `docs/project/1-business-domain.md` path — with only the bodies changed to
+   `CHANGELOG.md` path — with only the bodies changed to
    cosmetic ones.
 
 **Expected result**: the terminal rule **does** fire. If Step 6b passes and this

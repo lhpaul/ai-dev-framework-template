@@ -130,8 +130,8 @@ Not applicable — this repository ships workflow tooling, not a service.
 
       | Finding's path | Blocking finding is small? |
       | --- | --- |
-      | A **normative document** — `REVIEW.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `LLM_RULES.md`, `.ai-dev-workflow.yaml`, `docs/workflow/**`, `docs/best-practices/**`, `docs/specs/developments/**`, `docs/testing/workflow/**` | **Never**, whatever it says |
-      | Any other non-shipped path — `docs/project/**`, fixtures, snapshots, `CHANGELOG.md` | Small, **unless** its body touches a contract surface |
+      | A **normative document** — `REVIEW.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `LLM_RULES.md`, `.ai-dev-workflow.yaml`, `docs/workflow/**`, `docs/best-practices/**`, `docs/specs/developments/**`, `docs/testing/workflow/**`, `docs/project/**` | **Never**, whatever it says |
+      | Any other non-shipped path — `CHANGELOG.md`, fixtures, snapshots, and other non-shipped `*.md` outside the normative set | Small, **unless** its body touches a contract surface |
       | A shipped path | Never — unchanged behavior |
 
       Add `reviewer_loop_path_is_normative_document` for the first row, consulted
@@ -157,8 +157,13 @@ Not applicable — this repository ships workflow tooling, not a service.
       requests touch normative documents, the terminal rule will fire less
       often. That is the intended direction — the rule fired 24 times across
       this epic's own PRs while blocking contract defects were live. Cosmetic-
-      tail termination survives where it is actually needed: `docs/project/**`,
-      fixtures, snapshots and `CHANGELOG.md`.
+      tail termination survives where it is actually needed: `CHANGELOG.md`,
+      fixtures, snapshots and other non-shipped `*.md` outside the normative
+      set. `docs/project/**` is **in** the first tier: `AGENTS.md` designates
+      the business-domain, repository-architecture, software-architecture and
+      database-model documents as authoritative guidance agents read before
+      writing code, so a contract defect in one of them is exactly the class
+      this rule must not clear.
 
 - [ ] **Add a contract-surface test as the escalation for the second tier.**
       It applies only to blocking findings on non-normative, non-shipped paths,
@@ -475,10 +480,9 @@ Not applicable — no user interface in this repository.
 
 **Key scenarios to test**:
 
-1. `reviewer_loop_path_is_normative_document` matches each of the ten patterns
-   in the first tier, one case per pattern, and rejects
-   `docs/project/1-business-domain.md`, `tests/fixtures/x.json`,
-   `__snapshots__/x.snap`, `CHANGELOG.md` and
+1. `reviewer_loop_path_is_normative_document` matches each of the eleven
+   patterns in the first tier, one case per pattern, and rejects
+   `tests/fixtures/x.json`, `__snapshots__/x.snap`, `CHANGELOG.md` and
    `scripts/development-workflow/pr-review-loop.sh`.
 2. A blocking finding on a normative document is **never small, whatever its
    body says** — three cases on `docs/specs/developments/x/1_x_specs.md`: a body
@@ -488,7 +492,7 @@ Not applicable — no user interface in this repository.
    vocabulary-only rule would have cleared it.
 3. A blocking finding on a **non-normative, non-shipped** path is still small
    when cosmetic and non-small when it touches a contract surface — two cases on
-   `docs/project/1-business-domain.md`, so the second tier's escalation is
+   `CHANGELOG.md`, so the second tier's escalation is
    exercised where it actually applies and the cosmetic tail still terminates.
 4. `reviewer_loop_finding_touches_contract_surface` matches one case per row of
    the contract-surface table, and rejects three cosmetic bodies: a typo report,
@@ -623,7 +627,7 @@ Not applicable — no user interface in this repository.
     completely broken. It proves the epic's actual regression is closed; it does
     not prove tier 2 works.
 12a. **Tier-2 isolation.** Replay the same ledger shape on
-    `docs/project/1-business-domain.md` — a non-normative, non-shipped path —
+    `CHANGELOG.md` — a non-normative, non-shipped path —
     with the same #1661 bodies naming fail-closed semantics, decision-matrix
     rows and acceptance criteria. Assert the terminal rule does **not** fire.
     Here the path alone would make the findings small, so only the
@@ -632,7 +636,7 @@ Not applicable — no user interface in this repository.
     matching is broken.
 13. **The cosmetic counter-case.** Replay scenario 12a's ledger exactly — same
     round count, adjacency, head **and the same
-    `docs/project/1-business-domain.md` path** — changing only the bodies to
+    `CHANGELOG.md` path** — changing only the bodies to
     cosmetic ones. Assert the terminal rule **does** fire.
 
     Pairing with 12a rather than 12 is what makes this the strong form: the two
@@ -704,7 +708,7 @@ demonstrated runs per proof, each citing a concrete file and line. The twenty-on
 | P3 | Turn the contract-surface allow-list into a deny-list of cosmetic terms | same scratch copy | scenario 4's three cosmetic bodies still pass, but a contract body using none of the listed cosmetic terms is classified small — the failure mode the allow-list exists to prevent; restoring the allow-list passes |
 | P4 | Drop the current-head comparison from the consecutive count | a scratch copy of the counter | scenario 8 fails, because rounds on an older head extend the run; restoring the comparison passes |
 | P5 | Treat an entry with an absent or placeholder head as matching the current head | same scratch copy | scenario 9 fails in all three cases, because an unprovable head extends the run; restoring the fail-closed branch passes |
-| P6 | Over-tighten by path: add `docs/project/**`, fixtures and `CHANGELOG.md` to the normative-document list | a scratch copy of `reviewer_loop_path_is_normative_document` | scenarios 1, 3, 6 and 13 fail, because no documentation finding can be small and the loop runs to its cycle cap on a trailing space; restoring the narrowed list passes |
+| P6 | Over-tighten by path: add `CHANGELOG.md`, fixtures and snapshots to the normative-document list | a scratch copy of `reviewer_loop_path_is_normative_document` | scenarios 1, 3, 6 and 13 fail, because no documentation finding can be small and the loop runs to its cycle cap on a trailing space; restoring the narrowed list passes |
 | P7 | Over-tighten by term: restore the bare common words `gate`, `scope`, `state`, `status`, `proof`, `parse` and `contract` to the contract-surface list | same scratch copy | scenario 6a fails on all seven cosmetic bodies and scenario 13 stops firing, because ordinary prose now reads as contract-bearing; restoring the phrase-only list passes |
 | P9 | Invert both within-group precedences: report `contract_surface` over `shipped_path`, and `head_unknown` over `stale_head` | a scratch copy of the blocked-by mapping | scenario 10a's first two rows fail — the content row reports `contract_surface` where a shipped path is present, and the currency row reports `head_unknown` where a known-different head is present. Both are detectable because both are genuine co-occurrences within a group; restoring the order passes |
 | P10 | Make the counter read `head_sha` instead of `classification_head` | a scratch copy of the counter | scenario 8c fails, because a round whose write-time head happens to match counts even though it described an older commit; restoring `classification_head` passes |
@@ -764,7 +768,7 @@ point. No listeners, timers, or shared mutable state are introduced.
 
 | Entity | Values / Scenario | File |
 | --- | --- | --- |
-| Path classification fixture | The ten normative patterns of scenario 1 and the five non-matching controls, plus the three bodies of scenario 2 on one normative path and the two bodies of scenario 3 on `docs/project/1-business-domain.md` | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
+| Path classification fixture | The ten normative patterns of scenario 1 and the four non-matching controls, plus the three bodies of scenario 2 on one normative path and the two bodies of scenario 3 on `CHANGELOG.md` | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Path/body pair fixture | Two findings on one identical path — one cosmetic, one naming a decision matrix — a body containing an escaped `\n` sequence, a two-platform record set, and four hostile-character cases (a tab in the path, a tab in the body, a double quote, a backslash), driving scenarios 7a through 7d | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Contract-surface body fixture | One body per row of the contract-surface table; three cosmetic bodies; the **seven bare-common-word cosmetic bodies** of scenario 6a, one per removed term; the three qualified-phrase controls that must still match; and **twelve** parser edge cases — the ten enumerated in the parser-risk addendum, plus the `failXclosed` wildcard negative and the unhyphenated `allow list` negative that the runbook's Step 3 table adds | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Multi-contributor round fixture | A single round with counted findings from two platforms, in four combinations — both on the current head, one stale, one reporting no head, and both stale — driving scenario 8a | inline in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
@@ -772,7 +776,7 @@ point. No listeners, timers, or shared mutable state are introduced.
 | Contributing-platform ledger fixture | Entries with two contributors both current, two with one stale, one contributor current alongside a non-contributing platform reporting no head, and a pre-change entry with no `contributing_platforms[]` — driving scenario 8b's four rows | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | Head-comparison ledger fixture | Ledger payloads with prior small rounds on an older head, on the current head, and with absent, empty and placeholder heads — driving scenarios 8, 9, 10 and 14 | inline heredocs in `scripts/development-workflow/tests/test-pr-review-loop.sh` |
 | #1661 replay ledger | A `reviewer_loop_history.v1` payload reproducing PR #1661's consecutive small-findings rounds, with the real finding bodies naming fail-closed semantics, matrix rows and acceptance criteria | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
-| Tier-2 replay ledger | The #1661 replay's ledger shape and bodies on `docs/project/1-business-domain.md`, a non-normative non-shipped path, driving scenario 12a — the only replay that exercises the contract-surface test end to end | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
+| Tier-2 replay ledger | The #1661 replay's ledger shape and bodies on `CHANGELOG.md`, a non-normative non-shipped path, driving scenario 12a — the only replay that exercises the contract-surface test end to end | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
 | Cosmetic replay ledger | Scenario 12a's ledger with **only the bodies changed** to cosmetic ones — same shape, head and path — driving scenario 13, so the pair differs in body alone on a tier-2 path | inline heredoc in `scripts/development-workflow/tests/test-small-finding-terminal-policy.sh` |
 
 No repository fixture files are added; both suites build their fixtures inline
@@ -806,7 +810,7 @@ and neither may claim that *every* finding on a normative document is non-small
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| The tightening removes the terminal mechanism entirely | Med | High — every PR with a cosmetic documentation tail would loop to its cycle cap | The normative-document list is narrow and enumerated: `docs/project/**`, fixtures, snapshots and `CHANGELOG.md` stay in the second tier, where a cosmetic blocking finding is still small. Scenarios 3, 6 and 13 assert the mechanism still fires there, and proof P6 plants the widening |
+| The tightening removes the terminal mechanism entirely | Med | High — every PR with a cosmetic documentation tail would loop to its cycle cap | The normative-document list is narrow and enumerated: `CHANGELOG.md`, fixtures and snapshots stay in the second tier, where a cosmetic blocking finding is still small. Scenarios 3, 6 and 13 assert the mechanism still fires there, and proof P6 plants the widening |
 | The classification depends on reviewers using particular vocabulary | **High** | High — a contract finding worded as *"required error handling is missing"* contains no listed term and would be cleared as small, which is the original bug for ordinary wording | The vocabulary test is never the only guard: tier 1 makes a blocking finding on a normative document non-small whatever it says, and tier 2's escalation applies only where a cosmetic tail is still wanted. Scenario 2's third case uses a contract finding with no listed term, and proof P12 drops tier 1 and requires it to fail |
 | The contract-surface test is written as a deny-list of cosmetic terms | Med | High — an unrecognised contract finding would be classified small, reproducing the bug | The test is an explicit allow-list of surfaces, and a body it does not recognise falls through to the path rule rather than being declared cosmetic; proof P3 plants the inversion |
 | Path/body pairing is lost in collection | Med | High — a body would be classified against the wrong path, or a contract finding sharing a path with a cosmetic one would be dropped and the round called small | Findings are collected as one compact JSON object per finding in a dedicated array that is explicitly **not** deduplicated, separate from the existing path array; scenarios 7a and 7d and proof P15 pin it |
@@ -841,7 +845,7 @@ reviewer_loop_path_is_normative_document() {
   case "$1" in
     REVIEW.md|AGENTS.md|CLAUDE.md|GEMINI.md|LLM_RULES.md|.ai-dev-workflow.yaml)
       return 0 ;;
-    docs/workflow/*|docs/best-practices/*|docs/specs/developments/*|docs/testing/workflow/*)
+    docs/workflow/*|docs/best-practices/*|docs/specs/developments/*|docs/testing/workflow/*|docs/project/*)
       return 0 ;;
   esac
   return 1
@@ -915,10 +919,10 @@ reviewer_loop_finding_touches_contract_surface() {
    current-head requirement against a guessed contract.
 1. Add `reviewer_loop_path_is_normative_document` covering the ten first-tier
    patterns and consult it from `reviewer_loop_path_is_non_shipped_artifact`
-   before the existing patterns. **Verify**: scenarios 1-3 — the ten patterns
-   match and the five controls do not; a blocking finding on a normative
+   before the existing patterns. **Verify**: scenarios 1-3 — the eleven patterns
+   match and the four controls do not; a blocking finding on a normative
    document is non-small whatever its body says, including one with no listed
-   contract term; and a cosmetic blocking finding on `docs/project/**` is still
+   contract term; and a cosmetic blocking finding on `CHANGELOG.md` is still
    small.
 2. Add `reviewer_loop_finding_touches_contract_surface` with case-insensitive
    word-boundary matching — via `(^|[^[:alnum:]_])…([^[:alnum:]_]|$)`, never
