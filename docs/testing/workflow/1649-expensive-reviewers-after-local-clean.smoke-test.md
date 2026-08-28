@@ -483,9 +483,11 @@ must surface no contradiction.
 ## Rollback
 
 Revert the implementation PR. The change is additive — one gate function, one
-call site, one reorder step, one deferral counter, six `EXPENSIVE_GATE_*` keys
-plus `EXPENSIVE_REVIEWERS_REORDERED`, one summary line, and one optional ledger
-object —
+call site, one reorder step, one deferral counter, one bound resolver, seven
+`EXPENSIVE_GATE_*` keys (`PLATFORM`, `RESULT`, `REASON`, `HEAD`, `DEFERRALS`,
+`MAX_DEFERRALS`, `ESCALATION`) plus `EXPENSIVE_REVIEWERS_REORDERED`, one summary
+line, one optional ledger object, and one function relocated to
+`workflow-lib.sh` —
 and reverting restores the previous behavior, in which an expensive reviewer
 runs as soon as the phase mechanism reaches it. Ledger entries already written
 with `expensive_gate` remain parseable by the reverted reader, which dereferences
