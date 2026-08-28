@@ -158,12 +158,21 @@ which is the more likely of the two mistakes because it appears to succeed.
 2. Run it with a body emitted as `some prose\ndecision matrix is wrong`, where
    the `\n` is the literal two-character escape `local-ai-reviewer.sh` writes.
 3. Run it with findings from two platforms and read the summary line.
+4. Run it four more times with hostile characters: a **tab in the path**, a
+   **tab in the body**, a double quote in the body, and a backslash in the body.
 
 **Expected result**: run 1 is **non-small** — a collector that deduplicated by
 path could have kept only the cosmetic record and called the round small. Run 2
 is **non-small**, which requires the body to be decoded before matching; against
 the raw escaped string the term abuts the literal `\n` and misses the word
 boundary. Run 3's summary names the platform that produced the deciding finding.
+
+All four of run 4's cases are classified from **intact fields** and the contract
+term is still found. These are the cases a delimiter-separated record would
+corrupt: git paths may contain tabs and `local-ai-reviewer.sh` does not escape
+tabs in bodies, so a `<path><TAB><platform><TAB><body>` form would shift columns
+and classify a blocker against the wrong text. The record is JSON built with
+`jq --arg` and read with `jq -r`, which escapes and decodes every field.
 
 ### Step 4: Counted rounds must be on the current head
 
@@ -345,18 +354,19 @@ tier 1 makes those findings non-small whatever the body says.
 **Maps to**: `REVIEW.md` § Planted-violation proof.
 
 1. Read the implementation PR's `Planted-Violation Proofs` heading.
-2. Confirm P1 through P16 each record the command, the file and line of the
+2. Confirm P1 through P17 each record the command, the file and line of the
    planted violation, and both outcomes.
 
-**Expected result**: sixteen proofs in three groups — **twelve** permissive,
+**Expected result**: seventeen proofs in three groups — **thirteen** permissive,
 **three** restrictive, **one** observability, per the plan's proof-group table.
-The permissive group is P1 through P5, P8, P10, P11, P12, P14, P15 and P16,
+The permissive group is P1 through P5, P8, P10, P11, P12, P14, P15, P16 and P17,
 reproducing the original bug in each of the ways it can return; P8 skips the current round's head check and requires Step 4's
 fifth run to fail; P10 reads `head_sha` instead of `classification_head` and
 requires Step 4's step 1b to fail; P14 breaks the contract-surface
 matching entirely and requires Step 6b to fail while Step 6 still passes, which
-is precisely why Step 6b exists; P15 deduplicates the findings array and P16
-matches the raw escaped body, both requiring Step 3f to fail; P11 checks only a
+is precisely why Step 6b exists; P15 deduplicates the findings array, P16
+matches the raw escaped body, and P17 replaces the JSON record with a
+tab-separated one — all three requiring Step 3f to fail; P11 checks only a
 prior entry's
 `classification_head` and skips its `reviewed_heads[]`, requiring step 1a to
 fail; **P12** drops tier 1 and leaves the vocabulary test as the only guard, requiring Step 1's third case — a contract finding containing no listed term — to fail. **Three** plant the
