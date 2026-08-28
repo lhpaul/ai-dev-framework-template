@@ -476,9 +476,9 @@ is the shell harnesses named above; all **three** are extended in this item —
 | Fixture | Contents | Location |
 | --- | --- | --- |
 | Branch fixture | The six recognised prefixes of scenario 1 and the five controls of scenario 2 | inline in `scripts/development-workflow/tests/test-local-ai-reviewer.sh` |
-| Changed-file fixture | One path per `case` entry — nine — the four non-matching controls of scenario 3, a mixed list for scenario 4, the empty list of scenario 5, and scenario 5b's list beginning with `REVIEW.md`, grown in a loop until `wc -c` measures past twice the host's `fs.pipe-max-size` (floor 2 MiB where `/proc` is absent) | inline in the same suite |
-| Prompt fixture | A verbatim copy of the current default prompt string, for scenario 11's byte-comparison | inline in the same suite, as a single-quoted heredoc so no expansion occurs |
-| Bundle field fixture | The thirteen `local_ai_reviewer_context.v1` field names, enumerated | inline in the same suite |
+| Changed-file fixture | One path per `case` entry — nine — the four non-matching controls of scenario 3, a mixed list for scenario 4, the empty list of scenario 5, and scenario 5b's list beginning with `REVIEW.md`, grown in a loop until `wc -c` measures past twice the host's `fs.pipe-max-size` (floor 2 MiB where `/proc` is absent) | inline in `scripts/development-workflow/tests/test-local-ai-reviewer.sh` |
+| Prompt fixture | A verbatim copy of the current default prompt string, for scenario 11's byte-comparison | inline in `scripts/development-workflow/tests/test-local-codex-review-command.sh`, the suite that owns scenarios 10, 11 and 15, as a single-quoted heredoc so no expansion occurs |
+| Bundle field fixture | The thirteen `local_ai_reviewer_context.v1` field names, enumerated | inline in `scripts/development-workflow/tests/test-local-ai-reviewer.sh` |
 
 ---
 
