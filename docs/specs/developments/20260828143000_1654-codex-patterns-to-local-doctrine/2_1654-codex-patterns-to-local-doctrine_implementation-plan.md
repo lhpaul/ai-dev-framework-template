@@ -164,7 +164,8 @@ Not applicable — this repository ships workflow tooling, not a service.
       repository documents by path — that is what contribution guidance is — and
       a check that could not tell the two apart would either reject valid
       guidance or be switched off. The entry boundary is the level-3 heading, so
-      the same parse serves both the first two checks and the pattern count.
+      one parse serves the well-formedness check, the incident-reference check
+      and the pattern count alike.
 
 - [ ] **Read the catalogue in `local-ai-reviewer.sh`.** Add
       `reviewer_doctrine_supply`, returning one compact JSON object:
