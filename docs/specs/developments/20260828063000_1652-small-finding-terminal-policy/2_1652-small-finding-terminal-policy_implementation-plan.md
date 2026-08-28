@@ -127,8 +127,12 @@ Not applicable — this repository ships workflow tooling, not a service.
       `reviewer_loop_finding_touches_contract_surface <body>`. It returns
       success when the finding's text names a contract-bearing surface, **and
       prints the identity of the surface it matched** — the `Surface` value from
-      the table below, in lowercase with spaces replaced by underscores, such as
-      `acceptance_criteria` or `fail_closed_semantics`. On no match it prints
+      the table below, lowercased with every space **and hyphen** replaced by an
+      underscore — so `Fail-closed semantics` becomes `fail_closed_semantics`
+      and `Acceptance criteria` becomes `acceptance_criteria`. The identities
+      are fixed strings, listed in full in the illustrative array below, so the
+      derivation rule is a description of how they were formed rather than
+      something the implementation recomputes. On no match it prints
       nothing and returns failure. The printed identity is what the summary
       renderer needs to name *which* surface kept the round non-small; a bare
       boolean would leave it with nothing to render. When a body matches more
@@ -331,11 +335,20 @@ Not applicable — no user interface in this repository.
 10. With the required rounds reached but the most recent counted round on a
     stale head, the terminal rule does **not** fire and
     `SMALL_FINDINGS_BLOCKED_BY=stale_head`.
-10a. Precedence when causes co-occur, one case per pair: a round with both a
-    shipped-path and a contract-surface finding reports `shipped_path`; a round
-    whose findings are all small but has one stale contributor and one with no
-    head reports `stale_head`. In both cases the **summary line still names both
-    causes**, so precedence reduces only the single-valued key.
+10a. Precedence when causes co-occur, one case per adjacent boundary in the
+    four-level order:
+
+    | Co-occurring causes | Reported value | Boundary tested |
+    | --- | --- | --- |
+    | shipped-path finding **and** contract-surface finding | `shipped_path` | 1 over 2 |
+    | contract-surface finding **and** a stale contributor | `contract_surface` | 2 over 3 — the content-versus-currency boundary |
+    | one stale contributor **and** one reporting no head | `stale_head` | 3 over 4 |
+
+    The **second row is the one that verifies content outranks currency**, and
+    it is the case proof P9 inverts: the first row contains no currency cause at
+    all, so inverting the content-versus-currency order could not change its
+    result. In every row the **summary line still names both causes**, so
+    precedence reduces only the single-valued key.
 10b. `reviewer_loop_finding_touches_contract_surface` prints the matched surface
     identity — `acceptance_criteria`, `fail_closed_semantics` and so on — and
     prints nothing on no match. A body matching two surfaces prints the first in
@@ -406,7 +419,7 @@ sharpening it.
 | P5 | Treat an entry with an absent or placeholder head as matching the current head | same scratch copy | scenario 9 fails in all three cases, because an unprovable head extends the run; restoring the fail-closed branch passes |
 | P6 | Over-tighten by path: make every `docs/` path shipped, dropping the non-shipped patterns entirely | a scratch copy of the predicate | scenarios 3, 6 and 13 fail, because the loop can no longer terminate on a genuinely cosmetic documentation tail; restoring the narrowed list passes |
 | P7 | Over-tighten by term: restore the bare common words `gate`, `scope`, `state`, `status`, `proof`, `parse` and `contract` to the contract-surface list | same scratch copy | scenario 6a fails on all seven cosmetic bodies and scenario 13 stops firing, because ordinary prose now reads as contract-bearing; restoring the phrase-only list passes |
-| P9 | Invert the precedence so currency reasons outrank content reasons | a scratch copy of the blocked-by mapping | scenario 10a's first case fails, reporting `stale_head` where a shipped-path finding is present and must be reported first; restoring the order passes |
+| P9 | Invert the precedence so currency reasons outrank content reasons | a scratch copy of the blocked-by mapping | scenario 10a's **second** row fails, reporting `stale_head` where a contract-surface finding is present and must be reported first. That row is the only one that crosses the content-versus-currency boundary — the first row has no currency cause and the third has no content cause, so neither can detect the inversion. Restoring the order passes |
 | P8 | Skip the current round's head check, verifying only the prior ledger entries | a scratch copy of the terminal decision | scenario 8a fails, because the rule terminates on a deciding round whose findings describe a commit that is no longer the head; restoring the check passes |
 
 P6 and P7 are the two restrictive-direction proofs and neither is optional. A
@@ -571,8 +584,9 @@ reviewer_loop_finding_touches_contract_surface() {
    `reviewer_loop_path_is_non_shipped_artifact`. **Verify**: scenarios 1-3 — the
    five paths flip to shipped and the four control paths do not.
 2. Add `reviewer_loop_finding_touches_contract_surface` with case-insensitive
-   word-boundary matching over the phrase list — no bare common words, and
-   literal `[ -]` separators rather than the regex wildcard. It **prints the
+   word-boundary matching over **exactly the spellings the normative table
+   lists** — no bare common words, no wildcard separators, and no additional
+   variants such as an unhyphenated `allow list`. It **prints the
    matched surface identity** and returns success, printing nothing on no
    match, and resolves ties by first match in table order. **Verify**:
    scenario 4, scenario 6a's seven cosmetic bodies, scenario 10b's identity and

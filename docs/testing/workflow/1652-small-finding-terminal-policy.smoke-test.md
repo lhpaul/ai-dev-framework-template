@@ -180,9 +180,11 @@ cannot demonstrate anything.
 2. Run it once where the terminal rule fires.
 3. Read `SMALL_FINDINGS_BLOCKED_BY` and the summary's small-findings line.
 
-4. Run it twice more with **co-occurring** causes: a round carrying both a
-   shipped-path and a contract-surface finding, and a round whose findings are
-   all small but which has one stale contributor and one reporting no head.
+4. Run it three more times with **co-occurring** causes, one per adjacent
+   boundary in the precedence order: a round carrying both a shipped-path and a
+   contract-surface finding; a round carrying a contract-surface finding **and**
+   a stale contributor; and a round whose findings are all small but which has
+   one stale contributor and one reporting no head.
 
 **Expected result**: the four situations report `shipped_path`,
 `contract_surface`, `stale_head` and `head_unknown` respectively; the firing run
@@ -190,10 +192,14 @@ reports an **empty** value, as does a run whose consecutive count was simply
 short — `exhausted` and `not_small` describe an ordinary short run and are not
 blocking reasons.
 
-The co-occurring runs report `shipped_path` and `stale_head` respectively,
-following the fixed precedence: content reasons outrank currency reasons because
-they must be fixed regardless of which commit they were found on, and
-`stale_head` outranks `head_unknown` as the more specific statement. In both
+The three co-occurring runs report `shipped_path`, `contract_surface` and
+`stale_head` respectively, following the fixed precedence: content reasons
+outrank currency reasons because they must be fixed regardless of which commit
+they were found on, and `stale_head` outranks `head_unknown` as the more
+specific statement. The **second** run is the one that verifies the
+content-versus-currency boundary, and it is the case proof P9 inverts — the
+first has no currency cause and the third has no content cause, so neither could
+detect an inversion. In both
 runs the **summary line still names every cause present** — precedence reduces
 only the single-valued key, and nothing is hidden by it.
 
@@ -257,6 +263,17 @@ common words to the contract-surface list and requires Step 3's seven bare-word
 rows and Step 7 to fail. A tightening that disables the mechanism would pass
 every permissive proof while introducing a different defect, and it is the more
 likely mistake because it looks like success.
+
+**One** — **P9** — is neither, and forms the third group: it inverts the
+`SMALL_FINDINGS_BLOCKED_BY` precedence so currency reasons outrank content
+reasons. It requires Step 5's **contract-surface-plus-stale-contributor** run to
+fail, which is the only co-occurring case that crosses the content-versus-
+currency boundary; the shipped-path pair has no currency cause and the two-head
+pair has no content cause, so neither can detect the inversion. P9 changes no
+firing decision at all — the rule still terminates or refuses exactly as before
+— and only changes which cause a maintainer is shown first. It is its own group
+because a precedence defect is an **observability** defect, invisible to any
+test that asserts only whether the rule fired.
 
 ### Step 9: Documentation agrees across all three surfaces
 
