@@ -72,15 +72,27 @@ checklist on a branch that is not a spec branch. Proof P2 plants exactly that.
 5. Call `reviewer_resolve_review_stage 'feature/x' '["REVIEW.md","src/app/main.ts"]'`,
    then again with `[]` and with `""` as the second argument.
 6. Call it once more with an array whose **first** element is `REVIEW.md` and
-   whose decoded form exceeds **2 MiB**. Generate it, and assert the size
-   before using it:
+   whose decoded form exceeds **twice this host's maximum pipe capacity**.
+   Derive the bound, generate to it, and assert the size before using it:
 
    <!-- workflow-shell-contract: bash -->
 
    ```bash
-   big="$(jq -n -c '["REVIEW.md"] + [range(40000)
-     | "src/generated/deeply/nested/module/segment/path/file\(.).ts"]')"
-   [ "$(printf '%s' "$big" | jq -r '.[]' | wc -c)" -gt 2097152 ] || exit 1
+   pipe_max=65536
+   if [ -r /proc/sys/fs/pipe-max-size ]; then
+     pipe_max="$(cat /proc/sys/fs/pipe-max-size)"
+   fi
+   target=$(( pipe_max * 2 ))
+   [ "$target" -lt 2097152 ] && target=2097152
+
+   count=40000
+   while :; do
+     big="$(jq -n -c --argjson n "$count" '["REVIEW.md"] + [range($n)
+       | "src/generated/deeply/nested/module/segment/path/file\(.).ts"]')"
+     bytes="$(printf '%s' "$big" | jq -r '.[]' | wc -c)"
+     [ "$bytes" -gt "$target" ] && break
+     count=$(( count * 2 ))
+   done
    ```
 
 **Expected result**: all nine entries match; none of the four controls does;
@@ -102,14 +114,25 @@ reader exits, takes SIGPIPE, and reports 141 — the pipeline fails, the `elif` 
 not taken, and the checklist is dropped. On Step 5's two-path list the same code
 passes, which is what makes this step necessary rather than redundant.
 
-The **2 MiB assertion is the step**, not the path count. A pipe holds 64 KiB by
-default on Linux and macOS; macOS caps there and Linux allows up to
-`fs.pipe-max-size`, 1 MiB on a default kernel. A fixture below that ceiling
-makes P10 pass or fail depending on the machine, which is not a proof. Assert
-the byte count rather than the number of paths — path length is the variable
-that silently shrinks the fixture when someone shortens the generated names.
-The generator above measures 2,428,900 bytes; 20,000 paths of the same shape
-measure 1,208,900 and would **not** clear a raised Linux pipe buffer.
+The **derived bound is the step**, not the path count and not a fixed size. A
+pipe holds 64 KiB by default on Linux and macOS. macOS caps there; on Linux the
+ceiling is `fs.pipe-max-size`, which is 1 MiB on a default kernel but is
+**writable by root** and is larger on some hosts. A fixed 2 MiB fixture is
+therefore not deterministic either — on a host with a 4 MiB ceiling and a pipe
+sized to it, the whole list fits, `jq` never blocks, never takes SIGPIPE, and
+the planted pipeline passes. That is a proof that fails to fail, which
+`REVIEW.md` → Verification Discipline does not accept.
+
+Reading the host's own limit and doubling it removes the assumption instead of
+restating it: whatever a pipe on this machine can hold, the fixture is larger,
+so `jq` is still writing when the predicate returns. The 2 MiB floor only covers
+hosts with no `/proc` — macOS, where the cap is fixed at 64 KiB — and the loop
+grows the fixture until it measures past the target rather than trusting an
+arithmetic estimate.
+
+Assert bytes, never path count: at 40,000 paths of the shape above the fixture
+measures 2,428,900 bytes, while 20,000 measure 1,208,900. Path length is the
+variable that silently shrinks it when someone shortens the generated names.
 
 Buffering the decode into a variable and feeding the predicate from a
 here-string removes the pipeline entirely. Proof P10.
