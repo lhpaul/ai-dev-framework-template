@@ -292,7 +292,14 @@ Not applicable — this repository ships workflow tooling, not a service.
       repository that has not run the reviewer yet and one that never will. The
       list is the value `workflow_config_review_platforms` already produces at
       `pr-review-loop.sh:8339`, passed in rather than re-read, so the function
-      stays testable without a configuration file.
+      stays testable without a configuration file. It is **newline-delimited,
+      one platform per line** — the loop reads it with a
+      `while IFS= read -r line` loop at lines 8336-8339 — and membership is
+      tested with `grep -Fxq`, a whole-line literal comparison. A comma-split
+      would match only when the reviewer is the single configured platform, and
+      a substring test would accept a platform named `local-ai-reviewer-v2`;
+      both report the wrong state in the direction that says a configured
+      reviewer will never run.
 
       It scans `entries[]` in **descending iteration order** and returns the
       first entry whose `platform_results` names the local reviewer, taking
@@ -570,6 +577,12 @@ Not applicable — this repository ships workflow tooling, not a service.
    2 and a `needs_fixes` local verdict at iteration 5 returns the iteration-5
    verdict. This is AC-4a, and it is the single most likely implementation
    error in the item.
+2b. Membership is by **whole line**: a configured list of three platforms with
+    `local-ai-reviewer` among them is recognised, one where it is the sole entry
+    is recognised, one containing only `local-ai-reviewer-v2` is **not**, and an
+    empty list is not. The first case fails under a comma-split test and the
+    third under a substring test, so both wrong implementations are excluded by
+    the same scenario.
 2a. The two sources of `not_configured` disagreeing: a round recorded as
     `skipped` with reason `not_configured` while the configured list **contains**
     the reviewer yields `unavailable`, never `not_configured`. The list says the
@@ -782,11 +795,17 @@ reviewer_loop_commit_ancestry() {
 reviewer_loop_local_latest_verdict() {
   local payload="${1:-}" configured="${2:-}"
 
-  case ",${configured}," in
-    *,local-ai-reviewer,*) ;;
-    *) printf '{"outcome":"not_configured","head_sha":"","iteration":0}\n'
-       return 0 ;;
-  esac
+  # Exact-line membership. `workflow_config_review_platforms` emits one
+  # platform per line (pr-review-loop.sh:8336-8339 reads it with a
+  # `while IFS= read -r line` loop), so a comma-delimited `case` would match
+  # only when the reviewer is the sole entry — and would report a configured
+  # repository as `not_configured`, the state that means "will never run".
+  # `grep -Fxq` compares whole lines and takes the pattern literally, so a
+  # platform named `local-ai-reviewer-v2` cannot satisfy it either.
+  if ! printf '%s\n' "$configured" | grep -Fxq 'local-ai-reviewer'; then
+    printf '{"outcome":"not_configured","head_sha":"","iteration":0}\n'
+    return 0
+  fi
 
   printf '%s' "$payload" | jq -c '
     (.entries // []) as $entries
@@ -825,12 +844,12 @@ reviewer_loop_local_latest_verdict() {
 ## Planted-Violation Proofs
 
 `REVIEW.md` → Core Rules → Verification Discipline requires two demonstrated
-runs per proof, each citing a concrete file and line. The eighteen proofs fall into
+runs per proof, each citing a concrete file and line. The nineteen proofs fall into
 two groups:
 
 | Group | Count | Proofs | What the plant reproduces |
 | --- | --- | --- | --- |
-| Overclaiming | **12** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16, P17, P18 | a number asserted on evidence that does not support it |
+| Overclaiming | **13** | P1, P2, P3, P4, P8, P10, P12, P14, P15, P16, P17, P18, P19 | a number asserted on evidence that does not support it |
 | Contract | **6** | P5, P6, P7, P9, P11, P13 | a report, a line, or a stored history that breaks its own stated contract |
 
 | # | Violation to plant | Where | Check that must fail, then pass |
@@ -849,12 +868,13 @@ two groups:
 | P13 | Compute the remainder as `path_total - 3` instead of from the paths actually named | a scratch copy of the renderer | scenario 13c fails at every truncation point: the zero-path line reads `+9 more` for twelve files, and a record with two files fitting reads `-1 more`. The plant is invisible whenever exactly three paths fit, which is the common case; restoring the count-what-was-named rule passes |
 | P14 | Select from persisted entries only, omitting the current round's records | a scratch copy of the call site | scenarios 1a and 1b fail: a round where the local reviewer was clean and an external reviewer found blockers is classified from the previous round's verdict, or as `not_yet_run` when there is no previous round — so the confirmed miss the feature exists to record is the one case it cannot see. Every other scenario still passes, because they all supply the verdict as prior history; restoring the composition passes |
 | P16 | Fall back to the entry's `head_sha` when a local verdict has no `reviewed_head` | a scratch copy of the selector | scenario 6a fails: the local reviewer's verdict is compared against the live head at write time rather than the commit it examined, so two unrelated facts can produce `clean_same_commit` and a confirmed miss. The plant is invisible whenever the two happen to coincide, which is most rounds; restoring the empty head — and with it an undecidable ancestry and `unknown` — passes |
+| P19 | Test configured-platform membership with a comma-delimited `case` | a scratch copy of the selector's guard | scenario 2b's first case fails: a repository configuring three platforms, `local-ai-reviewer` among them, is reported `not_configured` — the state meaning the reviewer will never run — so every round on it is excluded from the denominator and the effectiveness rate is computed over the wrong population. The plant passes whenever the reviewer is the only configured platform, which is the shape every single-platform fixture has; restoring `grep -Fxq` passes |
 | P18 | Give `claude-code-action` a head by falling back to the pull request's current head | a scratch copy of that adapter | scenario 13f's `claude-code-action` case fails: an adapter whose only artifact is an issue comment gains a head it never stated, and its rounds start producing records — and confirmed misses — against a commit nobody claimed to have reviewed. The plant is the natural reading of "every adapter emits a head", which is why the table's one no-head row is tested rather than described; restoring the no-head result passes |
 | P17 | Emit the first `commit_id` when a round's artifacts name two | a scratch copy of an adapter's head extraction | scenario 13e's two-commit case fails: a head is emitted for a round whose findings straddle a push, so the record names a commit some of the findings do not belong to and a `clean_same_commit` can follow from it. The plant looks like ordinary defaulting and only a fixture that straddles a push exposes it; restoring the no-head rule passes |
 | P15 | Substitute `loop_head_sha` for a missing `REVIEWED_HEAD` | a scratch copy of the attribution gate | scenario 13d fails: a round whose external reviewer never stated its head produces a record, and a `clean_same_commit` in it enters the **confirmed** count on the loop's inference about what the reviewer read. AC-11 requires no record when the commit cannot be established, and `clean_same_commit` is defined against the commit the external reviewer *reviewed*. The plant is the tempting one — it makes an empty telemetry produce data — which is why it is planted rather than argued about; restoring the no-fallback rule passes |
 | P6 | Enforce the 200-character bound by truncating the finished line | a scratch copy of the renderer | scenario 13's long-path case fails: truncation removes the tail, which is where the local evidence state and the classification sit, so the line that survives is the one carrying paths and no verdict — exactly inverted from what a reader needs; restoring build-order enforcement passes |
 
-Twelve proofs plant the overclaiming direction because that is the direction with
+Thirteen proofs plant the overclaiming direction because that is the direction with
 no symptom: every one of them produces a plausible number, and a number is
 believed. P3 is the one to read twice — its plant passes every test written
 against a healthy repository, and only a fixture with a deliberately deleted
@@ -877,10 +897,13 @@ object exposes it.
    row of the raw-to-outcome table — in particular the two `skipped` reasons and
    `escalate`, which `platform_result_tokens` cannot distinguish.
 2. Add `reviewer_loop_local_latest_verdict`, taking the history payload and the
-   configured-platform list, and compose the current round's
+   newline-delimited configured-platform list tested with `grep -Fxq`, and
+   compose the current round's
    `platform_result_records` into the payload at the call site before selecting.
-   **Verify**: scenarios 1a and 1b first — a selector that reads only persisted
-   entries passes every other scenario in this list. **Verify**: scenarios 1, 2, 3, 3a and 3b — recency
+   **Verify**: scenarios 1a, 1b and 2b first — a selector that reads only
+   persisted entries passes every other scenario in this list, and a
+   comma-delimited membership test passes every one that configures a single
+   platform. **Verify**: scenarios 1, 2, 3, 3a and 3b — recency
    over cleanliness, the two absent-reviewer values kept apart by the
    configuration argument alone, and the `unknown` fallback for pre-change
    entries.
@@ -913,7 +936,7 @@ object exposes it.
    eight-findings-over-three-files case, and the three remainder forms.
 8. Update Protocol 93 and the `--help` block. **Verify**: runbook Step 9 reads
    both against the code.
-10. Produce the eighteen planted-violation proofs (P1-P18) and record them in the PR
+10. Produce the nineteen planted-violation proofs (P1-P19) and record them in the PR
    with the command, file, line and both outcomes for each.
 
 ---
