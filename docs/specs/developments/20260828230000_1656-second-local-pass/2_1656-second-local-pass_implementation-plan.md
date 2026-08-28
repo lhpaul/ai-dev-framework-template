@@ -312,12 +312,18 @@ Not applicable — this repository ships workflow tooling, not a service.
       cycles for platforms, cycles-plus-passes for this one — and would shorten
       every run that needed a pass.
 
-      What the caps still bound is the **run**: a pull request whose local
-      reviewer never goes clean produces **one dispatch for the first head**,
-      then a refusal on every later cycle at that head, until `MAX_CYCLES`
-      escalates the run with `max_cycles_exceeded` — the same escalation and the
-      same cycle count as today, with fewer dispatches than a per-cycle guard
-      would make. Scenarios 8 and 8a pin both halves.
+      What the caps still bound is the **moving-head** case: a pull request
+      whose local reviewer never goes clean while its head keeps changing gets
+      one dispatch per head, and reaches `max_cycles_exceeded` at the same cycle
+      count as today — the guard adds dispatches, not cycles.
+
+      **The unchanged-head case is not bounded by a cap at all, and must not
+      be.** There the guard refuses with `escalate` at the first repeat, which
+      terminates the run by itself. Relying on `MAX_CYCLES` there would not work
+      — the lifetime count is `unique` over `head_sha | result`, so repeated
+      identical entries never advance it — and would be the wrong shape anyway:
+      nothing changes between those cycles, so waiting ten of them to say so
+      helps nobody. Scenarios 8, 8a and 10a pin the three halves.
 
 - [ ] **Report it.** Two `print_kv` lines:
 
