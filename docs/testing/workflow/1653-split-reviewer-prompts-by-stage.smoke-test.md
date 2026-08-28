@@ -254,6 +254,9 @@ by an accidental addition.
 2. Read the prompt.
 3. Repeat with `REVIEW_CHECKLISTS` **empty**.
 4. Repeat with `LOCAL_CODEX_REVIEWER_PROMPT` set to a fixed string.
+5. Run the reviewer once with `LOCAL_AI_REVIEWER_COMMAND` set to a stub that
+   prints its own environment, and grep the output for `REVIEW_STAGE`,
+   `REVIEW_STAGE_SOURCE` and `REVIEW_CHECKLISTS`.
 
 **Expected result**: step 2's prompt names the stage, names
 `Plan Review Checklist`, and contains both *"in full"* and *"Core Rules"*.
@@ -269,6 +272,12 @@ was asked to check. Proof P4 removes the phrase.
 
 Step 3 must compare against a fixture, not against the prompt the code builds:
 comparing the code's output to itself passes no matter what the string is.
+
+Step 5 finds all three variables. The preset uses only two — it has no use for
+the source — but exporting two of three would leave the environment disagreeing
+with the bundle and the evidence file, both of which carry all three, and a
+custom command wanting to tell a branch-only selection from a file-augmented one
+would have to re-derive it.
 
 ## Step 7: The selection reaches the loop summary
 

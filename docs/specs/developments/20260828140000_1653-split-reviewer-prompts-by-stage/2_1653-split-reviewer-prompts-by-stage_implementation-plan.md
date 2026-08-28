@@ -353,10 +353,16 @@ Not applicable — this repository ships workflow tooling, not a service.
       stage `default` — no sentence is inserted and the prompt is the current
       string, unchanged character for character.
 
-      The preset reads `REVIEW_STAGE` and `REVIEW_CHECKLISTS` from the
-      environment, which `local-ai-reviewer.sh` exports alongside the existing
+      `local-ai-reviewer.sh` exports **all three** — `REVIEW_STAGE`,
+      `REVIEW_STAGE_SOURCE` and `REVIEW_CHECKLISTS` — alongside the existing
       `CONTEXT_BUNDLE_PATH` / `PR_NUMBER` / `OWNER` / `REPO` / `BASE_BRANCH` /
-      `HEAD_BRANCH` / `REVIEWED_HEAD` set.
+      `HEAD_BRANCH` / `REVIEWED_HEAD` set. The bundled preset reads two of them;
+      it has no use for the source. The third is exported anyway so that the
+      three surfaces a command can read from — environment, bundle and
+      evidence — carry the same three values, and a custom
+      `LOCAL_AI_REVIEWER_COMMAND` that wants to distinguish a branch-only
+      selection from a file-augmented one does not have to re-derive it.
+      Scenario 15a asserts all three are present in the command's environment.
 
 ### Frontend / UI
 
@@ -460,6 +466,10 @@ Not applicable.
     exercised through the real function rather than assumed from its source.
 14. The evidence JSON contains the `review_stage` object with all three values,
     and remains valid `local_ai_reviewer_evidence.v1`.
+15a. The command's environment carries all three values, asserted with a stub
+    `LOCAL_AI_REVIEWER_COMMAND` that dumps its own environment. Exporting two of
+    three would leave the environment disagreeing with the bundle and the
+    evidence file, which both carry all three.
 15. A `LOCAL_CODEX_REVIEWER_PROMPT` override still wins: the stage sentence is
     not appended to it. The override contract is unchanged, and a caller who set
     it before this item gets exactly what they got before.
@@ -470,7 +480,8 @@ Not applicable.
   through 9, including 5a and 5b, and 12 and 14, as new cases in the existing
   harness.
 - `scripts/development-workflow/tests/test-local-codex-review-command.sh` —
-  scenarios 10, 11 and 15, the prompt-construction cases. This suite already
+  scenarios 10, 11, 15 and 15a, the prompt-construction and command-handoff
+  cases. This suite already
   exists and already declares
   `# covers: scripts/development-workflow/local-codex-review-command.sh`, so
   the preset's new behavior belongs here rather than in the reviewer suite.
@@ -787,9 +798,11 @@ Workflow Policy checklist named on every PR carries no information.
 5. Add the three `print_kv` calls and the `review_stage` object in
    `write_evidence_file`. **Verify**: scenarios 13 and 14, the first through the
    real `emit_prefixed_platform_output`.
-6. Export `REVIEW_STAGE` and `REVIEW_CHECKLISTS` to the command, and add the
-   stage sentence to the preset. **Verify**: scenarios 10, 11 and 15 — the
-   sentence's wording, the byte-identical `default` prompt, and the override.
+6. Export `REVIEW_STAGE`, `REVIEW_STAGE_SOURCE` and `REVIEW_CHECKLISTS` to the
+   command, and add the stage sentence to the preset. **Verify**: scenarios 10,
+   11, 15 and 15a — the sentence's wording, the byte-identical `default`
+   prompt, the override, and all three variables present in the command's
+   environment.
 6a. Add the identical workflow-policy sentence to `.claude/agents/code-reviewer.md`,
    `.cursor/agents/code-reviewer.md` and
    `.codex/skills/workflow-code-reviewer/SKILL.md`. **Verify**: scenario 8a —
